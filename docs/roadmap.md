@@ -27,7 +27,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M1  | `ElasticLM.Licensing`（JWS、トークン、トラストストア、検証、時計の守り、マシン指紋）       | not-started | —     |
 | M2  | `ElasticLM.Issuing` と `elm` の鍵・発行・検査                                              | not-started | —     |
 | M3  | `ElasticLM.Leasing`・`elm-server`・`ElasticLM.Client` のリース（借り出し・回収・利用ログ） | not-started | —     |
-| M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン有効化・クラウドのリース・監査ログ） | not-started | —     |
+| M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用 | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
 | M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
