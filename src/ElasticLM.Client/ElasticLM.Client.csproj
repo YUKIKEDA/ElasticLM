@@ -15,5 +15,7 @@
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
     <!-- elm-server keeps its installation key in the same store and signs leases and its TLS certificate with it. -->
     <InternalsVisibleTo Include="elm-server" />
+    <!-- elm server reads the server's administrator token with the same protection. -->
+    <InternalsVisibleTo Include="elm" />
   </ItemGroup>
 </Project>

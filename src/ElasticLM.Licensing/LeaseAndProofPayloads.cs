@@ -103,3 +103,41 @@ internal sealed class ProofPayload
     [JsonPropertyName("jwk")]
     public EcPublicJwk? Jwk { get; set; }
 }
+
+/// <summary>
+/// The payload of a log signature (<c>elm-log+jws</c>, design §8.4.6): it closes the lines written since the previous one.
+/// </summary>
+internal sealed class LogPayload
+{
+    [JsonPropertyName("ver")]
+    [JsonRequired]
+    public int Ver { get; set; }
+
+    [JsonPropertyName("iat")]
+    [JsonRequired]
+    public long Iat { get; set; }
+
+    [JsonPropertyName("jti")]
+    [JsonRequired]
+    public string Jti { get; set; } = string.Empty;
+
+    [JsonPropertyName("stream")]
+    [JsonRequired]
+    public string Stream { get; set; } = string.Empty;
+
+    [JsonPropertyName("n")]
+    [JsonRequired]
+    public long N { get; set; }
+
+    [JsonPropertyName("prev")]
+    [JsonRequired]
+    public string Prev { get; set; } = string.Empty;
+
+    [JsonPropertyName("digest")]
+    [JsonRequired]
+    public string Digest { get; set; } = string.Empty;
+
+    [JsonPropertyName("lines")]
+    [JsonRequired]
+    public int Lines { get; set; }
+}

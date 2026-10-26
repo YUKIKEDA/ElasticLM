@@ -30,15 +30,15 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | --- | --- |
 | `src/ElasticLM.Licensing` | オフラインの検証（design §6.2）。JWS の用途を絞った形、トークンの型、トラストストア、`LicenseVerifier`、時計の守り、マシン指紋。外部の依存なし。NuGet パッケージ |
 | `src/ElasticLM.Client` | クライアント（design §6.2）。インストール鍵の作成と保管（Windows は DPAPI、Linux と macOS は `0600` のファイル）、証明（`ELM-Proof`）の作成、`LicenseClient` によるリースの取得・自動更新・回収・返却とサーバーのピン（design §12.7, §13.5）。NuGet パッケージ。`ElasticLM.Licensing` の内部の型は見ず、公開 API（`KeyIds`、`HttpTargetUri` など）だけを使う |
-| `src/ElasticLM.Issuing` | 署名側（design §6.2）。鍵ファイル（暗号化した PKCS#8）、鍵の証明書とライセンスの発行。アプリには入らない。`ElasticLM.Licensing` の内部の型と規則（`LicensePayloadRules`）を `InternalsVisibleTo` で共有し、検証側が拒否するものを発行しない |
+| `src/ElasticLM.Issuing` | 署名側（design §6.2）。鍵ファイル（暗号化した PKCS#8）、鍵の証明書とライセンスの発行。アプリには入らない。`ElasticLM.Licensing` の内部の型と規則（`LicensePayloadRules`）を `InternalsVisibleTo` で共有し、検証側が拒否するものを発行しない。署名つきの追記だけのログ（`SignedLog`）とその検証（`LogVerifier`）も持ち、`elm-server` と `elm log verify` が共有する |
 | `src/ElasticLM.Leasing` | リースの規則（design §12.7, §13.2〜§13.4）。席の数え上げと超過、機能ごとの排他、`seq` による複製の検出、回収と回収の時間。状態はメモリに持つ。アプリには入らない |
-| `src/ElasticLM.Server` | オンプレミスのライセンスサーバー `elm-server`（design §13）。ASP.NET Core の Slim ビルダー、NativeAOT の単一バイナリ。`ElmServer.StartAsync` に時計と環境変数を渡せるので、テストは同じプロセスのループバックで動かす |
-| `src/ElasticLM.Cli` | CLI `elm`（design §16）。NativeAOT の単一バイナリ。`ElmApp.Run` に入出力・時刻・環境変数を渡せるので、テストは同じプロセスで動かす |
+| `src/ElasticLM.Server` | オンプレミスのライセンスサーバー `elm-server`（design §13）。ASP.NET Core の Slim ビルダー、NativeAOT の単一バイナリ。`ElmServer.StartAsync` に時計と環境変数を渡せるので、テストは同じプロセスのループバックで動かす。利用ログと借り出しの記録（署名つきのログ）、ループバックの管理 API（`ElmServer.Admin.cs`） |
+| `src/ElasticLM.Cli` | CLI `elm`（design §16）。NativeAOT の単一バイナリ。`ElmApp.Run` に入出力・時刻・環境変数を渡せるので、テストは同じプロセスで動かす。`elm log verify` と `elm server`（管理 API を呼ぶ）は M3c で足した |
 | `tests/ElasticLM.Licensing.Tests` | `ElasticLM.Licensing` のテスト。鍵とトークンはテストの中で作る（`TestIssuer`） |
 | `tests/ElasticLM.Client.Tests` | `ElasticLM.Client` のテスト。作った証明をサーバー側の `ProofVerifier`（`ElasticLM.Issuing`）で確かめる |
 | `tests/ElasticLM.Issuing.Tests` | `ElasticLM.Issuing` のテスト。発行したライセンスとリースを `ElasticLM.Licensing` で検証する |
 | `tests/ElasticLM.Leasing.Tests` | `ElasticLM.Leasing` のテスト。偽の時計で、席・`seq`・回収の時間・期限を確かめる |
-| `tests/ElasticLM.Server.Tests` | `elm-server` と `LicenseClient` の結合テスト。サーバーを同じプロセスのループバックの TLS で立て、本物のクライアントから呼ぶ |
+| `tests/ElasticLM.Server.Tests` | `elm-server` と `LicenseClient` の結合テスト。サーバーを同じプロセスのループバックの TLS で立て、本物のクライアントから呼ぶ。`elm server` と `elm log verify` も同じプロセスで `ElmApp.Run` から呼ぶ |
 | `tests/ElasticLM.Cli.Tests` | `elm` のコマンドのテスト。一時フォルダのファイルで、鍵の作成から検証までを流す |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
 

@@ -257,6 +257,7 @@ internal static class SelfTest
             BorrowLimit = TimeSpan.Zero,
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
+            BorrowReturnLimit = 2,
         };
         byte[] file = ElasticLM.Issuing.LicenseIssuer.Issue(signing, [certificate], spec, TimeProvider.System).File;
         var licenses = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
@@ -321,6 +322,53 @@ internal static class SelfTest
                     + Runs.ToString(CultureInfo.InvariantCulture)
                     + " runs)"
             );
+
+            // The usage log line that each renewal writes (design §18.1), signed every 100 lines as the server does.
+            string folder = Path.Combine(Path.GetTempPath(), "elm-selftest-log-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
+            try
+            {
+                const int Lines = 10_000;
+                using ElasticLM.Issuing.SignedLog log = ElasticLM.Issuing.SignedLog.Open(
+                    folder,
+                    "usage",
+                    "usage",
+                    use => use(server),
+                    file,
+                    ElasticLM.Issuing.KeyFiles.ExportPublicJwk(server),
+                    TimeProvider.System
+                );
+                start = Stopwatch.GetTimestamp();
+                for (int i = 0; i < Lines; i++)
+                {
+                    log.Append(
+                        "lease.renewed",
+                        w =>
+                        {
+                            w.WriteString("lic", "lic-srv");
+                            w.WriteString("key", clientKid);
+                            w.WriteString("lease", "lease-1");
+                        }
+                    );
+                }
+
+                log.Seal();
+                double line = Stopwatch.GetElapsedTime(start).TotalMicroseconds / Lines;
+                Console.WriteLine(
+                    "usage log line (signed every 100): "
+                        + line.ToString("F1", CultureInfo.InvariantCulture)
+                        + " us ("
+                        + Lines.ToString(CultureInfo.InvariantCulture)
+                        + " lines)"
+                );
+            }
+            finally
+            {
+                if (Directory.Exists(folder))
+                {
+                    Directory.Delete(folder, recursive: true);
+                }
+            }
+
             return true;
         }
     }

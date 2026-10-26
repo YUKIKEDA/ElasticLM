@@ -23,7 +23,9 @@ internal sealed class TestServer : IDisposable
         int overage = 0,
         CloneStrategy clone = CloneStrategy.Deny,
         DateTimeOffset? expires = null,
-        TimeSpan? grace = null
+        TimeSpan? grace = null,
+        TimeSpan? borrow = null,
+        int borrowReturns = 2
     )
     {
         Time = new FakeTimeProvider(Start);
@@ -40,9 +42,10 @@ internal sealed class TestServer : IDisposable
             GracePeriod = grace ?? TimeSpan.FromDays(7),
             InstallationKeyThumbprint = KeyFiles.KeyId(Key),
             LeaseDuration = TimeSpan.FromMinutes(10),
-            BorrowLimit = TimeSpan.FromDays(7),
+            BorrowLimit = borrow ?? TimeSpan.FromDays(7),
             OveragePercent = overage,
             CloneStrategy = clone,
+            BorrowReturnLimit = borrowReturns,
         };
         Identity = IssueIdentity();
     }
@@ -67,7 +70,16 @@ internal sealed class TestServer : IDisposable
         Identity = IssueIdentity();
     }
 
-    public LeaseEngine Engine() =>
+    /// <summary>
+    /// Replaces the server license with one issued from a changed spec for the same server key.
+    /// </summary>
+    public void ReplaceServerLicense(Func<LicenseSpec, LicenseSpec> change)
+    {
+        _owned.Add(Identity);
+        Identity = IssueIdentity(change(_spec));
+    }
+
+    public LeaseEngine Engine(LeaseEngineOptions? options = null) =>
         new(
             Identity,
             (spec, at) =>
@@ -76,20 +88,22 @@ internal sealed class TestServer : IDisposable
                 return LeaseIssuer.Issue(Key, spec, at);
             },
             new LeaseVerifier(Trust, Time, StatelessClockGuard.Instance),
-            Time
+            Time,
+            options
         );
 
     /// <summary>Returns an engine whose reclaim window is already over: it waits out the window of a fresh start.</summary>
-    public LeaseEngine OpenEngine()
+    public LeaseEngine OpenEngine(LeaseEngineOptions? options = null)
     {
-        LeaseEngine engine = Engine();
+        LeaseEngine engine = Engine(options);
         Time.Advance(TimeSpan.FromMinutes(10));
         return engine;
     }
 
-    public TestClient Client()
+    /// <summary>Returns a new installation key on a machine with the given fingerprint, or on a new machine.</summary>
+    public TestClient Client(string? fingerprint = null)
     {
-        var client = new TestClient();
+        var client = new TestClient(fingerprint ?? Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16)));
         _owned.Add(client);
         return client;
     }
@@ -101,9 +115,9 @@ internal sealed class TestServer : IDisposable
             new LeaseExpectation("acme-cad", client.KeyId)
         );
 
-    private ServerIdentity IssueIdentity()
+    private ServerIdentity IssueIdentity(LicenseSpec? spec = null)
     {
-        IssuedLicense issued = LicenseIssuer.Issue(_signing, [_certificate], _spec, Time);
+        IssuedLicense issued = LicenseIssuer.Issue(_signing, [_certificate], spec ?? _spec, Time);
         var verifier = new LicenseVerifier(Trust, Time, StatelessClockGuard.Instance);
         LicenseVerificationResult result = verifier.Verify(
             issued.File,
@@ -129,11 +143,13 @@ internal sealed class TestServer : IDisposable
 }
 
 /// <summary>
-/// An installation key of a client.
+/// An installation key of a client, on a machine with one fingerprint.
 /// </summary>
-internal sealed class TestClient : IDisposable
+internal sealed class TestClient(string fingerprint) : IDisposable
 {
     private readonly ECDsa _key = KeyFiles.CreateKey();
+
+    public string Fingerprint => fingerprint;
 
     public string KeyId => KeyFiles.KeyId(_key);
 
@@ -141,6 +157,9 @@ internal sealed class TestClient : IDisposable
 
     public LeaseRequest Request(string feature = "pro", int count = 1, string? version = "2.5") =>
         new(feature, version, count, KeyId, PublicKey, EngineExtensions.NewProofId());
+
+    public LeaseRequest Borrow(TimeSpan period, int count = 1) =>
+        new("pro", null, count, KeyId, PublicKey, EngineExtensions.NewProofId(), period, [fingerprint]);
 
     public void Dispose() => _key.Dispose();
 }

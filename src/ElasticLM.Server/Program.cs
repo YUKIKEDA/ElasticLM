@@ -3,6 +3,7 @@ using ElasticLM.Server;
 // elm-server [--config <settings.json>]: the on-premises license server (design §13). Exit codes: 0 after a normal stop,
 // 1 when the server cannot start, 2 for a usage or settings error.
 string? configPath = null;
+bool setAside = false;
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -13,8 +14,11 @@ for (int i = 0; i < args.Length; i++)
         case "--config":
             Console.Error.WriteLine("error: --config needs the path of a settings file.");
             return 2;
+        case "--set-aside-broken-records":
+            setAside = true;
+            break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: elm-server [--config <settings.json>]");
+            Console.WriteLine("Usage: elm-server [--config <settings.json>] [--set-aside-broken-records]");
             Console.WriteLine("Settings: design §13.8; each key can also be set as ELM_<KEY>, for example ELM_PRODUCT.");
             return 0;
         default:
@@ -37,7 +41,7 @@ catch (ServerStartException e)
 ElmServer server;
 try
 {
-    server = await ElmServer.StartAsync(settings, new ServerHostOptions());
+    server = await ElmServer.StartAsync(settings, new ServerHostOptions { SetAsideBrokenRecords = setAside });
 }
 catch (ServerStartException e)
 {

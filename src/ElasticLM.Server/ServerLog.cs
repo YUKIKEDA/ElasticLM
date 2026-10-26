@@ -42,4 +42,23 @@ internal static partial class ServerLog
 
     [LoggerMessage(EventId = 21, Level = LogLevel.Warning, Message = "clone.flagged: lease {LeaseId}, key {KeyId}")]
     public static partial void CloneFlagged(ILogger log, string? leaseId, string keyId);
+
+    [LoggerMessage(EventId = 30, Level = LogLevel.Error, Message = "The usage log cannot be written.")]
+    public static partial void UsageLogFailed(ILogger log, Exception exception);
+
+    [LoggerMessage(
+        EventId = 31,
+        Level = LogLevel.Warning,
+        Message = "The broken borrow record was set aside as {File}; its borrows are not counted until they expire, so seats may be lent beyond the license meanwhile."
+    )]
+    public static partial void RecordSetAside(ILogger log, string file);
+
+    [LoggerMessage(EventId = 32, Level = LogLevel.Warning, Message = "The {Stream} log could not continue its chain: {Reason}")]
+    public static partial void ChainReset(ILogger log, string stream, string reason);
+
+    [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
+    public static partial void AdminAction(ILogger log, string action, string? target, string result);
+
+    [LoggerMessage(EventId = 41, Level = LogLevel.Information, Message = "license.reloaded: {LicenseId}, token {TokenId}")]
+    public static partial void Reloaded(ILogger log, string licenseId, string tokenId);
 }

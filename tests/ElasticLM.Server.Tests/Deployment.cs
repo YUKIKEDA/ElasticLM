@@ -68,6 +68,7 @@ internal sealed class Deployment : IAsyncDisposable
             BorrowLimit = TimeSpan.FromDays(7),
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
+            BorrowReturnLimit = 2,
         };
         IssuedLicense issued = LicenseIssuer.Issue(_signing, [_certificate], change?.Invoke(spec) ?? spec, Time);
         string path = System.IO.Path.Combine(dataDirectory, "server.elmlic");
@@ -79,6 +80,7 @@ internal sealed class Deployment : IAsyncDisposable
         new()
         {
             Product = "acme-cad",
+            AdminListen = new Uri("http://127.0.0.1:0"),
             Listen = new Uri($"https://127.0.0.1:{port}"),
             LicensePath = System.IO.Path.Combine(dataDirectory, "server.elmlic"),
             TrustRootKeyFiles = [RootKeyFile],
@@ -87,7 +89,11 @@ internal sealed class Deployment : IAsyncDisposable
         };
 
     /// <summary>Starts a server with a license in a new data folder, or in the given one.</summary>
-    public async Task<ElmServer> StartServerAsync(string? dataDirectory = null, Func<ServerSettings, ServerSettings>? change = null)
+    public async Task<ElmServer> StartServerAsync(
+        string? dataDirectory = null,
+        Func<ServerSettings, ServerSettings>? change = null,
+        bool setAside = false
+    )
     {
         dataDirectory ??= NewFolder("server");
         if (!File.Exists(System.IO.Path.Combine(dataDirectory, "server.elmlic")))
@@ -96,23 +102,38 @@ internal sealed class Deployment : IAsyncDisposable
         }
 
         ServerSettings settings = Settings(dataDirectory);
-        ElmServer server = await ElmServer.StartAsync(change?.Invoke(settings) ?? settings, HostOptions());
+        ElmServer server = await ElmServer.StartAsync(change?.Invoke(settings) ?? settings, HostOptions(setAside: setAside));
         _owned.Add(server);
         return server;
     }
 
-    public ServerHostOptions HostOptions(Func<string, string?>? environment = null) =>
+    public ServerHostOptions HostOptions(Func<string, string?>? environment = null, bool setAside = false) =>
         new()
         {
             Time = Time,
             Environment = environment ?? (_ => null),
             MinimumLogLevel = LogLevel.Warning,
+            SetAsideBrokenRecords = setAside,
         };
 
+    /// <summary>An HTTP client of a server's administration API: with the given token, with none, or with the real one.</summary>
+    public static HttpClient AdminHttp(ElmServer server, bool authenticate = true, string? token = null)
+    {
+        var http = new HttpClient { BaseAddress = server.AdminUrl };
+        string? bearer = !authenticate ? null : token ?? AdminToken.Read(server.DataDirectory);
+        if (bearer is not null)
+        {
+            http.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", bearer);
+        }
+
+        return http;
+    }
+
+    /// <summary>Creates a new folder that only this user can use, as a machine-scope data folder must be (design §10.2).</summary>
     public string NewFolder(string name)
     {
         string path = System.IO.Path.Combine(Directory, name + "-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
-        System.IO.Directory.CreateDirectory(path);
+        ProtectedFiles.CreateDirectory(path, KeyScope.Machine);
         return path;
     }
 

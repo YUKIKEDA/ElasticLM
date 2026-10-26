@@ -90,7 +90,12 @@ internal static class LicensePayloadRules
             return false;
         }
 
-        if (!Limits.IsDuration(payload.Lease) || !Limits.IsDuration(payload.Borrow) || payload.Overage is < 0 or > 1000)
+        if (
+            !Limits.IsDuration(payload.Lease)
+            || !Limits.IsDuration(payload.Borrow)
+            || payload.Overage is < 0 or > 1000
+            || payload.Brl is < 0 or > Limits.MaxBorrowReturns
+        )
         {
             return false;
         }
@@ -113,6 +118,7 @@ internal static class LicensePayloadRules
                 || payload.Overage is null or < 0
                 || payload.Cnf is null
                 || payload.Clone is null
+                || payload.Brl is null
             )
         )
         {

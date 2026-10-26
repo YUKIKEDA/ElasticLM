@@ -65,6 +65,15 @@ public sealed partial class InstallationKeyStore
         try
         {
             CreateDirectory();
+
+            // A folder that another user prepared is refused before the key is written into it (design §10.2).
+            if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+            {
+                key = null;
+                error = Unreadable(unsafeFolder);
+                return false;
+            }
+
             var options = new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,
@@ -104,11 +113,18 @@ public sealed partial class InstallationKeyStore
     /// Reads the key.
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
-    /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when there is no key or it cannot be read.</param>
+    /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when there is no key or it cannot be read, or when another
+    /// user could have read or replaced the machine-scope folder (design §10.2).</param>
     /// <returns><see langword="true"/> when the key was read.</returns>
     public bool TryLoad(out InstallationKey? key, out LicenseError? error)
     {
         key = null;
+        if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+        {
+            error = Unreadable(unsafeFolder);
+            return false;
+        }
+
         byte[] stored;
         try
         {
@@ -220,17 +236,7 @@ public sealed partial class InstallationKeyStore
     [GeneratedRegex("^[a-z0-9-]{1,64}$", RegexOptions.CultureInvariant)]
     private static partial Regex ProductIdPattern();
 
-    private void CreateDirectory()
-    {
-        if (OperatingSystem.IsWindows())
-        {
-            System.IO.Directory.CreateDirectory(Directory);
-        }
-        else
-        {
-            System.IO.Directory.CreateDirectory(Directory, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
-        }
-    }
+    private void CreateDirectory() => ProtectedFiles.CreateDirectory(Directory, Scope);
 
     private byte[] Protect(byte[] pkcs8)
     {

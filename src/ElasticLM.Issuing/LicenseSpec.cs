@@ -77,6 +77,10 @@ public sealed record LicenseSpec
     /// <summary>Gets the overage percentage; required for server licenses.</summary>
     public int? OveragePercent { get; init; }
 
+    /// <summary>Gets how many borrows one installation key may return early in 30 days (design §12.7.4); required for server
+    /// licenses, 0 to 1,000.</summary>
+    public int? BorrowReturnLimit { get; init; }
+
     /// <summary>Gets what the server does with a detected clone (design §10.4); required for server licenses.</summary>
     public CloneStrategy? CloneStrategy { get; init; }
 

@@ -176,6 +176,7 @@ public static class LicenseIssuer
             Lease = spec.LeaseDuration is { } lease ? Seconds(lease) : null,
             Borrow = spec.BorrowLimit is { } borrow ? Seconds(borrow) : null,
             Overage = spec.OveragePercent,
+            Brl = spec.BorrowReturnLimit,
             Clone = spec.CloneStrategy switch
             {
                 null => null,

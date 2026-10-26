@@ -60,6 +60,10 @@ internal static class LicenseCommands
             Description = "Server licenses: borrow limit in days; 0 disallows borrowing. Default: 0.",
         };
         var overageOption = new Option<int?>("--overage") { Description = "Server licenses: overage percentage. Default: 0." };
+        var borrowReturnsOption = new Option<int?>("--borrow-returns")
+        {
+            Description = "Server licenses: early returns of borrows one installation may make in 30 days. Default: 2.",
+        };
         var cloneOption = new Option<string?>("--clone") { Description = "Server licenses: deny or flag a detected clone. Default: deny." };
         var metaOption = new Option<string[]>("--meta") { Description = "Vendor metadata key=value. Repeat for several." };
         var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true };
@@ -91,6 +95,7 @@ internal static class LicenseCommands
             borrowOption,
             overageOption,
             cloneOption,
+            borrowReturnsOption,
             metaOption,
             outOption,
             issueTrustOption,
@@ -113,10 +118,13 @@ internal static class LicenseCommands
                             || parse.GetValue(borrowOption) is not null
                             || parse.GetValue(overageOption) is not null
                             || parse.GetValue(cloneOption) is not null
+                            || parse.GetValue(borrowReturnsOption) is not null
                         )
                     )
                     {
-                        throw new CliException("--lease-minutes, --borrow-days, --overage, and --clone apply to server licenses only.");
+                        throw new CliException(
+                            "--lease-minutes, --borrow-days, --overage, --clone, and --borrow-returns apply to server licenses only."
+                        );
                     }
 
                     string expiresText = parse.GetValue(expiresOption)!;
@@ -137,6 +145,7 @@ internal static class LicenseCommands
                         LeaseDuration = isServer ? TimeSpan.FromMinutes(parse.GetValue(leaseOption) ?? 10) : null,
                         BorrowLimit = isServer ? TimeSpan.FromDays(parse.GetValue(borrowOption) ?? 0) : null,
                         OveragePercent = isServer ? parse.GetValue(overageOption) ?? 0 : null,
+                        BorrowReturnLimit = isServer ? parse.GetValue(borrowReturnsOption) ?? 2 : null,
                         CloneStrategy = isServer ? ParseClone(parse.GetValue(cloneOption) ?? "deny") : null,
                         Metadata = parse.GetValue(metaOption) is { Length: > 0 } meta
                             ? new Dictionary<string, string>(meta.Select(CliParse.Meta), StringComparer.Ordinal)

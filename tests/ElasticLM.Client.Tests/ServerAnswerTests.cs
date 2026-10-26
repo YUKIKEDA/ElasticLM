@@ -138,5 +138,56 @@ public sealed class ServerAnswerTests : IDisposable
         Assert.False(pins.Delete(url));
     }
 
+    /// <summary>
+    /// A saved borrow file must be an object with version 1, a server, a lease token, a license object, and a key object;
+    /// other members are ignored.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Files: valid with an unknown member; not JSON; no version; version 2; version as text; the lease as a number; the
+    ///   license as a string; no key; nested deeper than 8.
+    ///
+    /// Steps:
+    /// - Read each.
+    ///
+    /// Expected:
+    /// - The valid one gives its parts; the others are refused without an exception.
+    /// </remarks>
+    [Fact]
+    public void BorrowFile_ShapeIsChecked()
+    {
+        Assert.True(
+            LicenseClient.TryReadBorrowFile(
+                Bytes("""{"ver":1,"server":"https://s/","lease":"a.b.c","license":{"x":1},"key":{"kty":"EC"},"later":true}"""),
+                out string? server,
+                out string? token,
+                out byte[] license,
+                out byte[] key
+            )
+        );
+        Assert.Equal(
+            ("https://s/", "a.b.c", """{"x":1}""", """{"kty":"EC"}"""),
+            (server, token, Encoding.UTF8.GetString(license), Encoding.UTF8.GetString(key))
+        );
+
+        string deep = """{"ver":1,"server":"s","lease":"t","license":""" + new string('[', 10) + new string(']', 10) + ""","key":{}}""";
+        foreach (
+            string file in new[]
+            {
+                "not json",
+                """{"server":"s","lease":"t","license":{},"key":{}}""",
+                """{"ver":2,"server":"s","lease":"t","license":{},"key":{}}""",
+                """{"ver":"1","server":"s","lease":"t","license":{},"key":{}}""",
+                """{"ver":1,"server":"s","lease":1,"license":{},"key":{}}""",
+                """{"ver":1,"server":"s","lease":"t","license":"x","key":{}}""",
+                """{"ver":1,"server":"s","lease":"t","license":{}}""",
+                deep,
+            }
+        )
+        {
+            Assert.False(LicenseClient.TryReadBorrowFile(Bytes(file), out _, out _, out _, out _));
+        }
+    }
+
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);
 }

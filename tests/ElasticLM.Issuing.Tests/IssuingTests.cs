@@ -56,6 +56,7 @@ public sealed class IssuingTests : IDisposable
         Assert.Equal(kind, valid.License.Kind);
         Assert.Equal(issued.TokenId, valid.License.TokenId);
         Assert.Equal(spec.CloneStrategy, valid.License.CloneStrategy);
+        Assert.Equal(spec.BorrowReturnLimit, valid.License.BorrowReturnLimit);
         Assert.Equal(expires ? 0 : 1, issued.Warnings.Count(w => w.Contains("no expiry", StringComparison.Ordinal)));
     }
 
@@ -88,7 +89,8 @@ public sealed class IssuingTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A valid spec, changed in one way: a server license without lease or without clone strategy, seats on a standard license, a trial with grace,
+    /// - A valid spec, changed in one way: a server license without lease, clone strategy, or borrow return limit, or with
+    ///   a borrow return limit of 1001, seats on a standard license, a trial with grace,
     ///   257 features, 9 fingerprints, a bad version range, an empty product, a negative grace period.
     ///
     /// Steps:
@@ -100,6 +102,8 @@ public sealed class IssuingTests : IDisposable
     [Theory]
     [InlineData("server-without-lease")]
     [InlineData("server-without-clone")]
+    [InlineData("server-without-brl")]
+    [InlineData("brl-over-limit")]
     [InlineData("seats-on-standard")]
     [InlineData("trial-with-grace")]
     [InlineData("too-many-features")]
@@ -114,6 +118,8 @@ public sealed class IssuingTests : IDisposable
         {
             "server-without-lease" => Spec(LicenseKind.Server, true, true) with { LeaseDuration = null },
             "server-without-clone" => Spec(LicenseKind.Server, true, true) with { CloneStrategy = null },
+            "server-without-brl" => Spec(LicenseKind.Server, true, true) with { BorrowReturnLimit = null },
+            "brl-over-limit" => Spec(LicenseKind.Server, true, true) with { BorrowReturnLimit = 1_001 },
             "seats-on-standard" => spec with { Features = [new FeatureSpec("pro", Seats: 5)] },
             "trial-with-grace" => Spec(LicenseKind.Trial, true, true) with { GracePeriod = TimeSpan.FromDays(1) },
             "too-many-features" => spec with { Features = [.. Enumerable.Range(0, 257).Select(i => new FeatureSpec("f" + i))] },
@@ -384,6 +390,7 @@ public sealed class IssuingTests : IDisposable
             BorrowLimit = kind == LicenseKind.Server ? TimeSpan.Zero : null,
             OveragePercent = kind == LicenseKind.Server ? 0 : null,
             CloneStrategy = kind == LicenseKind.Server ? CloneStrategy.Deny : null,
+            BorrowReturnLimit = kind == LicenseKind.Server ? 2 : null,
         };
 
     private LicenseRequirement Requirement(LicenseKind kind, bool bound) =>
