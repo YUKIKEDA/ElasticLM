@@ -1,0 +1,21 @@
+---
+description: Scope is decided by requirements, not by effort; no half-shipped capabilities
+alwaysApply: true
+---
+
+# Scope
+
+The reason for a design choice is the product's goal and the requirements that realize it (`docs/design.ja.md`). Implementation volume and ease are not reasons. If a requirement cannot be met, recommend "do not build it" over a reduced version.
+
+Do not recommend a partial implementation because it is smaller or easier. If a split is real, the same decision names where the rest lives: a roadmap row with an ID and an Issue, or an entry under **Intentionally out of scope**.
+
+Allowed splits:
+
+- A later milestone applies one capability to every deployment mode or OS, and its roadmap row names it.
+- An entire capability stays unshipped until the milestone where its requirements are met.
+
+Not allowed:
+
+- A public capability that one path supports and its pair does not, without a roadmap row. Examples: a license field that the offline verifier enforces and the floating server ignores; a machine ID read on Windows and Linux but not macOS; revocation that the hosted service honors and the on-premises server does not.
+- A security property that holds on one path only: a signature checked on load but not on reload; a lease bound to the client on checkout but not on renewal.
+- A published package whose behavior differs from `docs/design.ja.md` without the difference written there or in an ADR.

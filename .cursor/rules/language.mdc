@@ -1,0 +1,30 @@
+---
+description: Which text is English and which may be Japanese
+alwaysApply: true
+---
+
+# Language
+
+Reports and replies to the owner in chat are in Japanese: the end-of-turn report, answers to questions, and the questions put to the owner. Identifiers, file names, and quoted English text stay as they are.
+
+## English
+
+- Code: identifiers, XML docs, inline comments, exception and diagnostic messages, log messages, CLI output, `BannedSymbols.txt` messages.
+- Wire formats and file formats: field names, error codes, media types.
+- Tests: method names, `summary` and `remarks`, assertion and skip messages.
+- Commit subjects, PR titles, the `type` and `scope` of both, and the PR template headings.
+- `.cursor/rules/`, `.agents/skills/` written in this repository, `.github/` templates, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`.
+- `README.md` (the source of truth for readers) and package descriptions.
+
+Before writing XML docs or comments, read `.agents/skills/english-writing/SKILL.md`. When a review corrects wording, add the general rule there in the same change.
+
+## Japanese
+
+- `README.ja.md`: a translation of `README.md`, changed in the same PR.
+- The design and the documents next to it: `docs/design.ja.md` (the canonical spec), `docs/design-decisions.md`, `docs/roadmap.md`, `docs/conventions.md`, `docs/adr/`. An English design is a roadmap row, not kept in sync before then.
+- Issue bodies, PR bodies (below the English headings), commit bodies, and review replies.
+- `.agents/skills/natural-japanese/` (vendored; do not edit).
+
+## Japanese writing
+
+Japanese documents use plain form (常体), keep identifiers and code in English, and are checked with `.agents/skills/natural-japanese/` by someone other than their author when they are published.

@@ -1,0 +1,62 @@
+---
+description: Test framework, layers, structure, and documentation of tests
+globs: "tests/**/*.cs"
+alwaysApply: false
+---
+
+# Tests
+
+The test layers are in `docs/design.ja.md`. This rule is how a test is written.
+
+## Framework
+
+- xUnit v3 with its built-in `Assert`. No assertion library, no mocking library: hand-written fakes behind the interfaces the design names.
+- Tests run on Microsoft.Testing.Platform (`global.json` `test.runner`). There is no `Microsoft.NET.Test.Sdk` or `xunit.runner.visualstudio`. Run one project with `dotnet test --project <path>`, and some of its tests with `dotnet test --project <path> -- --filter-method <pattern>`. Read the exit code and the count of tests run: a run that ran no test is not a pass.
+- Time comes from a fake `TimeProvider` (`Microsoft.Extensions.TimeProvider.Testing`). A test never sleeps, never waits on the wall clock, and never asserts what the clock decides.
+- Keys are generated in the test or in a fixture shared by one test class, at run time. A test never reads a key or a token from the repository.
+- A server test runs the server in process on a loopback port the OS picks, and stops it in the test's cleanup.
+- Every run of `./build.ps1` writes its output to a file in the scratchpad, so that a failure seen once can be named.
+
+## Structure
+
+- `tests/<Project>.Tests` mirrors `src/<Project>`. `Foo.cs` → `FooTests.cs`, in the same folder.
+- Method names: `{Target}_{Scenario}_{Expected}` in PascalCase, English.
+- Each test owns its state. Tests run in parallel; a test that cannot says why in its collection definition.
+
+## Documentation
+
+Every `[Fact]` and `[Theory]` has XML docs in this shape, in English:
+
+```csharp
+/// <summary>
+/// One line: the behavior this test guards.
+/// </summary>
+/// <remarks>
+/// Preconditions:
+/// - ...
+///
+/// Steps:
+/// - ...
+///
+/// Expected:
+/// - ...
+/// </remarks>
+[Fact]
+public void Verify_PayloadFieldChanged_ReturnsInvalidSignature()
+{
+}
+```
+
+- A `[Theory]` is documented once; list what the cases cover under Preconditions or Steps.
+- No custom XML tags. Link a design section when the why is not obvious.
+
+## What a test checks
+
+- A test stands for the whole design statement (`.cursor/rules/spec-checks.mdc`).
+- Compare with an independent reference: an RFC test vector, a token produced by a reviewed earlier run, a value worked out by hand. Do not compare a function with a re-implementation of itself.
+- A memo or cache key of several values is tested by changing each value alone, the others kept.
+- A test of a comparison (a priority, a tie-break, the oldest lease) sets up candidates whose values differ.
+- Mutation check for a guard: change the guarded term and see the test fail, then restore it by copying the file aside and back (not `git checkout`). List the mutations in the PR. Every test of a security check gets this before the PR.
+- A mutant must build. With warnings as errors, a mutant such as `if (false)` fails to compile (CS0162), `dotnet test --no-build` then runs the previous binaries, and the mutant looks survived. Check the build's exit code before reading the test result, and write the mutant so that it compiles.
+- A script that runs mutants decides from the exit code of `dotnet test`, not from its text: Microsoft.Testing.Platform exits with 2 when a test failed, and its messages follow the OS language.
+- Read the state you assert before a shared helper's cleanup runs. An assertion after a helper that resets state checks the helper, not the code.

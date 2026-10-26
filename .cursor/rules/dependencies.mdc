@@ -1,0 +1,30 @@
+---
+description: When an external package may be added
+alwaysApply: true
+---
+
+# Dependencies
+
+Avoiding dependencies is not a goal in itself. What must not be lost is: NativeAOT, the single binary, a small and fast verifier, and a supply chain that a license system's users can trust (`docs/design.ja.md`). A library that keeps all of them may be used, and replaced with our own code when a measurement says so.
+
+The verification library that apps embed has the strictest bar: every package it pulls in ships inside every customer's app. Prefer the BCL there.
+
+## Before adding a package
+
+Check each point and write the result in the PR's `## Verification`:
+
+1. **AOT**: the package declares `IsAotCompatible` or `IsTrimmable`, and a NativeAOT publish of a sample that calls it has zero trim / AOT warnings. No reflection or dynamic code generation on the path we call.
+2. **Single binary**: it adds no file to distribute beside the executable.
+3. **Size and speed**: the NativeAOT size before and after, and its time on any measured path. Its types do not appear in our public API, so it can be replaced without a breaking change.
+4. **Cryptography**: a package that implements cryptography is not added; use `System.Security.Cryptography`. A package that only wraps the OS's or the BCL's cryptography may be considered through a `design` Issue.
+5. **License and upkeep**: MIT-compatible, maintained, a version pinned in `Directory.Packages.props`, and its own dependencies listed.
+
+Then add a row to the dependency table in `docs/design.ja.md` in the same PR. A dependency that changes what the product means (a database engine, a web framework, a cloud SDK) is a `design` Issue first.
+
+Test, benchmark, and tool projects may use packages that only those projects reference (xUnit, BenchmarkDotNet, `Microsoft.Extensions.TimeProvider.Testing`); points 2 and 3 do not apply to them.
+
+```text
+# BAD — adds a JWT package because it was convenient; the AOT publish now warns IL2026, found two PRs later
+# GOOD — NativeAOT publish of the verifier sample with the package: 0 warnings; binary +38 KB;
+#        no cryptography of its own; row added to the dependency table in docs/design.ja.md
+```

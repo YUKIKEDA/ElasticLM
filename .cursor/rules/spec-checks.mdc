@@ -1,0 +1,26 @@
+---
+description: Checks and tests implement the design's full statement, not a necessary condition of it
+alwaysApply: true
+---
+
+# Checking the design's statements
+
+A check or a test that stands for a statement in `docs/design.ja.md` implements the whole statement, not a necessary condition of it.
+
+- Every documented contract has a code path and a test. A sentence with no code behind it is a defect.
+- Before the PR, list each contract sentence the PR adds to `docs/design.ja.md` next to the test that checks it.
+- A signature or MAC check is tested with each covered field changed alone, the others kept, and with the signature from another valid token. A test that only flips a byte of the signature does not show that the payload is covered.
+- A check of a request's authenticity is tested with a captured valid request replayed: with the same body, with another body, and after its time window.
+- When the design fixes an order (the steps of verification, the error priority), test it with one input that fails two adjacent steps and assert the first.
+- When the design fixes a state machine (lease states, activation states), test every transition it lists and one transition it does not allow.
+- A time bound (expiry, not-before, grace period, lease length) is tested at the instant before, at, and after the bound, with a fake `TimeProvider`.
+- A limit (seat count, token size, request size, clock skew) has a test at the limit and one past it. A seat limit also has a test with concurrent checkouts that would exceed it.
+- A rejection in `docs/design-decisions.md` whose reason is behavior has a test that fails when the rejected option is put in its place.
+- When a design statement changes, search `docs/`, the READMEs, `.cursor/rules/`, and XML docs for every restatement and update them in the same PR.
+- Before a PR says "every X does Y" (every endpoint authenticates the caller, every reader bounds its input), search the whole solution for X. The PR's test plan names the search and the exceptions.
+
+```text
+BAD:  "the signature covers the whole payload"
+      → test flips one byte of the signature and expects rejection
+GOOD: for each payload field, change only that field and keep the signature; expect rejection for every field
+```
