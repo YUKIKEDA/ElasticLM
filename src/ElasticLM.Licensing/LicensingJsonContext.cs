@@ -12,6 +12,7 @@ namespace ElasticLM.Licensing;
     MaxDepth = Limits.MaxJsonDepth,
     AllowDuplicateProperties = false,
     RespectNullableAnnotations = true,
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     ReadCommentHandling = JsonCommentHandling.Disallow
 )]
 [JsonSerializable(typeof(JwsHeader))]

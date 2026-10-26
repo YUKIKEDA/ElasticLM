@@ -390,7 +390,7 @@ flowchart TD
 
 ### 7.2 鍵の置き場所
 
-- ルート鍵: ベンダーが `elm` の実行時にファイルで渡す。PKCS#8 の PEM を、パスフレーズで暗号化して保管する（`EncryptedPrivateKeyInfo`、PBES2）。オンラインのサービスには置かない。
+- ルート鍵: ベンダーが `elm` の実行時にファイルで渡す。PKCS#8 の PEM を、パスフレーズで暗号化して保管する（`EncryptedPrivateKeyInfo`、PBES2: PBKDF2-HMAC-SHA256 600,000 回と AES-256-CBC。回数は OWASP Password Storage Cheat Sheet の PBKDF2 の節にある PBKDF2-HMAC-SHA256 の値: https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html#pbkdf2 ）。オンラインのサービスには置かない。
 - サービスの署名鍵: 運用者がファイルか環境変数で `elm-service` に渡す（§14.8）。
 - オンプレミスのサーバーのインストール鍵: サーバーが初回起動で作り、§10.2 の方法で保管する。
 - どの秘密鍵も、実行ファイルのリソースや定数に入れない（`.cursor/rules/security.mdc`）。
@@ -1312,14 +1312,17 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 | コマンド | 内容 |
 | --- | --- |
 | `elm key root create` / `elm key signing create` | ルート鍵・署名鍵を作る（PKCS#8 PEM、パスフレーズで暗号化） |
-| `elm key certify` | ルート鍵で署名鍵の証明書を発行する |
-| `elm license issue` | ライセンスファイルを発行する（サービスなしの運用。期限なしを選ぶと警告） |
+| `elm key certify` | ルート鍵で署名鍵の証明書を発行する（`--use license,lease,log`、`--days` は既定 365、上限 731） |
+| `elm key thumbprint` | 公開鍵の鍵 ID（§7.4）を表示する |
+| `elm license issue` | ライセンスファイルを発行する（サービスなしの運用）。`--expires` は日時か `never` を必ず指定し、`never` には警告を出す。機能は `--feature "ID;ver=範囲;seats=N;exp=日時"`。発行の前に §8.4.2・§8.6・§9.3 の規則で確かめ、検証側が拒否するものは発行しない。`--trust`（ルートの公開鍵）を渡すと、書き出す前に検証器そのもの（`LicenseVerifier`）で検証し、通らなければ書き出さない |
 | `elm license inspect` / `elm license verify` | ライセンスファイルの中身の表示と、トラストストアでの検証 |
 | `elm log verify` | 利用ログの署名の連なりを検証する（§18.1） |
 | `elm admin login` | OIDC のデバイス認可フローで管理 API にログインする |
 | `elm admin ...` | 管理 API の操作。API キーは環境変数 `ELM_API_KEY` で渡す |
 | `elm offline process` | オフライン有効化・解除のファイルをサービスに渡す |
 | `elm server ...` | オンプレミスのサーバーのローカル管理（§13.7） |
+
+`key` と `license` のコマンドは M2（Issue #11）で実装した。秘密鍵を読むコマンドのパスフレーズは、`--passphrase-env` が名指す環境変数（既定 `ELM_KEY_PASSPHRASE`）から読み、なければ対話で尋ねる。入力が対話でないときは引数の誤り（2）で終わる。新しい鍵のパスフレーズは 12 文字以上とする。秘密鍵のファイルは上書きせず（`--force` で上書き）、Linux と macOS では権限 `0600` で作る。
 
 トラストストアを要するコマンド（`elm license verify`、`elm log verify`、`elm server ...` の一部）は、`--trust <PEM のファイル>`（複数可）と `--revoked <鍵 ID>`（複数可）か、環境変数 `ELM_TRUST_ROOT_KEYS` で受け取る。`elm` も汎用のバイナリで、ベンダーのルート鍵を持たない。
 
@@ -1518,6 +1521,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | `Npgsql` | `ElasticLM.Service` | PostgreSQL | D0 で警告 0 件（10.0.3） |
 | `Microsoft.Data.Sqlite.Core`, `SQLitePCLRaw.provider.e_sqlite3` | `ElasticLM.Service` | SQLite | D0 で警告 0 件 |
 | SQLite（アマルガム、`vendor/sqlite/`） | `ElasticLM.Service` | 静的リンク | — |
+| `System.CommandLine` 2.0.14 | `ElasticLM.Cli`（`elm`）だけ | 引数の解析、ヘルプ、検証。アプリには入らない。MIT。`net10.0` が使う `net8.0` のアセットにパッケージ依存はない（`netstandard2.0` のアセットだけが `System.Memory` 4.5.5 に依存する） | M2 で警告 0 件。何もしないコンソールの 0.93 MB に対して 2.83 MB（+1.9 MB、win-x64）。`elm` の全体は 4.44 MB |
 | `xunit.v3`, `Microsoft.Extensions.TimeProvider.Testing` | テスト | テスト | 対象外 |
 
 管理画面の SPA の依存は W0 の行で決め、この表に足す。

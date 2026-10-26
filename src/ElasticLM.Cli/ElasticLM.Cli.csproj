@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>elm</AssemblyName>
+    <RootNamespace>ElasticLM.Cli</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="System.CommandLine" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
+  </ItemGroup>
+</Project>
