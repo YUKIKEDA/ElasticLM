@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+    <!-- The server-side proof verifier checks what the client builds. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+  </ItemGroup>
+</Project>

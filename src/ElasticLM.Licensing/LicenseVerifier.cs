@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -12,17 +11,13 @@ namespace ElasticLM.Licensing;
 public sealed class LicenseVerifier
 {
     private const string LicenseFileFormat = "elasticlm-license";
-    private const string UseLicense = "license";
-    private const int MaxCachedCertificates = 16;
 
     private readonly TrustStore _trust;
     private readonly TimeProvider _time;
     private readonly IClockGuard _clockGuard;
     private readonly LicenseVerifierOptions _options;
 
-    // Certificates that verified, keyed by their exact text. The same bytes always give the same result for this verifier,
-    // because the trust store cannot change. Bounded so that a stream of distinct certificates cannot grow it.
-    private readonly ConcurrentDictionary<string, CertifiedKey> _certificates = new(StringComparer.Ordinal);
+    private readonly CertificateSet _certificates;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LicenseVerifier"/> class.
@@ -44,6 +39,7 @@ public sealed class LicenseVerifier
         }
 
         _trust = trust;
+        _certificates = new CertificateSet(trust, CertificateSet.UseLicense);
         _time = time;
         _clockGuard = clockGuard;
         _options = new LicenseVerifierOptions { ClockSkew = options.ClockSkew, AcceptTrialAsStandard = options.AcceptTrialAsStandard };
@@ -94,7 +90,7 @@ public sealed class LicenseVerifier
 
         // Step 3: the certificates that verify under a trusted root and certify the token's key for licenses. Every candidate
         // certifies the same key, so the signature is checked once with it before the payload is read (design §8.2 rule 6).
-        List<CertifiedKey> candidates = CollectCandidates(envelope.Certificates, license.Header.Kid, out List<CertifiedKey>? uncached);
+        List<CertifiedKey> candidates = _certificates.CollectCandidates(envelope.Certificates, license.Header.Kid, out List<CertifiedKey>? uncached);
         try
         {
             return VerifyToken(license, candidates, requirement, requiredVersion);
@@ -242,85 +238,6 @@ public sealed class LicenseVerifier
         return true;
     }
 
-    private List<CertifiedKey> CollectCandidates(List<string> certificates, string tokenKeyId, out List<CertifiedKey>? uncached)
-    {
-        uncached = null;
-        var candidates = new List<CertifiedKey>(1);
-        foreach (string text in certificates)
-        {
-            if (!_certificates.TryGetValue(text, out CertifiedKey? entry))
-            {
-                if (!TryVerifyCertificate(text, out entry))
-                {
-                    // A certificate that fails any check is skipped, so an old certificate kept for rotation cannot fail the file.
-                    continue;
-                }
-
-                // The cache keeps the first certificates it sees and never evicts, so a cached key is never disposed while
-                // another call uses it. Certificates beyond the limit are verified per call and disposed by the caller.
-                if (_certificates.Count >= MaxCachedCertificates || !_certificates.TryAdd(text, entry!))
-                {
-                    (uncached ??= []).Add(entry!);
-                }
-            }
-
-            if (entry!.Key.KeyId == tokenKeyId)
-            {
-                candidates.Add(entry);
-            }
-        }
-
-        return candidates;
-    }
-
-    private bool TryVerifyCertificate(string text, out CertifiedKey? entry)
-    {
-        entry = null;
-        if (!CompactJws.TryParse(text, TokenTypes.KeyCertificate, out CompactJws? jws, out _))
-        {
-            return false;
-        }
-
-        string rootId = jws!.Header.Kid;
-        if (_trust.IsRevoked(rootId) || !_trust.TryGetRoot(rootId, out VerificationKey? root) || !root!.Verify(jws))
-        {
-            return false;
-        }
-
-        KeyCertificatePayload? payload;
-        try
-        {
-            payload = JsonSerializer.Deserialize(jws.Payload, LicensingJsonContext.Default.KeyCertificatePayload);
-        }
-        catch (JsonException)
-        {
-            return false;
-        }
-
-        if (payload is null || payload.Ver != 1 || _trust.IsRevoked(payload.Sub))
-        {
-            return false;
-        }
-
-        if (!Limits.IsTime(payload.Nbf) || !Limits.IsTime(payload.Exp) || !Limits.IsTime(payload.Iat))
-        {
-            return false;
-        }
-
-        if (!payload.Use.Contains(UseLicense, StringComparer.Ordinal) || !payload.Jwk.TryGetParameters(out ECParameters parameters))
-        {
-            return false;
-        }
-
-        if (!VerificationKey.TryCreate(parameters, out VerificationKey? key) || key!.KeyId != payload.Sub)
-        {
-            return false;
-        }
-
-        entry = new CertifiedKey(key, payload.Nbf, payload.Exp);
-        return true;
-    }
-
     private static bool TryReadLicensePayload(byte[] bytes, out LicensePayload? payload, out LicenseKind kind)
     {
         payload = null;
@@ -396,6 +313,4 @@ public sealed class LicenseVerifier
 
         return null;
     }
-
-    private sealed record CertifiedKey(VerificationKey Key, long Nbf, long Exp);
 }

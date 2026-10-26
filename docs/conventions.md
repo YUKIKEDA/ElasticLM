@@ -29,10 +29,12 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | プロジェクト | 責務 |
 | --- | --- |
 | `src/ElasticLM.Licensing` | オフラインの検証（design §6.2）。JWS の用途を絞った形、トークンの型、トラストストア、`LicenseVerifier`、時計の守り、マシン指紋。外部の依存なし。NuGet パッケージ |
+| `src/ElasticLM.Client` | クライアント（design §6.2）。インストール鍵の作成と保管（Windows は DPAPI、Linux と macOS は `0600` のファイル）、証明（`ELM-Proof`）の作成。NuGet パッケージ。`ElasticLM.Licensing` の内部の型は見ず、公開 API（`KeyIds`、`HttpTargetUri` など）だけを使う |
 | `src/ElasticLM.Issuing` | 署名側（design §6.2）。鍵ファイル（暗号化した PKCS#8）、鍵の証明書とライセンスの発行。アプリには入らない。`ElasticLM.Licensing` の内部の型と規則（`LicensePayloadRules`）を `InternalsVisibleTo` で共有し、検証側が拒否するものを発行しない |
 | `src/ElasticLM.Cli` | CLI `elm`（design §16）。NativeAOT の単一バイナリ。`ElmApp.Run` に入出力・時刻・環境変数を渡せるので、テストは同じプロセスで動かす |
 | `tests/ElasticLM.Licensing.Tests` | `ElasticLM.Licensing` のテスト。鍵とトークンはテストの中で作る（`TestIssuer`） |
-| `tests/ElasticLM.Issuing.Tests` | `ElasticLM.Issuing` のテスト。発行したものを `ElasticLM.Licensing` で検証する |
+| `tests/ElasticLM.Client.Tests` | `ElasticLM.Client` のテスト。作った証明をサーバー側の `ProofVerifier`（`ElasticLM.Issuing`）で確かめる |
+| `tests/ElasticLM.Issuing.Tests` | `ElasticLM.Issuing` のテスト。発行したライセンスとリースを `ElasticLM.Licensing` で検証する |
 | `tests/ElasticLM.Cli.Tests` | `elm` のコマンドのテスト。一時フォルダのファイルで、鍵の作成から検証までを流す |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
 

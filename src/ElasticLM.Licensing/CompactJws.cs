@@ -124,6 +124,30 @@ internal sealed class CompactJws
     /// </summary>
     public bool TryVerifyWithEmbeddedKey(out ECParameters key)
     {
+        if (!TryReadEmbeddedKey(out key) || !EcKeys.TryCreateVerifier(key, out ECDsa? verifier))
+        {
+            key = default;
+            return false;
+        }
+
+        using (verifier)
+        {
+            if (Verify(verifier!))
+            {
+                return true;
+            }
+        }
+
+        key = default;
+        return false;
+    }
+
+    /// <summary>
+    /// Reads the payload's <c>jwk</c> without verifying the signature, and checks that its thumbprint is the header
+    /// <c>kid</c>. Only <c>jwk</c> is read (design §8.2 rule 6, exception); the caller verifies the signature next.
+    /// </summary>
+    public bool TryReadEmbeddedKey(out ECParameters key)
+    {
         key = default;
         EmbeddedJwkPayload? embedded;
         try
@@ -145,19 +169,6 @@ internal sealed class CompactJws
         )
         {
             return false;
-        }
-
-        if (!EcKeys.TryCreateVerifier(parameters, out ECDsa? verifier))
-        {
-            return false;
-        }
-
-        using (verifier)
-        {
-            if (!Verify(verifier!))
-            {
-                return false;
-            }
         }
 
         key = parameters;
