@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Internal to ElasticLM's servers: the lease rules (design §6.2). Apps never reference it. -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Leasing.Tests" />
+  </ItemGroup>
+</Project>

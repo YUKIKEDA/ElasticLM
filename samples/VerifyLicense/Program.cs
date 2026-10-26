@@ -101,7 +101,7 @@ internal static class SelfTest
                 + Iterations.ToString(CultureInfo.InvariantCulture)
                 + " runs)"
         );
-        if (!ProofAndLease(root, signing))
+        if (!ProofAndLease(root, signing) || !Renewal(root, signing))
         {
             return 1;
         }
@@ -224,6 +224,104 @@ internal static class SelfTest
             {
                 Directory.Delete(directory, recursive: true);
             }
+        }
+    }
+
+    // The server side of one renewal on premises (design §12.7.1, §4.2): the lease engine judges the sequence number under
+    // the feature's lock and signs the next token. The proof check of the request is measured above.
+    private static bool Renewal(ECDsa root, ECDsa signing)
+    {
+        using ECDsa server = ElasticLM.Issuing.KeyFiles.CreateKey();
+        using ECDsa client = ElasticLM.Issuing.KeyFiles.CreateKey();
+        string serverKid = ElasticLM.Issuing.KeyFiles.KeyId(server);
+        string clientKid = ElasticLM.Issuing.KeyFiles.KeyId(client);
+        TrustStore trust = TrustStore.Create([root.ExportSubjectPublicKeyInfoPem()], []);
+        string certificate = ElasticLM.Issuing.CertificateIssuer.Issue(
+            root,
+            signing,
+            ElasticLM.Issuing.KeyUses.License,
+            DateTimeOffset.UtcNow.AddDays(-1),
+            TimeSpan.FromDays(30),
+            TimeProvider.System
+        );
+        var spec = new ElasticLM.Issuing.LicenseSpec
+        {
+            LicenseId = "lic-srv",
+            ProductId = "acme-cad",
+            Kind = LicenseKind.Server,
+            Features = [new ElasticLM.Issuing.FeatureSpec("pro", Seats: 10_000)],
+            ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+            GracePeriod = TimeSpan.FromDays(7),
+            InstallationKeyThumbprint = serverKid,
+            LeaseDuration = TimeSpan.FromMinutes(10),
+            BorrowLimit = TimeSpan.Zero,
+            OveragePercent = 0,
+            CloneStrategy = CloneStrategy.Deny,
+        };
+        byte[] file = ElasticLM.Issuing.LicenseIssuer.Issue(signing, [certificate], spec, TimeProvider.System).File;
+        var licenses = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
+        var requirement = new LicenseRequirement("acme-cad", LicenseKind.Server, null, null, new InstallationIdentity(serverKid, []));
+        if (
+            licenses.Verify(file, requirement) is not LicenseVerificationResult.Valid valid
+            || !ServerIdentity.TryCreate(valid.License, ElasticLM.Issuing.KeyFiles.ExportPublicJwk(server), out ServerIdentity? identity, out _)
+        )
+        {
+            Console.Error.WriteLine("self-test: the server license did not verify");
+            return false;
+        }
+
+        using (identity)
+        {
+            var engine = new ElasticLM.Leasing.LeaseEngine(
+                identity!,
+                (lease, at) => ElasticLM.Issuing.LeaseIssuer.Issue(server, lease, at),
+                new LeaseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance),
+                TimeProvider.System
+            );
+
+            // A fresh engine is in its reclaim window, so the lease comes in as a reclaim, as after a restart.
+            var leaseSpec = new ElasticLM.Issuing.LeaseSpec
+            {
+                LeaseId = "lease-1",
+                ProductId = "acme-cad",
+                LicenseId = "lic-srv",
+                FeatureId = "pro",
+                Seats = 1,
+                InstallationKeyThumbprint = clientKid,
+                Duration = TimeSpan.FromMinutes(10),
+                ServerLicenseTokenId = identity!.License.TokenId,
+                Sequence = 1,
+            };
+            string token = ElasticLM.Issuing.LeaseIssuer.Issue(server, leaseSpec, TimeProvider.System);
+            if (engine.Reclaim([token], clientKid, client.ExportParameters(false))[0].Error is LicenseError reclaimError)
+            {
+                Console.Error.WriteLine("self-test: the reclaim failed: " + reclaimError.Message);
+                return false;
+            }
+
+            const int Runs = 1000;
+            long start = Stopwatch.GetTimestamp();
+            for (int i = 1; i <= Runs; i++)
+            {
+                if (
+                    engine.Renew("lease-1", i, clientKid, "proof-" + i.ToString(CultureInfo.InvariantCulture), [])
+                    is not ElasticLM.Leasing.LeaseOutcome.Granted
+                )
+                {
+                    Console.Error.WriteLine("self-test: a renewal was refused");
+                    return false;
+                }
+            }
+
+            double renew = Stopwatch.GetElapsedTime(start).TotalMicroseconds / Runs;
+            Console.WriteLine(
+                "renewal (server, without the proof): "
+                    + renew.ToString("F1", CultureInfo.InvariantCulture)
+                    + " us ("
+                    + Runs.ToString(CultureInfo.InvariantCulture)
+                    + " runs)"
+            );
+            return true;
         }
     }
 

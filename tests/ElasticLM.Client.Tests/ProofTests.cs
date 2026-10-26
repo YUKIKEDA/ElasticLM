@@ -68,6 +68,35 @@ public sealed class ProofTests : IDisposable
     }
 
     /// <summary>
+    /// A server reachable under several public URLs accepts a proof for any of them, and refuses one for none of them
+    /// (design §12.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Proofs for https://licenses.example.com/v1/leases.
+    ///
+    /// Steps:
+    /// - Verify against [another host, the proof's host] and against [two other hosts].
+    ///
+    /// Expected:
+    /// - Valid; ELM_PROOF_INVALID.
+    /// </remarks>
+    [Fact]
+    public void Verify_SeveralTargets_AcceptsAnyOfThem()
+    {
+        Uri[] withMatch = [new("https://lic.internal:7070/v1/leases"), Target];
+        Uri[] withoutMatch = [new("https://lic.internal:7070/v1/leases"), new("https://localhost:7070/v1/leases")];
+
+        string first = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time);
+        Assert.IsType<ProofResult.Valid>(_verifier.Verify(first, "POST", withMatch, Body));
+
+        string second = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time);
+        var invalid = Assert.IsType<ProofResult.Invalid>(_verifier.Verify(second, "POST", withoutMatch, Body));
+        Assert.Equal(ErrorCode.ProofInvalid, invalid.Error.Code);
+        Assert.Throws<ArgumentException>(() => _verifier.Verify(second, "POST", Array.Empty<Uri>(), Body));
+    }
+
+    /// <summary>
     /// Each rule of design §12.2, broken alone, fails with its own error.
     /// </summary>
     /// <remarks>

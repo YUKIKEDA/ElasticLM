@@ -34,6 +34,12 @@ public sealed class VerifiedLicense
         LeaseDuration = payload.Lease is long lease ? TimeSpan.FromSeconds(lease) : null;
         BorrowLimit = payload.Borrow is long borrow ? TimeSpan.FromSeconds(borrow) : null;
         OveragePercent = payload.Overage;
+        CloneStrategy = payload.Clone switch
+        {
+            "deny" => Licensing.CloneStrategy.Deny,
+            "flag" => Licensing.CloneStrategy.Flag,
+            _ => null,
+        };
         Metadata = payload.Meta ?? new Dictionary<string, string>(StringComparer.Ordinal);
     }
 
@@ -87,6 +93,9 @@ public sealed class VerifiedLicense
 
     /// <summary>Gets the overage percentage for server licenses, or <see langword="null"/>.</summary>
     public int? OveragePercent { get; }
+
+    /// <summary>Gets what the server does with a detected clone, for server licenses, or <see langword="null"/>.</summary>
+    public CloneStrategy? CloneStrategy { get; }
 
     /// <summary>Gets the vendor metadata. The library does not interpret it.</summary>
     public IReadOnlyDictionary<string, string> Metadata { get; }

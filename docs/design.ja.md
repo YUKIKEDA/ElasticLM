@@ -82,6 +82,19 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.40 | 借り出しの早期返却 | 認める。回数の上限をポリシーで決める。残る危険は受け入れる（§5.4, §12.7.4） |
 | 0.41 | ネットワークのない端末の更新 | オフライン有効化と同じファイルのやり取りでトークンを更新できる。サーバーライセンスの更新にも使う（§12.8.3） |
 
+### 0.E M3b で決めたこと
+
+2026-10-26 の Grill（Issue #21）で持ち主が決めた。
+
+| # | 項目 | 決定 |
+| --- | --- | --- |
+| 0.42 | .NET のクライアントの形 | C ABI（§17.2）と同じ形の `LicenseClient` と `Lease`。状態の変化はイベントで知らせる。回収の時間中の取得は `Retry-After` を返し、自分では待たない（§12.7.3） |
+| 0.43 | オンプレミスでの複製の扱い | サーバーライセンスに必須の `clone`（`deny` / `flag`）を持たせる。`deny` で止めたリースは期限まで残し、更新と回収に `ELM_CLONE_DETECTED` を返す（§8.4.2, §10.4） |
+| 0.44 | 回収の形 | 1 回の要求で 64 件までのリーストークンを送り、リースごとの結果を返す。回収したリースはトークンと `seq` を引き継ぐ（§13.4） |
+| 0.45 | TLS の受け入れ方 | OS の検証に通るか、相手の公開鍵の拇印がピンした `cnf.jkt` と一致すれば受け入れる。クライアントに方式の設定は持たせない（§13.5） |
+| 0.46 | 頻度の制限 | `TimeProvider` で動く IP ごとのトークンバケットを `elm-server` に持つ。BCL の制限器は `TimeProvider` を受け取らない（https://github.com/dotnet/runtime/issues/106447 ）（§13.8） |
+| 0.47 | 再試行と複製の見分け | `seq` が 1 小さい要求に同じトークンを返すのは、その要求が、今のトークンを出した要求の証明の `jti` を「応答のなかった要求」として名指したときだけにする。D0 の「1 小さければ再試行」のままでは、同じタイマーで動く複製の VM が 1 席を分け合っても検出できない（設計のレビュー、Issue #21）（§10.4） |
+
 ## 1. 目的と利用者
 
 ### 1.1 目的
@@ -215,6 +228,12 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 
 10,000 件のリースを既定のリース期間 10 分・更新間隔 1/3 で持つと、更新は $10000 / 200\,\mathrm{s} = 50$ 件/秒になる。
 
+M3b（Issue #21）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1 の行）:
+
+- `elm-server` の大きさは 11.4 MB（11,430,912 バイト）。
+- 起動から待ち受けまで、サーバーの記録では 51 ms。プロセスの起動から最初の HTTPS の応答までを外から測ると、5 回で 524〜639 ms だった（PowerShell の `Invoke-WebRequest` の待ちを含む）。
+- 更新 1 件のサーバー側の処理は、証明の検証が約 120 µs、リースの規則と新しいトークンの署名が 322〜415 µs（4 回の実行、各 1,000 回の平均）で、合わせて約 0.45〜0.54 ms（`samples/VerifyLicense --self-test`）。50 件/秒なら 1 コアの約 2.7 % 以下である（$50 \times 0.54\,\mathrm{ms} = 27\,\mathrm{ms/s}$）。10,000 件を同時に持つときの p99 とメモリは V1 で測る。
+
 ### 4.3 安全性
 
 - §5 の脅威モデルの対策をすべて満たす。`.cursor/rules/security.mdc` を守る。
@@ -274,8 +293,8 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | T13 | 管理 API の不正利用 | A4, A5 | API キーは範囲と期限を持ちハッシュだけを保存する。OIDC は IdP 側で停止できる。全操作を監査ログに残す（§14.6, §18.2） |
 | T14 | 管理画面への CSRF・XSS | A4 | BFF でブラウザにトークンを渡さない。Cookie は `__Host-`・`HttpOnly`・`Secure`・`SameSite=Lax`。状態を変える API は独自ヘッダーを要求し、GET は状態を変えない。CSP を厳しくする（§15） |
 | T15 | 利用ログの改ざん | A3 | 区切りごとの署名と、ファイルをまたぐ連なり（§18.1）。サーバーの鍵を持つ利用者の管理者（A1）による書き直しは防げない（§5.4） |
-| T16 | 大きな入力やトークンでの資源の枯渇 | A2, A3, A4 | 入力の大きさ・深さ・数に上限を置く（§8.6, §14.7）。リクエストの頻度を制限する |
-| T17 | オンプレミスのサーバーのなりすまし | A1, A3 | クライアントはサーバーライセンスをルート鍵からたどって検証し、`kind: server` であること、設定で指定したサーバーであることを確かめ、リースをその公開鍵で検証する。自己署名の TLS のときは、接続のたびに TLS の公開鍵とサーバーライセンスの公開鍵の一致を確かめる（§13.5） |
+| T16 | 大きな入力やトークンでの資源の枯渇 | A2, A3, A4 | 入力の大きさ・深さ・数に上限を置く（§8.6, §14.7）。リクエストの頻度を制限する（§13.8） |
+| T17 | オンプレミスのサーバーのなりすまし | A1, A3 | クライアントはサーバーライセンスをルート鍵からたどって検証し、`kind: server` であること、設定で指定したサーバーであることを確かめ、リースをその公開鍵で検証する。OS の検証に通らない TLS の接続では、接続のたびに TLS の公開鍵とサーバーライセンスの公開鍵の一致を確かめる（§13.5）。OS が信頼する証明書を持つ中継（社内の TLS の検査など）は通信を見られ、署名のない応答（問題の応答）を偽れる。リースは偽れないが、偽の `ELM_CLONE_DETECTED` でリースを失わせることはでき、これは通信を止めることと同じ妨害として受け入れる |
 | T18 | 試用・通常のライセンスを使った偽のサーバー | A1 | クライアントは `kind: server` 以外のライセンスを持つサーバーのリースを受け付けない（§11.2, §12.7.5） |
 | T19 | 他人の有効化の解除・更新 | A2, A3 | 有効化に関わるすべての要求で、証明の鍵が有効化のインストール鍵と一致することを求める（§12.5, §12.6, §12.8） |
 
@@ -498,6 +517,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `lease` | int | `kind: server` のとき | リースの期間の秒数（ポリシーの `LeaseDuration`）。回収の時間にも使う（§13.4） |
 | `borrow` | int | `kind: server` のとき | 借り出しの上限の秒数。0 なら借り出しを許さない |
 | `overage` | int | `kind: server` のとき | 席数を超えて貸せる割合（百分率）。0 なら超えない |
+| `clone` | string | `kind: server` のとき | 複製を検出したときの扱い。`deny` か `flag`（§9.3 の `CloneStrategy`、§10.4）。`elm license issue --clone` で指定し、既定は `deny`（M3b で足した） |
 | `meta` | object | 任意 | ベンダーが自由に入れる文字列の組。検証では解釈しない |
 
 #### 8.4.3 リーストークン（`elm-lease+jws`）
@@ -580,7 +600,15 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | 要求の `client` のホスト名・ユーザー名 | 各 255 バイト |
 | 要求の `app` | 64 バイト |
 | 回収の要求のリーストークンの数 | 64 |
+| 更新の要求の `retry`（応答のなかった要求の `jti`） | 16 件、各 64 文字 |
 | サーバーの公開鍵の JWK（`GET /v1/server/license` の `key`） | 1,024 バイト |
+| リースの取得の `version` | 32 文字 |
+| `elm-server` の応答（クライアントが読む大きさ） | 256 KiB |
+| 問題の応答の `detail`（クライアントがアプリに渡す長さ） | 512 文字。超えれば状態コードだけを伝える |
+| サーバーのピンのファイル | 4 KiB |
+| `elm-server` の設定ファイル | 64 KiB |
+| `allow` と `deny` の項目 | 合わせて 1,000 |
+| 頻度の制限が覚える送信元（IPv4 のアドレスか IPv6 の /64） | 100,000。超えたら新しい送信元は 1 つの溢れ用のバケットを分け合う（§13.8） |
 | ノンスの文字列 | 128 文字（正しいノンスは 56 バイトの base64url で 75 文字） |
 | 証明の `jti` | 64 文字 |
 | インストール鍵のファイル | 16 KiB |
@@ -772,16 +800,21 @@ OS の ID が読めないとき（ファイルがない、`uninitialized`、全�
 複製された端末は同じインストール鍵を持つため、サーバー側で更新番号の巻き戻りから検出する。OAuth のリフレッシュトークンの回転（RFC 9700 §4.14）と同じ考え方である。
 
 1. 有効化（サーバーライセンスを含む）とリースは更新番号（`seq`）を持つ。サービスとサーバーは、更新のたびに 1 増やしてトークンに入れ、最後に出した値と、そのトークンを覚える。
-2. クライアントは、更新・解除・再有効化の要求に、最後に受け取った `seq` を入れる。
+2. クライアントは、更新・解除・再有効化の要求に、最後に受け取った `seq` を入れる。前の要求に応答が届かなかった（送ったが答えがない）ときは、その要求の証明の `jti` を、新しいトークンを受け取るまで覚えておき、再試行の本文の `retry` に入れる（新しいものを後ろに、16 件まで）。
 3. 判定:
    - 要求の `seq` が最後に出した値と同じ: 正しい更新。`seq` を 1 増やして新しいトークンを出す。
-   - 要求の `seq` が最後に出した値より 1 小さい: 前の応答が届かなかった再試行とみなし、最後に出したトークンをそのまま返す（冪等）。
+   - 要求の `seq` が最後に出した値より 1 小さく、`retry` が「最後に出したトークンを出した要求の証明の `jti`」を含む: 前の応答が届かなかった再試行とみなし、最後に出したトークンをそのまま返す（冪等）。サーバーはそのため、トークンごとに、それを出した要求の `jti` を覚える。
+   - 1 小さくても `retry` がその `jti` を含まなければ、複製とする。同じ時刻に更新する 2 つの写し（タイマーまで複製された VM）では、後から来た写しは 1 小さい `seq` を送るが、もう一方の写しの要求の `jti` は知りようがない。回収で戻したリース（§13.4）は出した要求が分からないので、1 小さい要求はすべて複製とする（0.47）。
    - それ以外（2 以上小さい、大きい、省略）: 別の写しが先に進んだとみなし、複製として扱う。
 4. 同じインストール鍵での再有効化（§12.4）も、既存の有効化があれば 3 の判定を行う。`seq` を省いた再有効化は複製として扱う。ライセンスファイルをなくした正当な利用者は、管理者による解除の後に有効化し直す。
 
 検出したら、ポリシーの `CloneStrategy` に従う。`Deny` は、その有効化の新しいトークンとリースを止め、監査ログに記録し、エラー `ELM_CLONE_DETECTED` を返す。利用者は解除と再有効化で戻る。`Flag` は記録だけを行い、通常どおり応答する。
 
-オンプレミスのサーバーは、リースの更新で同じ判定を行う（メモリの状態に対して）。複製された 2 つのクライアントが同じリースを更新し合えば、2 回目で検出する。オンプレミスでの検出は、サーバーライセンスの `CloneStrategy` に従う。
+オンプレミスのサーバーは、リースの更新で同じ判定を行う（メモリの状態に対して）。複製された 2 つのクライアントが同じリースを更新し合えば、2 回目で検出する。オンプレミスでの検出は、サーバーライセンスの `clone`（§8.4.2）に従う。
+
+- `deny`: そのリースを「止めたもの」にして期限まで残し、`ELM_CLONE_DETECTED` を返す。止めたリースは、どの `seq` でも更新できず、回収もできない。返却も受け付けず（`409` と `ELM_CLONE_DETECTED`）、席は期限まで埋まったままにする。リースを消して席を空けると、もう一方の写しが手元のトークンで回収し直せてしまうためである（0.43）。クライアントはそのリースを `Lost` にする。
+- `flag`: 記録だけを行い、通常どおり次のトークン（`seq` + 1）を返す。
+- 回収（§13.4）で、サーバーがすでに持つリースのトークンが届いたときも、更新と同じく判定する。`seq` が同じか 1 小さければ同じクライアントとし、それ以外は複製とする。
 
 複製を「同時の利用」で検出する案は採らない。同じ端末で複数のプロセスが同じインストール鍵を使うのは正当であり、区別できないためである。
 
@@ -841,7 +874,11 @@ public static class MachineFingerprint
 public sealed class InstallationIdentity(string keyThumbprint, IReadOnlyList<string> fingerprints);
 public static class TokenTypes { /* §8.4 の typ の定数 */ }
 public enum ErrorCode { /* §19 */ }
-public static class ErrorCodes { public static string ToWireName(ErrorCode code); }
+public static class ErrorCodes
+{
+    public static string ToWireName(ErrorCode code);
+    public static bool TryParseWireName(string? wireName, out ErrorCode code);   // M3b: クライアントが問題の応答を読む
+}
 ```
 
 型の中身:
@@ -849,6 +886,7 @@ public static class ErrorCodes { public static string ToWireName(ErrorCode code)
 | 型 | 中身 |
 | --- | --- |
 | `LicenseKind` | `Standard`, `Trial`, `Server` の列挙（§9.3 の `LicenseKind`） |
+| `CloneStrategy` | `Deny`, `Flag` の列挙（§9.3 の `CloneStrategy`）。`VerifiedLicense.CloneStrategy` はサーバーライセンスの `clone` で、それ以外は `null`（M3b で足した） |
 | `InstallationIdentity` | インストール鍵の拇印と、現在のマシン指紋の組。指紋は `MachineFingerprint.Compute`（§10.3）で作り、インストール鍵は `ElasticLM.Client` が §10.2 で持つ。オフラインだけの運用で端末に紐づけないときは `null` |
 | `VerifiedLicense` | 署名の検証と §11.2 の判定に通ったライセンストークンのクレーム（§8.4.2）を、型つきで持つ。検証を経ずには作れない |
 | `LicensedFeature` | `VerifiedLicense.Features` の要素。機能 ID、版の範囲、席数、機能の期限 |
@@ -903,7 +941,9 @@ public static class ErrorCodes { public static string ToWireName(ErrorCode code)
 - エラーは RFC 9457 の `application/problem+json` で返し、`code` に §19 のエラーコードを入れる。遠くの呼び出し元には、§19 の分類以上の内部の理由を返さない。
 - リクエストの本文は 64 KiB まで。超えれば `413` と `ELM_PAYLOAD_TOO_LARGE`。
 - 時刻は UNIX 秒。
-- サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。
+- サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
+- 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。
+- `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。
 
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
@@ -948,7 +988,7 @@ M3a（Issue #15）のレビューで、手順 3 を「それ以外は変えな�
 
 ノンス:
 
-- サーバーは `GET /v1/nonce` と、`401` の応答の `ELM-Nonce` ヘッダーでノンスを出す（RFC 9449 §8, §9 と同じ流れ）。
+- サーバーは `GET /v1/nonce` と、`401` の応答の `ELM-Nonce` ヘッダーでノンスを出す（RFC 9449 §8, §9 と同じ流れ）。`elm-server` はリースの要求へのすべての応答にも付ける（§12.1）。
 - ノンスは、作った時刻と 128 ビットの乱数を、サーバーの秘密で HMAC-SHA256 したものを含む。有効期間は 300 秒。サーバーはノンス自体を保存しない。
 - `jti` は、ノンスの有効期間のあいだ保存して重複を断る。オンプレミスはメモリ、SaaS 型はデータベース（一意制約）に置く。
 - 複数ノードの SaaS 型では、HMAC の秘密を全ノードで共有する（§14.8）。
@@ -980,6 +1020,8 @@ public sealed class ProofVerifier(NonceService nonces, IReplayStore replays)
 {
     public ProofResult Verify(string? proof, string method, Uri target, ReadOnlySpan<byte> body,
                               Func<string, ECParameters?>? knownKey = null);
+    public ProofResult Verify(string? proof, string method, IReadOnlyList<Uri> targets, ReadOnlySpan<byte> body,
+                              Func<string, ECParameters?>? knownKey = null);   // M3b: 公開 URL が複数のサーバー（§12.1）
 }
 
 // ElasticLM.Licensing: 両側で使う
@@ -1014,7 +1056,7 @@ sequenceDiagram
 
 - 同じインストール鍵の 2 回目の有効化は、台数を増やさない。本文の `seq` を §10.4 の手順 3 で判定し、正しければ新しいライセンスファイルを返す。
 - 台数を超えれば `409` と `ELM_ACTIVATION_LIMIT`。
-- サーバーの有効化（`LicenseKind: Server` のライセンス）も同じ要求で行い、`elm-server` がインストール鍵で証明を付ける。
+- サーバーの有効化（`LicenseKind: Server` のライセンス）も同じ要求で行い、`elm-server` がインストール鍵で証明を付ける。サービスが出すサーバーライセンスの `clone` は、ポリシーの `CloneStrategy` から作る（§8.4.2）。
 
 ### 12.5 トークンの更新
 
@@ -1040,7 +1082,7 @@ sequenceDiagram
 | 操作 | 要求 |
 | --- | --- |
 | 取得 | `POST /v1/leases {feature, version, count, borrow?}` + 証明 |
-| 更新 | `POST /v1/leases/{id}/renew {seq}` + 証明 |
+| 更新 | `POST /v1/leases/{id}/renew {seq, retry?}` + 証明（`retry` は §10.4 の手順 2） |
 | 返却 | `DELETE /v1/leases/{id}` + 証明 |
 
 - `count` は 1 以上で、その機能の席数以下。`borrow` を入れるなら 1 秒以上。外れれば `ELM_INVALID_ARGUMENT`。
@@ -1052,6 +1094,49 @@ sequenceDiagram
 - クライアントは §12.7.5 で検証する。
 - 更新と返却は、`cnf.jkt` のインストール鍵の証明がなければ断る（前身の「誰でも他人のセッションを返却できる」問題への対策）。
 - 返却は冪等で、すでに返却されたリースには `204` を返す。
+- 応答の状態コード: 取得は `201`、更新は `200`、返却は `204`。サーバーが知らないリースの更新は、証明を確かめる前に `404` と `ELM_UNKNOWN_LEASE` を返し、返却は `204` を返す。リース ID は 128 ビットの乱数なので、ID の有無を答えても他人のリースを探せない。
+- 更新と返却の証明は `jwk` を持たない。サーバーは、リースを取得・回収したときの証明の公開鍵をリースとともに覚え、それで確かめる。
+- 取得の本文の `borrow` は M3b のサーバーでは受け付けず、`403` と `ELM_BORROW_NOT_ALLOWED` を返す（1 秒未満なら `ELM_INVALID_ARGUMENT`）。借り出しは M3c の行で足す。
+
+API（`ElasticLM.Client`、M3b で出荷した形。0.42）:
+
+```csharp
+public sealed class LicenseClientOptions
+{
+    public required string ProductId { get; init; }
+    public required Uri ServerUrl { get; init; }
+    public required TrustStore Trust { get; init; }
+    public string? ExpectedServerLicenseId { get; init; }   // §13.5 手順 3。null なら最初に見たものをピンする
+    public KeyScope KeyScope { get; init; }                  // 既定 User
+    public string? DataDirectory { get; init; }              // インストール鍵とピンの場所。null なら §10.2 の既定
+    public bool SendClientInfo { get; init; }                // ClientInfoStrategy: HostAndUser
+    public string? AppVersion { get; init; }                 // 64 バイトまで
+    public IClockGuard? ClockGuard { get; init; }            // null ならインストール鍵の横の FileClockGuard
+    public LicenseVerifierOptions? VerifierOptions { get; init; }
+    public TimeProvider TimeProvider { get; init; }          // 既定 TimeProvider.System
+}
+
+public sealed class LicenseClient : IAsyncDisposable
+{
+    public static bool TryCreate(LicenseClientOptions options, out LicenseClient? client, out LicenseError? error);
+    public string InstallationKeyThumbprint { get; }
+    public event EventHandler<LeaseStateChangedEventArgs>? LeaseStateChanged;
+    public Task<LeaseResult> AcquireLeaseAsync(string featureId, string? version = null, int count = 1,
+                                               CancellationToken cancellationToken = default);
+    public Task<LicenseError?> ReleaseLeaseAsync(Lease lease, CancellationToken cancellationToken = default);
+    public bool ResetServerPin(Uri serverUrl);
+    public ValueTask DisposeAsync();                         // タイマーを止め、持っているリースを返却する
+}
+
+public sealed class Lease                                    // Id, FeatureId, Seats, Token (VerifiedLease), ExpiresAt, State, LastError
+public enum LeaseState { Held, Retrying, Reclaiming, Lost, Released }
+public abstract record LeaseResult { /* Acquired(Lease) / Failed(LicenseError Error, TimeSpan? RetryAfter) */ }
+public sealed class LeaseStateChangedEventArgs : EventArgs  // Lease, Previous, Current, Error
+```
+
+- `TryCreate` はインストール鍵を読み込むか作り、マシン指紋を計算する。サーバーにはつながない。
+- 要求は 1 つずつ送る（クライアントの中の排他）。イベントはタイマーのスレッドから、排他の外で呼ぶ。ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい。タイマーのスレッドで投げられた例外は無視する（プロセスを落とさないため）。
+- `DisposeAsync` の後にイベントは呼ばれない。
 
 #### 12.7.2 席の数え上げ
 
@@ -1070,6 +1155,10 @@ stateDiagram-v2
     Reclaiming --> Held: 回収の成功
     Reclaiming --> Lost: 回収の拒否
     Retrying --> Lost: 期限
+    Held --> Lost: ELM_CLONE_DETECTED
+    Retrying --> Lost: ELM_CLONE_DETECTED
+    Held --> Reclaiming: ELM_UNKNOWN_LEASE
+    Reclaiming --> Retrying: 回収の要求の失敗
     Held --> Released: 返却
     Lost --> [*]
     Released --> [*]
@@ -1078,6 +1167,8 @@ stateDiagram-v2
 - クライアントは、リース期間の 1/3 ごとに更新する。既定の 10 分なら約 200 秒ごとである。
 - 失敗したら、15 秒から始めて倍にし、60 秒を上限として、期限まで再試行する。Cryptlex が「期限の 30 秒以上前に同期せよ」と書く（https://cryptlex.com/docs/licensing-models/floating-licenses/hosted-floating-licenses ）ように、1 回の遅れで席を失わない間隔にする。
 - 期限が来たら `Lost` にし、アプリに通知する。アプリが何をするか（保存を促す、機能を止める）はアプリが決める。
+- `ELM_CLONE_DETECTED` は再試行しても変わらないので、すぐに `Lost` にする。それ以外の失敗（通信の失敗、`5xx`、サーバーのピンの不一致を含む）は期限まで再試行する。
+- 更新が `ELM_UNKNOWN_LEASE` で断られたら `Reclaiming` にし、そのサーバーから借りているリースを 1 回の要求でまとめて回収する（0.44）。回収できたリースはそのまま、断られたリースは `Lost` にし、回収できたら更新をやり直す。回収の要求自体が失敗したら `Retrying` にする。
 
 #### 12.7.4 借り出し
 
@@ -1132,7 +1223,8 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 
 - `ServerIdentity` はサーバーの鍵のオブジェクトを 1 度だけ作って持ち、そのサーバーのリースをすべてそれで確かめる。
 - `LeaseVerifier` は、SaaS 型のリースの証明書を、`LicenseVerifier` と同じく検証器ごとに最初の 16 件まで覚える。
-- リースの発行は `ElasticLM.Issuing` の `LeaseIssuer.Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)` で行う。
+- リースの発行は `ElasticLM.Issuing` の `LeaseIssuer.Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)` で行う。M3b で、発行の時刻を渡す `Issue(ECDsa signingKey, LeaseSpec spec, DateTimeOffset issuedAt)` を足した。サーバーは期間を切り詰める計算と同じ時刻で発行し、その間に秒が進んでも `exp` が §12.7.5 の手順 5 を超えないようにする。
+- `ElasticLM.Issuing` の `KeyFiles` に、公開鍵を JWK で書き出す `ExportPublicJwk` と、PEM の文を鍵ごとに分ける `SplitPem` を足した（M3b。`elm-server` の `GET /v1/server/license` とトラストストアの読み込みで使う）。
 
 ### 12.8 オフライン有効化
 
@@ -1184,6 +1276,10 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 
 サーバーライセンスの検証に失敗したら、エラーを出して終了する。前身は「機能を絞って動き続ける」としていたが、管理者が失敗に気づかないため採らない。
 
+- インストール鍵は設定の `product` の、端末の範囲の場所（`dataDirectory` で変えられる）に置く。サーバーライセンスがまだないときは、鍵を作ったうえで、その拇印とマシン指紋をエラーの文に出して終了する。管理者はそれをベンダーに渡して、サーバーライセンスを発行してもらう。
+- サーバーライセンスの検証には、インストール鍵の横のファイルの時計の守り（§11.4）を使う。
+- 終了コードは、正常な停止が 0、起動できないときが 1、引数と設定の誤りが 2 である。起動の時間（起動から待ち受けまで）を、開始の記録に書く。
+
 動いている間のサーバーライセンス:
 
 - 期限までの残りが `RefreshWindow` を下回ったら、1 時間ごとにオンラインの更新を試みる（§9.6）。
@@ -1196,9 +1292,9 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 
 メモリに次を持つ（0.6）。
 
-- リース: ID、ライセンスの機能、`n`、インストール鍵の拇印、期限、`seq`、借り出しかどうか。
+- リース: ID、ライセンスの機能、`n`、インストール鍵の拇印と公開鍵（取得か回収の証明のもの。更新と返却の証明を確かめる、§12.7.1）、期限、`seq`、最後に出したトークン（`seq` が 1 小さい再試行に返す、§10.4）、止めたかどうか（§10.4）、借り出しかどうか。
 - 使った `jti`: ノンスの有効期間（300 秒）のあいだ。上限は 100,000 件とし、超えたら新しい証明を `503` と `ELM_SERVER_BUSY` で断る。100,000 件は、§4.2 の 50 件/秒の 300 秒分（15,000 件）の約 6.7 倍である。
-- 期限の切れたリースと `jti` は、30 秒ごとの掃除で消す。
+- 期限の切れたリースと `jti` は、30 秒ごとの掃除で消す。同じ掃除で、頻度の制限（§13.8）の、1 秒以上要求のない送信元も忘れる。
 
 タイマーの寿命: 掃除・利用ログの区切り（§18.1）・サーバーライセンスの更新のタイマーは、`TimeProvider.CreateTimer` で起動時に作り、停止の処理（ホストの `ApplicationStopping`）で止めて破棄する。止めた後に、返却されていないリースは利用ログに `server.stopped` とともに件数だけを書く（状態は残さない）。
 
@@ -1215,6 +1311,29 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 3. 回収の時間は、サーバーライセンスの `lease`（リースの期間）とする。既定のポリシーなら 10 分である。回収した席と借り出しの記録から戻した席の合計が、すべての機能で席数に達したら、その時点で回収の時間を終える（それ以上の回収は来ないか、来ても席がないため）。
 4. クライアントは、更新が `ELM_UNKNOWN_LEASE` で断られたら回収を送る。
 5. 回収の時間が終わった後に届いた回収（ネットワークが遅れた端末、スリープから戻った端末）も、手順 2 と同じ検査をして受け付ける。ただし、その時点の空き席に収まるときだけで、収まらなければ `ELM_NO_SEATS` を返す。クライアントは回収が断られたら、そのリースを `Lost` にする（§12.7.3）。
+
+回収の要求と応答（0.44）:
+
+```text
+POST /v1/leases/reclaim + 証明（jwk つき）
+{"leases": ["<elm-lease+jws>", ...]}                       64 件まで。超えれば 400 と ELM_MALFORMED
+200 {"results": [{"lease": "<ID>", "code": "ELM_OK"}, ...]}  要求と同じ順に 1 件ずつ。読めないトークンは lease を省く
+```
+
+- トークンは要求の順に 1 件ずつ処理する（全体を 1 つの単位にはしない）。回収の時間の中でも外でも、各トークンを機能の排他の中で、超過を含む空き席（§12.7.2）に収まるときだけ戻す。席数の減ったサーバーライセンスに入れ替えた後や、返却したリースのトークンを再起動の後に送り直されたときにも、席数を超えないためである。同じトークンが 1 つの要求に 2 度あれば、2 度目はすでに持つリースとして判定する（席は 1 度だけ数える）。
+- 各トークンは §12.7.5 の手順で確かめる。ただし `slic` が今のサーバーライセンスと違ってもよい。そのサーバーの鍵でしか署名できないトークンであり、今のサーバーライセンスの範囲（機能・席数・期間・期限）には収まっている必要がある。サーバーが止まっている間にサーバーライセンスを入れ替えても、クライアントが席を失わないためである。
+- リースごとの結果のコード: 読めない・形の誤り（`ELM_MALFORMED`）、署名の誤り（`ELM_BAD_SIGNATURE`）、期限切れ（`ELM_EXPIRED`）、サーバーライセンスの範囲外（`ELM_LEASE_OUT_OF_BOUNDS`）、製品の違い（`ELM_WRONG_PRODUCT`）、証明の鍵がトークンの `cnf.jkt` と違う（`ELM_WRONG_INSTALLATION`）、借り出しのトークン（`ELM_BORROW_NOT_ALLOWED`。借り出しは記録から戻すため）、空き席なし（`ELM_NO_SEATS`）、止めたリース（`ELM_CLONE_DETECTED`）。
+- クライアントは、そのサーバーから借りているリースを 64 件ずつの要求に分けて回収する。
+- 回収の時間中の取得への `Retry-After` は、回収の時間の残りを秒に切り上げたものである。
+- サーバーがすでに持つリースのトークンは §10.4 の手順 3 で判定する。
+- 回収したリースは、トークンの `seq` と期限を引き継ぐ。次の更新は、その `seq` で行う。
+
+検査の順（`elm-server`）:
+
+1. すべての要求: IP の規則、頻度の制限（§13.8）。
+2. 取得・回収: 本文の大きさ（64 KiB）、証明（§12.2）、本文の形と上限（§8.6）、借り出しの有無（取得）、ホスト名とユーザー名の規則（取得）、サーバーライセンスの期限、機能・機能の期限・版、`count`、回収の時間（取得）、席。
+3. 更新: リースを知っているか（知らなければ証明の前に `404`）、本文の大きさ、証明（リースの公開鍵で）、本文の形、証明の鍵がリースの鍵か（違えば `ELM_PROOF_INVALID`）、止めたリースか、サーバーライセンスの期限、機能の期限、`seq`。
+4. 返却: リースを知っているか（知らなければ証明の前に `204`）、本文の大きさ、証明、証明の鍵がリースの鍵か（違えば `ELM_PROOF_INVALID`）、止めたリースか。
 
 借り出しの記録（0.38）:
 
@@ -1247,11 +1366,29 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 自己署名のときは、さらに次を行う。
 
 - 最初の接続: TLS の検証を保留したハンドシェイクで得た相手の公開鍵を覚えておき、手順 2 でサーバーライセンスを検証して `cnf.jkt` が分かった後に照合する。違えば、その接続で受け取ったものをすべて捨て、`ELM_SERVER_PIN_MISMATCH` で終える。
-- 以後の接続: TLS の接続のたびに（接続の再利用・再接続を含め、`HttpClient` の証明書の検証のコールバックで）、相手の公開鍵の拇印がサーバーライセンスの `cnf.jkt` と一致することを確かめる。一致しなければ接続を切り、`ELM_SERVER_PIN_MISMATCH` を返す。
+- 以後の接続: TLS の接続のたびに（接続の再利用・再接続を含め、`HttpClient` の証明書の検証のコールバックで）、OS の検証に通らない証明書なら、相手の公開鍵の拇印がサーバーライセンスの `cnf.jkt` と一致することを確かめる（0.45）。一致しなければ接続を切り、`ELM_SERVER_PIN_MISMATCH` を返す。
+- 最初の接続（ピンも手元の写しもないとき）は、証明書を記録するだけで受け入れ、手順 2 の後に照合する（上の「最初の接続」）。OS の検証に通った証明書なら照合しない。照合で断ったときはピンを保存しない。
 
 これで、社内に証明書の仕組みがなくても、サーバーのなりすまし（T17）を防ぐ。
 
-Windows で PEM から読んだ鍵は一時的な鍵になり、SChannel の TLS で失敗することを D0 で確かめた（https://github.com/dotnet/aspnetcore/issues/40020 ）。PKCS#12 に書き出して読み直すと動く。実装は M3b の行で行う。
+Windows で PEM から読んだ鍵は一時的な鍵になり、SChannel の TLS で失敗することを D0 で確かめた（https://github.com/dotnet/aspnetcore/issues/40020 、https://github.com/dotnet/runtime/issues/23749 ）。PKCS#12 に書き出して読み直すと動く。M3b では、自己署名の証明書と PEM の運用者の証明書を、どの OS でも PKCS#12 に書き出して読み直す（道を 1 つにするため）。
+
+M3b で決めたこと（0.45）:
+
+- クライアントは、接続ごとに、OS の通常の検証に通るか、相手の公開鍵の拇印がピンした `cnf.jkt` と一致すれば受け入れる。クライアントに方式の設定は持たせない。サーバーの方式はサーバーの管理者が決め、アプリの開発者は知らないためである。正しい証明書を持つ別のサーバーにつながっても、リースは `cnf.jkt` の鍵でしか検証に通らない（§12.7.5）。
+- 接続のたびの確かめで一致しなければ、`ELM_SERVER_PIN_MISMATCH` を返し、次の要求で手順 1〜3 をやり直す。`ExpectedServerLicenseId` を設定していれば、同じ `lic` の別の鍵を受け入れ直す。設定していなければピンが断る。
+- クライアントは、受け取ったサーバーライセンスを、ルート鍵から §11.2 で検証し、`cnf.jkt` が受け取った公開鍵の拇印と一致することを確かめる。マシン指紋は確かめない。指紋はサーバーの端末のもので、サーバーが起動時に確かめる（§13.1）。`ElasticLM.Licensing` の `ServerIdentity.TryVerify` がこれを行う。
+- ピンは、インストール鍵の場所の `servers/` に、正規化した URL（§12.1）の SHA-256 の名前で、`{"url", "lic", "jkt"}` の JSON として置く。書くときは一時ファイルから置き換える。読めない・壊れた・別の URL のピンは、サーバーを確かめる役に立たないので、`ELM_SERVER_PIN_MISMATCH` で断る。`ResetServerPin` で消せる。
+- サーバーが `ELM-Server-License` で手元と違う `jti` を返したら、クライアントは手順 1〜3 をやり直し、新しい写しで応答のリースを確かめる。古い写しは、それを指すリースのために 8 件まで残す。
+
+```csharp
+// ElasticLM.Licensing（M3b で足した）
+public sealed class ServerIdentity
+{
+    public static bool TryVerify(LicenseVerifier verifier, ReadOnlySpan<byte> licenseFile, ReadOnlySpan<byte> publicKeyJwk,
+                                 string productId, out ServerIdentity? identity, out LicenseError? error);
+}
+```
 
 ### 13.6 冗長化を作らない根拠
 
@@ -1276,21 +1413,34 @@ FlexNet の 3 台構成は 3 台中 2 台の合意を要し、安定した LAN �
 
 ### 13.8 設定
 
-主な設定（JSON か環境変数 `ELM_` + 大文字のキー）:
+主な設定（JSON か環境変数）。環境変数は `ELM_` に、キーの道筋を大文字にして `.` を `_` にしたものを付ける（例: `rateLimit.perIp` は `ELM_RATELIMIT_PERIP`）。一覧は `;` で区切る。環境変数がファイルより優先する。ファイルの知らないキーは誤りとして起動しない（綴りの誤りを黙って無視しないため）。`elm-server --config <ファイル>` で読む。
 
 | キー | 既定 | 意味 |
 | --- | --- | --- |
-| `listen` | `https://0.0.0.0:7070` | 待ち受け |
+| `product` | なし（必須） | 製品 ID。サーバーライセンスの `prd` と一致する必要がある。インストール鍵の場所もこれで決まる（M3b で足した） |
+| `listen` | `https://0.0.0.0:7070` | 待ち受け。ホストは IP アドレス、`localhost`、`0.0.0.0`、`[::]` のどれか |
 | `publicUrls` | `listen` から作る | クライアントが使う URL。証明の `htu` と比べる（§12.1） |
 | `rateLimit.perIp` | 毎秒 20 件 | 送信元 IP ごとの要求の上限 |
 | `license` | 実行ファイルと同じ場所の `server.elmlic` | サーバーライセンス |
 | `trust.rootKeys` | なし（必須） | ベンダーのルート鍵の公開鍵（PEM のファイルのパス、または環境変数 `ELM_TRUST_ROOT_KEYS` に PEM）。`elm-server` は汎用のバイナリでベンダーのルート鍵を持たないため、運用者が渡す。未設定なら起動しない |
 | `trust.revokedKeyIds` | なし | 無効にした鍵 ID の一覧（§7.5） |
-| `tls.certificate` | なし（自己署名） | §13.5 |
+| `tls.certificate` | なし（自己署名） | §13.5。PKCS#12 のファイル（パスワードは環境変数 `ELM_TLS_PASSWORD`）か、PEM の証明書 |
+| `tls.key` | なし | `tls.certificate` が PEM のときの、PEM の秘密鍵（M3b で足した） |
+| `dataDirectory` | §10.2 の端末の範囲 | インストール鍵と時計の守りの場所（M3b で足した） |
 | `borrow.maxDuration` | ポリシーの上限 | §12.7.4 |
 | `borrow.reserve` | 0 | §12.7.4 |
 | `log.usage` | `usage.jsonl` | §18.1 |
 | `allow` / `deny` | なし | IP 範囲での許可と拒否。ホスト名・ユーザー名の規則も書ける（`ClientInfoStrategy: HostAndUser` のとき）が、クライアントの申告で確かめられないため、確実に効くのは IP の規則だけである（§5.4） |
+
+- `borrow.*` と `log.usage` は M3c の行で受け付ける。M3b のサーバーでは知らないキーとして起動しない。
+- 環境変数の名前の規則の例外: `ELM_TRUST_ROOT_KEYS` はファイルのパスではなく PEM の文そのもので、`trust.rootKeys`（ファイル、環境変数では `ELM_TRUST_ROOTKEYS`）がないときに使う。`ELM_TLS_PASSWORD` は PKCS#12 のパスワードである。
+- `publicUrls` を設定しないときは `listen` から作る。`listen` のホストが `0.0.0.0` か `[::]` なら、端末のホスト名（小文字）と `localhost` の 2 つの URL にする。クライアントが別の名前で接続するなら、`publicUrls` にその URL を書く（`htu` が一致しないため）。
+- リバースプロキシの後ろでは、IP の規則と頻度の制限はプロキシの IP に当たる。`elm-server` は `X-Forwarded-For` を信じない（偽れるため）。プロキシの後ろに置くなら、IP の規則はプロキシで行い、`rateLimit.perIp` をプロキシの先の端末の数に合わせて上げる。NAT の後ろの多くの端末が 1 つの IP から来るときも同じである。
+- 待ち受けの時間の上限は Kestrel の既定である（ヘッダーは 30 秒、本文は毎秒 240 バイトを下回れば切る、接続の保持は 130 秒）。遅く送るクライアントに資源を取られ続けないためである。
+- クライアントは要求ごとに 30 秒で打ち切り、通信の失敗として扱う（`ELM_NETWORK_ERROR`、§12.7.3 の再試行）。ノンスが切れていれば（リースが長く、更新の間隔が 300 秒を超えるとき）、`ELM_NONCE_REQUIRED` の応答の新しいノンスで 1 度だけ送り直す。
+- `allow` と `deny` の項目は、IP アドレス、CIDR の範囲、`host:<名前>`、`user:<名前>` のどれかである。IP の項目はリースのすべての要求に、ホスト名とユーザー名の項目は新しいリース（取得）だけに当てる。それを申告するのは取得の要求だけだからである。種類ごとに、拒否の項目に当たれば断り、許可の項目があってどれにも当たらなければ断る（`403` と `ELM_FORBIDDEN`）。申告のない取得は、ホスト名・ユーザー名の許可の項目に当たらない。ホスト名は大文字と小文字を区別しない。
+- 頻度の制限（0.46）は、送信元ごとのトークンバケットである。送信元は IPv4 のアドレスか IPv6 の /64 である（IPv6 の端末は /64 の中のどのアドレスも使えるため）。毎秒 `rateLimit.perIp` 件まで、同じ数までのまとまった要求を許す。超えれば `429` と `ELM_RATE_LIMITED`、`Retry-After: 1` を返す。IP の規則と頻度の制限は、ほかのどの処理より先に行う。
+- 覚える送信元は 100,000 件までで、満ちているときの新しい送信元は、全員で 1 つの溢れ用のバケットを分け合う。断らないのは、攻撃者が送信元を次々に変えて表を満たしても、正規のクライアントを締め出せないようにするためである。1 秒以上要求のない送信元は 30 秒ごとの掃除で忘れる。
 
 ## 14. SaaS 型の有効化サービス
 
@@ -1423,6 +1573,8 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 
 出力は既定で人が読む形、`--json` で JSON にする。終了コードは、成功 0、検証の失敗 1、引数の誤り 2、通信の失敗 3 とする。
 
+サーバーライセンス（`--kind server`）の発行は、`--lease-minutes`（既定 10）、`--borrow-days`（既定 0）、`--overage`（既定 0）、`--clone`（`deny` か `flag`、既定 `deny`、§8.4.2）を受け取る。ほかの種類にこれらを渡せば誤りとする。
+
 ## 17. C ABI
 
 ### 17.1 方針
@@ -1473,7 +1625,7 @@ const char* elm_last_error_message(void);
   - プロセスの終了時に `destroy` を呼ばなかった場合、リースは返却されず、サーバーの期限で消える。
 - 正確な関数の一覧と構造体は M6 の行で決め、本節を直す。
 
-.NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。
+.NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。返却は合わせて最長 5 秒で打ち切り、返却できなかったリースはサーバーの期限で消える。違いは 1 つだけで、.NET はイベントをクライアントの排他の外で呼ぶので、ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい（C ABI のコールバックの中の `lease_release` は `ELM_INVALID_STATE`）。リースごとのタイマーは、そのリースが `Lost` か `Released` になったときに破棄する。
 
 ## 18. ログ
 
@@ -1544,7 +1696,7 @@ const char* elm_last_error_message(void);
 | 43 | `ELM_SERVER_RECOVERING` | 回収の時間中 | 503 |
 | 44 | `ELM_RETURN_NOT_ALLOWED` | 早期返却が許されない（回数の上限、ライセンスの変更） | 409 |
 | 50 | `ELM_UNAUTHORIZED` | 管理の認証の失敗 | 401 |
-| 51 | `ELM_FORBIDDEN` | 管理の権限なし | 403 |
+| 51 | `ELM_FORBIDDEN` | 管理の権限なし。`elm-server` の `allow` / `deny` で断られた要求（§13.8） | 403 |
 | 52 | `ELM_RATE_LIMITED` | 頻度の制限 | 429 |
 | 53 | `ELM_SERVER_BUSY` | サーバーの記録の上限（`jti` の記録など）に達した | 503 |
 | 90 | `ELM_NETWORK_ERROR` | 通信の失敗（クライアント側） | — |
@@ -1575,17 +1727,17 @@ const char* elm_last_error_message(void);
 - 回収の時間中の新しい取得が断られること、他人のリースを回収・返却できないこと、借り出しが再起動の後に記録から戻ること。
 - 試用・通常のライセンスで立てた偽のサーバーのリースと、サーバーライセンスの範囲外（機能・席数・期間・期限・製品）のリースを、クライアントが拒否すること（§12.7.5）。
 - 有効化の更新・解除・オフラインの解除が、別のインストール鍵の証明で断られること。
-- 更新番号: 同じ値・1 小さい値（再試行）・2 以上小さい値（複製）のそれぞれの応答。
+- 更新番号: 同じ値・1 小さい値（応答のなかった要求を名指す再試行と、名指さない複製）・2 以上小さい値（複製）のそれぞれの応答。同じ時刻に更新する 2 つの写しを検出すること。
 - `count` が 0・負・席数超えのときに断られること。
 - 無効にした鍵 ID の証明書とトークンが拒否されること、期限の切れた古い証明書がファイルにあっても正しい証明書で検証できること、`iat` が証明書の期間外のトークンが拒否されること。
-- 自己署名の TLS で、接続のたびに公開鍵の一致を確かめること（再接続で別の鍵に変わったら切ること）。
+- OS の検証に通らない TLS の接続で、接続のたびに公開鍵の一致を確かめること（再接続で別の鍵に変わったら切ること）。最初の接続で TLS の鍵が `cnf.jkt` と違えばピンを保存しないこと。
 - 利用ログと借り出しの記録で、行の書き換え・削除・末尾の切り詰め・ファイルの欠けが `elm log verify` で見つかること。
 - 入力の上限ちょうどと超え。
 - 各安全性の検査に、PR の前のミューテーション確認を行う。
 
 ### 20.3 NativeAOT の確認
 
-CI で、各 OS（Windows・Linux・macOS）で 3 つの実行ファイルと `libelasticlm` を NativeAOT で公開し、警告 0 件と大きさを記録する。M3 以降の行で、各行が自分の出力を CI に足す。
+CI で、各 OS（Windows・Linux・macOS）で 3 つの実行ファイルと `libelasticlm` を NativeAOT で公開し、警告 0 件と大きさを記録する。M3 以降の行で、各行が自分の出力を CI に足す。M3b で `elm-server` を足した（`.github/workflows/ci.yml` の `aot`）。
 
 ### 20.4 D0 で確かめたことの一覧
 
@@ -1607,7 +1759,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | パッケージ | 使う場所 | 理由 | AOT |
 | --- | --- | --- | --- |
 | （BCL のみ） | `ElasticLM.Licensing`, `ElasticLM.Client`, `ElasticLM.Native` | アプリに入る部品は外部の依存を持たない | — |
-| ASP.NET Core（共有フレームワーク） | `ElasticLM.Server`, `ElasticLM.Service` | HTTP サーバー | 対応（Slim ビルダー） |
+| ASP.NET Core（共有フレームワーク） | `ElasticLM.Server`, `ElasticLM.Service` | HTTP サーバー | 対応（Slim ビルダー）。M3b の `elm-server` で警告 0 件、11.4 MB（win-x64）。ランタイムパックの IIS のモジュール（`aspnetcorev2_inprocess.dll`）は公開から外す |
 | `Microsoft.AspNetCore.Authentication.JwtBearer` | `ElasticLM.Service` | CLI のアクセストークンの検証 | D0 で警告 0 件 |
 | `Microsoft.AspNetCore.Authentication.OpenIdConnect` | `ElasticLM.Service` | 管理画面の BFF | D0 で警告 0 件（§15.3） |
 | `Microsoft.Extensions.FileProviders.Embedded` | `ElasticLM.Service` | 管理画面の配信 | D0 で警告 0 件 |

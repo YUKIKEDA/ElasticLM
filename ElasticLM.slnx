@@ -6,12 +6,16 @@
     <Project Path="src/ElasticLM.Cli/ElasticLM.Cli.csproj" />
     <Project Path="src/ElasticLM.Client/ElasticLM.Client.csproj" />
     <Project Path="src/ElasticLM.Issuing/ElasticLM.Issuing.csproj" />
+    <Project Path="src/ElasticLM.Leasing/ElasticLM.Leasing.csproj" />
     <Project Path="src/ElasticLM.Licensing/ElasticLM.Licensing.csproj" />
+    <Project Path="src/ElasticLM.Server/ElasticLM.Server.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/ElasticLM.Cli.Tests/ElasticLM.Cli.Tests.csproj" />
     <Project Path="tests/ElasticLM.Client.Tests/ElasticLM.Client.Tests.csproj" />
     <Project Path="tests/ElasticLM.Issuing.Tests/ElasticLM.Issuing.Tests.csproj" />
+    <Project Path="tests/ElasticLM.Leasing.Tests/ElasticLM.Leasing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Licensing.Tests/ElasticLM.Licensing.Tests.csproj" />
+    <Project Path="tests/ElasticLM.Server.Tests/ElasticLM.Server.Tests.csproj" />
   </Folder>
 </Solution>

@@ -11,5 +11,9 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
+    <!-- The end-to-end tests lose an answer on purpose through LicenseClientOptions.WrapHandler. -->
+    <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+    <!-- elm-server keeps its installation key in the same store and signs leases and its TLS certificate with it. -->
+    <InternalsVisibleTo Include="elm-server" />
   </ItemGroup>
 </Project>

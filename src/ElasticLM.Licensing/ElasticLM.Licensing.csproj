@@ -10,6 +10,8 @@
     <InternalsVisibleTo Include="ElasticLM.Licensing.Tests" />
     <!-- The issuing side signs the same payload types and applies the same rules (docs/conventions.md). -->
     <InternalsVisibleTo Include="ElasticLM.Issuing" />
+    <!-- The lease engine reads feature version ranges and encodes IDs with the same code as the verifier. -->
+    <InternalsVisibleTo Include="ElasticLM.Leasing" />
     <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
   </ItemGroup>
 </Project>

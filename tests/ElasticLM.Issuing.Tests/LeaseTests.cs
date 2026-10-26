@@ -394,6 +394,57 @@ public sealed class LeaseTests : IDisposable
         return input + "." + System.Buffers.Text.Base64Url.EncodeToString(signature);
     }
 
+    /// <summary>
+    /// A client verifies a server's license with the key the server sent (design §13.5 step 2): the server machine's
+    /// fingerprints are not compared, the key must be the license's cnf.jkt, and the key must be an EC P-256 JWK.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license bound to the server key and to a fingerprint of the server machine (matching any).
+    ///
+    /// Steps:
+    /// - TryVerify with the server key; with the client key; with a JWK that is not a key; with a product the license is not
+    ///   for.
+    ///
+    /// Expected:
+    /// - An identity whose key ID is the server key's; ELM_SERVER_PIN_MISMATCH; ELM_MALFORMED; ELM_WRONG_PRODUCT.
+    /// </remarks>
+    [Fact]
+    public void TryVerify_ServerLicense_ChecksTheKeyButNotTheFingerprints()
+    {
+        var spec = new LicenseSpec
+        {
+            LicenseId = "lic-srv",
+            ProductId = "acme-cad",
+            Kind = LicenseKind.Server,
+            Features = [new FeatureSpec("pro", Seats: 5)],
+            ExpiresAt = Now.AddDays(30),
+            GracePeriod = TimeSpan.FromDays(7),
+            InstallationKeyThumbprint = KeyFiles.KeyId(_server),
+            Fingerprints = ["2b9b86465b5d4fbda9c050845613fa89"],
+            LeaseDuration = TimeSpan.FromMinutes(10),
+            BorrowLimit = TimeSpan.Zero,
+            OveragePercent = 0,
+            CloneStrategy = CloneStrategy.Deny,
+        };
+        string cert = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);
+        byte[] file = LicenseIssuer.Issue(_signing, [cert], spec, _time).File;
+        var verifier = new LicenseVerifier(TrustStore.Create([KeyFiles.ExportPublic(_root)], []), _time, StatelessClockGuard.Instance);
+
+        Assert.True(ServerIdentity.TryVerify(verifier, file, Jwk(_server), "acme-cad", out ServerIdentity? identity, out _));
+        using (identity)
+        {
+            Assert.Equal(KeyFiles.KeyId(_server), identity!.KeyId);
+        }
+
+        Assert.False(ServerIdentity.TryVerify(verifier, file, Jwk(_client), "acme-cad", out _, out LicenseError? other));
+        Assert.Equal(ErrorCode.ServerPinMismatch, other!.Code);
+        Assert.False(ServerIdentity.TryVerify(verifier, file, "{\"kty\":\"EC\"}"u8, "acme-cad", out _, out LicenseError? malformed));
+        Assert.Equal(ErrorCode.Malformed, malformed!.Code);
+        Assert.False(ServerIdentity.TryVerify(verifier, file, Jwk(_server), "acme-cam", out _, out LicenseError? product));
+        Assert.Equal(ErrorCode.WrongProduct, product!.Code);
+    }
+
     private LeaseVerifier Verifier(IClockGuard? guard = null, TrustStore? trust = null) =>
         new(trust ?? TrustStore.Create([KeyFiles.ExportPublic(_root)], []), _time, guard ?? StatelessClockGuard.Instance);
 
@@ -423,6 +474,7 @@ public sealed class LeaseTests : IDisposable
             LeaseDuration = isServer ? TimeSpan.FromMinutes(10) : null,
             BorrowLimit = isServer ? TimeSpan.FromDays(7) : null,
             OveragePercent = isServer ? 0 : null,
+            CloneStrategy = isServer ? CloneStrategy.Flag : null,
         };
         spec = isServer ? spec with { Features = [new FeatureSpec("pro", Seats: 5)] } : spec;
         string cert = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);

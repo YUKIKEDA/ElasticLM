@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using ElasticLM.Licensing;
 
 namespace ElasticLM.Issuing;
@@ -93,6 +94,38 @@ public static class KeyFiles
     {
         ArgumentNullException.ThrowIfNull(key);
         return key.ExportSubjectPublicKeyInfoPem();
+    }
+
+    /// <summary>
+    /// Exports the public part of a key as a JWK with only <c>kty</c>, <c>crv</c>, <c>x</c>, and <c>y</c> (design §8.4.1), the
+    /// form <see cref="ServerIdentity.TryCreate"/> reads.
+    /// </summary>
+    /// <param name="key">The key.</param>
+    /// <returns>The JWK as UTF-8 JSON.</returns>
+    public static byte[] ExportPublicJwk(ECDsa key)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+        return JsonSerializer.SerializeToUtf8Bytes(EcPublicJwk.FromParameters(key.ExportParameters(false)), LicensingJsonContext.Default.EcPublicJwk);
+    }
+
+    /// <summary>
+    /// Splits a text into its PEM blocks, in order. A trust file or variable may hold several root keys, and
+    /// <see cref="TrustStore.Create"/> takes one block per key.
+    /// </summary>
+    /// <param name="text">The text.</param>
+    /// <returns>The blocks; empty when the text has none.</returns>
+    public static string[] SplitPem(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var blocks = new List<string>();
+        ReadOnlySpan<char> rest = text;
+        while (PemEncoding.TryFind(rest, out PemFields fields))
+        {
+            blocks.Add(rest[fields.Location].ToString());
+            rest = rest[fields.Location.End..];
+        }
+
+        return [.. blocks];
     }
 
     /// <summary>

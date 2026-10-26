@@ -67,6 +67,37 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
+    /// A server license states what the server does with a clone (design §8.4.2): deny unless --clone says flag.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keys and a certificate from the offline flow.
+    ///
+    /// Steps:
+    /// - Issue a server license (pro, 5 seats) without --clone and with --clone flag; inspect both.
+    ///
+    /// Expected:
+    /// - Exit 0; the payloads hold "clone": "deny" and "clone": "flag".
+    /// </remarks>
+    [Fact]
+    public void IssueServer_Clone_DefaultsToDeny()
+    {
+        IssueSample();
+        string[] Server(string file, params string[] extra)
+        {
+            string[] args = [.. Issue(file), "--kind", "server", .. extra];
+            args[Array.IndexOf(args, "--feature") + 1] = "pro;seats=5";
+            return args;
+        }
+
+        Assert.Equal(0, Run(Server("deny.elmlic")).Code);
+        Assert.Equal(0, Run(Server("flag.elmlic", "--clone", "flag")).Code);
+
+        Assert.Contains("\"clone\": \"deny\"", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
+        Assert.Contains("\"clone\": \"flag\"", Run("license", "inspect", P("flag.elmlic")).Out, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// Input errors exit with 2 and a message: a missing option, an existing file without --force, a wrong passphrase, a
     /// server option on a standard license, no passphrase without interactive input, a short passphrase, and an unknown use.
     /// </summary>
@@ -89,6 +120,8 @@ public sealed class ElmCliTests : IDisposable
         AssertInputError(Run("key", "root", "create"), "--out");
         AssertInputError(Run("key", "root", "create", "--out", P("root.key.pem")), "exists");
         AssertInputError(Run([.. Issue("x.elmlic"), "--lease-minutes", "5"]), "server licenses only");
+        AssertInputError(Run([.. Issue("x.elmlic"), "--clone", "flag"]), "server licenses only");
+        AssertInputError(Run([.. Issue("x.elmlic"), "--kind", "server", "--clone", "maybe"]), "deny or flag");
         AssertInputError(
             Run("key", "certify", "--root", P("root.key.pem"), "--public", P("signing.key.pem.pub.pem"), "--use", "everything", "--out", P("c2.jws")),
             "'everything'"

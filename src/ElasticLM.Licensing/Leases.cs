@@ -47,20 +47,7 @@ public sealed class ServerIdentity : IDisposable
             return false;
         }
 
-        EcPublicJwk? jwk = null;
-        if (publicKeyJwk.Length <= 1024)
-        {
-            try
-            {
-                jwk = JsonSerializer.Deserialize(publicKeyJwk, LicensingJsonContext.Default.EcPublicJwk);
-            }
-            catch (JsonException)
-            {
-                jwk = null;
-            }
-        }
-
-        if (jwk is null || !jwk.TryGetParameters(out ECParameters parameters) || !VerificationKey.TryCreate(parameters, out VerificationKey? key))
+        if (!TryReadJwk(publicKeyJwk, out ECParameters parameters) || !VerificationKey.TryCreate(parameters, out VerificationKey? key))
         {
             error = new LicenseError(ErrorCode.Malformed, "The server key is not an EC P-256 public key in JWK form.");
             return false;
@@ -79,9 +66,83 @@ public sealed class ServerIdentity : IDisposable
     }
 
     /// <summary>
+    /// Verifies a server license received from a server, as a client does (design §13.5 step 2): §11.2 with the kind
+    /// <see cref="LicenseKind.Server"/>, its <c>cnf.jkt</c> equal to the thumbprint of the key the server sent, and without
+    /// the fingerprints, which belong to the server machine and which the server checks at start.
+    /// </summary>
+    /// <param name="verifier">The verifier, with the vendor's trust store.</param>
+    /// <param name="licenseFile">The server license file.</param>
+    /// <param name="publicKeyJwk">The server's public key as a JWK.</param>
+    /// <param name="productId">The client's product ID.</param>
+    /// <param name="identity">The identity, or <see langword="null"/> on failure.</param>
+    /// <param name="error">Why it failed: the license verification error, <c>ELM_MALFORMED</c> for a key that is not an EC
+    /// P-256 JWK, or <c>ELM_SERVER_PIN_MISMATCH</c> for a key that is not the license's <c>cnf.jkt</c>.</param>
+    /// <returns><see langword="true"/> when the license verified and the identity was created.</returns>
+    public static bool TryVerify(
+        LicenseVerifier verifier,
+        ReadOnlySpan<byte> licenseFile,
+        ReadOnlySpan<byte> publicKeyJwk,
+        string productId,
+        out ServerIdentity? identity,
+        out LicenseError? error
+    )
+    {
+        ArgumentNullException.ThrowIfNull(verifier);
+        ArgumentException.ThrowIfNullOrEmpty(productId);
+        identity = null;
+        if (!TryReadJwk(publicKeyJwk, out ECParameters parameters))
+        {
+            error = new LicenseError(ErrorCode.Malformed, "The server key is not an EC P-256 public key in JWK form.");
+            return false;
+        }
+
+        var requirement = new LicenseRequirement(
+            productId,
+            LicenseKind.Server,
+            null,
+            null,
+            InstallationIdentity.ForRemoteServer(EcPublicJwk.Thumbprint(parameters))
+        );
+        switch (verifier.Verify(licenseFile, requirement))
+        {
+            case LicenseVerificationResult.Valid valid:
+                return TryCreate(valid.License, publicKeyJwk, out identity, out error);
+            case LicenseVerificationResult.Invalid { Error.Code: ErrorCode.WrongInstallation }:
+                error = new LicenseError(ErrorCode.ServerPinMismatch, "The server key is not the key of the server license.");
+                return false;
+            case LicenseVerificationResult.Invalid invalid:
+                error = invalid.Error;
+                return false;
+            default:
+                throw new InvalidOperationException("Unknown license verification result.");
+        }
+    }
+
+    /// <summary>
     /// Releases the server's key. Leases are not checked with this identity afterwards.
     /// </summary>
     public void Dispose() => Key.Dispose();
+
+    private static bool TryReadJwk(ReadOnlySpan<byte> publicKeyJwk, out ECParameters parameters)
+    {
+        parameters = default;
+        if (publicKeyJwk.Length > 1024)
+        {
+            return false;
+        }
+
+        EcPublicJwk? jwk;
+        try
+        {
+            jwk = JsonSerializer.Deserialize(publicKeyJwk, LicensingJsonContext.Default.EcPublicJwk);
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+
+        return jwk is not null && jwk.TryGetParameters(out parameters);
+    }
 }
 
 /// <summary>

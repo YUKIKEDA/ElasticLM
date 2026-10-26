@@ -56,9 +56,24 @@ public static class LeaseIssuer
     /// positive or longer than design §8.6 allows, or the sequence number is negative.</exception>
     public static string Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)
     {
+        ArgumentNullException.ThrowIfNull(time);
+        return Issue(signingKey, spec, time.GetUtcNow());
+    }
+
+    /// <summary>
+    /// Issues a lease token with a given issue time. A server that caps the duration at a time it computed from the same
+    /// clock reading uses this, so the cap holds even when the clock moves to the next second in between.
+    /// </summary>
+    /// <param name="signingKey">The key that signs, with its private part. Its key ID becomes <c>iss</c> and <c>srv</c>.</param>
+    /// <param name="spec">The lease.</param>
+    /// <param name="issuedAt">The issue time; its whole seconds become <c>iat</c>.</param>
+    /// <returns>The lease token.</returns>
+    /// <exception cref="ArgumentException">A required value is empty, the seat count is less than 1, the duration is not
+    /// positive or longer than design §8.6 allows, or the sequence number is negative.</exception>
+    public static string Issue(ECDsa signingKey, LeaseSpec spec, DateTimeOffset issuedAt)
+    {
         ArgumentNullException.ThrowIfNull(signingKey);
         ArgumentNullException.ThrowIfNull(spec);
-        ArgumentNullException.ThrowIfNull(time);
         foreach (string? value in new[] { spec.LeaseId, spec.ProductId, spec.LicenseId, spec.FeatureId, spec.InstallationKeyThumbprint })
         {
             ArgumentException.ThrowIfNullOrEmpty(value, nameof(spec));
@@ -75,7 +90,7 @@ public static class LeaseIssuer
             throw new ArgumentException("The lease duration must be at least one second and at most the limit of design §8.6.", nameof(spec));
         }
 
-        long now = time.GetUtcNow().ToUnixTimeSeconds();
+        long now = issuedAt.ToUnixTimeSeconds();
         if (!Limits.IsTime(now + seconds))
         {
             throw new ArgumentException("The lease would end after the latest time of design §8.6.", nameof(spec));

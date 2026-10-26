@@ -29,4 +29,15 @@ public sealed class InstallationIdentity
     /// Gets the current machine fingerprints.
     /// </summary>
     public IReadOnlyList<string> Fingerprints { get; }
+
+    /// <summary>
+    /// Gets a value indicating whether the license's fingerprints are compared. A client that verifies a server's license
+    /// knows the server's key but not the server machine's fingerprints; the server checks those itself (design §13.5).
+    /// </summary>
+    internal bool ChecksFingerprints { get; private init; } = true;
+
+    /// <summary>
+    /// Returns the identity of another machine's server, known by its key only.
+    /// </summary>
+    internal static InstallationIdentity ForRemoteServer(string keyThumbprint) => new(keyThumbprint, []) { ChecksFingerprints = false };
 }

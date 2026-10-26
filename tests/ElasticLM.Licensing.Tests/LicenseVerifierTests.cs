@@ -584,6 +584,7 @@ public sealed class LicenseVerifierTests : IDisposable
             license["lease"] = 600;
             license["borrow"] = 0;
             license["overage"] = 0;
+            license["clone"] = "deny";
         }
 
         LicenseRequirement requirement = _issuer.Requirement(version: null) with { Kind = required };
@@ -906,7 +907,8 @@ public sealed class LicenseVerifierTests : IDisposable
     }
 
     /// <summary>
-    /// Payload shapes the design forbids are malformed: a server license without its server claims, seats on a standard
+    /// Payload shapes the design forbids are malformed: a server license without its server claims or with only clone
+    /// missing, a clone strategy that is not deny or flag, seats on a standard
     /// license, a trial with grace, an unknown kind, ver 2, fp without fpm, an issuer that differs from the key ID, a bad
     /// version range, and times or durations outside the limits of design §8.6.
     /// </summary>
@@ -922,6 +924,8 @@ public sealed class LicenseVerifierTests : IDisposable
     /// </remarks>
     [Theory]
     [InlineData("server-without-lease")]
+    [InlineData("server-without-clone")]
+    [InlineData("unknown-clone")]
     [InlineData("seats-on-standard")]
     [InlineData("trial-with-grace")]
     [InlineData("unknown-kind")]
@@ -941,6 +945,19 @@ public sealed class LicenseVerifierTests : IDisposable
             case "server-without-lease":
                 license["kind"] = "server";
                 license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
+                break;
+            case "server-without-clone":
+            case "unknown-clone":
+                license["kind"] = "server";
+                license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
+                license["lease"] = 600;
+                license["borrow"] = 0;
+                license["overage"] = 0;
+                if (kind == "unknown-clone")
+                {
+                    license["clone"] = "Deny";
+                }
+
                 break;
             case "seats-on-standard":
                 license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
