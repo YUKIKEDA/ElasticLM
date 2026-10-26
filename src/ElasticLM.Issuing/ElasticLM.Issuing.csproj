@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- Internal to ElasticLM's tools and servers; apps never reference the signing side (design §6.2). -->
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Licensing\ElasticLM.Licensing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
+  </ItemGroup>
+</Project>

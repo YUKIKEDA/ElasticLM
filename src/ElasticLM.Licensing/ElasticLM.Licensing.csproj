@@ -8,5 +8,8 @@
   </PropertyGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Licensing.Tests" />
+    <!-- The issuing side signs the same payload types and applies the same rules (docs/conventions.md). -->
+    <InternalsVisibleTo Include="ElasticLM.Issuing" />
+    <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
   </ItemGroup>
 </Project>
