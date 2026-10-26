@@ -1,0 +1,28 @@
+---
+description: PR title and body follow the repository template
+alwaysApply: true
+---
+
+# Pull requests
+
+## Title
+
+Conventional Commits: `type(optional-scope): subject`, in English (`.cursor/rules/conventional-commits.mdc`).
+
+## Body
+
+Follow `.github/pull_request_template.md` with the same headings in the same order:
+
+1. `## Summary`
+2. `## Related`
+3. `## Verification`
+4. `## Measurements`
+5. `## Risk / Rollback`
+6. `## Checklist`
+
+- The headings stay English. The body text may be Japanese (`.cursor/rules/language.mdc`).
+- Empty sections say `N/A`; do not delete them.
+- `## Related` has `Closes #N` alone on a line when the PR finishes the Issue, `Part of #N` when it does not (`.cursor/rules/github-closing.mdc`).
+- `## Verification` first lists every acceptance line of the Issue and how each was checked, then the commands that ran and their result: `./build.ps1`, the NativeAOT publish when the Issue names it, any search a "every X does Y" claim rests on (`.cursor/rules/spec-checks.mdc`).
+- `## Measurements` carries the numbers for a change on a measured path, against a named baseline. `N/A` only when nothing on such a path changed.
+- Pass the body to `gh pr create` through a temporary UTF-8 file (`--body-file`), deleted after the call (`.cursor/rules/scratch.mdc`).

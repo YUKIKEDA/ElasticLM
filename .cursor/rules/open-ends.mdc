@@ -1,0 +1,27 @@
+---
+description: A PR does not go out with work it names as not done, or a figure it cannot explain
+alwaysApply: true
+---
+
+# No open ends in a PR
+
+A PR is opened when its work is finished, not when it runs. These sentences do not belong in a PR body or in a report to the owner:
+
+- "Not measured." A PR that adds a step on a measured path (license verification, server startup, checkout and renewal, binary size) measures it before it is opened, tunes what stands out, and reports the numbers before and after under the PR's `## Measurements`. What is left is stated with a number and the reason it stays.
+- "We take it that ..., not checked." An explanation that one look can check is checked before it is written.
+- "The cause is not confirmed." A figure or a failure the agent cannot explain is traced to its cause from the data before the PR is opened. A guess is not written as an explanation, with or without "probably".
+
+What is out of the row's scope is a roadmap row that names when (`.cursor/rules/defer.mdc`), not a caveat. A finding about code the row did not change becomes its own Issue at once (`.cursor/rules/pace.mdc`).
+
+A reason written as likely ("probably", 「と考えられる」) is checked first when a cheap check exists.
+
+A comment in the code is held to the same line: it says what was measured, and marks a cause that was not confirmed as not confirmed, with the Issue number.
+
+```text
+# BAD
+トークン検証の速度は詰めていません。初回だけ遅いですが、おそらく JIT です。
+
+# GOOD
+トークン検証は NativeAOT で 1 件 41 µs → 18 µs。内訳を測ると公開鍵の ImportSubjectPublicKeyInfo が 6 割だったので、
+鍵 ID ごとに ECDsa を作って使い回すようにした。初回の 2.1 ms は ECDsa の生成で、JIT ではない（JitInfo で確認）。
+```

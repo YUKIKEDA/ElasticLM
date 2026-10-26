@@ -1,0 +1,44 @@
+---
+description: PowerShell-safe shell usage for git, gh, and dotnet on Windows
+alwaysApply: true
+---
+
+# PowerShell shell (Windows)
+
+The agent shell on this setup is PowerShell. Do not use bash-only constructs in it.
+
+## Forbidden in PowerShell
+
+- Heredoc: `$(cat <<'EOF' ... EOF)`
+- Unquoted git upstream: `@{u}` (PowerShell parses `@{...}` as a hashtable). Write `'@{u}'`.
+- `export FOO=bar`, bash arrays, `&&` chains that assume bash semantics for `$?`.
+
+## Use instead
+
+- Multi-line text for a commit: a here-string.
+
+```powershell
+git commit -m @"
+type(scope): subject
+
+body
+"@
+```
+
+  `git commit -F -` with a here-string does not work: PowerShell passes the text as an argument and git reads it as a pathspec. Use `-m` as above, or commit from Bash with a heredoc.
+- Long text for `gh`: write a temporary UTF-8 file and pass `--body-file`, then delete it (`.cursor/rules/scratch.mdc`).
+- Do not put `Remove-Item` in the same command as a path under `C:\Program Files ...`: the agent's PowerShell tool reads `C:\Program` as the item to remove and refuses the whole command. Remove files in a separate call, or from Bash.
+- A helper script (Python, a patch): write it to a file in the scratchpad first, then run it. Do not build it from a here-string piped to `Set-Content` in the same command that removes files.
+- Native commands set `$LASTEXITCODE`. Check it before the next step: `dotnet test ...; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`.
+- Variable names are not case-sensitive. A local `$low` is the parameter `$Low`. Give locals names that differ from every parameter in more than case.
+- Splatting one string (`& $app @args` where `$args` is `'--text'`) passes its characters one by one. Build arguments as an array: `[string[]]$arguments = @(...)`.
+- Run `./build.ps1` in PowerShell 7 (`pwsh`, the agent's PowerShell tool), not Windows PowerShell 5.1 (`powershell.exe`).
+- A run that reads an environment variable is run from Bash, with `VAR=value cmd` and `env -u VAR cmd`.
+- Quote paths with spaces. Prefer repository-relative paths, except for .NET methods: `[IO.File]::ReadAllText` and the like read a relative path from the process's working directory, not from `Set-Location`. Pass them an absolute path.
+- In Bash, `rm -rf "$DIR"/*` is refused by the agent's safety check, because an empty `$DIR` would make it `/*`. Write `"${DIR:?}"/*` or a literal path.
+
+## Writing files
+
+Write files with the editor tools, not with shell redirection. A Python script sent through the Bash tool loses the backslashes of `\f`, `\r`, `\t`, and `\v` in its string literals. After an edit by a script, count the control bytes in the files it wrote with `tr -cd '\000-\010\013\014\016-\037' < <file> | wc -c`; the count is 0.
+
+`Copy-Item` keeps the file's last write time, so an incremental build does not see a file put back from a copy. After copying a source file into place, set its time to now (`(Get-Item <file>).LastWriteTime = Get-Date`).

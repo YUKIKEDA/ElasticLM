@@ -1,0 +1,71 @@
+<Project>
+  <!-- Shared settings for every project. Conventions: docs/conventions.md. Dependency rules: .cursor/rules/dependencies.mdc. -->
+  <PropertyGroup>
+    <TargetFramework Condition="'$(TargetFramework)' == '' And '$(TargetFrameworks)' == ''">net10.0</TargetFramework>
+    <LangVersion>14</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NeutralLanguage>en</NeutralLanguage>
+
+    <!-- Warnings are errors from the first commit; trim and AOT warnings must be zero (.cursor/rules/aot.mdc). -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+    <Features>strict</Features>
+
+    <!-- Deterministic builds; CI paths are normalized for Source Link. -->
+    <Deterministic>true</Deterministic>
+    <ContinuousIntegrationBuild Condition="'$(GITHUB_ACTIONS)' == 'true'">true</ContinuousIntegrationBuild>
+
+    <!-- License data is parsed and compared without culture-dependent APIs. Tests run the way apps do. -->
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <IsPackable>false</IsPackable>
+
+    <_ElmRelativeDir>$([MSBuild]::MakeRelative('$(MSBuildThisFileDirectory)', '$(MSBuildProjectDirectory)').Replace('\', '/'))</_ElmRelativeDir>
+    <ElmIsSrcProject>false</ElmIsSrcProject>
+    <ElmIsSrcProject Condition="$(_ElmRelativeDir.StartsWith('src/'))">true</ElmIsSrcProject>
+    <ElmIsTestProject>false</ElmIsTestProject>
+    <ElmIsTestProject Condition="$(_ElmRelativeDir.StartsWith('tests/'))">true</ElmIsTestProject>
+  </PropertyGroup>
+
+  <!-- Projects under src/ ship (NuGet packages or NativeAOT executables) and must be AOT compatible. -->
+  <PropertyGroup Condition="'$(ElmIsSrcProject)' == 'true'">
+    <IsAotCompatible>true</IsAotCompatible>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <VersionPrefix>0.1.0</VersionPrefix>
+    <Authors>YUKIKEDA</Authors>
+    <Copyright>Copyright (c) 2026 YUKIKEDA and contributors</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/YUKIKEDA/ElasticLM</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/YUKIKEDA/ElasticLM</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(ElmIsTestProject)' == 'true'">
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(MSBuildProjectExtension)' == '.csproj'">
+    <PackageReference
+      Include="StyleCop.Analyzers"
+      PrivateAssets="all"
+      IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive"
+    />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)stylecop.json" Link="stylecop.json" />
+  </ItemGroup>
+
+  <!-- Banned APIs for shipped code: wall clock, non-cryptographic randomness, reflection (.cursor/rules/security.mdc, aot.mdc). -->
+  <ItemGroup Condition="'$(ElmIsSrcProject)' == 'true'">
+    <PackageReference
+      Include="Microsoft.CodeAnalysis.BannedApiAnalyzers"
+      PrivateAssets="all"
+      IncludeAssets="runtime; build; native; contentfiles; analyzers; buildtransitive"
+    />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Link="BannedSymbols.txt" />
+  </ItemGroup>
+</Project>

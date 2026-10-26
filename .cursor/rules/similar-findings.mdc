@@ -1,0 +1,13 @@
+---
+description: When a problem is pointed out, check for the same kind of gap elsewhere too
+alwaysApply: true
+---
+
+# Fix similar findings together
+
+When a problem is pointed out, do not fix only the cited spot and stop. Before fixing, check whether the same kind of gap exists elsewhere.
+
+- Look in the same file, in callees with the same contract, and in the paired code: the offline verifier and the floating server, the on-premises server and the hosted service, checkout and renewal, the Windows, Linux, and macOS machine ID readers, the JIT and NativeAOT builds.
+- Examples: an expiry compared with the wall clock in the verifier and the same comparison in the server; a request field that the signature does not cover on checkout and the same field on check-in; an unbounded read of a token file and the same read of a key file.
+- If you find the same kind of problem, fix it together with the cited spot.
+- If you find none, say what you checked and that nothing remains.

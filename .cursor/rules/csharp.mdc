@@ -1,0 +1,46 @@
+---
+description: C# style, naming, types, and API shape
+globs: "**/*.cs"
+alwaysApply: false
+---
+
+# C#
+
+Formatting is CSharpier's (`.cursor/rules/engineering.mdc`). This rule covers what a formatter cannot.
+
+## Style
+
+- Modern C# is allowed: `var` when the type is apparent on the right, collection expressions, target-typed `new`, primary constructors, file-scoped namespaces, `required` members, `ref struct`, `scoped`.
+- Private fields are `_camelCase`, static ones included. Constants are PascalCase. No `this.` unless needed to disambiguate. Interfaces start with `I`.
+- Namespaces follow assembly names, not folders. No type has the name of a namespace (CA1724 is an error).
+- One type per file by default. A file name matches its main type.
+- No `using` alias to shorten a BCL type name. Qualify the name where it collides.
+- Library `await` uses `ConfigureAwait(false)`. `CancellationToken` is the last parameter.
+- A new overload goes above the XML docs and attributes of the member it joins, not between them and that member.
+
+## Types
+
+Make an invalid state unrepresentable; do not document it away or catch it at run time.
+
+- One choice, one slot: an enum, a sealed record hierarchy, or a generic parameter, not a `bool` plus a nullable that the `bool` makes meaningless.
+- A value that has been verified has its own type (a verified license is not the same type as a parsed, unverified token), so unverified data cannot reach a decision.
+- Identifiers are distinct types (`LicenseId`, `LeaseId`, `KeyId`), so one cannot be passed where another is expected. The `default` of an ID type never refers to a live value.
+- A method that cannot fail returns its value, not a `bool`/`out` pair or a nullable.
+- A public method does not throw because the caller used the wrong phase of the same type; split the type instead.
+- The public surface is what the design lists. Everything else is `internal`.
+
+## Errors
+
+- An expected outcome that a caller decides on (a license that is expired, a seat that is not free, a signature that does not verify) is a return value with a reason the design lists, not an exception.
+- Argument checks throw `ArgumentException` and its subtypes, with one-sentence English messages that name the condition.
+- Public exception types are few and documented in the XML docs of the members that throw them.
+- A `catch` that runs cleanup which can throw keeps the exception it caught: when the cleanup throws too, throw an `AggregateException` with the caught exception first, then the cleanup's.
+- A comment that states how a runtime or OS API behaves names what was checked: the call, the version, and the result.
+- A call that can fail by its result is checked (`TryParse`, `TryImport...`, `TryGetValue`).
+
+## XML docs
+
+- Public members under `src/` have `summary`, and `param` / `returns` / `exception` when a caller might be unsure. Sentences end with a period. Properties start with "Gets" / "Gets or sets"; constructors with "Initializes a new instance of the <see cref="T"/> class".
+- XML docs state the caller's contract only. How it works lives in `docs/design.ja.md`; refer to the section instead of restating it.
+- Use `<inheritdoc />` when an implementation has the interface's contract.
+- Wording and terminology: `.agents/skills/english-writing/SKILL.md`.
