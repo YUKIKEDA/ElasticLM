@@ -101,8 +101,130 @@ internal static class SelfTest
                 + Iterations.ToString(CultureInfo.InvariantCulture)
                 + " runs)"
         );
+        if (!ProofAndLease(root, signing))
+        {
+            return 1;
+        }
+
         Console.WriteLine("jit: " + (System.Runtime.JitInfo.GetCompiledMethodCount() > 0 ? "yes" : "no (NativeAOT)"));
         return 0;
+    }
+
+    // A request proof from an installation key, checked by the server-side verifier, and a hosted lease checked by the
+    // client (design §12.2, §12.7.5). The key lives in a temporary directory that is removed afterwards.
+    private static bool ProofAndLease(ECDsa root, ECDsa signing)
+    {
+        string directory = Path.Combine(Path.GetTempPath(), "elm-selftest-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
+        try
+        {
+            var store = new ElasticLM.Client.InstallationKeyStore("acme-cad", ElasticLM.Client.KeyScope.User, directory);
+            if (!store.TryLoadOrCreate(out ElasticLM.Client.InstallationKey? key, out LicenseError? keyError))
+            {
+                Console.Error.WriteLine("self-test: installation key: " + keyError!.Message);
+                return false;
+            }
+
+            using (key)
+            {
+                var target = new Uri("https://licenses.example.com/v1/leases");
+                byte[] body = Encoding.UTF8.GetBytes("{\"feature\":\"pro\"}");
+                var nonces = new ElasticLM.Issuing.NonceService(RandomNumberGenerator.GetBytes(32), TimeProvider.System);
+                var verifier = new ElasticLM.Issuing.ProofVerifier(nonces, new ElasticLM.Issuing.MemoryReplayStore(TimeProvider.System));
+
+                const int Runs = 1000;
+                long start = Stopwatch.GetTimestamp();
+                string proof = string.Empty;
+                for (int i = 0; i < Runs; i++)
+                {
+                    proof = ElasticLM.Client.ProofBuilder.Create(
+                        key!,
+                        "POST",
+                        target,
+                        nonces.Issue(),
+                        body,
+                        includePublicKey: true,
+                        TimeProvider.System
+                    );
+                }
+
+                double create = Stopwatch.GetElapsedTime(start).TotalMicroseconds / Runs;
+                var proofs = new string[Runs];
+                for (int i = 0; i < Runs; i++)
+                {
+                    proofs[i] = ElasticLM.Client.ProofBuilder.Create(
+                        key!,
+                        "POST",
+                        target,
+                        nonces.Issue(),
+                        body,
+                        includePublicKey: true,
+                        TimeProvider.System
+                    );
+                }
+
+                start = Stopwatch.GetTimestamp();
+                foreach (string p in proofs)
+                {
+                    if (verifier.Verify(p, "POST", target, body) is not ElasticLM.Issuing.ProofResult.Valid)
+                    {
+                        Console.Error.WriteLine("self-test: a proof did not verify");
+                        return false;
+                    }
+                }
+
+                double verify = Stopwatch.GetElapsedTime(start).TotalMicroseconds / Runs;
+                Console.WriteLine(
+                    "proof: create "
+                        + create.ToString("F1", CultureInfo.InvariantCulture)
+                        + " us, verify "
+                        + verify.ToString("F1", CultureInfo.InvariantCulture)
+                        + " us ("
+                        + Runs.ToString(CultureInfo.InvariantCulture)
+                        + " runs)"
+                );
+
+                string certificate = ElasticLM.Issuing.CertificateIssuer.Issue(
+                    root,
+                    signing,
+                    ElasticLM.Issuing.KeyUses.Lease,
+                    DateTimeOffset.UtcNow.AddDays(-1),
+                    TimeSpan.FromDays(30),
+                    TimeProvider.System
+                );
+                var spec = new ElasticLM.Issuing.LeaseSpec
+                {
+                    LeaseId = "lease-1",
+                    ProductId = "acme-cad",
+                    LicenseId = "lic-1",
+                    FeatureId = "pro",
+                    Seats = 1,
+                    InstallationKeyThumbprint = key!.Thumbprint,
+                    Duration = TimeSpan.FromMinutes(10),
+                };
+                string lease = ElasticLM.Issuing.LeaseIssuer.Issue(signing, spec, TimeProvider.System);
+                TrustStore trust = TrustStore.Create([root.ExportSubjectPublicKeyInfoPem()], []);
+                LeaseVerificationResult result = new LeaseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance).VerifyHosted(
+                    lease,
+                    [certificate],
+                    new LeaseExpectation("acme-cad", key.Thumbprint)
+                );
+                if (result is not LeaseVerificationResult.Valid)
+                {
+                    Console.Error.WriteLine("self-test: the lease did not verify");
+                    return false;
+                }
+
+                Console.WriteLine("lease: valid");
+                return true;
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(directory))
+            {
+                Directory.Delete(directory, recursive: true);
+            }
+        }
     }
 
     private static string B64(byte[] data) => Convert.ToBase64String(data).TrimEnd('=').Replace('+', '-').Replace('/', '_');

@@ -21,4 +21,7 @@ namespace ElasticLM.Licensing;
 [JsonSerializable(typeof(LicenseFileEnvelope))]
 [JsonSerializable(typeof(EmbeddedJwkPayload))]
 [JsonSerializable(typeof(ClockState))]
+[JsonSerializable(typeof(LeasePayload))]
+[JsonSerializable(typeof(ProofPayload))]
+[JsonSerializable(typeof(EcPublicJwk))]
 internal sealed partial class LicensingJsonContext : JsonSerializerContext;

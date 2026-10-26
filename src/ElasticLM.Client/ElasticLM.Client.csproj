@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>ElasticLM.Client</PackageId>
+    <Description>ElasticLM client: installation keys, request proofs, and leases from on-premises servers and the hosted service. NativeAOT compatible.</Description>
+    <PackageTags>licensing;license;floating;lease;nativeaot</PackageTags>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Licensing\ElasticLM.Licensing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
+  </ItemGroup>
+</Project>

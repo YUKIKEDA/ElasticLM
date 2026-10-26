@@ -6,5 +6,8 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ElasticLM.Licensing\ElasticLM.Licensing.csproj" />
+    <!-- The self-test also runs a request proof and a lease through the client and the server-side code. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+    <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
   </ItemGroup>
 </Project>

@@ -15,8 +15,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M3（`ElasticLM.Leasing`・`elm-server`・`ElasticLM.Client` のリース）
-- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）
+- **フェーズ:** M3b（`elm-server` の本体と `ElasticLM.Client` のリース）
+- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）
 
 ## v1 まで
 
@@ -26,8 +26,10 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | D0  | 要件・脅威モデル・全体構成（オフライン検証・オンプレミスのフローティング・SaaS 型の有効化） | done        | [#3](https://github.com/YUKIKEDA/ElasticLM/issues/3) |
 | M1  | `ElasticLM.Licensing`（JWS、トークン、トラストストア、検証、時計の守り、マシン指紋）       | done        | [#7](https://github.com/YUKIKEDA/ElasticLM/issues/7) |
 | M2  | `ElasticLM.Issuing` と `elm` の鍵・発行・検査                                              | done        | [#11](https://github.com/YUKIKEDA/ElasticLM/issues/11) |
-| M3  | `ElasticLM.Leasing`・`elm-server`・`ElasticLM.Client` のリース（借り出し・回収・利用ログ） | not-started | —     |
-| M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用 | not-started | —     |
+| M3a | プロトコルの土台（インストール鍵、証明の作成と検証、ノンス、リーストークン）          | done        | [#15](https://github.com/YUKIKEDA/ElasticLM/issues/15) |
+| M3b | `elm-server` の本体と `ElasticLM.Client` のリース（席・回収・TLS・自動更新）            | not-started | —     |
+| M3c | 借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`        | not-started | —     |
+| M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用、`elm-server` のサーバーライセンスの更新 | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
 | M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
