@@ -15,8 +15,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M1（`ElasticLM.Licensing`）
-- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）
+- **フェーズ:** M2（`ElasticLM.Issuing` と `elm` の鍵・発行・検査）
+- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）
 
 ## v1 まで
 
@@ -24,7 +24,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | --- | ------------------------------------------------------------------------------------------ | ----------- | ----- |
 | F0  | 開発基盤（規約・スキル・ビルド設定・CI・テンプレート・コミュニティ文書）                   | done        | [#1](https://github.com/YUKIKEDA/ElasticLM/issues/1) |
 | D0  | 要件・脅威モデル・全体構成（オフライン検証・オンプレミスのフローティング・SaaS 型の有効化） | done        | [#3](https://github.com/YUKIKEDA/ElasticLM/issues/3) |
-| M1  | `ElasticLM.Licensing`（JWS、トークン、トラストストア、検証、時計の守り、マシン指紋）       | not-started | —     |
+| M1  | `ElasticLM.Licensing`（JWS、トークン、トラストストア、検証、時計の守り、マシン指紋）       | done        | [#7](https://github.com/YUKIKEDA/ElasticLM/issues/7) |
 | M2  | `ElasticLM.Issuing` と `elm` の鍵・発行・検査                                              | not-started | —     |
 | M3  | `ElasticLM.Leasing`・`elm-server`・`ElasticLM.Client` のリース（借り出し・回収・利用ログ） | not-started | —     |
 | M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用 | not-started | —     |
@@ -32,7 +32,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
-| V1  | 端から端までのテスト、文書、サンプル、安全性の見直し、v1 の公開                            | not-started | —     |
+| V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
 
 ## v1 の後
 

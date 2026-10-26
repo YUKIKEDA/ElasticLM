@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <PackageId>ElasticLM.Licensing</PackageId>
+    <Description>Offline verification of ElasticLM license files: signed tokens, trust store, clock guard, and machine fingerprints. NativeAOT compatible, no dependencies.</Description>
+    <PackageTags>licensing;license;verification;nativeaot</PackageTags>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Licensing.Tests" />
+  </ItemGroup>
+</Project>
