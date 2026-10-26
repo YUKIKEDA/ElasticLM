@@ -26,6 +26,9 @@ public sealed class HttpTargetUriTests
     [InlineData("http://licenses.example.com:80/v1/nonce", "http://licenses.example.com/v1/nonce")]
     [InlineData("https://licenses.example.com/v1/leases/a%2fb", "https://licenses.example.com/v1/leases/a%2Fb")]
     [InlineData("https://[::1]:7070/v1/leases", "https://[::1]:7070/v1/leases")]
+    [InlineData("https://licenses.example.com/v1/%6Ceases", "https://licenses.example.com/v1/leases")]
+    [InlineData("https://licenses.example.com/v1/./leases", "https://licenses.example.com/v1/leases")]
+    [InlineData("https://licenses.example.com/v1/x/../leases", "https://licenses.example.com/v1/leases")]
     public void Normalize_Forms_GiveOneText(string uri, string expected)
     {
         Assert.Equal(expected, HttpTargetUri.Normalize(new Uri(uri)));

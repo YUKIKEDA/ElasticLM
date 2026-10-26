@@ -7,13 +7,13 @@ namespace ElasticLM.Licensing;
 /// An on-premises license server as the client knows it: a verified server license and the server's public key, whose
 /// thumbprint is the license's <c>cnf.jkt</c> (design §13.5).
 /// </summary>
-public sealed class ServerIdentity
+public sealed class ServerIdentity : IDisposable
 {
-    private ServerIdentity(VerifiedLicense license, ECParameters key, string keyId)
+    private ServerIdentity(VerifiedLicense license, VerificationKey key)
     {
         License = license;
         Key = key;
-        KeyId = keyId;
+        KeyId = key.KeyId;
     }
 
     /// <summary>Gets the server license.</summary>
@@ -22,7 +22,9 @@ public sealed class ServerIdentity
     /// <summary>Gets the key ID of the server's key, equal to the license's <c>cnf.jkt</c>.</summary>
     public string KeyId { get; }
 
-    internal ECParameters Key { get; }
+    // Created once: the client checks every renewal and every borrowed lease with it (M1: creating an ECDsa costs more than a
+    // verification).
+    internal VerificationKey Key { get; }
 
     /// <summary>
     /// Creates a server identity from a server license that <see cref="LicenseVerifier"/> verified with
@@ -58,24 +60,28 @@ public sealed class ServerIdentity
             }
         }
 
-        if (jwk is null || !jwk.TryGetParameters(out ECParameters key) || !EcKeys.TryCreateVerifier(key, out ECDsa? check))
+        if (jwk is null || !jwk.TryGetParameters(out ECParameters parameters) || !VerificationKey.TryCreate(parameters, out VerificationKey? key))
         {
             error = new LicenseError(ErrorCode.Malformed, "The server key is not an EC P-256 public key in JWK form.");
             return false;
         }
 
-        check!.Dispose();
-        string keyId = EcPublicJwk.Thumbprint(key);
-        if (keyId != license.InstallationKeyThumbprint)
+        if (key!.KeyId != license.InstallationKeyThumbprint)
         {
+            key.Dispose();
             error = new LicenseError(ErrorCode.ServerPinMismatch, "The server key is not the key of the server license.");
             return false;
         }
 
-        identity = new ServerIdentity(license, key, keyId);
+        identity = new ServerIdentity(license, key);
         error = null;
         return true;
     }
+
+    /// <summary>
+    /// Releases the server's key. Leases are not checked with this identity afterwards.
+    /// </summary>
+    public void Dispose() => Key.Dispose();
 }
 
 /// <summary>

@@ -203,10 +203,9 @@ internal static class SelfTest
                 };
                 string lease = ElasticLM.Issuing.LeaseIssuer.Issue(signing, spec, TimeProvider.System);
                 TrustStore trust = TrustStore.Create([root.ExportSubjectPublicKeyInfoPem()], []);
-                LeaseVerificationResult result = new LeaseVerifier(TimeProvider.System, StatelessClockGuard.Instance).VerifyHosted(
+                LeaseVerificationResult result = new LeaseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance).VerifyHosted(
                     lease,
                     [certificate],
-                    trust,
                     new LeaseExpectation("acme-cad", key.Thumbprint)
                 );
                 if (result is not LeaseVerificationResult.Valid)

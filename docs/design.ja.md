@@ -580,6 +580,10 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | 要求の `client` のホスト名・ユーザー名 | 各 255 バイト |
 | 要求の `app` | 64 バイト |
 | 回収の要求のリーストークンの数 | 64 |
+| サーバーの公開鍵の JWK（`GET /v1/server/license` の `key`） | 1,024 バイト |
+| ノンスの文字列 | 128 文字（正しいノンスは 56 バイトの base64url で 75 文字） |
+| 証明の `jti` | 64 文字 |
+| インストール鍵のファイル | 16 KiB |
 | 時刻のクレーム（`iat`, `exp`, `nbf`, 機能の `exp`） | 0 以上、253,402,300,799（9999-12-31T23:59:59Z、`DateTimeOffset` が表せる最後の秒）以下 |
 | 期間のクレーム（`grace`, `refresh`, `lease`, `borrow`） | 0 以上、100 年（3,162,240,000 秒、1 年を 366 日として）以下 |
 | `overage` | 0 以上、1,000（百分率）以下 |
@@ -715,6 +719,28 @@ stateDiagram-v2
 
 - 範囲（ユーザーか端末か）は、アプリが `ElasticLM.Client` の設定で選ぶ。既定はユーザーである。端末の範囲は書き込みに管理者権限が要るため、サービスとして動くアプリ向けとする。
 - 鍵が読めない（壊れた、別ユーザーの DPAPI で保護された）ときは、新しい鍵を作らずにエラー `ELM_INSTALLATION_KEY_UNREADABLE` を返す。黙って作り直すと、台数を 1 つ余計に使うためである。アプリは利用者に再有効化を促す。
+- 製品 ID は `^[a-z0-9-]{1,64}$`（§9.1）に限る。製品 ID はディレクトリの名前になるので、`..` や `/` でその外へ出られない。
+- DPAPI には ElasticLM 用の付加エントロピー（`ElasticLM installation key v1`）を渡す。同じ利用者の別のアプリが DPAPI で守った値と取り違えないためである。
+
+`ElasticLM.Client` の API（M3a、Issue #15 で出荷した形）:
+
+```csharp
+public enum KeyScope { User, Machine }
+
+public sealed class InstallationKeyStore(string productId, KeyScope scope = KeyScope.User, string? directory = null)
+{
+    public string Directory { get; }
+    public bool TryLoadOrCreate(out InstallationKey? key, out LicenseError? error);
+    public bool TryLoad(out InstallationKey? key, out LicenseError? error);
+    public void Delete();
+}
+
+public sealed class InstallationKey : IDisposable
+{
+    public string Thumbprint { get; }                      // §7.4。cnf.jkt の値
+    public InstallationIdentity Identity(IReadOnlyList<string> fingerprints);
+}
+```
 
 ### 10.3 マシン指紋
 
@@ -832,6 +858,7 @@ public static class ErrorCodes { public static string ToWireName(ErrorCode code)
 - 検証前の値と検証済みの値（`VerifiedLicense`）は別の型にする（`.cursor/rules/csharp.mdc`）。
 - 失敗は例外ではなく `Invalid` と理由で返す。例外になるのは引数の誤り（空の製品 ID、`major.minor[.patch]` でない要求の版、範囲外の `ClockSkew`、不正なトラストストアの鍵）だけである。ファイルの中身がどう壊れていても（JSON の `null` を含む）、例外ではなく `Invalid` を返す。
 - `TrustStore.Create` の鍵は、1 つの PEM ブロックに入った P-256 の SubjectPublicKeyInfo に限る。秘密鍵の PEM、複数のブロック、同じ鍵の重複は `ArgumentException` である。
+- リースの検証の API（`LeaseVerifier`、`ServerIdentity` など）、`HttpTargetUri`、`KeyIds` も同じパッケージの公開面で、§12.2 と §12.7.5 に書く。
 - `MachineFingerprint` の公開面は、この端末の指紋を返す `Compute` だけである。任意の値から指紋を作る関数は公開しない。
 - `LicenseVerifier` は、検証に成功した証明書（その文字列）と、そこから作った鍵を、最初の 16 件まで覚えて使い回す。トラストストアは作った後に変えられないので、同じ文字列の結果は変わらない。上限を超えた証明書は呼び出しごとに検証し、呼び出しの終わりに鍵を破棄する。
 
@@ -881,9 +908,12 @@ public static class ErrorCodes { public static string ToWireName(ErrorCode code)
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
 1. スキームとホストを小文字にする。
-2. 既定のポート（https の 443）を省く。
-3. パスは、パーセントエンコードを大文字の 16 進にそろえ、それ以外は変えない。
-4. クエリと断片を除く。
+2. 既定のポート（https の 443、http の 80）を省く。
+3. パスに RFC 3986 §6.2.2 の構文の正規化を行う。予約されていない文字（英数字と `-` `.` `_` `~`）のパーセントエンコードを戻し（`%6C` → `l`）、`.` と `..` の区切りを畳む（RFC 3986 §5.2.4）。.NET では `System.Uri` の解析がこれを行い、`ElasticLM.Licensing` の `HttpTargetUri.Normalize` はその結果（`AbsolutePath`）を使う。他の言語の実装も同じ正規化を行う。
+4. 残ったパーセントエンコードを大文字の 16 進にそろえる。
+5. クエリと断片を除く。
+
+M3a（Issue #15）のレビューで、手順 3 を「それ以外は変えない」から、`System.Uri` が実際に行う正規化に合わせて書き直した。`HttpTargetUriTests` が `%6C` と `/./`、`/x/../` の例でこの形を固定する。
 
 ### 12.2 証明（DPoP 形式）
 
@@ -922,6 +952,40 @@ public static class ErrorCodes { public static string ToWireName(ErrorCode code)
 - ノンスは、作った時刻と 128 ビットの乱数を、サーバーの秘密で HMAC-SHA256 したものを含む。有効期間は 300 秒。サーバーはノンス自体を保存しない。
 - `jti` は、ノンスの有効期間のあいだ保存して重複を断る。オンプレミスはメモリ、SaaS 型はデータベース（一意制約）に置く。
 - 複数ノードの SaaS 型では、HMAC の秘密を全ノードで共有する（§14.8）。
+- 一度検証できた公開鍵は、`kid` ごとに 10,000 件まで覚えて使い回す。`kid` はその鍵の拇印なので、ほかの鍵で汚せない。覚えた鍵でも署名は毎回確かめる。M3a で、証明の検証が 1 件 460 µs から約 130 µs になった（NativeAOT、win-x64）。
+
+API（M3a、Issue #15 で出荷した形）:
+
+```csharp
+// ElasticLM.Client: クライアントが証明を作る
+public static class ProofBuilder
+{
+    public const string HeaderName = "ELM-Proof";
+    public static string Create(InstallationKey key, string method, Uri target, string nonce,
+                                ReadOnlySpan<byte> body, bool includePublicKey, TimeProvider time);
+}
+
+// ElasticLM.Issuing: サーバーがノンスを出し、証明を検証する
+public sealed class NonceService(ReadOnlySpan<byte> secret, TimeProvider time)   // 秘密は 32 バイト以上
+{
+    public static readonly TimeSpan Lifetime;                                     // 300 秒
+    public string Issue();
+    public bool IsValid(string? nonce, out DateTimeOffset expiresAt);
+}
+
+public interface IReplayStore { ReplayCheck TryUse(string jti, DateTimeOffset expiresAt); }
+public sealed class MemoryReplayStore(TimeProvider time, int capacity = 100_000) : IReplayStore { public void Purge(); }
+
+public sealed class ProofVerifier(NonceService nonces, IReplayStore replays)
+{
+    public ProofResult Verify(string? proof, string method, Uri target, ReadOnlySpan<byte> body,
+                              Func<string, ECParameters?>? knownKey = null);
+}
+
+// ElasticLM.Licensing: 両側で使う
+public static class HttpTargetUri { public static string Normalize(Uri uri); }   // §12.1
+public static class KeyIds { public static string Of(ECDsa key); }                // §7.4
+```
 
 ### 12.3 端末の情報
 
@@ -1043,6 +1107,33 @@ stateDiagram-v2
 
 手順 3〜5 はオンプレミスのリースだけに当てはまる。SaaS 型のリースはベンダーの署名鍵（`use: lease`）で署名され、手順 3〜5 が防ぐ「鍵を握った利用者側のサーバー」がいない。また SaaS 型のクライアントはポリシーの値を持たない。SaaS 型では手順 1・2・6 を行う（M3a、Issue #15 で決めた）。
 
+API（`ElasticLM.Licensing`、M3a で出荷した形）:
+
+```csharp
+public sealed class ServerIdentity : IDisposable              // 検証済みのサーバーライセンスとサーバーの公開鍵
+{
+    public static bool TryCreate(VerifiedLicense license, ReadOnlySpan<byte> publicKeyJwk,
+                                 out ServerIdentity? identity, out LicenseError? error);
+    public VerifiedLicense License { get; }
+    public string KeyId { get; }
+}
+
+public sealed record LeaseExpectation(string ProductId, string InstallationKeyThumbprint);
+
+public sealed class LeaseVerifier(TrustStore trust, TimeProvider time, IClockGuard clockGuard,
+                                  LicenseVerifierOptions? options = null)
+{
+    public LeaseVerificationResult VerifyOnPremises(string leaseToken, ServerIdentity server, LeaseExpectation expect);
+    public LeaseVerificationResult VerifyHosted(string leaseToken, IReadOnlyList<string> certificates, LeaseExpectation expect);
+}
+
+public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Invalid(LicenseError) */ }
+```
+
+- `ServerIdentity` はサーバーの鍵のオブジェクトを 1 度だけ作って持ち、そのサーバーのリースをすべてそれで確かめる。
+- `LeaseVerifier` は、SaaS 型のリースの証明書を、`LicenseVerifier` と同じく検証器ごとに最初の 16 件まで覚える。
+- リースの発行は `ElasticLM.Issuing` の `LeaseIssuer.Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)` で行う。
+
 ### 12.8 オフライン有効化
 
 ネットワークにつながらない端末のために、ファイルを人が運ぶ。
@@ -1160,7 +1251,7 @@ stateDiagram-v2
 
 これで、社内に証明書の仕組みがなくても、サーバーのなりすまし（T17）を防ぐ。
 
-Windows で PEM から読んだ鍵は一時的な鍵になり、SChannel の TLS で失敗することを D0 で確かめた（https://github.com/dotnet/aspnetcore/issues/40020 ）。PKCS#12 に書き出して読み直すと動く。実装は M3 の行で行う。
+Windows で PEM から読んだ鍵は一時的な鍵になり、SChannel の TLS で失敗することを D0 で確かめた（https://github.com/dotnet/aspnetcore/issues/40020 ）。PKCS#12 に書き出して読み直すと動く。実装は M3b の行で行う。
 
 ### 13.6 冗長化を作らない根拠
 

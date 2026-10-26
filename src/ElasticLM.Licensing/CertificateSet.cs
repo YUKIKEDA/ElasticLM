@@ -26,6 +26,9 @@ internal sealed class CertificateSet(TrustStore trust, string use)
     // because the trust store cannot change. Bounded so that a stream of distinct certificates cannot grow it.
     private readonly ConcurrentDictionary<string, CertifiedKey> _certificates = new(StringComparer.Ordinal);
 
+    /// <summary>Gets the number of certificates kept, for tests of the cache.</summary>
+    internal int CachedCount => _certificates.Count;
+
     public List<CertifiedKey> CollectCandidates(List<string> certificates, string tokenKeyId, out List<CertifiedKey>? uncached)
     {
         uncached = null;

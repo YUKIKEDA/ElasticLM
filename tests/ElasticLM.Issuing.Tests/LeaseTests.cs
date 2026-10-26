@@ -263,11 +263,41 @@ public sealed class LeaseTests : IDisposable
         };
         string lease = LeaseIssuer.Issue(_signing, spec, _time);
 
-        Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyHosted(lease, [leaseCert], trust, Expect()));
-        Assert.Equal(ErrorCode.UntrustedKey, Invalid(Verifier().VerifyHosted(lease, [licenseCert], trust, Expect())).Code);
-        Assert.Equal(ErrorCode.UntrustedKey, Invalid(Verifier().VerifyHosted(lease, [leaseCert], otherTrust, Expect())).Code);
+        Assert.IsType<LeaseVerificationResult.Valid>(Verifier(trust: trust).VerifyHosted(lease, [leaseCert], Expect()));
+        Assert.Equal(ErrorCode.UntrustedKey, Invalid(Verifier(trust: trust).VerifyHosted(lease, [licenseCert], Expect())).Code);
+        Assert.Equal(ErrorCode.UntrustedKey, Invalid(Verifier(trust: otherTrust).VerifyHosted(lease, [leaseCert], Expect())).Code);
         string otherProduct = LeaseIssuer.Issue(_signing, spec with { ProductId = "acme-cam" }, _time);
-        Assert.Equal(ErrorCode.WrongProduct, Invalid(Verifier().VerifyHosted(otherProduct, [leaseCert], trust, Expect())).Code);
+        Assert.Equal(ErrorCode.WrongProduct, Invalid(Verifier(trust: trust).VerifyHosted(otherProduct, [leaseCert], Expect())).Code);
+    }
+
+    /// <summary>
+    /// One verifier keeps a hosted lease's certificate after the first check, so later checks with the same certificate do
+    /// not verify it or create its key again (review of PR #16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A lease certificate from the trusted root; one lease verifier.
+    ///
+    /// Steps:
+    /// - Verify three hosted leases that carry the same certificate.
+    ///
+    /// Expected:
+    /// - All valid; the verifier keeps exactly one certificate.
+    /// </remarks>
+    [Fact]
+    public void VerifyHosted_SameCertificate_IsKeptOnce()
+    {
+        string leaseCert = CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
+        LeaseVerifier verifier = Verifier();
+        LeaseSpec spec = Spec(Server()) with { ServerLicenseTokenId = null };
+
+        for (int i = 0; i < 3; i++)
+        {
+            string lease = LeaseIssuer.Issue(_signing, spec with { LeaseId = "lease-" + i }, _time);
+            Assert.IsType<LeaseVerificationResult.Valid>(verifier.VerifyHosted(lease, [leaseCert], Expect()));
+        }
+
+        Assert.Equal(1, verifier.CachedCertificateCount);
     }
 
     /// <summary>
@@ -364,7 +394,8 @@ public sealed class LeaseTests : IDisposable
         return input + "." + System.Buffers.Text.Base64Url.EncodeToString(signature);
     }
 
-    private LeaseVerifier Verifier(IClockGuard? guard = null) => new(_time, guard ?? StatelessClockGuard.Instance);
+    private LeaseVerifier Verifier(IClockGuard? guard = null, TrustStore? trust = null) =>
+        new(trust ?? TrustStore.Create([KeyFiles.ExportPublic(_root)], []), _time, guard ?? StatelessClockGuard.Instance);
 
     private LeaseExpectation Expect() => new("acme-cad", ClientKid);
 

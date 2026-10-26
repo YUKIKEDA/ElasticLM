@@ -7,6 +7,8 @@ namespace ElasticLM.Licensing;
 /// </summary>
 public sealed class LeaseVerifier
 {
+    private readonly TrustStore _trust;
+    private readonly CertificateSet _leaseCertificates;
     private readonly TimeProvider _time;
     private readonly IClockGuard _clockGuard;
     private readonly LicenseVerifierOptions _options;
@@ -14,12 +16,15 @@ public sealed class LeaseVerifier
     /// <summary>
     /// Initializes a new instance of the <see cref="LeaseVerifier"/> class.
     /// </summary>
+    /// <param name="trust">The trust store, for the certificates of hosted leases. Certificates that verified are kept for the
+    /// life of the verifier, as in <see cref="LicenseVerifier"/>.</param>
     /// <param name="time">The time provider.</param>
     /// <param name="clockGuard">The clock guard (design §11.4 item 5: leases are guarded like licenses).</param>
     /// <param name="options">The options, or <see langword="null"/> for the defaults. Only <see cref="LicenseVerifierOptions.ClockSkew"/> is used.</param>
     /// <exception cref="ArgumentOutOfRangeException">The clock skew is negative or more than <see cref="LicenseVerifierOptions.MaxClockSkew"/>.</exception>
-    public LeaseVerifier(TimeProvider time, IClockGuard clockGuard, LicenseVerifierOptions? options = null)
+    public LeaseVerifier(TrustStore trust, TimeProvider time, IClockGuard clockGuard, LicenseVerifierOptions? options = null)
     {
+        ArgumentNullException.ThrowIfNull(trust);
         ArgumentNullException.ThrowIfNull(time);
         ArgumentNullException.ThrowIfNull(clockGuard);
         options ??= new LicenseVerifierOptions();
@@ -28,6 +33,8 @@ public sealed class LeaseVerifier
             throw new ArgumentOutOfRangeException(nameof(options), options.ClockSkew, "The clock skew must be between zero and one hour.");
         }
 
+        _trust = trust;
+        _leaseCertificates = new CertificateSet(trust, CertificateSet.UseLease);
         _time = time;
         _clockGuard = clockGuard;
         _options = new LicenseVerifierOptions { ClockSkew = options.ClockSkew };
@@ -51,7 +58,7 @@ public sealed class LeaseVerifier
         }
 
         // Step 1: signed by the server's key.
-        if (jws!.Header.Kid != server.KeyId || !VerifyWith(jws, server.Key))
+        if (jws!.Header.Kid != server.KeyId || !server.Key.Verify(jws))
         {
             return Fail(ErrorCode.BadSignature, "The lease is not signed by the server's key.");
         }
@@ -102,13 +109,11 @@ public sealed class LeaseVerifier
     /// </summary>
     /// <param name="leaseToken">The lease token.</param>
     /// <param name="certificates">The certificates sent with the lease.</param>
-    /// <param name="trust">The trust store.</param>
     /// <param name="expect">The product and installation the lease must be for.</param>
     /// <returns>The result.</returns>
-    public LeaseVerificationResult VerifyHosted(string leaseToken, IReadOnlyList<string> certificates, TrustStore trust, LeaseExpectation expect)
+    public LeaseVerificationResult VerifyHosted(string leaseToken, IReadOnlyList<string> certificates, LeaseExpectation expect)
     {
         ArgumentNullException.ThrowIfNull(certificates);
-        ArgumentNullException.ThrowIfNull(trust);
         ArgumentNullException.ThrowIfNull(expect);
         if (!TryReadSigned(leaseToken, out CompactJws? jws, out LicenseError? error))
         {
@@ -120,16 +125,12 @@ public sealed class LeaseVerifier
             return Fail(ErrorCode.Malformed, "Between one and four certificates are required.");
         }
 
-        if (trust.IsRevoked(jws!.Header.Kid))
+        if (_trust.IsRevoked(jws!.Header.Kid))
         {
             return Fail(ErrorCode.KeyRevoked, "The lease was signed by a revoked key.");
         }
 
-        List<CertifiedKey> candidates = new CertificateSet(trust, CertificateSet.UseLease).CollectCandidates(
-            [.. certificates],
-            jws.Header.Kid,
-            out List<CertifiedKey>? uncached
-        );
+        List<CertifiedKey> candidates = _leaseCertificates.CollectCandidates([.. certificates], jws.Header.Kid, out List<CertifiedKey>? uncached);
         try
         {
             if (candidates.Count == 0)
@@ -165,6 +166,9 @@ public sealed class LeaseVerifier
         }
     }
 
+    /// <summary>Gets the number of hosted-lease certificates kept, for tests of the cache.</summary>
+    internal int CachedCertificateCount => _leaseCertificates.CachedCount;
+
     private static LeaseVerificationResult.Invalid Fail(ErrorCode code, string message) => new(new LicenseError(code, message));
 
     private static bool TryReadSigned(string? token, out CompactJws? jws, out LicenseError? error)
@@ -177,19 +181,6 @@ public sealed class LeaseVerifier
         }
 
         return CompactJws.TryParse(token, TokenTypes.Lease, out jws, out error);
-    }
-
-    private static bool VerifyWith(CompactJws jws, System.Security.Cryptography.ECParameters key)
-    {
-        if (!VerificationKey.TryCreate(key, out VerificationKey? verifier))
-        {
-            return false;
-        }
-
-        using (verifier)
-        {
-            return verifier!.Verify(jws);
-        }
     }
 
     private static bool TryReadPayload(CompactJws jws, out LeasePayload? payload)
