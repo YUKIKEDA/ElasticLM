@@ -10,6 +10,9 @@ for (int i = 0; i < args.Length; i++)
         case "--config" when i + 1 < args.Length:
             configPath = args[++i];
             break;
+        case "--config":
+            Console.Error.WriteLine("error: --config needs the path of a settings file.");
+            return 2;
         case "--help" or "-h":
             Console.WriteLine("Usage: elm-server [--config <settings.json>]");
             Console.WriteLine("Settings: design §13.8; each key can also be set as ELM_<KEY>, for example ELM_PRODUCT.");

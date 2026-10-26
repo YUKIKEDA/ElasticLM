@@ -221,7 +221,8 @@ public sealed class LicenseClient : IAsyncDisposable
     /// request checks the server again as on the first connection.
     /// </summary>
     /// <param name="serverUrl">The server URL.</param>
-    /// <returns><see langword="true"/> when a pin was deleted.</returns>
+    /// <returns><see langword="true"/> when a pin was deleted; <see langword="false"/> when there was none or the file
+    /// cannot be deleted.</returns>
     public bool ResetServerPin(Uri serverUrl)
     {
         ArgumentNullException.ThrowIfNull(serverUrl);

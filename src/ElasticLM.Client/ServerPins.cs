@@ -86,17 +86,25 @@ internal sealed class ServerPins(string directory)
     /// <summary>
     /// Deletes the pin of a server.
     /// </summary>
-    /// <returns><see langword="true"/> when a pin was deleted.</returns>
+    /// <returns><see langword="true"/> when a pin was deleted; <see langword="false"/> when there was none or it cannot be
+    /// deleted (a read-only folder, a file another process holds).</returns>
     public bool Delete(Uri server)
     {
         string path = PathOf(server);
-        if (!File.Exists(path))
+        try
+        {
+            if (!File.Exists(path))
+            {
+                return false;
+            }
+
+            File.Delete(path);
+            return true;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return false;
         }
-
-        File.Delete(path);
-        return true;
     }
 
     private static void TryDelete(string path)

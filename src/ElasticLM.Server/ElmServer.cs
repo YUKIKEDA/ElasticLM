@@ -330,11 +330,8 @@ internal sealed class ElmServer : IAsyncDisposable
 
     private static void Listen(KestrelServerOptions kestrel, Uri listen, X509Certificate2 certificate)
     {
-        string host = listen.Host.Trim('[', ']');
-        IPAddress address =
-            host == "localhost" ? IPAddress.Loopback
-            : IPAddress.TryParse(host, out IPAddress? parsed) ? parsed
-            : throw new ServerStartException($"listen must name an IP address, localhost, 0.0.0.0, or [::]: '{listen}'.");
+        // ServerSettings.Load checks the host already; settings built in code are checked here.
+        IPAddress address = ServerSettings.ListenAddress(listen);
         kestrel.Listen(address, listen.Port, options => options.UseHttps(certificate));
     }
 

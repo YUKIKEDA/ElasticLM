@@ -612,8 +612,8 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
-    /// A reclaim of a lease the server holds is judged like a renewal: the same or previous sequence number is the same
-    /// client; an older one is a clone.
+    /// A reclaim of a lease the server holds: the same sequence number is the same client; a token one behind is a clone,
+    /// because a reclaim names no unanswered request (design §10.4, 0.47).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -623,7 +623,7 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Reclaim the token of sequence 3, then 2, then 1; renew with 3.
     ///
     /// Expected:
-    /// - OK, OK, ELM_CLONE_DETECTED; the renewal is ELM_CLONE_DETECTED because the lease is stopped.
+    /// - OK, then ELM_CLONE_DETECTED twice (the lease is stopped at the second); the renewal is ELM_CLONE_DETECTED.
     /// </remarks>
     [Fact]
     public void Reclaim_KnownLease_IsJudgedBySequence()
@@ -635,7 +635,7 @@ public sealed class LeaseEngineTests : IDisposable
         var third = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(first.LeaseId, 2, client.KeyId));
 
         Assert.Null(Assert.Single(engine.Reclaim([third.Token], client.KeyId, client.PublicKey)).Error);
-        Assert.Null(Assert.Single(engine.Reclaim([second.Token], client.KeyId, client.PublicKey)).Error);
+        Assert.Equal(ErrorCode.CloneDetected, Assert.Single(engine.Reclaim([second.Token], client.KeyId, client.PublicKey)).Error?.Code);
         Assert.Equal(ErrorCode.CloneDetected, Assert.Single(engine.Reclaim([first.Token], client.KeyId, client.PublicKey)).Error?.Code);
         AssertRefused(ErrorCode.CloneDetected, engine.Renew(first.LeaseId, 3, client.KeyId));
     }

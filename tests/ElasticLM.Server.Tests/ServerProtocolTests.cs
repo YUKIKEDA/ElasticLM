@@ -230,12 +230,16 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// Steps:
     /// - Acquire with: a body of exactly 64 KiB of padding and one byte more, with Content-Length and chunked; not JSON; 9 fingerprints; an upper-case
     ///   fingerprint; a host of 256 bytes; an app of 65 bytes; a version of 33 characters; borrow 0; borrow 60; count 0.
-    ///   Reclaim 65 tokens.
+    ///   Acquire with a version of exactly 32 characters; with every other field exactly at its limit (names with a two-byte
+    ///   character); with an app one byte over. Renew
+    ///   with 16 retry IDs of 64 characters, 17 IDs, an ID of 65 characters, and a null ID. Reclaim 65 tokens.
     ///
     /// Expected:
     /// - 64 KiB is read (a JSON error, ELM_MALFORMED) and 64 KiB + 1 is 413 ELM_PAYLOAD_TOO_LARGE; ELM_MALFORMED for the
     ///   shapes; ELM_INVALID_ARGUMENT for borrow 0 and count 0; ELM_BORROW_NOT_ALLOWED for borrow 60; the reclaim is
-    ///   ELM_MALFORMED.
+    ///   ELM_MALFORMED. The 32-character version is ELM_INVALID_ARGUMENT (past the size check); every field at its limit is 201 and one byte
+    ///   over is ELM_MALFORMED; the renewal at the limits is 200
+    ///   and the three over it are ELM_MALFORMED.
     /// </remarks>
     [Fact]
     public async Task Bodies_AreLimitedAndChecked()
@@ -263,6 +267,53 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":1,"borrow":60}"""), "ELM_BORROW_NOT_ALLOWED", HttpStatusCode.Forbidden);
         await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":0}"""), "ELM_INVALID_ARGUMENT");
 
+        // A version of 32 characters passes the size check and is refused only as a version (each part has at most 9 digits,
+        // so a valid version has at most 29 characters).
+        await raw.AssertAcquireAsync(
+            Raw.Json("{\"feature\":\"pro\",\"count\":1,\"version\":\"" + new string('1', 32) + "\"}"),
+            "ELM_INVALID_ARGUMENT"
+        );
+
+        // Exactly at each limit passes: 8 fingerprints, host and user 255 bytes, app 64 bytes, with the longest valid version.
+        // A two-byte character in the names fixes that they are counted in UTF-8 bytes.
+        string version = "2.000000000.000000000";
+        string host = "é" + new string('h', 253);
+        string app = "é" + new string('a', 62);
+        byte[] atLimits = Raw.Json(
+            "{\"feature\":\"pro\",\"count\":1,\"version\":\""
+                + version
+                + "\",\"fingerprints\":["
+                + string.Join(',', Enumerable.Repeat($"\"{fingerprint}\"", 8))
+                + "],\"client\":{\"host\":\""
+                + host
+                + "\",\"user\":\""
+                + host
+                + "\"},\"app\":\""
+                + app
+                + "\"}"
+        );
+        using (HttpResponseMessage accepted = await raw.SignedAsync(HttpMethod.Post, "v1/leases", atLimits, includeKey: true))
+        {
+            Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+        }
+
+        await raw.AssertAcquireAsync(Raw.Json("{\"feature\":\"pro\",\"count\":1,\"app\":\"é" + new string('a', 63) + "\"}"), "ELM_MALFORMED");
+
+        // A renewal names at most 16 unanswered proofs of at most 64 characters each.
+        string id = await raw.AcquireAsync();
+        string RenewBody(int count, int length) =>
+            "{\"seq\":1,\"retry\":[" + string.Join(',', Enumerable.Repeat("\"" + new string('j', length) + "\"", count)) + "]}";
+        using (HttpResponseMessage renewed = await raw.SignedAsync(HttpMethod.Post, $"v1/leases/{id}/renew", Raw.Json(RenewBody(16, 64))))
+        {
+            Assert.Equal(HttpStatusCode.OK, renewed.StatusCode);
+        }
+
+        foreach (string tooMuch in new[] { RenewBody(17, 64), RenewBody(1, 65), "{\"seq\":2,\"retry\":[null]}" })
+        {
+            using HttpResponseMessage refused = await raw.SignedAsync(HttpMethod.Post, $"v1/leases/{id}/renew", Raw.Json(tooMuch));
+            await Raw.AssertCodeAsync(refused, "ELM_MALFORMED");
+        }
+
         byte[] reclaim = Raw.Json($$"""{"leases":[{{string.Join(',', Enumerable.Repeat("\"x\"", 65))}}]}""");
         using HttpResponseMessage tooMany = await raw.SendAsync(
             HttpMethod.Post,
@@ -271,7 +322,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             raw.Proof(HttpMethod.Post, "v1/leases/reclaim", reclaim, await raw.NonceAsync(), includeKey: true)
         );
         await Raw.AssertCodeAsync(tooMany, "ELM_MALFORMED");
-        Assert.Equal(0, raw.Server.Engine.LeaseCount);
+        Assert.Equal(2, raw.Server.Engine.LeaseCount);
     }
 
     /// <summary>

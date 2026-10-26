@@ -67,6 +67,7 @@ internal sealed partial class ServerSettings
         }
 
         Uri listen = ParseHttps(Env("ELM_LISTEN") ?? file.Listen ?? "https://0.0.0.0:7070", "listen");
+        _ = ListenAddress(listen);
         IReadOnlyList<Uri> publicUrls = [.. (EnvList("ELM_PUBLICURLS") ?? file.PublicUrls ?? []).Select(u => ParseHttps(u, "publicUrls"))];
         int perIp = Env("ELM_RATELIMIT_PERIP") is string perIpText ? ParseInt(perIpText, "rateLimit.perIp") : file.RateLimit?.PerIp ?? 20;
         if (perIp is < 1 or > 10_000)
@@ -116,6 +117,19 @@ internal sealed partial class ServerSettings
         {
             throw new ServerStartException($"The settings file '{path}' cannot be read: {e.Message}");
         }
+    }
+
+    /// <summary>
+    /// Returns the address to listen on: the host of <c>listen</c> must be an IP address, <c>localhost</c>, <c>0.0.0.0</c>,
+    /// or <c>[::]</c> (design §13.8).
+    /// </summary>
+    /// <exception cref="ServerStartException">The host is a name other than <c>localhost</c>.</exception>
+    public static System.Net.IPAddress ListenAddress(Uri listen)
+    {
+        string host = listen.Host.Trim('[', ']');
+        return host == "localhost" ? System.Net.IPAddress.Loopback
+            : System.Net.IPAddress.TryParse(host, out System.Net.IPAddress? parsed) ? parsed
+            : throw new ServerStartException($"listen must name an IP address, localhost, 0.0.0.0, or [::]: '{listen}'.");
     }
 
     private static Uri ParseHttps(string text, string key)

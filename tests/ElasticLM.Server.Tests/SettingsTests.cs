@@ -76,8 +76,8 @@ public sealed class SettingsTests : IDisposable
     /// - Load each.
     ///
     /// Expected:
-    /// - ServerStartException naming: the unknown key, product, listen, rateLimit.perIp (0 and 10001), the allow entry, and
-    ///   the missing file.
+    /// - ServerStartException naming: the unknown key, product, listen (http, and a host name other than localhost),
+    ///   rateLimit.perIp (0 and 10001), the allow entry, and the missing file.
     /// </remarks>
     [Fact]
     public void Load_InvalidSettings_Throw()
@@ -93,6 +93,7 @@ public sealed class SettingsTests : IDisposable
         AssertError("""{"listen":"https://0.0.0.0:1"}""", "product");
         AssertError("""{"product":"Acme"}""", "product");
         AssertError("""{"product":"acme-cad","listen":"http://0.0.0.0:7070"}""", "listen");
+        AssertError("""{"product":"acme-cad","listen":"https://licenses.example:7070"}""", "listen must name an IP address");
         AssertError("""{"product":"acme-cad","rateLimit":{"perIp":0}}""", "rateLimit.perIp");
         AssertError("""{"product":"acme-cad"}""", "rateLimit.perIp", new() { ["ELM_RATELIMIT_PERIP"] = "10001" });
         AssertError("""{"product":"acme-cad","allow":["somewhere"]}""", "somewhere");

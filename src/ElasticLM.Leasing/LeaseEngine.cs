@@ -476,8 +476,8 @@ public sealed class LeaseEngine
         return new ReclaimResult(lease.LeaseId, null);
     }
 
-    // A token for a lease the server already holds: the same or the previous sequence number is the same client; anything
-    // else is another copy (design §10.4).
+    // A token for a lease the server already holds: the same sequence number is the same client; anything else is another
+    // copy (design §10.4). A reclaim carries no retry, so a token one behind cannot be told from a lockstep clone (0.47).
     private ReclaimResult ReclaimKnown(LeaseRecord existing, VerifiedLease lease)
     {
         if (existing.Stopped)
@@ -485,7 +485,7 @@ public sealed class LeaseEngine
             return new ReclaimResult(lease.LeaseId, new LicenseError(ErrorCode.CloneDetected, "The lease was stopped as a clone."));
         }
 
-        if (lease.Sequence == existing.Sequence || lease.Sequence == existing.Sequence - 1)
+        if (lease.Sequence == existing.Sequence)
         {
             return new ReclaimResult(lease.LeaseId, null);
         }
