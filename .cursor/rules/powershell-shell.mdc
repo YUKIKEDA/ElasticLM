@@ -41,4 +41,6 @@ body
 
 Write files with the editor tools, not with shell redirection. A Python script sent through the Bash tool loses the backslashes of `\f`, `\r`, `\t`, and `\v` in its string literals. After an edit by a script, count the control bytes in the files it wrote with `tr -cd '\000-\010\013\014\016-\037' < <file> | wc -c`; the count is 0.
 
+A Python script in a Bash heredoc that inserts C# text containing `\n` writes a real line break into the C# string, which does not compile. It happened three times in M2 (PR #12). An edit whose new text holds a C# escape (`\n`, `\t`, `\\`) is made with the editor tool, not with a heredoc script.
+
 `Copy-Item` keeps the file's last write time, so an incremental build does not see a file put back from a copy. After copying a source file into place, set its time to now (`(Get-Item <file>).LastWriteTime = Get-Date`).
