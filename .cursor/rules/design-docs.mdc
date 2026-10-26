@@ -42,7 +42,7 @@ After a script edits a Markdown table, read `git diff --stat`. A diff of the who
 
 ## Review before the PR
 
-A design PR is reviewed by an independent reader before it is opened: an agent that reads only the documents and the rules, not the conversation that wrote them, and reports security holes, contradictions, dangling references, and rule violations. Each finding is fixed in the design or put to the owner as a question. The review's summary goes on the Issue as a comment, so that the PR body can cite its finding IDs. In D0 this review found 35 points in the first draft, among them a fake server minting leases from a trial license and a negative seat count (Issue #3).
+A design PR, and a feature PR that adds or changes statements of the design, is reviewed by an independent reader before it is opened: an agent that reads only the documents and the rules, not the conversation that wrote them, and reports security holes, contradictions, dangling references, and rule violations. Each finding is fixed in the design or put to the owner as a question. The review's summary goes on the Issue as a comment, so that the PR body can cite its finding IDs. In D0 this review found 35 points in the first draft, among them a fake server minting leases from a trial license and a negative seat count (Issue #3). In M3b the review of the design added by the feature PR found that two copies of a cloned VM, renewing at the same moment, passed the D0 rule "one sequence number behind is a retry" and could share one seat (PR #22, decision 0.47).
 
 ## Judge the current optimum
 

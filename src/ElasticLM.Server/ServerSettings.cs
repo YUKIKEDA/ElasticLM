@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -124,11 +125,11 @@ internal sealed partial class ServerSettings
     /// or <c>[::]</c> (design §13.8).
     /// </summary>
     /// <exception cref="ServerStartException">The host is a name other than <c>localhost</c>.</exception>
-    public static System.Net.IPAddress ListenAddress(Uri listen)
+    public static IPAddress ListenAddress(Uri listen)
     {
         string host = listen.Host.Trim('[', ']');
-        return host == "localhost" ? System.Net.IPAddress.Loopback
-            : System.Net.IPAddress.TryParse(host, out System.Net.IPAddress? parsed) ? parsed
+        return host == "localhost" ? IPAddress.Loopback
+            : IPAddress.TryParse(host, out IPAddress? parsed) ? parsed
             : throw new ServerStartException($"listen must name an IP address, localhost, 0.0.0.0, or [::]: '{listen}'.");
     }
 
