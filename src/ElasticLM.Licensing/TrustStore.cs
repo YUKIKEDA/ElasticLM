@@ -28,7 +28,7 @@ public sealed class TrustStore
     /// <param name="rootPublicKeysPem">One or more P-256 public keys as PEM <c>PUBLIC KEY</c> blocks.</param>
     /// <param name="revokedKeyIds">Key IDs whose certificates and tokens are rejected (design §7.5).</param>
     /// <returns>The trust store.</returns>
-    /// <exception cref="ArgumentException">No root key is given, or a key is not a P-256 public key in PEM.</exception>
+    /// <exception cref="ArgumentException">No root key is given, a key is not a P-256 public key in one PEM <c>PUBLIC KEY</c> block, or a key is given twice.</exception>
     public static TrustStore Create(ReadOnlySpan<string> rootPublicKeysPem, ReadOnlySpan<string> revokedKeyIds)
     {
         if (rootPublicKeysPem.IsEmpty)
@@ -48,7 +48,11 @@ public sealed class TrustStore
                 throw new ArgumentException("A root key is not a P-256 public key in PEM.", nameof(rootPublicKeysPem));
             }
 
-            roots[key!.KeyId] = key;
+            if (!roots.TryAdd(key!.KeyId, key))
+            {
+                key.Dispose();
+                throw new ArgumentException("A root key is given more than once.", nameof(rootPublicKeysPem));
+            }
         }
 
         var revoked = new HashSet<string>(StringComparer.Ordinal);

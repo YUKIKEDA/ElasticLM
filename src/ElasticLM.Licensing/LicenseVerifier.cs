@@ -92,14 +92,36 @@ public sealed class LicenseVerifier
             return Fail(ErrorCode.KeyRevoked, "The license was signed by a revoked key.");
         }
 
-        // Step 3: choose a certificate that verifies under a trusted root and certifies the token's key for licenses.
-        if (!TrySelectCertificate(envelope.Certificates, license.Header.Kid, out CertifiedKey? certified))
+        // Step 3: the certificates that verify under a trusted root and certify the token's key for licenses. Every candidate
+        // certifies the same key, so the signature is checked once with it before the payload is read (design §8.2 rule 6).
+        List<CertifiedKey> candidates = CollectCandidates(envelope.Certificates, license.Header.Kid, out List<CertifiedKey>? uncached);
+        try
+        {
+            return VerifyToken(license, candidates, requirement, requiredVersion);
+        }
+        finally
+        {
+            foreach (CertifiedKey entry in uncached ?? [])
+            {
+                entry.Key.Dispose();
+            }
+        }
+    }
+
+    private LicenseVerificationResult VerifyToken(
+        CompactJws license,
+        List<CertifiedKey> candidates,
+        LicenseRequirement requirement,
+        FeatureVersion? requiredVersion
+    )
+    {
+        if (candidates.Count == 0)
         {
             return Fail(ErrorCode.UntrustedKey, "No trusted certificate certifies the license signing key.");
         }
 
         // Step 4: the token signature.
-        if (!certified!.Key.Verify(license))
+        if (!candidates[0].Key.Verify(license))
         {
             return Fail(ErrorCode.BadSignature, "The license signature does not verify.");
         }
@@ -118,10 +140,11 @@ public sealed class LicenseVerifier
         long nowSeconds = now.ToUnixTimeSeconds();
         long skew = (long)_options.ClockSkew.TotalSeconds;
 
-        // Step 5: the token was issued inside the certificate's validity period (design §7.5).
-        if (payload.Iat < certified.Nbf - skew || payload.Iat > certified.Exp + skew)
+        // Step 5: a candidate certificate whose validity period holds the token's iat (design §7.5). Several certificates for
+        // the same key appear when the certificate is renewed without changing the key.
+        if (!candidates.Exists(c => payload.Iat >= c.Nbf - skew && payload.Iat <= c.Exp + skew))
         {
-            return Fail(ErrorCode.CertificateExpired, "The license was issued outside the validity period of its key certificate.");
+            return Fail(ErrorCode.CertificateExpired, "The license was issued outside the validity period of its key certificates.");
         }
 
         // Step 6: not issued in the future.
@@ -210,7 +233,7 @@ public sealed class LicenseVerifier
             return false;
         }
 
-        if (parsed.Certificates.Count is 0 or > Limits.MaxCertificates)
+        if (parsed.Certificates.Count is 0 or > Limits.MaxCertificates || parsed.Certificates.Contains(null!))
         {
             return false;
         }
@@ -219,9 +242,10 @@ public sealed class LicenseVerifier
         return true;
     }
 
-    private bool TrySelectCertificate(List<string> certificates, string tokenKeyId, out CertifiedKey? selected)
+    private List<CertifiedKey> CollectCandidates(List<string> certificates, string tokenKeyId, out List<CertifiedKey>? uncached)
     {
-        selected = null;
+        uncached = null;
+        var candidates = new List<CertifiedKey>(1);
         foreach (string text in certificates)
         {
             if (!_certificates.TryGetValue(text, out CertifiedKey? entry))
@@ -232,22 +256,21 @@ public sealed class LicenseVerifier
                     continue;
                 }
 
-                if (_certificates.Count >= MaxCachedCertificates)
+                // The cache keeps the first certificates it sees and never evicts, so a cached key is never disposed while
+                // another call uses it. Certificates beyond the limit are verified per call and disposed by the caller.
+                if (_certificates.Count >= MaxCachedCertificates || !_certificates.TryAdd(text, entry!))
                 {
-                    _certificates.Clear();
+                    (uncached ??= []).Add(entry!);
                 }
-
-                _certificates[text] = entry!;
             }
 
             if (entry!.Key.KeyId == tokenKeyId)
             {
-                selected = entry;
-                return true;
+                candidates.Add(entry);
             }
         }
 
-        return false;
+        return candidates;
     }
 
     private bool TryVerifyCertificate(string text, out CertifiedKey? entry)
@@ -344,6 +367,12 @@ public sealed class LicenseVerifier
     private static bool HasValidLimitsAndShapes(LicensePayload payload, LicenseKind kind)
     {
         if (payload.Feat.Count > Limits.MaxFeatures || (payload.Fp?.Count ?? 0) > Limits.MaxFingerprints)
+        {
+            return false;
+        }
+
+        // Collection elements are outside RespectNullableAnnotations, so a JSON null element is rejected here.
+        if (payload.Feat.Contains(null!) || (payload.Fp?.Contains(null!) ?? false) || (payload.Meta?.ContainsValue(null!) ?? false))
         {
             return false;
         }

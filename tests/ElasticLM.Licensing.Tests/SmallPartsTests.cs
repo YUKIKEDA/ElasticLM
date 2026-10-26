@@ -55,25 +55,34 @@ public sealed class SmallPartsTests
     }
 
     /// <summary>
-    /// The trust store refuses no keys and keys that are not P-256 public keys in PEM.
+    /// The trust store refuses no keys, keys that are not P-256 public keys in one PEM PUBLIC KEY block, private keys, and a
+    /// key given twice.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - An empty list, a non-PEM string, and a P-384 key.
+    /// - An empty list, a non-PEM string, a P-384 key, a P-256 private key as PKCS#8 and as SEC1 PEM, two PUBLIC KEY blocks in
+    ///   one text, and the same public key twice.
     ///
     /// Steps:
     /// - Create a trust store from each.
     ///
     /// Expected:
-    /// - ArgumentException each time.
+    /// - ArgumentException each time; the public key alone is accepted.
     /// </remarks>
     [Fact]
     public void Create_InvalidRoots_Throws()
     {
         using var p384 = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP384);
+        using var p256 = System.Security.Cryptography.ECDsa.Create(System.Security.Cryptography.ECCurve.NamedCurves.nistP256);
+        string publicPem = p256.ExportSubjectPublicKeyInfoPem();
 
         Assert.Throws<ArgumentException>(() => TrustStore.Create([], []));
         Assert.Throws<ArgumentException>(() => TrustStore.Create(["not a key"], []));
         Assert.Throws<ArgumentException>(() => TrustStore.Create([p384.ExportSubjectPublicKeyInfoPem()], []));
+        Assert.Throws<ArgumentException>(() => TrustStore.Create([p256.ExportPkcs8PrivateKeyPem()], []));
+        Assert.Throws<ArgumentException>(() => TrustStore.Create([p256.ExportECPrivateKeyPem()], []));
+        Assert.Throws<ArgumentException>(() => TrustStore.Create([publicPem + "\n" + p384.ExportSubjectPublicKeyInfoPem()], []));
+        Assert.Throws<ArgumentException>(() => TrustStore.Create([publicPem, publicPem], []));
+        Assert.Single(TrustStore.Create([publicPem], []).RootKeyIds);
     }
 }

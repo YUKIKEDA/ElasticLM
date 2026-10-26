@@ -32,7 +32,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
-| V1  | 端から端までのテスト、文書、サンプル、安全性の見直し、v1 の公開                            | not-started | —     |
+| V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
 
 ## v1 の後
 

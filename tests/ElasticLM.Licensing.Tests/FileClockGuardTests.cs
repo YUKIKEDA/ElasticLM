@@ -120,6 +120,59 @@ public sealed class FileClockGuardTests : IDisposable
     }
 
     /// <summary>
+    /// When the state cannot be written, the guard keeps going on its in-memory value and the token's iat, without an
+    /// exception.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A state path inside a directory that does not exist.
+    ///
+    /// Steps:
+    /// - Observe T0 + 1 day; observe T0 + 1 day - 301 s in the same guard.
+    ///
+    /// Expected:
+    /// - The first is accepted and no file appears; the second is rejected from the in-memory value.
+    /// </remarks>
+    [Fact]
+    public void Observe_UnwritableState_KeepsGoingInMemory()
+    {
+        string path = Path.Combine(_directory, "missing", "clock.json");
+        var guard = new FileClockGuard(path);
+
+        Assert.True(guard.Observe(T0.AddDays(1), T0, Skew));
+        Assert.False(File.Exists(path));
+        Assert.False(guard.Observe(T0.AddDays(1).AddSeconds(-301), T0, Skew));
+    }
+
+    /// <summary>
+    /// After a failed write, the guard does not try again until the time advanced by 60 seconds.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A state path in a missing directory; the first write fails.
+    ///
+    /// Steps:
+    /// - Create the directory; observe T0 + 59 s; check the file; observe T0 + 60 s; check the file.
+    ///
+    /// Expected:
+    /// - No file after +59 s; the file exists after +60 s.
+    /// </remarks>
+    [Fact]
+    public void Observe_AfterFailedWrite_WaitsBeforeRetrying()
+    {
+        string directory = Path.Combine(_directory, "later");
+        string path = Path.Combine(directory, "clock.json");
+        var guard = new FileClockGuard(path);
+        Assert.True(guard.Observe(T0, T0, Skew));
+        Directory.CreateDirectory(directory);
+
+        Assert.True(guard.Observe(T0.AddSeconds(59), T0, Skew));
+        Assert.False(File.Exists(path));
+        Assert.True(guard.Observe(T0.AddSeconds(60), T0, Skew));
+        Assert.True(File.Exists(path));
+    }
+
+    /// <summary>
     /// The state is written only when the time advanced by 60 seconds or more since the last write.
     /// </summary>
     /// <remarks>

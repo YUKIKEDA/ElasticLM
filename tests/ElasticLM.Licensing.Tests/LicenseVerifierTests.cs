@@ -981,6 +981,187 @@ public sealed class LicenseVerifierTests : IDisposable
     }
 
     /// <summary>
+    /// A JSON null anywhere in the file, the header, the payload, or a certificate is rejected as a result, never as an
+    /// exception (review of PR #8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Correctly signed tokens and files where one member or one collection element is null.
+    ///
+    /// Steps:
+    /// - Verify each.
+    ///
+    /// Expected:
+    /// - ELM_MALFORMED for the file, the header, and the license payload; ELM_UNTRUSTED_KEY for a certificate with a null
+    ///   member (the certificate is skipped). No exception.
+    /// </remarks>
+    [Theory]
+    [InlineData("header-kid", ErrorCode.Malformed)]
+    [InlineData("header-typ", ErrorCode.Malformed)]
+    [InlineData("lic", ErrorCode.Malformed)]
+    [InlineData("prd", ErrorCode.Malformed)]
+    [InlineData("jti", ErrorCode.Malformed)]
+    [InlineData("iss", ErrorCode.Malformed)]
+    [InlineData("feat", ErrorCode.Malformed)]
+    [InlineData("feat-element", ErrorCode.Malformed)]
+    [InlineData("feat-id", ErrorCode.Malformed)]
+    [InlineData("fp-element", ErrorCode.Malformed)]
+    [InlineData("meta-value", ErrorCode.Malformed)]
+    [InlineData("cnf-jkt", ErrorCode.Malformed)]
+    [InlineData("cert-use", ErrorCode.UntrustedKey)]
+    [InlineData("cert-jwk", ErrorCode.UntrustedKey)]
+    [InlineData("cert-sub", ErrorCode.UntrustedKey)]
+    [InlineData("file-license", ErrorCode.Malformed)]
+    [InlineData("file-certificates", ErrorCode.Malformed)]
+    [InlineData("file-certificate-element", ErrorCode.Malformed)]
+    public void Verify_JsonNull_ReturnsErrorWithoutException(string kind, ErrorCode expected)
+    {
+        JsonObject license = _issuer.LicensePayload();
+        JsonObject cert = _issuer.CertificatePayload();
+        string? header = null;
+        switch (kind)
+        {
+            case "header-kid":
+                header = "{\"alg\":\"ES256\",\"kid\":null,\"typ\":\"elm-license+jws\"}";
+                break;
+            case "header-typ":
+                header = $"{{\"alg\":\"ES256\",\"kid\":\"{_issuer.SigningKid}\",\"typ\":null}}";
+                break;
+            case "feat-element":
+                license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro" }, null);
+                break;
+            case "feat-id":
+                license["feat"] = new JsonArray(new JsonObject { ["id"] = null });
+                break;
+            case "fp-element":
+                license["fp"] = new JsonArray("2b9b86465b5d4fbda9c050845613fa89", null);
+                break;
+            case "meta-value":
+                license["meta"] = new JsonObject { ["k"] = null };
+                break;
+            case "cnf-jkt":
+                license["cnf"] = new JsonObject { ["jkt"] = null };
+                break;
+            case "cert-use":
+                cert["use"] = null;
+                break;
+            case "cert-jwk":
+                cert["jwk"] = null;
+                break;
+            case "cert-sub":
+                cert["sub"] = null;
+                break;
+            case "file-license" or "file-certificates" or "file-certificate-element":
+                break;
+            default:
+                license[kind] = null;
+                break;
+        }
+
+        string token = header is null ? _issuer.License(license) : TestIssuer.Sign(_issuer.Signing, header, license.ToJsonString());
+        string certificate = _issuer.Certificate(cert);
+        byte[] file = kind switch
+        {
+            "file-license" => Encoding.UTF8.GetBytes(
+                $"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":null,\"certificates\":[\"{certificate}\"]}}"
+            ),
+            "file-certificates" => Encoding.UTF8.GetBytes(
+                $"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"{token}\",\"certificates\":null}}"
+            ),
+            "file-certificate-element" => Encoding.UTF8.GetBytes(
+                $"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"{token}\",\"certificates\":[null]}}"
+            ),
+            _ => TestIssuer.File(token, certificate),
+        };
+
+        AssertError(expected, _issuer.Verifier().Verify(file, _issuer.Requirement()));
+    }
+
+    /// <summary>
+    /// With two certificates for the same key and periods that do not overlap, the one whose period holds the token's iat
+    /// is used, whatever their order (design §11.2 step 5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Certificate A for the signing key valid in [now - 400 days, now - 200 days], certificate B for the same key valid
+    ///   in [now - 199 days, now + 165 days].
+    ///
+    /// Steps:
+    /// - Verify a token issued at now - 1 hour (inside B) with [A, B] and with [B, A]; verify a token issued at now - 300 days
+    ///   (inside A, with an expiry in the future) with [A, B]; verify a token issued inside neither period with only A.
+    ///
+    /// Expected:
+    /// - Valid in the first three cases; ELM_CERTIFICATE_EXPIRED in the last.
+    /// </remarks>
+    [Fact]
+    public void Verify_RenewedCertificateForSameKey_UsesThePeriodHoldingIat()
+    {
+        const long Day = 86400;
+        long now = TestIssuer.NowSeconds;
+        JsonObject a = _issuer.CertificatePayload();
+        a["jti"] = "cert-a";
+        a["nbf"] = now - (400 * Day);
+        a["exp"] = now - (200 * Day);
+        JsonObject b = _issuer.CertificatePayload();
+        b["jti"] = "cert-b";
+        b["nbf"] = now - (199 * Day);
+        b["exp"] = now + (165 * Day);
+        string certA = _issuer.Certificate(a);
+        string certB = _issuer.Certificate(b);
+        JsonObject old = _issuer.LicensePayload();
+        old["iat"] = now - (300 * Day);
+
+        Assert.IsType<LicenseVerificationResult.Valid>(
+            _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(), certA, certB), _issuer.Requirement())
+        );
+        Assert.IsType<LicenseVerificationResult.Valid>(
+            _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(), certB, certA), _issuer.Requirement())
+        );
+        Assert.IsType<LicenseVerificationResult.Valid>(
+            _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(old), certA, certB), _issuer.Requirement())
+        );
+        AssertError(ErrorCode.CertificateExpired, _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(), certA), _issuer.Requirement()));
+    }
+
+    /// <summary>
+    /// When two adjacent steps among 3 to 5 fail, the first one is reported.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Inputs that fail steps 3 and 4 (a certificate for another key and a broken signature), or steps 4 and 5 (a broken
+    ///   signature and an iat outside the certificate period).
+    ///
+    /// Steps:
+    /// - Verify each.
+    ///
+    /// Expected:
+    /// - ELM_UNTRUSTED_KEY for 3+4; ELM_BAD_SIGNATURE for 4+5.
+    /// </remarks>
+    [Theory]
+    [InlineData("3+4", ErrorCode.UntrustedKey)]
+    [InlineData("4+5", ErrorCode.BadSignature)]
+    public void Verify_TwoEarlyStepsFail_ReportsFirst(string kind, ErrorCode expected)
+    {
+        using var other = new TestIssuer();
+        JsonObject license = _issuer.LicensePayload();
+        JsonObject cert = _issuer.CertificatePayload();
+        if (kind == "3+4")
+        {
+            cert["sub"] = other.SigningKid;
+            cert["jwk"] = TestIssuer.Jwk(other.Signing);
+        }
+        else
+        {
+            license["iat"] = TestIssuer.NowSeconds - (86400L * 365 * 3);
+        }
+
+        string[] parts = _issuer.License(license).Split('.');
+        string brokenSignature = parts[0] + "." + parts[1] + "." + _issuer.License().Split('.')[2];
+
+        AssertError(expected, _issuer.Verifier().Verify(TestIssuer.File(brokenSignature, _issuer.Certificate(cert)), _issuer.Requirement()));
+    }
+
+    /// <summary>
     /// Reusing one verifier, with its certificate cache, gives the same results as a fresh verifier, also after the cache
     /// is cleared by more distinct certificates than it holds.
     /// </summary>

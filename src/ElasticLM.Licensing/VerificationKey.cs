@@ -8,7 +8,7 @@ namespace ElasticLM.Licensing;
 /// verify many tokens are created once. The documentation does not promise that one <see cref="ECDsa"/> may verify on
 /// several threads at once, so verification takes a lock.
 /// </summary>
-internal sealed class VerificationKey
+internal sealed class VerificationKey : IDisposable
 {
     private readonly ECDsa _key;
     private readonly Lock _lock = new();
@@ -38,6 +38,18 @@ internal sealed class VerificationKey
         lock (_lock)
         {
             return jws.Verify(_key);
+        }
+    }
+
+    /// <summary>
+    /// Disposes the key. Only keys that one call owns are disposed; shared keys (trust store, certificate cache) live as long
+    /// as their owner.
+    /// </summary>
+    public void Dispose()
+    {
+        lock (_lock)
+        {
+            _key.Dispose();
         }
     }
 }

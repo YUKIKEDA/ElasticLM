@@ -20,6 +20,7 @@ public sealed class FileClockGuard : IClockGuard
     private readonly Lock _lock = new();
     private long? _lastSeen;
     private long? _lastWritten;
+    private long? _lastFailedWrite;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="FileClockGuard"/> class.
@@ -51,7 +52,11 @@ public sealed class FileClockGuard : IClockGuard
             long next = Math.Max(lastSeen, nowSeconds);
             _lastSeen = next;
             long written = Math.Max(stored ?? long.MinValue, _lastWritten ?? long.MinValue);
-            if (stored is null || next - written >= (long)WriteThreshold.TotalSeconds)
+
+            // After a failed write (no directory, no permission, disk full) the guard keeps going on the in-memory value and the
+            // token's iat, and does not try again for the same interval, so a read-only location costs no I/O per verification.
+            bool retryAllowed = _lastFailedWrite is not long failed || next - failed >= (long)WriteThreshold.TotalSeconds;
+            if (retryAllowed && (stored is null || next - written >= (long)WriteThreshold.TotalSeconds))
             {
                 WriteState(next);
             }
@@ -140,13 +145,16 @@ public sealed class FileClockGuard : IClockGuard
             File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(state, LicensingJsonContext.Default.ClockState));
             File.Move(temp, _path, overwrite: true);
             _lastWritten = lastSeen;
+            _lastFailedWrite = null;
         }
         catch (IOException)
         {
+            _lastFailedWrite = lastSeen;
             TryDelete(temp);
         }
         catch (UnauthorizedAccessException)
         {
+            _lastFailedWrite = lastSeen;
             TryDelete(temp);
         }
     }

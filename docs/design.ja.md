@@ -765,15 +765,25 @@ Windows の VM Generation ID は管理者権限が要り、Linux ではユーザ
 
 ### 11.1 公開 API の形
 
+M1（Issue #7）で出荷した形である。名前空間は `ElasticLM.Licensing`。
+
 ```csharp
 public sealed class TrustStore
 {
     public static TrustStore Create(ReadOnlySpan<string> rootPublicKeysPem, ReadOnlySpan<string> revokedKeyIds);
+    public IReadOnlyCollection<string> RootKeyIds { get; }
 }
 
-public sealed class LicenseVerifier(TrustStore trust, TimeProvider time, IClockGuard clockGuard)
+public sealed class LicenseVerifier
 {
+    public LicenseVerifier(TrustStore trust, TimeProvider time, IClockGuard clockGuard, LicenseVerifierOptions? options = null);
     public LicenseVerificationResult Verify(ReadOnlySpan<byte> licenseFile, LicenseRequirement requirement);
+}
+
+public sealed class LicenseVerifierOptions
+{
+    public TimeSpan ClockSkew { get; set; }               // §11.3。既定 5 分、0〜1 時間
+    public bool AcceptTrialAsStandard { get; set; }       // §11.2 の手順 8。既定 true
 }
 
 public readonly record struct LicenseRequirement(
@@ -788,6 +798,24 @@ public abstract record LicenseVerificationResult
     public sealed record Valid(VerifiedLicense License, bool InGracePeriod) : LicenseVerificationResult;
     public sealed record Invalid(LicenseError Error) : LicenseVerificationResult;
 }
+
+public interface IClockGuard
+{
+    bool Observe(DateTimeOffset now, DateTimeOffset tokenIssuedAt, TimeSpan allowedSkew);
+}
+
+public sealed class FileClockGuard(string path, ECDsa? installationKey = null) : IClockGuard;
+public sealed class StatelessClockGuard : IClockGuard { public static StatelessClockGuard Instance { get; } }
+
+public static class MachineFingerprint
+{
+    public static IReadOnlyList<string> Compute(string productId);
+}
+
+public sealed class InstallationIdentity(string keyThumbprint, IReadOnlyList<string> fingerprints);
+public static class TokenTypes { /* §8.4 の typ の定数 */ }
+public enum ErrorCode { /* §19 */ }
+public static class ErrorCodes { public static string ToWireName(ErrorCode code); }
 ```
 
 型の中身:
@@ -795,26 +823,30 @@ public abstract record LicenseVerificationResult
 | 型 | 中身 |
 | --- | --- |
 | `LicenseKind` | `Standard`, `Trial`, `Server` の列挙（§9.3 の `LicenseKind`） |
-| `InstallationIdentity` | インストール鍵の拇印と、現在のマシン指紋の組。指紋は `ElasticLM.Licensing` が §10.3 で作り、インストール鍵は `ElasticLM.Client` が §10.2 で持つ。オフラインだけの運用で端末に紐づけないときは `null` |
+| `InstallationIdentity` | インストール鍵の拇印と、現在のマシン指紋の組。指紋は `MachineFingerprint.Compute`（§10.3）で作り、インストール鍵は `ElasticLM.Client` が §10.2 で持つ。オフラインだけの運用で端末に紐づけないときは `null` |
 | `VerifiedLicense` | 署名の検証と §11.2 の判定に通ったライセンストークンのクレーム（§8.4.2）を、型つきで持つ。検証を経ずには作れない |
-| `LicenseError` | §19 のエラーコードと、人が読む一文の組 |
+| `LicensedFeature` | `VerifiedLicense.Features` の要素。機能 ID、版の範囲、席数、機能の期限 |
+| `LicenseError` | §19 のエラーコードと、人が読む一文の組。一文は鍵やトークンの全体を含まない |
+| `LicenseVerifierOptions` | 検証器ごとの設定。検証器は作るときに写しを取り、`ClockSkew` が範囲外なら `ArgumentOutOfRangeException` を投げる |
 
 - 検証前の値と検証済みの値（`VerifiedLicense`）は別の型にする（`.cursor/rules/csharp.mdc`）。
-- 失敗は例外ではなく `Invalid` と理由で返す。引数の誤り（`null` 等）だけが例外になる。
-- 正確な型と名前は M1 の行で決め、本節を直す。
+- 失敗は例外ではなく `Invalid` と理由で返す。例外になるのは引数の誤り（空の製品 ID、`major.minor[.patch]` でない要求の版、範囲外の `ClockSkew`、不正なトラストストアの鍵）だけである。ファイルの中身がどう壊れていても（JSON の `null` を含む）、例外ではなく `Invalid` を返す。
+- `TrustStore.Create` の鍵は、1 つの PEM ブロックに入った P-256 の SubjectPublicKeyInfo に限る。秘密鍵の PEM、複数のブロック、同じ鍵の重複は `ArgumentException` である。
+- `MachineFingerprint` の公開面は、この端末の指紋を返す `Compute` だけである。任意の値から指紋を作る関数は公開しない。
+- `LicenseVerifier` は、検証に成功した証明書（その文字列）と、そこから作った鍵を、最初の 16 件まで覚えて使い回す。トラストストアは作った後に変えられないので、同じ文字列の結果は変わらない。上限を超えた証明書は呼び出しごとに検証し、呼び出しの終わりに鍵を破棄する。
 
 ### 11.2 検証の手順
 
 次の順に調べ、最初に失敗した段の理由を返す。
 
-1. ファイルの大きさと形式（§8.5, §8.6）。違えば `ELM_MALFORMED`。
+1. ファイルの大きさと形式（§8.5, §8.6）。`certificates` が 0 個、または 5 個以上のファイルもここで `ELM_MALFORMED` とする。
 2. ライセンストークンのヘッダーを読む（ペイロードはまだ読まない）。その `kid` が無効の一覧にあれば `ELM_KEY_REVOKED`。
-3. 証明書を選ぶ。各証明書について、ヘッダーの `kid` がトラストストアのルート鍵で、無効の一覧になく、署名が正しいものだけを候補にする。候補のうち、`sub` がライセンストークンの `kid` と一致し、`use` に `license` を持つものを 1 つ選ぶ。選べなければ `ELM_UNTRUSTED_KEY`。候補にならなかった証明書は飛ばし、ファイル全体は失敗させない（入れ替えのために残した古い証明書が、ほかを巻き込まないため）。
+3. 証明書の候補を集める。各証明書について、ヘッダーの `kid` がトラストストアのルート鍵で、無効の一覧になく、署名が正しく、`use` に `license` を持ち、`sub` がライセンストークンの `kid` と一致するものを候補にする。候補がなければ `ELM_UNTRUSTED_KEY`。候補にならなかった証明書は飛ばし、ファイル全体は失敗させない（入れ替えのために残した古い証明書が、ほかを巻き込まないため）。候補はどれも同じ鍵を証明するので、手順 4 はその鍵で 1 回だけ検証し、ペイロードは手順 4 の後に読む（§8.2 の規則 6）。
 4. ライセンストークンの署名（§8.2）。違えば `ELM_BAD_SIGNATURE`。
-5. 証明書の期間: ライセンストークンの `iat` が証明書の `nbf` から `exp` の間（許容のずれ込み、§11.3）になければ `ELM_CERTIFICATE_EXPIRED`（§7.5）。
+5. 証明書の期間: 候補のうち、ライセンストークンの `iat` が `nbf` から `exp` の間（許容のずれ込み、§11.3）に入るものが 1 つもなければ `ELM_CERTIFICATE_EXPIRED`（§7.5）。鍵を変えずに証明書だけを更新すると、同じ鍵の証明書が期間を変えて並ぶ。並び順によらず、`iat` を含む期間の証明書を使う。
 6. 発行時刻: `iat` が「現在 + 許容のずれ」より未来なら `ELM_CLOCK_TAMPERED`。
 7. 時計の守り（§11.4）。巻き戻りを検出したら `ELM_CLOCK_TAMPERED`。
-8. 種類: `kind` が要求の `Kind` と違えば `ELM_WRONG_KIND`。`Standard` を求める検証は `Trial` も受け付けるかを、要求で選べる（既定は受け付ける）。`Server` は `Server` を求める検証だけが受け付ける。
+8. 種類: `kind` が要求の `Kind` と違えば `ELM_WRONG_KIND`。`Standard` を求める検証が `Trial` も受け付けるかは、検証器の設定 `LicenseVerifierOptions.AcceptTrialAsStandard` で選ぶ（既定は受け付ける）。アプリの中で要求ごとに変える理由がないため、検証器ごとの設定にした。`Server` は `Server` を求める検証だけが受け付ける。
 9. 製品: `prd` が要求と違えば `ELM_WRONG_PRODUCT`。
 10. 端末: `cnf` があれば、要求のインストール鍵の拇印と一致しなければ `ELM_WRONG_INSTALLATION`。`fp` を `fpm` で照合し、合わなければ `ELM_FINGERPRINT_MISMATCH`。
 11. 期限: `exp` がなければ期限なしとして通す。`exp` を過ぎて `exp + grace` 以内なら `Valid` で `InGracePeriod = true`。`exp + grace` も過ぎていれば `ELM_EXPIRED`。
@@ -826,13 +858,13 @@ public abstract record LicenseVerificationResult
 
 ### 11.4 時計の守り
 
-1. 検証に成功するたびに、そのときの時刻と、検証したトークンの `iat` の大きいほうを「最後に確認した時刻」として保存する。トークンの `iat` は署名鍵の時計なので、端末の時計を進めて戻しても、`iat` より前には戻せない。
+1. §11.2 の手順 1〜6 に通ったトークンごとに（手順 7 で）、そのときの時刻と、トークンの `iat` の大きいほうを「最後に確認した時刻」として記録する。手順 8 以降で失敗するトークン（別の製品、期限切れ）でも記録する。署名と証明書を通ったトークンの `iat` なので、記録してよい。トークンの `iat` は署名鍵の時計なので、端末の時計を進めて戻しても、`iat` より前には戻せない。
 2. 現在の時刻が「最後に確認した時刻 − 許容のずれ」より前なら、巻き戻りとみなす。
 3. 状態はアプリが指定する場所（既定はインストール鍵と同じ場所、§10.2）に置く。インストール鍵があれば状態に署名し、署名が合わなければ書き換えとみなす。端末に紐づかないライセンスにはインストール鍵がないため、署名しない。状態が書き換えられた、消された、読めないときは、最後に確認した時刻を「検証中のトークンの `iat`」とみなして続ける。どの場合も、時計をトークンの `iat` より前には戻せない。
 4. FlexNet Embedded は、時計を進めて使い、戻すと、本当の時刻が追いつくまで使えなくなると書いている（https://community.revenera.com/s/article/clock-windback-detection-with-an-flexnet-embedded-client ）。ElasticLM も同じ振る舞いになる。オンラインの更新に成功すれば、サーバーの時刻を「最後に確認した時刻」として上書きし、戻せる。
 
 5. 対象: 時計の守りは、ライセンストークンの検証と、リーストークン（借り出しを含む）の検証の両方で行う（§12.7.5）。借り出したリースはオフラインで端末の時計と比べるため、リースにも行わなければ、時計を戻して期限を延ばせる。
-6. 書き込み: 状態は「最後に確認した時刻」が 60 秒以上進んだときだけ書き込む。§4.2 の 1 ms の目標は、書き込まない検証で測る。書き込みは一時ファイルへの書き込みと置き換え（アトミックな改名）で行い、複数のプロセスが同時に書いても壊れた状態を残さない。読み込んだ値と書き込む値の大きいほうを残すので、どのプロセスの書き込みが残っても巻き戻らない。
+6. 書き込み: 状態は「最後に確認した時刻」が 60 秒以上進んだときだけ書き込む。書き込めない（ディレクトリがない、権限がない、ディスクが一杯）ときは、例外にせず、メモリの値とトークンの `iat` で守りを続け、次の 60 秒までは書き込みを試みない。書けない場所でも検証のたびにファイルの I/O が走らないためである。§4.2 の 1 ms の目標は、書き込まない検証で測る。書き込みは一時ファイルへの書き込みと置き換え（アトミックな改名）で行い、複数のプロセスが同時に書いても壊れた状態を残さない。読み込んだ値と書き込む値の大きいほうを残すので、どのプロセスの書き込みが残っても巻き戻らない。
 
 `IClockGuard` はアプリが差し替えられる。状態を持たない実装（手順 1〜3 を行わず、§11.2 の手順 6 の `iat` の検査だけ）も用意する。
 
@@ -1504,7 +1536,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M5 | 管理の OIDC（JwtBearer と BFF）と管理画面 | §14.6, §15 |
 | M6 | `libelasticlm` | §17 |
 | F1 | リリース基盤 | — |
-| V1 | 端から端までのテスト、文書、サンプル、安全性の見直し、v1 の公開 | §20 |
+| V1 | 端から端までのテスト、§4.2 の目標の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | §4.2, §20 |
 
 ## 23. v1 の範囲外
 

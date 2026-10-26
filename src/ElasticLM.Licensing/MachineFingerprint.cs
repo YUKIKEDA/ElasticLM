@@ -40,7 +40,7 @@ public static class MachineFingerprint
     /// <param name="productId">The product ID.</param>
     /// <returns>The fingerprint, 32 lowercase hex characters.</returns>
     /// <exception cref="ArgumentException"><paramref name="osId"/> is not 16 bytes, or <paramref name="productId"/> is empty.</exception>
-    public static string Derive(ReadOnlySpan<byte> osId, string productId)
+    internal static string Derive(ReadOnlySpan<byte> osId, string productId)
     {
         if (osId.Length != 16)
         {

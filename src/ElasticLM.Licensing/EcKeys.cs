@@ -36,15 +36,40 @@ internal static class EcKeys
     }
 
     /// <summary>
-    /// Reads a P-256 public key from a PEM <c>PUBLIC KEY</c> block (SubjectPublicKeyInfo).
+    /// Reads a P-256 public key from a PEM text with exactly one block holding a SubjectPublicKeyInfo (<c>PUBLIC KEY</c>).
     /// </summary>
     public static bool TryReadPublicKeyPem(string pem, out ECParameters parameters)
     {
         parameters = default;
+
+        // One PEM block, read as SubjectPublicKeyInfo. ImportFromPem would also read PRIVATE KEY and EC PRIVATE KEY blocks, so a
+        // root's private key passed by mistake would be accepted silently (.cursor/rules/security.mdc). The DER of a private key
+        // is not a SubjectPublicKeyInfo, so ImportSubjectPublicKeyInfo rejects it whatever its label says
+        // (Create_InvalidRoots_Throws).
+        if (!PemEncoding.TryFind(pem, out PemFields fields))
+        {
+            return false;
+        }
+
+        if (PemEncoding.TryFind(pem.AsSpan(fields.Location.End.GetOffset(pem.Length)), out _))
+        {
+            return false;
+        }
+
+        byte[] der = new byte[fields.DecodedDataLength];
+        if (!Convert.TryFromBase64Chars(pem.AsSpan()[fields.Base64Data], der, out int written) || written != der.Length)
+        {
+            return false;
+        }
+
         using ECDsa key = ECDsa.Create();
         try
         {
-            key.ImportFromPem(pem);
+            key.ImportSubjectPublicKeyInfo(der, out int read);
+            if (read != der.Length)
+            {
+                return false;
+            }
         }
         catch (ArgumentException)
         {
