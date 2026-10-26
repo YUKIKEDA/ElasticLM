@@ -73,6 +73,8 @@ After a squash merge, in the turn that learns of it, write three points as a com
 
 Then, without waiting for an ask, file a `chore` Issue and one PR that writes each lesson into the file it names. The next feature branch waits until that PR is open.
 
+When a lesson PR merges while another PR is open, check the open PR against the new rule before calling it ready. In M2 the rule for testing readers of untrusted input (PR #10) merged after PR #12 opened, and the review, not the agent, found the readers PR #12 had added without those tests.
+
 ```text
 # BAD — the PR merged; the next row starts; what the row taught stays in the conversation
 # GOOD — the PR merged; three points on it; a chore PR with the lessons is open; then the next row
