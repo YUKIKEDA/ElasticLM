@@ -228,8 +228,11 @@ public sealed class InstallationKeyStoreTests : IDisposable
     [Fact]
     public void MachineScope_RoundTrip_Works()
     {
-        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, _dir).TryLoadOrCreate(out InstallationKey? created, out _));
-        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, _dir).TryLoad(out InstallationKey? read, out _));
+        // Inside the test folder: the temporary folder itself (/tmp) is writable by others, which a machine-scope folder's
+        // parent must not be.
+        string folder = Path.Combine(_dir, "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out InstallationKey? read, out _));
         using (created)
         using (read)
         {
