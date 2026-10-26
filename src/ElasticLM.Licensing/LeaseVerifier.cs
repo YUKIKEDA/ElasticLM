@@ -48,7 +48,24 @@ public sealed class LeaseVerifier
     /// <param name="server">The server, built from its verified server license.</param>
     /// <param name="expect">The product and installation the lease must be for.</param>
     /// <returns>The result.</returns>
-    public LeaseVerificationResult VerifyOnPremises(string leaseToken, ServerIdentity server, LeaseExpectation expect)
+    public LeaseVerificationResult VerifyOnPremises(string leaseToken, ServerIdentity server, LeaseExpectation expect) =>
+        VerifyOnPremises(leaseToken, server, expect, requireCurrentServerLicense: true);
+
+    /// <summary>
+    /// Checks a lease token that a server issued itself, for a reclaim after a restart (design §13.4): the same checks as
+    /// <see cref="VerifyOnPremises(string, ServerIdentity, LeaseExpectation)"/>, except that the token may name an earlier
+    /// server license of the same server. Only that server's key could have signed it, and the token must still fit the
+    /// current server license, so a server license replaced while the server was down does not cost the clients their seats.
+    /// </summary>
+    internal LeaseVerificationResult VerifyOwnLease(string leaseToken, ServerIdentity server, LeaseExpectation expect) =>
+        VerifyOnPremises(leaseToken, server, expect, requireCurrentServerLicense: false);
+
+    private LeaseVerificationResult VerifyOnPremises(
+        string leaseToken,
+        ServerIdentity server,
+        LeaseExpectation expect,
+        bool requireCurrentServerLicense
+    )
     {
         ArgumentNullException.ThrowIfNull(server);
         ArgumentNullException.ThrowIfNull(expect);
@@ -63,13 +80,14 @@ public sealed class LeaseVerifier
             return Fail(ErrorCode.BadSignature, "The lease is not signed by the server's key.");
         }
 
-        if (!TryReadPayload(jws, out LeasePayload? payload))
+        if (!TryReadPayload(jws, out LeasePayload? read))
         {
             return Fail(ErrorCode.Malformed, "The lease payload is not valid.");
         }
 
+        LeasePayload payload = read!;
         VerifiedLicense license = server.License;
-        if (payload!.Slic != license.TokenId)
+        if (requireCurrentServerLicense && payload.Slic != license.TokenId)
         {
             return Fail(ErrorCode.LeaseOutOfBounds, "The lease was issued under another server license; fetch the server license again.");
         }

@@ -36,6 +36,21 @@ public static class ProofBuilder
         ReadOnlySpan<byte> body,
         bool includePublicKey,
         TimeProvider time
+    ) => Create(key, method, target, nonce, body, includePublicKey, time, out _);
+
+    /// <summary>
+    /// Creates a proof and returns its <c>jti</c>, which the client names when it retries a renewal that got no answer
+    /// (design §10.4).
+    /// </summary>
+    internal static string Create(
+        InstallationKey key,
+        string method,
+        Uri target,
+        string nonce,
+        ReadOnlySpan<byte> body,
+        bool includePublicKey,
+        TimeProvider time,
+        out string proofId
     )
     {
         ArgumentNullException.ThrowIfNull(key);
@@ -53,7 +68,7 @@ public static class ProofBuilder
         var payload = new ProofClaims(
             1,
             time.GetUtcNow().ToUnixTimeSeconds(),
-            Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16)),
+            proofId = Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16)),
             method,
             HttpTargetUri.Normalize(target),
             nonce,

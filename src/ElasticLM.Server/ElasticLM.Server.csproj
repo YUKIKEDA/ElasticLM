@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>elm-server</AssemblyName>
+    <RootNamespace>ElasticLM.Server</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- design §21: the ASP.NET Core shared framework, with the slim builder. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Leasing\ElasticLM.Leasing.csproj" />
+    <ProjectReference Include="..\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+  </ItemGroup>
+  <!-- The runtime pack carries the IIS in-process module; elm-server is not hosted in IIS and ships as one file. -->
+  <Target Name="ElmDropIisModule" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'aspnetcorev2_inprocess.dll'" />
+    </ItemGroup>
+  </Target>
+</Project>

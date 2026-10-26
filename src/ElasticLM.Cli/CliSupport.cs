@@ -242,14 +242,7 @@ internal static class TrustKeys
     /// </summary>
     public static string[] SplitBlocks(string pem, string source)
     {
-        var keys = new List<string>();
-        ReadOnlySpan<char> rest = pem;
-        while (System.Security.Cryptography.PemEncoding.TryFind(rest, out System.Security.Cryptography.PemFields fields))
-        {
-            keys.Add(rest[fields.Location].ToString());
-            rest = rest[fields.Location.End..];
-        }
-
-        return keys.Count > 0 ? [.. keys] : throw new CliException($"{source} holds no PEM public key.");
+        string[] keys = KeyFiles.SplitPem(pem);
+        return keys.Length > 0 ? keys : throw new CliException($"{source} holds no PEM public key.");
     }
 }

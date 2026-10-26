@@ -77,6 +77,9 @@ public sealed record LicenseSpec
     /// <summary>Gets the overage percentage; required for server licenses.</summary>
     public int? OveragePercent { get; init; }
 
+    /// <summary>Gets what the server does with a detected clone (design §10.4); required for server licenses.</summary>
+    public CloneStrategy? CloneStrategy { get; init; }
+
     /// <summary>Gets the vendor metadata.</summary>
     public IReadOnlyDictionary<string, string>? Metadata { get; init; }
 }

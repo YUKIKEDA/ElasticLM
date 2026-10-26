@@ -95,6 +95,11 @@ internal static class LicensePayloadRules
             return false;
         }
 
+        if (payload.Clone is not (null or "deny" or "flag"))
+        {
+            return false;
+        }
+
         if (payload.Fp is { Count: > 0 } && payload.Fpm is not ("any" or "all" or "ignore"))
         {
             return false;
@@ -102,7 +107,13 @@ internal static class LicensePayloadRules
 
         if (
             kind == LicenseKind.Server
-            && (payload.Lease is null or < 1 || payload.Borrow is null or < 0 || payload.Overage is null or < 0 || payload.Cnf is null)
+            && (
+                payload.Lease is null or < 1
+                || payload.Borrow is null or < 0
+                || payload.Overage is null or < 0
+                || payload.Cnf is null
+                || payload.Clone is null
+            )
         )
         {
             return false;

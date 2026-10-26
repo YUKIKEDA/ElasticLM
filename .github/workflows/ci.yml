@@ -46,3 +46,55 @@ jobs:
 
       - name: Gate
         run: ./build.ps1
+
+  aot:
+    # design §20.3: each shipped executable is published with NativeAOT on every OS, with zero warnings.
+    name: NativeAOT elm-server (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+          - os: ubuntu-latest
+            rid: linux-x64
+          - os: macos-latest
+            rid: osx-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-dotnet@v6
+        with:
+          global-json-file: global.json
+
+      - uses: actions/cache@v6
+        with:
+          path: ~/.nuget/packages
+          key: nuget-aot-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj', '.config/dotnet-tools.json') }}
+          restore-keys: nuget-aot-${{ runner.os }}-
+
+      - name: Publish
+        run: |
+          $log = dotnet publish src/ElasticLM.Server -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
+          $log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $warnings = @($log | Select-String -Pattern ': warning ')
+          if ($warnings.Count -gt 0) { "::error::NativeAOT publish reported $($warnings.Count) warnings"; exit 1 }
+          $exe = Get-Item (Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server'))
+          "elm-server (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Smoke
+        run: |
+          $exe = Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server')
+          & $exe --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $env:ELM_PRODUCT = 'acme-cad'
+          $out = & $exe 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 1 -or $out -notmatch 'trust.rootKeys') { $out; "::error::elm-server did not refuse to start without trust"; exit 1 }
+          # The expected exit code 1 would otherwise become the step's result.
+          exit 0

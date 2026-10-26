@@ -6,6 +6,27 @@ namespace ElasticLM.Licensing;
 public static class ErrorCodes
 {
     /// <summary>
+    /// Reads a wire name such as <c>ELM_NO_SEATS</c> (design §19).
+    /// </summary>
+    /// <param name="wireName">The wire name.</param>
+    /// <param name="code">The code; <see cref="ErrorCode.InternalError"/> when the name is unknown.</param>
+    /// <returns><see langword="false"/> when the name is not a known code.</returns>
+    public static bool TryParseWireName(string? wireName, out ErrorCode code)
+    {
+        foreach (ErrorCode candidate in Enum.GetValues<ErrorCode>())
+        {
+            if (ToWireName(candidate) == wireName)
+            {
+                code = candidate;
+                return true;
+            }
+        }
+
+        code = ErrorCode.InternalError;
+        return false;
+    }
+
+    /// <summary>
     /// Returns the wire name of an error code, such as <c>ELM_MALFORMED</c>.
     /// </summary>
     /// <param name="code">The error code.</param>

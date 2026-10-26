@@ -158,6 +158,9 @@ internal sealed class LicensePayload
     [JsonPropertyName("overage")]
     public int? Overage { get; set; }
 
+    [JsonPropertyName("clone")]
+    public string? Clone { get; set; }
+
     [JsonPropertyName("meta")]
     public Dictionary<string, string>? Meta { get; set; }
 }

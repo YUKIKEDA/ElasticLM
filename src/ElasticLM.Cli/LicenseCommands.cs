@@ -60,6 +60,7 @@ internal static class LicenseCommands
             Description = "Server licenses: borrow limit in days; 0 disallows borrowing. Default: 0.",
         };
         var overageOption = new Option<int?>("--overage") { Description = "Server licenses: overage percentage. Default: 0." };
+        var cloneOption = new Option<string?>("--clone") { Description = "Server licenses: deny or flag a detected clone. Default: deny." };
         var metaOption = new Option<string[]>("--meta") { Description = "Vendor metadata key=value. Repeat for several." };
         var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true };
         var issueTrustOption = new Option<string[]>("--trust")
@@ -89,6 +90,7 @@ internal static class LicenseCommands
             leaseOption,
             borrowOption,
             overageOption,
+            cloneOption,
             metaOption,
             outOption,
             issueTrustOption,
@@ -110,10 +112,11 @@ internal static class LicenseCommands
                             parse.GetValue(leaseOption) is not null
                             || parse.GetValue(borrowOption) is not null
                             || parse.GetValue(overageOption) is not null
+                            || parse.GetValue(cloneOption) is not null
                         )
                     )
                     {
-                        throw new CliException("--lease-minutes, --borrow-days, and --overage apply to server licenses only.");
+                        throw new CliException("--lease-minutes, --borrow-days, --overage, and --clone apply to server licenses only.");
                     }
 
                     string expiresText = parse.GetValue(expiresOption)!;
@@ -134,6 +137,7 @@ internal static class LicenseCommands
                         LeaseDuration = isServer ? TimeSpan.FromMinutes(parse.GetValue(leaseOption) ?? 10) : null,
                         BorrowLimit = isServer ? TimeSpan.FromDays(parse.GetValue(borrowOption) ?? 0) : null,
                         OveragePercent = isServer ? parse.GetValue(overageOption) ?? 0 : null,
+                        CloneStrategy = isServer ? ParseClone(parse.GetValue(cloneOption) ?? "deny") : null,
                         Metadata = parse.GetValue(metaOption) is { Length: > 0 } meta
                             ? new Dictionary<string, string>(meta.Select(CliParse.Meta), StringComparer.Ordinal)
                             : null,
@@ -327,6 +331,14 @@ internal static class LicenseCommands
         );
         return verify;
     }
+
+    private static CloneStrategy ParseClone(string text) =>
+        text switch
+        {
+            "deny" => CloneStrategy.Deny,
+            "flag" => CloneStrategy.Flag,
+            _ => throw new CliException("--clone must be deny or flag."),
+        };
 
     private static LicenseKind ParseKind(string text) =>
         text switch

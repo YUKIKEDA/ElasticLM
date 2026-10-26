@@ -51,6 +51,17 @@ public sealed class InstallationKey : IDisposable
 
     internal ECParameters PublicParameters() => _key.ExportParameters(false);
 
+    /// <summary>
+    /// Runs an operation with the private key under the key's lock. The operation must not keep the key.
+    /// </summary>
+    internal T WithPrivateKey<T>(Func<ECDsa, T> use)
+    {
+        lock (_lock)
+        {
+            return use(_key);
+        }
+    }
+
     internal byte[] Sign(byte[] data)
     {
         lock (_lock)

@@ -18,7 +18,9 @@ public abstract record ProofResult
     /// </summary>
     /// <param name="KeyId">The installation key thumbprint of the caller.</param>
     /// <param name="Key">The caller's public key.</param>
-    public sealed record Valid(string KeyId, ECParameters Key) : ProofResult;
+    /// <param name="ProofId">The proof's <c>jti</c>. A server keeps it with what the request produced, so a retry that names
+    /// it can be told from a clone (design §10.4).</param>
+    public sealed record Valid(string KeyId, ECParameters Key, string ProofId) : ProofResult;
 
     /// <summary>
     /// The proof is invalid.
@@ -68,8 +70,35 @@ public sealed class ProofVerifier
     /// <returns>The result.</returns>
     public ProofResult Verify(string? proof, string method, Uri target, ReadOnlySpan<byte> body, Func<string, ECParameters?>? knownKey = null)
     {
-        ArgumentException.ThrowIfNullOrEmpty(method);
         ArgumentNullException.ThrowIfNull(target);
+        return Verify(proof, method, [target], body, knownKey);
+    }
+
+    /// <summary>
+    /// Verifies a request proof whose <c>htu</c> may be any of several URIs: a server reachable under several public URLs
+    /// (design §12.1, §13.8) accepts each.
+    /// </summary>
+    /// <param name="proof">The <c>ELM-Proof</c> header value.</param>
+    /// <param name="method">The request method.</param>
+    /// <param name="targets">The request URI under each public URL; at least one.</param>
+    /// <param name="body">The request body bytes, empty when there is none.</param>
+    /// <param name="knownKey">Returns the public key for a key ID the server already knows, or <see langword="null"/>.</param>
+    /// <returns>The key of the proof, or why it was refused.</returns>
+    public ProofResult Verify(
+        string? proof,
+        string method,
+        IReadOnlyList<Uri> targets,
+        ReadOnlySpan<byte> body,
+        Func<string, ECParameters?>? knownKey = null
+    )
+    {
+        ArgumentException.ThrowIfNullOrEmpty(method);
+        ArgumentNullException.ThrowIfNull(targets);
+        if (targets.Count == 0)
+        {
+            throw new ArgumentException("At least one target URI is required.", nameof(targets));
+        }
+
         if (string.IsNullOrEmpty(proof) || !CompactJws.TryParse(proof, TokenTypes.Proof, out CompactJws? jws, out _))
         {
             return Invalid(ErrorCode.ProofInvalid, "The request proof is missing or not a valid elm-proof+jws.");
@@ -95,7 +124,7 @@ public sealed class ProofVerifier
             return Invalid(ErrorCode.ProofInvalid, "The request proof payload is not valid.");
         }
 
-        if (payload.Htm != method || payload.Htu != HttpTargetUri.Normalize(target))
+        if (payload.Htm != method || !targets.Any(t => payload.Htu == HttpTargetUri.Normalize(t)))
         {
             return Invalid(ErrorCode.ProofInvalid, "The request proof is for another method or URI.");
         }
@@ -114,7 +143,7 @@ public sealed class ProofVerifier
 
         return _replays.TryUse(payload.Jti, nonceExpires) switch
         {
-            ReplayCheck.Accepted => new ProofResult.Valid(jws!.Header.Kid, key),
+            ReplayCheck.Accepted => new ProofResult.Valid(jws!.Header.Kid, key, payload.Jti),
             ReplayCheck.Replayed => Invalid(ErrorCode.Replayed, "The request proof was already used."),
             _ => Invalid(ErrorCode.ServerBusy, "The server cannot record more proofs now."),
         };

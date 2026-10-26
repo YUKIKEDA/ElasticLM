@@ -55,7 +55,32 @@ public sealed class IssuingTests : IDisposable
         Assert.Equal("lic-1", valid.License.LicenseId);
         Assert.Equal(kind, valid.License.Kind);
         Assert.Equal(issued.TokenId, valid.License.TokenId);
+        Assert.Equal(spec.CloneStrategy, valid.License.CloneStrategy);
         Assert.Equal(expires ? 0 : 1, issued.Warnings.Count(w => w.Contains("no expiry", StringComparison.Ordinal)));
+    }
+
+    /// <summary>
+    /// A server license with the flag clone strategy reads back as flag; deny is covered by the test of each kind.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license spec with CloneStrategy.Flag.
+    ///
+    /// Steps:
+    /// - Issue and verify it.
+    ///
+    /// Expected:
+    /// - The verified license has CloneStrategy.Flag.
+    /// </remarks>
+    [Fact]
+    public void Issue_ServerWithFlag_ReadsBackFlag()
+    {
+        LicenseSpec spec = Spec(LicenseKind.Server, true, true) with { CloneStrategy = CloneStrategy.Flag };
+
+        IssuedLicense issued = LicenseIssuer.Issue(_signing, [Certificate()], spec, _time);
+
+        var valid = Assert.IsType<LicenseVerificationResult.Valid>(Verifier().Verify(issued.File, Requirement(LicenseKind.Server, true)));
+        Assert.Equal(CloneStrategy.Flag, valid.License.CloneStrategy);
     }
 
     /// <summary>
@@ -63,7 +88,7 @@ public sealed class IssuingTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A valid spec, changed in one way: a server license without lease, seats on a standard license, a trial with grace,
+    /// - A valid spec, changed in one way: a server license without lease or without clone strategy, seats on a standard license, a trial with grace,
     ///   257 features, 9 fingerprints, a bad version range, an empty product, a negative grace period.
     ///
     /// Steps:
@@ -74,6 +99,7 @@ public sealed class IssuingTests : IDisposable
     /// </remarks>
     [Theory]
     [InlineData("server-without-lease")]
+    [InlineData("server-without-clone")]
     [InlineData("seats-on-standard")]
     [InlineData("trial-with-grace")]
     [InlineData("too-many-features")]
@@ -87,6 +113,7 @@ public sealed class IssuingTests : IDisposable
         spec = kind switch
         {
             "server-without-lease" => Spec(LicenseKind.Server, true, true) with { LeaseDuration = null },
+            "server-without-clone" => Spec(LicenseKind.Server, true, true) with { CloneStrategy = null },
             "seats-on-standard" => spec with { Features = [new FeatureSpec("pro", Seats: 5)] },
             "trial-with-grace" => Spec(LicenseKind.Trial, true, true) with { GracePeriod = TimeSpan.FromDays(1) },
             "too-many-features" => spec with { Features = [.. Enumerable.Range(0, 257).Select(i => new FeatureSpec("f" + i))] },
@@ -356,6 +383,7 @@ public sealed class IssuingTests : IDisposable
             LeaseDuration = kind == LicenseKind.Server ? TimeSpan.FromMinutes(10) : null,
             BorrowLimit = kind == LicenseKind.Server ? TimeSpan.Zero : null,
             OveragePercent = kind == LicenseKind.Server ? 0 : null,
+            CloneStrategy = kind == LicenseKind.Server ? CloneStrategy.Deny : null,
         };
 
     private LicenseRequirement Requirement(LicenseKind kind, bool bound) =>

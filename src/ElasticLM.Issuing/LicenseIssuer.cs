@@ -176,6 +176,13 @@ public static class LicenseIssuer
             Lease = spec.LeaseDuration is { } lease ? Seconds(lease) : null,
             Borrow = spec.BorrowLimit is { } borrow ? Seconds(borrow) : null,
             Overage = spec.OveragePercent,
+            Clone = spec.CloneStrategy switch
+            {
+                null => null,
+                CloneStrategy.Deny => "deny",
+                CloneStrategy.Flag => "flag",
+                _ => throw new ArgumentException("The clone strategy is not defined.", nameof(spec)),
+            },
             Meta = spec.Metadata is null ? null : new Dictionary<string, string>(spec.Metadata, StringComparer.Ordinal),
         };
     }

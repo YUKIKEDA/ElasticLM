@@ -271,7 +271,7 @@ public sealed class LicenseVerifier
             }
         }
 
-        if (payload.Fp is not { Count: > 0 } fingerprints || payload.Fpm == "ignore")
+        if (payload.Fp is not { Count: > 0 } fingerprints || payload.Fpm == "ignore" || installation is { ChecksFingerprints: false })
         {
             return null;
         }
