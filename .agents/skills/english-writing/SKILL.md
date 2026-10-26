@@ -45,8 +45,19 @@ The left column is the term in `docs/design.ja.md`. Write the right column in co
 | 発行者（ベンダー） | issuer (vendor) |
 | 利用者（顧客） | licensee (customer) |
 | 機能、フィーチャー | feature |
+| ルート鍵 | root key |
 | 署名鍵、検証鍵 | signing key, verification key |
+| 鍵の証明書 | key certificate |
+| トラストストア | trust store |
 | 鍵 ID | key ID (`kid`) |
+| インストール鍵 | installation key |
+| マシン指紋 | machine fingerprint |
+| 証明（DPoP 形式） | proof |
+| ノンス | nonce |
+| 回収 | reclaim |
+| 借り出し | borrow |
+| 更新番号 | sequence number (`seq`) |
+| サーバーライセンス | server license |
 | 有効期限 | expiry, expires at |
 | 猶予期間 | grace period |
 | 端末紐づけ、ノードロック | node lock, node-locked |
