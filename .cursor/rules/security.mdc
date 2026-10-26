@@ -28,6 +28,8 @@ ElasticLM decides whether software may run. The threat model and the properties 
 - Verify the signature before acting on any field except those the design names as needed to find the key (the key ID and algorithm).
 - Every request that changes state is authenticated and bound to its caller; the signed content covers every field the server acts on. A check over data the client supplies separately from the request is not authentication.
 - Errors returned to a remote caller do not reveal which internal check failed beyond what the design's error codes say.
+- Do not assume a BCL API returns `false` on bad input because its name starts with `Try`. Every reader of untrusted input has tests that put `null`, an out-of-range value, and a wrong shape into each member, and check that the result is an error, not an exception. In M1, `Base64Url.TryDecodeFromChars` threw `FormatException` for non-zero unused bits, Windows CNG threw `PlatformNotSupportedException` for a point off the curve, and a JSON `null` passed `[JsonRequired]`; one crafted token was enough for each (PR #8).
+- Every `JsonSerializerContext` that reads untrusted input sets `RespectNullableAnnotations = true` and `AllowDuplicateProperties = false`. Collection elements are outside `RespectNullableAnnotations`, so a `null` element is rejected where the payload is read.
 
 ## Time
 

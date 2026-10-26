@@ -38,6 +38,11 @@ Make an invalid state unrepresentable; do not document it away or catch it at ru
 - A comment that states how a runtime or OS API behaves names what was checked: the call, the version, and the result.
 - A call that can fail by its result is checked (`TryParse`, `TryImport...`, `TryGetValue`).
 
+## Cryptography objects
+
+- Measure what creating a cryptography object costs against what one operation costs, under NativeAOT, before putting it on a measured path. In M1, creating an `ECDsa` and importing a P-256 public key took about 275 µs on Windows, against about 110 µs for one verification, and verification took 888 µs per license file until each key was created once (PR #8).
+- A key that verifies many tokens is created once and kept by its owner. The documentation does not promise that one `ECDsa` may be used on several threads at once, so a shared key takes a lock. A key that one call creates is disposed by that call; a shared key is not disposed while another call may hold it.
+
 ## XML docs
 
 - Public members under `src/` have `summary`, and `param` / `returns` / `exception` when a caller might be unsure. Sentences end with a period. Properties start with "Gets" / "Gets or sets"; constructors with "Initializes a new instance of the <see cref="T"/> class".
