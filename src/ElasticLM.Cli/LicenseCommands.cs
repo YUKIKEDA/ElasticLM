@@ -64,9 +64,10 @@ internal static class LicenseCommands
         var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true };
         var issueTrustOption = new Option<string[]>("--trust")
         {
-            Description = "A root public key file. When given, the license is verified with it before it is written.",
+            Description =
+                $"A root public key file; the license is verified with it before it is written. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
         };
-        var issueRevokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID, used with --trust." };
+        var issueRevokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         Option<string> passphraseOption = CommonOptions.PassphraseEnvironment();
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
@@ -140,9 +141,10 @@ internal static class LicenseCommands
 
                     string[] certificates = [.. parse.GetValue(certificateOption)!.Select(p => CliFiles.ReadText(p, MaxLicenseFileBytes))];
                     using ECDsa signing = CommonOptions.ReadPrivateKey(host, parse.GetValue(signingOption)!, parse.GetValue(passphraseOption)!);
-                    string[] trustFiles = parse.GetValue(issueTrustOption) ?? [];
-                    TrustStore? trust =
-                        trustFiles.Length > 0 ? TrustStore.Create(TrustKeys.Read(host, trustFiles), parse.GetValue(issueRevokedOption) ?? []) : null;
+                    TrustStore trust = TrustStore.Create(
+                        TrustKeys.Read(host, parse.GetValue(issueTrustOption) ?? []),
+                        parse.GetValue(issueRevokedOption) ?? []
+                    );
                     IssuedLicense issued = LicenseIssuer.Issue(signing, certificates, spec, host.Time, trust);
                     string outPath = parse.GetValue(outOption)!;
                     CliFiles.Write(outPath, issued.File, parse.GetValue(forceOption), secret: false);

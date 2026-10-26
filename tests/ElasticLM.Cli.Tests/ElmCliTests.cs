@@ -108,33 +108,49 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
-    /// Without --trust, verify reads the root keys from ELM_TRUST_ROOT_KEYS, which may hold several PEM blocks; with neither,
-    /// it exits with 2.
+    /// Without --trust, issue and verify read the root keys from ELM_TRUST_ROOT_KEYS, which may hold several PEM blocks;
+    /// with neither, they exit with 2 and issue writes nothing.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - An issued license; the root public key.
+    /// - Keys and a certificate from the offline flow; an issued license; the root public key.
     ///
     /// Steps:
-    /// - Verify without --trust and with the variable holding another key and the root key; then with no variable.
+    /// - Issue and verify without --trust and with the variable holding another key and the root key.
+    /// - Issue with the variable holding only the other key.
+    /// - Issue and verify with no variable.
     ///
     /// Expected:
-    /// - Exit 0 with the variable; exit 2 and a message naming the variable without it.
+    /// - Exit 0 with both keys in the variable; exit 2 with ELM_UNTRUSTED_KEY with the other key only; exit 2 and a message
+    ///   naming the variable without it. A refused issue leaves no file.
     /// </remarks>
     [Fact]
-    public void Verify_TrustFromEnvironment_IsUsed()
+    public void TrustFromEnvironment_IsUsed_ByIssueAndVerify()
     {
         string license = IssueSample();
-        string[] args = Verify(license);
-        int trust = Array.IndexOf(args, "--trust");
-        string[] withoutTrust = [.. args[..trust], .. args[(trust + 2)..]];
+        string[] verify = WithoutTrust(Verify(license));
         using ECDsa other = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        string otherPem = other.ExportSubjectPublicKeyInfoPem();
 
-        _environment["ELM_TRUST_ROOT_KEYS"] = other.ExportSubjectPublicKeyInfoPem() + Environment.NewLine + File.ReadAllText(P("root.pub.pem"));
-        Assert.Equal(0, Run(withoutTrust).Code);
+        _environment["ELM_TRUST_ROOT_KEYS"] = otherPem + Environment.NewLine + File.ReadAllText(P("root.pub.pem"));
+        Assert.Equal(0, Run(verify).Code);
+        Assert.Equal(0, Run(WithoutTrust(Issue("env.elmlic"))).Code);
+        Assert.True(File.Exists(P("env.elmlic")));
+
+        _environment["ELM_TRUST_ROOT_KEYS"] = otherPem;
+        AssertInputError(Run(WithoutTrust(Issue("other.elmlic"))), "ELM_UNTRUSTED_KEY");
+        Assert.False(File.Exists(P("other.elmlic")));
 
         _environment.Remove("ELM_TRUST_ROOT_KEYS");
-        AssertInputError(Run(withoutTrust), "ELM_TRUST_ROOT_KEYS");
+        AssertInputError(Run(verify), "ELM_TRUST_ROOT_KEYS");
+        AssertInputError(Run(WithoutTrust(Issue("none.elmlic"))), "ELM_TRUST_ROOT_KEYS");
+        Assert.False(File.Exists(P("none.elmlic")));
+
+        static string[] WithoutTrust(string[] args)
+        {
+            int trust = Array.IndexOf(args, "--trust");
+            return [.. args[..trust], .. args[(trust + 2)..]];
+        }
     }
 
     /// <summary>
@@ -256,7 +272,9 @@ public sealed class ElmCliTests : IDisposable
             File.WriteAllText(P("other.pub.pem"), otherRoot.ExportSubjectPublicKeyInfoPem());
         }
 
-        AssertInputError(Run([.. Issue("t.elmlic"), "--trust", P("other.pub.pem")]), "ELM_UNTRUSTED_KEY");
+        string[] otherTrust = Issue("t.elmlic");
+        otherTrust[Array.IndexOf(otherTrust, "--trust") + 1] = P("other.pub.pem");
+        AssertInputError(Run(otherTrust), "ELM_UNTRUSTED_KEY");
         Assert.False(File.Exists(P("t.elmlic")));
 
         string[] Certify(params string[] extra) =>
@@ -406,6 +424,8 @@ public sealed class ElmCliTests : IDisposable
             "installation-key-thumbprint",
             "--fingerprint",
             "2b9b86465b5d4fbda9c050845613fa89",
+            "--trust",
+            P("root.pub.pem"),
             "--out",
             P(file),
         ];
