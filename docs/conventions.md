@@ -19,6 +19,7 @@ stylecop.json                StyleCop の設定
 build.ps1                    ローカルのゲート（CI も同じスクリプトを実行する）
 src/                         出荷するプロジェクト（ElasticLM.*）
 tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）
+samples/                     利用例と NativeAOT の確認用のアプリ
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
 .cursor/rules/               エージェント向けの規約
 .agents/skills/              スキル（.claude/skills/ にコピーを置く）
@@ -27,7 +28,9 @@ docs/                        設計・却下した案・ADR・ロードマップ
 
 | プロジェクト | 責務 |
 | --- | --- |
-| （まだない） | 構成は design.ja.md §6.2。プロジェクトを作る PR で行を足す |
+| `src/ElasticLM.Licensing` | オフラインの検証（design §6.2）。JWS の用途を絞った形、トークンの型、トラストストア、`LicenseVerifier`、時計の守り、マシン指紋。外部の依存なし。NuGet パッケージ |
+| `tests/ElasticLM.Licensing.Tests` | `ElasticLM.Licensing` のテスト。鍵とトークンはテストの中で作る（`TestIssuer`） |
+| `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
 
 ## ビルドとゲート
 

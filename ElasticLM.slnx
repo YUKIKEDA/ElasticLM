@@ -1,1 +1,11 @@
-<Solution />
+<Solution>
+  <Folder Name="/samples/">
+    <Project Path="samples/VerifyLicense/VerifyLicense.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/ElasticLM.Licensing/ElasticLM.Licensing.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/ElasticLM.Licensing.Tests/ElasticLM.Licensing.Tests.csproj" />
+  </Folder>
+</Solution>
