@@ -96,3 +96,5 @@ jobs:
           $env:ELM_PRODUCT = 'acme-cad'
           $out = & $exe 2>&1 | Out-String
           if ($LASTEXITCODE -ne 1 -or $out -notmatch 'trust.rootKeys') { $out; "::error::elm-server did not refuse to start without trust"; exit 1 }
+          # The expected exit code 1 would otherwise become the step's result.
+          exit 0
