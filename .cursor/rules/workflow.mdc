@@ -57,6 +57,8 @@ Create an Issue before its number is written anywhere: a branch name, a commit, 
 # GOOD — create the Issue, read its number from the output, then write the body
 ```
 
+Creating the Issue and using its number are separate commands. A chain such as `gh issue create ... && git switch -c docs/3-slug` writes a number before the output that gives it has been read. In D0 the agent chained the two and named the branch `docs/3-...` before reading the URL; the number happened to match (PR #4's retrospective).
+
 ## Stacked PRs
 
 A second Issue that builds on an open PR gets its own branch and PR based on the first. A stacked PR is merged only after its base has merged. When the base merges, retarget the next PR to `main` first, then delete the merged branch.
