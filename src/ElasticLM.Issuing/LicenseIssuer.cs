@@ -25,9 +25,19 @@ public static class LicenseIssuer
     /// <c>license</c> and cover the issue time.</param>
     /// <param name="spec">The license.</param>
     /// <param name="time">The time provider, for the issue time.</param>
+    /// <param name="trust">The root keys the apps trust, or <see langword="null"/>. When given, the issued file is run
+    /// through <see cref="LicenseVerifier"/> before it is returned, so a certificate that the root did not sign, or one whose
+    /// key or period does not match, is found here rather than on a customer's machine.</param>
     /// <returns>The issued license.</returns>
-    /// <exception cref="ArgumentException">The spec breaks a rule of design §8.4.2, §8.6, or §9.3, or no certificate covers the signing key for licenses at the issue time.</exception>
-    public static IssuedLicense Issue(ECDsa signingKey, IReadOnlyList<string> certificates, LicenseSpec spec, TimeProvider time)
+    /// <exception cref="ArgumentException">The spec breaks a rule of design §8.4.2, §8.6, or §9.3; no certificate covers the
+    /// signing key for licenses at the issue time; or the issued file does not pass verification with <paramref name="trust"/>.</exception>
+    public static IssuedLicense Issue(
+        ECDsa signingKey,
+        IReadOnlyList<string> certificates,
+        LicenseSpec spec,
+        TimeProvider time,
+        TrustStore? trust = null
+    )
     {
         ArgumentNullException.ThrowIfNull(signingKey);
         ArgumentNullException.ThrowIfNull(certificates);
@@ -41,9 +51,20 @@ public static class LicenseIssuer
             throw new ArgumentException("Between one and four certificates are required.", nameof(certificates));
         }
 
-        if (!certificates.Any(c => Certifies(c, kid, now)))
+        string[] trimmed = [.. certificates.Select(c => c?.Trim() ?? string.Empty)];
+        CertificateCheck best = trimmed.Select(c => Check(c, kid, now)).Min();
+        if (best != CertificateCheck.Certifies)
         {
-            throw new ArgumentException("No certificate allows the signing key to sign licenses at the issue time.", nameof(certificates));
+            throw new ArgumentException(
+                best switch
+                {
+                    CertificateCheck.OutsidePeriod => "The certificates for the signing key do not cover the issue time.",
+                    CertificateCheck.NoLicenseUse => "The certificates for the signing key do not allow it to sign licenses (use license).",
+                    CertificateCheck.OtherKey => $"No certificate is for the signing key {kid}.",
+                    _ => "No certificate can be read as an elm-cert+jws token.",
+                },
+                nameof(certificates)
+            );
         }
 
         LicensePayload payload = ToPayload(spec, kid, now);
@@ -72,7 +93,7 @@ public static class LicenseIssuer
             Format = "elasticlm-license",
             Version = 1,
             License = token,
-            Certificates = [.. certificates],
+            Certificates = [.. trimmed],
         };
         byte[] file = JsonSerializer.SerializeToUtf8Bytes(envelope, LicensingJsonContext.Default.LicenseFileEnvelope);
         if (file.Length > Limits.MaxLicenseFileLength || token.Length > Limits.MaxTokenLength)
@@ -80,7 +101,30 @@ public static class LicenseIssuer
             throw new ArgumentException("The license file is larger than the limit.", nameof(spec));
         }
 
+        if (trust is not null)
+        {
+            VerifyIssued(file, spec, trust, time);
+        }
+
         return new IssuedLicense(file, payload.Jti, warnings);
+    }
+
+    private static void VerifyIssued(byte[] file, LicenseSpec spec, TrustStore trust, TimeProvider time)
+    {
+        // An unbound license with fingerprints still needs an identity to carry them; the key is not checked without cnf.
+        InstallationIdentity? installation =
+            spec.InstallationKeyThumbprint is not null || spec.Fingerprints.Count > 0
+                ? new InstallationIdentity(spec.InstallationKeyThumbprint ?? "unbound", spec.Fingerprints)
+                : null;
+        var requirement = new LicenseRequirement(spec.ProductId, spec.Kind, null, null, installation);
+        var verifier = new LicenseVerifier(trust, time, StatelessClockGuard.Instance, new LicenseVerifierOptions { AcceptTrialAsStandard = false });
+        if (verifier.Verify(file, requirement) is LicenseVerificationResult.Invalid invalid)
+        {
+            throw new ArgumentException(
+                $"The issued license does not pass verification with the trust store: {invalid.Error.WireName}: {invalid.Error.Message}",
+                nameof(trust)
+            );
+        }
     }
 
     private static LicensePayload ToPayload(LicenseSpec spec, string kid, long now)
@@ -138,14 +182,14 @@ public static class LicenseIssuer
 
     private static long Seconds(TimeSpan span) => (long)Math.Floor(span.TotalSeconds);
 
-    private static bool Certifies(string certificate, string kid, long now)
+    private static CertificateCheck Check(string certificate, string kid, long now)
     {
         if (!CompactJws.TryParse(certificate, TokenTypes.KeyCertificate, out CompactJws? jws, out _))
         {
-            return false;
+            return CertificateCheck.Unreadable;
         }
 
-        // The issuer's own certificate file: its root signature is checked by the verifier, not here.
+        // The issuer's own certificate file: its root signature is checked by the verifier (see the trust parameter).
         KeyCertificatePayload? payload;
         try
         {
@@ -153,13 +197,34 @@ public static class LicenseIssuer
         }
         catch (JsonException)
         {
-            return false;
+            return CertificateCheck.Unreadable;
         }
 
-        return payload is not null
-            && payload.Sub == kid
-            && payload.Use.Contains("license", StringComparer.Ordinal)
-            && payload.Nbf <= now
-            && now <= payload.Exp;
+        if (payload is null)
+        {
+            return CertificateCheck.Unreadable;
+        }
+
+        if (payload.Sub != kid)
+        {
+            return CertificateCheck.OtherKey;
+        }
+
+        if (!payload.Use.Contains("license", StringComparer.Ordinal))
+        {
+            return CertificateCheck.NoLicenseUse;
+        }
+
+        return payload.Nbf <= now && now <= payload.Exp ? CertificateCheck.Certifies : CertificateCheck.OutsidePeriod;
+    }
+
+    // Ordered from the best result to the worst, so the minimum over the certificates is the closest one to usable.
+    private enum CertificateCheck
+    {
+        Certifies,
+        OutsidePeriod,
+        NoLicenseUse,
+        OtherKey,
+        Unreadable,
     }
 }

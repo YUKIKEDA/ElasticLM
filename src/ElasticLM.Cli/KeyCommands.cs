@@ -39,6 +39,10 @@ internal static class KeyCommands
                     string outPath = parse.GetValue(outOption)!;
                     string publicPath = parse.GetValue(publicOption) ?? outPath + ".pub.pem";
                     bool force = parse.GetValue(forceOption);
+
+                    // Check both paths before writing either, so a refused public key file never leaves a private key behind.
+                    CliFiles.EnsureWritable(outPath, force);
+                    CliFiles.EnsureWritable(publicPath, force);
                     string passphrase = Passphrases.ForNewKey(host, parse.GetValue(passphraseOption)!);
 
                     using ECDsa created = KeyFiles.CreateKey();

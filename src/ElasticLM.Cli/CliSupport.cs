@@ -57,6 +57,14 @@ internal static class CliFiles
 
     public static byte[] ReadBytes(string path, int maxBytes) => System.Text.Encoding.UTF8.GetBytes(ReadText(path, maxBytes));
 
+    public static void EnsureWritable(string path, bool force)
+    {
+        if (!force && File.Exists(path))
+        {
+            throw new CliException($"The file '{path}' exists. Pass --force to overwrite it.");
+        }
+    }
+
     public static void Write(string path, string text, bool force, bool secret) =>
         Write(path, System.Text.Encoding.UTF8.GetBytes(text), force, secret);
 
@@ -216,7 +224,7 @@ internal static class TrustKeys
     {
         if (files.Length > 0)
         {
-            return [.. files.Select(f => CliFiles.ReadText(f, 64 * 1024))];
+            return [.. files.SelectMany(f => SplitBlocks(CliFiles.ReadText(f, 64 * 1024), $"The file '{f}'"))];
         }
 
         string? pem = host.GetEnvironmentVariable(EnvironmentVariable);
@@ -225,7 +233,15 @@ internal static class TrustKeys
             throw new CliException($"Pass --trust, or set {EnvironmentVariable} to one or more PEM public keys.");
         }
 
-        // The variable may hold several PEM blocks; the trust store takes one block per key.
+        return SplitBlocks(pem, EnvironmentVariable);
+    }
+
+    /// <summary>
+    /// Splits a text into its PEM blocks. A file and the variable may both hold several root keys; the trust store takes one
+    /// block per key.
+    /// </summary>
+    public static string[] SplitBlocks(string pem, string source)
+    {
         var keys = new List<string>();
         ReadOnlySpan<char> rest = pem;
         while (System.Security.Cryptography.PemEncoding.TryFind(rest, out System.Security.Cryptography.PemFields fields))
@@ -234,6 +250,6 @@ internal static class TrustKeys
             rest = rest[fields.Location.End..];
         }
 
-        return keys.Count > 0 ? [.. keys] : throw new CliException($"{EnvironmentVariable} holds no PEM public key.");
+        return keys.Count > 0 ? [.. keys] : throw new CliException($"{source} holds no PEM public key.");
     }
 }

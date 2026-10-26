@@ -43,7 +43,7 @@ public static class CertificateIssuer
     /// <param name="validity">The length of the validity period, at most <see cref="MaxValidity"/>.</param>
     /// <param name="time">The time provider, for the issue time.</param>
     /// <returns>The certificate as an <c>elm-cert+jws</c> token.</returns>
-    /// <exception cref="ArgumentException">No use is given, the validity is not positive or longer than <see cref="MaxValidity"/>, or a key is not P-256.</exception>
+    /// <exception cref="ArgumentException">No use is given, the validity is not positive or longer than <see cref="MaxValidity"/>, the period lies outside the times of design §8.6, or a key is not P-256.</exception>
     public static string Issue(ECDsa rootKey, ECDsa signingPublicKey, KeyUses uses, DateTimeOffset notBefore, TimeSpan validity, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(rootKey);
@@ -57,6 +57,12 @@ public static class CertificateIssuer
         if (validity <= TimeSpan.Zero || validity > MaxValidity)
         {
             throw new ArgumentException("The validity must be positive and at most two years.", nameof(validity));
+        }
+
+        long notBeforeSeconds = notBefore.ToUnixTimeSeconds();
+        if (!Limits.IsTime(notBeforeSeconds) || !Limits.IsTime(notBeforeSeconds + (long)validity.TotalSeconds))
+        {
+            throw new ArgumentException("The validity period must lie between 1970 and 9999 (design §8.6).", nameof(notBefore));
         }
 
         ECParameters signing = signingPublicKey.ExportParameters(false);

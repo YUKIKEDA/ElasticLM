@@ -138,6 +138,166 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
+    /// key thumbprint prints the same key ID as key root create --json, and exits with 2 for a missing file or a file that
+    /// is not a public key. The --json output of certify and issue is valid JSON with the same IDs.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty folder.
+    ///
+    /// Steps:
+    /// - Create a root key with --json; run key thumbprint on its public key, on a missing file, and on the encrypted private
+    ///   key; certify and issue with --json.
+    ///
+    /// Expected:
+    /// - The thumbprint equals keyId; exit 2 with "does not exist" and "not one P-256 public key"; certify and issue JSON
+    ///   carry the root key ID and the license ID.
+    /// </remarks>
+    [Fact]
+    public void Thumbprint_AndJsonOutput_MatchKeyIds()
+    {
+        (int code, string output, _) = Run("key", "root", "create", "--out", P("root.key.pem"), "--public-out", P("root.pub.pem"), "--json");
+        Assert.Equal(0, code);
+        string rootKeyId;
+        using (JsonDocument json = JsonDocument.Parse(output))
+        {
+            rootKeyId = json.RootElement.GetProperty("keyId").GetString()!;
+        }
+
+        (int thumbCode, string thumbOut, _) = Run("key", "thumbprint", P("root.pub.pem"));
+        Assert.Equal(0, thumbCode);
+        Assert.Equal(rootKeyId, thumbOut.Trim());
+        AssertInputError(Run("key", "thumbprint", P("missing.pem")), "does not exist");
+        AssertInputError(Run("key", "thumbprint", P("root.key.pem")), "not one P-256 public key");
+
+        Assert.Equal(0, Run("key", "signing", "create", "--out", P("signing.key.pem")).Code);
+        (int certCode, string certOut, _) = Run(
+            "key",
+            "certify",
+            "--root",
+            P("root.key.pem"),
+            "--public",
+            P("signing.key.pem.pub.pem"),
+            "--out",
+            P("signing.cert.jws"),
+            "--not-before",
+            "2026-09-01",
+            "--json"
+        );
+        Assert.Equal(0, certCode);
+        using (JsonDocument json = JsonDocument.Parse(certOut))
+        {
+            Assert.Equal(rootKeyId, json.RootElement.GetProperty("rootKeyId").GetString());
+        }
+
+        (int issueCode, string issueOut, _) = Run([.. Issue("license.elmlic"), "--json"]);
+        Assert.Equal(0, issueCode);
+        using (JsonDocument json = JsonDocument.Parse(issueOut))
+        {
+            Assert.Equal("lic-1", json.RootElement.GetProperty("licenseId").GetString());
+        }
+    }
+
+    /// <summary>
+    /// Malformed input from files and options is reported with exit 2 and its own message, never as an exception
+    /// (.cursor/rules/security.mdc).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keys and a certificate from the offline flow; files with broken license contents.
+    ///
+    /// Steps:
+    /// - license inspect on: not JSON, license not a string, certificates not an array, a null certificate, a token with two
+    ///   segments, a segment that is not base64url. license issue with: a feature without ID, an unknown feature part, seats
+    ///   not a number, an expiry that is not a date (in a feature and in --expires), metadata without '=', a public key as the
+    ///   certificate, --trust with another root. key certify with --days 0 and 732 and a bad --not-before.
+    ///
+    /// Expected:
+    /// - Exit 2 and the message part named in each call.
+    /// </remarks>
+    [Fact]
+    public void Errors_MalformedInput_ExitWithTwoAndMessage()
+    {
+        IssueSample();
+        string token = File.ReadAllText(P("signing.cert.jws")).Trim();
+        void Inspect(string content)
+        {
+            File.WriteAllText(P("bad.elmlic"), content);
+            AssertInputError(Run("license", "inspect", P("bad.elmlic")), "not an ElasticLM license file");
+        }
+
+        Inspect("{not json");
+        Inspect("{\"format\":\"elasticlm-license\",\"version\":1,\"license\":5,\"certificates\":[]}");
+        Inspect($"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"{token}\",\"certificates\":{{}}}}");
+        Inspect($"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"{token}\",\"certificates\":[null]}}");
+        Inspect("{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"aaaa.bbbb\",\"certificates\":[]}");
+        Inspect("{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"a*a.bbbb.cccc\",\"certificates\":[]}");
+
+        string[] WithFeature(string feature)
+        {
+            string[] args = Issue("f.elmlic");
+            args[Array.IndexOf(args, "--feature") + 1] = feature;
+            return args;
+        }
+
+        AssertInputError(Run(WithFeature(";ver=1")), "has no ID");
+        AssertInputError(Run(WithFeature("pro;foo=1")), "unknown or invalid part");
+        AssertInputError(Run(WithFeature("pro;seats=abc")), "unknown or invalid part");
+        AssertInputError(Run(WithFeature("pro;exp=tomorrow")), "not an ISO 8601");
+        string[] badExpiry = Issue("e.elmlic");
+        badExpiry[Array.IndexOf(badExpiry, "--expires") + 1] = "tomorrow";
+        AssertInputError(Run(badExpiry), "not an ISO 8601");
+        AssertInputError(Run([.. Issue("m.elmlic"), "--meta", "novalue"]), "not key=value");
+        string[] publicAsCertificate = Issue("c.elmlic");
+        publicAsCertificate[Array.IndexOf(publicAsCertificate, "--certificate") + 1] = P("root.pub.pem");
+        AssertInputError(Run(publicAsCertificate), "can be read as an elm-cert+jws");
+        using (ECDsa otherRoot = ECDsa.Create(ECCurve.NamedCurves.nistP256))
+        {
+            File.WriteAllText(P("other.pub.pem"), otherRoot.ExportSubjectPublicKeyInfoPem());
+        }
+
+        AssertInputError(Run([.. Issue("t.elmlic"), "--trust", P("other.pub.pem")]), "ELM_UNTRUSTED_KEY");
+        Assert.False(File.Exists(P("t.elmlic")));
+
+        string[] Certify(params string[] extra) =>
+            ["key", "certify", "--root", P("root.key.pem"), "--public", P("signing.key.pem.pub.pem"), "--out", P("c9.jws"), .. extra];
+        AssertInputError(Run(Certify("--days", "0")), "validity must be positive");
+        AssertInputError(Run(Certify("--days", "732")), "validity must be positive");
+        AssertInputError(Run(Certify("--not-before", "someday")), "not an ISO 8601");
+    }
+
+    /// <summary>
+    /// key create checks both output files before writing, so a refused public key file leaves no private key behind; a
+    /// --trust file may hold several PEM keys.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An existing file at the public key path; a license issued under the test root.
+    ///
+    /// Steps:
+    /// - Create a root key whose public key path exists, without --force. Verify with a --trust file holding another key
+    ///   and the root key.
+    ///
+    /// Expected:
+    /// - Exit 2 and no private key file; the verification exits 0.
+    /// </remarks>
+    [Fact]
+    public void KeyCreate_ExistingPublicFile_WritesNothing_AndTrustFileHoldsSeveralKeys()
+    {
+        File.WriteAllText(P("taken.pub.pem"), "x");
+        AssertInputError(Run("key", "root", "create", "--out", P("fresh.key.pem"), "--public-out", P("taken.pub.pem")), "exists");
+        Assert.False(File.Exists(P("fresh.key.pem")));
+
+        string license = IssueSample();
+        using ECDsa other = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        File.WriteAllText(P("both.pub.pem"), other.ExportSubjectPublicKeyInfoPem() + Environment.NewLine + File.ReadAllText(P("root.pub.pem")));
+        string[] args = Verify(license);
+        args[Array.IndexOf(args, "--trust") + 1] = P("both.pub.pem");
+
+        Assert.Equal(0, Run(args).Code);
+    }
+
+    /// <summary>
     /// A license without expiry is issued with a warning, and verifies.
     /// </summary>
     /// <remarks>

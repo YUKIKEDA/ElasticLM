@@ -62,6 +62,11 @@ internal static class LicenseCommands
         var overageOption = new Option<int?>("--overage") { Description = "Server licenses: overage percentage. Default: 0." };
         var metaOption = new Option<string[]>("--meta") { Description = "Vendor metadata key=value. Repeat for several." };
         var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true };
+        var issueTrustOption = new Option<string[]>("--trust")
+        {
+            Description = "A root public key file. When given, the license is verified with it before it is written.",
+        };
+        var issueRevokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID, used with --trust." };
         Option<string> passphraseOption = CommonOptions.PassphraseEnvironment();
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
@@ -85,6 +90,8 @@ internal static class LicenseCommands
             overageOption,
             metaOption,
             outOption,
+            issueTrustOption,
+            issueRevokedOption,
             passphraseOption,
             forceOption,
             jsonOption,
@@ -131,9 +138,12 @@ internal static class LicenseCommands
                             : null,
                     };
 
-                    string[] certificates = [.. parse.GetValue(certificateOption)!.Select(p => CliFiles.ReadText(p, MaxLicenseFileBytes).Trim())];
+                    string[] certificates = [.. parse.GetValue(certificateOption)!.Select(p => CliFiles.ReadText(p, MaxLicenseFileBytes))];
                     using ECDsa signing = CommonOptions.ReadPrivateKey(host, parse.GetValue(signingOption)!, parse.GetValue(passphraseOption)!);
-                    IssuedLicense issued = LicenseIssuer.Issue(signing, certificates, spec, host.Time);
+                    string[] trustFiles = parse.GetValue(issueTrustOption) ?? [];
+                    TrustStore? trust =
+                        trustFiles.Length > 0 ? TrustStore.Create(TrustKeys.Read(host, trustFiles), parse.GetValue(issueRevokedOption) ?? []) : null;
+                    IssuedLicense issued = LicenseIssuer.Issue(signing, certificates, spec, host.Time, trust);
                     string outPath = parse.GetValue(outOption)!;
                     CliFiles.Write(outPath, issued.File, parse.GetValue(forceOption), secret: false);
 

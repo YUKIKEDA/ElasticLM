@@ -124,12 +124,95 @@ public sealed class IssuingTests : IDisposable
         string leaseOnly = CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
         string ended = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-60), TimeSpan.FromDays(30), _time);
 
-        Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [forOther], spec, _time));
-        Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [leaseOnly], spec, _time));
-        Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [ended], spec, _time));
-        Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [], spec, _time));
+        AssertThrows("is for the signing key", () => LicenseIssuer.Issue(_signing, [forOther], spec, _time));
+        AssertThrows("use license", () => LicenseIssuer.Issue(_signing, [leaseOnly], spec, _time));
+        AssertThrows("issue time", () => LicenseIssuer.Issue(_signing, [ended], spec, _time));
+        AssertThrows("can be read", () => LicenseIssuer.Issue(_signing, [KeyFiles.ExportPublic(_root)], spec, _time));
+        AssertThrows("issue time", () => LicenseIssuer.Issue(_signing, [forOther, ended], spec, _time));
+        AssertThrows("Between one and four", () => LicenseIssuer.Issue(_signing, [], spec, _time));
         string good = Certificate();
-        Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [good, good, good, good, good], spec, _time));
+        AssertThrows("Between one and four", () => LicenseIssuer.Issue(_signing, [good, good, good, good, good], spec, _time));
+        Assert.NotNull(LicenseIssuer.Issue(_signing, ["  " + good + Environment.NewLine], spec, _time));
+    }
+
+    /// <summary>
+    /// With a trust store, the issued file is run through the verifier, so certificates the root did not sign, or whose key
+    /// does not match their subject, are refused at issuance; a correct file passes.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A certificate from the trusted root; one from another root; one whose jwk is another key under the right subject.
+    ///
+    /// Steps:
+    /// - Issue with each and the trust store of the right root; issue with the right certificate and another root's trust
+    ///   store; issue an already-expired license.
+    ///
+    /// Expected:
+    /// - The right certificate passes; the others throw ArgumentException naming the verifier's error.
+    /// </remarks>
+    [Fact]
+    public void Issue_WithTrustStore_VerifiesWithTheVerifier()
+    {
+        using ECDsa otherRoot = KeyFiles.CreateKey();
+        using ECDsa otherKey = KeyFiles.CreateKey();
+        LicenseSpec spec = Spec(LicenseKind.Standard, bound: true, expires: true);
+        TrustStore trust = TrustStore.Create([KeyFiles.ExportPublic(_root)], []);
+        string fromOtherRoot = CertificateIssuer.Issue(otherRoot, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
+        string[] parts = CertificateIssuer.Issue(_root, otherKey, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(30), _time).Split('.');
+        string payload = System.Text.Encoding.UTF8.GetString(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]));
+        string swapped = payload.Replace(KeyFiles.KeyId(otherKey), KeyFiles.KeyId(_signing), StringComparison.Ordinal);
+        string jwkMismatch = SignAsRoot(parts[0], swapped);
+
+        Assert.NotNull(LicenseIssuer.Issue(_signing, [Certificate()], spec, _time, trust));
+        AssertThrows("ELM_UNTRUSTED_KEY", () => LicenseIssuer.Issue(_signing, [fromOtherRoot], spec, _time, trust));
+        AssertThrows("ELM_UNTRUSTED_KEY", () => LicenseIssuer.Issue(_signing, [jwkMismatch], spec, _time, trust));
+        AssertThrows(
+            "ELM_UNTRUSTED_KEY",
+            () => LicenseIssuer.Issue(_signing, [Certificate()], spec, _time, TrustStore.Create([KeyFiles.ExportPublic(otherRoot)], []))
+        );
+        AssertThrows("ELM_EXPIRED", () => LicenseIssuer.Issue(_signing, [Certificate()], spec with { ExpiresAt = Now.AddDays(-30) }, _time, trust));
+    }
+
+    /// <summary>
+    /// A certificate period outside 1970..9999 is refused (design §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A root and a signing key.
+    ///
+    /// Steps:
+    /// - Certify with not-before in 1969, and with not-before 9999-12-01 and 60 days of validity.
+    ///
+    /// Expected:
+    /// - ArgumentException both times.
+    /// </remarks>
+    [Fact]
+    public void IssueCertificate_PeriodOutsideTimes_Throws()
+    {
+        AssertThrows(
+            "1970 and 9999",
+            () =>
+                CertificateIssuer.Issue(
+                    _root,
+                    _signing,
+                    KeyUses.License,
+                    new DateTimeOffset(1969, 12, 31, 0, 0, 0, TimeSpan.Zero),
+                    TimeSpan.FromDays(1),
+                    _time
+                )
+        );
+        AssertThrows(
+            "1970 and 9999",
+            () =>
+                CertificateIssuer.Issue(
+                    _root,
+                    _signing,
+                    KeyUses.License,
+                    new DateTimeOffset(9999, 12, 1, 0, 0, 0, TimeSpan.Zero),
+                    TimeSpan.FromDays(60),
+                    _time
+                )
+        );
     }
 
     /// <summary>
@@ -236,6 +319,23 @@ public sealed class IssuingTests : IDisposable
         Assert.False(KeyFiles.TryImportEncrypted(_signing.ExportPkcs8PrivateKeyPem(), Passphrase, out _));
         Assert.False(KeyFiles.TryImportEncrypted(KeyFiles.ExportPublic(_signing), Passphrase, out _));
         Assert.Throws<ArgumentException>(() => KeyFiles.ExportEncrypted(_signing, "short-11chr"));
+    }
+
+    private static void AssertThrows(string expected, Action action)
+    {
+        ArgumentException e = Assert.ThrowsAny<ArgumentException>(action);
+        Assert.Contains(expected, e.Message, StringComparison.Ordinal);
+    }
+
+    private string SignAsRoot(string encodedHeader, string payloadJson)
+    {
+        string input = encodedHeader + "." + System.Buffers.Text.Base64Url.EncodeToString(System.Text.Encoding.UTF8.GetBytes(payloadJson));
+        byte[] signature = _root.SignData(
+            System.Text.Encoding.ASCII.GetBytes(input),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation
+        );
+        return input + "." + System.Buffers.Text.Base64Url.EncodeToString(signature);
     }
 
     private string Certificate() => CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);
