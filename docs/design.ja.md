@@ -1640,7 +1640,7 @@ M4a1 のエンドポイント（0.79）:
 | 一覧 | `{"items": [...], "next": <次の after>}`。`next` がなければ、それ以上の行はない |
 | API キーの 1 件 | `{"id", "name", "prefix": <先頭 8 文字>, "permissions", "createdBy": <管理者の ID>, "createdAt", "expiresAt", "revokedAt": <止めていなければ null>}`。時刻は ISO 8601 の UTC（`2026-10-27T00:00:00Z`） |
 | `POST /v1/admin/api-keys` の `201` | API キーの 1 件に `"key": "elm_..."` を足したもの。キー本体はこの応答だけに入る |
-| 監査ログの 1 件 | §18.2 の 10 列（`n`、`ts`、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`、`prev`）と `hash`。`ts` は ISO 8601 の UTC、`prev` と `hash` は base64url、`detail` は JSON のオブジェクト |
+| 監査ログの 1 件 | §18.2 の 10 列（`n`、`ts`、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`、`prev`）と `hash`。`ts` は ISO 8601 の UTC（ハッシュに入る UNIX 秒へ一意に戻せる）、`prev` と `hash` は base64url、`detail` は保存した JSON の文字列をそのまま文字列として返す（例 `"detail": "{\"count\":12}"`）。解釈し直したオブジェクトでは、空白やメンバーの順が保存したものと違いうるため、§18.2 のハッシュを API の利用者が出し直せるよう、保存したバイト列を変えずに返す |
 | `POST /v1/admin/audit/verify` | `{"intact": <真偽>, "checked": <確かめた行の数>, "firstBroken": <最初に食い違う行の n。なければ null>}` |
 
 誤り（M4a1）:
