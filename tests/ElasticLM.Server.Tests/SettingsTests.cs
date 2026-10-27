@@ -1,4 +1,5 @@
 using System.Net;
+using ElasticLM.Issuing;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Server.Tests;
@@ -203,28 +204,29 @@ public sealed class SettingsTests : IDisposable
     public void RateLimiter_RefillsGroupsAndOverflows()
     {
         var time = new FakeTimeProvider();
-        var limiter = new IpRateLimiter(2, time, capacity: 2);
+        var limiter = new RateLimiter<IPAddress>(2, time, capacity: 2);
+        bool Take(IPAddress address) => limiter.TryAcquire(RateLimitSource.Of(address));
         IPAddress a = IPAddress.Parse("10.0.0.1");
 
-        Assert.True(limiter.TryAcquire(a));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("::ffff:10.0.0.1")));
-        Assert.False(limiter.TryAcquire(a));
+        Assert.True(Take(a));
+        Assert.True(Take(IPAddress.Parse("::ffff:10.0.0.1")));
+        Assert.False(Take(a));
         time.Advance(TimeSpan.FromMilliseconds(500));
-        Assert.True(limiter.TryAcquire(a));
+        Assert.True(Take(a));
 
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2::1")));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2:ffff::9")));
-        Assert.False(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2::77")));
+        Assert.True(Take(IPAddress.Parse("2001:db8:1:2::1")));
+        Assert.True(Take(IPAddress.Parse("2001:db8:1:2:ffff::9")));
+        Assert.False(Take(IPAddress.Parse("2001:db8:1:2::77")));
 
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.3")));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.4")));
-        Assert.False(limiter.TryAcquire(IPAddress.Parse("10.0.0.5")));
+        Assert.True(Take(IPAddress.Parse("10.0.0.3")));
+        Assert.True(Take(IPAddress.Parse("10.0.0.4")));
+        Assert.False(Take(IPAddress.Parse("10.0.0.5")));
         Assert.Equal(2, limiter.Count);
 
         time.Advance(TimeSpan.FromSeconds(1));
         limiter.Purge();
         Assert.Equal(0, limiter.Count);
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.3")));
+        Assert.True(Take(IPAddress.Parse("10.0.0.3")));
     }
 
     private string Write(string json)

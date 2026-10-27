@@ -60,7 +60,17 @@ internal sealed class CertificateSet(TrustStore trust, string use)
         return candidates;
     }
 
-    private bool TryVerifyCertificate(string text, out CertifiedKey? entry)
+    private bool TryVerifyCertificate(string text, out CertifiedKey? entry) => TryVerify(_trust, _use, text, out entry);
+
+    /// <summary>
+    /// Verifies one key certificate against a trust store for one use: its root signature, version, times, use, and key.
+    /// </summary>
+    /// <param name="trust">The trust store.</param>
+    /// <param name="use">The use the certificate must allow.</param>
+    /// <param name="text">The certificate (<c>elm-cert+jws</c>).</param>
+    /// <param name="entry">The certified key, which the caller disposes; <see langword="null"/> when the certificate fails.</param>
+    /// <returns><see langword="true"/> when the certificate verifies.</returns>
+    internal static bool TryVerify(TrustStore trust, string use, string text, out CertifiedKey? entry)
     {
         entry = null;
         if (!CompactJws.TryParse(text, TokenTypes.KeyCertificate, out CompactJws? jws, out _))
@@ -69,7 +79,7 @@ internal sealed class CertificateSet(TrustStore trust, string use)
         }
 
         string rootId = jws!.Header.Kid;
-        if (_trust.IsRevoked(rootId) || !_trust.TryGetRoot(rootId, out VerificationKey? root) || !root!.Verify(jws))
+        if (trust.IsRevoked(rootId) || !trust.TryGetRoot(rootId, out VerificationKey? root) || !root!.Verify(jws))
         {
             return false;
         }
@@ -84,7 +94,7 @@ internal sealed class CertificateSet(TrustStore trust, string use)
             return false;
         }
 
-        if (payload is null || payload.Ver != 1 || _trust.IsRevoked(payload.Sub))
+        if (payload is null || payload.Ver != 1 || trust.IsRevoked(payload.Sub))
         {
             return false;
         }
@@ -94,7 +104,7 @@ internal sealed class CertificateSet(TrustStore trust, string use)
             return false;
         }
 
-        if (!payload.Use.Contains(_use, StringComparer.Ordinal) || !payload.Jwk.TryGetParameters(out ECParameters parameters))
+        if (!payload.Use.Contains(use, StringComparer.Ordinal) || !payload.Jwk.TryGetParameters(out ECParameters parameters))
         {
             return false;
         }

@@ -1,0 +1,70 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>elm-service</AssemblyName>
+    <RootNamespace>ElasticLM.Service</RootNamespace>
+    <PublishAot>true</PublishAot>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- design §14.1: the ASP.NET Core shared framework, with the slim builder. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- design §14.2, §21: the storage layer over DbConnection. SQLite is built from vendor/sqlite (below). -->
+    <PackageReference Include="Microsoft.Data.Sqlite.Core" />
+    <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" />
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="ElasticLM.Service.Tests" />
+    <EmbeddedResource Include="Migrations\**\*.sql" LogicalName="migrations/%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    SQLite (design §14.2, decision 0.72): vendor/sqlite/build.ps1 builds the pinned amalgamation with the platform's C compiler.
+    JIT runs (tests, dotnet run) load the shared library from the output folder; NativeAOT links the static one into the
+    executable, so nothing is published beside it.
+  -->
+  <PropertyGroup>
+    <ElmSqliteRid Condition="'$(RuntimeIdentifier)' != ''">$(RuntimeIdentifier)</ElmSqliteRid>
+    <ElmSqliteRid Condition="'$(RuntimeIdentifier)' == ''">$(NETCoreSdkRuntimeIdentifier)</ElmSqliteRid>
+    <ElmSqliteDir>$(MSBuildThisFileDirectory)..\..\vendor\sqlite\</ElmSqliteDir>
+    <ElmSqliteOut>$(MSBuildThisFileDirectory)..\..\artifacts\sqlite\$(ElmSqliteRid)\</ElmSqliteOut>
+    <ElmSqliteShared Condition="$(ElmSqliteRid.StartsWith('win-'))">e_sqlite3.dll</ElmSqliteShared>
+    <ElmSqliteShared Condition="$(ElmSqliteRid.StartsWith('osx-'))">libe_sqlite3.dylib</ElmSqliteShared>
+    <ElmSqliteShared Condition="'$(ElmSqliteShared)' == ''">libe_sqlite3.so</ElmSqliteShared>
+    <ElmSqliteStatic Condition="$(ElmSqliteRid.StartsWith('win-'))">e_sqlite3.lib</ElmSqliteStatic>
+    <ElmSqliteStatic Condition="'$(ElmSqliteStatic)' == ''">libe_sqlite3.a</ElmSqliteStatic>
+  </PropertyGroup>
+
+  <Target
+    Name="ElmBuildSqlite"
+    BeforeTargets="AssignTargetPaths"
+    Inputs="$(ElmSqliteDir)sqlite3.c;$(ElmSqliteDir)sqlite3.h;$(ElmSqliteDir)SHA256SUMS;$(ElmSqliteDir)build.ps1"
+    Outputs="$(ElmSqliteOut)shared\$(ElmSqliteShared);$(ElmSqliteOut)static\$(ElmSqliteStatic)"
+  >
+    <!-- The folder is passed without its trailing separator: a backslash before the closing quote escapes it on Windows. -->
+    <Exec Command="pwsh -NoProfile -NonInteractive -File &quot;$(ElmSqliteDir)build.ps1&quot; -Rid $(ElmSqliteRid) -OutDir &quot;$(ElmSqliteOut.TrimEnd('\'))&quot;" />
+  </Target>
+
+  <ItemGroup>
+    <None Include="$(ElmSqliteOut)shared\$(ElmSqliteShared)" Link="$(ElmSqliteShared)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(PublishAot)' == 'true'">
+    <DirectPInvoke Include="e_sqlite3" />
+    <NativeLibrary Include="$(ElmSqliteOut)static\$(ElmSqliteStatic)" />
+  </ItemGroup>
+
+  <!-- The runtime pack carries the IIS in-process module, and the shared SQLite is for JIT runs only: elm-service ships as one file. -->
+  <Target Name="ElmDropSidecars" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == 'aspnetcorev2_inprocess.dll'" />
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)%(Extension)' == '$(ElmSqliteShared)'" />
+    </ItemGroup>
+  </Target>
+</Project>

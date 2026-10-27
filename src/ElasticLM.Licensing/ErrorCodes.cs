@@ -79,6 +79,7 @@ public static class ErrorCodes
             ErrorCode.Forbidden => "ELM_FORBIDDEN",
             ErrorCode.RateLimited => "ELM_RATE_LIMITED",
             ErrorCode.ServerBusy => "ELM_SERVER_BUSY",
+            ErrorCode.NotFound => "ELM_NOT_FOUND",
             ErrorCode.NetworkError => "ELM_NETWORK_ERROR",
             ErrorCode.InternalError => "ELM_INTERNAL_ERROR",
             _ => throw new ArgumentOutOfRangeException(nameof(code), code, "The error code is not defined."),

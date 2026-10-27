@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- The service runs in the test process on a loopback port, on SQLite and, when ELM_TEST_POSTGRES is set, on PostgreSQL. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+  </ItemGroup>
+</Project>
