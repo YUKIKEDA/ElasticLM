@@ -135,6 +135,21 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.69 | スキーマの移行 | 4 桁の番号のファイル、`schema_migrations` に版と SHA-256、版ごとのトランザクション。書き換えたファイルでは起動しない。PostgreSQL は助言ロックで一度だけ流す（§14.2） |
 | 0.70 | 監査ログの連なり | 32 バイトの 0 から始め、列の値を長さつきで並べたバイト列の SHA-256。追記は直列。連なりを確かめる管理 API。古い行を消すときは起点を残す（§18.2） |
 
+2026-10-27 の M4a の Grill（Issue #42）で持ち主が決めた。
+
+| # | 項目 | 決定 |
+| --- | --- | --- |
+| 0.71 | M4a の分け方 | M4a1（保存先、SQLite の静的ビルド、PostgreSQL、移行、設定、署名鍵の読み込み、`setup` と API キー、監査ログ、3 OS の NativeAOT）と M4a2（製品・機能・ポリシー・ライセンスとその管理 API、署名鍵の状態、`Unbound` のライセンスファイル）に分ける（§22） |
+| 0.72 | SQLite のビルド | `vendor/sqlite/` の版と SHA-256 を固定したアマルガムから、ビルドのたびに各 OS の C コンパイラーで静的ライブラリを作って組み込む。ビルド済みのライブラリはリポジトリに置かない（§14.2） |
+| 0.73 | 管理 API の形 | `elm-server` と同じ素の JSON（camelCase、`problem+json` と `ELM_` のコード、`?after=&limit=` で 200 件まで）（§14.5） |
+| 0.74 | サービスの設定 | `elm-server` と同じく、JSON の設定ファイルと `ELM_` の環境変数（環境変数が勝つ）。秘密は環境変数かファイルで、設定ファイルに直接書かない（§14.8） |
+| 0.75 | 署名鍵 | 起動時に 1 本を読む。証明書が今の時刻とライセンス・リースの用途を持たなければ起動しない。入れ替えは再起動。状態の API は鍵 ID・証明書の期限・用途を返し、期限まで 30 日を切ったら警告する（§14.8） |
+| 0.76 | `Unbound` のライセンスファイル | M4a2 で、管理 API から端末に紐づかないライセンスファイルを出す。`Unbound` のオンラインの有効化は M4b の Grill で決める（§9.3） |
+| 0.77 | 監査ログのバイト列 | 10 列を決まった順に、4 バイトのビッグエンディアンの長さと UTF-8 で並べ、`NULL` は長さ `0xFFFFFFFF`、`prev` は 32 バイトのまま（§18.2） |
+| 0.78 | 許可の一覧 | M4a1 と M4a2 の許可を §14.6 の表のとおりにし、M4b 以降の許可はその行で足す（§14.6） |
+| 0.79 | M4a1 のエンドポイント | API キーの作成・一覧・停止、監査ログの一覧・確認、`/health`。認証の失敗は 1 分ごとの件数で書く（§14.5） |
+| 0.80 | `setup` の出力 | キーだけを標準出力に 1 行で書き、説明は標準エラーに書く。終了コードは 0 / 1 / 2（§14.6） |
+
 ## 1. 目的と利用者
 
 ### 1.1 目的
@@ -744,6 +759,8 @@ erDiagram
 - 製品は試用に使うポリシーを 1 つ指定する（`Product.TrialPolicy`）。指定がなければ、その製品は試用を出さない。
 
 `LicenseKind: Server` のポリシーでは、`TokenLifetime` と `RefreshWindow` がサーバーライセンスの更新の周期になる（0.37）。`Binding` は `NodeLocked` に固定する。
+
+`Binding: Unbound` のライセンスファイル（インストール鍵とマシン指紋を持たない）は、M4a2 で管理 API から出す（0.76）。Keygen にも、オフライン用にライセンスファイルを出す「チェックアウト」の操作がある（https://keygen.sh/docs/api/licenses/ 。端末の有効化が要るかは資料に書かれていない）。`Unbound` のオンラインの有効化は M4b の Grill で決める。
 
 発行済みのライセンスがあるポリシーも、`LicenseKind` と `Binding` を除いて管理 API で変えられる（0.68）。変更は、次に出すトークン（更新・再有効化）から効き、すでに渡したトークンは期限まで今の値のままである。`LicenseKind` と `Binding` は、発行済みのトークンの形を変えるため変えられない。
 
@@ -1562,13 +1579,14 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 
 ### 14.1 構成
 
-`elm-service` は ASP.NET Core の Slim ビルダー（`WebApplication.CreateSlimBuilder`）で作る。D0 の調査で、HTTPS（PEM の証明書）、JwtBearer（OIDC の設定情報の取得を含む）、Npgsql、SQLite、埋め込みファイルを持つ構成が、Windows の NativeAOT 公開で警告 0 件になることを確かめた。Linux と macOS は M4a の行で確かめる。
+`elm-service` は ASP.NET Core の Slim ビルダー（`WebApplication.CreateSlimBuilder`）で作る。D0 の調査で、HTTPS（PEM の証明書）、JwtBearer（OIDC の設定情報の取得を含む）、Npgsql、SQLite、埋め込みファイルを持つ構成が、Windows の NativeAOT 公開で警告 0 件になることを確かめた。Linux と macOS は M4a1 の行で確かめる。
 
 ### 14.2 保存先
 
 - SQL を手で書き、`DbConnection` の上の薄い層で SQLite と PostgreSQL を切り替える。ORM は使わない（前身で EF Core が足かせになった。[design-decisions.md](./design-decisions.md)）。
 - PostgreSQL: Npgsql の `NpgsqlSlimDataSourceBuilder` を使う。Npgsql 8.0 以降は NativeAOT に対応する（https://www.npgsql.org/doc/compatibility.html ）。D0 で Npgsql 10.0.3 の公開が警告 0 件だった。
-- SQLite: `Microsoft.Data.Sqlite.Core` と `SQLitePCLRaw.provider.e_sqlite3` を使い、SQLite 本体は `vendor/sqlite/` で版と SHA-256 を固定したアマルガムから、各 OS 向けの静的ライブラリにビルドして、`DirectPInvoke` と `NativeLibrary` で実行ファイルに組み込む（https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop ）。D0 で SQLite 3.54.1 を win-x64 で組み込み、横に DLL のない 25.3 MB の実行ファイルで `sqlite_version()` が動くことを確かめた。Linux と macOS は M4a の行で確かめる。
+- SQLite: `Microsoft.Data.Sqlite.Core` と `SQLitePCLRaw.provider.e_sqlite3` を使い、SQLite 本体は `vendor/sqlite/` で版と SHA-256 を固定したアマルガムから、各 OS 向けの静的ライブラリにビルドして、`DirectPInvoke` と `NativeLibrary` で実行ファイルに組み込む（https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop ）。D0 で SQLite 3.54.1 を win-x64 で組み込み、横に DLL のない 25.3 MB の実行ファイルで `sqlite_version()` が動くことを確かめた。Linux と macOS は M4a1 の行で確かめる。
+- SQLite のビルド（0.72）: `vendor/sqlite/` に、版と SHA-256 を固定したアマルガム（`sqlite3.c` と `sqlite3.h`）とビルドのスクリプトを置く。`build.ps1` と CI は、ビルドのたびに各 OS の C コンパイラー（Windows は MSVC の `cl`、Linux は `clang`、macOS は Xcode の `clang`）で静的ライブラリを作る。NativeAOT が同じ C の道具をすでに求めるため、新しく要る道具はない。ビルド済みのライブラリは、中身を確かめられないのでリポジトリに置かない。
 - スキーマの移行は、版の番号つきの SQL ファイルを実行ファイルに埋め込み、起動時に順に流す。前身はマイグレーションが消えて新しい環境で表が作られなかったため、移行は起動時に必ず行い、テストで空のデータベースから最新まで流す。
 - 移行の形（0.69）: ファイルは `0001_<名前>.sql` の 4 桁の番号から始め、SQLite 用と PostgreSQL 用を別のフォルダーに置く。流した版とファイルの SHA-256 を表 `schema_migrations` に記録し、流した後に書き換えたファイルがあれば起動しない。1 つの版は 1 つのトランザクションで流す。PostgreSQL では助言ロック（`pg_advisory_lock`）を取り、複数のノードが同時に起動しても一度だけ流す。
 - PostgreSQL は 14〜18 に対応し、CI では 18 で同じテストを流す（0.62）。Windows と macOS の CI は SQLite だけを流す。
@@ -1589,7 +1607,20 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 
 - パスは `/v1/admin/` で始める。JSON で、一覧はカーソルで区切る。
 - 対象: 製品、機能、ポリシー、ライセンス（発行・停止・再開・失効・延長）、有効化（一覧・解除）、リース（一覧・強制返却）、試用（一覧・消去）、オフライン有効化の処理、署名鍵の状態、API キー、監査ログ、利用ログ。
-- 正確なエンドポイントの一覧は、その実体を作る行（M4a〜M4d、0.65）で決め、本節に表で書く。
+- 正確なエンドポイントの一覧は、その実体を作る行（M4a1〜M4d、0.65）で決め、本節に表で書く。
+- 形（0.73）: `elm-server` と同じ素の JSON。名前は camelCase、誤りは `application/problem+json` と `ELM_` のコード、一覧は `?after=<ID>&limit=<件数>`（200 件まで、既定 50）。JSON:API の形は、包みが深く、ソース生成の JSON の型が増えるので採らない。
+- 認証は `Authorization: Bearer elm_...`（API キー、§14.6）。管理 API のすべての操作を監査ログ（§18.2）に書く。認証の失敗は、1 分ごとに件数を 1 行で書く（M3c の利用ログの `admin.denied` と同じ考え方）。
+
+M4a1 のエンドポイント（0.79）:
+
+| メソッドとパス | 許可 | 中身 |
+| --- | --- | --- |
+| `POST /v1/admin/api-keys` | `apikey.create` | 本文 `{name, permissions, expiresInDays}`。`201` で、キー本体は一度だけ返す。期限は既定 90 日、上限 365 日。作る人の許可を超える許可は `403` と `ELM_FORBIDDEN` |
+| `GET /v1/admin/api-keys` | `apikey.read` | 一覧。キー本体は返さず、先頭 8 文字だけを返す |
+| `DELETE /v1/admin/api-keys/{id}` | `apikey.revoke` | キーを止める。行は消さずに止めた時刻を記録する |
+| `GET /v1/admin/audit` | `audit.read` | 監査ログの一覧 |
+| `POST /v1/admin/audit/verify` | `audit.read` | 連なりを確かめ、`{intact, firstBroken}` を返す |
+| `GET /health` | なし | データベースに届けば `200`。秘密は返さない |
 
 ### 14.6 管理の認証と認可
 
@@ -1609,11 +1640,24 @@ API キー:
 
 - 許可は `resource.action` の形（例: `license.read`, `license.revoke`）とし、Keygen の方式にならう（https://keygen.sh/docs/api/authorization/ ）。
 - 役割: `owner`（すべて）、`admin`（API キーと役割の管理を除くすべて）、`support`（読み取り、解除、強制返却、オフライン有効化の処理）、`viewer`（読み取りだけ）。
+- M4a1 と M4a2 の許可（0.78）。M4b 以降の許可（`activation.*` など）と、`support` の解除・強制返却・オフラインの処理の許可は、その実体を作る行で足す。
+
+| 許可 | 中身 | 行 |
+| --- | --- | --- |
+| `apikey.read`、`apikey.create`、`apikey.revoke` | API キー | M4a1 |
+| `audit.read` | 監査ログの閲覧と連なりの確認 | M4a1 |
+| `product.read`、`product.write` | 製品と機能 | M4a2 |
+| `policy.read`、`policy.write` | ポリシー | M4a2 |
+| `license.read`、`license.create`、`license.update`、`license.revoke` | ライセンス（`update` は停止・再開・延長） | M4a2 |
+| `license.file` | `Unbound` のライセンスファイルを出す | M4a2 |
+| `signingkey.read` | 署名鍵の状態 | M4a2 |
+
+  `owner` はすべて、`admin` は `apikey.*` を除くすべて、`support` と `viewer` は `*.read` を持つ。
 - API キーの許可は、作った人の許可を超えられない。
 - OIDC の利用者の役割は、IdP のクレーム（設定で指定。例: `groups`）から設定の対応表で決める。対応しない利用者は拒否する。
 - サービスは、ログインした管理者の一覧（OIDC の `iss` と `sub`、役割、最後のログイン、有効か無効か）を持つ。無効の管理者は、IdP で認証できてもログインできない。
 - 最初の `owner` は、起動時の設定（`bootstrapOwner`: IdP の `iss` と `sub`）で決める。
-- 最初の API キーは、サービスのホストで `elm-service setup` を流して作る（0.63）。`bootstrapOwner` に結びついた `owner` の許可のキーで、期限は 90 日、作ったときに一度だけ表示する。何度でも流せ、流すたびに新しいキーを作って監査ログに残す（前のキーは消さない）。`bootstrapOwner` がなければ誤りで止める。Keygen CE も、ホストで `setup` を流して最初の管理者を作る（https://keygen.sh/docs/self-hosting/ ）。
+- 最初の API キーは、サービスのホストで `elm-service setup` を流して作る（0.63）。`bootstrapOwner` に結びついた `owner` の許可のキーで、期限は 90 日、作ったときに一度だけ表示する。何度でも流せ、流すたびに新しいキーを作って監査ログに残す（前のキーは消さない）。`bootstrapOwner` がなければ誤りで止める。出力（0.80）: キー本体だけを標準出力に 1 行で書き、キーの ID・期限・持ち主は標準エラーに書く（`elm-service setup > key.txt` でそのまま渡せる）。終了コードは、成功 0、データベースの誤り 1、設定の誤り 2。Keygen CE も、ホストで `setup` を流して最初の管理者を作る（https://keygen.sh/docs/self-hosting/ ）。
 
 ### 14.7 入力の上限と頻度の制限
 
@@ -1632,6 +1676,9 @@ API キー:
 | 公開 URL（`publicUrls`） | 設定。証明の `htu` と、OIDC のリダイレクト URI に使う（§12.1） |
 
 鍵管理サービス（クラウドの KMS）からの署名鍵の利用は、ロードマップ A-4 とする。
+
+- 設定（0.74）: `elm-server` と同じく、任意の JSON の設定ファイルと `ELM_` の環境変数で、環境変数が勝つ。上の表の秘密は環境変数かファイルで渡し、設定ファイルに直接書かない。
+- 署名鍵（0.75）: 起動時に 1 本を読む（暗号化した PKCS#8 と、その鍵の証明書のファイル）。証明書が今の時刻を含まないか、ライセンスとリースの用途を持たなければ、起動しない。入れ替えは、ファイルを替えて再起動する（§7.5）。署名鍵の状態の API（M4a2）は、鍵 ID、証明書の期限、用途を返し、期限まで 30 日を切ったら警告を返す。
 
 ## 15. 管理画面
 
@@ -1788,7 +1835,7 @@ M3c で作った形:
 
 - `elm-service` の管理操作を、データベースの追記だけの表に記録する。行は、時刻、操作者（API キーの ID か OIDC の `sub`）、操作、対象、結果、送信元 IP を持つ。
 - 各行は、前の行のハッシュを含めた SHA-256 を持ち、連なりで改ざんを検出できる。
-- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（列の順、長さの形、文字列の符号化、時刻の表し方、`NULL` と空文字列の区別、前の行のハッシュの入れ方）は、表の列を決める M4a の行で決め、本節に書く。別の道具で検証を書けるよう、その形だけで同じハッシュが出せるように書く。追記は直列にする（PostgreSQL は最後の行を `FOR UPDATE` で固定、SQLite は `BEGIN IMMEDIATE`）。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、消した最後の行のハッシュを起点として残す。
+- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は 32 バイトのまま入れる。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする（PostgreSQL は最後の行を `FOR UPDATE` で固定、SQLite は `BEGIN IMMEDIATE`）。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、消した最後の行のハッシュを起点として残す。
 - 管理画面と管理 API で読める。保管期間は設定で決め、既定は無期限とする。
 
 ## 19. エラーコード
@@ -1924,7 +1971,8 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M3b | `elm-server` の本体と `ElasticLM.Client` のリース: 席の数え上げ・超過、取得・更新・返却、複製の検出、回収、自己署名の TLS とサーバーの確かめ方、自動更新、設定、頻度の制限 | §12.7.1〜§12.7.3, §13.1〜§13.6, §13.8 |
 | M3c | 借り出し（上限・残す席・早期返却の回数）と借り出しの記録、署名つきの利用ログと `elm log verify`、ローカル管理 API と `elm server`、サーバーライセンスの再読み込み | §12.7.4, §13.4, §13.7, §18.1 |
 | M3d | Windows で、再起動の後のリースの回収に 1 件あたり約 2 秒かかる問題（Issue #28）の段階ごとの計測と修正。製品の遅さなら §4.2 の目標に関わるため、同じエンジンを使う M4 の前に置く | §4.2, §13.4 |
-| M4a | `elm-service` の土台: 保存先（SQLite の静的ビルドと PostgreSQL、移行）、モデル（製品・機能・ポリシー・ライセンス・ライセンスキー）、管理 API（製品・機能・ポリシー・ライセンス・API キー・監査ログ・署名鍵の状態）、`elm-service setup`、監査ログ（連なりの正確なバイト列を含む）、3 OS の NativeAOT | §9, §14.1〜§14.8, §18.2 |
+| M4a1 | `elm-service` の土台: 保存先（SQLite の静的ビルドと PostgreSQL、移行）、設定、署名鍵の読み込み、`elm-service setup` と API キーの管理 API、監査ログ（連なりのバイト列、一覧と確認の API）、`/health`、3 OS の NativeAOT | §14.1〜§14.3, §14.5〜§14.8, §18.2 |
+| M4a2 | `elm-service` のモデル: 製品・機能・ポリシー・ライセンス（ライセンスキーを含む）とその管理 API、署名鍵の状態の API、`Unbound` のライセンスファイル | §9, §14.4, §14.5 |
 | M4b | オンラインの有効化・更新・解除・試用と、その複製の検出。`ElasticLM.Client` の有効化・更新・解除・試用。有効化と試用の管理 API | §3.2, §10.4, §12.4〜§12.6, §12.9 |
 | M4c | オフラインの有効化・更新・解除（`elm offline process`）と `ElasticLM.Client` のオフラインのファイル。`elm-server` のサーバーライセンスの更新（オンラインと、`elm server refresh-request` によるファイルのやり取り）。オフライン有効化の処理の管理 API。M4c まで、サーバーライセンスは手で入れ替える | §9.6, §12.8, §12.8.3, §13.7 |
 | M4d | `elm-service` のクラウドのリースと借り出し（`LeaseEngine` の規則を共有）、利用ログ、リースと利用ログの管理 API | §12.7, §14.4, §18.1 |
