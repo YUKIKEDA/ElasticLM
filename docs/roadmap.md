@@ -15,7 +15,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M4（`elm-service` と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用、`elm-server` のサーバーライセンスの更新）
+- **フェーズ:** M4a（`elm-service` の土台: 保存先、モデル、管理 API と API キー、監査ログ、署名鍵）
 - **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）
 
 ## v1 まで
@@ -30,9 +30,12 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M3b | `elm-server` の本体と `ElasticLM.Client` のリース（席・回収・TLS・自動更新）            | done        | [#21](https://github.com/YUKIKEDA/ElasticLM/issues/21) |
 | M3c | 借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`        | done        | [#25](https://github.com/YUKIKEDA/ElasticLM/issues/25) |
 | M3d | Windows で再起動の後のリースの回収が遅い問題の調査と修正                                   | done        | [#28](https://github.com/YUKIKEDA/ElasticLM/issues/28) |
-| M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用、`elm-server` のサーバーライセンスの更新 | not-started | —     |
+| M4a | `elm-service` の土台（SQLite と PostgreSQL、スキーマの移行、モデル、管理 API と API キー、`elm-service setup`、監査ログ、署名鍵、3 OS の NativeAOT） | not-started | —     |
+| M4b | オンラインの有効化・更新・解除・試用（複製の検出を含む）と `ElasticLM.Client` の対応、その管理 API | not-started | —     |
+| M4c | オフラインの有効化・更新・解除（`elm offline process`）と `elm-server` のサーバーライセンスの更新（オンラインと `elm server refresh-request`） | not-started | —     |
+| M4d | `elm-service` のクラウドのリースと借り出し（規則をオンプレミスと共有）、リースと利用ログの管理 API | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
-| M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |
+| M5  | 管理の OIDC（JwtBearer と BFF）と管理画面、ログインのない管理者のキーを止める規則          | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
 | V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
