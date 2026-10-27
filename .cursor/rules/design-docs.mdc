@@ -20,6 +20,7 @@ alwaysApply: true
 ## Changing the design
 
 - Requirement, contract, public API, wire or file format, threat model, or phase: open a `design` Issue, update `docs/design.ja.md` (and `docs/design-decisions.md` for what was rejected) in its PR, and merge it before implementation Issues.
+- Exception for a row split by a Grill: the detail of one row that its own Grill decided (endpoints, formats, the order of checks, the client API of that row) may ship in that row's implementation PR, after an independent design review of the diff before the PR is opened. Requirements, the threat model, and phases still go first through a design PR. The owner decided this for M4 (decision 0.61, Issue #38) after M3 had worked that way.
 - Wording, typos, and examples: may ship in the same PR as code.
 - Do not implement first and update the design later. If code and design conflict, stop and fix the design through the process above.
 
