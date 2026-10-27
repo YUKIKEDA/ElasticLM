@@ -41,6 +41,7 @@ Make an invalid state unrepresentable; do not document it away or catch it at ru
 ## Cryptography objects
 
 - Measure what creating a cryptography object costs against what one operation costs, under NativeAOT, before putting it on a measured path. In M1, creating an `ECDsa` and importing a P-256 public key took about 275 µs on Windows, against about 110 µs for one verification, and verification took 888 µs per license file until each key was created once (PR #8).
+- State that another thread or a test reads (a new token, a state change) is made visible last, after everything that follows from it is set up (the next timer, a record). After M3c the client showed a renewed token before it scheduled the next renewal, and a test that advanced its fake clock as soon as it saw the token failed on the Windows runner of `main` (PR #32).
 - A key that verifies many tokens is created once and kept by its owner. The documentation does not promise that one `ECDsa` may be used on several threads at once, so a shared key takes a lock. A key that one call creates is disposed by that call; a shared key is not disposed while another call may hold it.
 - A cache lives in an owner that outlives the calls that use it, never in a local that one call creates. A test counts the objects created and checks that a second call creates none. In M3a, `VerifyHosted` made a new `CertificateSet` on each call, so its cache never hit and the keys it created were never disposed; the owner's review found it (PR #16).
 
