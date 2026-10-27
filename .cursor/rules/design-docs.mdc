@@ -37,7 +37,7 @@ alwaysApply: true
 - A figure the design derives (a token size, a lease count, a memory bound) writes its arithmetic beside it.
 - Every type in a signature the design writes is defined in the design or the code.
 - A design that leaves a point to another row ("row X decides") names a row that exists in `docs/roadmap.md`, and that row's text names the point, in the same PR (`.cursor/rules/defer.mdc`).
-- A design PR that changes a decision searches the whole design for the sections that restate it, and changes them in the same PR. Search by the decision's number (`0.xx`) and by its key words. In D0, decision 0.39 moved the certificate check to the token's `iat`, and §7.3 and T12 kept the old current-time rule until the owner's review found them (PR #4).
+- A design PR that changes a decision searches the whole design for the sections that restate it, and changes them in the same PR. Search by the decision's number (`0.xx`) and by its key words. In D0, decision 0.39 moved the certificate check to the token's `iat`, and §7.3 and T12 kept the old current-time rule until the owner's review found them (PR #4). The search covers `.cursor/rules/` and the skills too: in PR #39, decision 0.61 let a row's detail ship in its implementation PR while `design-docs.mdc` and `workflow.mdc` still said otherwise, and the review found it.
 
 After a script edits a Markdown table, read `git diff --stat`. A diff of the whole table means its columns were padded again: restore the file and replace only the rows that change.
 
