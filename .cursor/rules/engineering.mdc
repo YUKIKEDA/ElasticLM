@@ -27,6 +27,10 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 - StyleCop.Analyzers and the .NET analyzers at `latest-recommended` run in every build. `EnforceCodeStyleInBuild` is on.
 - Do not use an alignment in an interpolated string (`{x,5}`): CSharpier writes it `{x, 5}`, which StyleCop's SA1001 refuses. Pad with `PadLeft` instead.
 
+## Changing a stored row
+
+An operation that applies a request to a stored row (a `PATCH`, a state change) reads that row in the write transaction that writes it, and on PostgreSQL locks it first (`SELECT … FOR UPDATE`, or an `UPDATE` that sets a column to itself with `RETURNING`). Read outside the transaction, two changes of different members at once write back each other's old values. In M4a2 the first version of the `PATCH` endpoints did that, and the review found it (PR #55).
+
 ## Gate
 
 `./build.ps1` before a PR. It runs tool restore, the CSharpier check, restore, then for Release and for Debug a build and every test project. Release is what ships; Debug runs the checks that exist only there. Hosted CI runs the same script on Windows, Linux, and macOS.
