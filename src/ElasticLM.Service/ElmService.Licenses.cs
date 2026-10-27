@@ -13,7 +13,7 @@ namespace ElasticLM.Service;
 internal sealed partial class ElmService
 {
     private const string NoLicense = "No license has this ID.";
-    private static readonly string[] LicenseFixed = ["productId", "policyId", "expiresAt"];
+    private static readonly string[] LicenseFixed = ["productId", "policyId"];
 
     private void MapLicenses()
     {
@@ -220,6 +220,12 @@ internal sealed partial class ElmService
                 async body =>
                 {
                     RefuseFixed(body, LicenseFixed);
+                    if (body.Has("expiresAt"))
+                    {
+                        // The expiry is changed by extend, which checks it against the state (design §14.5).
+                        throw new BodyException(ErrorCode.InvalidArgument, "expiresAt is changed by extend.");
+                    }
+
                     string? name = body.TryGet("name", out JsonElement nameValue)
                         ? CheckLicenseName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, Licenses.Malformed))
                         : null;
@@ -281,66 +287,81 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
         }
 
+        // design §14.5: only extend has a body; suspend, resume, and revoke read none, so a POST without one works.
+        if (action != AuditActions.LicenseExtend)
+        {
+            return await ApplyStateAsync(context, caller, action, found, null).ConfigureAwait(false);
+        }
+
         return await WithBodyAsync(
                 context,
                 Licenses.Malformed,
                 async body =>
                 {
-                    long? extendTo =
-                        action == AuditActions.LicenseExtend
-                            ? body.TryGet("expiresAt", out JsonElement value)
-                                ? Licenses.Time(body, value)
-                                : throw new BodyException(ErrorCode.Malformed, Licenses.Malformed)
-                            : null;
-                    DateTimeOffset now = Time.GetUtcNow();
-                    long at = now.ToUnixTimeSeconds();
-                    LicenseRow Change(LicenseRow row)
-                    {
-                        string state = Licenses.State(row, at);
-                        return action switch
-                        {
-                            AuditActions.LicenseSuspend => state switch
-                            {
-                                Licenses.Revoked => throw Conflict("A revoked license cannot be suspended."),
-                                Licenses.Suspended => row,
-                                _ => row with { SuspendedAt = at, UpdatedAt = at },
-                            },
-                            AuditActions.LicenseResume => state switch
-                            {
-                                Licenses.Revoked => throw Conflict("A revoked license cannot be resumed."),
-                                Licenses.Suspended => row with { SuspendedAt = null, UpdatedAt = at },
-                                _ => row,
-                            },
-                            AuditActions.LicenseRevoke => state == Licenses.Revoked ? row : row with { RevokedAt = at, UpdatedAt = at },
-                            _ => Extend(row, state, extendTo!.Value, at),
-                        };
-                    }
-
-                    string detail = string.Empty;
-                    LicenseRow? changed = await Database
-                        .UpdateLicenseAsync(
-                            found.Id,
-                            Change,
-                            (before, after) =>
-                            {
-                                detail = ChangeDetail(before, after);
-                                return Entry(context, caller, action, found.Id, detail);
-                            },
-                            now,
-                            context.RequestAborted
-                        )
-                        .ConfigureAwait(false);
-                    if (changed is null)
-                    {
-                        return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, found.Id.ToString("D")).ConfigureAwait(false);
-                    }
-
-                    await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed, at), ServiceJsonContext.Default.LicenseItem)
-                        .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
+                    long to = body.TryGet("expiresAt", out JsonElement value)
+                        ? Licenses.Time(body, value)
+                        : throw new BodyException(ErrorCode.Malformed, Licenses.Malformed);
+                    return await ApplyStateAsync(context, caller, action, found, to).ConfigureAwait(false);
                 }
             )
             .ConfigureAwait(false);
+    }
+
+    private async Task<AdminOutcome> ApplyStateAsync(HttpContext context, Caller caller, string action, LicenseRow found, long? extendTo)
+    {
+        DateTimeOffset now = Time.GetUtcNow();
+        long at = now.ToUnixTimeSeconds();
+        LicenseRow Change(LicenseRow row)
+        {
+            string state = Licenses.State(row, at);
+            return action switch
+            {
+                AuditActions.LicenseSuspend => state switch
+                {
+                    Licenses.Revoked => throw Conflict("A revoked license cannot be suspended."),
+                    Licenses.Suspended => row,
+                    _ => row with { SuspendedAt = at, UpdatedAt = at },
+                },
+                AuditActions.LicenseResume => state switch
+                {
+                    Licenses.Revoked => throw Conflict("A revoked license cannot be resumed."),
+                    Licenses.Suspended => row with { SuspendedAt = null, UpdatedAt = at },
+                    _ => row,
+                },
+                AuditActions.LicenseRevoke => state == Licenses.Revoked ? row : row with { RevokedAt = at, UpdatedAt = at },
+                _ => Extend(row, state, extendTo!.Value, at),
+            };
+        }
+
+        try
+        {
+            string detail = string.Empty;
+            LicenseRow? changed = await Database
+                .UpdateLicenseAsync(
+                    found.Id,
+                    Change,
+                    (before, after) =>
+                    {
+                        detail = ChangeDetail(before, after);
+                        return Entry(context, caller, action, found.Id, detail);
+                    },
+                    now,
+                    context.RequestAborted
+                )
+                .ConfigureAwait(false);
+            if (changed is null)
+            {
+                return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, found.Id.ToString("D")).ConfigureAwait(false);
+            }
+
+            await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed, at), ServiceJsonContext.Default.LicenseItem).ConfigureAwait(false);
+            return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
+        }
+        catch (BodyException e)
+        {
+            // A transition the §9.4 diagram does not allow (409), or an extension that is too early (400); nothing was written.
+            return await RefuseAsync(context, e.Code, e.Message, found.Id.ToString("D")).ConfigureAwait(false);
+        }
     }
 
     // design §8.5, §14.5, decisions 0.76 and 0.86: the file of an active license of an unbound policy; its token ends when the

@@ -48,36 +48,54 @@ public sealed class MigratorTests
         }
     }
 
+    /// <summary>Gets each engine with each version a database may stand at before the last.</summary>
+    public static TheoryData<string, int> EarlierVersions
+    {
+        get
+        {
+            var data = new TheoryData<string, int>();
+            foreach (string provider in new[] { "sqlite", "postgres" })
+            {
+                for (int version = 1; version < Migrator.Embedded(DatabaseProvider.Sqlite).Count; version++)
+                {
+                    data.Add(provider, version);
+                }
+            }
+
+            return data;
+        }
+    }
+
     /// <summary>
-    /// A database at version 1 (M4a1) is brought to the last version with what it holds kept.
+    /// A database at any earlier version is brought to the last version with what it holds kept.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A database on the provider migrated with version 1 only.
+    /// - A database on the provider migrated up to the case's version (1 for M4a1, 2 for M4a2, and on as versions are added).
     ///
     /// Steps:
     /// - Insert an administrator into version 1's tables; run the embedded migrations; count the administrators and the
     ///   products.
     ///
     /// Expected:
-    /// - Versions 2 and later applied; one administrator; no product.
+    /// - The versions after the case's applied; one administrator; no product.
     /// </remarks>
     [Theory]
-    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
-    public async Task Run_FromVersionOne_AppliesTheRest(string provider)
+    [MemberData(nameof(EarlierVersions))]
+    public async Task Run_FromAnEarlierVersion_AppliesTheRest(string provider, int version)
     {
         await using TestService test = TestService.Open(provider);
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
         CancellationToken cancel = TestContext.Current.CancellationToken;
         IReadOnlyList<Migration> migrations = Migrator.Embedded(test.Provider);
-        await Migrator.RunAsync(database, [migrations[0]], test.Time, cancel);
+        await Migrator.RunAsync(database, [.. migrations.Take(version)], test.Time, cancel);
         await test.ExecuteAsync(
             test.Provider == DatabaseProvider.Sqlite
                 ? "INSERT INTO admins (id, issuer, subject, role, enabled, created_at) VALUES ('0196f3a0-0000-7000-8000-000000000001', 'i', 's', 'owner', 1, 0)"
                 : "INSERT INTO admins (id, issuer, subject, role, enabled, created_at) VALUES ('0196f3a0-0000-7000-8000-000000000001', 'i', 's', 'owner', true, 0)"
         );
 
-        Assert.Equal([.. migrations.Skip(1).Select(m => m.Version)], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([.. migrations.Skip(version).Select(m => m.Version)], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal((1L, 0L), (await test.ScalarAsync("SELECT COUNT(*) FROM admins"), await test.ScalarAsync("SELECT COUNT(*) FROM products")));
     }
 

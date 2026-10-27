@@ -28,7 +28,7 @@ public sealed class ElmServiceLicensesTests
     /// Expected:
     /// - 201 with a key of the §9.5 form, expiry 365 days after the start, state active, maxActivations null, the feature
     ///   with null seats and expiry; the same without "key" when read; lists of 1, 0, 400, 1; 200 with the changes; 400
-    ///   "… cannot be changed" three times; the create row without the key and the update row with the changed members.
+    ///   "expiresAt is changed by extend." and "… cannot be changed" twice; the create row without the key and the update row with the changed members.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -101,13 +101,20 @@ public sealed class ElmServiceLicensesTests
                 patched.GetProperty("features")[0].GetProperty("code").GetString()
             )
         );
-        foreach (string member in new[] { "expiresAt", "policyId", "productId" })
+        foreach (
+            (string member, string detail) in new[]
+            {
+                ("expiresAt", "expiresAt is changed by extend."),
+                ("policyId", "policyId cannot be changed."),
+                ("productId", "productId cannot be changed."),
+            }
+        )
         {
             await TestService.AssertProblemAsync(
                 await admin.PatchAsync($"{Licenses}/{id}", TestService.Json($"{{\"{member}\":\"x\"}}"), cancel),
                 HttpStatusCode.BadRequest,
                 "ELM_INVALID_ARGUMENT",
-                $"{member} cannot be changed."
+                detail
             );
         }
 
@@ -245,11 +252,23 @@ public sealed class ElmServiceLicensesTests
         string p = await NewLicense(perpetualPolicy);
         string r1 = await NewLicense(tenDays);
         string r2 = await NewLicense(tenDays);
-        async Task<string> Op(string license, string op, string body = "{}") =>
-            (await TestService.PostOkAsync(admin, $"{Licenses}/{license}/{op}", body)).GetProperty("state").GetString()!;
-        async Task Conflict(string license, string op, string detail, string body = "{}") =>
+
+        // suspend, resume, and revoke are sent without a body, as design §14.5 has them; extend with its body.
+        async Task<string> Op(string license, string op, string? body = null)
+        {
+            using HttpResponseMessage response = await admin.PostAsync(
+                $"{Licenses}/{license}/{op}",
+                body is null ? null : TestService.Json(body),
+                cancel
+            );
+            string text = await response.Content.ReadAsStringAsync(cancel);
+            Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+            return JsonDocument.Parse(text).RootElement.GetProperty("state").GetString()!;
+        }
+
+        async Task Conflict(string license, string op, string detail, string? body = null) =>
             await TestService.AssertProblemAsync(
-                await admin.PostAsync($"{Licenses}/{license}/{op}", TestService.Json(body), cancel),
+                await admin.PostAsync($"{Licenses}/{license}/{op}", body is null ? null : TestService.Json(body), cancel),
                 HttpStatusCode.Conflict,
                 "ELM_CONFLICT",
                 detail
@@ -530,7 +549,7 @@ public sealed class ElmServiceLicensesTests
 
         await Forbidden(reader.PostAsync(Licenses, TestService.Json(body), cancel), "license.create");
         Assert.Equal(HttpStatusCode.OK, (await reader.GetAsync($"{Licenses}/{id}", cancel)).StatusCode);
-        Assert.Equal(HttpStatusCode.OK, (await updater.PostAsync($"{Licenses}/{id}/suspend", TestService.Json("{}"), cancel)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await updater.PostAsync($"{Licenses}/{id}/suspend", null, cancel)).StatusCode);
         await Forbidden(updater.PostAsync($"{Licenses}/{id}/revoke", TestService.Json("{}"), cancel), "license.revoke");
         await Forbidden(updater.PostAsync($"{Licenses}/{id}/file", null, cancel), "license.file");
 
