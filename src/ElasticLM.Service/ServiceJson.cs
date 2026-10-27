@@ -173,6 +173,68 @@ internal sealed record VerifyAnswer(
     [property: JsonPropertyName("firstBroken"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? FirstBroken
 );
 
+/// <summary>A product (design §14.5, M4a2).</summary>
+internal sealed record ProductItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("code")] string Code,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("trialPolicyId"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? TrialPolicyId,
+    [property: JsonPropertyName("createdAt")] string CreatedAt
+);
+
+/// <summary>A page of products.</summary>
+internal sealed record ProductPage([property: JsonPropertyName("items")] ProductItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>A feature of a product (design §14.5, M4a2).</summary>
+internal sealed record FeatureItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("productId")] string ProductId,
+    [property: JsonPropertyName("code")] string Code,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("createdAt")] string CreatedAt
+);
+
+/// <summary>A page of features.</summary>
+internal sealed record FeaturePage([property: JsonPropertyName("items")] FeatureItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>A policy (design §14.5, M4a2): every member, defaults included; <c>null</c> is the design's "none".</summary>
+internal sealed record PolicyItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("productId")] string ProductId,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("licenseKind")] string LicenseKind,
+    [property: JsonPropertyName("binding")] string Binding,
+    [property: JsonPropertyName("maxActivations")] long MaxActivations,
+    [property: JsonPropertyName("deactivationLimit"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? DeactivationLimit,
+    [property: JsonPropertyName("expirationBasis")] string ExpirationBasis,
+    [property: JsonPropertyName("duration"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Duration,
+    [property: JsonPropertyName("tokenLifetime")] long TokenLifetime,
+    [property: JsonPropertyName("refreshWindow")] long RefreshWindow,
+    [property: JsonPropertyName("gracePeriod")] long GracePeriod,
+    [property: JsonPropertyName("fingerprintMatching")] string FingerprintMatching,
+    [property: JsonPropertyName("cloneStrategy")] string CloneStrategy,
+    [property: JsonPropertyName("floating")] string Floating,
+    [property: JsonPropertyName("leaseDuration")] long LeaseDuration,
+    [property: JsonPropertyName("overage"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Overage,
+    [property: JsonPropertyName("borrowLimit"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? BorrowLimit,
+    [property: JsonPropertyName("borrowReturnLimit")] long BorrowReturnLimit,
+    [property: JsonPropertyName("clientInfoStrategy")] string ClientInfoStrategy,
+    [property: JsonPropertyName("trialDuration")] long TrialDuration,
+    [property: JsonPropertyName("createdAt")] string CreatedAt,
+    [property: JsonPropertyName("updatedAt")] string UpdatedAt
+);
+
+/// <summary>A page of policies.</summary>
+internal sealed record PolicyPage([property: JsonPropertyName("items")] PolicyItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary><c>GET /v1/admin/signing-key</c> (design §14.5, decision 0.75).</summary>
+internal sealed record SigningKeyAnswer(
+    [property: JsonPropertyName("keyId")] string KeyId,
+    [property: JsonPropertyName("uses")] string[] Uses,
+    [property: JsonPropertyName("expiresAt")] string ExpiresAt,
+    [property: JsonPropertyName("expiresSoon")] bool ExpiresSoon
+);
+
 /// <summary>
 /// An error answer (RFC 9457) with the ElasticLM code.
 /// </summary>
@@ -201,5 +263,12 @@ internal sealed record Problem(
 [JsonSerializable(typeof(AuditPage))]
 [JsonSerializable(typeof(VerifyAnswer))]
 [JsonSerializable(typeof(Problem))]
+[JsonSerializable(typeof(ProductItem))]
+[JsonSerializable(typeof(ProductPage))]
+[JsonSerializable(typeof(FeatureItem))]
+[JsonSerializable(typeof(FeaturePage))]
+[JsonSerializable(typeof(PolicyItem))]
+[JsonSerializable(typeof(PolicyPage))]
+[JsonSerializable(typeof(SigningKeyAnswer))]
 [JsonSerializable(typeof(string[]))]
 internal sealed partial class ServiceJsonContext : JsonSerializerContext;

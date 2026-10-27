@@ -15,7 +15,7 @@ internal sealed record KeyHolder(ApiKeyRecord Key, string Role, bool Enabled);
 /// built with AuraORM (decision 0.81) by <see cref="ServiceStore{TDialect}"/>, one implementation for both engines; only the
 /// migrations are SQL files run as they are.
 /// </summary>
-internal abstract class Database : IAsyncDisposable
+internal abstract partial class Database : IAsyncDisposable
 {
     private static readonly Lock SqliteInitLock = new();
     private static bool _sqliteReady;
@@ -126,7 +126,7 @@ internal abstract class Database : IAsyncDisposable
     public abstract Task<KeyHolder?> FindKeyAsync(byte[] hash, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Returns keys after an ID, oldest first (IDs are UUID version 7, so their order is the order of creation).
+    /// Returns keys after an ID, in ID order: UUID version 7 orders them by creation time to the millisecond.
     /// </summary>
     public abstract Task<IReadOnlyList<ApiKeyRecord>> ListKeysAsync(Guid? after, int limit, CancellationToken cancellationToken);
 

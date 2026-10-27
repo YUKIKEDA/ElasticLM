@@ -156,4 +156,16 @@ internal static class AuditActions
     public const string AuditList = "audit.list";
     public const string AuditVerify = "audit.verify";
     public const string AuthFailed = "auth.failed";
+    public const string ProductCreate = "product.create";
+    public const string ProductList = "product.list";
+    public const string ProductGet = "product.get";
+    public const string ProductUpdate = "product.update";
+    public const string FeatureCreate = "feature.create";
+    public const string FeatureList = "feature.list";
+    public const string FeatureUpdate = "feature.update";
+    public const string PolicyCreate = "policy.create";
+    public const string PolicyList = "policy.list";
+    public const string PolicyGet = "policy.get";
+    public const string PolicyUpdate = "policy.update";
+    public const string SigningKeyGet = "signingkey.get";
 }

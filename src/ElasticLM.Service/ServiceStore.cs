@@ -11,7 +11,7 @@ namespace ElasticLM.Service;
 /// committed on PostgreSQL, where every audit append locks the one <c>audit_state</c> row first.
 /// </summary>
 /// <typeparam name="TDialect">The engine's dialect.</typeparam>
-internal sealed class ServiceStore<TDialect> : Database
+internal sealed partial class ServiceStore<TDialect> : Database
     where TDialect : IUpdateReturningDialect, IOnConflictDialect
 {
     private readonly Database<TDialect> _db;

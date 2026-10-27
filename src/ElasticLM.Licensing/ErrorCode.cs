@@ -140,6 +140,9 @@ public enum ErrorCode
     /// <summary>An administration API call names an entity, such as an API key, that does not exist (design §14.5).</summary>
     NotFound = 54,
 
+    /// <summary>An administration API call conflicts with an entity's state or with a unique value, such as a used code (design §14.5).</summary>
+    Conflict = 55,
+
     /// <summary>The network call failed.</summary>
     NetworkError = 90,
 
