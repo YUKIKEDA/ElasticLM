@@ -12,6 +12,7 @@ GitHub closes an Issue when a closing verb (`close(s/d)`, `fix(es/ed)`, `resolve
 - The line lives in the PR body only, never in a commit body. That holds for the one commit made by squashing a branch's work-in-progress commits too: in M3c that commit carried `Closes #25` (PR #27).
 - After a PR is created or its body edited, run `gh pr view <n> --json closingIssuesReferences` and compare the list with the intent.
 - When the PR body itself says a condition of the Issue is not met, the PR does not close the Issue. Either move the unmet conditions to an Issue and a roadmap row of their own, or write `Part of #N`. Which of the two is the owner's to say when the owner set the conditions.
+- A PR that writes `Part of #N` leaves its roadmap row `in-progress` and **今** where it is. In M4a1 the PR said `Part of #46` while it set the row to `done` and moved **今** to the next row (PR #47).
 
 ```text
 # BAD: this closes #12

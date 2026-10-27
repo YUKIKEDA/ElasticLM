@@ -10,6 +10,8 @@ A check or a test that stands for a statement in `docs/design.ja.md` implements 
 - Every documented contract has a code path and a test. A sentence with no code behind it is a defect.
 - Before the PR, list each contract sentence the PR adds to `docs/design.ja.md` next to the test that checks it.
 - A signature or MAC check is tested with each covered field changed alone, the others kept, and with the signature from another valid token. A test that only flips a byte of the signature does not show that the payload is covered.
+- A hash chain check has several guards (the number, the previous hash, the row's hash, the head, the anchor), and a row's hash covers its number and previous hash, so a changed row is caught by the hash guard too. Each guard gets an input that only it catches. In M4a1 the only such input for the previous-hash guard was a changed anchor hash; the mutation check found it (PR #47).
+- A limit whose far side no input can reach is not a check. In M4a1 a name of at most 64 Unicode scalar values cannot pass 256 UTF-8 bytes, so the byte check was removed and the design states the bound as a property (PR #47).
 - A check of a request's authenticity is tested with a captured valid request replayed: with the same body, with another body, and after its time window.
 - When the design fixes an order (the steps of verification, the error priority), test it with one input that fails two adjacent steps and assert the first.
 - When the design fixes a state machine (lease states, activation states), test every transition it lists and one transition it does not allow.
