@@ -182,7 +182,10 @@ internal sealed class Deployment : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned))
+        // Clients first, while the servers still listen: a client returns its leases when disposed, and its 5-second limit
+        // runs on the fake clock, which does not move here. Against a stopped server each return waits for the connection to
+        // be refused, about 2 seconds on Windows, so a test that restarted its server with 70 leases took 2 minutes (#28).
+        foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned).OrderBy(o => o is ElmServer ? 1 : 0))
         {
             await owned.DisposeAsync();
         }
