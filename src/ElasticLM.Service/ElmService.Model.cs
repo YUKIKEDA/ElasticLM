@@ -23,6 +23,10 @@ internal sealed partial class ElmService
     private const string NameRule = "name must be 1 to 64 characters.";
     private static readonly TimeSpan SigningKeyWarning = TimeSpan.FromDays(30);
 
+    // The members a PATCH cannot change: a code never changes (design §9.1), nor the product a feature belongs to.
+    private static readonly string[] ProductFixed = ["code"];
+    private static readonly string[] FeatureFixed = ["code", "productId"];
+
     private void MapModel()
     {
         void Map(string method, string path, string permission, string action, Func<HttpContext, Caller, Task<AdminOutcome>> operation) =>
@@ -96,7 +100,7 @@ internal sealed partial class ElmService
 
     private async Task<AdminOutcome> UpdateProductAsync(HttpContext context, Caller caller)
     {
-        if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow product)
+        if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow found)
         {
             return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteText(context, "id")).ConfigureAwait(false);
         }
@@ -106,38 +110,48 @@ internal sealed partial class ElmService
                 ProductMalformed,
                 async body =>
                 {
-                    ProductRow changed = product;
-                    if (body.TryGet("name", out JsonElement name))
+                    RefuseFixed(body, ProductFixed);
+                    string? name = body.TryGet("name", out JsonElement nameValue)
+                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, ProductMalformed))
+                        : null;
+                    bool setTrial = body.TryGet("trialPolicyId", out JsonElement trialValue);
+                    Guid? trial = setTrial ? await TrialPolicyAsync(context, found, body.Text(trialValue)).ConfigureAwait(false) : null;
+
+                    // The change is applied to the row read in the write transaction, so a change of another member at the
+                    // same time stays (design §14.5).
+                    string detail = string.Empty;
+                    ProductRow? changed = await Database
+                        .UpdateProductAsync(
+                            found.Id,
+                            row => row with { Name = name ?? row.Name, TrialPolicyId = setTrial ? trial : row.TrialPolicyId },
+                            (before, after) =>
+                            {
+                                detail = AuditLog.Detail(w =>
+                                {
+                                    if (after.Name != before.Name)
+                                    {
+                                        w.WriteString("name", after.Name);
+                                    }
+
+                                    if (after.TrialPolicyId != before.TrialPolicyId)
+                                    {
+                                        w.WriteString("trialPolicyId", after.TrialPolicyId?.ToString("D"));
+                                    }
+                                });
+                                return Entry(context, caller, AuditActions.ProductUpdate, found.Id, detail);
+                            },
+                            Time.GetUtcNow(),
+                            context.RequestAborted
+                        )
+                        .ConfigureAwait(false);
+                    if (changed is null)
                     {
-                        changed = changed with
-                        {
-                            Name = CheckName(body.Text(name) ?? throw new BodyException(ErrorCode.Malformed, ProductMalformed)),
-                        };
+                        return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    if (body.TryGet("trialPolicyId", out JsonElement trial))
-                    {
-                        changed = changed with { TrialPolicyId = await TrialPolicyAsync(context, product, body.Text(trial)).ConfigureAwait(false) };
-                    }
-
-                    string detail = AuditLog.Detail(w =>
-                    {
-                        if (changed.Name != product.Name)
-                        {
-                            w.WriteString("name", changed.Name);
-                        }
-
-                        if (changed.TrialPolicyId != product.TrialPolicyId)
-                        {
-                            w.WriteString("trialPolicyId", changed.TrialPolicyId?.ToString("D"));
-                        }
-                    });
-                    DateTimeOffset now = Time.GetUtcNow();
-                    AuditEntry entry = Entry(context, caller, AuditActions.ProductUpdate, product.Id, detail);
-                    await Database.UpdateProductAsync(changed, entry, now, context.RequestAborted).ConfigureAwait(false);
                     await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.ProductItem)
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", product.Id.ToString("D"), detail, Recorded: true);
+                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -201,11 +215,11 @@ internal sealed partial class ElmService
 
     private async Task<AdminOutcome> UpdateFeatureAsync(HttpContext context, Caller caller)
     {
-        FeatureRow? feature =
+        FeatureRow? found =
             TryRouteId(context, "id", out Guid productId) && TryRouteId(context, "featureId", out Guid featureId)
                 ? await Database.FindFeatureAsync(productId, featureId, context.RequestAborted).ConfigureAwait(false)
                 : null;
-        if (feature is null)
+        if (found is null)
         {
             return await RefuseAsync(context, ErrorCode.NotFound, NoFeature, RouteText(context, "featureId")).ConfigureAwait(false);
         }
@@ -215,28 +229,39 @@ internal sealed partial class ElmService
                 FeatureMalformed,
                 async body =>
                 {
-                    FeatureRow changed = feature;
-                    if (body.TryGet("name", out JsonElement name))
+                    RefuseFixed(body, FeatureFixed);
+                    string? name = body.TryGet("name", out JsonElement nameValue)
+                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, FeatureMalformed))
+                        : null;
+                    string detail = string.Empty;
+                    FeatureRow? changed = await Database
+                        .UpdateFeatureAsync(
+                            found.ProductId,
+                            found.Id,
+                            row => row with { Name = name ?? row.Name },
+                            (before, after) =>
+                            {
+                                detail = AuditLog.Detail(w =>
+                                {
+                                    if (after.Name != before.Name)
+                                    {
+                                        w.WriteString("name", after.Name);
+                                    }
+                                });
+                                return Entry(context, caller, AuditActions.FeatureUpdate, found.Id, detail);
+                            },
+                            Time.GetUtcNow(),
+                            context.RequestAborted
+                        )
+                        .ConfigureAwait(false);
+                    if (changed is null)
                     {
-                        changed = changed with
-                        {
-                            Name = CheckName(body.Text(name) ?? throw new BodyException(ErrorCode.Malformed, FeatureMalformed)),
-                        };
+                        return await RefuseAsync(context, ErrorCode.NotFound, NoFeature, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    string detail = AuditLog.Detail(w =>
-                    {
-                        if (changed.Name != feature.Name)
-                        {
-                            w.WriteString("name", changed.Name);
-                        }
-                    });
-                    DateTimeOffset now = Time.GetUtcNow();
-                    AuditEntry entry = Entry(context, caller, AuditActions.FeatureUpdate, feature.Id, detail);
-                    await Database.UpdateFeatureAsync(changed, entry, now, context.RequestAborted).ConfigureAwait(false);
                     await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.FeatureItem)
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", feature.Id.ToString("D"), detail, Recorded: true);
+                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -316,7 +341,7 @@ internal sealed partial class ElmService
 
     private async Task<AdminOutcome> UpdatePolicyAsync(HttpContext context, Caller caller)
     {
-        if (await FindPolicyAsync(context).ConfigureAwait(false) is not PolicyRow policy)
+        if (await FindPolicyAsync(context).ConfigureAwait(false) is not PolicyRow found)
         {
             return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, RouteText(context, "id")).ConfigureAwait(false);
         }
@@ -326,37 +351,54 @@ internal sealed partial class ElmService
                 PolicyMember.Malformed,
                 async body =>
                 {
-                    if (Policies.Fixed.FirstOrDefault(body.Has) is string fixedMember)
-                    {
-                        throw new BodyException(ErrorCode.InvalidArgument, $"{fixedMember} cannot be changed.");
-                    }
-
-                    string name = body.TryGet("name", out JsonElement nameValue)
+                    RefuseFixed(body, Policies.Fixed);
+                    string? name = body.TryGet("name", out JsonElement nameValue)
                         ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, PolicyMember.Malformed))
-                        : policy.Name;
-                    PolicySettings before = Policies.Of(policy);
-                    PolicySettings after = Policies.Apply(body, before);
-                    if (Policies.Problem(after) is string problem)
+                        : null;
+                    DateTimeOffset now = Time.GetUtcNow();
+
+                    // The members are applied to the row read in the write transaction and the whole result is checked there,
+                    // so a change of other members at the same time stays and the rules hold for the row written.
+                    PolicyRow Change(PolicyRow row)
                     {
-                        throw new BodyException(ErrorCode.InvalidArgument, problem);
+                        PolicySettings settings = Policies.Apply(body, Policies.Of(row));
+                        return Policies.Problem(settings) is string problem
+                            ? throw new BodyException(ErrorCode.InvalidArgument, problem)
+                            : Policies.ToRow(row.Id, row.ProductId, name ?? row.Name, settings, row.CreatedAt, now.ToUnixTimeSeconds());
                     }
 
-                    DateTimeOffset now = Time.GetUtcNow();
-                    PolicyRow changed = Policies.ToRow(policy.Id, policy.ProductId, name, after, policy.CreatedAt, now.ToUnixTimeSeconds());
-                    string detail = AuditLog.Detail(w =>
-                    {
-                        if (name != policy.Name)
-                        {
-                            w.WriteString("name", name);
-                        }
+                    string detail = string.Empty;
+                    PolicyRow? changed = await Database
+                        .UpdatePolicyAsync(
+                            found.Id,
+                            Change,
+                            (before, after) =>
+                            {
+                                PolicySettings was = Policies.Of(before);
+                                PolicySettings next = Policies.Of(after);
+                                detail = AuditLog.Detail(w =>
+                                {
+                                    if (after.Name != before.Name)
+                                    {
+                                        w.WriteString("name", after.Name);
+                                    }
 
-                        Policies.Write(w, after, m => !Equals(m.Value(before), m.Value(after)));
-                    });
-                    AuditEntry entry = Entry(context, caller, AuditActions.PolicyUpdate, policy.Id, detail);
-                    await Database.UpdatePolicyAsync(changed, entry, now, context.RequestAborted).ConfigureAwait(false);
+                                    Policies.Write(w, next, m => !Equals(m.Value(was), m.Value(next)));
+                                });
+                                return Entry(context, caller, AuditActions.PolicyUpdate, found.Id, detail);
+                            },
+                            now,
+                            context.RequestAborted
+                        )
+                        .ConfigureAwait(false);
+                    if (changed is null)
+                    {
+                        return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, found.Id.ToString("D")).ConfigureAwait(false);
+                    }
+
                     await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.PolicyItem)
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", policy.Id.ToString("D"), detail, Recorded: true);
+                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -433,6 +475,15 @@ internal sealed partial class ElmService
         return policy is { LicenseKind: Policies.Trial } && policy.ProductId == product.Id
             ? policy.Id
             : throw new BodyException(ErrorCode.InvalidArgument, "trialPolicyId must name a trial policy of this product.");
+    }
+
+    // A known member that cannot change is refused, not ignored like an unknown one (design §14.5).
+    private static void RefuseFixed(RequestBody body, string[] fixedMembers)
+    {
+        if (fixedMembers.FirstOrDefault(body.Has) is string member)
+        {
+            throw new BodyException(ErrorCode.InvalidArgument, $"{member} cannot be changed.");
+        }
     }
 
     private static AuditEntry Entry(HttpContext context, Caller caller, string action, Guid target, string detail) =>

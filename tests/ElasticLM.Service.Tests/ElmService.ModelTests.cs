@@ -23,11 +23,12 @@ public sealed class ElmServiceModelTests
     ///
     /// Steps:
     /// - Create product "app"; read it; list products; rename it; create features "core" and "pro"; list them with limit 1
-    ///   and after the next; rename "pro"; read the audit log.
+    ///   and after the next; patch the product's code, the feature's code, and the feature's productId; rename "pro"; read
+    ///   the audit log.
     ///
     /// Expected:
     /// - 201 with the code, name, null trialPolicyId; the same item read back and listed; 200 with the new name; two 201
-    ///   features; one per page, in ID order, the second without a next; 200 renamed; the rows product.create {"code","name"}, product.update
+    ///   features; one per page, in ID order, the second without a next; 400 "… cannot be changed" three times; 200 renamed; the rows product.create {"code","name"}, product.update
     ///   {"name"}, feature.create, feature.update {"name"} with the right targets.
     /// </remarks>
     [Theory]
@@ -61,6 +62,23 @@ public sealed class ElmServiceModelTests
         Assert.True(string.CompareOrdinal(ids[0], ids[1]) < 0);
         Assert.False(second.TryGetProperty("next", out _));
         string proId = pro.GetProperty("id").GetString()!;
+        foreach (
+            (string path, string body, string member) in new[]
+            {
+                ($"v1/admin/products/{id}", """{"code":"other"}""", "code"),
+                ($"v1/admin/products/{id}/features/{proId}", """{"code":"other"}""", "code"),
+                ($"v1/admin/products/{id}/features/{proId}", $"{{\"productId\":\"{id}\"}}", "productId"),
+            }
+        )
+        {
+            await TestService.AssertProblemAsync(
+                await admin.PatchAsync(path, TestService.Json(body), TestContext.Current.CancellationToken),
+                HttpStatusCode.BadRequest,
+                "ELM_INVALID_ARGUMENT",
+                $"{member} cannot be changed."
+            );
+        }
+
         Assert.Equal(
             "Pro 2",
             (await PatchAsync(admin, $"v1/admin/products/{id}/features/{proId}", """{"name":"Pro 2"}""")).GetProperty("name").GetString()
@@ -146,7 +164,8 @@ public sealed class ElmServiceModelTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Products A and B; a trial policy and a standard policy of A; a trial policy of B.
+    /// - Products A and B; a trial policy and a standard policy of A; a trial policy of B, on each engine (the foreign key
+    ///   from a product to its trial policy is added by ALTER TABLE on PostgreSQL).
     ///
     /// Steps:
     /// - Set A's trialPolicyId to A's trial policy; to A's standard policy; to B's trial policy; to a text that is not an ID;
@@ -155,10 +174,11 @@ public sealed class ElmServiceModelTests
     /// Expected:
     /// - 200 with it; 400 three times with the rule; 200 with null; the update rows record each change.
     /// </remarks>
-    [Fact]
-    public async Task ProductTrialPolicy_OnlyATrialOfTheProduct()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task ProductTrialPolicy_OnlyATrialOfTheProduct(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         string owner = await test.SetupAsync();
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
@@ -275,6 +295,51 @@ public sealed class ElmServiceModelTests
                 .GetProperty("detail")
                 .GetString()
         );
+    }
+
+    /// <summary>
+    /// Two changes of different members sent at once both stay: each one reads the row it changes in its write transaction
+    /// (design §14.5, decision 0.87).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A product with a trial policy, and a standard policy, on each engine.
+    ///
+    /// Steps:
+    /// - 20 times: send at once a product name and a product trialPolicyId (set and cleared in turn); send at once a policy
+    ///   maxActivations and a policy overage; read both.
+    ///
+    /// Expected:
+    /// - Each time the product has both the new name and the new trialPolicyId, and the policy both new values.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Patch_TwoMembersAtOnce_BothStay(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        HttpClient admin = test.Http(service, owner);
+        string product = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string trial = await PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        string policy = await PolicyAsync(admin, product, string.Empty);
+
+        for (int i = 0; i < 20; i++)
+        {
+            string? trialValue = i % 2 == 0 ? trial : null;
+            string trialJson = trialValue is null ? "null" : $"\"{trialValue}\"";
+            await Task.WhenAll(
+                PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"name\":\"n{i}\"}}"),
+                PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"trialPolicyId\":{trialJson}}}"),
+                PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"maxActivations\":{i + 1}}}"),
+                PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"overage\":{i}}}")
+            );
+
+            JsonElement p = await GetAsync(admin, $"v1/admin/products/{product}");
+            Assert.Equal(($"n{i}", trialValue), (p.GetProperty("name").GetString(), p.GetProperty("trialPolicyId").GetString()));
+            JsonElement q = await GetAsync(admin, $"v1/admin/policies/{policy}");
+            Assert.Equal((i + 1, i), (q.GetProperty("maxActivations").GetInt32(), q.GetProperty("overage").GetInt32()));
+        }
     }
 
     /// <summary>

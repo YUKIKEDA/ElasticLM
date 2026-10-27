@@ -54,18 +54,39 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override Task UpdateProductAsync(ProductRow product, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
+    public override Task<ProductRow?> UpdateProductAsync(
+        Guid id,
+        Func<ProductRow, ProductRow> change,
+        Func<ProductRow, ProductRow, AuditEntry> audit,
+        DateTimeOffset now,
+        CancellationToken cancellationToken
+    )
     {
-        ArgumentNullException.ThrowIfNull(product);
+        ArgumentNullException.ThrowIfNull(change);
+        ArgumentNullException.ThrowIfNull(audit);
         return _db.InTransactionAsync(
             async tx =>
             {
+                // A self-assignment locks the row on PostgreSQL, as SELECT … FOR UPDATE would; SQLite holds the write lock.
+                ProductRow? before = await tx.Update(ProductRow.Table)
+                    .Set(p => [Set(p.Name, p.Name)])
+                    .Where(p => Eq(p.Id, id))
+                    .Returning(p => p)
+                    .SingleOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                if (before is null)
+                {
+                    return null;
+                }
+
+                ProductRow after = change(before);
                 await tx.Update(ProductRow.Table)
-                    .Set(p => [Set(p.Name, product.Name), Set(p.TrialPolicyId, product.TrialPolicyId)])
-                    .Where(p => Eq(p.Id, product.Id))
+                    .Set(p => [Set(p.Name, after.Name), Set(p.TrialPolicyId, after.TrialPolicyId)])
+                    .Where(p => Eq(p.Id, id))
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
-                await AppendAsync(tx, audit, now, cancellationToken).ConfigureAwait(false);
+                await AppendAsync(tx, audit(before, after), now, cancellationToken).ConfigureAwait(false);
+                return after;
             },
             cancellationToken
         );
@@ -124,18 +145,39 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override Task UpdateFeatureAsync(FeatureRow feature, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
+    public override Task<FeatureRow?> UpdateFeatureAsync(
+        Guid productId,
+        Guid featureId,
+        Func<FeatureRow, FeatureRow> change,
+        Func<FeatureRow, FeatureRow, AuditEntry> audit,
+        DateTimeOffset now,
+        CancellationToken cancellationToken
+    )
     {
-        ArgumentNullException.ThrowIfNull(feature);
+        ArgumentNullException.ThrowIfNull(change);
+        ArgumentNullException.ThrowIfNull(audit);
         return _db.InTransactionAsync(
             async tx =>
             {
+                FeatureRow? before = await tx.Update(FeatureRow.Table)
+                    .Set(f => [Set(f.Name, f.Name)])
+                    .Where(f => And(Eq(f.Id, featureId), Eq(f.ProductId, productId)))
+                    .Returning(f => f)
+                    .SingleOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                if (before is null)
+                {
+                    return null;
+                }
+
+                FeatureRow after = change(before);
                 await tx.Update(FeatureRow.Table)
-                    .Set(f => [Set(f.Name, feature.Name)])
-                    .Where(f => Eq(f.Id, feature.Id))
+                    .Set(f => [Set(f.Name, after.Name)])
+                    .Where(f => Eq(f.Id, featureId))
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
-                await AppendAsync(tx, audit, now, cancellationToken).ConfigureAwait(false);
+                await AppendAsync(tx, audit(before, after), now, cancellationToken).ConfigureAwait(false);
+                return after;
             },
             cancellationToken
         );
@@ -201,12 +243,31 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override Task UpdatePolicyAsync(PolicyRow policy, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
+    public override Task<PolicyRow?> UpdatePolicyAsync(
+        Guid id,
+        Func<PolicyRow, PolicyRow> change,
+        Func<PolicyRow, PolicyRow, AuditEntry> audit,
+        DateTimeOffset now,
+        CancellationToken cancellationToken
+    )
     {
-        ArgumentNullException.ThrowIfNull(policy);
+        ArgumentNullException.ThrowIfNull(change);
+        ArgumentNullException.ThrowIfNull(audit);
         return _db.InTransactionAsync(
             async tx =>
             {
+                PolicyRow? before = await tx.Update(PolicyRow.Table)
+                    .Set(p => [Set(p.UpdatedAt, p.UpdatedAt)])
+                    .Where(p => Eq(p.Id, id))
+                    .Returning(p => p)
+                    .SingleOrDefaultAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                if (before is null)
+                {
+                    return null;
+                }
+
+                PolicyRow policy = change(before);
                 await tx.Update(PolicyRow.Table)
                     .Set(p =>
                         [
@@ -230,10 +291,11 @@ internal sealed partial class ServiceStore<TDialect>
                             Set(p.UpdatedAt, policy.UpdatedAt),
                         ]
                     )
-                    .Where(p => Eq(p.Id, policy.Id))
+                    .Where(p => Eq(p.Id, id))
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
-                await AppendAsync(tx, audit, now, cancellationToken).ConfigureAwait(false);
+                await AppendAsync(tx, audit(before, policy), now, cancellationToken).ConfigureAwait(false);
+                return policy;
             },
             cancellationToken
         );
