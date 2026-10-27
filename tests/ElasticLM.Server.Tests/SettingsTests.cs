@@ -42,7 +42,10 @@ public sealed class SettingsTests : IDisposable
               "tls": { "certificate": "cert.pem", "key": "key.pem" },
               "allow": ["10.0.0.0/8"],
               "deny": ["user:guest"],
-              "dataDirectory": "data"
+              "dataDirectory": "data",
+              "borrow": { "maxDuration": "3.00:00:00", "reserve": 2 },
+              "log": { "usage": "logs/usage.jsonl" },
+              "admin": { "listen": "http://[::1]:7099" }
             }
             """
         );
@@ -60,9 +63,44 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal("cert.pem", settings.TlsCertificate);
         Assert.Equal("key.pem", settings.TlsKey);
         Assert.Equal("data", settings.DataDirectory);
+        Assert.Equal(TimeSpan.FromDays(3), settings.BorrowMaxDuration);
+        Assert.Equal(2, settings.BorrowReserve);
+        Assert.Equal("logs/usage.jsonl", settings.UsageLog);
+        Assert.Equal(new Uri("http://[::1]:7099"), settings.AdminListen);
         Assert.True(settings.Access.AllowsAddress(IPAddress.Parse("10.1.2.3")));
         Assert.False(settings.Access.AllowsAddress(IPAddress.Parse("192.168.0.1")));
         Assert.False(settings.Access.AllowsClient(null, "guest"));
+    }
+
+    /// <summary>
+    /// The borrow settings are read up to their limits, exactly: borrow.maxDuration from one second to 100 years (36,600
+    /// days) and borrow.reserve up to 1,000,000; one step beyond each stops the start.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Settings files of the product with one borrow value each.
+    ///
+    /// Steps:
+    /// - Load maxDuration 00:00:01, 36600.00:00:00, 00:00:00.9990000, 36600.00:00:01; reserve 1000000 and 1000001.
+    ///
+    /// Expected:
+    /// - 1 s, 36,600 days, an error, an error; 1,000,000 and an error naming borrow.reserve.
+    /// </remarks>
+    [Fact]
+    public void Load_BorrowLimits_AreExact()
+    {
+        ServerSettings Load(string borrow) => ServerSettings.Load(Write("{\"product\":\"acme-cad\",\"borrow\":" + borrow + "}"), _ => null);
+
+        Assert.Equal(TimeSpan.FromSeconds(1), Load("""{"maxDuration":"00:00:01"}""").BorrowMaxDuration);
+        Assert.Equal(TimeSpan.FromDays(36_600), Load("""{"maxDuration":"36600.00:00:00"}""").BorrowMaxDuration);
+        Assert.Throws<ServerStartException>(() => Load("""{"maxDuration":"00:00:00.9990000"}"""));
+        Assert.Throws<ServerStartException>(() => Load("""{"maxDuration":"36600.00:00:01"}"""));
+        Assert.Equal(1_000_000, Load("""{"reserve":1000000}""").BorrowReserve);
+        Assert.Contains(
+            "borrow.reserve",
+            Assert.Throws<ServerStartException>(() => Load("""{"reserve":1000001}""")).Message,
+            StringComparison.Ordinal
+        );
     }
 
     /// <summary>
@@ -77,7 +115,8 @@ public sealed class SettingsTests : IDisposable
     ///
     /// Expected:
     /// - ServerStartException naming: the unknown key, product, listen (http, and a host name other than localhost),
-    ///   rateLimit.perIp (0 and 10001), the allow entry, and the missing file.
+    ///   rateLimit.perIp (0 and 10001), the allow entry, admin.listen (not loopback, https), borrow.maxDuration (not a
+    ///   duration, zero), borrow.reserve (-1), log.usage (no file name), and the missing file.
     /// </remarks>
     [Fact]
     public void Load_InvalidSettings_Throw()
@@ -97,6 +136,12 @@ public sealed class SettingsTests : IDisposable
         AssertError("""{"product":"acme-cad","rateLimit":{"perIp":0}}""", "rateLimit.perIp");
         AssertError("""{"product":"acme-cad"}""", "rateLimit.perIp", new() { ["ELM_RATELIMIT_PERIP"] = "10001" });
         AssertError("""{"product":"acme-cad","allow":["somewhere"]}""", "somewhere");
+        AssertError("""{"product":"acme-cad","admin":{"listen":"http://0.0.0.0:7071"}}""", "admin.listen");
+        AssertError("""{"product":"acme-cad","admin":{"listen":"https://127.0.0.1:7071"}}""", "admin.listen");
+        AssertError("""{"product":"acme-cad","borrow":{"maxDuration":"7 days"}}""", "borrow.maxDuration");
+        AssertError("""{"product":"acme-cad","borrow":{"maxDuration":"00:00:00"}}""", "borrow.maxDuration");
+        AssertError("""{"product":"acme-cad","borrow":{"reserve":-1}}""", "borrow.reserve");
+        AssertError("""{"product":"acme-cad","log":{"usage":"logs/"}}""", "log.usage");
         AssertError("""{"product":"acme-cad","product":"acme-cam"}""", "not valid");
         var e = Assert.Throws<ServerStartException>(() => ServerSettings.Load(Path.Combine(_directory, "none.json"), _ => null));
         Assert.Contains("does not exist", e.Message, StringComparison.Ordinal);

@@ -10,5 +10,6 @@
     <!-- The server runs in the test process on a loopback port; the client is the real ElasticLM.Client. -->
     <ProjectReference Include="..\..\src\ElasticLM.Server\ElasticLM.Server.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <ProjectReference Include="..\..\src\ElasticLM.Cli\ElasticLM.Cli.csproj" />
   </ItemGroup>
 </Project>

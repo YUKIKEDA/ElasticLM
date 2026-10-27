@@ -161,6 +161,9 @@ internal sealed class LicensePayload
     [JsonPropertyName("clone")]
     public string? Clone { get; set; }
 
+    [JsonPropertyName("brl")]
+    public int? Brl { get; set; }
+
     [JsonPropertyName("meta")]
     public Dictionary<string, string>? Meta { get; set; }
 }

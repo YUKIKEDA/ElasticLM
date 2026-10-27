@@ -49,7 +49,7 @@ jobs:
 
   aot:
     # design §20.3: each shipped executable is published with NativeAOT on every OS, with zero warnings.
-    name: NativeAOT elm-server (${{ matrix.os }})
+    name: NativeAOT elm-server and elm (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -80,16 +80,21 @@ jobs:
 
       - name: Publish
         run: |
-          $log = dotnet publish src/ElasticLM.Server -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
-          $log
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $warnings = @($log | Select-String -Pattern ': warning ')
-          if ($warnings.Count -gt 0) { "::error::NativeAOT publish reported $($warnings.Count) warnings"; exit 1 }
-          $exe = Get-Item (Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server'))
-          "elm-server (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
+          foreach ($target in @(@('src/ElasticLM.Server', 'elm-server'), @('src/ElasticLM.Cli', 'elm'))) {
+            $log = dotnet publish $target[0] -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
+            $log
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+            $warnings = @($log | Select-String -Pattern ': warning ')
+            if ($warnings.Count -gt 0) { "::error::NativeAOT publish of $($target[1]) reported $($warnings.Count) warnings"; exit 1 }
+            $exe = Get-Item (Join-Path publish ($IsWindows ? "$($target[1]).exe" : $target[1]))
+            "$($target[1]) (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
+          }
 
       - name: Smoke
         run: |
+          $elm = Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')
+          & $elm --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
           $exe = Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server')
           & $exe --help
           if ($LASTEXITCODE -ne 0) { exit 1 }

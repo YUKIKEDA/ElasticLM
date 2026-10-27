@@ -585,6 +585,7 @@ public sealed class LicenseVerifierTests : IDisposable
             license["borrow"] = 0;
             license["overage"] = 0;
             license["clone"] = "deny";
+            license["brl"] = 2;
         }
 
         LicenseRequirement requirement = _issuer.Requirement(version: null) with { Kind = required };
@@ -908,7 +909,8 @@ public sealed class LicenseVerifierTests : IDisposable
 
     /// <summary>
     /// Payload shapes the design forbids are malformed: a server license without its server claims or with only clone
-    /// missing, a clone strategy that is not deny or flag, seats on a standard
+    /// missing, a clone strategy that is not deny or flag, a server license without brl or with brl of -1 or 1001, seats on
+    /// a standard
     /// license, a trial with grace, an unknown kind, ver 2, fp without fpm, an issuer that differs from the key ID, a bad
     /// version range, and times or durations outside the limits of design §8.6.
     /// </summary>
@@ -926,6 +928,9 @@ public sealed class LicenseVerifierTests : IDisposable
     [InlineData("server-without-lease")]
     [InlineData("server-without-clone")]
     [InlineData("unknown-clone")]
+    [InlineData("server-without-brl")]
+    [InlineData("brl-negative")]
+    [InlineData("brl-over-limit")]
     [InlineData("seats-on-standard")]
     [InlineData("trial-with-grace")]
     [InlineData("unknown-kind")]
@@ -946,6 +951,21 @@ public sealed class LicenseVerifierTests : IDisposable
                 license["kind"] = "server";
                 license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
                 break;
+            case "server-without-brl":
+            case "brl-negative":
+            case "brl-over-limit":
+                license["kind"] = "server";
+                license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
+                license["lease"] = 600;
+                license["borrow"] = 0;
+                license["overage"] = 0;
+                license["clone"] = "deny";
+                if (kind != "server-without-brl")
+                {
+                    license["brl"] = kind == "brl-negative" ? -1 : 1_001;
+                }
+
+                break;
             case "server-without-clone":
             case "unknown-clone":
                 license["kind"] = "server";
@@ -953,6 +973,7 @@ public sealed class LicenseVerifierTests : IDisposable
                 license["lease"] = 600;
                 license["borrow"] = 0;
                 license["overage"] = 0;
+                license["brl"] = 2;
                 if (kind == "unknown-clone")
                 {
                     license["clone"] = "Deny";

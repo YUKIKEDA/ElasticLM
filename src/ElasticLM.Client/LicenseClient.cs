@@ -27,6 +27,9 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxAppBytes = 64;
     private const int MaxIdentities = 8;
     private const int MaxReclaimTokens = 64;
+    private const int MaxBorrowFileLength = 256 * 1024;
+    private const int MaxBorrowFiles = 1_000;
+    private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
@@ -38,6 +41,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private readonly LicenseVerifier _licenseVerifier;
     private readonly LeaseVerifier _leaseVerifier;
     private readonly ServerPins _pins;
+    private readonly string _storeDirectory;
     private readonly HttpClient _http;
     private readonly TimeProvider _time;
     private readonly SemaphoreSlim _gate = new(1, 1);
@@ -45,6 +49,9 @@ public sealed class LicenseClient : IAsyncDisposable
 
     // Server identities by server license jti: the current one, and older ones that leases issued under them still need.
     private readonly List<ServerIdentity> _identities = [];
+
+    // The server license file and key JSON behind each identity, by server license jti: a borrow is saved with them.
+    private readonly Dictionary<string, (byte[] License, byte[] Key)> _identityFiles = new(StringComparer.Ordinal);
     private ServerIdentity? _current;
     private volatile string? _pinnedKeyId;
     private volatile bool _pinFailed;
@@ -63,6 +70,7 @@ public sealed class LicenseClient : IAsyncDisposable
         _licenseVerifier = new LicenseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _leaseVerifier = new LeaseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _pins = new ServerPins(store.Directory);
+        _storeDirectory = store.Directory;
         var handler = new SocketsHttpHandler
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
@@ -129,8 +137,31 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
-    public async Task<LeaseResult> AcquireLeaseAsync(
+    public Task<LeaseResult> AcquireLeaseAsync(string featureId, string? version = null, int count = 1, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(featureId);
+        ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        return AcquireCoreAsync(featureId, version, count, borrow: null, cancellationToken);
+    }
+
+    /// <summary>
+    /// Borrows a lease for a period (design §12.7.4): it is not renewed, is valid until it expires, and is saved next to the
+    /// installation key with the server license and key that verify it, so <see cref="GetBorrowedLeases"/> finds it after a
+    /// restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules.
+    /// </summary>
+    /// <param name="featureId">The feature.</param>
+    /// <param name="period">The borrow period, at least one second; the server refuses more than it allows.</param>
+    /// <param name="version">The app's version of the feature, or <see langword="null"/>.</param>
+    /// <param name="count">The number of seats, at least 1.</param>
+    /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests.</param>
+    /// <returns>The borrowed lease, or why there is none.</returns>
+    /// <exception cref="ArgumentException">The feature ID is empty.</exception>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1, or the period is shorter
+    /// than one second.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public Task<LeaseResult> BorrowLeaseAsync(
         string featureId,
+        TimeSpan period,
         string? version = null,
         int count = 1,
         CancellationToken cancellationToken = default
@@ -138,6 +169,54 @@ public sealed class LicenseClient : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrEmpty(featureId);
         ArgumentOutOfRangeException.ThrowIfLessThan(count, 1);
+        ArgumentOutOfRangeException.ThrowIfLessThan(period, TimeSpan.FromSeconds(1));
+        return AcquireCoreAsync(featureId, version, count, (long)period.TotalSeconds, cancellationToken);
+    }
+
+    /// <summary>
+    /// Reads the borrowed leases saved for this server (at most 1,000 files) and checks each as when it was borrowed (design
+    /// §12.7.5), with the server license and key saved beside it and against the server pin or the expected server license;
+    /// no request is sent. Expired borrows are deleted; a file that does not verify is left alone and not returned.
+    /// </summary>
+    /// <returns>The borrowed leases that are still valid.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public IReadOnlyList<Lease> GetBorrowedLeases()
+    {
+        _gate.Wait();
+        try
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            var borrowed = new List<Lease>();
+            string folder = Path.Combine(_storeDirectory, BorrowFolder);
+            if (!Directory.Exists(folder))
+            {
+                return borrowed;
+            }
+
+            foreach (string path in Directory.EnumerateFiles(folder, "*.json").Take(MaxBorrowFiles))
+            {
+                if (LoadBorrow(path) is Lease lease)
+                {
+                    Lease? known = _leases.Find(l => l.Id == lease.Id);
+                    if (known is null)
+                    {
+                        _leases.Add(lease);
+                    }
+
+                    borrowed.Add(known ?? lease);
+                }
+            }
+
+            return borrowed;
+        }
+        finally
+        {
+            _gate.Release();
+        }
+    }
+
+    private async Task<LeaseResult> AcquireCoreAsync(string featureId, string? version, int count, long? borrow, CancellationToken cancellationToken)
+    {
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -153,7 +232,8 @@ public sealed class LicenseClient : IAsyncDisposable
                 count,
                 _fingerprints.Count > 0 ? _fingerprints : null,
                 _clientInfo,
-                _options.AppVersion
+                _options.AppVersion,
+                borrow
             );
             Reply reply = await SendSignedAsync(
                     HttpMethod.Post,
@@ -170,10 +250,21 @@ public sealed class LicenseClient : IAsyncDisposable
 
             switch (await ReadLeaseAsync(reply).ConfigureAwait(false))
             {
+                case LeaseVerificationResult.Valid valid when valid.Lease.IsBorrow != (borrow is not null):
+                    return new LeaseResult.Failed(new LicenseError(ErrorCode.Malformed, "The server's lease is not of the kind asked for."), null);
                 case LeaseVerificationResult.Valid valid:
                     var lease = new Lease(valid.Lease);
+                    if (lease.IsBorrow && SaveBorrow(lease) is LicenseError saveError)
+                    {
+                        return new LeaseResult.Failed(saveError, null);
+                    }
+
                     _leases.Add(lease);
-                    ScheduleRenewal(lease);
+                    if (!lease.IsBorrow)
+                    {
+                        ScheduleRenewal(lease);
+                    }
+
                     return new LeaseResult.Acquired(lease);
                 case LeaseVerificationResult.Invalid invalid:
                     return new LeaseResult.Failed(invalid.Error, null);
@@ -254,7 +345,7 @@ public sealed class LicenseClient : IAsyncDisposable
 
             // design §17.2: returning the leases takes at most 5 seconds; leases not returned by then end at their expiry.
             using var timeout = new CancellationTokenSource(DisposeTimeout, _time);
-            foreach (Lease lease in _leases.ToArray())
+            foreach (Lease lease in _leases.Where(l => !l.IsBorrow).ToArray())
             {
                 await ReleaseCoreAsync(lease, events: [], timeout.Token).ConfigureAwait(false);
             }
@@ -270,6 +361,170 @@ public sealed class LicenseClient : IAsyncDisposable
         finally
         {
             _gate.Release();
+        }
+    }
+
+    // A borrow is saved as {"ver": 1, "server", "lease", "license", "key"} in borrows/<lease ID>.json next to the installation
+    // key, written to a temporary file and moved into place. The folder holds at most MaxBorrowFiles borrows.
+    private LicenseError? SaveBorrow(Lease lease)
+    {
+        if (!_identityFiles.TryGetValue(lease.Token.ServerLicenseTokenId ?? string.Empty, out (byte[] License, byte[] Key) files))
+        {
+            return new LicenseError(ErrorCode.InternalError, "The server license of the borrow is not known.");
+        }
+
+        string folder = Path.Combine(_storeDirectory, BorrowFolder);
+        string path = Path.Combine(folder, lease.Id + ".json");
+        string temporary = path + ".tmp";
+        try
+        {
+            ProtectedFiles.CreateDirectory(folder, _options.KeyScope);
+            if (Directory.EnumerateFiles(folder, "*.json").Skip(MaxBorrowFiles - 1).Any())
+            {
+                return new LicenseError(ErrorCode.InternalError, $"{MaxBorrowFiles} borrows are saved already; return or let some expire first.");
+            }
+
+            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+            using (var writer = new Utf8JsonWriter(stream))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("ver", 1);
+                writer.WriteString("server", HttpTargetUri.Normalize(_server));
+                writer.WriteString("lease", lease.Token.Token);
+                writer.WritePropertyName("license");
+                writer.WriteRawValue(files.License);
+                writer.WritePropertyName("key");
+                writer.WriteRawValue(files.Key);
+                writer.WriteEndObject();
+            }
+
+            File.Move(temporary, path, overwrite: true);
+            return null;
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new LicenseError(ErrorCode.InternalError, "The borrow cannot be saved next to the installation key: " + e.Message);
+        }
+    }
+
+    private void DeleteBorrow(string leaseId)
+    {
+        try
+        {
+            File.Delete(Path.Combine(_storeDirectory, BorrowFolder, leaseId + ".json"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Left behind; it is skipped once it has expired, and deleted by the next GetBorrowedLeases.
+        }
+    }
+
+    // Reads and verifies one saved borrow of this server; null when it is of another server, damaged, or no longer valid.
+    private Lease? LoadBorrow(string path)
+    {
+        byte[] bytes;
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Length > MaxBorrowFileLength)
+            {
+                return null;
+            }
+
+            bytes = File.ReadAllBytes(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (
+            !TryReadBorrowFile(bytes, out string? server, out string? token, out byte[]? license, out byte[]? key)
+            || server != HttpTargetUri.Normalize(_server)
+        )
+        {
+            return null;
+        }
+
+        if (!ServerIdentity.TryVerify(_licenseVerifier, license, key, _options.ProductId, out ServerIdentity? identity, out _))
+        {
+            return null;
+        }
+
+        if (!PinAccepts(identity!.License.LicenseId, identity.KeyId))
+        {
+            identity.Dispose();
+            return null;
+        }
+
+        LeaseVerificationResult result = _leaseVerifier.VerifyOnPremises(
+            token!,
+            identity!,
+            new LeaseExpectation(_options.ProductId, _key.Thumbprint)
+        );
+        identity!.Dispose();
+        switch (result)
+        {
+            case LeaseVerificationResult.Valid { Lease.IsBorrow: true } valid:
+                return new Lease(valid.Lease);
+            case LeaseVerificationResult.Invalid { Error.Code: ErrorCode.Expired }:
+                TryDelete(path);
+                return null;
+            default:
+                return null;
+        }
+    }
+
+    internal static bool TryReadBorrowFile(byte[] bytes, out string? server, out string? token, out byte[] license, out byte[] key)
+    {
+        server = null;
+        token = null;
+        license = [];
+        key = [];
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 8 });
+            JsonElement root = document.RootElement;
+            if (
+                root.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("ver", out JsonElement ver)
+                || ver.ValueKind != JsonValueKind.Number
+                || !ver.TryGetInt32(out int version)
+                || version != 1
+                || !root.TryGetProperty("server", out JsonElement s)
+                || s.ValueKind != JsonValueKind.String
+                || !root.TryGetProperty("lease", out JsonElement l)
+                || l.ValueKind != JsonValueKind.String
+                || !root.TryGetProperty("license", out JsonElement f)
+                || f.ValueKind != JsonValueKind.Object
+                || !root.TryGetProperty("key", out JsonElement k)
+                || k.ValueKind != JsonValueKind.Object
+            )
+            {
+                return false;
+            }
+
+            server = s.GetString();
+            token = l.GetString();
+            license = Encoding.UTF8.GetBytes(f.GetRawText());
+            key = Encoding.UTF8.GetBytes(k.GetRawText());
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Tried again at the next GetBorrowedLeases.
         }
     }
 
@@ -463,9 +718,17 @@ public sealed class LicenseClient : IAsyncDisposable
             return pinError;
         }
 
+        _identityFiles[identity!.License.TokenId] = (licenseFile, keyJwk);
         AddIdentity(identity!);
         return null;
     }
+
+    // The pin's judgement of a saved borrow's server, without writing a pin (design §12.7.4): the expected license ID when it is
+    // set, otherwise the pinned license and key when there is a pin.
+    private bool PinAccepts(string licenseId, string keyId) =>
+        _options.ExpectedServerLicenseId is string expected
+            ? licenseId == expected
+            : _pins.TryRead(_server, out PinFile? pin) && (pin is null || (pin.Lic == licenseId && pin.Jkt == keyId));
 
     private LicenseError? CheckPin(string licenseId, string keyId)
     {
@@ -693,7 +956,7 @@ public sealed class LicenseClient : IAsyncDisposable
     // refused is lost (design §13.4 step 5); a failed request leaves its leases to the retry.
     private async Task ReclaimAllAsync(List<LeaseStateChangedEventArgs> events)
     {
-        Lease[] held = [.. _leases.Where(l => l.State is not (LeaseState.Lost or LeaseState.Released))];
+        Lease[] held = [.. _leases.Where(l => !l.IsBorrow && l.State is not (LeaseState.Lost or LeaseState.Released))];
         foreach (Lease[] batch in held.Chunk(MaxReclaimTokens))
         {
             await ReclaimBatchAsync(batch, events).ConfigureAwait(false);
@@ -762,15 +1025,29 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error is null)
         {
+            // A borrow may come back from the disk after a server restart, when the server no longer knows its key: the proof
+            // carries it.
             Reply reply = await SendSignedAsync(
                     HttpMethod.Delete,
                     $"v1/leases/{Uri.EscapeDataString(lease.Id)}",
                     body: null,
-                    includeKey: false,
+                    includeKey: lease.IsBorrow,
                     cancellationToken
                 )
                 .ConfigureAwait(false);
             error = reply.Error;
+        }
+
+        if (lease.IsBorrow)
+        {
+            if (error is not null && error.Code != ErrorCode.UnknownLease)
+            {
+                // Not returned (refused or not reached): the borrow stays valid and on the disk until it expires.
+                return error;
+            }
+
+            DeleteBorrow(lease.Id);
+            error = null;
         }
 
         SetState(lease, LeaseState.Released, error, events);

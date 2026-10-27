@@ -34,6 +34,7 @@ public sealed class VerifiedLicense
         LeaseDuration = payload.Lease is long lease ? TimeSpan.FromSeconds(lease) : null;
         BorrowLimit = payload.Borrow is long borrow ? TimeSpan.FromSeconds(borrow) : null;
         OveragePercent = payload.Overage;
+        BorrowReturnLimit = payload.Brl;
         CloneStrategy = payload.Clone switch
         {
             "deny" => Licensing.CloneStrategy.Deny,
@@ -93,6 +94,12 @@ public sealed class VerifiedLicense
 
     /// <summary>Gets the overage percentage for server licenses, or <see langword="null"/>.</summary>
     public int? OveragePercent { get; }
+
+    /// <summary>
+    /// Gets how many borrowed leases one installation key may return early in 30 days, for server licenses, or
+    /// <see langword="null"/> (design §9.3 <c>BorrowReturnLimit</c>, §12.7.4).
+    /// </summary>
+    public int? BorrowReturnLimit { get; }
 
     /// <summary>Gets what the server does with a detected clone, for server licenses, or <see langword="null"/>.</summary>
     public CloneStrategy? CloneStrategy { get; }

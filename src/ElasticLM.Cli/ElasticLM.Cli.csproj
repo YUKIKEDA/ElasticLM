@@ -11,8 +11,11 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <ProjectReference Include="..\ElasticLM.Client\ElasticLM.Client.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
+    <!-- The server tests run elm server and elm log verify against a server in the same process. -->
+    <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
   </ItemGroup>
 </Project>

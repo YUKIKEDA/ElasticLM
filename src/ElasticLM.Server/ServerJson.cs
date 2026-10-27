@@ -136,7 +136,101 @@ internal sealed class SettingsFile
 
     [JsonPropertyName("dataDirectory")]
     public string? DataDirectory { get; set; }
+
+    [JsonPropertyName("borrow")]
+    public BorrowSection? Borrow { get; set; }
+
+    [JsonPropertyName("log")]
+    public LogSection? Log { get; set; }
+
+    [JsonPropertyName("admin")]
+    public AdminSection? Admin { get; set; }
 }
+
+/// <summary>
+/// <c>borrow</c>.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class BorrowSection
+{
+    [JsonPropertyName("maxDuration")]
+    public string? MaxDuration { get; set; }
+
+    [JsonPropertyName("reserve")]
+    public int? Reserve { get; set; }
+}
+
+/// <summary>
+/// <c>log</c>.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class LogSection
+{
+    [JsonPropertyName("usage")]
+    public string? Usage { get; set; }
+}
+
+/// <summary>
+/// <c>admin</c>.
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class AdminSection
+{
+    [JsonPropertyName("listen")]
+    public string? Listen { get; set; }
+}
+
+/// <summary>
+/// <c>GET /admin/v1/status</c> (design §13.7).
+/// </summary>
+internal sealed record StatusAnswer(
+    [property: JsonPropertyName("product")] string Product,
+    [property: JsonPropertyName("license")] string License,
+    [property: JsonPropertyName("licenseToken")] string LicenseToken,
+    [property: JsonPropertyName("licenseExpires")] long? LicenseExpires,
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("recovering")] bool Recovering,
+    [property: JsonPropertyName("recoveryEnds")] long RecoveryEnds,
+    [property: JsonPropertyName("leases")] int Leases,
+    [property: JsonPropertyName("features")] FeatureItem[] Features
+);
+
+/// <summary>
+/// The use of one feature.
+/// </summary>
+internal sealed record FeatureItem(
+    [property: JsonPropertyName("feature")] string Feature,
+    [property: JsonPropertyName("seats")] int Seats,
+    [property: JsonPropertyName("allowed")] long Allowed,
+    [property: JsonPropertyName("inUse")] long InUse,
+    [property: JsonPropertyName("borrowed")] long Borrowed
+);
+
+/// <summary>
+/// <c>GET /admin/v1/leases</c>.
+/// </summary>
+internal sealed record LeasesAnswer([property: JsonPropertyName("leases")] LeaseItem[] Leases);
+
+/// <summary>
+/// One lease as the administrator sees it.
+/// </summary>
+internal sealed record LeaseItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("feature")] string Feature,
+    [property: JsonPropertyName("seats")] int Seats,
+    [property: JsonPropertyName("key")] string Key,
+    [property: JsonPropertyName("expires")] long Expires,
+    [property: JsonPropertyName("borrow")] bool Borrow,
+    [property: JsonPropertyName("stopped")] bool Stopped
+);
+
+/// <summary>
+/// <c>POST /admin/v1/license/reload</c>.
+/// </summary>
+internal sealed record ReloadAnswer(
+    [property: JsonPropertyName("license")] string License,
+    [property: JsonPropertyName("licenseToken")] string LicenseToken
+);
 
 /// <summary>
 /// <c>rateLimit</c>.
@@ -192,4 +286,7 @@ internal sealed class TlsSection
 [JsonSerializable(typeof(NonceAnswer))]
 [JsonSerializable(typeof(Problem))]
 [JsonSerializable(typeof(SettingsFile))]
+[JsonSerializable(typeof(StatusAnswer))]
+[JsonSerializable(typeof(LeasesAnswer))]
+[JsonSerializable(typeof(ReloadAnswer))]
 internal sealed partial class ServerJsonContext : JsonSerializerContext;

@@ -91,9 +91,11 @@ public sealed class ElmCliTests : IDisposable
         }
 
         Assert.Equal(0, Run(Server("deny.elmlic")).Code);
-        Assert.Equal(0, Run(Server("flag.elmlic", "--clone", "flag")).Code);
+        Assert.Equal(0, Run(Server("flag.elmlic", "--clone", "flag", "--borrow-returns", "5")).Code);
 
         Assert.Contains("\"clone\": \"deny\"", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
+        Assert.Contains("\"brl\": 2", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
+        Assert.Contains("\"brl\": 5", Run("license", "inspect", P("flag.elmlic")).Out, StringComparison.Ordinal);
         Assert.Contains("\"clone\": \"flag\"", Run("license", "inspect", P("flag.elmlic")).Out, StringComparison.Ordinal);
     }
 
@@ -121,6 +123,7 @@ public sealed class ElmCliTests : IDisposable
         AssertInputError(Run("key", "root", "create", "--out", P("root.key.pem")), "exists");
         AssertInputError(Run([.. Issue("x.elmlic"), "--lease-minutes", "5"]), "server licenses only");
         AssertInputError(Run([.. Issue("x.elmlic"), "--clone", "flag"]), "server licenses only");
+        AssertInputError(Run([.. Issue("x.elmlic"), "--borrow-returns", "3"]), "server licenses only");
         AssertInputError(Run([.. Issue("x.elmlic"), "--kind", "server", "--clone", "maybe"]), "deny or flag");
         AssertInputError(
             Run("key", "certify", "--root", P("root.key.pem"), "--public", P("signing.key.pem.pub.pem"), "--use", "everything", "--out", P("c2.jws")),

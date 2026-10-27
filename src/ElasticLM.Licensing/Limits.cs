@@ -5,6 +5,9 @@ namespace ElasticLM.Licensing;
 /// </summary>
 internal static class Limits
 {
+    /// <summary>The largest early-return count a server license may allow in 30 days (design §8.6, <c>brl</c>).</summary>
+    public const int MaxBorrowReturns = 1_000;
+
     public const int MaxTokenLength = 16 * 1024;
     public const int MaxLicenseFileLength = 64 * 1024;
     public const int MaxCertificates = 4;

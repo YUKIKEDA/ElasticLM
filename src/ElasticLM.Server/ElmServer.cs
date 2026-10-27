@@ -1,6 +1,7 @@
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
@@ -18,7 +19,7 @@ using Microsoft.Extensions.Logging;
 namespace ElasticLM.Server;
 
 /// <summary>
-/// How the server is hosted: the clock, the environment, and the log level. Tests pass a fake clock.
+/// How the server is hosted: the clock, the environment, the log level, and the start options. Tests pass a fake clock.
 /// </summary>
 internal sealed class ServerHostOptions
 {
@@ -27,13 +28,18 @@ internal sealed class ServerHostOptions
     public Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
 
     public LogLevel MinimumLogLevel { get; init; } = LogLevel.Information;
+
+    /// <summary>Gets a value indicating whether a broken borrow record is moved aside instead of stopping the start
+    /// (<c>--set-aside-broken-records</c>, design §13.4).</summary>
+    public bool SetAsideBrokenRecords { get; init; }
 }
 
 /// <summary>
-/// The on-premises license server (design §13): it starts as §13.1 says and serves the nonce, the server license, and the
-/// lease protocol (§12.7.1, §13.4).
+/// The on-premises license server (design §13): it starts as §13.1 says, serves the nonce, the server license, and the
+/// lease protocol (§12.7, §13.4), writes the usage log and the borrow record (§13.4, §18.1), and answers the local
+/// administration API on a loopback address (§13.7).
 /// </summary>
-internal sealed class ElmServer : IAsyncDisposable
+internal sealed partial class ElmServer : IAsyncDisposable
 {
     public const string ServerLicenseHeader = "ELM-Server-License";
     public const string NonceHeader = "ELM-Nonce";
@@ -47,12 +53,15 @@ internal sealed class ElmServer : IAsyncDisposable
     private const int MaxAppBytes = 64;
     private const int MaxVersionLength = 32;
     private const int MaxProofIdLength = 64;
+    private const long MaxBorrowSeconds = 3_162_240_000;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan SealInterval = TimeSpan.FromSeconds(60);
 
     private readonly WebApplication _app;
+    private readonly ServerSettings _settings;
+    private readonly InstallationKeyStore _store;
     private readonly InstallationKey _key;
-    private readonly ServerIdentity _identity;
-    private readonly byte[] _licenseFile;
+    private readonly TrustStore _trust;
     private readonly byte[] _keyJwk;
     private readonly X509Certificate2 _certificate;
     private readonly NonceService _nonces;
@@ -61,40 +70,44 @@ internal sealed class ElmServer : IAsyncDisposable
     private readonly IpRateLimiter _limiter;
     private readonly AccessRules _access;
     private readonly ILogger _log;
+    private readonly UsageLog _usage;
+    private readonly BorrowJournal _journal;
+    private readonly byte[] _adminToken;
+    private readonly List<ServerIdentity> _identities = [];
+    private readonly Lock _reloadLock = new();
+    private byte[] _licenseFile;
     private ITimer? _cleanup;
+    private ITimer? _seal;
     private IReadOnlyList<Uri> _publicUrls;
+    private Uri? _adminUrl;
     private bool _stopped;
     private bool _disposed;
 
-    private ElmServer(
-        WebApplication app,
-        InstallationKey key,
-        ServerIdentity identity,
-        LeaseEngine engine,
-        byte[] licenseFile,
-        X509Certificate2 certificate,
-        ServerSettings settings,
-        IReadOnlyList<Uri> publicUrls,
-        TimeProvider time
-    )
+    private ElmServer(Parts parts)
     {
-        _app = app;
-        _key = key;
-        _identity = identity;
-        Engine = engine;
-        _licenseFile = licenseFile;
-        _keyJwk = key.WithPrivateKey(KeyFiles.ExportPublicJwk);
-        _certificate = certificate;
-        _publicUrls = publicUrls;
-        Time = time;
-        _access = settings.Access;
-        _limiter = new IpRateLimiter(settings.RateLimitPerIp, time);
+        _app = parts.App;
+        _settings = parts.Settings;
+        _store = parts.Store;
+        _key = parts.Key;
+        _trust = parts.Trust;
+        _identities.Add(parts.Identity);
+        Engine = parts.Engine;
+        _licenseFile = parts.LicenseFile;
+        _keyJwk = parts.Key.WithPrivateKey(KeyFiles.ExportPublicJwk);
+        _certificate = parts.Certificate;
+        _publicUrls = parts.PublicUrls;
+        _usage = parts.Usage;
+        _journal = parts.Journal;
+        _adminToken = Encoding.ASCII.GetBytes(parts.AdminToken);
+        Time = parts.Time;
+        _access = parts.Settings.Access;
+        _limiter = new IpRateLimiter(parts.Settings.RateLimitPerIp, parts.Time);
 
         // design §13.7: a new secret at each start, never stored, so nonces from before a restart are void.
-        _nonces = new NonceService(RandomNumberGenerator.GetBytes(32), time);
-        _replays = new MemoryReplayStore(time, MaxReplayEntries);
+        _nonces = new NonceService(RandomNumberGenerator.GetBytes(32), parts.Time);
+        _replays = new MemoryReplayStore(parts.Time, MaxReplayEntries);
         _proofs = new ProofVerifier(_nonces, _replays);
-        _log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-server");
+        _log = parts.Log;
     }
 
     /// <summary>Gets the lease engine.</summary>
@@ -103,15 +116,23 @@ internal sealed class ElmServer : IAsyncDisposable
     /// <summary>Gets the URLs clients use; proofs name one of them (design §12.1).</summary>
     public IReadOnlyList<Uri> PublicUrls => _publicUrls;
 
+    /// <summary>Gets the URL of the local administration API.</summary>
+    public Uri AdminUrl => _adminUrl!;
+
     /// <summary>Gets the installation key thumbprint, which is the server license's <c>cnf.jkt</c>.</summary>
-    public string KeyId => _identity.KeyId;
+    public string KeyId => Engine.Server.KeyId;
+
+    /// <summary>Gets the data folder: the installation key, the administrator token, and the borrow record.</summary>
+    public string DataDirectory => _store.Directory;
 
     /// <summary>Gets the clock.</summary>
     public TimeProvider Time { get; }
 
+    private SigningKeyAccess KeyAccess => use => _key.WithPrivateKey(use);
+
     /// <summary>
-    /// Starts the server as design §13.1 says: settings, installation key, trust store, server license, TLS, then listening
-    /// with the reclaim window open.
+    /// Starts the server as design §13.1 says: settings, installation key, trust store, server license, the borrow record,
+    /// TLS, the usage log, then listening with the reclaim window open.
     /// </summary>
     /// <exception cref="ServerStartException">The server cannot start; the message says why.</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
@@ -129,43 +150,86 @@ internal sealed class ElmServer : IAsyncDisposable
         var disposables = new List<IDisposable> { key! };
         try
         {
-            (VerifiedLicense license, byte[] licenseFile) = VerifyLicense(settings, store, key!, trust, host.Time);
-            if (
-                !ServerIdentity.TryCreate(
-                    license,
-                    key!.WithPrivateKey(KeyFiles.ExportPublicJwk),
-                    out ServerIdentity? identity,
-                    out LicenseError? identityError
-                )
-            )
+            (VerifiedLicense? license, byte[]? licenseFile, LicenseError? licenseError) = TryVerifyLicense(settings, store, key!, trust, host.Time);
+            if (licenseError is not null)
+            {
+                throw new ServerStartException(licenseError.Message);
+            }
+
+            byte[] keyJwk = key!.WithPrivateKey(KeyFiles.ExportPublicJwk);
+            if (!ServerIdentity.TryCreate(license!, keyJwk, out ServerIdentity? identity, out LicenseError? identityError))
             {
                 throw new ServerStartException(identityError!.Message);
             }
 
             disposables.Add(identity!);
+            BorrowJournal journal = Journal(() => BorrowJournal.Load(store.Directory, trust, identity!, host.SetAsideBrokenRecords, host.Time));
+            disposables.Add(journal);
+            string adminToken =
+                AdminToken.LoadOrCreate(store.Directory)
+                ?? throw new ServerStartException($"The administrator token in '{store.Directory}' cannot be created or read.");
             IReadOnlyList<Uri> publicUrls =
                 settings.PublicUrls.Count > 0 ? settings.PublicUrls : DefaultPublicUrls(settings.Listen, settings.Listen.Port);
             X509Certificate2 certificate = settings.TlsCertificate is string certificatePath
                 ? TlsCertificates.FromFiles(certificatePath, settings.TlsKey, host.Environment(ServerSettings.TlsPasswordVariable))
-                : TlsCertificates.SelfSigned(key!, publicUrls, host.Time);
+                : TlsCertificates.SelfSigned(key, publicUrls, host.Time);
             disposables.Add(certificate);
 
+            WebApplication app = Build(settings, certificate, host);
+            ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-server");
+            SigningKeyAccess access = use => key.WithPrivateKey(use);
+            UsageLog usage = OpenUsageLog(settings, store, access, licenseFile!, keyJwk, host.Time, log);
+            disposables.Add(usage);
+            LeaseEngine? created = null;
             var engine = new LeaseEngine(
                 identity!,
-                (spec, issuedAt) => key!.WithPrivateKey(ecdsa => LeaseIssuer.Issue(ecdsa, spec, issuedAt)),
+                (spec, issuedAt) => key.WithPrivateKey(ecdsa => LeaseIssuer.Issue(ecdsa, spec, issuedAt)),
                 new LeaseVerifier(trust, host.Time, StatelessClockGuard.Instance),
-                host.Time
+                host.Time,
+                new LeaseEngineOptions
+                {
+                    MaxBorrow = settings.BorrowMaxDuration,
+                    BorrowReserve = settings.BorrowReserve,
+                    Journal = journal,
+                    Expired = lease =>
+                        usage.Lease(lease.IsBorrow ? "borrow.expired" : "lease.expired", lease, (created?.Server ?? identity!).License.LicenseId),
+                }
             );
-            WebApplication app = Build(settings, certificate, host);
-            var server = new ElmServer(app, key!, identity!, engine, licenseFile, certificate, settings, publicUrls, host.Time);
+            created = engine;
+            disposables.Add(engine);
+            engine.Restore(journal.Borrows, journal.Returns);
+            Journal(() =>
+            {
+                journal.Open(access, licenseFile!, keyJwk);
+                return journal;
+            });
+            var server = new ElmServer(
+                new Parts(
+                    app,
+                    settings,
+                    store,
+                    key,
+                    trust,
+                    identity!,
+                    engine,
+                    licenseFile!,
+                    certificate,
+                    publicUrls,
+                    usage,
+                    journal,
+                    adminToken,
+                    host.Time,
+                    log
+                )
+            );
             server.Map();
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
-            server.AfterStart(settings, host.Time.GetElapsedTime(started));
+            server.AfterStart(host.Time.GetElapsedTime(started));
             return server;
         }
         catch
         {
-            foreach (IDisposable disposable in disposables)
+            foreach (IDisposable disposable in Enumerable.Reverse(disposables))
             {
                 disposable.Dispose();
             }
@@ -178,7 +242,8 @@ internal sealed class ElmServer : IAsyncDisposable
     public Task WaitForShutdownAsync() => _app.WaitForShutdownAsync();
 
     /// <summary>
-    /// Stops listening and the timers (design §13.2). Leases not returned are dropped; clients reclaim them after a restart.
+    /// Stops listening and the timers (design §13.2), writes <c>server.stopped</c> with the leases not returned, and signs
+    /// the logs. Leases not returned are dropped; clients reclaim them after a restart, and borrows come back from the record.
     /// </summary>
     public async Task StopAsync()
     {
@@ -193,8 +258,18 @@ internal sealed class ElmServer : IAsyncDisposable
             await _cleanup.DisposeAsync().ConfigureAwait(false);
         }
 
+        if (_seal is not null)
+        {
+            await _seal.DisposeAsync().ConfigureAwait(false);
+        }
+
         await _app.StopAsync().ConfigureAwait(false);
-        ServerLog.Stopped(_log, Engine.LeaseCount);
+        int leases = Engine.LeaseCount;
+        _usage.WriteDenials();
+        _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
+        ServerLog.Stopped(_log, leases);
+        _usage.Dispose();
+        _journal.Dispose();
     }
 
     public async ValueTask DisposeAsync()
@@ -207,9 +282,90 @@ internal sealed class ElmServer : IAsyncDisposable
         _disposed = true;
         await StopAsync().ConfigureAwait(false);
         await _app.DisposeAsync().ConfigureAwait(false);
+        Engine.Dispose();
         _certificate.Dispose();
-        _identity.Dispose();
+        foreach (ServerIdentity identity in _identities)
+        {
+            identity.Dispose();
+        }
+
         _key.Dispose();
+    }
+
+    /// <summary>
+    /// Reads the server license file again and, when it verifies for this server as at the start (design §13.1), puts it in
+    /// place: the borrow record and the usage log record the change first, then new leases are issued under it. Otherwise,
+    /// or when the borrow record cannot record the change, the old license stays.
+    /// </summary>
+    /// <returns><see langword="null"/> when the new license is in place, otherwise why it was not.</returns>
+    public LicenseError? ReloadLicense()
+    {
+        (VerifiedLicense? license, byte[]? file, LicenseError? error) = TryVerifyLicense(_settings, _store, _key, _trust, Time);
+        if (error is not null)
+        {
+            return error;
+        }
+
+        if (!ServerIdentity.TryCreate(license!, _keyJwk, out ServerIdentity? identity, out LicenseError? identityError))
+        {
+            return identityError;
+        }
+
+        lock (_reloadLock)
+        {
+            try
+            {
+                _journal.ChangeKey(file!, _keyJwk, KeyAccess);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                identity!.Dispose();
+                return new LicenseError(ErrorCode.InternalError, "The borrow record cannot record the new license: " + e.Message);
+            }
+
+            // A usage log that cannot record it says so in the operational log and starts its next file with the new license.
+            _usage.ChangeKey(file!, _keyJwk, KeyAccess);
+            Engine.ReplaceLicense(identity!);
+            _identities.Add(identity!);
+            Volatile.Write(ref _licenseFile, file!);
+        }
+
+        ServerLog.Reloaded(_log, identity!.License.LicenseId, identity.License.TokenId);
+        return null;
+    }
+
+    private static UsageLog OpenUsageLog(
+        ServerSettings settings,
+        InstallationKeyStore store,
+        SigningKeyAccess access,
+        byte[] licenseFile,
+        byte[] keyJwk,
+        TimeProvider time,
+        ILogger log
+    )
+    {
+        string path = Path.IsPathRooted(settings.UsageLog) ? settings.UsageLog : Path.Combine(store.Directory, settings.UsageLog);
+        try
+        {
+            return UsageLog.Open(path, access, licenseFile, keyJwk, time, log);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new ServerStartException($"The usage log '{path}' cannot be written: {e.Message}");
+        }
+    }
+
+    // design §13.1: a borrow record that cannot be read or written stops the start with a reason, like the usage log.
+    private static BorrowJournal Journal(Func<BorrowJournal> step)
+    {
+        try
+        {
+            return step();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new ServerStartException($"The borrow record cannot be read or written: {e.Message}");
+        }
     }
 
     private static TrustStore ReadTrust(ServerSettings settings, Func<string, string?> environment)
@@ -253,8 +409,9 @@ internal sealed class ElmServer : IAsyncDisposable
         }
     }
 
-    // design §13.1 step 3: the server license must verify for this installation, or the server does not start.
-    private static (VerifiedLicense License, byte[] File) VerifyLicense(
+    // design §13.1 step 3: the server license must verify for this installation; at the start a failure stops the server,
+    // at a reload it keeps the old license.
+    private static (VerifiedLicense? License, byte[]? File, LicenseError? Error) TryVerifyLicense(
         ServerSettings settings,
         InstallationKeyStore store,
         InstallationKey key,
@@ -269,35 +426,38 @@ internal sealed class ElmServer : IAsyncDisposable
             var info = new FileInfo(settings.LicensePath);
             if (!info.Exists)
             {
-                throw new ServerStartException(
-                    $"The server license '{settings.LicensePath}' does not exist. Ask the vendor for a server license bound to this "
-                        + $"server: installation key {key.Thumbprint}, fingerprints {string.Join(", ", fingerprints)}."
-                );
+                string missing =
+                    $"The server license '{settings.LicensePath}' does not exist. Ask the vendor for a server license bound to "
+                    + $"this server: installation key {key.Thumbprint}, fingerprints {string.Join(", ", fingerprints)}.";
+                return (null, null, new LicenseError(ErrorCode.LicenseNotFound, missing));
             }
 
             if (info.Length > MaxLicenseFileLength)
             {
-                throw new ServerStartException($"The server license '{settings.LicensePath}' is larger than 64 KiB.");
+                return (null, null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
             }
 
             file = File.ReadAllBytes(settings.LicensePath);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            throw new ServerStartException($"The server license '{settings.LicensePath}' cannot be read: {e.Message}");
+            return (null, null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' cannot be read: {e.Message}"));
         }
 
         var verifier = new LicenseVerifier(trust, time, new FileClockGuard(Path.Combine(store.Directory, "clock")));
         var requirement = new LicenseRequirement(settings.Product, LicenseKind.Server, null, null, key.Identity(fingerprints));
-        return verifier.Verify(file, requirement) switch
+        switch (verifier.Verify(file, requirement))
         {
-            LicenseVerificationResult.Valid valid => (valid.License, file),
-            LicenseVerificationResult.Invalid invalid => throw new ServerStartException(
-                $"The server license does not verify ({ErrorCodes.ToWireName(invalid.Error.Code)}): {invalid.Error.Message} "
-                    + $"This server's installation key is {key.Thumbprint}."
-            ),
-            _ => throw new InvalidOperationException("Unknown license verification result."),
-        };
+            case LicenseVerificationResult.Valid valid:
+                return (valid.License, file, null);
+            case LicenseVerificationResult.Invalid invalid:
+                string message =
+                    $"The server license does not verify ({ErrorCodes.ToWireName(invalid.Error.Code)}): {invalid.Error.Message} "
+                    + $"This server's installation key is {key.Thumbprint}.";
+                return (null, null, new LicenseError(invalid.Error.Code, message));
+            default:
+                throw new InvalidOperationException("Unknown license verification result.");
+        }
     }
 
     private static IReadOnlyList<Uri> DefaultPublicUrls(Uri listen, int port)
@@ -323,23 +483,20 @@ internal sealed class ElmServer : IAsyncDisposable
             // The handlers read at most 64 KiB and answer 413 themselves (design §12.1); Kestrel's own limit only stops
             // what is far larger.
             kestrel.Limits.MaxRequestBodySize = 1024 * 1024;
-            Listen(kestrel, settings.Listen, certificate);
+
+            // ServerSettings.Load checks the hosts already; settings built in code are checked here.
+            kestrel.Listen(ServerSettings.ListenAddress(settings.Listen), settings.Listen.Port, options => options.UseHttps(certificate));
+            kestrel.Listen(ServerSettings.ListenAddress(settings.AdminListen), settings.AdminListen.Port);
         });
         return builder.Build();
-    }
-
-    private static void Listen(KestrelServerOptions kestrel, Uri listen, X509Certificate2 certificate)
-    {
-        // ServerSettings.Load checks the host already; settings built in code are checked here.
-        IPAddress address = ServerSettings.ListenAddress(listen);
-        kestrel.Listen(address, listen.Port, options => options.UseHttps(certificate));
     }
 
     private static int StatusOf(ErrorCode code) =>
         code switch
         {
             ErrorCode.InvalidArgument or ErrorCode.Malformed or ErrorCode.FingerprintUnavailable => StatusCodes.Status400BadRequest,
-            ErrorCode.BadSignature or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed => StatusCodes.Status401Unauthorized,
+            ErrorCode.BadSignature or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed or ErrorCode.Unauthorized =>
+                StatusCodes.Status401Unauthorized,
             ErrorCode.Expired
             or ErrorCode.FeatureNotLicensed
             or ErrorCode.FeatureVersionNotLicensed
@@ -392,21 +549,76 @@ internal sealed class ElmServer : IAsyncDisposable
 
     private static bool IsFingerprint(string? value) => value is { Length: 32 } && value.All(char.IsAsciiHexDigitLower);
 
-    private static bool FitsUtf8(string? value, int maxBytes) => value is null || System.Text.Encoding.UTF8.GetByteCount(value) <= maxBytes;
+    private static bool FitsUtf8(string? value, int maxBytes) => value is null || Encoding.UTF8.GetByteCount(value) <= maxBytes;
 
-    private void AfterStart(ServerSettings settings, TimeSpan startup)
+    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
+    {
+        int statusCode = status ?? StatusOf(code);
+        string wire = ErrorCodes.ToWireName(code);
+        if (retryAfter is TimeSpan wait)
+        {
+            context.Response.Headers.RetryAfter = ((long)Math.Ceiling(wait.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        return WriteJsonAsync(
+            context,
+            statusCode,
+            new Problem("about:blank", wire, statusCode, message, wire),
+            ServerJsonContext.Default.Problem,
+            "application/problem+json"
+        );
+    }
+
+    private static Task WriteJsonAsync<T>(
+        HttpContext context,
+        int status,
+        T value,
+        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
+        string contentType = "application/json"
+    )
+    {
+        context.Response.StatusCode = status;
+        context.Response.ContentType = contentType;
+        return context.Response.Body.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(value, type), context.RequestAborted).AsTask();
+    }
+
+    private void AfterStart(TimeSpan startup)
     {
         IServerAddressesFeature? addresses = _app
             .Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
             .Features.Get<IServerAddressesFeature>();
-        int port = addresses?.Addresses.Select(a => new Uri(a).Port).FirstOrDefault() ?? settings.Listen.Port;
-        if (settings.PublicUrls.Count == 0)
+        Uri[] bound = [.. addresses?.Addresses.Select(a => new Uri(a)) ?? []];
+        int port = bound.FirstOrDefault(u => u.Scheme == Uri.UriSchemeHttps)?.Port ?? _settings.Listen.Port;
+        int adminPort = bound.FirstOrDefault(u => u.Scheme == Uri.UriSchemeHttp)?.Port ?? _settings.AdminListen.Port;
+        _adminUrl = new UriBuilder(_settings.AdminListen) { Port = adminPort }.Uri;
+        if (_settings.PublicUrls.Count == 0)
         {
-            _publicUrls = DefaultPublicUrls(settings.Listen, port);
+            _publicUrls = DefaultPublicUrls(_settings.Listen, port);
         }
 
         _cleanup = Time.CreateTimer(_ => Cleanup(), null, CleanupInterval, CleanupInterval);
-        ServerLog.Started(_log, port, _publicUrls, KeyId, _identity.License.LicenseId, (long)startup.TotalMilliseconds, Engine.RecoveryEndsAt);
+        _seal = Time.CreateTimer(_ => SealLogs(), null, SealInterval, SealInterval);
+        if (_journal.SetAside is string aside)
+        {
+            ServerLog.RecordSetAside(_log, aside);
+            _usage.Write("records.set_aside", w => w.WriteString("file", Path.GetFileName(aside)));
+        }
+
+        if (_usage.ResetReason is string reason)
+        {
+            ServerLog.ChainReset(_log, UsageLog.Stream, reason);
+        }
+
+        _usage.Write(
+            "server.started",
+            w =>
+            {
+                w.WriteString("lic", Engine.Server.License.LicenseId);
+                w.WriteString("key", KeyId);
+                w.WriteNumber("borrows", Engine.Leases().Count(l => l.IsBorrow));
+            }
+        );
+        ServerLog.Started(_log, port, _publicUrls, KeyId, Engine.Server.License.LicenseId, (long)startup.TotalMilliseconds, Engine.RecoveryEndsAt);
     }
 
     // design §13.2: expired leases, proof IDs, and idle rate buckets go every 30 seconds.
@@ -424,6 +636,22 @@ internal sealed class ElmServer : IAsyncDisposable
         }
     }
 
+    // design §18.1: the refusals of the last minute are written as counts, the pending lines are signed every 60 seconds, and
+    // a new UTC day starts new files.
+    private void SealLogs()
+    {
+        try
+        {
+            _usage.WriteDenials();
+            _usage.Seal();
+            _journal.Seal();
+        }
+        catch (Exception e)
+        {
+            ServerLog.CleanupFailed(_log, e);
+        }
+    }
+
     private void Map()
     {
         _app.Use(GuardAsync);
@@ -433,11 +661,32 @@ internal sealed class ElmServer : IAsyncDisposable
         _app.MapPost("/v1/leases/reclaim", (RequestDelegate)ReclaimAsync);
         _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)RenewAsync);
         _app.MapDelete("/v1/leases/{id}", (RequestDelegate)ReleaseAsync);
+        MapAdmin();
     }
 
-    // The IP rules and the rate limit, before any other work (design §13.8, T16).
+    // The administration API answers only on its loopback http listener, and the lease protocol only on the https one. The
+    // IP rules and the rate limit come before any other work of the lease protocol (design §13.8, T16).
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
+        bool adminPath = context.Request.Path.StartsWithSegments("/admin", StringComparison.Ordinal);
+        if (!context.Request.IsHttps)
+        {
+            if (!adminPath)
+            {
+                context.Response.StatusCode = StatusCodes.Status404NotFound;
+                return;
+            }
+
+            await next(context).ConfigureAwait(false);
+            return;
+        }
+
+        if (adminPath)
+        {
+            context.Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+
         IPAddress? address = context.Connection.RemoteIpAddress;
         if (!_access.AllowsAddress(address))
         {
@@ -469,7 +718,7 @@ internal sealed class ElmServer : IAsyncDisposable
         {
             writer.WriteStartObject();
             writer.WritePropertyName("license");
-            writer.WriteRawValue(_licenseFile);
+            writer.WriteRawValue(Volatile.Read(ref _licenseFile));
             writer.WritePropertyName("key");
             writer.WriteRawValue(_keyJwk);
             writer.WriteEndObject();
@@ -495,20 +744,10 @@ internal sealed class ElmServer : IAsyncDisposable
             || !FitsUtf8(request.Client?.Host, MaxClientNameBytes)
             || !FitsUtf8(request.Client?.User, MaxClientNameBytes)
             || !FitsUtf8(request.App, MaxAppBytes)
+            || request.Borrow is < 0 or > MaxBorrowSeconds
         )
         {
             await ProblemAsync(context, ErrorCode.Malformed, "The request body is not a valid lease request.").ConfigureAwait(false);
-            return;
-        }
-
-        if (request.Borrow is long borrow)
-        {
-            // Borrowing comes with the borrow records in the next row (M3c).
-            await (
-                borrow < 1
-                    ? ProblemAsync(context, ErrorCode.InvalidArgument, "A borrow period is at least one second.")
-                    : ProblemAsync(context, ErrorCode.BorrowNotAllowed, "This server does not lend borrows.")
-            ).ConfigureAwait(false);
             return;
         }
 
@@ -518,12 +757,53 @@ internal sealed class ElmServer : IAsyncDisposable
             return;
         }
 
+        TimeSpan? borrow = request.Borrow is long seconds ? TimeSpan.FromSeconds(seconds) : null;
         LeaseOutcome outcome = Engine.Acquire(
-            new LeaseRequest(request.Feature, request.Version, request.Count, proof.KeyId, proof.Key, proof.ProofId)
+            new LeaseRequest(request.Feature, request.Version, request.Count, proof.KeyId, proof.Key, proof.ProofId, borrow, request.Fingerprints)
         );
+        string licenseId = Engine.Server.License.LicenseId;
+        void Client(Utf8JsonWriter w)
+        {
+            if (request.Client is { } client)
+            {
+                w.WriteString("host", client.Host);
+                w.WriteString("user", client.User);
+            }
+
+            if (request.App is string app)
+            {
+                w.WriteString("app", app);
+            }
+        }
+
         if (outcome is LeaseOutcome.Granted granted)
         {
             ServerLog.Acquired(_log, granted.LeaseId, request.Feature, request.Count, proof.KeyId);
+            _usage.Lease(
+                borrow is null ? "lease.acquired" : "borrow.started",
+                granted.LeaseId,
+                request.Feature,
+                request.Count,
+                proof.KeyId,
+                licenseId,
+                Client
+            );
+            if (granted.InUse > granted.Seats)
+            {
+                _usage.Lease(
+                    "overage",
+                    granted.LeaseId,
+                    request.Feature,
+                    request.Count,
+                    proof.KeyId,
+                    licenseId,
+                    w => w.WriteNumber("inUse", granted.InUse)
+                );
+            }
+        }
+        else if (outcome is LeaseOutcome.Refused refused)
+        {
+            _usage.Denied(request.Feature, refused.Error.Code);
         }
 
         await AnswerAsync(context, outcome, StatusCodes.Status201Created).ConfigureAwait(false);
@@ -532,7 +812,7 @@ internal sealed class ElmServer : IAsyncDisposable
     private async Task RenewAsync(HttpContext context)
     {
         string id = context.Request.RouteValues["id"] as string ?? string.Empty;
-        if (!Engine.TryGetLeaseKey(id, out string? keyId, out ECParameters key))
+        if (!Engine.TryGetLeaseKey(id, out string? keyId, out ECParameters? key))
         {
             context.Response.Headers[NonceHeader] = _nonces.Issue();
             await ProblemAsync(context, ErrorCode.UnknownLease, "The server does not know the lease; reclaim it.").ConfigureAwait(false);
@@ -561,13 +841,31 @@ internal sealed class ElmServer : IAsyncDisposable
 
         LeaseOutcome outcome = Engine.Renew(id, request.Seq, proof.KeyId, proof.ProofId, request.Retry ?? []);
         LogClone(outcome, id, proof.KeyId);
+        string licenseId = Engine.Server.License.LicenseId;
+        if (outcome is LeaseOutcome.Granted granted)
+        {
+            _usage.Lease(
+                "lease.renewed",
+                granted.LeaseId,
+                null,
+                null,
+                proof.KeyId,
+                licenseId,
+                w => w.WriteBoolean("cloneFlagged", granted.CloneFlagged)
+            );
+        }
+        else if (outcome is LeaseOutcome.Refused refused)
+        {
+            _usage.Denied(null, refused.Error.Code);
+        }
+
         await AnswerAsync(context, outcome, StatusCodes.Status200OK).ConfigureAwait(false);
     }
 
     private async Task ReleaseAsync(HttpContext context)
     {
         string id = context.Request.RouteValues["id"] as string ?? string.Empty;
-        if (!Engine.TryGetLeaseKey(id, out string? keyId, out ECParameters key))
+        if (!Engine.TryGetLeaseKey(id, out string? keyId, out ECParameters? key))
         {
             // A release is idempotent (design §12.7.1).
             context.Response.Headers[NonceHeader] = _nonces.Issue();
@@ -580,10 +878,19 @@ internal sealed class ElmServer : IAsyncDisposable
             return;
         }
 
-        switch (Engine.Release(id, proof.KeyId))
+        string licenseId = Engine.Server.License.LicenseId;
+        switch (Engine.Release(id, proof.KeyId, out LeaseInfo? lease))
         {
             case ReleaseOutcome.Released:
                 ServerLog.Released(_log, id);
+                _usage.Lease(
+                    lease?.IsBorrow == true ? "borrow.returned" : "lease.released",
+                    id,
+                    lease?.FeatureId,
+                    lease?.Seats,
+                    proof.KeyId,
+                    licenseId
+                );
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 break;
             case ReleaseOutcome.NotFound:
@@ -591,6 +898,15 @@ internal sealed class ElmServer : IAsyncDisposable
                 break;
             case ReleaseOutcome.WrongKey:
                 await ProblemAsync(context, ErrorCode.ProofInvalid, "The proof is not signed by the key the lease is bound to.")
+                    .ConfigureAwait(false);
+                break;
+            case ReleaseOutcome.ReturnNotAllowed:
+                _usage.Denied(lease?.FeatureId, ErrorCode.ReturnNotAllowed);
+                await ProblemAsync(
+                        context,
+                        ErrorCode.ReturnNotAllowed,
+                        "The borrow cannot be returned early: the early returns of 30 days are used up, or the server license changed."
+                    )
                     .ConfigureAwait(false);
                 break;
             default:
@@ -616,15 +932,30 @@ internal sealed class ElmServer : IAsyncDisposable
         }
 
         IReadOnlyList<ReclaimResult> results = Engine.Reclaim(request.Leases, proof.KeyId, proof.Key);
+        string licenseId = Engine.Server.License.LicenseId;
         foreach (ReclaimResult result in results)
         {
             if (result.Error is null)
             {
                 ServerLog.Reclaimed(_log, result.LeaseId, proof.KeyId);
+                _usage.Lease(
+                    "lease.reclaimed",
+                    result.LeaseId,
+                    null,
+                    null,
+                    proof.KeyId,
+                    licenseId,
+                    w => w.WriteBoolean("cloneFlagged", result.CloneFlagged)
+                );
             }
-            else if (result.Error.Code == ErrorCode.CloneDetected)
+            else
             {
-                ServerLog.CloneDetected(_log, result.LeaseId, proof.KeyId);
+                if (result.Error.Code == ErrorCode.CloneDetected)
+                {
+                    ServerLog.CloneDetected(_log, result.LeaseId, proof.KeyId);
+                }
+
+                _usage.Denied(null, result.Error.Code);
             }
 
             if (result.CloneFlagged)
@@ -670,7 +1001,7 @@ internal sealed class ElmServer : IAsyncDisposable
         {
             case LeaseOutcome.Granted granted:
                 // design §12.7.1: the jti of the server license the lease was issued under, so the client can fetch a new copy.
-                context.Response.Headers[ServerLicenseHeader] = _identity.License.TokenId;
+                context.Response.Headers[ServerLicenseHeader] = Engine.Server.License.TokenId;
                 return WriteJsonAsync(context, successStatus, new LeaseAnswer(granted.Token, []), ServerJsonContext.Default.LeaseAnswer);
             case LeaseOutcome.Refused refused:
                 return ProblemAsync(context, refused.Error.Code, refused.Error.Message, refused.RetryAfter);
@@ -691,34 +1022,21 @@ internal sealed class ElmServer : IAsyncDisposable
         }
     }
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null)
-    {
-        int status = StatusOf(code);
-        string wire = ErrorCodes.ToWireName(code);
-        if (retryAfter is TimeSpan wait)
-        {
-            context.Response.Headers.RetryAfter = ((long)Math.Ceiling(wait.TotalSeconds)).ToString(System.Globalization.CultureInfo.InvariantCulture);
-        }
-
-        return WriteJsonAsync(
-            context,
-            status,
-            new Problem("about:blank", wire, status, message, wire),
-            ServerJsonContext.Default.Problem,
-            "application/problem+json"
-        );
-    }
-
-    private static Task WriteJsonAsync<T>(
-        HttpContext context,
-        int status,
-        T value,
-        System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type,
-        string contentType = "application/json"
-    )
-    {
-        context.Response.StatusCode = status;
-        context.Response.ContentType = contentType;
-        return context.Response.Body.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(value, type), context.RequestAborted).AsTask();
-    }
+    private sealed record Parts(
+        WebApplication App,
+        ServerSettings Settings,
+        InstallationKeyStore Store,
+        InstallationKey Key,
+        TrustStore Trust,
+        ServerIdentity Identity,
+        LeaseEngine Engine,
+        byte[] LicenseFile,
+        X509Certificate2 Certificate,
+        IReadOnlyList<Uri> PublicUrls,
+        UsageLog Usage,
+        BorrowJournal Journal,
+        string AdminToken,
+        TimeProvider Time,
+        ILogger Log
+    );
 }

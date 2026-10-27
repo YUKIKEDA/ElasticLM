@@ -56,31 +56,36 @@ public sealed class IssuingTests : IDisposable
         Assert.Equal(kind, valid.License.Kind);
         Assert.Equal(issued.TokenId, valid.License.TokenId);
         Assert.Equal(spec.CloneStrategy, valid.License.CloneStrategy);
+        Assert.Equal(spec.BorrowReturnLimit, valid.License.BorrowReturnLimit);
         Assert.Equal(expires ? 0 : 1, issued.Warnings.Count(w => w.Contains("no expiry", StringComparison.Ordinal)));
     }
 
     /// <summary>
-    /// A server license with the flag clone strategy reads back as flag; deny is covered by the test of each kind.
+    /// A server license with the flag clone strategy reads back as flag (deny is covered by the test of each kind), and the
+    /// borrow return limit at its maximum (1,000) and at its minimum (0) is issued and verifies.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A server license spec with CloneStrategy.Flag.
+    /// - A server license spec with CloneStrategy.Flag and brl 1000; the same with brl 0.
     ///
     /// Steps:
-    /// - Issue and verify it.
+    /// - Issue and verify each.
     ///
     /// Expected:
-    /// - The verified license has CloneStrategy.Flag.
+    /// - The verified licenses have CloneStrategy.Flag and brl 1000 and 0.
     /// </remarks>
-    [Fact]
-    public void Issue_ServerWithFlag_ReadsBackFlag()
+    [Theory]
+    [InlineData(1_000)]
+    [InlineData(0)]
+    public void Issue_ServerWithFlag_ReadsBackFlag(int borrowReturns)
     {
-        LicenseSpec spec = Spec(LicenseKind.Server, true, true) with { CloneStrategy = CloneStrategy.Flag };
+        LicenseSpec spec = Spec(LicenseKind.Server, true, true) with { CloneStrategy = CloneStrategy.Flag, BorrowReturnLimit = borrowReturns };
 
         IssuedLicense issued = LicenseIssuer.Issue(_signing, [Certificate()], spec, _time);
 
         var valid = Assert.IsType<LicenseVerificationResult.Valid>(Verifier().Verify(issued.File, Requirement(LicenseKind.Server, true)));
         Assert.Equal(CloneStrategy.Flag, valid.License.CloneStrategy);
+        Assert.Equal(borrowReturns, valid.License.BorrowReturnLimit);
     }
 
     /// <summary>
@@ -88,7 +93,8 @@ public sealed class IssuingTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A valid spec, changed in one way: a server license without lease or without clone strategy, seats on a standard license, a trial with grace,
+    /// - A valid spec, changed in one way: a server license without lease, clone strategy, or borrow return limit, or with
+    ///   a borrow return limit of 1001, seats on a standard license, a trial with grace,
     ///   257 features, 9 fingerprints, a bad version range, an empty product, a negative grace period.
     ///
     /// Steps:
@@ -100,6 +106,8 @@ public sealed class IssuingTests : IDisposable
     [Theory]
     [InlineData("server-without-lease")]
     [InlineData("server-without-clone")]
+    [InlineData("server-without-brl")]
+    [InlineData("brl-over-limit")]
     [InlineData("seats-on-standard")]
     [InlineData("trial-with-grace")]
     [InlineData("too-many-features")]
@@ -114,6 +122,8 @@ public sealed class IssuingTests : IDisposable
         {
             "server-without-lease" => Spec(LicenseKind.Server, true, true) with { LeaseDuration = null },
             "server-without-clone" => Spec(LicenseKind.Server, true, true) with { CloneStrategy = null },
+            "server-without-brl" => Spec(LicenseKind.Server, true, true) with { BorrowReturnLimit = null },
+            "brl-over-limit" => Spec(LicenseKind.Server, true, true) with { BorrowReturnLimit = 1_001 },
             "seats-on-standard" => spec with { Features = [new FeatureSpec("pro", Seats: 5)] },
             "trial-with-grace" => Spec(LicenseKind.Trial, true, true) with { GracePeriod = TimeSpan.FromDays(1) },
             "too-many-features" => spec with { Features = [.. Enumerable.Range(0, 257).Select(i => new FeatureSpec("f" + i))] },
@@ -384,6 +394,7 @@ public sealed class IssuingTests : IDisposable
             BorrowLimit = kind == LicenseKind.Server ? TimeSpan.Zero : null,
             OveragePercent = kind == LicenseKind.Server ? 0 : null,
             CloneStrategy = kind == LicenseKind.Server ? CloneStrategy.Deny : null,
+            BorrowReturnLimit = kind == LicenseKind.Server ? 2 : null,
         };
 
     private LicenseRequirement Requirement(LicenseKind kind, bool bound) =>

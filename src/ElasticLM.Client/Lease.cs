@@ -55,6 +55,10 @@ public sealed class Lease
     /// <summary>Gets the current lease token, verified as design §12.7.5 says.</summary>
     public VerifiedLease Token => _token;
 
+    /// <summary>Gets a value indicating whether the lease is a borrow: valid until it expires without renewal, kept on the disk
+    /// for use without the server (design §12.7.4).</summary>
+    public bool IsBorrow => _token.IsBorrow;
+
     /// <summary>Gets the expiry of the current token.</summary>
     public DateTimeOffset ExpiresAt => _token.ExpiresAt;
 

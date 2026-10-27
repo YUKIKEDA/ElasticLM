@@ -9,7 +9,8 @@ internal sealed record AcquireRequestBody(
     [property: JsonPropertyName("count")] int Count,
     [property: JsonPropertyName("fingerprints")] IReadOnlyList<string>? Fingerprints,
     [property: JsonPropertyName("client")] ClientInfoBody? Client,
-    [property: JsonPropertyName("app")] string? App
+    [property: JsonPropertyName("app")] string? App,
+    [property: JsonPropertyName("borrow")] long? Borrow
 );
 
 /// <summary>The host name and OS user name, sent only when the app enables it (design §4.4).</summary>

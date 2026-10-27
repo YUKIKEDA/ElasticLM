@@ -511,6 +511,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
         new()
         {
             Product = settings.Product,
+            AdminListen = settings.AdminListen,
             Listen = port is int p ? new Uri($"https://127.0.0.1:{p}") : settings.Listen,
             LicensePath = settings.LicensePath,
             TrustRootKeyFiles = settings.TrustRootKeyFiles,

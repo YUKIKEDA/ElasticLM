@@ -15,8 +15,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M3c（借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`）
-- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）
+- **フェーズ:** M3d（Windows で再起動の後のリースの回収が遅い問題の調査と修正）
+- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）
 
 ## v1 まで
 
@@ -28,7 +28,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M2  | `ElasticLM.Issuing` と `elm` の鍵・発行・検査                                              | done        | [#11](https://github.com/YUKIKEDA/ElasticLM/issues/11) |
 | M3a | プロトコルの土台（インストール鍵、証明の作成と検証、ノンス、リーストークン）          | done        | [#15](https://github.com/YUKIKEDA/ElasticLM/issues/15) |
 | M3b | `elm-server` の本体と `ElasticLM.Client` のリース（席・回収・TLS・自動更新）            | done        | [#21](https://github.com/YUKIKEDA/ElasticLM/issues/21) |
-| M3c | 借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`        | not-started | —     |
+| M3c | 借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`        | done        | [#25](https://github.com/YUKIKEDA/ElasticLM/issues/25) |
+| M3d | Windows で再起動の後のリースの回収が遅い問題の調査と修正                                   | not-started | [#28](https://github.com/YUKIKEDA/ElasticLM/issues/28) |
 | M4  | `elm-service`（保存先・SQLite の静的ビルド・管理 API・有効化・試用・オフライン・クラウドのリース・監査ログ）と `ElasticLM.Client` の有効化・更新・解除・オフラインのファイル・試用、`elm-server` のサーバーライセンスの更新 | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
 | M5  | 管理の OIDC（JwtBearer と BFF）と管理画面                                                  | not-started | —     |

@@ -60,6 +60,28 @@ public sealed class LeaseVerifier
     internal LeaseVerificationResult VerifyOwnLease(string leaseToken, ServerIdentity server, LeaseExpectation expect) =>
         VerifyOnPremises(leaseToken, server, expect, requireCurrentServerLicense: false);
 
+    /// <summary>
+    /// Reads a lease token that a server signed itself, for its own record of borrows (design §13.4): the signature and the
+    /// payload only. The record restores borrows even when the server license changed since, because their seats are taken
+    /// until they expire.
+    /// </summary>
+    internal static bool TryReadOwnLease(string? leaseToken, ServerIdentity server, out VerifiedLease? lease)
+    {
+        lease = null;
+        if (
+            !TryReadSigned(leaseToken, out CompactJws? jws, out _)
+            || jws!.Header.Kid != server.KeyId
+            || !server.Key.Verify(jws)
+            || !TryReadPayload(jws, out LeasePayload? payload)
+        )
+        {
+            return false;
+        }
+
+        lease = new VerifiedLease(payload!, leaseToken!);
+        return true;
+    }
+
     private LeaseVerificationResult VerifyOnPremises(
         string leaseToken,
         ServerIdentity server,

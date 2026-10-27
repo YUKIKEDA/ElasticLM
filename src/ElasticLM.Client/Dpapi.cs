@@ -12,18 +12,23 @@ internal static unsafe partial class Dpapi
     private const uint UiForbidden = 0x1; // CRYPTPROTECT_UI_FORBIDDEN
     private const uint LocalMachine = 0x4; // CRYPTPROTECT_LOCAL_MACHINE
 
-    // Optional entropy ties the protected blob to ElasticLM; another app using DPAPI for the same user cannot open it by accident.
-    private static readonly byte[] Entropy = "ElasticLM installation key v1"u8.ToArray();
+    // Optional entropy ties the protected blob to ElasticLM and to its purpose; another app using DPAPI for the same user,
+    // or another ElasticLM secret, cannot open it by accident.
+    private static readonly byte[] InstallationKeyEntropy = "ElasticLM installation key v1"u8.ToArray();
 
-    public static byte[] Protect(byte[] data, bool machine)
+    public static byte[] Protect(byte[] data, bool machine) => Protect(data, machine, InstallationKeyEntropy);
+
+    public static byte[]? Unprotect(byte[] data) => Unprotect(data, InstallationKeyEntropy);
+
+    public static byte[] Protect(byte[] data, bool machine, byte[] purpose)
     {
         DataBlob output;
         fixed (byte* input = data)
         {
-            fixed (byte* entropy = Entropy)
+            fixed (byte* entropy = purpose)
             {
                 var inBlob = new DataBlob { Size = (uint)data.Length, Data = input };
-                var entropyBlob = new DataBlob { Size = (uint)Entropy.Length, Data = entropy };
+                var entropyBlob = new DataBlob { Size = (uint)purpose.Length, Data = entropy };
                 if (!CryptProtectData(&inBlob, null, &entropyBlob, null, null, UiForbidden | (machine ? LocalMachine : 0), out output))
                 {
                     throw new IOException($"CryptProtectData failed with error {Marshal.GetLastPInvokeError()}.");
@@ -34,15 +39,15 @@ internal static unsafe partial class Dpapi
         return CopyAndFree(output);
     }
 
-    public static byte[]? Unprotect(byte[] data)
+    public static byte[]? Unprotect(byte[] data, byte[] purpose)
     {
         DataBlob output;
         fixed (byte* input = data)
         {
-            fixed (byte* entropy = Entropy)
+            fixed (byte* entropy = purpose)
             {
                 var inBlob = new DataBlob { Size = (uint)data.Length, Data = input };
-                var entropyBlob = new DataBlob { Size = (uint)Entropy.Length, Data = entropy };
+                var entropyBlob = new DataBlob { Size = (uint)purpose.Length, Data = entropy };
                 if (!CryptUnprotectData(&inBlob, null, &entropyBlob, null, null, UiForbidden, out output))
                 {
                     return null;

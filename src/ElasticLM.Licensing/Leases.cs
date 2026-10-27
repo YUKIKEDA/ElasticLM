@@ -164,6 +164,7 @@ public sealed class VerifiedLease
         ProductId = payload.Prd;
         FeatureId = payload.Feat;
         Seats = payload.N;
+        InstallationKeyThumbprint = payload.Cnf.Jkt;
         IsBorrow = payload.Brw;
         ServerKeyId = payload.Srv;
         ServerLicenseTokenId = payload.Slic;
@@ -187,6 +188,9 @@ public sealed class VerifiedLease
 
     /// <summary>Gets the number of seats leased.</summary>
     public int Seats { get; }
+
+    /// <summary>Gets the thumbprint of the installation key the lease is bound to (<c>cnf.jkt</c>).</summary>
+    public string InstallationKeyThumbprint { get; }
 
     /// <summary>Gets a value indicating whether the lease is a borrow.</summary>
     public bool IsBorrow { get; }
