@@ -262,7 +262,7 @@ public sealed class LicenseClient : IAsyncDisposable
                     _leases.Add(lease);
                     if (!lease.IsBorrow)
                     {
-                        ScheduleRenewal(lease);
+                        ScheduleRenewal(lease, lease.Token);
                     }
 
                     return new LeaseResult.Acquired(lease);
@@ -835,10 +835,10 @@ public sealed class LicenseClient : IAsyncDisposable
         return _leaseVerifier.VerifyOnPremises(answer.Lease, identity, new LeaseExpectation(_options.ProductId, _key.Thumbprint));
     }
 
-    private void ScheduleRenewal(Lease lease)
+    private void ScheduleRenewal(Lease lease, VerifiedLease token)
     {
         // design §12.7.3: every third of the lease duration (about 200 s for the default 10 minutes).
-        TimeSpan duration = lease.Token.ExpiresAt - lease.Token.IssuedAt;
+        TimeSpan duration = token.ExpiresAt - token.IssuedAt;
         Schedule(lease, duration / 3);
     }
 
@@ -915,9 +915,11 @@ public sealed class LicenseClient : IAsyncDisposable
                 switch (await ReadLeaseAsync(reply).ConfigureAwait(false))
                 {
                     case LeaseVerificationResult.Valid valid:
+                        // The next renewal is set before the new token is visible, so whoever sees the new token also
+                        // finds the renewal after it already scheduled.
+                        ScheduleRenewal(lease, valid.Lease);
                         lease.Update(valid.Lease);
                         SetState(lease, LeaseState.Held, null, events);
-                        ScheduleRenewal(lease);
                         return;
                     case LeaseVerificationResult.Invalid invalid:
                         error = invalid.Error;
