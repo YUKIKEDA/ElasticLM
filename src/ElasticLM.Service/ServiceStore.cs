@@ -17,7 +17,9 @@ internal sealed class ServiceStore<TDialect> : Database
     private readonly Database<TDialect> _db;
 
     // The isolation level of one consistent read: a deferred transaction on SQLite (its snapshot starts at the first read and
-    // lasts to the end), repeatable read on PostgreSQL.
+    // lasts to the end), repeatable read on PostgreSQL. In Microsoft.Data.Sqlite, ReadUncommitted is the only level that
+    // starts with a deferred BEGIN; every other level is BEGIN IMMEDIATE. Its read_uncommitted pragma acts only on a shared
+    // cache, which the service does not use, so uncommitted rows are never read.
     private readonly IsolationLevel _snapshot;
 
     public ServiceStore(DatabaseProvider provider, System.Data.Common.DbDataSource source)

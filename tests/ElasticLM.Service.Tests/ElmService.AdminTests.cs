@@ -9,7 +9,7 @@ namespace ElasticLM.Service.Tests;
 public sealed class ElmServiceAdminTests
 {
     private const string Malformed = "The request body is not a valid API key request.";
-    private const string NameLimit = "name must be 1 to 64 characters (256 bytes in UTF-8).";
+    private const string NameLimit = "name must be 1 to 64 characters.";
     private const string NotFound = "No API key has this ID.";
     private const string Unauthorized = "The API key is missing, unknown, stopped, or expired.";
 
@@ -354,7 +354,7 @@ public sealed class ElmServiceAdminTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service, an owner key, and 3 more keys.
+    /// - A service, an owner key, and 3 more keys, on each engine (the key ID is text on SQLite and uuid on PostgreSQL).
     ///
     /// Steps:
     /// - List keys with limit 2, then after the returned next; list with limit 0, 201, 200, a non-ID after; list keys after
@@ -364,10 +364,11 @@ public sealed class ElmServiceAdminTests
     /// Expected:
     /// - 2 keys and a next; 2 keys and no next; 400, 400, 200, 400; 4 keys; none; one row then the following row; none; 400.
     /// </remarks>
-    [Fact]
-    public async Task Lists_WithCursor_PageInOrder()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Lists_WithCursor_PageInOrder(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         string owner = await test.SetupAsync();
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);

@@ -15,13 +15,41 @@ namespace ElasticLM.Service.Tests;
 /// </summary>
 public sealed class AuditLogTests
 {
+    /// <summary>Gets each one-column change of <see cref="Verify_OneColumnChanged_ReturnsFirstBroken"/> on each engine.</summary>
+    public static TheoryData<string, string, long> TamperCases
+    {
+        get
+        {
+            (string Change, long FirstBroken)[] cases =
+            [
+                ("UPDATE audit_log SET prev = (SELECT hash FROM audit_log WHERE n = 1) WHERE n = 3", 3),
+                ("UPDATE audit_log SET hash = prev WHERE n = 3", 3),
+                ("UPDATE audit_log SET n = 9 WHERE n = 3", 3),
+                ("UPDATE audit_state SET head_n = 6", 6),
+                ("UPDATE audit_state SET head_hash = anchor_hash", 6),
+                ("UPDATE audit_state SET anchor_n = 1", 1),
+                ("UPDATE audit_state SET anchor_hash = head_hash", 1),
+            ];
+            var data = new TheoryData<string, string, long>();
+            foreach (string provider in new[] { "sqlite", "postgres" })
+            {
+                foreach ((string change, long firstBroken) in cases)
+                {
+                    data.Add(provider, change, firstBroken);
+                }
+            }
+
+            return data;
+        }
+    }
+
     /// <summary>
     /// A row's hash can be computed from the design's description alone: ten columns in order, each a 4-byte big-endian length
     /// and its UTF-8 bytes, numbers in decimal, prev as its 32 bytes, NULL as the length 0xFFFFFFFF.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service after setup (row 1) and one key creation (row 2).
+    /// - A service after setup (row 1) and one key creation (row 2), on each engine.
     ///
     /// Steps:
     /// - Read the rows through the API; build each row's bytes here from §18.2, with ts from the ISO time and prev from
@@ -31,10 +59,11 @@ public sealed class AuditLogTests
     /// - Each hash equals the row's hash; row 1's prev is 32 zero bytes; row 2's prev is row 1's hash; row 1 is setup's
     ///   apikey.create by system/setup with null ip.
     /// </remarks>
-    [Fact]
-    public async Task Hash_FromTheDesignText_Matches()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Hash_FromTheDesignText_Matches(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         string owner = await test.SetupAsync();
         ElmService service = await test.StartAsync();
         await TestService.CreateKeyAsync(test.Http(service, owner), "\"audit.read\"");
@@ -98,7 +127,7 @@ public sealed class AuditLogTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service after setup and one key creation (rows 1 and 2).
+    /// - A service after setup and one key creation (rows 1 and 2), on each engine.
     ///
     /// Steps:
     /// - Delete row 2 in the database; verify.
@@ -106,10 +135,11 @@ public sealed class AuditLogTests
     /// Expected:
     /// - Not intact; firstBroken 2.
     /// </remarks>
-    [Fact]
-    public async Task Verify_LastRowRemoved_ReturnsTheHead()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Verify_LastRowRemoved_ReturnsTheHead(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         string owner = await test.SetupAsync();
         ElmService service = await test.StartAsync();
         await TestService.CreateKeyAsync(test.Http(service, owner), "\"audit.read\"");
@@ -126,7 +156,7 @@ public sealed class AuditLogTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A database after setup (row 1 at day 0); two rows at day 10; one row at day 20.
+    /// - A database after setup (row 1 at day 0); two rows at day 10; one row at day 20, on each engine.
     ///
     /// Steps:
     /// - Remove rows older than day 15; verify; remove again.
@@ -134,10 +164,11 @@ public sealed class AuditLogTests
     /// Expected:
     /// - 3 rows removed; intact with 1 row checked; 0 removed.
     /// </remarks>
-    [Fact]
-    public async Task RemoveOlderThan_OldRows_LeavesTheRestCheckable()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task RemoveOlderThan_OldRows_LeavesTheRestCheckable(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         await test.SetupAsync();
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
         CancellationToken cancel = TestContext.Current.CancellationToken;
@@ -185,7 +216,7 @@ public sealed class AuditLogTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A database after setup and 4 appends (rows 1 to 5), one per case.
+    /// - A database after setup and 4 appends (rows 1 to 5), one per case, on each engine.
     ///
     /// Steps:
     /// - Run the case's one change; verify. The cases: row 3's prev set to row 1's hash; row 3's hash set to its prev; row 3
@@ -196,16 +227,10 @@ public sealed class AuditLogTests
     /// - Not intact, with the case's first broken row: 3, 3, 3, 6, 6, 1, 1.
     /// </remarks>
     [Theory]
-    [InlineData("UPDATE audit_log SET prev = (SELECT hash FROM audit_log WHERE n = 1) WHERE n = 3", 3)]
-    [InlineData("UPDATE audit_log SET hash = prev WHERE n = 3", 3)]
-    [InlineData("UPDATE audit_log SET n = 9 WHERE n = 3", 3)]
-    [InlineData("UPDATE audit_state SET head_n = 6", 6)]
-    [InlineData("UPDATE audit_state SET head_hash = anchor_hash", 6)]
-    [InlineData("UPDATE audit_state SET anchor_n = 1", 1)]
-    [InlineData("UPDATE audit_state SET anchor_hash = head_hash", 1)]
-    public async Task Verify_OneColumnChanged_ReturnsFirstBroken(string change, long firstBroken)
+    [MemberData(nameof(TamperCases))]
+    public async Task Verify_OneColumnChanged_ReturnsFirstBroken(string provider, string change, long firstBroken)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         await test.SetupAsync();
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
         CancellationToken cancel = TestContext.Current.CancellationToken;
@@ -227,7 +252,7 @@ public sealed class AuditLogTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A database after setup (row 1 at day 0); rows at day 20, day 5 (the clock moved back), and day 25.
+    /// - A database after setup (row 1 at day 0); rows at day 20, day 5 (the clock moved back), and day 25, on each engine.
     ///
     /// Steps:
     /// - Remove rows older than day 15; verify.
@@ -235,10 +260,11 @@ public sealed class AuditLogTests
     /// Expected:
     /// - 1 row removed (row 1 only: row 2 is inside the period); intact with 3 rows checked.
     /// </remarks>
-    [Fact]
-    public async Task RemoveOlderThan_ClockMovedBack_StopsAtTheFirstNewRow()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task RemoveOlderThan_ClockMovedBack_StopsAtTheFirstNewRow(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         await test.SetupAsync();
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
         CancellationToken cancel = TestContext.Current.CancellationToken;

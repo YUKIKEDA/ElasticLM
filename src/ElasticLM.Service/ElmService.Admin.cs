@@ -159,10 +159,9 @@ internal sealed partial class ElmService
         }
 
         int nameLength = request.Name.EnumerateRunes().Count();
-        if (nameLength is < 1 or > ApiKeys.MaxNameLength || Encoding.UTF8.GetByteCount(request.Name) > ApiKeys.MaxNameBytes)
+        if (nameLength is < 1 or > ApiKeys.MaxNameLength)
         {
-            return await RefuseAsync(context, ErrorCode.InvalidArgument, "name must be 1 to 64 characters (256 bytes in UTF-8).")
-                .ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.InvalidArgument, "name must be 1 to 64 characters.").ConfigureAwait(false);
         }
 
         if (request.Permissions.Count is < 1 or > ApiKeys.MaxPermissions)

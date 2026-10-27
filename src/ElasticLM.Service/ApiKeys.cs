@@ -38,7 +38,6 @@ internal static class ApiKeys
     public const int DefaultDays = 90;
     public const int MaxDays = 365;
     public const int MaxNameLength = 64;
-    public const int MaxNameBytes = 256;
     public const int MaxPermissions = 32;
 
     // "elm_" and 43 base64url characters for 32 bytes.

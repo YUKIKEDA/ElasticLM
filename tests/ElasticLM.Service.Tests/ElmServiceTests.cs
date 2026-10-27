@@ -274,7 +274,7 @@ public sealed class ElmServiceTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service with retention of 1 day, after setup (row 1 at the start).
+    /// - A service with retention of 1 day, after setup (row 1 at the start), on each engine.
     ///
     /// Steps:
     /// - Advance 1 day and 1 hour; wait for the timer's work; check the chain.
@@ -282,10 +282,11 @@ public sealed class ElmServiceTests
     /// Expected:
     /// - No row left; the chain intact with 0 rows checked.
     /// </remarks>
-    [Fact]
-    public async Task Retention_TimerFires_RemovesOldRows()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Retention_TimerFires_RemovesOldRows(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         await test.SetupAsync();
         await test.StartAsync(s => s with { AuditRetention = TimeSpan.FromDays(1) });
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
