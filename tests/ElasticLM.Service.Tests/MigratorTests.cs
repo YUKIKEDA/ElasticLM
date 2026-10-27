@@ -21,7 +21,7 @@ public sealed class MigratorTests
     ///   journal_mode.
     ///
     /// Expected:
-    /// - Between them the two runs applied versions 1 and 2 once each; the third applied nothing; two rows; wal.
+    /// - Between them the two runs applied versions 1 to 3 once each; the third applied nothing; three rows; wal.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -36,11 +36,11 @@ public sealed class MigratorTests
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel),
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel)
         );
-        Assert.Equal([1, 2], runs.SelectMany(r => r).Order());
+        Assert.Equal([1, 2, 3], runs.SelectMany(r => r).Order());
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(2L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(3L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");

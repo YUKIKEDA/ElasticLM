@@ -40,6 +40,8 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly ServiceSettings _settings;
     private readonly ECDsa _signingKey;
+    private readonly IReadOnlyList<string> _signingCertificates;
+    private readonly TrustStore _trust;
     private readonly X509Certificate2? _tls;
     private readonly RateLimiter<IPAddress> _perIp;
     private readonly RateLimiter<Guid> _perKey;
@@ -59,7 +61,9 @@ internal sealed partial class ElmService : IAsyncDisposable
         ServiceSettings settings,
         Database database,
         ECDsa signingKey,
+        IReadOnlyList<string> signingCertificates,
         SigningKeyStatus signing,
+        TrustStore trust,
         X509Certificate2? tls,
         TimeProvider time,
         ILogger log
@@ -69,6 +73,8 @@ internal sealed partial class ElmService : IAsyncDisposable
         _settings = settings;
         Database = database;
         _signingKey = signingKey;
+        _signingCertificates = signingCertificates;
+        _trust = trust;
         Signing = signing;
         _tls = tls;
         Time = time;
@@ -99,7 +105,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(host);
         long started = host.Time.GetTimestamp();
         TrustStore trust = ReadTrust(settings, host.Environment);
-        (ECDsa signingKey, SigningKeyStatus signing) = ReadSigningKey(settings, trust, host);
+        (ECDsa signingKey, IReadOnlyList<string> certificates, SigningKeyStatus signing) = ReadSigningKey(settings, trust, host);
         var disposables = new List<IAsyncDisposable>();
         X509Certificate2? tls = null;
         try
@@ -126,7 +132,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             WebApplication app = Build(settings, tls, host);
             disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
-            var service = new ElmService(app, settings, database, signingKey, signing, tls, host.Time, log);
+            var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log);
             service.MapAdmin();
             try
             {
@@ -246,7 +252,11 @@ internal sealed partial class ElmService : IAsyncDisposable
     }
 
     // design §14.8, decision 0.75: one signing key, read at the start; its certificates must let it sign licenses and leases now.
-    private static (ECDsa Key, SigningKeyStatus Status) ReadSigningKey(ServiceSettings settings, TrustStore trust, ServiceHostOptions host)
+    private static (ECDsa Key, IReadOnlyList<string> Certificates, SigningKeyStatus Status) ReadSigningKey(
+        ServiceSettings settings,
+        TrustStore trust,
+        ServiceHostOptions host
+    )
     {
         string pem;
         var certificates = new List<string>();
@@ -289,7 +299,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             throw new ServiceStartException(problem!);
         }
 
-        return (key!, status!);
+        return (key!, certificates, status!);
     }
 
     private static WebApplication Build(ServiceSettings settings, X509Certificate2? tls, ServiceHostOptions host)

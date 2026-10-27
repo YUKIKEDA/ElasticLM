@@ -235,6 +235,48 @@ internal sealed record SigningKeyAnswer(
     [property: JsonPropertyName("expiresSoon")] bool ExpiresSoon
 );
 
+/// <summary>A feature of a license as the API shows it (design §14.5).</summary>
+internal sealed record LicenseFeatureItem(
+    [property: JsonPropertyName("code")] string Code,
+    [property: JsonPropertyName("ver"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Ver,
+    [property: JsonPropertyName("seats"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Seats,
+    [property: JsonPropertyName("expiresAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ExpiresAt
+);
+
+/// <summary>A feature of a license as the <c>features</c> column stores it (times in UNIX seconds).</summary>
+internal sealed record StoredLicenseFeature(
+    [property: JsonPropertyName("code")] string Code,
+    [property: JsonPropertyName("ver")] string? Ver,
+    [property: JsonPropertyName("seats")] long? Seats,
+    [property: JsonPropertyName("expiresAt")] long? ExpiresAt
+);
+
+/// <summary>
+/// A license as the administration API shows it (design §14.5, M4a3). The key itself is only in <see cref="Key"/>, at
+/// creation.
+/// </summary>
+internal sealed record LicenseItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("productId")] string ProductId,
+    [property: JsonPropertyName("policyId")] string PolicyId,
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("features")] LicenseFeatureItem[] Features,
+    [property: JsonPropertyName("maxActivations"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? MaxActivations,
+    [property: JsonPropertyName("state")] string State,
+    [property: JsonPropertyName("createdAt")] string CreatedAt,
+    [property: JsonPropertyName("expiresAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ExpiresAt,
+    [property: JsonPropertyName("suspendedAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? SuspendedAt,
+    [property: JsonPropertyName("revokedAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? RevokedAt,
+    [property: JsonPropertyName("meta")] Dictionary<string, string> Meta
+)
+{
+    [JsonPropertyName("key")]
+    public string? Key { get; init; }
+}
+
+/// <summary>A page of licenses.</summary>
+internal sealed record LicensePage([property: JsonPropertyName("items")] LicenseItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
 /// <summary>
 /// An error answer (RFC 9457) with the ElasticLM code.
 /// </summary>
@@ -270,5 +312,9 @@ internal sealed record Problem(
 [JsonSerializable(typeof(PolicyItem))]
 [JsonSerializable(typeof(PolicyPage))]
 [JsonSerializable(typeof(SigningKeyAnswer))]
+[JsonSerializable(typeof(LicenseItem))]
+[JsonSerializable(typeof(LicensePage))]
+[JsonSerializable(typeof(StoredLicenseFeature[]))]
+[JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(string[]))]
 internal sealed partial class ServiceJsonContext : JsonSerializerContext;
