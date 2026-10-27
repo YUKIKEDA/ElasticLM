@@ -45,6 +45,8 @@ A Python script in a Bash heredoc that inserts C# text containing `\n` writes a 
 
 A script that makes many edits is itself written with the editor tool into the scratchpad and then run; it is not sent as a heredoc. In M3b, heredoc scripts whose text held quotes and apostrophes broke the Bash parser four times ("unexpected EOF while looking for matching `'`"), and one wrote a raw line break into a Python string (PR #22). The Windows Python does not read Bash paths such as `/c/Users/...`: pass `"$(cygpath -w <path>)"`.
 
+A command that reads standard input (`cat`, `cat > /dev/null`, `read`) does not go before a heredoc in the same Bash call: it waits for input that never comes, and the call runs until the tool's time limit. In M3c a stray `cat > /dev/null;` before a heredoc script stopped a call for two minutes (PR #27).
+
 In a GitHub Actions step with `shell: pwsh`, the exit code of the last native command becomes the step's result. A step that expects a non-zero exit code (a smoke test of a refusal) ends with `exit 0` after its own check; in M3b the `aot` job failed on all three runners for this alone (PR #22).
 
 `Copy-Item` keeps the file's last write time, so an incremental build does not see a file put back from a copy. After copying a source file into place, set its time to now (`(Get-Item <file>).LastWriteTime = Get-Date`).
