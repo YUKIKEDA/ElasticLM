@@ -137,6 +137,9 @@ public enum ErrorCode
     /// <summary>A server record limit is reached.</summary>
     ServerBusy = 53,
 
+    /// <summary>An administration API call names an entity, such as an API key, that does not exist (design §14.5).</summary>
+    NotFound = 54,
+
     /// <summary>The network call failed.</summary>
     NetworkError = 90,
 

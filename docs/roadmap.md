@@ -15,8 +15,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M4a1（`elm-service` の土台: 保存先、SQLite の静的ビルド、移行、設定、署名鍵、`setup` と API キー、監査ログ）
-- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）
+- **フェーズ:** M4a2（`elm-service` のモデル: 製品・機能・ポリシー・ライセンスとその管理 API、署名鍵の状態、`Unbound` のライセンスファイル）
+- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）
 
 ## v1 まで
 
@@ -30,7 +30,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M3b | `elm-server` の本体と `ElasticLM.Client` のリース（席・回収・TLS・自動更新）            | done        | [#21](https://github.com/YUKIKEDA/ElasticLM/issues/21) |
 | M3c | 借り出しと記録、署名つきの利用ログと `elm log verify`、ローカル管理と `elm server`        | done        | [#25](https://github.com/YUKIKEDA/ElasticLM/issues/25) |
 | M3d | Windows で再起動の後のリースの回収が遅い問題の調査と修正                                   | done        | [#28](https://github.com/YUKIKEDA/ElasticLM/issues/28) |
-| M4a1 | `elm-service` の土台（SQLite の静的ビルドと PostgreSQL、スキーマの移行、設定、署名鍵、`elm-service setup` と API キー、監査ログ、3 OS の NativeAOT） | not-started | —     |
+| M4a1 | `elm-service` の土台（SQLite の静的ビルドと PostgreSQL、スキーマの移行、設定、署名鍵、`elm-service setup` と API キー、監査ログ、3 OS の NativeAOT） | done        | [#46](https://github.com/YUKIKEDA/ElasticLM/issues/46) |
 | M4a2 | `elm-service` のモデル（製品・機能・ポリシー・ライセンスとライセンスキー）とその管理 API、署名鍵の状態、`Unbound` のライセンスファイル | not-started | —     |
 | M4b | オンラインの有効化・更新・解除・試用（複製の検出を含む）と `ElasticLM.Client` の対応、その管理 API | not-started | —     |
 | M4c | オフラインの有効化・更新・解除（`elm offline process`）と `elm-server` のサーバーライセンスの更新（オンラインと `elm server refresh-request`） | not-started | —     |

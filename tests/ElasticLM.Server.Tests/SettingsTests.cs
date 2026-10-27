@@ -1,10 +1,11 @@
 using System.Net;
+using ElasticLM.Issuing;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Server.Tests;
 
 /// <summary>
-/// The settings of <c>elm-server</c> (design §13.8): the file, the variables, the access entries, and the rate limiter.
+/// The settings of <c>elm-server</c> (design §13.8): the file, the variables, and the access entries.
 /// </summary>
 public sealed class SettingsTests : IDisposable
 {
@@ -181,50 +182,6 @@ public sealed class SettingsTests : IDisposable
         Assert.True(AccessRules.Parse([], ["user:guest"]).AllowsClient(null, null));
         Assert.Throws<ServerStartException>(() => AccessRules.Parse(["host:"], []));
         Assert.Throws<ServerStartException>(() => AccessRules.Parse([.. Enumerable.Repeat("::1", 1_001)], []));
-    }
-
-    /// <summary>
-    /// The rate limiter allows bursts up to the rate and refills at the rate per second; an IPv6 /64 is one source; when the
-    /// table is full, new sources share one overflow bucket instead of being refused; idle sources are forgotten.
-    /// </summary>
-    /// <remarks>
-    /// Preconditions:
-    /// - A limiter of 2 per second for at most 2 sources, on a fake clock.
-    ///
-    /// Steps:
-    /// - Three requests from A; half a second later one more. One request from each of two addresses in one IPv6 /64 and a
-    ///   third from it. Requests from C, D, and E (the table is full). One second later purge; C again.
-    ///
-    /// Expected:
-    /// - Allowed, Allowed, refused; allowed after half a second. The /64 is one source: allowed, allowed, refused. C and D are
-    ///   allowed and E refused, from the shared overflow bucket. After the purge no source is tracked and C is allowed.
-    /// </remarks>
-    [Fact]
-    public void RateLimiter_RefillsGroupsAndOverflows()
-    {
-        var time = new FakeTimeProvider();
-        var limiter = new IpRateLimiter(2, time, capacity: 2);
-        IPAddress a = IPAddress.Parse("10.0.0.1");
-
-        Assert.True(limiter.TryAcquire(a));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("::ffff:10.0.0.1")));
-        Assert.False(limiter.TryAcquire(a));
-        time.Advance(TimeSpan.FromMilliseconds(500));
-        Assert.True(limiter.TryAcquire(a));
-
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2::1")));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2:ffff::9")));
-        Assert.False(limiter.TryAcquire(IPAddress.Parse("2001:db8:1:2::77")));
-
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.3")));
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.4")));
-        Assert.False(limiter.TryAcquire(IPAddress.Parse("10.0.0.5")));
-        Assert.Equal(2, limiter.Count);
-
-        time.Advance(TimeSpan.FromSeconds(1));
-        limiter.Purge();
-        Assert.Equal(0, limiter.Count);
-        Assert.True(limiter.TryAcquire(IPAddress.Parse("10.0.0.3")));
     }
 
     private string Write(string json)

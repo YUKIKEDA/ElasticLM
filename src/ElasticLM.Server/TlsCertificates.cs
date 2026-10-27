@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Client;
+using ElasticLM.Issuing;
 
 namespace ElasticLM.Server;
 
@@ -39,7 +40,7 @@ internal static class TlsCertificates
             request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], critical: false));
             return request.CreateSelfSigned(now.AddDays(-1), now + SelfSignedValidity);
         });
-        return ForKestrel(created);
+        return TlsCertificateFiles.ForKestrel(created);
     }
 
     /// <summary>
@@ -47,44 +48,8 @@ internal static class TlsCertificates
     /// PEM certificate with its PEM key in <paramref name="keyPath"/>.
     /// </summary>
     /// <exception cref="ServerStartException">The files cannot be read or do not hold a certificate with its private key.</exception>
-    public static X509Certificate2 FromFiles(string certificatePath, string? keyPath, string? password)
-    {
-        try
-        {
-            if (keyPath is null)
-            {
-                X509Certificate2 pfx = X509CertificateLoader.LoadPkcs12FromFile(certificatePath, password);
-                if (!pfx.HasPrivateKey)
-                {
-                    pfx.Dispose();
-                    throw new ServerStartException($"tls.certificate '{certificatePath}' has no private key.");
-                }
-
-                return pfx;
-            }
-
-            using X509Certificate2 pem = X509Certificate2.CreateFromPemFile(certificatePath, keyPath);
-            return ForKestrel(pem);
-        }
-        catch (Exception e) when (e is CryptographicException or IOException or UnauthorizedAccessException)
-        {
-            throw new ServerStartException($"The TLS certificate cannot be read: {e.Message}");
-        }
-    }
-
-    // A key held only in memory fails in Windows SChannel ("No credentials are available in the security package",
-    // dotnet/runtime#23749, dotnet/aspnetcore#40020); a PKCS#12 round trip gives a key SChannel can use. It also gives the
-    // caller its own certificate object on every platform, so one path serves all three.
-    private static X509Certificate2 ForKestrel(X509Certificate2 certificate)
-    {
-        byte[] pkcs12 = certificate.Export(X509ContentType.Pkcs12);
-        try
-        {
-            return X509CertificateLoader.LoadPkcs12(pkcs12, null);
-        }
-        finally
-        {
-            CryptographicOperations.ZeroMemory(pkcs12);
-        }
-    }
+    public static X509Certificate2 FromFiles(string certificatePath, string? keyPath, string? password) =>
+        TlsCertificateFiles.TryLoad(certificatePath, keyPath, password, out X509Certificate2? certificate, out string? problem)
+            ? certificate!
+            : throw new ServerStartException(problem!);
 }

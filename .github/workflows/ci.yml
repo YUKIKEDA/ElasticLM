@@ -44,12 +44,26 @@ jobs:
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj', '.config/dotnet-tools.json') }}
           restore-keys: nuget-${{ runner.os }}-
 
+      # design §14.2, decision 0.62: the service's tests also run on PostgreSQL 18, on Linux, where service containers run.
+      # The image is pinned by digest (postgres:18 on 2026-10-21); a newer one is taken by changing the digest in a PR.
+      - name: PostgreSQL
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name elm-postgres -e POSTGRES_PASSWORD=elm-ci -p 5432:5432 postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+          for ($i = 0; $i -lt 60; $i++) {
+            docker exec elm-postgres pg_isready -U postgres | Out-Null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
+          "ELM_TEST_POSTGRES=Host=127.0.0.1;Port=5432;Username=postgres;Password=elm-ci;Database=postgres" >> $env:GITHUB_ENV
+
       - name: Gate
         run: ./build.ps1
 
   aot:
     # design §20.3: each shipped executable is published with NativeAOT on every OS, with zero warnings.
-    name: NativeAOT elm-server and elm (${{ matrix.os }})
+    name: NativeAOT elm-server, elm, and elm-service (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
@@ -80,7 +94,7 @@ jobs:
 
       - name: Publish
         run: |
-          foreach ($target in @(@('src/ElasticLM.Server', 'elm-server'), @('src/ElasticLM.Cli', 'elm'))) {
+          foreach ($target in @(@('src/ElasticLM.Server', 'elm-server'), @('src/ElasticLM.Cli', 'elm'), @('src/ElasticLM.Service', 'elm-service'))) {
             $log = dotnet publish $target[0] -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
             $log
             if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -103,3 +117,92 @@ jobs:
           if ($LASTEXITCODE -ne 1 -or $out -notmatch 'trust.rootKeys') { $out; "::error::elm-server did not refuse to start without trust"; exit 1 }
           # The expected exit code 1 would otherwise become the step's result.
           exit 0
+
+      - name: Smoke elm-service
+        # The single executable with SQLite linked in (design §14.2): keys made by elm, setup prints a key, the service starts
+        # with nothing beside it, answers /health, and serves the audit log to the key.
+        run: |
+          $elm = Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')
+          $service = Join-Path publish ($IsWindows ? 'elm-service.exe' : 'elm-service')
+          if (@(Get-ChildItem publish -Filter '*sqlite*').Count -gt 0) { "::error::a SQLite library was published beside elm-service"; exit 1 }
+          $env:ELM_KEY_PASSPHRASE = 'ci smoke passphrase 0123'
+          & $elm key root create --out root.key.pem --public-out root.pub.pem
+          & $elm key signing create --out signing.key.pem --public-out signing.pub.pem
+          & $elm key certify --root root.key.pem --public signing.pub.pem --use license lease --out signing.cert
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
+          $env:ELM_SIGNING_KEY = 'signing.key.pem'
+          $env:ELM_SIGNING_CERTIFICATES = 'signing.cert'
+          $env:ELM_TRUST_ROOTKEYS = 'root.pub.pem'
+          $env:ELM_DATABASE_CONNECTION = 'Data Source=smoke.db'
+          $env:ELM_BOOTSTRAPOWNER_ISS = 'https://idp.example'
+          $env:ELM_BOOTSTRAPOWNER_SUB = 'ci'
+          $env:ELM_LISTEN = 'http://127.0.0.1:18080'
+          $key = (& $service setup).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $key.StartsWith('elm_')) { "::error::elm-service setup did not print a key"; exit 1 }
+          $process = Start-Process $service -PassThru -NoNewWindow
+          try {
+            $ok = $false
+            for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
+              try { $ok = (Invoke-WebRequest http://127.0.0.1:18080/health -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
+              if (-not $ok) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ok) { "::error::elm-service did not answer /health"; exit 1 }
+            $audit = Invoke-RestMethod http://127.0.0.1:18080/v1/admin/audit -Headers @{ Authorization = "Bearer $key" }
+            if ($audit.items.Count -lt 1) { "::error::the audit log is empty"; exit 1 }
+          }
+          finally {
+            Stop-Process -Id $process.Id
+          }
+          exit 0
+
+      - name: Measure elm-service on PostgreSQL
+        # design §4.2 (M4a1): the time from start to listening on PostgreSQL 18, from the service.started record, three
+        # starts on a migrated database.
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name elm-postgres -e POSTGRES_PASSWORD=elm-ci -p 5432:5432 postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+          for ($i = 0; $i -lt 60; $i++) {
+            docker exec elm-postgres pg_isready -U postgres | Out-Null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
+          $elm = Join-Path publish 'elm'
+          $service = Join-Path publish 'elm-service'
+          New-Item -ItemType Directory pg | Out-Null
+          $env:ELM_KEY_PASSPHRASE = 'ci measure passphrase 0123'
+          & $elm key root create --out pg/root.key.pem --public-out pg/root.pub.pem
+          & $elm key signing create --out pg/signing.key.pem --public-out pg/signing.pub.pem
+          & $elm key certify --root pg/root.key.pem --public pg/signing.pub.pem --use license lease --out pg/signing.cert
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
+          $env:ELM_SIGNING_KEY = 'pg/signing.key.pem'
+          $env:ELM_SIGNING_CERTIFICATES = 'pg/signing.cert'
+          $env:ELM_TRUST_ROOTKEYS = 'pg/root.pub.pem'
+          $env:ELM_DATABASE_PROVIDER = 'postgres'
+          $env:ELM_DATABASE_CONNECTION = 'Host=127.0.0.1;Port=5432;Username=postgres;Password=elm-ci;Database=postgres'
+          $env:ELM_BOOTSTRAPOWNER_ISS = 'https://idp.example'
+          $env:ELM_BOOTSTRAPOWNER_SUB = 'ci'
+          $env:ELM_LISTEN = 'http://127.0.0.1:18081'
+          $key = (& $service setup).Trim()
+          if ($LASTEXITCODE -ne 0 -or -not $key.StartsWith('elm_')) { "::error::elm-service setup did not print a key on PostgreSQL"; exit 1 }
+          foreach ($run in 1..3) {
+            $process = Start-Process $service -PassThru -RedirectStandardOutput "pg/run$run.log"
+            try {
+              $ok = $false
+              for ($i = 0; $i -lt 50 -and -not $ok; $i++) {
+                try { $ok = (Invoke-WebRequest http://127.0.0.1:18081/health -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
+                if (-not $ok) { Start-Sleep -Milliseconds 200 }
+              }
+              if (-not $ok) { "::error::elm-service did not answer /health on PostgreSQL"; exit 1 }
+            }
+            finally {
+              Stop-Process -Id $process.Id
+              $process.WaitForExit()
+            }
+            $started = Select-String -Path "pg/run$run.log" -Pattern 'service.started: .* in ([0-9]+) ms' | Select-Object -First 1
+            if (-not $started) { "::error::no service.started record"; exit 1 }
+            "elm-service start on PostgreSQL 18 (run $run): $($started.Matches[0].Groups[1].Value) ms" | Tee-Object -Append -FilePath $env:GITHUB_STEP_SUMMARY
+          }
+          Remove-Item -Recurse -Force pg

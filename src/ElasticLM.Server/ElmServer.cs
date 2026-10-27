@@ -67,7 +67,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private readonly NonceService _nonces;
     private readonly MemoryReplayStore _replays;
     private readonly ProofVerifier _proofs;
-    private readonly IpRateLimiter _limiter;
+    private readonly RateLimiter<IPAddress> _limiter;
     private readonly AccessRules _access;
     private readonly ILogger _log;
     private readonly UsageLog _usage;
@@ -101,7 +101,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _adminToken = Encoding.ASCII.GetBytes(parts.AdminToken);
         Time = parts.Time;
         _access = parts.Settings.Access;
-        _limiter = new IpRateLimiter(parts.Settings.RateLimitPerIp, parts.Time);
+        _limiter = new RateLimiter<IPAddress>(parts.Settings.RateLimitPerIp, parts.Time);
 
         // design §13.7: a new secret at each start, never stored, so nonces from before a restart are void.
         _nonces = new NonceService(RandomNumberGenerator.GetBytes(32), parts.Time);
@@ -694,7 +694,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
-        if (address is not null && !_limiter.TryAcquire(address))
+        if (address is not null && !_limiter.TryAcquire(RateLimitSource.Of(address)))
         {
             await ProblemAsync(context, ErrorCode.RateLimited, "Too many requests from this address.", TimeSpan.FromSeconds(1)).ConfigureAwait(false);
             return;
