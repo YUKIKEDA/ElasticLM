@@ -14,6 +14,8 @@ These are questions, not orders. Do not create, edit, close, or retitle Issues o
 
 For such a question, list the options, give a recommendation, and state each option's advantage and disadvantage. Then stop and wait.
 
+A question at the end of a report is held to the same. In M3c the agent ended a report with "add #28 to the roadmap?" and no recommendation; the owner answered "the recommendation is fine", and the agent had to make the recommendation after the answer (PR #27).
+
 The reason for a recommendation is the product's goal and its functional and non-functional requirements (`docs/design.ja.md`). Implementation effort, volume, or ease is not a reason (`.cursor/rules/scope.mdc`), and neither is how soon it can be built.
 
 Before recommending how to build a mechanism (a token format, a lease protocol, a key store, a machine ID), find how established license systems and standards do it (FlexLM / FlexNet, Keygen, Cryptlex, LicenseSpring, JWS / COSE / PASETO, the OS's own APIs), cite the sources, and judge each way against the requirements. A statement about how another system behaves is checked in its source or its official documentation before it goes to the owner, and what was not checked is said to be unchecked.
