@@ -792,9 +792,12 @@ stateDiagram-v2
     Active --> Revoked: 失効
     Suspended --> Revoked: 失効
     Expired --> Revoked: 失効
+    Expired --> Suspended: 停止
+    Suspended --> Expired: 再開（期限が過ぎていれば）
     Revoked --> [*]
 ```
 
+- 重なったときの状態は `Revoked` > `Suspended` > `Expired` > `Active` の順で 1 つに決める（§14.5）。停止は期限と別の理由なので、期限の過ぎたライセンスも止められ、再開の結果は期限によって `Active` か `Expired` になる。
 - `Suspended` と `Revoked` のライセンスには、新しいトークンもリースも出さない。`Suspended` は戻せるが、`Revoked` は戻せない。
 - 端末に渡したトークンは期限まで有効である（§5.4）。
 
