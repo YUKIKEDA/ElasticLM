@@ -49,6 +49,6 @@ A command that reads standard input (`cat`, `cat > /dev/null`, `read`) does not 
 
 In a GitHub Actions step with `shell: pwsh`, the exit code of the last native command becomes the step's result. A step that expects a non-zero exit code (a smoke test of a refusal) ends with `exit 0` after its own check; in M3b the `aot` job failed on all three runners for this alone (PR #22).
 
-Before `git worktree remove` on Windows, run `dotnet build-server shutdown`. A build server that still holds files in the worktree makes the removal stop with "Permission denied" after git has dropped the worktree, and the folder stays behind (after M3d).
+Before `git worktree remove` on Windows, run `dotnet build-server shutdown`. A build server that still holds files in the worktree makes the removal stop with "Permission denied" after git has dropped the worktree, and the folder stays behind (after M3d). The same happens when the shell's current directory is inside the worktree: move out of it first (after PR #39).
 
 `Copy-Item` keeps the file's last write time, so an incremental build does not see a file put back from a copy. After copying a source file into place, set its time to now (`(Get-Item <file>).LastWriteTime = Get-Date`).
