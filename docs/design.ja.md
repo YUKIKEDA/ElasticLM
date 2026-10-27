@@ -294,7 +294,7 @@ M4a1（Issue #46）の実測（Windows、win-x64、NativeAOT。参照機での�
 
 - `elm-service` は 19.8 MB（19,784,192 バイト。AuraORM を入れる前は 19,079,168 バイト）。§4.2 の目標 40 MB 以下に収まる。横に SQLite のライブラリは置かない。
 - 起動から待ち受けまで、サービスの記録で 185〜225 ms（SQLite、移行の済んだデータベース、3 回）。
-- PostgreSQL 18 では、起動から待ち受けまでサービスの記録で 437〜463 ms（GitHub Actions の `ubuntu-latest`、linux-x64、同じ端末のコンテナー、移行の済んだデータベース、3 回。CI の `aot` の「Measure elm-service on PostgreSQL」）。端末が違うので、上の SQLite の値とは比べない。
+- PostgreSQL 18 では、起動から待ち受けまでサービスの記録で 270〜463 ms（GitHub Actions の `ubuntu-latest`、linux-x64、同じ端末のコンテナー、移行の済んだデータベース。CI の `aot` の「Measure elm-service on PostgreSQL」の 2 回の実行で、各 3 回の起動: 463 / 437 / 446 ms と 270 / 291 / 281 ms）。runner は実行ごとに違う端末なので幅が広い。参照機の値は V1 の行で測る。端末が違うので、上の SQLite の値とは比べない。
 - 監査ログを書く管理 API の 1 件（API キーの作成。認証の検索、キーと監査ログの行の追記、1 つのトランザクション）は 1.05〜1.11 ms（SQLite、JIT の Release、ループバックの HTTP を含む、3 回の実行で各 200 件の平均）。同じビルドで SQLite を先行書き込みログ（WAL）にしないと 3.7〜5.0 ms になる。WAL ではコミットごとのディスクへの書き出しが 1 つのファイルで済むためで、WAL にする前の手書きの SQL の版は 3.1〜3.5 ms だった。
 
 M3c（Issue #25）の実測（同じ条件）:
