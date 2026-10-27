@@ -58,3 +58,39 @@ internal sealed partial record KeyHolderRow(
     string Role,
     bool Enabled
 );
+
+/// <summary>A product (design §9.1): its <c>code</c> is the tokens' <c>prd</c> and never changes.</summary>
+[Table("products", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record ProductRow([PrimaryKey] Guid Id, string Code, string Name, Guid? TrialPolicyId, long CreatedAt);
+
+/// <summary>A feature of a product (design §9.1): its <c>code</c> is the tokens' <c>feat[].id</c> and never changes.</summary>
+[Table("features", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record FeatureRow([PrimaryKey] Guid Id, Guid ProductId, string Code, string Name, long CreatedAt);
+
+/// <summary>A policy (design §9.3): the choices as their API names, durations in seconds, null for "none".</summary>
+[Table("policies", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record PolicyRow(
+    [PrimaryKey] Guid Id,
+    Guid ProductId,
+    string Name,
+    string LicenseKind,
+    string Binding,
+    long MaxActivations,
+    long? DeactivationLimit,
+    string ExpirationBasis,
+    long? Duration,
+    long TokenLifetime,
+    long RefreshWindow,
+    long GracePeriod,
+    string FingerprintMatching,
+    string CloneStrategy,
+    string Floating,
+    long LeaseDuration,
+    long? Overage,
+    long? BorrowLimit,
+    long BorrowReturnLimit,
+    string ClientInfoStrategy,
+    long TrialDuration,
+    long CreatedAt,
+    long UpdatedAt
+);

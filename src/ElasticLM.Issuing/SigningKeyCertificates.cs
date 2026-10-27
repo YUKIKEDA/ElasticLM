@@ -87,6 +87,13 @@ public static class SigningKeyCertificates
         return true;
     }
 
+    /// <summary>
+    /// Returns the names of uses as certificates write them (<c>license</c>, <c>lease</c>, <c>log</c>), in that order.
+    /// </summary>
+    /// <param name="uses">The uses.</param>
+    /// <returns>Their names.</returns>
+    public static string[] UseNames(KeyUses uses) => [.. Uses.Where(u => uses.HasFlag(u.Use)).Select(u => u.Name)];
+
     private static readonly (KeyUses Use, string Name)[] Uses =
     [
         (KeyUses.License, CertificateSet.UseLicense),
