@@ -35,7 +35,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.14 | フローティング | クラウドからの同時利用数の貸出も v1 に含める。貸出の仕組みはオンプレミスのサーバーと共通にし、状態の持ち方だけを変える |
 | 0.15 | 保存先 | SQLite と PostgreSQL。ORM を使わない薄い層の上に載せる（SQL の組み立ては 0.81） |
 | 0.16 | 管理 API の認証 | 機械向けの API キー（範囲を絞れ、サーバーはハッシュだけを持つ）と、人向けの OIDC の両方。CLI はデバイス認可フロー（RFC 8628） |
-| 0.17 | オフラインのトークン | ライセンスごとのポリシーで決める。既定は期限付き（30 日）でオンラインで更新し、期限後も猶予期間内は使える。期限なしのトークンは CLI での手動発行に限る |
+| 0.17 | オフラインのトークン | ライセンスごとのポリシーで決める。既定は期限付き（30 日）でオンラインで更新し、期限後も猶予期間内は使える。期限なしのトークンは CLI での手動発行と、期限のないライセンスの `Unbound` のライセンスファイル（0.86 で足した）に限る |
 | 0.18 | 対象外の脅威 | クライアント側のバイナリの改ざん（検証処理を書き換えて飛ばすこと）と難読化は対象外と明記する。守るのはライセンスの偽造、リクエストの偽造と再送、席数を超えた利用 |
 
 ### 0.B v1 の範囲の追加
@@ -139,17 +139,23 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 
 | # | 項目 | 決定 |
 | --- | --- | --- |
-| 0.71 | M4a の分け方 | M4a1（保存先、SQLite の静的ビルド、PostgreSQL、移行、設定、署名鍵の読み込み、`setup` と API キー、監査ログ、3 OS の NativeAOT）と M4a2（製品・機能・ポリシー・ライセンスとその管理 API、署名鍵の状態、`Unbound` のライセンスファイル）に分ける（§22） |
+| 0.71 | M4a の分け方 | M4a1（保存先、SQLite の静的ビルド、PostgreSQL、移行、設定、署名鍵の読み込み、`setup` と API キー、監査ログ、3 OS の NativeAOT）と M4a2（製品・機能・ポリシー・ライセンスとその管理 API、署名鍵の状態、`Unbound` のライセンスファイル）に分ける（0.82 で M4a2 を M4a2 と M4a3 に分けた）（§22） |
 | 0.72 | SQLite のビルド | `vendor/sqlite/` の版と SHA-256 を固定したアマルガムから、ビルドのたびに各 OS の C コンパイラーで静的ライブラリを作って組み込む。ビルド済みのライブラリはリポジトリに置かない（§14.2） |
 | 0.73 | 管理 API の形 | `elm-server` と同じ素の JSON（camelCase、`problem+json` と `ELM_` のコード、`?after=&limit=` で 200 件まで）（§14.5） |
 | 0.74 | サービスの設定 | `elm-server` と同じく、JSON の設定ファイルと `ELM_` の環境変数（環境変数が勝つ）。秘密は環境変数かファイルで、設定ファイルに直接書かない（§14.8） |
 | 0.75 | 署名鍵 | 起動時に 1 本を読む。証明書が今の時刻とライセンス・リースの用途を持たなければ起動しない。入れ替えは再起動。状態の API は鍵 ID・証明書の期限・用途を返し、期限まで 30 日を切ったら警告する（§14.8） |
-| 0.76 | `Unbound` のライセンスファイル | M4a2 で、管理 API から端末に紐づかないライセンスファイルを出す。`Unbound` のオンラインの有効化は M4b の Grill で決める（§9.3） |
+| 0.76 | `Unbound` のライセンスファイル | M4a2（0.82 で M4a3 に分けた）で、管理 API から端末に紐づかないライセンスファイルを出す。`Unbound` のオンラインの有効化は M4b の Grill で決める（§9.3） |
 | 0.77 | 監査ログのバイト列 | 10 列を決まった順に、4 バイトのビッグエンディアンの長さと UTF-8 で並べ、`NULL` は長さ `0xFFFFFFFF`、`prev` は 32 バイトのまま（§18.2） |
-| 0.78 | 許可の一覧 | M4a1 と M4a2 の許可を §14.6 の表のとおりにし、M4b 以降の許可はその行で足す（§14.6） |
+| 0.78 | 許可の一覧 | M4a1 と M4a2（0.82 で M4a3 に分けた）の許可を §14.6 の表のとおりにし、M4b 以降の許可はその行で足す（§14.6） |
 | 0.79 | M4a1 のエンドポイント | API キーの作成・一覧・停止、監査ログの一覧・確認、`/health`。認証の失敗は 1 分ごとの件数で書く。本文・応答・誤りの形を §14.5 に書き、管理の実体がないときのコード `ELM_NOT_FOUND`（54）を §19 に足す（PR #43 のレビュー）（§14.5, §19） |
 | 0.80 | `setup` の出力 | キーだけを標準出力に 1 行で書き、説明は標準エラーに書く。終了コードは 0 / 1 / 2（§14.6） |
 | 0.81 | SQL の組み立て | `elm-service` の SQL は AuraORM（型で検査するクエリビルダー）で組み立て、SQLite と PostgreSQL を 1 つの実装で扱う。移行は SQL のファイルのまま流す。AuraORM が 15 から対応し、14 は 2026-11-12 にサポートが終わるため、PostgreSQL は 15〜18 にする（PR #47）（§14.2, §21） |
+| 0.82 | M4a2 の分け方 | M4a2（製品・機能・ポリシーとその管理 API、署名鍵の状態）と M4a3（ライセンスとライセンスキー、状態の操作、`Unbound` のライセンスファイル）に分ける（§22） |
+| 0.83 | 製品と機能の ID | 製品と機能は、API のパスで使う UUID 第 7 版の `id`（0.67）と、トークンの `prd` と `feat[].id` に入る `code`（§9.1 の形）を持つ。`code` は作った後は変えない（§9.1） |
+| 0.84 | ポリシーの API の形 | §9.3 の全項目を M4a2 で保存して検査し、効き目はそれを使う行で入れる。列挙は camelCase の文字列、期間は秒の整数、`Perpetual`・`Unlimited`・`Disabled`・`Overage: None` は `null`。値の範囲は §14.5 の表（§9.3, §14.5） |
+| 0.85 | ライセンスの管理 | ライセンスはポリシー・機能の一覧・`name`・`meta` を持ち、上書きできるのは `maxActivations` と期限だけ。顧客の実体は作らない。キーは作成時に一度だけ返し、再発行しない。状態の操作は停止・再開・失効・延長で、`Expired` は保存せずに計算する。許されない遷移と一意の値の重なりは `409` と `ELM_CONFLICT`（55）（§9.4, §14.5, §19） |
+| 0.86 | `Unbound` のライセンスファイルの期限 | トークンの `exp` はライセンスの期限と同じにし、期限なしなら省く（期限なしのトークンを出す場所に足し、0.17 と §5.4 を改めた。PR #51 のレビュー）。`Unbound` には期限の起点になる有効化がないので、`Unbound` と `FromFirstActivation` の組は拒む（§9.3, §14.5） |
+| 0.87 | 管理の実体の削除と同時の変更 | 製品・機能・ポリシーは消さない（発行済みのトークンが参照する）。`PATCH` は送ったメンバーだけを置き換え、版の検査（`If-Match`）は付けない（§14.5） |
 
 ## 1. 目的と利用者
 
@@ -386,7 +392,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | 時計の守りの状態を消すか書き換える | 状態を消しても、時計はトークンの `iat` より前には戻せない（§11.4）。実際の上限はトークンの期限なので、短い `TokenLifetime` で抑える |
 | `allow` / `deny` のホスト名とユーザー名を偽る | クライアントが申告する値で、確かめられない。確実なのは IP の範囲の規則だけである（§13.8） |
 | オフラインのトークンは期限まで失効が届かない | CRL のような失効リストを配る製品は調べた範囲になく、期限の短いトークンとオンラインの更新で失効を届ける（Keygen: https://keygen.sh/docs/api/cryptography/ 、Cryptlex: https://cryptlex.com/docs/sdks-and-apis/best-practices ）。期限はポリシーで短くできる |
-| 期限なしのトークンは失効できない | CLI の手動発行に限り（0.17）、発行時に警告を出す |
+| 期限なしのトークンは失効できない | CLI の手動発行と、期限のないライセンスの `Unbound` のライセンスファイルに限る（0.17, 0.86）。CLI は発行時に警告を出し、`elm-service` では出すたびの監査ログの行（`exp` なし）が記録になる |
 | データベースに書ける者が監査ログを書き直す | 連なりは、行の書き換え・削除・番号の付け替えを、`audit_state` の先頭と起点に照らして見つける（§18.2）。しかしデータベースに書ける者は、すべてのハッシュを計算し直して `audit_state` も書き換えられる。末尾を切って先頭を戻すことも、古い行を消して起点を動かすこと（保管期間による削除と見分けがつかない）もできる。この者はほかの表も書き換えられるので、連なりだけでは守れない。署名した先頭や外への書き出しのような、データベースの外の起点は入れない |
 
 ## 6. 全体構成
@@ -722,8 +728,8 @@ erDiagram
 
 | 実体 | 説明 |
 | --- | --- |
-| 製品（product） | ベンダーの製品。ID は英小文字・数字・`-` の 64 文字以内 |
-| 機能（feature） | 製品の中で個別に許す単位。ID は製品の中で一意 |
+| 製品（product） | ベンダーの製品。管理 API の `id`（UUID 第 7 版）と、トークンの `prd` に入る `code`（英小文字・数字・`-` の 64 文字以内、全体で一意）を持つ（0.83） |
+| 機能（feature） | 製品の中で個別に許す単位。`id` と、トークンの `feat[].id` に入る `code`（製品の中で一意）を持つ。`code` は作った後は変えない（0.83） |
 | ポリシー（policy） | ライセンスの規則の雛形（§9.3） |
 | ライセンス（license） | 利用者に与える権利。ポリシーと機能の組、台数・席数、期限を持つ |
 | 有効化（activation） | ライセンスとインストール鍵の結びつき |
@@ -763,13 +769,14 @@ erDiagram
 
 `LicenseKind: Trial` のポリシーには次の制約がある。
 
+- `Binding` は `NodeLocked`。`Unbound` のトークンは指紋を持たず、1 台 1 回を守れない（PR #51 のレビュー）。
 - `FingerprintMatching` は `Any` か `All`。`Ignore` は選べない。起動ごとに変えられる指紋では 1 台 1 回を守れないためである。
 - `GracePeriod` は 0。
 - 製品は試用に使うポリシーを 1 つ指定する（`Product.TrialPolicy`）。指定がなければ、その製品は試用を出さない。
 
 `LicenseKind: Server` のポリシーでは、`TokenLifetime` と `RefreshWindow` がサーバーライセンスの更新の周期になる（0.37）。`Binding` は `NodeLocked` に固定する。
 
-`Binding: Unbound` のライセンスファイル（インストール鍵とマシン指紋を持たない）は、M4a2 で管理 API から出す（0.76）。Keygen にも、オフライン用にライセンスファイルを出す「チェックアウト」の操作がある（https://keygen.sh/docs/api/licenses/ 。端末の有効化が要るかは資料に書かれていない）。`Unbound` のオンラインの有効化は M4b の Grill で決める。
+`Binding: Unbound` のライセンスファイル（インストール鍵とマシン指紋を持たない）は、M4a3 で管理 API から出す（0.76, 0.82）。トークンの期限はライセンスの期限と同じにする（0.86）。`Unbound` には期限の起点になる有効化がないので、`Binding: Unbound` と `ExpirationBasis: FromFirstActivation` の組は拒む。Keygen にも、オフライン用にライセンスファイルを出す「チェックアウト」の操作がある（https://keygen.sh/docs/api/licenses/ 。端末の有効化が要るかは資料に書かれていない）。`Unbound` のオンラインの有効化は M4b の Grill で決める。
 
 発行済みのライセンスがあるポリシーも、`LicenseKind` と `Binding` を除いて管理 API で変えられる（0.68）。変更は、次に出すトークン（更新・再有効化）から効き、すでに渡したトークンは期限まで今の値のままである。`LicenseKind` と `Binding` は、発行済みのトークンの形を変えるため変えられない。
 
@@ -785,9 +792,12 @@ stateDiagram-v2
     Active --> Revoked: 失効
     Suspended --> Revoked: 失効
     Expired --> Revoked: 失効
+    Expired --> Suspended: 停止
+    Suspended --> Expired: 再開（期限が過ぎていれば）
     Revoked --> [*]
 ```
 
+- 重なったときの状態は `Revoked` > `Suspended` > `Expired` > `Active` の順で 1 つに決める（§14.5）。停止は期限と別の理由なので、期限の過ぎたライセンスも止められ、再開の結果は期限によって `Active` か `Expired` になる。
 - `Suspended` と `Revoked` のライセンスには、新しいトークンもリースも出さない。`Suspended` は戻せるが、`Revoked` は戻せない。
 - 端末に渡したトークンは期限まで有効である（§5.4）。
 
@@ -1669,6 +1679,125 @@ M4a1 のエンドポイント（0.79）:
 
 - 頻度の制限（§14.7）: すべての要求は、認証の前に送信元 IP ごとの制限（設定 `rateLimit.perIp`）を受ける。`/health` と認証に失敗した要求は、この制限だけを受ける。認証された要求は、API キーごとの制限（設定 `rateLimit.perKey`）も受ける。どちらの制限の `429` も監査ログに書かない（拒んだ要求で記録を増やさないため）。
 - `Authorization` のスキーム名 `Bearer` は、大文字と小文字を区別しない（RFC 9110 §11.1）。
+M4a2 のエンドポイント（0.82〜0.84、0.87）:
+
+| メソッドとパス | 許可 | 中身 |
+| --- | --- | --- |
+| `POST /v1/admin/products` | `product.write` | 本文 `{code, name}`。`201` で製品の 1 件。`code` がほかの製品と重なれば `409` と `ELM_CONFLICT` |
+| `GET /v1/admin/products` | `product.read` | 一覧 |
+| `GET /v1/admin/products/{id}` | `product.read` | 1 件 |
+| `PATCH /v1/admin/products/{id}` | `product.write` | 本文 `{name, trialPolicyId}` のうち送ったもの。`trialPolicyId` に `null` を送れば外す |
+| `POST /v1/admin/products/{id}/features` | `product.write` | 本文 `{code, name}`。`201` で機能の 1 件。`code` が同じ製品の機能と重なれば `409` と `ELM_CONFLICT` |
+| `GET /v1/admin/products/{id}/features` | `product.read` | その製品の機能の一覧 |
+| `PATCH /v1/admin/products/{id}/features/{featureId}` | `product.write` | 本文 `{name}` |
+| `POST /v1/admin/policies` | `policy.write` | 本文は下のポリシーの表。`productId` と `name` のほかは任意で、省けば §9.3 の既定。`201` でポリシーの 1 件 |
+| `GET /v1/admin/policies` | `policy.read` | 一覧。`?productId=` で絞り込める |
+| `GET /v1/admin/policies/{id}` | `policy.read` | 1 件 |
+| `PATCH /v1/admin/policies/{id}` | `policy.write` | 送ったメンバー（`null` を含む）を置き換える。`productId`・`licenseKind`・`binding` を送れば `400` と `ELM_INVALID_ARGUMENT`（0.68）。置き換えた後の全体を下の制約で確かめる |
+| `GET /v1/admin/signing-key` | `signingkey.read` | `{"keyId", "uses": ["license", "lease"], "expiresAt", "expiresSoon"}`。`expiresAt` は証明書の期限、`expiresSoon` は期限まで 30 日を切ったら `true`（0.75） |
+
+製品と機能の本文:
+
+| メンバー | 型 | 必須 | 上限と、外れたとき |
+| --- | --- | --- | --- |
+| `code` | 文字列 | 作成のとき必須 | §9.1 の形（英小文字・数字・`-`、1〜64 文字）。外れれば `400` と `ELM_INVALID_ARGUMENT`。作った後は変えられない |
+| `name` | 文字列 | 作成のとき必須 | 1〜64 文字。外れれば `400` と `ELM_INVALID_ARGUMENT` |
+| `trialPolicyId` | 文字列か `null` | `PATCH` だけ（製品だけ） | 同じ製品の `licenseKind: trial` のポリシーの ID（§9.3 の `Product.TrialPolicy`）。ほかは `400` と `ELM_INVALID_ARGUMENT`。作成の時点では製品の `trial` のポリシーがまだないので、作成の本文には置かない。試用そのものは M4b |
+
+ポリシーの本文（0.84。名前は §9.3 の項目の camelCase）:
+
+| メンバー | 型 | 既定 | 範囲 |
+| --- | --- | --- | --- |
+| `productId` | 文字列 | 必須 | 製品の ID。ない製品は `400` と `ELM_INVALID_ARGUMENT` |
+| `name` | 文字列 | 必須 | 1〜64 文字 |
+| `licenseKind` | `standard`、`trial`、`server` | `standard` | — |
+| `binding` | `unbound`、`nodeLocked` | `nodeLocked` | — |
+| `maxActivations` | 整数 | 1 | 1〜100,000 |
+| `deactivationLimit` | 整数か `null`（無制限） | `null` | 0〜100,000 |
+| `expirationBasis` | `fromIssue`、`fromFirstActivation` | `fromIssue` | — |
+| `duration` | 秒か `null`（無期限） | `null` | 1 日〜100 年 |
+| `tokenLifetime` | 秒 | 30 日 | 1 時間〜100 年 |
+| `refreshWindow` | 秒 | 20 日 | 0 以上、`tokenLifetime` 未満 |
+| `gracePeriod` | 秒 | 7 日 | 0〜100 年 |
+| `fingerprintMatching` | `ignore`、`any`、`all` | `any` | — |
+| `cloneStrategy` | `deny`、`flag` | `deny` | — |
+| `floating` | `none`、`onPremises`、`cloud` | `none` | — |
+| `leaseDuration` | 秒 | 10 分 | 2 分〜24 時間 |
+| `overage` | 百分率か `null`（超えない） | `null` | 0〜1,000 |
+| `borrowLimit` | 秒か `null`（借り出しなし） | `null` | 1 秒〜100 年 |
+| `borrowReturnLimit` | 整数 | 2 | 0〜1,000 |
+| `clientInfoStrategy` | `none`、`hostAndUser` | `none` | — |
+| `trialDuration` | 秒 | 14 日 | 1 日〜365 日 |
+
+- 100 年は §8.6 の期間のクレームの上限（3,162,240,000 秒）である。範囲の外と知らない列挙の値は `400` と `ELM_INVALID_ARGUMENT`（M4a1 の知らない許可と同じ）、JSON として読めないときと型の違いは `400` と `ELM_MALFORMED`。
+- 項目どうしの制約（§9.3）: `trial` は `fingerprintMatching` が `any` か `all`、`gracePeriod` は 0、`binding` は `nodeLocked`（1 台 1 回を指紋で守るため。`unbound` のトークンは指紋を持たない）。`server` は `binding` が `nodeLocked`。`unbound` と `fromFirstActivation` の組は拒む（0.86）。破れば `400` と `ELM_INVALID_ARGUMENT`。
+- 効き目はその項目を使う行で入る（有効化と台数は M4b、オンプレミスとクラウドのリースは M3 と M4d）。M4a2 は保存して検査し、返す。
+
+応答（M4a2）:
+
+| 応答 | 形 |
+| --- | --- |
+| 製品の 1 件 | `{"id", "code", "name", "trialPolicyId": <なければ null>, "createdAt"}` |
+| 機能の 1 件 | `{"id", "productId", "code", "name", "createdAt"}` |
+| ポリシーの 1 件 | `{"id", "createdAt", "updatedAt"}` と、上の表のすべてのメンバー（既定を使ったものも値を書く） |
+
+- 一覧の形、`after` と `limit`、時刻の書き方は M4a1 と同じ。`after` は ID である。
+- 知らない `{id}`・`{featureId}`・形の違う ID は `404` と `ELM_NOT_FOUND`。本文の中の ID（`productId`、`trialPolicyId`）が指す実体がなければ `400` と `ELM_INVALID_ARGUMENT` にする（パスの実体ではないため）。
+- 製品・機能・ポリシーを消す操作はない（0.87）。
+- 監査ログ（§18.2）: 作成の行の `detail` は送られたメンバー、変更の行の `detail` は変えたメンバーとその新しい値。`target` は実体の ID。
+
+M4a3 のエンドポイント（0.85, 0.86）:
+
+| メソッドとパス | 許可 | 中身 |
+| --- | --- | --- |
+| `POST /v1/admin/licenses` | `license.create` | 本文は下の表。`201` でライセンスの 1 件に `"key": "ELM-..."`（§9.5）を足したもの。キーはこの応答だけに入る |
+| `GET /v1/admin/licenses` | `license.read` | 一覧。`?productId=`、`?policyId=`、`?state=`（`active`・`suspended`・`expired`・`revoked`）で絞り込める |
+| `GET /v1/admin/licenses/{id}` | `license.read` | 1 件 |
+| `PATCH /v1/admin/licenses/{id}` | `license.update` | 本文 `{name, meta, maxActivations, features}` のうち送ったもの。`maxActivations` に `null` を送ればポリシーの値に戻す |
+| `POST /v1/admin/licenses/{id}/suspend` | `license.update` | `Active` → `Suspended` |
+| `POST /v1/admin/licenses/{id}/resume` | `license.update` | `Suspended` → `Active` |
+| `POST /v1/admin/licenses/{id}/revoke` | `license.revoke` | `Active`・`Suspended`・`Expired` → `Revoked` |
+| `POST /v1/admin/licenses/{id}/extend` | `license.update` | 本文 `{expiresAt}`。`Active` か `Expired` で、期限のあるライセンスの期限を延ばす |
+| `POST /v1/admin/licenses/{id}/file` | `license.file` | `Unbound` のライセンスファイル（§8.5） |
+
+ライセンスの本文:
+
+| メンバー | 型 | 必須 | 上限と、外れたとき |
+| --- | --- | --- | --- |
+| `policyId` | 文字列 | 作成のとき必須 | ポリシーの ID。作った後は変えられない |
+| `name` | 文字列 | 作成のとき必須 | 1〜256 文字（顧客名など。顧客の実体は作らない） |
+| `features` | 配列 | 作成のとき必須 | 1〜256 個（§8.6）。各要素は `code`（ポリシーと同じ製品の機能、重なりなし）、`ver`（任意、§9.2 の範囲、64 文字まで）、`seats`（`server` のときだけ必須で 1〜1,000,000、ほかで送れば誤り）、`expiresAt`（任意、機能ごとの期限。下の期限の決まり） |
+| `maxActivations` | 整数か `null` | 任意 | 1〜100,000。`null` か省略はポリシーの値 |
+| `expiresAt` | 時刻 | 任意（作成のときだけ） | 下の期限の決まり |
+| `meta` | 文字列の組 | 任意 | §8.6（32 組、キー 64 バイト、値 1 KiB） |
+
+- 期限（0.85）: `fromIssue` のポリシーでは、既定は作った時刻 + `duration`（`null` なら期限なし）。`expiresAt` で上書きでき、今より後でなければ `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のポリシーでは、期限は最初の有効化（M4b）まで `null` で、`expiresAt` を送れば `400`。
+- 機能ごとの `expiresAt` は今より後で、ライセンスに期限があればその期限以下（期限のないライセンスでは任意）。外れれば `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のライセンスでは送れない（`400`）。`extend` は機能の期限を変えない（変えるなら `PATCH` の `features`）。
+- `extend` の `expiresAt` は、今の期限と今の時刻の両方より後でなければ `400` と `ELM_INVALID_ARGUMENT`。期限のないライセンスは `409` と `ELM_CONFLICT`。
+- 状態（§9.4）: `Suspended` と `Revoked` は時刻（`suspendedAt`、`revokedAt`）で持ち、`Expired` は保存せず、期限が今の時刻以前なら `Expired` とみなす。重なったときは `Revoked` > `Suspended` > `Expired` > `Active` の順で 1 つに決める（`state`、`?state=` の絞り込み、操作の可否はこの値に依る）。
+  - `suspend` は `Active` か `Expired` で `suspendedAt` を書く（停止は期限と別の理由なので、期限の過ぎたライセンスも止められる）。`resume` は `Suspended` で `suspendedAt` を消し、結果は期限によって `Active` か `Expired` になる。
+  - `extend` は `suspendedAt` と `revokedAt` がないときだけ受ける。`revoke` は `Revoked` 以外で受ける。
+  - ほかの組（`Revoked` への操作、`Suspended` の延長など）は `409` と `ELM_CONFLICT`。同じ状態への操作（停止中の停止、失効の失効）は冪等で、`200` と今の 1 件を返し、監査ログに `result` `ELM_OK`、`detail` `{"unchanged": true}` の行を書く（M4a1 の止めたキーの `DELETE` と同じく、すべての操作を書く）。
+- 変更は、次に出すトークンから効く（0.68 と同じ）。すでに渡したトークンは期限まで今の値のままである（§5.4）。
+- `PATCH` は送ったメンバーだけを置き換え、版の検査はしない（0.87）。
+
+`Unbound` のライセンスファイル（0.76, 0.86）:
+
+- ポリシーが `unbound` で、ライセンスの状態が `Active` のときだけ出す（上の順で決めた状態）。ほかは `409` と `ELM_CONFLICT`。
+- 応答は §8.5 のファイル（`application/json`、`Content-Disposition: attachment; filename="<ライセンス ID>.elmlic"`）。`certificates` は署名鍵の証明書。
+- トークンは `kind`（ポリシーの `licenseKind`）、`lic`、`prd`（製品の `code`）、`feat`（機能の `code`・`ver`・期限）、`meta` を持ち、`cnf`・`fp`・`seq`・`refresh` は持たない。`exp` はライセンスの期限と同じで、期限がなければ省く。`exp` があれば `grace` はポリシーの `gracePeriod`。
+- 出すたびに監査ログに書く。`detail` はトークンの `jti` と `exp`。
+
+応答（M4a3）:
+
+| 応答 | 形 |
+| --- | --- |
+| ライセンスの 1 件 | `{"id", "productId", "policyId", "name", "features", "maxActivations": <上書きがなければ null>, "state", "createdAt", "expiresAt": <なければ null>, "suspendedAt", "revokedAt", "meta"}`。`features` の各要素は本文と同じ形 |
+| 状態の操作の `200` | ライセンスの 1 件 |
+
+- 知らないライセンスと形の違う ID は `404` と `ELM_LICENSE_NOT_FOUND`（§19）。
+- 監査ログ: 作成の行の `detail` は送られたメンバー（キーは書かない）。変更・状態の操作の行は変えた値（変えなかった操作は `{"unchanged": true}`）。
+
 - TLS とリバースプロキシ: `listen` が http なら、API キーは平文で流れる。ループバック以外で待ち受けるなら https にするか、TLS を終端するリバースプロキシの後ろに置く。プロキシの後ろでは、送信元ごとの制限と監査ログの `ip` はプロキシの IP になる。`elm-service` は `X-Forwarded-For` を信じない（偽れるため。§13.8 と同じ）。プロキシの後ろに置くなら、`rateLimit.perIp` をプロキシの先の利用者の数に合わせて上げる。
 
 ### 14.6 管理の認証と認可
@@ -1689,7 +1818,7 @@ API キー:
 
 - 許可は `resource.action` の形（例: `license.read`, `license.revoke`）とし、Keygen の方式にならう（https://keygen.sh/docs/api/authorization/ ）。
 - 役割: `owner`（すべて）、`admin`（API キーと役割の管理を除くすべて）、`support`（読み取り、解除、強制返却、オフライン有効化の処理）、`viewer`（読み取りだけ）。
-- M4a1 と M4a2 の許可（0.78）。M4b 以降の許可（`activation.*` など）と、`support` の解除・強制返却・オフラインの処理の許可は、その実体を作る行で足す。
+- M4a1〜M4a3 の許可（0.78, 0.82）。M4b 以降の許可（`activation.*` など）と、`support` の解除・強制返却・オフラインの処理の許可は、その実体を作る行で足す。
 
 | 許可 | 中身 | 行 |
 | --- | --- | --- |
@@ -1697,8 +1826,8 @@ API キー:
 | `audit.read` | 監査ログの閲覧と連なりの確認 | M4a1 |
 | `product.read`、`product.write` | 製品と機能 | M4a2 |
 | `policy.read`、`policy.write` | ポリシー | M4a2 |
-| `license.read`、`license.create`、`license.update`、`license.revoke` | ライセンス（`update` は停止・再開・延長） | M4a2 |
-| `license.file` | `Unbound` のライセンスファイルを出す | M4a2 |
+| `license.read`、`license.create`、`license.update`、`license.revoke` | ライセンス（`update` は変更・停止・再開・延長） | M4a3 |
+| `license.file` | `Unbound` のライセンスファイルを出す | M4a3 |
 | `signingkey.read` | 署名鍵の状態 | M4a2 |
 
   `owner` はすべて、`admin` は `apikey.*` を除くすべて、`support` と `viewer` は `*.read` を持つ。
@@ -1962,6 +2091,7 @@ M3c で作った形:
 | 52 | `ELM_RATE_LIMITED` | 頻度の制限 | 429 |
 | 53 | `ELM_SERVER_BUSY` | サーバーの記録の上限（`jti` の記録など）に達した | 503 |
 | 54 | `ELM_NOT_FOUND` | 管理 API で、指定した実体（API キーなど）がない。リースは `ELM_UNKNOWN_LEASE`、ライセンスは `ELM_LICENSE_NOT_FOUND` を使う | 404 |
+| 55 | `ELM_CONFLICT` | 管理 API で、実体の今の状態か一意の値とぶつかる（§9.4 の図にない遷移、使われている `code`、`Unbound` でないライセンスのファイル）（0.85） | 409 |
 | 90 | `ELM_NETWORK_ERROR` | 通信の失敗（クライアント側） | — |
 | 99 | `ELM_INTERNAL_ERROR` | 内部の誤り | 500 |
 
@@ -2049,7 +2179,8 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M3c | 借り出し（上限・残す席・早期返却の回数）と借り出しの記録、署名つきの利用ログと `elm log verify`、ローカル管理 API と `elm server`、サーバーライセンスの再読み込み | §12.7.4, §13.4, §13.7, §18.1 |
 | M3d | Windows で、再起動の後のリースの回収に 1 件あたり約 2 秒かかる問題（Issue #28）の段階ごとの計測と修正。製品の遅さなら §4.2 の目標に関わるため、同じエンジンを使う M4 の前に置く | §4.2, §13.4 |
 | M4a1 | `elm-service` の土台: 保存先（SQLite の静的ビルドと PostgreSQL、移行）、設定、署名鍵の読み込み、`elm-service setup` と API キーの管理 API、監査ログ（連なりのバイト列、一覧と確認の API）、`/health`、3 OS の NativeAOT | §14.1〜§14.3, §14.5〜§14.8, §18.2 |
-| M4a2 | `elm-service` のモデル: 製品・機能・ポリシー・ライセンス（ライセンスキーを含む）とその管理 API、署名鍵の状態の API、`Unbound` のライセンスファイル | §9, §14.4, §14.5, §14.8 |
+| M4a2 | `elm-service` のモデル: 製品・機能・ポリシーとその管理 API、署名鍵の状態の API | §9.1〜§9.3, §14.5, §14.8 |
+| M4a3 | ライセンス（ライセンスキーを含む）とその管理 API、状態の操作、`Unbound` のライセンスファイル | §8.5, §9.3〜§9.5, §14.5 |
 | M4b | オンラインの有効化・更新・解除・試用と、その複製の検出。`ElasticLM.Client` の有効化・更新・解除・試用。有効化と試用の管理 API | §3.2, §10.4, §12.4〜§12.6, §12.9 |
 | M4c | オフラインの有効化・更新・解除（`elm offline process`）と `ElasticLM.Client` のオフラインのファイル。`elm-server` のサーバーライセンスの更新（オンラインと、`elm server refresh-request` によるファイルのやり取り）。オフライン有効化の処理の管理 API。M4c まで、サーバーライセンスは手で入れ替える | §9.6, §12.8, §12.8.3, §13.7 |
 | M4d | `elm-service` のクラウドのリースと借り出し（`LeaseEngine` の規則を共有）、利用ログ、リースと利用ログの管理 API | §12.7, §14.4, §18.1 |
