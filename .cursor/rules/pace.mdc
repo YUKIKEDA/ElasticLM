@@ -21,6 +21,8 @@ Before filing an Issue for a failure, search the open Issues and the roadmap's r
 
 ## A limit on an investigation
 
+A slowness is measured stage by stage before anything is changed. In M3d a test took 2 minutes on Windows; the stages of its body took 0.7 seconds in all, and the time was in the teardown, so no product code was changed (PR #35).
+
 After two attempts that change nothing, stop and decide before a third:
 
 - The cause is known and the fix is not worth it: write the numbers and leave it.
