@@ -16,11 +16,21 @@ $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 
 # The amalgamation is checked against the hashes recorded when it was added, so an edited copy is not built.
+$listed = @()
 foreach ($line in Get-Content -Path "SHA256SUMS") {
     $expected, $file = $line -split "\s+", 2
+    $listed += $file
     $actual = (Get-FileHash -Algorithm SHA256 -Path $file).Hash.ToLowerInvariant()
     if ($actual -ne $expected) {
         Write-Error "vendor/sqlite/$file does not match SHA256SUMS ($actual)."
+        exit 1
+    }
+}
+
+# A file left out of SHA256SUMS would be built without a check.
+foreach ($required in @("sqlite3.c", "sqlite3.h")) {
+    if ($listed -notcontains $required) {
+        Write-Error "vendor/sqlite/SHA256SUMS does not list $required."
         exit 1
     }
 }

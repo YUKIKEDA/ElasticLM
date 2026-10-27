@@ -23,7 +23,7 @@ for (int i = 0; i < args.Length; i++)
 ServiceSettings settings;
 try
 {
-    settings = ServiceSettings.Load(configPath, Environment.GetEnvironmentVariable);
+    settings = ServiceSettings.Load(configPath, Environment.GetEnvironmentVariable, requireSigning: !setup);
 }
 catch (ServiceStartException e)
 {

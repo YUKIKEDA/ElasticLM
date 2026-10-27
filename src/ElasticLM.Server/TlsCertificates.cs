@@ -40,7 +40,7 @@ internal static class TlsCertificates
             request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension([new Oid("1.3.6.1.5.5.7.3.1")], critical: false));
             return request.CreateSelfSigned(now.AddDays(-1), now + SelfSignedValidity);
         });
-        return ForKestrel(created);
+        return TlsCertificateFiles.ForKestrel(created);
     }
 
     /// <summary>
@@ -52,6 +52,4 @@ internal static class TlsCertificates
         TlsCertificateFiles.TryLoad(certificatePath, keyPath, password, out X509Certificate2? certificate, out string? problem)
             ? certificate!
             : throw new ServerStartException(problem!);
-
-    private static X509Certificate2 ForKestrel(X509Certificate2 certificate) => TlsCertificateFiles.ForKestrel(certificate);
 }

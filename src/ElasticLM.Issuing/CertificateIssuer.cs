@@ -74,17 +74,17 @@ public static class CertificateIssuer
         var useList = new List<string>(3);
         if (uses.HasFlag(KeyUses.License))
         {
-            useList.Add("license");
+            useList.Add(CertificateSet.UseLicense);
         }
 
         if (uses.HasFlag(KeyUses.Lease))
         {
-            useList.Add("lease");
+            useList.Add(CertificateSet.UseLease);
         }
 
         if (uses.HasFlag(KeyUses.Log))
         {
-            useList.Add("log");
+            useList.Add(CertificateSet.UseLog);
         }
 
         var payload = new KeyCertificatePayload

@@ -17,6 +17,7 @@ internal sealed class CertificateSet(TrustStore trust, string use)
 {
     public const string UseLicense = "license";
     public const string UseLease = "lease";
+    public const string UseLog = "log";
     private const int MaxCachedCertificates = 16;
 
     private readonly TrustStore _trust = trust;

@@ -46,11 +46,20 @@ internal sealed partial class ElmService
     {
         _app.Use(GuardAsync);
         _app.MapGet("/health", (RequestDelegate)HealthAsync);
-        _app.MapPost("/v1/admin/api-keys", (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyCreate, "apikey.create", CreateKeyAsync)));
-        _app.MapGet("/v1/admin/api-keys", (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyRead, "apikey.list", ListKeysAsync)));
-        _app.MapDelete("/v1/admin/api-keys/{id}", (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyRevoke, "apikey.revoke", RevokeKeyAsync)));
-        _app.MapGet("/v1/admin/audit", (RequestDelegate)(c => AdminAsync(c, Permissions.AuditRead, "audit.list", ListAuditAsync)));
-        _app.MapPost("/v1/admin/audit/verify", (RequestDelegate)(c => AdminAsync(c, Permissions.AuditRead, "audit.verify", VerifyAuditAsync)));
+        _app.MapPost(
+            "/v1/admin/api-keys",
+            (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyCreate, AuditActions.ApiKeyCreate, CreateKeyAsync))
+        );
+        _app.MapGet("/v1/admin/api-keys", (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyRead, AuditActions.ApiKeyList, ListKeysAsync)));
+        _app.MapDelete(
+            "/v1/admin/api-keys/{id}",
+            (RequestDelegate)(c => AdminAsync(c, Permissions.ApiKeyRevoke, AuditActions.ApiKeyRevoke, RevokeKeyAsync))
+        );
+        _app.MapGet("/v1/admin/audit", (RequestDelegate)(c => AdminAsync(c, Permissions.AuditRead, AuditActions.AuditList, ListAuditAsync)));
+        _app.MapPost(
+            "/v1/admin/audit/verify",
+            (RequestDelegate)(c => AdminAsync(c, Permissions.AuditRead, AuditActions.AuditVerify, VerifyAuditAsync))
+        );
     }
 
     // design §14.7: every request is limited per source before authentication; an authenticated one also per API key.
@@ -69,9 +78,7 @@ internal sealed partial class ElmService
     {
         try
         {
-            await using DbConnection connection = await Database.OpenAsync(context.RequestAborted).ConfigureAwait(false);
-            await using DbCommand ping = Database.Command(connection, null, "SELECT 1");
-            _ = await ping.ExecuteScalarAsync(context.RequestAborted).ConfigureAwait(false);
+            await Database.PingAsync(context.RequestAborted).ConfigureAwait(false);
             context.Response.StatusCode = StatusCodes.Status200OK;
         }
         catch (DbException e)
@@ -87,7 +94,7 @@ internal sealed partial class ElmService
         try
         {
             string header = context.Request.Headers.Authorization.ToString();
-            string? presented = header.StartsWith(BearerPrefix, StringComparison.Ordinal) ? header[BearerPrefix.Length..] : null;
+            string? presented = header.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase) ? header[BearerPrefix.Length..] : null;
             Caller? caller = await ApiKeys.AuthenticateAsync(Database, presented, Time.GetUtcNow(), context.RequestAborted).ConfigureAwait(false);
             if (caller is null)
             {
@@ -116,7 +123,7 @@ internal sealed partial class ElmService
             if (!outcome.Recorded)
             {
                 var entry = new AuditEntry("apikey", caller.Key.Id.ToString("D"), action, outcome.Target, outcome.Result, ip, outcome.Detail);
-                await AuditLog.AppendAsync(Database, entry, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                await Database.AppendAuditAsync(entry, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
             }
         }
         catch (DbException e)
@@ -182,34 +189,28 @@ internal sealed partial class ElmService
 
         DateTimeOffset now = Time.GetUtcNow();
         string key = ApiKeys.NewKey();
-        await using DbConnection connection = await Database.OpenAsync(context.RequestAborted).ConfigureAwait(false);
-        await using DbTransaction transaction = await Database.BeginWriteAsync(connection, context.RequestAborted).ConfigureAwait(false);
-        ApiKeyRecord record = await ApiKeys
-            .InsertAsync(Database, connection, transaction, caller.AdminId, request.Name, request.Permissions, key, now, days, context.RequestAborted)
+        string? detail = null;
+        ApiKeyRecord record = await Database
+            .CreateKeyAsync(
+                caller.AdminId,
+                new NewApiKey(key, request.Name, request.Permissions, days),
+                created =>
+                {
+                    detail = AuditLog.KeyCreatedDetail(created, null);
+                    return new AuditEntry(
+                        "apikey",
+                        caller.Key.Id.ToString("D"),
+                        AuditActions.ApiKeyCreate,
+                        created.Id.ToString("D"),
+                        "ELM_OK",
+                        context.Connection.RemoteIpAddress?.ToString(),
+                        detail
+                    );
+                },
+                now,
+                context.RequestAborted
+            )
             .ConfigureAwait(false);
-        string detail = AuditLog.Detail(w =>
-        {
-            w.WriteString("name", record.Name);
-            w.WriteStartArray("permissions");
-            foreach (string permission in record.Permissions)
-            {
-                w.WriteStringValue(permission);
-            }
-
-            w.WriteEndArray();
-            w.WriteString("expiresAt", AdminApi.Time(record.ExpiresAt));
-        });
-        var entry = new AuditEntry(
-            "apikey",
-            caller.Key.Id.ToString("D"),
-            "apikey.create",
-            record.Id.ToString("D"),
-            "ELM_OK",
-            context.Connection.RemoteIpAddress?.ToString(),
-            detail
-        );
-        await AuditLog.AppendAsync(Database, connection, transaction, entry, now, context.RequestAborted).ConfigureAwait(false);
-        await transaction.CommitAsync(context.RequestAborted).ConfigureAwait(false);
 
         ApiKeyItem item = ToItem(record) with { Key = key };
         await WriteJsonAsync(context, StatusCodes.Status201Created, item, ServiceJsonContext.Default.ApiKeyItem).ConfigureAwait(false);
@@ -234,7 +235,7 @@ internal sealed partial class ElmService
             after = parsed;
         }
 
-        IReadOnlyList<ApiKeyRecord> keys = await ApiKeys.ListAsync(Database, after, limit + 1, context.RequestAborted).ConfigureAwait(false);
+        IReadOnlyList<ApiKeyRecord> keys = await Database.ListKeysAsync(after, limit + 1, context.RequestAborted).ConfigureAwait(false);
         ApiKeyRecord[] page = [.. keys.Take(limit)];
         string? next = keys.Count > limit ? page[^1].Id.ToString("D") : null;
         var answer = new ApiKeyPage([.. page.Select(ToItem)], next);
@@ -251,25 +252,20 @@ internal sealed partial class ElmService
         }
 
         DateTimeOffset now = Time.GetUtcNow();
-        await using DbConnection connection = await Database.OpenAsync(context.RequestAborted).ConfigureAwait(false);
-        await using DbTransaction transaction = await Database.BeginWriteAsync(connection, context.RequestAborted).ConfigureAwait(false);
-        if (!await ApiKeys.RevokeAsync(Database, connection, transaction, id, now, context.RequestAborted).ConfigureAwait(false))
-        {
-            await transaction.RollbackAsync(context.RequestAborted).ConfigureAwait(false);
-            return await RefuseAsync(context, ErrorCode.NotFound, "No API key has this ID.", id.ToString("D")).ConfigureAwait(false);
-        }
-
         var entry = new AuditEntry(
             "apikey",
             caller.Key.Id.ToString("D"),
-            "apikey.revoke",
+            AuditActions.ApiKeyRevoke,
             id.ToString("D"),
             "ELM_OK",
             context.Connection.RemoteIpAddress?.ToString(),
             null
         );
-        await AuditLog.AppendAsync(Database, connection, transaction, entry, now, context.RequestAborted).ConfigureAwait(false);
-        await transaction.CommitAsync(context.RequestAborted).ConfigureAwait(false);
+        if (!await Database.RevokeKeyAsync(id, entry, now, context.RequestAborted).ConfigureAwait(false))
+        {
+            return await RefuseAsync(context, ErrorCode.NotFound, "No API key has this ID.", id.ToString("D")).ConfigureAwait(false);
+        }
+
         context.Response.StatusCode = StatusCodes.Status204NoContent;
         return new AdminOutcome("ELM_OK", id.ToString("D"), Recorded: true);
     }
@@ -290,7 +286,7 @@ internal sealed partial class ElmService
             }
         }
 
-        IReadOnlyList<AuditRow> rows = await AuditLog.ListAsync(Database, after, limit + 1, context.RequestAborted).ConfigureAwait(false);
+        IReadOnlyList<AuditRow> rows = await Database.ListAuditAsync(after, limit + 1, context.RequestAborted).ConfigureAwait(false);
         AuditRow[] page = [.. rows.Take(limit)];
         long? next = rows.Count > limit ? page[^1].N : null;
         var answer = new AuditPage([.. page.Select(ToItem)], next);
@@ -300,7 +296,7 @@ internal sealed partial class ElmService
 
     private async Task<AdminOutcome> VerifyAuditAsync(HttpContext context, Caller caller)
     {
-        AuditCheck check = await AuditLog.VerifyAsync(Database, context.RequestAborted).ConfigureAwait(false);
+        AuditCheck check = await Database.VerifyAuditAsync(context.RequestAborted).ConfigureAwait(false);
         var answer = new VerifyAnswer(check.FirstBroken is null, check.Checked, check.FirstBroken);
         await WriteJsonAsync(context, StatusCodes.Status200OK, answer, ServiceJsonContext.Default.VerifyAnswer).ConfigureAwait(false);
         string detail = AuditLog.Detail(w =>

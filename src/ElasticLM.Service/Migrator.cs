@@ -23,7 +23,8 @@ internal sealed record Migration(int Version, string Name, string Sql)
 /// <summary>
 /// Applies the schema versions at start (design §14.2, decision 0.69): each version once, in order, in its own transaction,
 /// recorded in <c>schema_migrations</c> with its SHA-256. A recorded version whose file changed, or that this build does not
-/// have, stops the start. On PostgreSQL an advisory lock lets one node apply them while others wait.
+/// have, stops the start. On PostgreSQL an advisory lock lets one node apply them while others wait; on SQLite each version is
+/// checked again inside its write transaction, so two processes starting at once apply it once.
 /// </summary>
 internal static partial class Migrator
 {
@@ -106,7 +107,13 @@ internal static partial class Migrator
         ArgumentNullException.ThrowIfNull(time);
         await using DbConnection connection = await database.OpenAsync(cancellationToken).ConfigureAwait(false);
         bool postgres = database.Provider == DatabaseProvider.Postgres;
-        if (postgres)
+        if (!postgres)
+        {
+            // design §14.2: write-ahead logging lets readers go on while one writer writes. The mode is kept in the file.
+            await using DbCommand wal = Database.Command(connection, null, "PRAGMA journal_mode = WAL");
+            await wal.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+        }
+        else
         {
             await using DbCommand acquire = Database.Command(connection, null, "SELECT pg_advisory_lock(@id)", ("id", AdvisoryLockId));
             await acquire.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -147,6 +154,30 @@ internal static partial class Migrator
             foreach (Migration migration in migrations.Where(m => !applied.ContainsKey(m.Version)))
             {
                 await using DbTransaction transaction = await Database.BeginWriteAsync(connection, cancellationToken).ConfigureAwait(false);
+
+                // SQLite has no advisory lock: another process may have applied the version since it was read. The write
+                // transaction holds the database's write lock, so the check here cannot be overtaken.
+                await using (
+                    DbCommand recorded = Database.Command(
+                        connection,
+                        transaction,
+                        "SELECT sha256 FROM schema_migrations WHERE version = @version",
+                        ("version", migration.Version)
+                    )
+                )
+                {
+                    if (await recorded.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false) is byte[] recordedHash)
+                    {
+                        await transaction.RollbackAsync(cancellationToken).ConfigureAwait(false);
+                        if (!CryptographicOperations.FixedTimeEquals(migration.Hash, recordedHash))
+                        {
+                            throw new ServiceStartException($"The migration '{migration.Name}' was applied by another process with other text.");
+                        }
+
+                        continue;
+                    }
+                }
+
                 await using (DbCommand script = Database.Command(connection, transaction, migration.Sql))
                 {
                     await script.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
@@ -190,7 +221,7 @@ internal static partial class Migrator
         await using DbDataReader reader = await select.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
         while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
         {
-            applied[reader.GetInt32(0)] = Database.ReadBytes(reader, 1);
+            applied[reader.GetInt32(0)] = (byte[])reader.GetValue(1);
         }
 
         return applied;

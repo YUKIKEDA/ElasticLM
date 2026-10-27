@@ -17,7 +17,7 @@ internal enum DatabaseProvider
     /// <summary>SQLite, linked into the executable. One node only (design §14.3).</summary>
     Sqlite,
 
-    /// <summary>PostgreSQL 14 to 18 (decision 0.62).</summary>
+    /// <summary>PostgreSQL 15 to 18 (decision 0.62).</summary>
     Postgres,
 }
 
@@ -59,9 +59,10 @@ internal sealed record ServiceSettings
 
     public required string ConnectionString { get; init; }
 
-    public required string SigningKeyFile { get; init; }
+    /// <summary>Gets the signing key file, which the service needs and setup does not (<see langword="null"/> only for setup).</summary>
+    public string? SigningKeyFile { get; init; }
 
-    public required IReadOnlyList<string> SigningCertificateFiles { get; init; }
+    public IReadOnlyList<string> SigningCertificateFiles { get; init; } = [];
 
     public IReadOnlyList<string> TrustRootKeyFiles { get; init; } = [];
 
@@ -74,7 +75,7 @@ internal sealed record ServiceSettings
     public int RateLimitPerIp { get; init; } = 20;
 
     /// <summary>Gets the requests per second of one API key (design §14.7).</summary>
-    public int RateLimitPerKey { get; init; } = 50;
+    public int RateLimitPerKey { get; init; } = 10;
 
     /// <summary>Gets how long audit rows are kept, or <see langword="null"/> to keep them (design §18.2, the default).</summary>
     public TimeSpan? AuditRetention { get; init; }
@@ -84,12 +85,14 @@ internal sealed record ServiceSettings
     /// </summary>
     /// <param name="configPath">The settings file, or <see langword="null"/>.</param>
     /// <param name="environment">Reads an environment variable.</param>
+    /// <param name="requireSigning">Whether the signing key and its certificates are required: the service needs them, setup
+    /// does not.</param>
     /// <returns>The settings.</returns>
     /// <exception cref="ServiceStartException">A file, key, or value is not valid, or a required one is missing.</exception>
-    public static ServiceSettings Load(string? configPath, Func<string, string?> environment)
+    public static ServiceSettings Load(string? configPath, Func<string, string?> environment, bool requireSigning = true)
     {
         ArgumentNullException.ThrowIfNull(environment);
-        SettingsFile file = configPath is null ? new SettingsFile() : ReadFile(configPath);
+        SettingsFile file = configPath is null ? new SettingsFile() : Check(ReadFile(configPath));
         string? Env(string name) => environment(name) is { Length: > 0 } value ? value : null;
         IReadOnlyList<string>? EnvList(string name) =>
             Env(name) is string value ? value.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries) : null;
@@ -113,10 +116,14 @@ internal sealed record ServiceSettings
             ?? (file.Database?.ConnectionFile is string connectionFile ? ReadSecret(connectionFile, "database.connectionFile") : null)
             ?? throw new ServiceStartException($"Set {ConnectionVariable} or database.connectionFile to the database connection string.");
 
-        string signingKey =
-            Env("ELM_SIGNING_KEY") ?? file.Signing?.Key ?? throw new ServiceStartException("Set signing.key to the signing key file (PKCS#8 PEM).");
+        string? signingKey = Env("ELM_SIGNING_KEY") ?? file.Signing?.Key;
         IReadOnlyList<string> certificates = EnvList("ELM_SIGNING_CERTIFICATES") ?? file.Signing?.Certificates ?? [];
-        if (certificates.Count == 0)
+        if (requireSigning && signingKey is null)
+        {
+            throw new ServiceStartException("Set signing.key to the signing key file (PKCS#8 PEM).");
+        }
+
+        if (requireSigning && certificates.Count == 0)
         {
             throw new ServiceStartException("Set signing.certificates to the signing key's certificate files.");
         }
@@ -135,7 +142,7 @@ internal sealed record ServiceSettings
         }
 
         int perIp = Env("ELM_RATELIMIT_PERIP") is string perIpText ? ParseInt(perIpText, "rateLimit.perIp") : file.RateLimit?.PerIp ?? 20;
-        int perKey = Env("ELM_RATELIMIT_PERKEY") is string perKeyText ? ParseInt(perKeyText, "rateLimit.perKey") : file.RateLimit?.PerKey ?? 50;
+        int perKey = Env("ELM_RATELIMIT_PERKEY") is string perKeyText ? ParseInt(perKeyText, "rateLimit.perKey") : file.RateLimit?.PerKey ?? 10;
         if (perIp is < 1 or > 10_000 || perKey is < 1 or > 10_000)
         {
             throw new ServiceStartException("rateLimit.perIp and rateLimit.perKey must be between 1 and 10000.");
@@ -195,6 +202,37 @@ internal sealed record ServiceSettings
 
         _ = ListenAddress(uri);
         return uri;
+    }
+
+    // A value written in the file may be left out but not empty: "" or null in a list is a mistake, not "use the default".
+    private static SettingsFile Check(SettingsFile file)
+    {
+        static void Text(string? value, string key)
+        {
+            if (value is { Length: 0 })
+            {
+                throw new ServiceStartException($"{key} must not be empty; leave it out instead.");
+            }
+        }
+
+        static void List(List<string>? values, string key)
+        {
+            if (values is not null && values.Any(string.IsNullOrEmpty))
+            {
+                throw new ServiceStartException($"{key} must not hold an empty or null entry.");
+            }
+        }
+
+        Text(file.Listen, "listen");
+        Text(file.Tls?.Certificate, "tls.certificate");
+        Text(file.Tls?.Key, "tls.key");
+        Text(file.Database?.Provider, "database.provider");
+        Text(file.Database?.ConnectionFile, "database.connectionFile");
+        Text(file.Signing?.Key, "signing.key");
+        List(file.Signing?.Certificates, "signing.certificates");
+        List(file.Trust?.RootKeys, "trust.rootKeys");
+        List(file.Trust?.RevokedKeyIds, "trust.revokedKeyIds");
+        return file;
     }
 
     private static SettingsFile ReadFile(string path)

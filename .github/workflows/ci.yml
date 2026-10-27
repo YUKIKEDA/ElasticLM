@@ -45,10 +45,11 @@ jobs:
           restore-keys: nuget-${{ runner.os }}-
 
       # design §14.2, decision 0.62: the service's tests also run on PostgreSQL 18, on Linux, where service containers run.
+      # The image is pinned by digest (postgres:18 on 2026-10-21); a newer one is taken by changing the digest in a PR.
       - name: PostgreSQL
         if: runner.os == 'Linux'
         run: |
-          docker run -d --name elm-postgres -e POSTGRES_PASSWORD=elm-ci -p 5432:5432 postgres:18
+          docker run -d --name elm-postgres -e POSTGRES_PASSWORD=elm-ci -p 5432:5432 postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
           for ($i = 0; $i -lt 60; $i++) {
             docker exec elm-postgres pg_isready -U postgres | Out-Null
             if ($LASTEXITCODE -eq 0) { break }

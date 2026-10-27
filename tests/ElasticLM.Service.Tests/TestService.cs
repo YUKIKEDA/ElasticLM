@@ -1,6 +1,9 @@
 using System.Data.Common;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using ElasticLM.Issuing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
@@ -139,6 +142,16 @@ internal sealed class TestService : IAsyncDisposable
         await command.ExecuteNonQueryAsync(TestContext.Current.CancellationToken);
     }
 
+    /// <summary>Reads one number from the test database.</summary>
+    public async Task<long> ScalarAsync(string sql)
+    {
+        await using Database database = Database.Create(Provider, ConnectionString);
+        await using DbConnection connection = await database.OpenAsync(TestContext.Current.CancellationToken);
+        await using DbCommand command = Database.Command(connection, null, sql);
+        object? value = await command.ExecuteScalarAsync(TestContext.Current.CancellationToken);
+        return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
+    }
+
     public async ValueTask DisposeAsync()
     {
         foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned))
@@ -163,6 +176,73 @@ internal sealed class TestService : IAsyncDisposable
             System.IO.Directory.Delete(Directory, recursive: true);
         }
         catch (IOException) { }
+    }
+
+    /// <summary>Gets the engines a theory runs on; PostgreSQL is skipped where no server is set.</summary>
+    public static TheoryData<string> Providers => ["sqlite", "postgres"];
+
+    /// <summary>Opens a test on an engine, or skips it when the engine is PostgreSQL and no server is set.</summary>
+    public static TestService Open(string provider)
+    {
+        if (provider == "postgres")
+        {
+            Assert.SkipUnless(PostgresAvailable, $"Set {PostgresVariable} to a PostgreSQL server to run this case.");
+            return new TestService(DatabaseProvider.Postgres);
+        }
+
+        return new TestService();
+    }
+
+    public static StringContent Json(string body) => new(body, Encoding.UTF8, "application/json");
+
+    /// <summary>Creates a key through the API and returns it.</summary>
+    public static async Task<string> CreateKeyAsync(HttpClient admin, string permissions, int days = 90)
+    {
+        string body = "{\"name\":\"k\",\"permissions\":[" + permissions + "],\"expiresInDays\":" + days + "}";
+        using HttpResponseMessage created = await admin.PostAsync("v1/admin/api-keys", Json(body), TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.Created, created.StatusCode);
+        using JsonDocument item = JsonDocument.Parse(await created.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return item.RootElement.GetProperty("key").GetString()!;
+    }
+
+    /// <summary>Reads the first 200 audit rows through the API (the read adds its own row after them).</summary>
+    public static async Task<JsonElement[]> AuditRowsAsync(TestService test, ElmService service, string key)
+    {
+        string text = await test.Http(service, key).GetStringAsync("v1/admin/audit?limit=200", TestContext.Current.CancellationToken);
+        using JsonDocument page = JsonDocument.Parse(text);
+        return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(e => e.Clone())];
+    }
+
+    /// <summary>Asserts a problem answer: its status, code, and detail.</summary>
+    public static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code, string detail)
+    {
+        using (response)
+        {
+            Assert.Equal(status, response.StatusCode);
+            Assert.Equal("application/problem+json", response.Content.Headers.ContentType?.MediaType);
+            using JsonDocument problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(
+                (code, detail),
+                (problem.RootElement.GetProperty("code").GetString(), problem.RootElement.GetProperty("detail").GetString())
+            );
+        }
+    }
+
+    // The service runs its timers on the fake clock but on thread-pool threads; wait, in real time, for their work. The same
+    // shape as the elm-server tests' wait for a background write.
+    public static async Task WaitForAsync(Func<Task<bool>> condition)
+    {
+        for (int i = 0; i < 500; i++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The condition did not hold within 10 seconds.");
     }
 
     private sealed class DisposableHttp(HttpClient http) : IAsyncDisposable

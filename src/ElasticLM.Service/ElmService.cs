@@ -45,6 +45,8 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly RateLimiter<Guid> _perKey;
     private readonly ILogger _log;
     private readonly Lock _denialsLock = new();
+    private readonly Lock _runningLock = new();
+    private readonly HashSet<Task> _running = [];
     private long _denials;
     private ITimer? _purge;
     private ITimer? _denialTimer;
@@ -122,10 +124,20 @@ internal sealed partial class ElmService : IAsyncDisposable
             }
 
             WebApplication app = Build(settings, tls, host);
+            disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
             var service = new ElmService(app, settings, database, signingKey, signing, tls, host.Time, log);
             service.MapAdmin();
-            await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (IOException e)
+            {
+                // Kestrel reports an address in use, or one it may not bind, as an IOException.
+                throw new ServiceStartException($"elm-service cannot listen on {settings.Listen}: {e.Message}");
+            }
+
             service.AfterStart(applied, host.Time.GetElapsedTime(started));
             return service;
         }
@@ -164,9 +176,23 @@ internal sealed partial class ElmService : IAsyncDisposable
             }
         }
 
+        // A timer's work that already started finishes before the last denials are written and the database is closed.
+        await WaitForTimersAsync().ConfigureAwait(false);
         await _app.StopAsync().ConfigureAwait(false);
         await WriteDenialsAsync().ConfigureAwait(false);
         ServiceLog.Stopped(_log);
+    }
+
+    /// <summary>Waits for the timers' work that has started (the denial count, retention) to end.</summary>
+    internal async Task WaitForTimersAsync()
+    {
+        Task[] running;
+        lock (_runningLock)
+        {
+            running = [.. _running];
+        }
+
+        await Task.WhenAll(running).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -226,7 +252,9 @@ internal sealed partial class ElmService : IAsyncDisposable
         var certificates = new List<string>();
         try
         {
-            pem = File.ReadAllText(settings.SigningKeyFile);
+            pem = File.ReadAllText(
+                settings.SigningKeyFile ?? throw new ServiceStartException("Set signing.key to the signing key file (PKCS#8 PEM).")
+            );
             foreach (string path in settings.SigningCertificateFiles)
             {
                 certificates.Add(File.ReadAllText(path));
@@ -303,10 +331,10 @@ internal sealed partial class ElmService : IAsyncDisposable
         Url = new UriBuilder(_settings.Listen) { Port = bound.Port, Path = "/" }.Uri;
 
         _purge = Time.CreateTimer(_ => Purge(), null, PurgeInterval, PurgeInterval);
-        _denialTimer = Time.CreateTimer(_ => _ = WriteDenialsAsync(), null, DenialInterval, DenialInterval);
+        _denialTimer = Time.CreateTimer(_ => Track(WriteDenialsAsync), null, DenialInterval, DenialInterval);
         if (_settings.AuditRetention is not null)
         {
-            _retention = Time.CreateTimer(_ => _ = RemoveOldAuditAsync(), null, RetentionInterval, RetentionInterval);
+            _retention = Time.CreateTimer(_ => Track(RemoveOldAuditAsync), null, RetentionInterval, RetentionInterval);
         }
 
         if (applied.Count > 0 && _log.IsEnabled(LogLevel.Information))
@@ -321,6 +349,29 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         ServiceLog.Started(_log, Url, _settings.Database, Signing.KeyId, Signing.ExpiresAt, (long)startup.TotalMilliseconds);
+    }
+
+    // Runs a timer's work and keeps it until it ends, so StopAsync can wait for it. The work catches its own failures.
+    private void Track(Func<Task> work)
+    {
+        Task task = work();
+        lock (_runningLock)
+        {
+            _running.Add(task);
+        }
+
+        _ = task.ContinueWith(
+            done =>
+            {
+                lock (_runningLock)
+                {
+                    _running.Remove(done);
+                }
+            },
+            CancellationToken.None,
+            TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     private void Purge()
@@ -355,11 +406,17 @@ internal sealed partial class ElmService : IAsyncDisposable
         try
         {
             string detail = AuditLog.Detail(w => w.WriteNumber("count", count));
-            var entry = new AuditEntry("system", "auth", "auth.failed", null, "ELM_UNAUTHORIZED", null, detail);
-            await AuditLog.AppendAsync(Database, entry, Time.GetUtcNow()).ConfigureAwait(false);
+            var entry = new AuditEntry("system", "auth", AuditActions.AuthFailed, null, "ELM_UNAUTHORIZED", null, detail);
+            await Database.AppendAuditAsync(entry, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception e) when (e is System.Data.Common.DbException or InvalidOperationException)
         {
+            // The failures are counted again, so the next minute's row includes them.
+            lock (_denialsLock)
+            {
+                _denials += count;
+            }
+
             ServiceLog.PeriodicFailed(_log, e);
         }
     }
@@ -369,7 +426,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         try
         {
             DateTimeOffset before = Time.GetUtcNow() - _settings.AuditRetention!.Value;
-            long removed = await AuditLog.RemoveOlderThanAsync(Database, before).ConfigureAwait(false);
+            long removed = await Database.RemoveAuditOlderThanAsync(before, CancellationToken.None).ConfigureAwait(false);
             if (removed > 0)
             {
                 ServiceLog.AuditRemoved(_log, removed, before);

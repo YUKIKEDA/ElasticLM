@@ -70,28 +70,23 @@ internal static class Setup
             await Migrator.RunAsync(database, Migrator.Embedded(provider), time, cancellationToken).ConfigureAwait(false);
             DateTimeOffset now = time.GetUtcNow();
             string key = ApiKeys.NewKey();
-            await using DbConnection connection = await database.OpenAsync(cancellationToken).ConfigureAwait(false);
-            await using DbTransaction transaction = await Database.BeginWriteAsync(connection, cancellationToken).ConfigureAwait(false);
-            Guid adminId = await Admins.EnsureOwnerAsync(database, connection, transaction, owner, now, cancellationToken).ConfigureAwait(false);
-            ApiKeyRecord record = await ApiKeys
-                .InsertAsync(database, connection, transaction, adminId, "setup", Permissions.All, key, now, ApiKeys.DefaultDays, cancellationToken)
+            ApiKeyRecord record = await database
+                .SetupKeyAsync(
+                    owner,
+                    new NewApiKey(key, "setup", Permissions.All, ApiKeys.DefaultDays),
+                    created => new AuditEntry(
+                        "system",
+                        "setup",
+                        AuditActions.ApiKeyCreate,
+                        created.Id.ToString("D"),
+                        "ELM_OK",
+                        null,
+                        AuditLog.KeyCreatedDetail(created, owner)
+                    ),
+                    now,
+                    cancellationToken
+                )
                 .ConfigureAwait(false);
-            string detail = AuditLog.Detail(w =>
-            {
-                w.WriteString("name", record.Name);
-                w.WriteStartArray("permissions");
-                foreach (string permission in record.Permissions)
-                {
-                    w.WriteStringValue(permission);
-                }
-
-                w.WriteEndArray();
-                w.WriteString("expiresAt", AdminApi.Time(record.ExpiresAt));
-                w.WriteString("owner", owner.Issuer + " " + owner.Subject);
-            });
-            var entry = new AuditEntry("system", "setup", Permissions.ApiKeyCreate, record.Id.ToString("D"), "ELM_OK", null, detail);
-            await AuditLog.AppendAsync(database, connection, transaction, entry, now, cancellationToken).ConfigureAwait(false);
-            await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
 
             await output.WriteLineAsync(key).ConfigureAwait(false);
             await error
@@ -120,64 +115,5 @@ internal static class Setup
             await error.WriteLineAsync("The setup record cannot be written: " + e.Message).ConfigureAwait(false);
             return ExitDatabase;
         }
-    }
-}
-
-/// <summary>
-/// Administrators (design §14.6). Before M5 the only one is the bootstrap owner.
-/// </summary>
-internal static class Admins
-{
-    /// <summary>
-    /// Returns the bootstrap owner's ID, adding the owner as an enabled <c>owner</c> when it is new.
-    /// </summary>
-    /// <exception cref="ServiceStartException">The owner exists but was disabled or given another role.</exception>
-    public static async Task<Guid> EnsureOwnerAsync(
-        Database database,
-        DbConnection connection,
-        DbTransaction transaction,
-        AdminIdentity owner,
-        DateTimeOffset now,
-        CancellationToken cancellationToken = default
-    )
-    {
-        ArgumentNullException.ThrowIfNull(database);
-        ArgumentNullException.ThrowIfNull(owner);
-        await using (
-            DbCommand select = Database.Command(
-                connection,
-                transaction,
-                "SELECT id, role, enabled FROM admins WHERE issuer = @issuer AND subject = @subject",
-                ("issuer", owner.Issuer),
-                ("subject", owner.Subject)
-            )
-        )
-        await using (DbDataReader reader = await select.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false))
-        {
-            if (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
-            {
-                if (reader.GetString(1) != Permissions.RoleOwner || !reader.GetBoolean(2))
-                {
-                    throw new ServiceStartException("The bootstrap owner is disabled or no longer an owner; setup does not change that.");
-                }
-
-                return database.ReadId(reader, 0);
-            }
-        }
-
-        Guid id = Guid.CreateVersion7(now);
-        await using DbCommand insert = Database.Command(
-            connection,
-            transaction,
-            "INSERT INTO admins (id, issuer, subject, role, enabled, created_at) VALUES (@id, @issuer, @subject, @role, @enabled, @created)",
-            ("id", database.Id(id)),
-            ("issuer", owner.Issuer),
-            ("subject", owner.Subject),
-            ("role", Permissions.RoleOwner),
-            ("enabled", true),
-            ("created", now.ToUnixTimeSeconds())
-        );
-        await insert.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-        return id;
     }
 }

@@ -91,6 +91,6 @@ public static class SigningKeyCertificates
     [
         (KeyUses.License, CertificateSet.UseLicense),
         (KeyUses.Lease, CertificateSet.UseLease),
-        (KeyUses.Log, "log"),
+        (KeyUses.Log, CertificateSet.UseLog),
     ];
 }

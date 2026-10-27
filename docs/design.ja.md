@@ -33,7 +33,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.12 | テナント | 1 デプロイを 1 ベンダーが使い、その中で複数の製品を扱う。複数ベンダーの相乗りは v1 の範囲外 |
 | 0.13 | 機能 | ライセンスキーの発行、端末単位の有効化と解除（台数上限つき）、ファイルを介したオフライン有効化、失効、管理用の REST API と CLI |
 | 0.14 | フローティング | クラウドからの同時利用数の貸出も v1 に含める。貸出の仕組みはオンプレミスのサーバーと共通にし、状態の持ち方だけを変える |
-| 0.15 | 保存先 | SQLite と PostgreSQL。ORM を使わない薄い層の上に載せる |
+| 0.15 | 保存先 | SQLite と PostgreSQL。ORM を使わない薄い層の上に載せる（SQL の組み立ては 0.81） |
 | 0.16 | 管理 API の認証 | 機械向けの API キー（範囲を絞れ、サーバーはハッシュだけを持つ）と、人向けの OIDC の両方。CLI はデバイス認可フロー（RFC 8628） |
 | 0.17 | オフラインのトークン | ライセンスごとのポリシーで決める。既定は期限付き（30 日）でオンラインで更新し、期限後も猶予期間内は使える。期限なしのトークンは CLI での手動発行に限る |
 | 0.18 | 対象外の脅威 | クライアント側のバイナリの改ざん（検証処理を書き換えて飛ばすこと）と難読化は対象外と明記する。守るのはライセンスの偽造、リクエストの偽造と再送、席数を超えた利用 |
@@ -125,7 +125,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | # | 項目 | 決定 |
 | --- | --- | --- |
 | 0.61 | M4 の分け方 | M4a（土台）、M4b（オンラインの有効化と `ElasticLM.Client`）、M4c（オフラインのファイルとサーバーライセンスの更新）、M4d（クラウドのリース）の 4 行に分け、この順に進める。各行の細かい設計（エンドポイント、形式、検査の順）は、その行の始まりの Grill で決め、PR の前に独立した設計のレビューを当てたうえで、その行の実装と同じ PR に入れる。要件・脅威モデル・段階の変更は、今までどおり先に設計の PR で入れる（§22、`.cursor/rules/design-docs.mdc`） |
-| 0.62 | 保存先の範囲 | SQLite と PostgreSQL の両方を M4a で入れる。PostgreSQL は 14〜18 に対応し、CI は 18 で確かめる（§14.2） |
+| 0.62 | 保存先の範囲 | SQLite と PostgreSQL の両方を M4a で入れる。PostgreSQL は 15〜18 に対応し（0.81 で 14 を外した）、CI は 18 で確かめる（§14.2） |
 | 0.63 | 最初の管理者 | `elm-service setup` が、`bootstrapOwner` に結びついた `owner` の API キーを作って一度だけ表示する。期限は 90 日で、何度でも流せる（§14.6） |
 | 0.64 | クラウドのリースの規則 | `LeaseEngine` の規則の判定を純粋な関数に取り出し、メモリとデータベースの実装で共有する（M4d、§14.4） |
 | 0.65 | 管理 API の分け方 | 実体を作る行が、その実体の管理 API も持つ（§14.5） |
@@ -149,6 +149,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.78 | 許可の一覧 | M4a1 と M4a2 の許可を §14.6 の表のとおりにし、M4b 以降の許可はその行で足す（§14.6） |
 | 0.79 | M4a1 のエンドポイント | API キーの作成・一覧・停止、監査ログの一覧・確認、`/health`。認証の失敗は 1 分ごとの件数で書く。本文・応答・誤りの形を §14.5 に書き、管理の実体がないときのコード `ELM_NOT_FOUND`（54）を §19 に足す（PR #43 のレビュー）（§14.5, §19） |
 | 0.80 | `setup` の出力 | キーだけを標準出力に 1 行で書き、説明は標準エラーに書く。終了コードは 0 / 1 / 2（§14.6） |
+| 0.81 | SQL の組み立て | `elm-service` の SQL は AuraORM（型で検査するクエリビルダー）で組み立て、SQLite と PostgreSQL を 1 つの実装で扱う。移行は SQL のファイルのまま流す。AuraORM が 15 から対応し、14 は 2026-11-12 にサポートが終わるため、PostgreSQL は 15〜18 にする（PR #47）（§14.2, §21） |
 
 ## 1. 目的と利用者
 
@@ -289,6 +290,12 @@ M3b（Issue #21）の実測（Windows、win-x64、NativeAOT。参照機での計
 - 起動から待ち受けまで、サーバーの記録では 51 ms。プロセスの起動から最初の HTTPS の応答までを外から測ると、5 回で 524〜639 ms だった（PowerShell の `Invoke-WebRequest` の待ちを含む）。
 - 更新 1 件のサーバー側の処理は、証明の検証が約 120 µs、リースの規則と新しいトークンの署名が 322〜415 µs（4 回の実行、各 1,000 回の平均）で、合わせて約 0.45〜0.54 ms（`samples/VerifyLicense --self-test`）。50 件/秒なら 1 コアの約 2.7 % 以下である（$50 \times 0.54\,\mathrm{ms} = 27\,\mathrm{ms/s}$）。10,000 件を同時に持つときの p99 とメモリは V1 で測る。
 
+M4a1（Issue #46）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1 の行）:
+
+- `elm-service` は 19.8 MB（19,784,192 バイト。AuraORM を入れる前は 19,079,168 バイト）。§4.2 の目標 40 MB 以下に収まる。横に SQLite のライブラリは置かない。
+- 起動から待ち受けまで、サービスの記録で 185〜225 ms（SQLite、移行の済んだデータベース、3 回）。
+- 監査ログを書く管理 API の 1 件（API キーの作成。認証の検索、キーと監査ログの行の追記、1 つのトランザクション）は 1.05〜1.11 ms（SQLite、JIT の Release、ループバックの HTTP を含む、3 回の実行で各 200 件の平均）。同じビルドで SQLite を先行書き込みログ（WAL）にしないと 3.7〜5.0 ms になる。WAL ではコミットごとのディスクへの書き出しが 1 つのファイルで済むためで、WAL にする前の手書きの SQL の版は 3.1〜3.5 ms だった。
+
 M3c（Issue #25）の実測（同じ条件）:
 
 - `elm-server` は 12.0 MB（12,021,760 バイト。M3b の 11,430,912 から +0.6 MB）。
@@ -379,6 +386,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | `allow` / `deny` のホスト名とユーザー名を偽る | クライアントが申告する値で、確かめられない。確実なのは IP の範囲の規則だけである（§13.8） |
 | オフラインのトークンは期限まで失効が届かない | CRL のような失効リストを配る製品は調べた範囲になく、期限の短いトークンとオンラインの更新で失効を届ける（Keygen: https://keygen.sh/docs/api/cryptography/ 、Cryptlex: https://cryptlex.com/docs/sdks-and-apis/best-practices ）。期限はポリシーで短くできる |
 | 期限なしのトークンは失効できない | CLI の手動発行に限り（0.17）、発行時に警告を出す |
+| データベースに書ける者が監査ログを書き直す | 連なりは、行の書き換え・削除・番号の付け替えを、`audit_state` の先頭と起点に照らして見つける（§18.2）。しかしデータベースに書ける者は、すべてのハッシュを計算し直して `audit_state` も書き換えられる。末尾を切って先頭を戻すことも、古い行を消して起点を動かすこと（保管期間による削除と見分けがつかない）もできる。この者はほかの表も書き換えられるので、連なりだけでは守れない。署名した先頭や外への書き出しのような、データベースの外の起点は入れない |
 
 ## 6. 全体構成
 
@@ -1579,17 +1587,20 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 
 ### 14.1 構成
 
-`elm-service` は ASP.NET Core の Slim ビルダー（`WebApplication.CreateSlimBuilder`）で作る。D0 の調査で、HTTPS（PEM の証明書）、JwtBearer（OIDC の設定情報の取得を含む）、Npgsql、SQLite、埋め込みファイルを持つ構成が、Windows の NativeAOT 公開で警告 0 件になることを確かめた。Linux と macOS は M4a1 の行で確かめる。
+`elm-service` は ASP.NET Core の Slim ビルダー（`WebApplication.CreateSlimBuilder`）で作る。D0 の調査で、HTTPS（PEM の証明書）、JwtBearer（OIDC の設定情報の取得を含む）、Npgsql、SQLite、埋め込みファイルを持つ構成が、Windows の NativeAOT 公開で警告 0 件になることを確かめた。M4a1 で、`elm-service` を 3 OS（win-x64、linux-x64、osx-arm64）の CI で NativeAOT で発行し、警告 0 件、横にファイルを置かずに `setup` と起動と `/health` が動くことを確かめる（`.github/workflows/ci.yml` の `aot`）。
 
 ### 14.2 保存先
 
-- SQL を手で書き、`DbConnection` の上の薄い層で SQLite と PostgreSQL を切り替える。ORM は使わない（前身で EF Core が足かせになった。[design-decisions.md](./design-decisions.md)）。
+- SQL は AuraORM で組み立て、1 つの実装（`ServiceStore<TDialect>`）で SQLite と PostgreSQL を扱う（0.81）。AuraORM は型で検査する SQL のクエリビルダーで、呼んだ句がそのまま SQL になり、ない列や型の違う値はコンパイルの誤りになり、値はすべてパラメーターになる。変更の追跡や LINQ の翻訳は持たない。前身で足かせになった EF Core は使わない（[design-decisions.md](./design-decisions.md)）。移行（下）は SQL のファイルをそのまま流す。
+- トランザクション: 書き込みは、SQLite では `BEGIN IMMEDIATE`（始めに書き込みのロックを取る）、PostgreSQL では read committed で行う。連なりの確認（§18.2）は 1 つの読み取りのスナップショットで行う（SQLite は遅延のトランザクション、PostgreSQL は repeatable read）。SQLite の `BEGIN` は同期の呼び出しで、ほかの書き手を待つ間（5 秒まで）スレッドプールのスレッドを 1 つふさぐ。SQLite は 1 ノードで使う（§14.3）ので受け入れる。
 - PostgreSQL: Npgsql の `NpgsqlSlimDataSourceBuilder` を使う。Npgsql 8.0 以降は NativeAOT に対応する（https://www.npgsql.org/doc/compatibility.html ）。D0 で Npgsql 10.0.3 の公開が警告 0 件だった。
-- SQLite: `Microsoft.Data.Sqlite.Core` と `SQLitePCLRaw.provider.e_sqlite3` を使い、SQLite 本体は `vendor/sqlite/` で版と SHA-256 を固定したアマルガムから、各 OS 向けの静的ライブラリにビルドして、`DirectPInvoke` と `NativeLibrary` で実行ファイルに組み込む（https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop ）。D0 で SQLite 3.54.1 を win-x64 で組み込み、横に DLL のない 25.3 MB の実行ファイルで `sqlite_version()` が動くことを確かめた。Linux と macOS は M4a1 の行で確かめる。
+- SQLite: `Microsoft.Data.Sqlite.Core` と `SQLitePCLRaw.provider.e_sqlite3` を使い、SQLite 本体は `vendor/sqlite/` で版と SHA-256 を固定したアマルガムから、各 OS 向けの静的ライブラリにビルドして、`DirectPInvoke` と `NativeLibrary` で実行ファイルに組み込む（https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop ）。D0 で SQLite 3.54.1 を win-x64 で組み込み、横に DLL のない 25.3 MB の実行ファイルで `sqlite_version()` が動くことを確かめた。M4a1 で 3 OS の CI に足した（§14.1）。
 - SQLite のビルド（0.72）: `vendor/sqlite/` に、版と SHA-256 を固定したアマルガム（`sqlite3.c` と `sqlite3.h`）とビルドのスクリプトを置く。`build.ps1` と CI は、ビルドのたびに各 OS の C コンパイラー（Windows は MSVC の `cl`、Linux は `clang`、macOS は Xcode の `clang`）で静的ライブラリを作る。NativeAOT が同じ C の道具をすでに求めるため、新しく要る道具はない。ビルド済みのライブラリは、中身を確かめられないのでリポジトリに置かない。
+- `vendor/sqlite/build.ps1` は、`SHA256SUMS` と合わないアマルガムをビルドしない。同じアマルガムから、NativeAOT が組み込む静的ライブラリと、JIT で動くとき（テスト、`dotnet run`）に読む共有ライブラリの 2 つを作る。共有ライブラリは発行に含めない。コンパイルの選択肢は `SQLITE_THREADSAFE=1`、`SQLITE_DQS=0`、`SQLITE_DEFAULT_MEMSTATUS=0`、`SQLITE_ENABLE_COLUMN_METADATA=1`（`Microsoft.Data.Sqlite` が使う）である（https://sqlite.org/compile.html ）。
+- 値の持ち方: 時刻は UNIX 秒の整数（両方とも `bigint` 相当）、バイト列は SQLite の `BLOB` と PostgreSQL の `bytea`、真偽は SQLite の `INTEGER`（0 / 1）と PostgreSQL の `boolean` とする。SQLite の接続は外部キーを有効にし、ほかの書き手を 5 秒まで待つ。SQLite のファイルは、移行のときに先行書き込みログ（WAL）にする。読み手が書き手を待たず、コミットごとの書き出しも減る（§4.2）。
 - スキーマの移行は、版の番号つきの SQL ファイルを実行ファイルに埋め込み、起動時に順に流す。前身はマイグレーションが消えて新しい環境で表が作られなかったため、移行は起動時に必ず行い、テストで空のデータベースから最新まで流す。
-- 移行の形（0.69）: ファイルは `0001_<名前>.sql` の 4 桁の番号から始め、SQLite 用と PostgreSQL 用を別のフォルダーに置く。流した版とファイルの SHA-256 を表 `schema_migrations` に記録し、流した後に書き換えたファイルがあれば起動しない。1 つの版は 1 つのトランザクションで流す。PostgreSQL では助言ロック（`pg_advisory_lock`）を取り、複数のノードが同時に起動しても一度だけ流す。
-- PostgreSQL は 14〜18 に対応し、CI では 18 で同じテストを流す（0.62）。Windows と macOS の CI は SQLite だけを流す。
+- 移行の形（0.69）: ファイルは `0001_<名前>.sql` の 4 桁の番号から始め、SQLite 用と PostgreSQL 用を別のフォルダーに置く。流した版とファイルの SHA-256 を表 `schema_migrations` に記録し、流した後に書き換えたファイルがあれば起動しない。1 つの版は 1 つのトランザクションで流す。PostgreSQL では助言ロック（`pg_advisory_lock`）を取り、複数のノードが同時に起動しても一度だけ流す。SQLite には助言ロックがないので、各版の書き込みのトランザクションの中で記録を読み直し、ほかのプロセスが先に流した版は流さない（その版の SHA-256 が違えば起動しない）。
+- PostgreSQL は 15〜18 に対応し、CI では 18 で同じテストを流す（0.62, 0.81）。Windows と macOS の CI は SQLite だけを流す。
 - 管理の実体（製品、機能、ポリシー、ライセンス、有効化、API キーなど）の ID は UUID 第 7 版とし、SQLite では文字列、PostgreSQL では `uuid` 型で持つ（0.67）。一覧のカーソルには ID の順を使う。ライセンスキー（§9.5）とリース ID（§12.7）は今の形のままとする。
 
 ### 14.3 複数ノード
@@ -1627,10 +1638,10 @@ M4a1 のエンドポイント（0.79）:
 | メンバー | 型 | 必須 | 上限と、外れたとき |
 | --- | --- | --- | --- |
 | `name` | 文字列 | 必須 | 1〜64 文字（UTF-8 で 256 バイトまで）。外れれば `400` と `ELM_INVALID_ARGUMENT` |
-| `permissions` | 文字列の配列 | 必須 | 1〜32 件。§14.6 の表にない許可は `400` と `ELM_INVALID_ARGUMENT`。重なりは 1 つにまとめる。作る人が持たない許可は `403` と `ELM_FORBIDDEN` |
+| `permissions` | 文字列の配列 | 必須 | 1〜32 件（重なりをまとめる前に数える）。§14.6 の表にない許可は `400` と `ELM_INVALID_ARGUMENT`。重なりは 1 つにまとめる。作る人が持たない許可は `403` と `ELM_FORBIDDEN` |
 | `expiresInDays` | 整数 | 任意（既定 90） | 1〜365。外れれば `400` と `ELM_INVALID_ARGUMENT` |
 
-- 本文が JSON でない、型が違う、入れ子が深すぎる（8 まで）ときは `400` と `ELM_MALFORMED`。知らないメンバーは無視する（版の違うクライアントが送っても壊れないため）。
+- 本文が JSON でない、型が違う、入れ子が深すぎる（8 まで）、必須のメンバーがないか `null`、同じメンバーが 2 度ある、文字列が UTF-16 として正しくない（対になっていないサロゲート）ときは `400` と `ELM_MALFORMED`。知らないメンバーは無視する（版の違うクライアントが送っても壊れないため）。
 - 一覧の `limit` は 1〜200（既定 50）。外れれば `400` と `ELM_INVALID_ARGUMENT`。`after` は、API キーでは ID（UUID 第 7 版）、監査ログでは行の番号 `n` である。知らない `after` は空の一覧ではなく、その値より後の行を返す。
 
 応答（M4a1）:
@@ -1649,11 +1660,15 @@ M4a1 のエンドポイント（0.79）:
 | --- | --- |
 | `Authorization` がない、知らないキー、止めたキー、期限の切れたキー | `401` と `ELM_UNAUTHORIZED`。どれかは区別して返さない |
 | キーが許可を持たない | `403` と `ELM_FORBIDDEN` |
-| 知らない `{id}`（`DELETE /v1/admin/api-keys/{id}`）、すでに止めたキーの `DELETE` | 知らなければ `404` と `ELM_NOT_FOUND`。止めたキーの `DELETE` は冪等で `204` |
-| 本文が 64 KiB を超える | `413` と `ELM_PAYLOAD_TOO_LARGE` |
-| 頻度の制限 | `429` と `ELM_RATE_LIMITED` |
+| 知らない `{id}`、UUID の形でない `{id}`（`DELETE /v1/admin/api-keys/{id}`）、すでに止めたキーの `DELETE` | 知らないか形が違えば `404` と `ELM_NOT_FOUND`。止めたキーの `DELETE` は冪等で `204` |
+| 本文が 64 KiB を超える（`Content-Length` がなくても、読んだ量で数える） | `413` と `ELM_PAYLOAD_TOO_LARGE` |
+| 頻度の制限 | `429` と `ELM_RATE_LIMITED`、`Retry-After: 1` |
+| データベースの誤り | `500` と `ELM_INTERNAL_ERROR`。誤りはサービスのログに書く |
+| `/health` でデータベースに届かない | `503`（本文なし） |
 
-- 頻度の制限（§14.7）: 管理 API は認証された API キーごとに制限する。認証の前の要求（`/health` と、認証に失敗した要求）は送信元 IP ごとに制限する（設定 `rateLimit.perIp`）。
+- 頻度の制限（§14.7）: すべての要求は、認証の前に送信元 IP ごとの制限（設定 `rateLimit.perIp`）を受ける。`/health` と認証に失敗した要求は、この制限だけを受ける。認証された要求は、API キーごとの制限（設定 `rateLimit.perKey`）も受ける。どちらの制限の `429` も監査ログに書かない（拒んだ要求で記録を増やさないため）。
+- `Authorization` のスキーム名 `Bearer` は、大文字と小文字を区別しない（RFC 9110 §11.1）。
+- TLS とリバースプロキシ: `listen` が http なら、API キーは平文で流れる。ループバック以外で待ち受けるなら https にするか、TLS を終端するリバースプロキシの後ろに置く。プロキシの後ろでは、送信元ごとの制限と監査ログの `ip` はプロキシの IP になる。`elm-service` は `X-Forwarded-For` を信じない（偽れるため。§13.8 と同じ）。プロキシの後ろに置くなら、`rateLimit.perIp` をプロキシの先の利用者の数に合わせて上げる。
 
 ### 14.6 管理の認証と認可
 
@@ -1695,7 +1710,9 @@ API キー:
 ### 14.7 入力の上限と頻度の制限
 
 - 本文は 64 KiB まで（§12.1）。一覧の 1 ページは 200 件まで。
-- 頻度の制限（ASP.NET Core の RateLimiting。NativeAOT に対応: https://learn.microsoft.com/en-us/aspnet/core/fundamentals/native-aot?view=aspnetcore-10.0 ）: 有効化と試用はインストール鍵と送信元 IP ごと、管理 API は認証された主体ごとに制限する。値は設定で変えられる。
+- 頻度の制限: 有効化と試用はインストール鍵と送信元 IP ごと（M4b）、管理 API は送信元 IP と、認証された API キーごとに制限する（§14.5）。値は設定で変えられる。
+- 制限器は `elm-server` と同じ、`TimeProvider` で動くトークンバケット（0.46、`ElasticLM.Issuing` の `RateLimiter<TKey>`）である。ASP.NET Core の RateLimiting は `TimeProvider` を受け取らず、偽の時計でテストできない（[design-decisions.md](./design-decisions.md) の「BCL と ASP.NET Core の頻度の制限器」）。送信元は IPv4 のアドレスか IPv6 の /64、覚える送信元とキーは各 100,000 まで（§13.8 と同じ）。30 秒ごとの掃除で、1 秒以上要求のない送信元とキーを忘れる。
+- `rateLimit.perKey` の既定（10）は `rateLimit.perIp` の既定（20）以下にする。管理 API の要求はまず送信元ごとの制限を受けるので、キーごとの制限が送信元ごとより大きいと、1 台から使うキーには効かない。
 
 ### 14.8 秘密の受け渡し
 
@@ -1710,7 +1727,29 @@ API キー:
 
 鍵管理サービス（クラウドの KMS）からの署名鍵の利用は、ロードマップ A-4 とする。
 
-- 設定（0.74）: `elm-server` と同じく、任意の JSON の設定ファイルと `ELM_` の環境変数で、環境変数が勝つ。上の表の秘密は環境変数かファイルで渡し、設定ファイルに直接書かない。
+- 設定（0.74）: `elm-server` と同じく、任意の JSON の設定ファイル（`elm-service --config <ファイル>`、64 KiB まで、知らないキーは誤り）と `ELM_` の環境変数で、環境変数が勝つ。上の表の秘密は環境変数かファイルで渡し、設定ファイルに直接書かない。
+
+M4a1 の設定:
+
+| キー | 環境変数 | 既定 | 意味 |
+| --- | --- | --- | --- |
+| `listen` | `ELM_LISTEN` | `http://127.0.0.1:8080` | 待ち受け。http か https。ホストは IP アドレス、`localhost`、`0.0.0.0`、`[::]` |
+| `tls.certificate`, `tls.key` | `ELM_TLS_CERTIFICATE`, `ELM_TLS_KEY` | なし | https のときの PEM の証明書と鍵 |
+| `database.provider` | `ELM_DATABASE_PROVIDER` | `sqlite` | `sqlite` か `postgres` |
+| `database.connectionFile` | `ELM_DATABASE_CONNECTION`（接続文字列そのもの） | なし（必須） | 接続文字列のファイル（16 KiB まで、末尾の改行は除く） |
+| `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE` |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` は読まない） | 署名鍵の証明書のファイル |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`（`;` 区切り）、またはそれがないとき PEM の本文を `ELM_TRUST_ROOT_KEYS` | なし（必須） | 証明書を確かめるルート鍵（§13.8 と同じ） |
+| `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS`（`;` 区切り） | なし | 無効にした鍵の ID（§13.8 と同じ） |
+| `bootstrapOwner.iss`, `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_ISS`, `ELM_BOOTSTRAPOWNER_SUB` | なし | 最初の `owner`（各 1〜255 文字、両方そろえる） |
+| `rateLimit.perIp` | `ELM_RATELIMIT_PERIP` | 20 | 送信元ごとの毎秒の要求（1〜10,000） |
+| `rateLimit.perKey` | `ELM_RATELIMIT_PERKEY` | 10 | API キーごとの毎秒の要求（1〜10,000） |
+| `audit.retentionDays` | `ELM_AUDIT_RETENTIONDAYS` | なし（消さない） | 監査ログを残す日数（1〜36,600）。1 時間ごとに、それより古い行を消す |
+
+- 設定ファイルの値は、省けるが空にはできない。空の文字列と、リストの空か `null` の要素は誤りである（既定の値とはみなさない）。
+- 終了コードは、正常な停止と `setup` の成功が 0、引数の誤りと設定の形の誤り（設定ファイルが読めないか形が違う、知らないキー、範囲の外の値、必須の値がない）が 2、それ以外で起動できないとき（設定が指すファイルが読めない、署名鍵や証明書が合わない、待ち受けられない、データベースの誤り）が 1 である。`setup` は署名の設定を読まない。
+- 起動後の時計の仕事: 30 秒ごとに頻度の制限器の掃除（§14.7）、1 分ごとに認証の失敗の件数の書き込み（§14.5）、`audit.retentionDays` があれば 1 時間ごとに保管期間を過ぎた監査ログの削除（最初は起動の 1 時間後）。件数の書き込みが失敗したら件数を戻し、次の 1 分の行に足す。削除の失敗はサービスのログに書き、次の 1 時間に回す。停止では、走っている仕事の終わりを待ってから、残った件数を書く。
+- ノンスの HMAC の秘密は M4b、OIDC と Data Protection の鍵暗号化鍵は M5 で足す。
 - 署名鍵（0.75）: 起動時に 1 本を読む（暗号化した PKCS#8 と、その鍵の証明書のファイル）。証明書が今の時刻を含まないか、ライセンスとリースの用途を持たなければ、起動しない。入れ替えは、ファイルを替えて再起動する（§7.5）。署名鍵の状態の API（M4a2）は、鍵 ID、証明書の期限、用途を返し、期限まで 30 日を切ったら警告を返す。
 
 ## 15. 管理画面
@@ -1868,8 +1907,8 @@ M3c で作った形:
 
 - `elm-service` の管理操作を、データベースの追記だけの表に記録する。行は、下の連なりの形の 10 列（行の番号、時刻、操作者の種類と ID、操作、対象、結果、送信元 IP、詳細、前の行のハッシュ）と、その行のハッシュを持つ。
 - `actorType` は `apikey`（`actorId` は API キーの ID）、`oidc`（`actorId` は `iss` と `sub` を空白でつないだもの、M5）、`system`（`actorId` は `setup` などの操作の名前、または認証の失敗の件数の行では `auth`）のどれか。`detail` は操作ごとの JSON のオブジェクトで、例えば API キーの作成では `{"name": "ci", "permissions": ["license.read"], "expiresAt": "2027-01-25T00:00:00Z"}`、認証の失敗の件数の行では `{"count": 12}` である。秘密（キー本体など）は入れない。
-- 各行は、前の行のハッシュを含めた SHA-256 を持ち、連なりで改ざんを検出できる。
-- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は、ほかの列と同じく 4 バイトの長さ（`0x00000020`）の後に、32 バイトをそのまま（16 進にせず）入れる。最初の行の `prev`（32 バイトの 0）と、保管期間で古い行を消した後の起点も同じ形である。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする（PostgreSQL は最後の行を `FOR UPDATE` で固定、SQLite は `BEGIN IMMEDIATE`）。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、消した最後の行のハッシュを起点として残す。
+- 各行は、前の行のハッシュを含めた SHA-256 を持ち、連なりで改ざんを検出できる。データベースに書ける者による書き直しは検出できず、§5.4 で受け入れる。
+- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は、ほかの列と同じく 4 バイトの長さ（`0x00000020`）の後に、32 バイトをそのまま（16 進にせず）入れる。最初の行の `prev`（32 バイトの 0）と、保管期間で古い行を消した後の起点も同じ形である。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする。連なりの先頭（最後の行の番号とハッシュ）と起点（保管期間で消した最後の行の番号とハッシュ）を 1 行の表 `audit_state` に持ち、追記はその行を固定してから行を足し、先頭を進める（PostgreSQL は列を自分自身に更新する `UPDATE ... RETURNING` で行のロックを取る。`SELECT ... FOR UPDATE` と同じロックを、クエリビルダーの中で取れる。SQLite は `BEGIN IMMEDIATE`）。最後の行そのものを固定する形では、表が空のときに固定する行がないためである（M4a1）。状態を変える操作（API キーの作成と停止、`setup`）は、その監査ログの行と同じトランザクションで書く。読み取り、拒否（`400`、`403`、`404`）、連なりの確認の行は、応答の後に別のトランザクションで書き、書けなければサービスのログに書く。連なりの確認は、1 つの読み取りのスナップショットで、起点の次の行から順に、番号が続き、`prev` が前の行のハッシュで、ハッシュが行から計算した値と合い、最後の行が先頭と合うことを確かめる。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、保管期間の内にある最初の行より前の行を消し、消した最後の行のハッシュを起点として残す。時計が戻って、後の行の時刻が前の行より古くても、途中に穴を開けない。
 - 行のハッシュと `prev` は、SQLite では `BLOB`、PostgreSQL では `bytea` の 32 バイトとして保存し、16 進の文字列にしない。管理 API では base64url で返す（§14.5）。
 - 管理画面と管理 API で読める。保管期間は設定で決め、既定は無期限とする。
 
@@ -1987,9 +2026,10 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | `Microsoft.AspNetCore.Authentication.JwtBearer` | `ElasticLM.Service` | CLI のアクセストークンの検証 | D0 で警告 0 件 |
 | `Microsoft.AspNetCore.Authentication.OpenIdConnect` | `ElasticLM.Service` | 管理画面の BFF | D0 で警告 0 件（§15.3） |
 | `Microsoft.Extensions.FileProviders.Embedded` | `ElasticLM.Service` | 管理画面の配信 | D0 で警告 0 件 |
-| `Npgsql` | `ElasticLM.Service` | PostgreSQL | D0 で警告 0 件（10.0.3） |
-| `Microsoft.Data.Sqlite.Core`, `SQLitePCLRaw.provider.e_sqlite3` | `ElasticLM.Service` | SQLite | D0 で警告 0 件 |
-| SQLite（アマルガム、`vendor/sqlite/`） | `ElasticLM.Service` | 静的リンク | — |
+| `Npgsql` 10.0.3 | `ElasticLM.Service` | PostgreSQL。`NpgsqlSlimDataSourceBuilder` を使う。PostgreSQL License | D0 と M4a1 で警告 0 件 |
+| `Microsoft.Data.Sqlite.Core` 10.0.14, `SQLitePCLRaw.provider.e_sqlite3` 2.1.13, `SQLitePCLRaw.core` 2.1.13 | `ElasticLM.Service` | SQLite の ADO.NET。`Microsoft.Data.Sqlite.Core` が `SQLitePCLRaw.core` 2.1.13 に依存するので、提供者も 2.1 系にそろえる。MIT と Apache-2.0。提供者は名前 `e_sqlite3` で SQLite を呼び、NativeAOT ではその名前を `DirectPInvoke` で実行ファイルの中の SQLite に結ぶ | M4a1 で警告 0 件 |
+| SQLite 3.54.1（アマルガム、`vendor/sqlite/`） | `ElasticLM.Service` | 静的リンク。パブリックドメイン（https://sqlite.org/copyright.html ）。zip の SHA3-256 を sqlite.org の公開値と照らし、取り込んだファイルの SHA-256 を `vendor/sqlite/SHA256SUMS` に固定する | M4a1 で `elm-service` 全体が 19.8 MB（win-x64） |
+| `AuraORM` 0.1.0 | `ElasticLM.Service` | SQL の組み立て（0.81）。MIT。実行時の依存は BCL と `System.Data.Common` だけで、行の読み取りはソース生成。このリポジトリの持ち主が作り、NuGet に公開した版を使う | M4a1 で警告 0 件。`elm-service` が +0.7 MB（19,079,168 から 19,784,192 バイト、win-x64） |
 | `System.CommandLine` 2.0.14 | `ElasticLM.Cli`（`elm`）だけ | 引数の解析、ヘルプ、検証。アプリには入らない。MIT。`net10.0` が使う `net8.0` のアセットにパッケージ依存はない（`netstandard2.0` のアセットだけが `System.Memory` 4.5.5 に依存する） | M2 で警告 0 件。何もしないコンソールの 0.93 MB に対して 2.83 MB（+1.9 MB、win-x64）。`elm` の全体は 4.44 MB |
 | `xunit.v3`, `Microsoft.Extensions.TimeProvider.Testing` | テスト | テスト | 対象外 |
 
