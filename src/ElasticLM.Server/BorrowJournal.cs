@@ -69,7 +69,11 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         string? problems = report.Intact
             ? null
             : string.Join(" ", report.Issues.Where(i => i.Severity == LogIssueSeverity.Error).Select(i => $"line {i.Line}: {i.Message}"));
-        if (problems is null && report.Files[^1] is LogFileKey last && last.KeyId != server.KeyId && last.LicenseId != server.License.LicenseId)
+        if (problems is null && report.Files.Count == 0)
+        {
+            problems = "it names no server license.";
+        }
+        else if (problems is null && report.Files[^1] is LogFileKey last && last.KeyId != server.KeyId && last.LicenseId != server.License.LicenseId)
         {
             problems = $"it is signed by the key of server license {last.LicenseId}, not by this server ({server.License.LicenseId}).";
         }
@@ -88,7 +92,15 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
                 directory,
                 $"{BaseName}-broken-{time.GetUtcNow().UtcDateTime.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture)}.jsonl"
             );
-            File.Move(newest, aside);
+            try
+            {
+                File.Move(newest, aside);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new ServerStartException($"The broken borrow record '{newest}' cannot be moved aside: {e.Message}");
+            }
+
             journal.SetAside = aside;
             return journal;
         }
@@ -138,12 +150,13 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
-    /// <summary>Records a new server license; the old key signs the change.</summary>
+    /// <summary>Records a new server license; the old key signs the change. When the change cannot be written, the record keeps
+    /// the old license, as the server does (design §13.1).</summary>
     public void ChangeKey(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key)
     {
         lock (_lock)
         {
-            _log?.ChangeKey(licenseFile, keyJwk, key);
+            _log?.ChangeKey(licenseFile, keyJwk, key, takeOnFailure: false);
         }
     }
 

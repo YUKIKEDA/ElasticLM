@@ -73,6 +73,37 @@ public sealed class SettingsTests : IDisposable
     }
 
     /// <summary>
+    /// The borrow settings are read up to their limits, exactly: borrow.maxDuration from one second to 100 years (36,600
+    /// days) and borrow.reserve up to 1,000,000; one step beyond each stops the start.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Settings files of the product with one borrow value each.
+    ///
+    /// Steps:
+    /// - Load maxDuration 00:00:01, 36600.00:00:00, 00:00:00.9990000, 36600.00:00:01; reserve 1000000 and 1000001.
+    ///
+    /// Expected:
+    /// - 1 s, 36,600 days, an error, an error; 1,000,000 and an error naming borrow.reserve.
+    /// </remarks>
+    [Fact]
+    public void Load_BorrowLimits_AreExact()
+    {
+        ServerSettings Load(string borrow) => ServerSettings.Load(Write("{\"product\":\"acme-cad\",\"borrow\":" + borrow + "}"), _ => null);
+
+        Assert.Equal(TimeSpan.FromSeconds(1), Load("""{"maxDuration":"00:00:01"}""").BorrowMaxDuration);
+        Assert.Equal(TimeSpan.FromDays(36_600), Load("""{"maxDuration":"36600.00:00:00"}""").BorrowMaxDuration);
+        Assert.Throws<ServerStartException>(() => Load("""{"maxDuration":"00:00:00.9990000"}"""));
+        Assert.Throws<ServerStartException>(() => Load("""{"maxDuration":"36600.00:00:01"}"""));
+        Assert.Equal(1_000_000, Load("""{"reserve":1000000}""").BorrowReserve);
+        Assert.Contains(
+            "borrow.reserve",
+            Assert.Throws<ServerStartException>(() => Load("""{"reserve":1000001}""")).Message,
+            StringComparison.Ordinal
+        );
+    }
+
+    /// <summary>
     /// Invalid settings stop the start with a message that names the key.
     /// </summary>
     /// <remarks>

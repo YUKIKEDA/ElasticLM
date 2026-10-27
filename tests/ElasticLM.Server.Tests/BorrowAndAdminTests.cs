@@ -30,12 +30,13 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///
     /// Steps:
     /// - A new client on the same data folder reads its borrows, and so do a client of another server URL and a client that
-    ///   expects server license lic-other; change one character of the saved token and read again; restore it, advance past
-    ///   the expiry, and read again.
+    ///   expects server license lic-other; change one character of the saved token and read again; pad the file to exactly
+    ///   256 KiB and read, then to one byte more and read; restore it, advance past the expiry, and read again.
     ///
     /// Expected:
     /// - The borrow, held and not renewed (none for the other server, none for the client that expects lic-other); none
-    ///   from the changed file (the file stays); none after the expiry and the file is gone.
+    ///   from the changed file (the file stays); the borrow at 256 KiB and none beyond; none after the expiry and the file
+    ///   is gone.
     /// </remarks>
     [Fact]
     public async Task Borrow_IsKeptForUseWithoutTheServer()
@@ -75,6 +76,12 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         File.WriteAllText(file, saved[..at] + (saved[at] == 'A' ? 'B' : 'A') + saved[(at + 1)..]);
         Assert.Empty(_deployment.Client(server.PublicUrls[0], data).GetBorrowedLeases());
         Assert.True(File.Exists(file));
+
+        // The saved file may be at most 256 KiB: padded with JSON whitespace to exactly that it is read, one byte more it is not.
+        File.WriteAllText(file, saved + new string(' ', (256 * 1024) - System.Text.Encoding.UTF8.GetByteCount(saved)));
+        Assert.Single(_deployment.Client(server.PublicUrls[0], data).GetBorrowedLeases());
+        File.AppendAllText(file, " ");
+        Assert.Empty(_deployment.Client(server.PublicUrls[0], data).GetBorrowedLeases());
 
         File.WriteAllText(file, saved);
         _deployment.Time.Advance(Day + TimeSpan.FromSeconds(1));
@@ -540,6 +547,81 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A newest borrow record that is empty or cut inside its first line (a crash while the file was started, or a file
+    /// emptied by hand) is a broken record: the start stops with the reason, and --set-aside-broken-records moves it aside.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped; a newer borrow record file of 0 bytes, or holding only {"type":"chain.st.
+    ///
+    /// Steps:
+    /// - Start; start with the set-aside option.
+    ///
+    /// Expected:
+    /// - ServerStartException naming --set-aside-broken-records; then a running server and a borrows-broken file.
+    /// </remarks>
+    [Theory]
+    [InlineData("")]
+    [InlineData("{\"type\":\"chain.st")]
+    public async Task EmptyRecord_IsABrokenRecord(string content)
+    {
+        string serverData = _deployment.NewFolder("server");
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        File.WriteAllText(Path.Combine(serverData, "borrows-29991231T000000000Z.jsonl"), content);
+
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
+        Assert.Contains("--set-aside-broken-records", refused.Message, StringComparison.Ordinal);
+
+        await _deployment.StartServerAsync(serverData, setAside: true);
+        Assert.Single(Directory.GetFiles(serverData, "borrows-broken-*.jsonl"));
+    }
+
+    /// <summary>
+    /// The usage log names each release by its kind and records an overage with the seats in use, from what the engine
+    /// returns for the request.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license of pro with 2 seats and 50 % overage (3 allowed).
+    ///
+    /// Steps:
+    /// - Acquire 3 leases of 1 seat; release two of them; borrow 1 seat (2 in use, no overage) and return it; stop and verify
+    ///   the usage log.
+    ///
+    /// Expected:
+    /// - One overage line, for the third lease, with inUse 3; two lease.released lines and one borrow.returned line.
+    /// </remarks>
+    [Fact]
+    public async Task UsageLog_NamesReleasesAndOverage()
+    {
+        string serverData = _deployment.NewFolder("server");
+        _deployment.WriteServerLicense(serverData, s => s with { OveragePercent = 50 });
+        ElmServer server = await StartOpenServerAsync(serverData);
+        LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        Lease[] leases =
+        [
+            Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel)),
+            Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel)),
+            Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel)),
+        ];
+        Assert.Null(await client.ReleaseLeaseAsync(leases[0], cancel));
+        Assert.Null(await client.ReleaseLeaseAsync(leases[1], cancel));
+        Lease borrow = Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: cancel));
+        Assert.Null(await client.ReleaseLeaseAsync(borrow, cancel));
+
+        await server.DisposeAsync();
+        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
+        LogEntry overage = Assert.Single(usage.Entries, e => e.Type == "overage");
+        Assert.Equal((leases[2].Id, 3L), (overage.Value.GetProperty("lease").GetString(), overage.Value.GetProperty("inUse").GetInt64()));
+        Assert.Equal(
+            [leases[0].Id, leases[1].Id],
+            usage.Entries.Where(e => e.Type == "lease.released").Select(e => e.Value.GetProperty("lease").GetString())
+        );
+        Assert.Equal(borrow.Id, Assert.Single(usage.Entries, e => e.Type == "borrow.returned").Value.GetProperty("lease").GetString());
+    }
+
+    /// <summary>
     /// Refused requests are written as counts per feature and code each minute, with at most 100 kinds: refusals beyond them
     /// are counted without their feature, so many feature names cannot grow the log line by line.
     /// </summary>
@@ -580,17 +662,18 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// The client keeps at most 1,000 saved borrows: a borrow beyond them is refused with ELM_INTERNAL_ERROR.
+    /// The client keeps at most 1,000 saved borrows: the 1,000th is saved, a borrow beyond them is refused with
+    /// ELM_INTERNAL_ERROR.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A client data folder whose borrows folder holds 1,000 files.
+    /// - A client data folder whose borrows folder holds 999 files.
     ///
     /// Steps:
-    /// - Borrow.
+    /// - Borrow; borrow again.
     ///
     /// Expected:
-    /// - ELM_INTERNAL_ERROR naming the 1,000 borrows; no file is added.
+    /// - The first is saved (1,000 files); the second is ELM_INTERNAL_ERROR naming the 1,000 borrows, and no file is added.
     /// </remarks>
     [Fact]
     public async Task Borrow_BeyondTheSavedLimit_IsRefused()
@@ -600,11 +683,13 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         LicenseClient client = _deployment.Client(server.PublicUrls[0], data);
         string folder = Path.Combine(data, "borrows");
         Directory.CreateDirectory(folder);
-        for (int i = 0; i < 1_000; i++)
+        for (int i = 0; i < 999; i++)
         {
             File.WriteAllText(Path.Combine(folder, $"old-{i}.json"), "{}");
         }
 
+        Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(1_000, Directory.GetFiles(folder, "*.json").Length);
         LeaseResult result = await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken);
         LicenseError error = Assert.IsType<LeaseResult.Failed>(result).Error;
         Assert.Equal(ErrorCode.InternalError, error.Code);

@@ -139,7 +139,7 @@ internal sealed class UsageLog : IDisposable
     {
         try
         {
-            _log.ChangeKey(licenseFile, keyJwk, key);
+            _log.ChangeKey(licenseFile, keyJwk, key, takeOnFailure: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

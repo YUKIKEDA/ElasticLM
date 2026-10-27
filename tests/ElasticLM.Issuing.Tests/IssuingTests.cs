@@ -61,27 +61,31 @@ public sealed class IssuingTests : IDisposable
     }
 
     /// <summary>
-    /// A server license with the flag clone strategy reads back as flag; deny is covered by the test of each kind.
+    /// A server license with the flag clone strategy reads back as flag (deny is covered by the test of each kind), and the
+    /// borrow return limit at its maximum (1,000) and at its minimum (0) is issued and verifies.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A server license spec with CloneStrategy.Flag.
+    /// - A server license spec with CloneStrategy.Flag and brl 1000; the same with brl 0.
     ///
     /// Steps:
-    /// - Issue and verify it.
+    /// - Issue and verify each.
     ///
     /// Expected:
-    /// - The verified license has CloneStrategy.Flag.
+    /// - The verified licenses have CloneStrategy.Flag and brl 1000 and 0.
     /// </remarks>
-    [Fact]
-    public void Issue_ServerWithFlag_ReadsBackFlag()
+    [Theory]
+    [InlineData(1_000)]
+    [InlineData(0)]
+    public void Issue_ServerWithFlag_ReadsBackFlag(int borrowReturns)
     {
-        LicenseSpec spec = Spec(LicenseKind.Server, true, true) with { CloneStrategy = CloneStrategy.Flag };
+        LicenseSpec spec = Spec(LicenseKind.Server, true, true) with { CloneStrategy = CloneStrategy.Flag, BorrowReturnLimit = borrowReturns };
 
         IssuedLicense issued = LicenseIssuer.Issue(_signing, [Certificate()], spec, _time);
 
         var valid = Assert.IsType<LicenseVerificationResult.Valid>(Verifier().Verify(issued.File, Requirement(LicenseKind.Server, true)));
         Assert.Equal(CloneStrategy.Flag, valid.License.CloneStrategy);
+        Assert.Equal(borrowReturns, valid.License.BorrowReturnLimit);
     }
 
     /// <summary>

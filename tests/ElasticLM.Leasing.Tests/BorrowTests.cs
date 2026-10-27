@@ -428,6 +428,39 @@ public sealed class BorrowTests : IDisposable
         Assert.Equal(borrow.LeaseId, Assert.Single(expired).LeaseId);
     }
 
+    /// <summary>
+    /// A new lease reports the feature's use and seats from inside the feature's lock, and a release reports the lease it
+    /// released, so the server needs no walk over every lease to write its usage log.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - pro with 5 seats; a lease of 2 seats.
+    ///
+    /// Steps:
+    /// - Borrow 1 seat; renew the lease; release the borrow; release an unknown ID.
+    ///
+    /// Expected:
+    /// - The borrow reports 3 in use of 5; the renewal reports 0 and 0; the release reports the borrow (pro, 1 seat,
+    ///   IsBorrow); the unknown ID reports no lease.
+    /// </remarks>
+    [Fact]
+    public void Outcomes_CarryWhatTheServerLogs()
+    {
+        LeaseEngine engine = _server.OpenEngine();
+        TestClient client = _server.Client();
+        var lease = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(count: 2)));
+
+        var borrow = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+        Assert.Equal((3L, 5), (borrow.InUse, borrow.Seats));
+        var renewed = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(lease.LeaseId, 1, client.KeyId));
+        Assert.Equal((0L, 0), (renewed.InUse, renewed.Seats));
+
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(borrow.LeaseId, client.KeyId, out LeaseInfo? released));
+        Assert.Equal(("pro", 1, true), (released!.FeatureId, released.Seats, released.IsBorrow));
+        Assert.Equal(ReleaseOutcome.NotFound, engine.Release("unknown", client.KeyId, out LeaseInfo? unknown));
+        Assert.Null(unknown);
+    }
+
     private static void AssertRefused(ErrorCode code, LeaseOutcome outcome) =>
         Assert.Equal(code, Assert.IsType<LeaseOutcome.Refused>(outcome).Error.Code);
 

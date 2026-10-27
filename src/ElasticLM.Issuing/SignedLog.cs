@@ -234,14 +234,16 @@ public sealed partial class SignedLog : IDisposable
 
     /// <summary>
     /// Records a new server license and key (design §18.1): a <c>key.changed</c> line, signed with the old key, after which
-    /// the new key signs. When the line cannot be written, the new license and key are still taken: the next file starts with
-    /// <c>chain.reset</c> that carries them.
+    /// the new key signs. When the line cannot be written, <paramref name="takeOnFailure"/> decides whether the new license
+    /// and key are taken anyway (the next file then starts with <c>chain.reset</c> that carries them) or the old ones stay.
     /// </summary>
     /// <param name="licenseFile">The new server license file.</param>
     /// <param name="keyJwk">The new public key as a JWK.</param>
     /// <param name="key">Signs with the new key.</param>
+    /// <param name="takeOnFailure">Whether a change that cannot be written is still taken: true for a log whose writer uses the
+    /// new license regardless (the usage log), false for one whose writer keeps the old license then (the borrow record).</param>
     /// <exception cref="IOException">The change cannot be written.</exception>
-    public void ChangeKey(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key)
+    public void ChangeKey(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key, bool takeOnFailure)
     {
         ArgumentNullException.ThrowIfNull(licenseFile);
         ArgumentNullException.ThrowIfNull(keyJwk);
@@ -257,12 +259,17 @@ public sealed partial class SignedLog : IDisposable
                     WriteAuth();
                 });
             }
-            finally
+            catch (IOException) when (!takeOnFailure)
             {
-                _key = key;
-                _licenseFile = licenseFile;
-                _keyJwk = keyJwk;
+                throw;
             }
+            catch (IOException)
+            {
+                Take(licenseFile, keyJwk, key);
+                throw;
+            }
+
+            Take(licenseFile, keyJwk, key);
         }
     }
 
@@ -383,6 +390,13 @@ public sealed partial class SignedLog : IDisposable
             CultureInfo.InvariantCulture,
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
         );
+
+    private void Take(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key)
+    {
+        _key = key;
+        _licenseFile = licenseFile;
+        _keyJwk = keyJwk;
+    }
 
     // Runs a write. After a failure the file is closed and the next write starts a new file with chain.reset; the lines
     // written so far stay as they are, and the verifier reports them as unsigned (a warning), not as changed.

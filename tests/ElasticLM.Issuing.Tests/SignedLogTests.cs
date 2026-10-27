@@ -191,7 +191,7 @@ public sealed class SignedLogTests : IDisposable
         using (SignedLog log = Open())
         {
             Append(log, 1);
-            log.ChangeKey(LicenseFile(_server), KeyFiles.ExportPublicJwk(_server), Access(_server));
+            log.ChangeKey(LicenseFile(_server), KeyFiles.ExportPublicJwk(_server), Access(_server), takeOnFailure: true);
             Append(log, 1);
         }
 
@@ -374,6 +374,80 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
+    /// A file with no whole line (empty, or cut inside its first line) is an error, not an intact file.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log file of 0 bytes, or holding only {"type":"chain.st.
+    ///
+    /// Steps:
+    /// - Verify it.
+    ///
+    /// Expected:
+    /// - Not intact, with an error at line 1 that the file does not start with chain.start or chain.reset, and no file key.
+    /// </remarks>
+    [Theory]
+    [InlineData("")]
+    [InlineData("{\"type\":\"chain.st")]
+    public void Verify_FileWithoutAWholeLine_IsAnError(string content)
+    {
+        string file = Path.Combine(_dir, "usage-20261001T000000000Z.jsonl");
+        File.WriteAllText(file, content);
+
+        LogReport report = Verify([file]);
+        Assert.False(report.Intact);
+        Assert.Contains(report.Issues, i => i.Line == 1 && i.Message.Contains("does not start with chain.start", StringComparison.Ordinal));
+        Assert.Empty(report.Files);
+    }
+
+    /// <summary>
+    /// A line of exactly 1 MiB (before its line feed) is read, and a whole line one byte longer is an error; a last line of
+    /// exactly 1 MiB cut before its line feed is only a warning.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log, then an event line of exactly 1 MiB and its line feed appended without a signature.
+    ///
+    /// Steps:
+    /// - Verify; append 1 MiB of text without a line feed and verify; write a file whose second line is 1 MiB + 1 byte with
+    ///   its line feed and verify.
+    ///
+    /// Expected:
+    /// - Intact, the long line an unsigned entry; intact with a warning that the file ends in the middle of a line; an
+    ///   error that the file cannot be read.
+    /// </remarks>
+    [Fact]
+    public void Verify_LineOfExactly1MiB_IsRead()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage")[0];
+        const string Head = "{\"type\":\"lease.acquired\",\"ts\":1,\"x\":\"";
+        string line = Head + new string('x', LogVerifier.MaxLineLength - Head.Length - 2) + "\"}";
+        Assert.Equal(LogVerifier.MaxLineLength, Encoding.UTF8.GetByteCount(line));
+        File.AppendAllText(file, line + "\n");
+
+        LogReport report = Verify();
+        Assert.True(report.Intact);
+        Assert.Contains(report.Entries, e => !e.IsSigned && e.Value.TryGetProperty("x", out _));
+
+        File.AppendAllText(file, new string('y', LogVerifier.MaxLineLength));
+        LogReport cut = Verify();
+        Assert.True(cut.Intact);
+        Assert.Contains(cut.Issues, i => i.Message.Contains("middle of a line", StringComparison.Ordinal));
+
+        string longer = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl");
+        File.WriteAllText(longer, "{}\n" + new string('z', LogVerifier.MaxLineLength + 1) + "\n");
+        Assert.Contains(
+            Verify([longer]).Issues,
+            i => i.Severity == LogIssueSeverity.Error && i.Message.StartsWith("The file cannot be read", StringComparison.Ordinal)
+        );
+    }
+
+    /// <summary>
     /// A line longer than 1 MiB is an error, and the file is not read further.
     /// </summary>
     /// <remarks>
@@ -509,21 +583,23 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
-    /// When a key change cannot be written, the log still takes the new license: the next file starts with chain.reset and
-    /// carries it.
+    /// When a key change cannot be written, a log that takes it anyway (the usage log) starts its next file with chain.reset
+    /// and the new license; a log that does not (the borrow record) goes on with the old license.
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A log of lic-srv whose key fails while the change is signed.
     ///
     /// Steps:
-    /// - Change to a license lic-new of the same key (throws); append; close; verify.
+    /// - Change to a license lic-new of the same key with takeOnFailure true or false (throws); append; close; verify.
     ///
     /// Expected:
-    /// - IOException; intact; the last file is reported with lic-new.
+    /// - IOException; intact; the last file is reported with lic-new when the change is taken, and with lic-srv when not.
     /// </remarks>
-    [Fact]
-    public void ChangeKey_FailedWrite_TakesTheNewLicense()
+    [Theory]
+    [InlineData(true, "lic-new")]
+    [InlineData(false, "lic-srv")]
+    public void ChangeKey_FailedWrite_TakesTheNewLicenseOnlyWhenAsked(bool takeOnFailure, string expected)
     {
         bool fail = false;
         string Access(Func<ECDsa, string> use) => fail ? throw new IOException("The disk is full.") : use(_server);
@@ -541,7 +617,8 @@ public sealed class SignedLogTests : IDisposable
         )
         {
             fail = true;
-            Assert.Throws<IOException>(() => log.ChangeKey(LicenseFile(_server, "lic-new"), KeyFiles.ExportPublicJwk(_server), Access));
+            byte[] newLicense = LicenseFile(_server, "lic-new");
+            Assert.Throws<IOException>(() => log.ChangeKey(newLicense, KeyFiles.ExportPublicJwk(_server), Access, takeOnFailure));
             fail = false;
             _time.Advance(TimeSpan.FromSeconds(1));
             Append(log, 1);
@@ -549,7 +626,7 @@ public sealed class SignedLogTests : IDisposable
 
         LogReport report = Verify();
         Assert.True(report.Intact);
-        Assert.Equal("lic-new", report.Files[^1].LicenseId);
+        Assert.Equal(expected, report.Files[^1].LicenseId);
     }
 
     /// <summary>

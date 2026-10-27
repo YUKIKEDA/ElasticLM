@@ -163,7 +163,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             }
 
             disposables.Add(identity!);
-            BorrowJournal journal = BorrowJournal.Load(store.Directory, trust, identity!, host.SetAsideBrokenRecords, host.Time);
+            BorrowJournal journal = Journal(() => BorrowJournal.Load(store.Directory, trust, identity!, host.SetAsideBrokenRecords, host.Time));
             disposables.Add(journal);
             string adminToken =
                 AdminToken.LoadOrCreate(store.Directory)
@@ -198,7 +198,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
             created = engine;
             disposables.Add(engine);
             engine.Restore(journal.Borrows, journal.Returns);
-            journal.Open(access, licenseFile!, keyJwk);
+            Journal(() =>
+            {
+                journal.Open(access, licenseFile!, keyJwk);
+                return journal;
+            });
             var server = new ElmServer(
                 new Parts(
                     app,
@@ -348,6 +352,19 @@ internal sealed partial class ElmServer : IAsyncDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             throw new ServerStartException($"The usage log '{path}' cannot be written: {e.Message}");
+        }
+    }
+
+    // design §13.1: a borrow record that cannot be read or written stops the start with a reason, like the usage log.
+    private static BorrowJournal Journal(Func<BorrowJournal> step)
+    {
+        try
+        {
+            return step();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new ServerStartException($"The borrow record cannot be read or written: {e.Message}");
         }
     }
 
@@ -771,7 +788,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 licenseId,
                 Client
             );
-            if (Engine.Usage().FirstOrDefault(u => u.FeatureId == request.Feature) is { } use && use.InUse > use.Seats)
+            if (granted.InUse > granted.Seats)
             {
                 _usage.Lease(
                     "overage",
@@ -780,7 +797,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     request.Count,
                     proof.KeyId,
                     licenseId,
-                    w => w.WriteNumber("inUse", use.InUse)
+                    w => w.WriteNumber("inUse", granted.InUse)
                 );
             }
         }
@@ -861,9 +878,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
-        LeaseInfo? lease = Engine.Leases().FirstOrDefault(l => l.LeaseId == id);
         string licenseId = Engine.Server.License.LicenseId;
-        switch (Engine.Release(id, proof.KeyId))
+        switch (Engine.Release(id, proof.KeyId, out LeaseInfo? lease))
         {
             case ReleaseOutcome.Released:
                 ServerLog.Released(_log, id);

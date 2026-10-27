@@ -223,15 +223,16 @@ public sealed class LeaseEngine : IDisposable
     /// </summary>
     /// <param name="leaseId">The lease ID.</param>
     /// <param name="keyId">The installation key thumbprint from the proof.</param>
+    /// <param name="lease">The lease as it was before the release, or <see langword="null"/> when the server does not know it.</param>
     /// <returns>What the release did.</returns>
-    public ReleaseOutcome Release(string leaseId, string keyId)
+    public ReleaseOutcome Release(string leaseId, string keyId, out LeaseInfo? lease)
     {
         ArgumentNullException.ThrowIfNull(leaseId);
         ArgumentNullException.ThrowIfNull(keyId);
         _gate.EnterReadLock();
         try
         {
-            return ReleaseCore(leaseId, keyId, _state);
+            return ReleaseCore(leaseId, keyId, _state, out lease);
         }
         finally
         {
@@ -569,7 +570,13 @@ public sealed class LeaseEngine : IDisposable
             }
 
             Add(pool, record);
-            return outcome;
+
+            // The feature's use is known here, inside its lock, so the caller need not walk every lease to find an overage.
+            return (LeaseOutcome.Granted)outcome with
+            {
+                InUse = pool.Used,
+                Seats = pool.Seats,
+            };
         }
     }
 
@@ -652,8 +659,9 @@ public sealed class LeaseEngine : IDisposable
         }
     }
 
-    private ReleaseOutcome ReleaseCore(string leaseId, string keyId, LicenseState state)
+    private ReleaseOutcome ReleaseCore(string leaseId, string keyId, LicenseState state, out LeaseInfo? lease)
     {
+        lease = null;
         if (!_leases.TryGetValue(leaseId, out LeaseRecord? found) || !state.Pools.TryGetValue(found.FeatureId, out FeaturePool? pool))
         {
             return ReleaseOutcome.NotFound;
@@ -668,6 +676,7 @@ public sealed class LeaseEngine : IDisposable
                 return ReleaseOutcome.NotFound;
             }
 
+            lease = record.Info();
             if (record.KeyId != keyId)
             {
                 return ReleaseOutcome.WrongKey;

@@ -121,6 +121,14 @@ public static class LogVerifier
             return;
         }
 
+        if (lines.Count == 0)
+        {
+            // An empty file, or one cut inside its first line: a crash while the file was started, or a file emptied by hand.
+            Issue(1, LogIssueSeverity.Error, "The file does not start with chain.start or chain.reset.");
+            state.Broken = true;
+            return;
+        }
+
         ServerIdentity? key = null;
         ServerIdentity? nextKey = null;
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -449,6 +457,12 @@ public static class LogVerifier
                 if (buffer[i] != (byte)'\n')
                 {
                     continue;
+                }
+
+                // The limit is on the line without its line feed; a whole line is checked here, a line still being read below.
+                if (current.Length + (i - start) > MaxLineLength)
+                {
+                    throw new InvalidDataException($"A line is longer than {MaxLineLength} bytes.");
                 }
 
                 current.Write(buffer, start, i - start + 1);

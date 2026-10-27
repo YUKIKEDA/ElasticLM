@@ -50,7 +50,14 @@ public abstract record LeaseOutcome
     /// <param name="ExpiresAt">The lease expiry.</param>
     /// <param name="CloneFlagged">Whether the request rolled back the sequence number and the server license's clone strategy
     /// is <see cref="CloneStrategy.Flag"/> (design §10.4).</param>
-    public sealed record Granted(string Token, string LeaseId, DateTimeOffset ExpiresAt, bool CloneFlagged) : LeaseOutcome;
+    public sealed record Granted(string Token, string LeaseId, DateTimeOffset ExpiresAt, bool CloneFlagged) : LeaseOutcome
+    {
+        /// <summary>Gets the seats the feature's leases hold after a new lease was added, including it; 0 for a renewal.</summary>
+        public long InUse { get; init; }
+
+        /// <summary>Gets the feature's seats in the server license, for a new lease; 0 for a renewal.</summary>
+        public int Seats { get; init; }
+    }
 
     /// <summary>
     /// The request was refused.

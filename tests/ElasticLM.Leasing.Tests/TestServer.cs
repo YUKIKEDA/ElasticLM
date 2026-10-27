@@ -175,4 +175,6 @@ internal static class EngineExtensions
 
     public static LeaseOutcome Renew(this LeaseEngine engine, string leaseId, long sequence, string keyId) =>
         engine.Renew(leaseId, sequence, keyId, NewProofId(), []);
+
+    public static ReleaseOutcome Release(this LeaseEngine engine, string leaseId, string keyId) => engine.Release(leaseId, keyId, out _);
 }
