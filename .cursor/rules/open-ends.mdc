@@ -15,6 +15,10 @@ What is out of the row's scope is a roadmap row that names when (`.cursor/rules/
 
 A reason written as likely ("probably", 「と考えられる」) is checked first when a cheap check exists.
 
+- A figure that moves after a change is traced by measuring again with that one change switched off. In M4a1 an audited write fell from 3.1–3.5 ms to 1.1 ms after the data layer moved to a query builder; with SQLite's WAL mode switched off the same build took 3.7–5.0 ms, so the cause was WAL, not the builder (PR #47).
+- A measurement that needs what the local machine lacks (a PostgreSQL server, another OS) is taken on CI, in a step that prints the value to the job summary. In M4a1 the first PR body said the start time on PostgreSQL was not measured, and the review asked for it (PR #47).
+- A value from a GitHub-hosted runner is written as the range of more than one run, with the reason: each run gets another machine. In M4a1 two runs of the same step gave 437–463 ms and 270–291 ms (PR #47).
+
 A comment in the code is held to the same line: it says what was measured, and marks a cause that was not confirmed as not confirmed, with the Issue number.
 
 ```text
