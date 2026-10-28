@@ -314,6 +314,34 @@ public sealed partial class ActivationClientTests
         Assert.DoesNotContain(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
     }
 
+    /// <summary>
+    /// The owner's callback gets a new file after the clock guard got the service's time, so elm-server's reload through the
+    /// same guard sees that time (design §13.7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client with a guard that records the server times it is given and a callback that records how many it
+    ///   had got when it ran.
+    ///
+    /// Steps:
+    /// - Activate online.
+    ///
+    /// Expected:
+    /// - The callback ran once, after one server time.
+    /// </remarks>
+    [Fact]
+    public async Task LicenseKept_RunsAfterTheServerTime()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var guard = new RecordingGuard();
+        var seen = new List<int>();
+        await using ActivationClient client = vendor.Client("a", guard: guard, kept: _ => seen.Add(guard.Accepted.Count));
+
+        Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal([1], seen);
+    }
+
     private static OfflineRequestResult.Created Created(OfflineRequestResult result) =>
         result as OfflineRequestResult.Created ?? throw new InvalidOperationException(((OfflineRequestResult.Failed)result).Error.ToString());
 

@@ -145,6 +145,19 @@ internal sealed class SettingsFile
 
     [JsonPropertyName("admin")]
     public AdminSection? Admin { get; set; }
+
+    [JsonPropertyName("service")]
+    public ServiceSection? Service { get; set; }
+}
+
+/// <summary>
+/// <c>service</c> (design §13.8, M4c3).
+/// </summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class ServiceSection
+{
+    [JsonPropertyName("url")]
+    public string? Url { get; set; }
 }
 
 /// <summary>
@@ -192,7 +205,8 @@ internal sealed record StatusAnswer(
     [property: JsonPropertyName("recovering")] bool Recovering,
     [property: JsonPropertyName("recoveryEnds")] long RecoveryEnds,
     [property: JsonPropertyName("leases")] int Leases,
-    [property: JsonPropertyName("features")] FeatureItem[] Features
+    [property: JsonPropertyName("features")] FeatureItem[] Features,
+    [property: JsonPropertyName("autoRefresh")] bool AutoRefresh
 );
 
 /// <summary>

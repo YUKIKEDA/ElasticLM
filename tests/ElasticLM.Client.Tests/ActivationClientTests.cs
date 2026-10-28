@@ -776,7 +776,8 @@ public sealed partial class ActivationClientTests
             LicenseVerifierOptions? verifier = null,
             TimeProvider? time = null,
             bool offline = false,
-            IClockGuard? guard = null
+            IClockGuard? guard = null,
+            Action<byte[]>? kept = null
         )
         {
             var options = new ActivationClientOptions
@@ -789,6 +790,7 @@ public sealed partial class ActivationClientTests
                 VerifierOptions = verifier,
                 TimeProvider = time ?? Test.Time,
                 ClockGuard = guard,
+                LicenseKept = kept,
                 WrapHandler = wrap is null
                     ? null
                     : inner =>

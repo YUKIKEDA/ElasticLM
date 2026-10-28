@@ -24,6 +24,7 @@
     <InternalsVisibleTo Include="ElasticLM.Service.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
+    <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
     <EmbeddedResource Include="Migrations\**\*.sql" LogicalName="migrations/%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 

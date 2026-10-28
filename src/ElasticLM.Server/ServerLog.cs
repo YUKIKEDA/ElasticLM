@@ -61,4 +61,7 @@ internal static partial class ServerLog
 
     [LoggerMessage(EventId = 41, Level = LogLevel.Information, Message = "license.reloaded: {LicenseId}, token {TokenId}")]
     public static partial void Reloaded(ILogger log, string licenseId, string tokenId);
+
+    [LoggerMessage(EventId = 42, Level = LogLevel.Warning, Message = "license.refresh_failed: {Code} {Reason}")]
+    public static partial void LicenseRefreshFailed(ILogger log, string code, string reason);
 }
