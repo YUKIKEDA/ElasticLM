@@ -36,6 +36,8 @@ internal sealed record LogIssueOutput(string File, int Line, string Severity, st
 
 internal sealed record LogVerifyOutput(bool Intact, int Files, int Entries, LogIssueOutput[] Issues);
 
+internal sealed record OfflineOutput(bool Deactivated, string? ActivationId, string? LicenseId, long? Seq, string? File);
+
 /// <summary>
 /// Source-generated JSON for <c>--json</c> output (NativeAOT).
 /// </summary>
@@ -50,5 +52,6 @@ internal sealed record LogVerifyOutput(bool Intact, int Files, int Entries, LogI
 [JsonSerializable(typeof(InspectOutput))]
 [JsonSerializable(typeof(VerifyOutput))]
 [JsonSerializable(typeof(LogVerifyOutput))]
+[JsonSerializable(typeof(OfflineOutput))]
 [JsonSerializable(typeof(JsonElement))]
 internal sealed partial class CliJsonContext : JsonSerializerContext;

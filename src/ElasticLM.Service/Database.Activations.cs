@@ -32,6 +32,12 @@ internal abstract class LicenseScope
 
     /// <summary>Appends an audit row in the same transaction.</summary>
     public abstract Task AppendAuditAsync(AuditEntry entry, CancellationToken cancellationToken);
+
+    /// <summary>Returns the stored answers to offline requests with an installation key and a nonce (design §12.8.4).</summary>
+    public abstract Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(string keyId, string nonce, CancellationToken cancellationToken);
+
+    /// <summary>Stores the answer to an activation's offline request in the same transaction, in place of the one before.</summary>
+    public abstract Task ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken);
 }
 
 /// <summary>A trial with the fingerprints it holds (design §12.9).</summary>
@@ -98,4 +104,8 @@ internal abstract partial class Database
     /// <summary>Removes the jti records that expired before a time.</summary>
     /// <returns>The records removed.</returns>
     public abstract Task<long> RemoveProofsBeforeAsync(long before, CancellationToken cancellationToken);
+
+    /// <summary>Removes the stored answers of offline requests that expired before a time (design §12.8.4).</summary>
+    /// <returns>The rows removed.</returns>
+    public abstract Task<long> RemoveOfflineRequestsBeforeAsync(long before, CancellationToken cancellationToken);
 }

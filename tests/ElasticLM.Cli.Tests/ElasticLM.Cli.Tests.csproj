@@ -8,5 +8,9 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ElasticLM.Cli\ElasticLM.Cli.csproj" />
+    <!-- elm offline process is tested against a real elm-service. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestDevice.cs" Link="TestDevice.cs" />
   </ItemGroup>
 </Project>

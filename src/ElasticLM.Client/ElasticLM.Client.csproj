@@ -13,6 +13,9 @@
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
     <!-- The end-to-end tests lose an answer on purpose through LicenseClientOptions.WrapHandler. -->
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+    <!-- The offline request tests (service and elm) sign request files with an installation key until M4c2 makes them in the client. -->
+    <InternalsVisibleTo Include="ElasticLM.Service.Tests" />
+    <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
     <!-- elm-server keeps its installation key in the same store and signs leases and its TLS certificate with it. -->
     <InternalsVisibleTo Include="elm-server" />
     <!-- elm server reads the server's administrator token with the same protection. -->

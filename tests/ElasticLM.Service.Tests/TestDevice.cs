@@ -130,6 +130,72 @@ internal sealed class TestDevice : IDisposable
     public Task<DeviceAnswer> TrialAsync(string product, string[] fingerprints, string more = "", string[]? retry = null) =>
         PostAsync("v1/trials", $$"""{"product":"{{product}}","fingerprints":{{Array(fingerprints)}}{{Retry(retry)}}{{more}}}""");
 
+    /// <summary>Returns a 128-bit nonce in base64url, as an offline request carries (design §8.4.4).</summary>
+    public static string NewNonce() => Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16));
+
+    /// <summary>
+    /// Makes an offline activation request (design §8.4.4) signed by this device's key; <paramref name="more"/> adds claims,
+    /// <paramref name="change"/> edits the payload's text before it is signed, and <paramref name="iat"/> and <paramref
+    /// name="exp"/> are seconds from the test's start.
+    /// </summary>
+    public string ActivationFile(
+        string licenseKey,
+        string[] fingerprints,
+        string? nonce = null,
+        long iat = 0,
+        long? exp = null,
+        string product = "app",
+        string more = "",
+        Func<string, string>? change = null
+    ) =>
+        Sign(
+            TokenTypes.ActivationRequest,
+            (change ?? (c => c))(
+                $$"""{"ver":1,"op":"activate","key":"{{licenseKey}}","prd":"{{product}}","fp":{{Array(fingerprints)}},"jwk":{{Jwk()}},"nonce":"{{nonce ?? NewNonce()}}","iat":{{At(iat)}},"exp":{{At(exp ?? iat + 604_800)}}{{more}}}"""
+            )
+        );
+
+    /// <summary>Makes an offline refresh request (design §8.4.4, §12.8.3) signed by this device's key.</summary>
+    public string RefreshFile(string activationId, long seq, string[]? retry = null, string? nonce = null, long iat = 0, string more = "") =>
+        Sign(
+            TokenTypes.ActivationRequest,
+            $$"""{"ver":1,"op":"refresh","act":"{{activationId}}","seq":{{seq}}{{Retry(retry)}},"fp":[],"jwk":{{Jwk()}},"nonce":"{{nonce ?? NewNonce()}}","iat":{{At(iat)}},"exp":{{At(iat + 604_800)}}{{more}}}"""
+        );
+
+    /// <summary>Makes an offline deactivation proof (design §8.4.5), signed by this device's key or another.</summary>
+    public string DeactivationFile(string activationId, long seq, string[]? retry = null, long iat = 0, InstallationKey? signer = null) =>
+        Sign(TokenTypes.DeactivationProof, $$"""{"ver":1,"act":"{{activationId}}","seq":{{seq}}{{Retry(retry)}},"iat":{{At(iat)}}}""", signer);
+
+    /// <summary>Signs a payload as a compact JWS of a type with this device's key, or another.</summary>
+    public string Sign(string typ, string payload, InstallationKey? signer = null)
+    {
+        InstallationKey key = signer ?? Key;
+        string input =
+            Base64Url.EncodeToString(Encoding.UTF8.GetBytes($$"""{"alg":"ES256","kid":"{{key.Thumbprint}}","typ":"{{typ}}"}"""))
+            + "."
+            + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload));
+        return input + "." + Base64Url.EncodeToString(key.Sign(Encoding.ASCII.GetBytes(input)));
+    }
+
+    /// <summary>Posts an offline file, with a line end after it, to <c>/v1/offline</c>, or to <c>/v1/admin/offline</c> with an
+    /// API key.</summary>
+    public async Task<DeviceAnswer> OfflineAsync(string file, string? apiKey = null)
+    {
+        using var request = new HttpRequestMessage(HttpMethod.Post, apiKey is null ? "v1/offline" : "v1/admin/offline")
+        {
+            Content = new StringContent(file + "\n"),
+        };
+        if (apiKey is not null)
+        {
+            request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", apiKey);
+        }
+
+        using HttpResponseMessage response = await _http.SendAsync(request, TestContext.Current.CancellationToken);
+        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        string? fresh = response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? values) ? values.Single() : null;
+        return new DeviceAnswer(response.StatusCode, text, string.Empty, fresh);
+    }
+
     /// <summary>Verifies a license file as the app would, bound to this device and its fingerprints.</summary>
     public VerifiedLicense Verify(byte[] file, string[] fingerprints, LicenseKind kind = LicenseKind.Standard)
     {
@@ -149,6 +215,14 @@ internal sealed class TestDevice : IDisposable
     {
         using JsonDocument payload = JsonDocument.Parse(Base64Url.DecodeFromChars(proof.Split('.')[1]));
         return payload.RootElement.GetProperty("jti").GetString()!;
+    }
+
+    private static long At(long seconds) => TestService.Start.ToUnixTimeSeconds() + seconds;
+
+    private string Jwk()
+    {
+        ECParameters key = Key.PublicParameters();
+        return $$"""{"kty":"EC","crv":"P-256","x":"{{Base64Url.EncodeToString(key.Q.X)}}","y":"{{Base64Url.EncodeToString(key.Q.Y)}}"}""";
     }
 
     private static string Array(string[] items) => "[" + string.Join(',', items.Select(i => "\"" + i + "\"")) + "]";

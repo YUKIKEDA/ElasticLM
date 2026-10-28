@@ -64,6 +64,7 @@ internal sealed partial class ElmService
         MapLicenses();
         MapActivations();
         MapClient();
+        MapOffline();
     }
 
     // design §14.7: every request is limited per source before authentication, devices and administrators in separate
@@ -71,7 +72,11 @@ internal sealed partial class ElmService
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         PathString path = context.Request.Path;
-        bool device = path.StartsWithSegments("/v1/activations") || path.StartsWithSegments("/v1/trials") || path.StartsWithSegments("/v1/nonce");
+        bool device =
+            path.StartsWithSegments("/v1/activations")
+            || path.StartsWithSegments("/v1/trials")
+            || path.StartsWithSegments("/v1/nonce")
+            || path.StartsWithSegments("/v1/offline");
         RateLimiter<IPAddress> perIp = device ? _clientPerIp : _perIp;
         if (context.Connection.RemoteIpAddress is IPAddress address && !perIp.TryAcquire(RateLimitSource.Of(address)))
         {
@@ -383,12 +388,17 @@ internal sealed partial class ElmService
         return new AdminOutcome(ErrorCodes.ToWireName(code), target);
     }
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message)
-    {
-        int status = code switch
+    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, int? status = null) =>
+        WriteProblemAsync(context, code, message, status ?? StatusOf(code));
+
+    private static int StatusOf(ErrorCode code) =>
+        code switch
         {
-            ErrorCode.InvalidArgument or ErrorCode.Malformed or ErrorCode.FingerprintUnavailable or ErrorCode.WrongProduct =>
-                StatusCodes.Status400BadRequest,
+            ErrorCode.InvalidArgument
+            or ErrorCode.Malformed
+            or ErrorCode.FingerprintUnavailable
+            or ErrorCode.WrongProduct
+            or ErrorCode.RequestExpired => StatusCodes.Status400BadRequest,
             ErrorCode.Unauthorized or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed => StatusCodes.Status401Unauthorized,
             ErrorCode.Forbidden or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => StatusCodes.Status403Forbidden,
             ErrorCode.NotFound or ErrorCode.LicenseNotFound or ErrorCode.ActivationNotFound or ErrorCode.TrialNotOffered =>
@@ -400,6 +410,9 @@ internal sealed partial class ElmService
             ErrorCode.ServerBusy => StatusCodes.Status503ServiceUnavailable,
             _ => StatusCodes.Status500InternalServerError,
         };
+
+    private static Task WriteProblemAsync(HttpContext context, ErrorCode code, string message, int status)
+    {
         if (code == ErrorCode.RateLimited)
         {
             context.Response.Headers.RetryAfter = "1";

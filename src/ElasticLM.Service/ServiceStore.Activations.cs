@@ -189,6 +189,9 @@ internal sealed partial class ServiceStore<TDialect>
     public override async Task<long> RemoveProofsBeforeAsync(long before, CancellationToken cancellationToken) =>
         await _db.Delete(ProofJtiRow.Table).Where(j => Lt(j.ExpiresAt, before)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
 
+    public override async Task<long> RemoveOfflineRequestsBeforeAsync(long before, CancellationToken cancellationToken) =>
+        await _db.Delete(OfflineRequestRow.Table).Where(r => Lt(r.ExpiresAt, before)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
+
     private static Task<int> InsertActivationAsync(Transaction<TDialect> tx, ActivationRow a, CancellationToken cancellationToken) =>
         tx.Insert(ActivationRow.Table)
             .Values(
@@ -269,5 +272,39 @@ internal sealed partial class ServiceStore<TDialect>
 
         public override Task AppendAuditAsync(AuditEntry entry, CancellationToken cancellationToken) =>
             AppendAsync(tx, entry, now, cancellationToken);
+
+        public override async Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(
+            string keyId,
+            string nonce,
+            CancellationToken cancellationToken
+        ) =>
+            await tx.From(OfflineRequestRow.Table)
+                .Where(r => And(Eq(r.KeyId, keyId), Eq(r.Nonce, nonce)))
+                .Select(r => r)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false);
+
+        public override async Task ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken)
+        {
+            await tx.Delete(OfflineRequestRow.Table)
+                .Where(r => Eq(r.ActivationId, request.ActivationId))
+                .ExecuteAsync(cancellationToken)
+                .ConfigureAwait(false);
+            await tx.Insert(OfflineRequestRow.Table)
+                .Values(
+                    new OfflineRequestRow.Insert
+                    {
+                        ActivationId = request.ActivationId,
+                        KeyId = request.KeyId,
+                        Nonce = request.Nonce,
+                        RequestHash = request.RequestHash,
+                        LicenseId = request.LicenseId,
+                        Response = request.Response,
+                        ExpiresAt = request.ExpiresAt,
+                    }
+                )
+                .ExecuteAsync(cancellationToken)
+                .ConfigureAwait(false);
+        }
     }
 }
