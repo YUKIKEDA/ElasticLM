@@ -493,7 +493,10 @@ public sealed class ActivationClient : IAsyncDisposable
         SetState(ActivationState.Active, null, events);
 
         // From the file just checked, not from the kept one checked again through the clock guard (M4b2's measurement).
-        Schedule(DueIn(valid.License));
+        // A refresh cannot move exp past the license's expiry (design §12.6), so after a saved file the next automatic
+        // refresh waits at least the retry interval, or a refresh already due would be sent again at once (design §12.6.2).
+        TimeSpan? due = DueIn(valid.License);
+        Schedule(due < RetryInterval ? RetryInterval : due);
         return new ActivationResult.Activated(valid.License);
     }
 

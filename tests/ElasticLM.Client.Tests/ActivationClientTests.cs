@@ -294,6 +294,39 @@ public sealed class ActivationClientTests
     }
 
     /// <summary>
+    /// A token whose refresh is already due when it is saved (its exp is the license's expiry) is refreshed again only
+    /// after the retry interval, not at once.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with a trial policy, whose token ends with the trial and is within the refresh window at once.
+    ///
+    /// Steps:
+    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more.
+    ///
+    /// Expected:
+    /// - The kept seq stays 1 for the 59 minutes; it is 2 after the hour.
+    /// </remarks>
+    [Fact]
+    public async Task Refresh_AlreadyDue_WaitsTheRetryInterval()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        await vendor.TrialPolicyAsync();
+        await using ActivationClient client = vendor.Client("a");
+
+        Assert.Equal(LicenseKind.Trial, Activated(await client.StartTrialAsync(Cancel)).Kind);
+        await vendor.AdvanceForAsync(TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(1));
+        Assert.Equal(1L, vendor.Kept("a").Seq);
+        await vendor.AdvanceForAsync(TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1));
+        for (int i = 0; i < 500 && vendor.Kept("a").Seq != 2; i++)
+        {
+            await Task.Delay(10, Cancel);
+        }
+
+        Assert.Equal(2L, vendor.Kept("a").Seq);
+    }
+
+    /// <summary>
     /// A file that does not verify for this installation is not kept, and a damaged or oversized kept file is reported and
     /// replaced by the next activation.
     /// </summary>
