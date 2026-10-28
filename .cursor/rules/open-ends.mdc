@@ -20,6 +20,8 @@ A reason written as likely ("probably", 「と考えられる」) is checked fir
 - A value from a GitHub-hosted runner is written as the range of more than one run, with the reason: each run gets another machine. In M4a1 two runs of the same step gave 437–463 ms and 270–291 ms (PR #47).
 - A value compared with an earlier build names that build (its commit). In M4a2 two sizes of the M4a1 build stood in the design, 2,048 bytes apart, and neither said which build it was (PR #55).
 
+A figure of a step taken off a measured path stays in the design as the result before and after (16 ms → 7 ms). Its breakdown may stay in the PR body, as measured facts; a cause that was not found is not written in either. If the cause matters, it becomes a roadmap row. In M4b2 the design said the cause of 8 ms was "not known", and two reviews in a row asked for it to go (PR #67).
+
 A comment in the code is held to the same line: it says what was measured, and marks a cause that was not confirmed as not confirmed, with the Issue number.
 
 ```text

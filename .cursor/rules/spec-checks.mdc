@@ -17,6 +17,7 @@ A check or a test that stands for a statement in `docs/design.ja.md` implements 
 - An operation the design gives no body is called without one in its test, not with `{}`. A test that sends an empty object passes even when the handler insists on a body. In M4a3 `suspend`, `resume`, and `revoke` refused a `POST` without a body, and the review found it (PR #59).
 - When the design fixes a state machine (lease states, activation states), test every transition it lists and one transition it does not allow.
 - A time bound (expiry, not-before, grace period, lease length) is tested at the instant before, at, and after the bound, with a fake `TimeProvider`.
+- A next run timed from a value that the run may not move forward (a token's `exp`, which stops at the license's expiry) waits at least a lower bound after a success, and a test starts from a value whose time has already passed. In M4b2 a trial's refresh was already due when its file was saved, and the client refreshed 51 times in a second; the Ubuntu runner found it, not the tests on Windows (PR #67).
 - A limit (seat count, token size, request size, clock skew) has a test at the limit and one past it. A seat limit also has a test with concurrent checkouts that would exceed it.
 - A rejection in `docs/design-decisions.md` whose reason is behavior has a test that fails when the rejected option is put in its place.
 - When a design statement changes, search `docs/`, the READMEs, `.cursor/rules/`, and XML docs for every restatement and update them in the same PR.
