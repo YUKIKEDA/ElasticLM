@@ -36,7 +36,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M4b1 | `elm-service` のオンラインの有効化・更新・解除・試用（複製の検出とサーバーライセンスを含む）、その管理 API | done        | [#60](https://github.com/YUKIKEDA/ElasticLM/issues/60) |
 | M4b2 | `ElasticLM.Client` のオンラインの有効化・更新・解除・試用 | done        | [#66](https://github.com/YUKIKEDA/ElasticLM/issues/66) |
 | M4c1 | `elm-service` のオフラインの有効化・更新・解除と `elm offline process` | done        | [#70](https://github.com/YUKIKEDA/ElasticLM/issues/70) |
-| M4c2 | `ElasticLM.Client` のオフラインのファイル（要求の作成、応答の取り込み、解除の証明） | not-started | —     |
+| M4c2 | `ElasticLM.Client` のオフラインのファイル（要求の作成、応答の取り込み、解除の証明） | in-progress | [#74](https://github.com/YUKIKEDA/ElasticLM/issues/74) |
 | M4c3 | `elm-server` のサーバーライセンスの有効化と更新（オンラインと `elm server refresh-request`） | not-started | —     |
 | M4d | `elm-service` のクラウドのリースと借り出し（規則をオンプレミスと共有）、リースと利用ログの管理 API | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
