@@ -414,7 +414,18 @@ internal sealed partial class ElmService
         };
 
         // Checked with the service's own trust store before it is returned, as the CLI does (design §16).
-        IssuedLicense issued = LicenseIssuer.Issue(_signingKey, _signingCertificates, spec, Time, _trust);
+        IssuedLicense issued;
+        try
+        {
+            issued = LicenseIssuer.Issue(_signingKey, _signingCertificates, spec, Time, _trust);
+        }
+        catch (ArgumentException e)
+        {
+            // No certificate covers now (one ran out after the start), or the file does not verify.
+            ServiceLog.IssueFailed(_log, e.Message);
+            return await RefuseAsync(context, ErrorCode.InternalError, IssueFailedException.Answer, target).ConfigureAwait(false);
+        }
+
         context.Response.StatusCode = StatusCodes.Status200OK;
         context.Response.ContentType = "application/json";
         context.Response.Headers.ContentDisposition = $"attachment; filename=\"{target}.elmlic\"";

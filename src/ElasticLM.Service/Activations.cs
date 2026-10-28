@@ -68,15 +68,15 @@ internal static class Activations
         return new ActivationRequest(key, fingerprints, seq, Retry(body), Client(body, Malformed), App(body, Malformed));
     }
 
-    /// <summary>Reads the body of a refresh or a deactivation; <c>retry</c> only where the design has it (a refresh).</summary>
+    /// <summary>Reads the body of a refresh or a deactivation (design §12.6.1): <c>seq</c> and the optional <c>retry</c>.</summary>
     /// <exception cref="BodyException">The body is not valid (<c>ELM_MALFORMED</c>).</exception>
-    public static SequenceRequest ReadSequence(RequestBody body, bool withRetry)
+    public static SequenceRequest ReadSequence(RequestBody body)
     {
         ArgumentNullException.ThrowIfNull(body);
         long seq = body.TryGet("seq", out JsonElement value)
             ? Sequence(body, value, Malformed) ?? throw new BodyException(ErrorCode.Malformed, Malformed)
             : throw new BodyException(ErrorCode.Malformed, Malformed);
-        return new SequenceRequest(seq, withRetry ? Retry(body) : []);
+        return new SequenceRequest(seq, Retry(body));
     }
 
     /// <summary>Reads the body of a trial.</summary>

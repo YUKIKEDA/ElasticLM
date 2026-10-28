@@ -69,6 +69,12 @@ internal sealed partial class ElmService
                 await ProblemAsync(context, ErrorCode.InternalError, "The database failed.").ConfigureAwait(false);
             }
         }
+        catch (IssueFailedException e)
+        {
+            // Thrown inside the write transaction, so nothing of the request was written.
+            ServiceLog.IssueFailed(_log, e.Message);
+            await ProblemAsync(context, ErrorCode.InternalError, IssueFailedException.Answer).ConfigureAwait(false);
+        }
     }
 
     // design §12.4: a new activation, or the same installation key again, judged by its sequence number (design §10.4).
@@ -221,7 +227,7 @@ internal sealed partial class ElmService
         try
         {
             using RequestBody body = RequestBody.Parse(bytes, Activations.Malformed);
-            request = Activations.ReadSequence(body, withRetry: true);
+            request = Activations.ReadSequence(body);
         }
         catch (BodyException e)
         {
@@ -274,7 +280,7 @@ internal sealed partial class ElmService
         try
         {
             using RequestBody body = RequestBody.Parse(bytes, Activations.Malformed);
-            request = Activations.ReadSequence(body, withRetry: true);
+            request = Activations.ReadSequence(body);
         }
         catch (BodyException e)
         {
@@ -647,8 +653,16 @@ internal sealed partial class ElmService
             Metadata = Licenses.LoadMeta(license.Meta),
         };
 
-        // Checked with the service's own trust store before it is returned, as the CLI does (design §16).
-        return LicenseIssuer.Issue(_signingKey, _signingCertificates, spec, Time, _trust).File;
+        // Checked with the service's own trust store before it is returned, as the CLI does (design §16). The issuer refuses
+        // when no certificate covers now (one ran out after the start) or the file does not verify: an internal error.
+        try
+        {
+            return LicenseIssuer.Issue(_signingKey, _signingCertificates, spec, Time, _trust).File;
+        }
+        catch (ArgumentException e)
+        {
+            throw new IssueFailedException(e.Message);
+        }
     }
 
     private static ClientResult? Refusal(LicenseRow license, long at) =>
@@ -700,6 +714,12 @@ internal sealed partial class ElmService
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
         return context.Response.Body.WriteAsync(buffer.ToArray(), context.RequestAborted).AsTask();
+    }
+
+    /// <summary>The signing of a license file failed; the request answers <c>ELM_INTERNAL_ERROR</c>.</summary>
+    private sealed class IssueFailedException(string message) : Exception(message)
+    {
+        public const string Answer = "The service cannot sign a license file now.";
     }
 
     /// <summary>What a device request answers: a problem, a license file, or a status alone; or nothing more, when the

@@ -52,8 +52,9 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly ProofVerifier _proofs;
     private readonly ILogger _log;
     private readonly Lock _denialsLock = new();
-    private readonly Lock _runningLock = new();
-    private readonly HashSet<Task> _running = [];
+    private readonly PeriodicWork _denialWork;
+    private readonly PeriodicWork _proofWork;
+    private readonly PeriodicWork _retentionWork;
     private long _denials;
     private ITimer? _purge;
     private ITimer? _denialTimer;
@@ -94,6 +95,9 @@ internal sealed partial class ElmService : IAsyncDisposable
 
         // The jti is recorded in the database after the other checks (design §12.2 rule 5), so the verifier's store accepts all.
         _proofs = new ProofVerifier(_nonces, AcceptingReplays.Instance);
+        _denialWork = new PeriodicWork(WriteDenialsAsync);
+        _proofWork = new PeriodicWork(RemoveOldProofsAsync);
+        _retentionWork = new PeriodicWork(RemoveOldAuditAsync);
     }
 
     /// <summary>Gets the URL the service answers on.</summary>
@@ -207,16 +211,10 @@ internal sealed partial class ElmService : IAsyncDisposable
         ServiceLog.Stopped(_log);
     }
 
-    /// <summary>Waits for the timers' work that has started (the denial count, retention) to end.</summary>
+    /// <summary>Waits for the timers' work that has started (the denial count, the jti records, retention) to end.</summary>
     internal async Task WaitForTimersAsync()
     {
-        Task[] running;
-        lock (_runningLock)
-        {
-            running = [.. _running];
-        }
-
-        await Task.WhenAll(running).ConfigureAwait(false);
+        await Task.WhenAll(_denialWork.WhenIdleAsync(), _proofWork.WhenIdleAsync(), _retentionWork.WhenIdleAsync()).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -360,11 +358,11 @@ internal sealed partial class ElmService : IAsyncDisposable
         _publicUrls = _settings.PublicUrls.Count > 0 ? _settings.PublicUrls : [Url];
 
         _purge = Time.CreateTimer(_ => Purge(), null, PurgeInterval, PurgeInterval);
-        _denialTimer = Time.CreateTimer(_ => Track(WriteDenialsAsync), null, DenialInterval, DenialInterval);
-        _proofPurge = Time.CreateTimer(_ => Track(RemoveOldProofsAsync), null, ProofPurgeInterval, ProofPurgeInterval);
+        _denialTimer = Time.CreateTimer(_ => _denialWork.TryStart(), null, DenialInterval, DenialInterval);
+        _proofPurge = Time.CreateTimer(_ => _proofWork.TryStart(), null, ProofPurgeInterval, ProofPurgeInterval);
         if (_settings.AuditRetention is not null)
         {
-            _retention = Time.CreateTimer(_ => Track(RemoveOldAuditAsync), null, RetentionInterval, RetentionInterval);
+            _retention = Time.CreateTimer(_ => _retentionWork.TryStart(), null, RetentionInterval, RetentionInterval);
         }
 
         if (applied.Count > 0 && _log.IsEnabled(LogLevel.Information))
@@ -379,29 +377,6 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         ServiceLog.Started(_log, Url, _settings.Database, Signing.KeyId, Signing.ExpiresAt, (long)startup.TotalMilliseconds);
-    }
-
-    // Runs a timer's work and keeps it until it ends, so StopAsync can wait for it. The work catches its own failures.
-    private void Track(Func<Task> work)
-    {
-        Task task = work();
-        lock (_runningLock)
-        {
-            _running.Add(task);
-        }
-
-        _ = task.ContinueWith(
-            done =>
-            {
-                lock (_runningLock)
-                {
-                    _running.Remove(done);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default
-        );
     }
 
     private void Purge()

@@ -732,6 +732,52 @@ public sealed class ElmServiceActivationsTests
         Assert.Contains("activation.read", Permissions.OfRole(Permissions.RoleViewer));
     }
 
+    /// <summary>
+    /// When no certificate of the signing key covers the time any more (it ran out after the start), a device activation and
+    /// an unbound file answer ELM_INTERNAL_ERROR, and the activation writes nothing.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The service started with a certificate valid from a day before the start for 10 days; a node-locked and an unbound
+    ///   license.
+    ///
+    /// Steps:
+    /// - Advance 10 days; activate the first; ask for the second's file; list the first's activations.
+    ///
+    /// Expected:
+    /// - 500 ELM_INTERNAL_ERROR "The service cannot sign a license file now." twice; no activation.
+    /// </remarks>
+    [Fact]
+    public async Task Issue_CertificateRanOut_AnswersInternalError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        string certificate = test.WriteCertificate(
+            "short.cert",
+            Issuing.KeyUses.License | Issuing.KeyUses.Lease,
+            TestService.Start.AddDays(-1),
+            TimeSpan.FromDays(10)
+        );
+        ElmService service = await test.StartAsync(s => s with { SigningCertificateFiles = [certificate] });
+        HttpClient admin = test.Http(service, owner);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string product = await ProductAsync(admin, "app", "core");
+        (string bound, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        (string unbound, _) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, "\"binding\":\"unbound\""));
+        using var device = TestDevice.Create(test, service);
+        const string Answer = "The service cannot sign a license file now.";
+
+        test.Time.Advance(TimeSpan.FromDays(10));
+        AssertProblem(await device.ActivateAsync(key, TestDevice.Fingerprints()), HttpStatusCode.InternalServerError, "ELM_INTERNAL_ERROR", Answer);
+        await TestService.AssertProblemAsync(
+            await admin.PostAsync($"v1/admin/licenses/{unbound}/file", null, cancel),
+            HttpStatusCode.InternalServerError,
+            "ELM_INTERNAL_ERROR",
+            Answer
+        );
+        Assert.Equal(0, (await TestService.GetAsync(admin, $"v1/admin/licenses/{bound}/activations")).GetProperty("items").GetArrayLength());
+    }
+
     /// <summary>Asserts a problem answer to a device request.</summary>
     internal static void AssertProblem(DeviceAnswer answer, HttpStatusCode status, string code, string detail)
     {

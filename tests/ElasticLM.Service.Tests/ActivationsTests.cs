@@ -68,29 +68,29 @@ public sealed class ActivationsTests
     }
 
     /// <summary>
-    /// A refresh needs seq and may name retries; a deactivation needs seq and its retry is not read (design §12.6).
+    /// A refresh and a deactivation need seq and may name retries (design §12.6.1).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Bodies built in the test.
     ///
     /// Steps:
-    /// - Read {"seq":3,"retry":["a"]} with and without retry; {} and {"seq":null}.
+    /// - Read {"seq":3,"retry":["a"]}; {"seq":3}; {"seq":3,"retry":null}; {} and {"seq":null}.
     ///
     /// Expected:
-    /// - 3 with ["a"]; 3 with none; ELM_MALFORMED twice.
+    /// - 3 with ["a"]; 3 with none twice; ELM_MALFORMED twice.
     /// </remarks>
     [Fact]
     public void ReadSequence_SeqIsRequired()
     {
-        static SequenceRequest Read(string json, bool retry) =>
-            Activations.ReadSequence(RequestBody.Parse(Encoding.UTF8.GetBytes(json), Activations.Malformed), retry);
+        static SequenceRequest Read(string json) => Activations.ReadSequence(RequestBody.Parse(Encoding.UTF8.GetBytes(json), Activations.Malformed));
 
-        SequenceRequest refresh = Read("{\"seq\":3,\"retry\":[\"a\"]}", true);
+        SequenceRequest refresh = Read("{\"seq\":3,\"retry\":[\"a\"]}");
         Assert.Equal((3L, "a"), (refresh.Seq, refresh.Retry.Single()));
-        Assert.Empty(Read("{\"seq\":3,\"retry\":[\"a\"]}", false).Retry);
-        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{}", true)).Code);
-        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{\"seq\":null}", true)).Code);
+        Assert.Empty(Read("{\"seq\":3}").Retry);
+        Assert.Empty(Read("{\"seq\":3,\"retry\":null}").Retry);
+        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{}")).Code);
+        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{\"seq\":null}")).Code);
     }
 
     /// <summary>

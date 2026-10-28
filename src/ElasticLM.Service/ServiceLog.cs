@@ -42,4 +42,7 @@ internal static partial class ServiceLog
 
     [LoggerMessage(EventId = 7, Level = LogLevel.Error, Message = "A request failed on the database.")]
     public static partial void RequestFailed(ILogger log, Exception exception);
+
+    [LoggerMessage(EventId = 8, Level = LogLevel.Error, Message = "A license file could not be signed: {Reason}")]
+    public static partial void IssueFailed(ILogger log, string reason);
 }
