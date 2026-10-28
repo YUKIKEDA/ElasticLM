@@ -508,8 +508,8 @@ public sealed class ActivationClientTests
     ///
     /// Expected:
     /// - W Failed ELM_UNTRUSTED_KEY, state RefreshFailing, its jti kept with the unkept file's hash (W's own timer, due at
-    ///   once since W cannot check the kept file, may have tried too); the two more get the same file, and the list does not
-    ///   grow; A Activated with sequence 2 (the file W could not keep); no activation.clone row.
+    ///   once since W cannot check the kept file, may have tried too); the two more get the same file, and the list settles
+    ///   at the one jti the service acted on; A Activated with sequence 2 (the file W could not keep); no activation.clone row.
     /// </remarks>
     [Fact]
     public async Task UnkeptFile_IsAskedForAgain()
@@ -528,7 +528,6 @@ public sealed class ActivationClientTests
         Assert.Equal(ActivationState.RefreshFailing, w.State);
         Assert.NotEmpty(vendor.Kept("a").Retry);
         Assert.NotNull(vendor.Kept("a").Unkept);
-        int kept = vendor.Kept("a").Retry.Count;
         for (int i = 0; i < 2; i++)
         {
             refreshW = w.RefreshAsync(Cancel);
@@ -536,7 +535,14 @@ public sealed class ActivationClientTests
             Assert.Equal(ErrorCode.UntrustedKey, Failed(await refreshW).Code);
         }
 
-        Assert.Equal(kept, vendor.Kept("a").Retry.Count);
+        // W's own timer may still have a request out, whose jti is in the list until the same file comes back.
+        for (int i = 0; i < 200 && vendor.Kept("a").Retry.Count != 1; i++)
+        {
+            vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(10, Cancel);
+        }
+
+        Assert.Single(vendor.Kept("a").Retry);
         Task<ActivationResult> refreshA = a.RefreshAsync(Cancel);
         await vendor.AdvanceUntilAsync(refreshA);
         Assert.Equal(2L, Activated(await refreshA).Sequence);
