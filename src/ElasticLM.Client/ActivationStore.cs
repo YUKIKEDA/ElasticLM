@@ -14,8 +14,26 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
     /// <summary>Gets the most <c>jti</c> kept (design §8.6).</summary>
     public const int MaxRetry = 16;
 
-    /// <summary>Returns this activation with a <c>jti</c> added last, the oldest dropped past <see cref="MaxRetry"/>.</summary>
-    public StoredActivation WithRetry(string jti) => this with { Retry = [.. Retry.Append(jti).TakeLast(MaxRetry)] };
+    /// <summary>
+    /// Gets the <c>jti</c> of activations and trials sent and not yet answered, kept apart from <see cref="Retry"/> (the kept
+    /// activation's refreshes and deactivations), so the success of one does not drop the other's (design §12.6.2).
+    /// </summary>
+    public IReadOnlyList<string> Pending { get; init; } = [];
+
+    /// <summary>Returns the list a kind of request keeps its jti in.</summary>
+    public IReadOnlyList<string> ListFor(bool pending) => pending ? Pending : Retry;
+
+    /// <summary>Returns this activation with a <c>jti</c> added last to one list, the oldest dropped past <see cref="MaxRetry"/>.</summary>
+    public StoredActivation WithRetry(string jti, bool pending = false) =>
+        pending
+            ? this with
+            {
+                Pending = [.. Pending.Append(jti).TakeLast(MaxRetry)],
+            }
+            : this with
+            {
+                Retry = [.. Retry.Append(jti).TakeLast(MaxRetry)],
+            };
 }
 
 /// <summary>
@@ -121,6 +139,13 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             }
 
             w.WriteEndArray();
+            w.WriteStartArray("pending");
+            foreach (string jti in activation.Pending)
+            {
+                w.WriteStringValue(jti);
+            }
+
+            w.WriteEndArray();
             w.WriteEndObject();
         }
 
@@ -168,6 +193,28 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
         }
     }
 
+    // A list of jti: an array of at most 16 strings of 1 to 64 characters; null when it is not.
+    private static List<string>? Jtis(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > StoredActivation.MaxRetry)
+        {
+            return null;
+        }
+
+        var jtis = new List<string>();
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.String || item.GetString() is not { Length: > 0 and <= MaxJtiLength } jti)
+            {
+                return null;
+            }
+
+            jtis.Add(jti);
+        }
+
+        return jtis;
+    }
+
     // The form Write makes; anything else is damaged. The license is kept as the bytes of its JSON, checked when used.
     private static StoredActivation? Parse(byte[] bytes)
     {
@@ -186,22 +233,16 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 || !seqValue.TryGetInt64(out long seq)
                 || seq < 0
                 || licenseValue.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null)
-                || retryValue.ValueKind != JsonValueKind.Array
-                || retryValue.GetArrayLength() > StoredActivation.MaxRetry
             )
             {
                 return null;
             }
 
-            var retry = new List<string>();
-            foreach (JsonElement item in retryValue.EnumerateArray())
+            List<string>? retry = Jtis(retryValue);
+            List<string>? pending = root.TryGetProperty("pending", out JsonElement pendingValue) ? Jtis(pendingValue) : [];
+            if (retry is null || pending is null)
             {
-                if (item.ValueKind != JsonValueKind.String || item.GetString() is not { Length: > 0 and <= MaxJtiLength } jti)
-                {
-                    return null;
-                }
-
-                retry.Add(jti);
+                return null;
             }
 
             string? id = idValue.ValueKind == JsonValueKind.String ? idValue.GetString() : null;
@@ -218,7 +259,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             };
             byte[]? license = licenseValue.ValueKind == JsonValueKind.Object ? Encoding.UTF8.GetBytes(licenseValue.GetRawText()) : null;
             bool together = (id is null) == (license is null) && (id is null) == (kind is null);
-            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) : null;
+            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) { Pending = pending } : null;
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException)
         {

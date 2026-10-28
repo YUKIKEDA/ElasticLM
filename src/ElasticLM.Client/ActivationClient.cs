@@ -102,6 +102,7 @@ public sealed class ActivationClient : IAsyncDisposable
     private LicenseVerifier? _verifier;
     private string? _nonce;
     private ITimer? _timer;
+    private bool _missed;
     private Task _timerWork = Task.CompletedTask;
     private ActivationState _state;
     private volatile string? _activationId;
@@ -223,11 +224,12 @@ public sealed class ActivationClient : IAsyncDisposable
                                 w.WriteString("product", _options.ProductId);
                                 WriteDevice(w);
                                 w.WriteNumber("seq", 0);
-                                WriteSequence(w, s, includeSeq: false);
+                                WriteSequence(w, s, includeSeq: false, pending: true);
                             }),
                         stored,
                         includeKey: true,
-                        cancellationToken
+                        cancellationToken,
+                        pending: true
                     )
                     .ConfigureAwait(false);
                 return Keep(reply, AnyKind, events, refreshing: false);
@@ -262,11 +264,12 @@ public sealed class ActivationClient : IAsyncDisposable
                             {
                                 w.WriteString("product", _options.ProductId);
                                 WriteDevice(w);
-                                WriteSequence(w, s, includeSeq: false);
+                                WriteSequence(w, s, includeSeq: false, pending: true);
                             }),
                         stored,
                         includeKey: true,
-                        cancellationToken
+                        cancellationToken,
+                        pending: true
                     )
                     .ConfigureAwait(false);
                 return Keep(reply, [LicenseKind.Trial], events, refreshing: false);
@@ -460,17 +463,21 @@ public sealed class ActivationClient : IAsyncDisposable
 
         if (ReadIssued(reply.Body) is not (string id, byte[] license))
         {
-            return Fail(ErrorCode.Malformed, "The service's answer is not an issued license.");
+            return Unkept(new LicenseError(ErrorCode.Malformed, "The service's answer is not an issued license."), events, refreshing);
         }
 
         LicenseVerificationResult checkedFile = Verify(_received, license, kinds);
         if (checkedFile is not LicenseVerificationResult.Valid valid)
         {
             // A file this installation cannot use never replaces the kept one (design §12.6.2).
-            return new ActivationResult.Failed(((LicenseVerificationResult.Invalid)checkedFile).Error, null);
+            return Unkept(((LicenseVerificationResult.Invalid)checkedFile).Error, events, refreshing);
         }
 
-        var stored = new StoredActivation(id, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, []);
+        // A refresh clears its own list and keeps the activations and trials not yet answered; a new activation clears both.
+        var stored = new StoredActivation(id, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
+        {
+            Pending = refreshing ? _files.Read(out _)?.Pending ?? [] : [],
+        };
         try
         {
             _files.Write(stored);
@@ -478,16 +485,27 @@ public sealed class ActivationClient : IAsyncDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // The retry list keeps this request's jti, so the next request gets the same file again (design §10.4).
-            return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+            return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing);
         }
 
         _guard?.AcceptServerTime(valid.License.IssuedAt);
         _activationId = id;
         SetState(ActivationState.Active, null, events);
 
-        // From the file just checked: checking it again through the guard cost about 8 ms on Windows (M4b2's measurement).
+        // From the file just checked, not from the kept one checked again through the clock guard (M4b2's measurement).
         Schedule(DueIn(valid.License));
         return new ActivationResult.Activated(valid.License);
+    }
+
+    // A successful answer whose file is not kept: the retry list still names the request, and a refresh tells the state.
+    private ActivationResult.Failed Unkept(LicenseError error, List<ActivationStateChangedEventArgs> events, bool refreshing)
+    {
+        if (refreshing && _activationId is not null)
+        {
+            SetState(ActivationState.RefreshFailing, error, events);
+        }
+
+        return new ActivationResult.Failed(error, null);
     }
 
     // design §12.6.2: what a refusal says about the kept activation.
@@ -648,7 +666,8 @@ public sealed class ActivationClient : IAsyncDisposable
         Func<StoredActivation?, byte[]> body,
         StoredActivation? stored,
         bool includeKey,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        bool pending = false
     )
     {
         var target = new Uri(_service, path);
@@ -656,7 +675,7 @@ public sealed class ActivationClient : IAsyncDisposable
         Reply reply = default;
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            if (stored is { Retry.Count: >= StoredActivation.MaxRetry })
+            if (stored is not null && stored.ListFor(pending).Count >= StoredActivation.MaxRetry)
             {
                 return Reply.Failure(
                     new LicenseError(
@@ -684,7 +703,7 @@ public sealed class ActivationClient : IAsyncDisposable
             byte[] bytes = body(stored);
             string proof = ProofBuilder.Create(_key!, "POST", target, _nonce, bytes, includeKey, _time, out string proofId);
             StoredActivation before = stored ?? new StoredActivation(null, 0, null, null, []);
-            stored = before.WithRetry(proofId);
+            stored = before.WithRetry(proofId, pending);
             try
             {
                 _files.Write(stored);
@@ -695,9 +714,10 @@ public sealed class ActivationClient : IAsyncDisposable
             }
 
             reply = await SendAsync(HttpMethod.Post, target, bytes, proof, linked.Token).ConfigureAwait(false);
-            if (!reply.Unanswered)
+            if (!reply.Unanswered && reply.Error is not null)
             {
-                // The outcome is known: only an unanswered request can be the one the service acted on (design §12.6.2).
+                // Refused, or never sent: this request is not the one the service acted on (design §12.6.2). A success keeps
+                // its jti until its file is kept, so a file that cannot be kept is asked for again and is not a clone.
                 stored = before;
                 TryWrite(stored);
             }
@@ -826,17 +846,17 @@ public sealed class ActivationClient : IAsyncDisposable
     }
 
     // The kept sequence number (0 before the first activation answered, design §10.4 step 4) and the unanswered requests.
-    private static void WriteSequence(Utf8JsonWriter w, StoredActivation? stored, bool includeSeq)
+    private static void WriteSequence(Utf8JsonWriter w, StoredActivation? stored, bool includeSeq, bool pending = false)
     {
         if (includeSeq)
         {
             w.WriteNumber("seq", stored?.Seq ?? 0);
         }
 
-        if (stored is { Retry.Count: > 0 })
+        if (stored is not null && stored.ListFor(pending).Count > 0)
         {
             w.WriteStartArray("retry");
-            foreach (string jti in stored.Retry)
+            foreach (string jti in stored.ListFor(pending))
             {
                 w.WriteStringValue(jti);
             }
@@ -886,7 +906,10 @@ public sealed class ActivationClient : IAsyncDisposable
                     wait < TimeSpan.Zero ? TimeSpan.Zero
                     : wait > LongestWait ? LongestWait
                     : wait;
-                _timer = _time.CreateTimer(_ => OnTimerFired(), null, clamped, Timeout.InfiniteTimeSpan);
+
+                // Kept before it is started: a timer due now may fire at once, and its callback must see itself as the timer.
+                _timer = _time.CreateTimer(_ => OnTimerFired(), null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
+                _timer.Change(clamped, Timeout.InfiniteTimeSpan);
             }
         }
     }
@@ -904,15 +927,28 @@ public sealed class ActivationClient : IAsyncDisposable
     {
         lock (_stateLock)
         {
-            if (_disposed || !_timerWork.IsCompleted)
+            if (_disposed)
             {
+                return;
+            }
+
+            if (!_timerWork.IsCompleted)
+            {
+                // The last refresh still runs; it schedules again when it ends (below), so this tick is not lost.
+                _timer?.Dispose();
+                _timer = null;
+                _missed = true;
                 return;
             }
 
             // The timer fired once and is done; the work schedules the next one, or the fallback below does.
             _timer?.Dispose();
             _timer = null;
-            _timerWork = Task.Run(RefreshOnTimerAsync);
+            Task work = Task.Run(RefreshOnTimerAsync);
+            _timerWork = work;
+
+            // After the refresh has ended, so a tick it scheduled finds it ended and runs.
+            _ = work.ContinueWith(_ => ScheduleMissed(), CancellationToken.None, TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
         }
     }
 
@@ -947,6 +983,22 @@ public sealed class ActivationClient : IAsyncDisposable
         {
             // The disk, a disposal, or a cancellation: try again at the next interval unless disposed.
             Schedule(RetryInterval);
+        }
+    }
+
+    // A tick came while this refresh ran: schedule from the kept file now that the refresh has ended.
+    private void ScheduleMissed()
+    {
+        bool missed;
+        lock (_stateLock)
+        {
+            missed = _missed;
+            _missed = false;
+        }
+
+        if (missed && _activationId is not null && TimerIdle() && _files.Read(out _) is StoredActivation kept)
+        {
+            Schedule(DueIn(kept));
         }
     }
 
