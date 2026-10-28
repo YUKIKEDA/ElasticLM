@@ -40,23 +40,29 @@ public sealed class ElmServiceModelTests
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
 
-        JsonElement product = await CreatedAsync(admin, "v1/admin/products", """{"code":"app","name":"App"}""");
+        JsonElement product = await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"app","name":"App"}""");
         string id = product.GetProperty("id").GetString()!;
         Assert.Equal(
             ("app", "App", JsonValueKind.Null),
             (product.GetProperty("code").GetString(), product.GetProperty("name").GetString(), product.GetProperty("trialPolicyId").ValueKind)
         );
-        Assert.Equal(product.ToString(), (await GetAsync(admin, $"v1/admin/products/{id}")).ToString());
-        Assert.Equal(id, (await GetAsync(admin, "v1/admin/products")).GetProperty("items")[0].GetProperty("id").GetString());
-        Assert.Equal("App 2", (await PatchAsync(admin, $"v1/admin/products/{id}", """{"name":"App 2"}""")).GetProperty("name").GetString());
+        Assert.Equal(product.ToString(), (await TestService.GetAsync(admin, $"v1/admin/products/{id}")).ToString());
+        Assert.Equal(id, (await TestService.GetAsync(admin, "v1/admin/products")).GetProperty("items")[0].GetProperty("id").GetString());
+        Assert.Equal(
+            "App 2",
+            (await TestService.PatchAsync(admin, $"v1/admin/products/{id}", """{"name":"App 2"}""")).GetProperty("name").GetString()
+        );
 
-        await CreatedAsync(admin, $"v1/admin/products/{id}/features", """{"code":"core","name":"Core"}""");
-        JsonElement pro = await CreatedAsync(admin, $"v1/admin/products/{id}/features", """{"code":"pro","name":"Pro"}""");
+        await TestService.CreatedAsync(admin, $"v1/admin/products/{id}/features", """{"code":"core","name":"Core"}""");
+        JsonElement pro = await TestService.CreatedAsync(admin, $"v1/admin/products/{id}/features", """{"code":"pro","name":"Pro"}""");
 
         // Both are made in the same millisecond of the fake clock, so their ID order is not their creation order (UUID
         // version 7 orders to the millisecond); the two pages hold one each, in ID order, and the second has no next.
-        JsonElement first = await GetAsync(admin, $"v1/admin/products/{id}/features?limit=1");
-        JsonElement second = await GetAsync(admin, $"v1/admin/products/{id}/features?limit=1&after={first.GetProperty("next").GetString()}");
+        JsonElement first = await TestService.GetAsync(admin, $"v1/admin/products/{id}/features?limit=1");
+        JsonElement second = await TestService.GetAsync(
+            admin,
+            $"v1/admin/products/{id}/features?limit=1&after={first.GetProperty("next").GetString()}"
+        );
         string[] ids = [first.GetProperty("items")[0].GetProperty("id").GetString()!, second.GetProperty("items")[0].GetProperty("id").GetString()!];
         Assert.Equal(["core", "pro"], new[] { first, second }.Select(p => p.GetProperty("items")[0].GetProperty("code").GetString()).Order());
         Assert.True(string.CompareOrdinal(ids[0], ids[1]) < 0);
@@ -81,7 +87,7 @@ public sealed class ElmServiceModelTests
 
         Assert.Equal(
             "Pro 2",
-            (await PatchAsync(admin, $"v1/admin/products/{id}/features/{proId}", """{"name":"Pro 2"}""")).GetProperty("name").GetString()
+            (await TestService.PatchAsync(admin, $"v1/admin/products/{id}/features/{proId}", """{"name":"Pro 2"}""")).GetProperty("name").GetString()
         );
 
         JsonElement[] rows = await TestService.AuditRowsAsync(test, service, owner);
@@ -147,10 +153,10 @@ public sealed class ElmServiceModelTests
             "The product code 'dup' is in use."
         );
 
-        string p1 = (await CreatedAsync(admin, "v1/admin/products", """{"code":"p1","name":"P1"}""")).GetProperty("id").GetString()!;
-        string p2 = (await CreatedAsync(admin, "v1/admin/products", """{"code":"p2","name":"P2"}""")).GetProperty("id").GetString()!;
-        await CreatedAsync(admin, $"v1/admin/products/{p1}/features", """{"code":"f","name":"F"}""");
-        await CreatedAsync(admin, $"v1/admin/products/{p2}/features", """{"code":"f","name":"F"}""");
+        string p1 = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"p1","name":"P1"}""")).GetProperty("id").GetString()!;
+        string p2 = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"p2","name":"P2"}""")).GetProperty("id").GetString()!;
+        await TestService.CreatedAsync(admin, $"v1/admin/products/{p1}/features", """{"code":"f","name":"F"}""");
+        await TestService.CreatedAsync(admin, $"v1/admin/products/{p2}/features", """{"code":"f","name":"F"}""");
         await TestService.AssertProblemAsync(
             await admin.PostAsync($"v1/admin/products/{p1}/features", TestService.Json("""{"code":"f","name":"F"}"""), cancel),
             HttpStatusCode.Conflict,
@@ -183,15 +189,17 @@ public sealed class ElmServiceModelTests
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        string a = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
-        string b = (await CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
-        string trialA = await PolicyAsync(admin, a, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
-        string standardA = await PolicyAsync(admin, a, string.Empty);
-        string trialB = await PolicyAsync(admin, b, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        string a = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string b = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
+        string trialA = await TestService.PolicyAsync(admin, a, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        string standardA = await TestService.PolicyAsync(admin, a, string.Empty);
+        string trialB = await TestService.PolicyAsync(admin, b, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
 
         Assert.Equal(
             trialA,
-            (await PatchAsync(admin, $"v1/admin/products/{a}", $"{{\"trialPolicyId\":\"{trialA}\"}}")).GetProperty("trialPolicyId").GetString()
+            (await TestService.PatchAsync(admin, $"v1/admin/products/{a}", $"{{\"trialPolicyId\":\"{trialA}\"}}"))
+                .GetProperty("trialPolicyId")
+                .GetString()
         );
         foreach (string other in new[] { standardA, trialB, "x" })
         {
@@ -205,7 +213,7 @@ public sealed class ElmServiceModelTests
 
         Assert.Equal(
             JsonValueKind.Null,
-            (await PatchAsync(admin, $"v1/admin/products/{a}", """{"trialPolicyId":null}""")).GetProperty("trialPolicyId").ValueKind
+            (await TestService.PatchAsync(admin, $"v1/admin/products/{a}", """{"trialPolicyId":null}""")).GetProperty("trialPolicyId").ValueKind
         );
         string[] details =
         [
@@ -244,19 +252,19 @@ public sealed class ElmServiceModelTests
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        string a = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
-        string b = (await CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
+        string a = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string b = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
 
-        string first = await PolicyAsync(admin, a, string.Empty);
-        await PolicyAsync(admin, b, "\"duration\":31536000,\"overage\":10");
-        JsonElement read = await GetAsync(admin, $"v1/admin/policies/{first}");
+        string first = await TestService.PolicyAsync(admin, a, string.Empty);
+        await TestService.PolicyAsync(admin, b, "\"duration\":31536000,\"overage\":10");
+        JsonElement read = await TestService.GetAsync(admin, $"v1/admin/policies/{first}");
         Assert.Equal(
             "standard nodeLocked 1 null fromIssue null 2592000 1728000 604800 any deny none 600 null null 2 none 1209600",
             string.Join(' ', Policies.Members.Select(m => read.GetProperty(m.Name).ToString() is { Length: > 0 } s ? s : "null"))
         );
-        Assert.Equal(1, (await GetAsync(admin, $"v1/admin/policies?productId={a}")).GetProperty("items").GetArrayLength());
-        Assert.Equal(1, (await GetAsync(admin, $"v1/admin/policies?productId={b}")).GetProperty("items").GetArrayLength());
-        Assert.Equal(2, (await GetAsync(admin, "v1/admin/policies")).GetProperty("items").GetArrayLength());
+        Assert.Equal(1, (await TestService.GetAsync(admin, $"v1/admin/policies?productId={a}")).GetProperty("items").GetArrayLength());
+        Assert.Equal(1, (await TestService.GetAsync(admin, $"v1/admin/policies?productId={b}")).GetProperty("items").GetArrayLength());
+        Assert.Equal(2, (await TestService.GetAsync(admin, "v1/admin/policies")).GetProperty("items").GetArrayLength());
         await TestService.AssertProblemAsync(
             await admin.GetAsync("v1/admin/policies?productId=x", cancel),
             HttpStatusCode.BadRequest,
@@ -264,7 +272,7 @@ public sealed class ElmServiceModelTests
             "productId must be a product ID."
         );
 
-        JsonElement patched = await PatchAsync(admin, $"v1/admin/policies/{first}", """{"maxActivations":5,"duration":null}""");
+        JsonElement patched = await TestService.PatchAsync(admin, $"v1/admin/policies/{first}", """{"maxActivations":5,"duration":null}""");
         Assert.Equal((5, 2_592_000L), (patched.GetProperty("maxActivations").GetInt32(), patched.GetProperty("tokenLifetime").GetInt64()));
         foreach (string member in new[] { "licenseKind", "binding", "productId" })
         {
@@ -276,7 +284,7 @@ public sealed class ElmServiceModelTests
             );
         }
 
-        string trial = await PolicyAsync(admin, a, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        string trial = await TestService.PolicyAsync(admin, a, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
         await TestService.AssertProblemAsync(
             await admin.PatchAsync($"v1/admin/policies/{trial}", TestService.Json("""{"gracePeriod":1}"""), cancel),
             HttpStatusCode.BadRequest,
@@ -320,24 +328,24 @@ public sealed class ElmServiceModelTests
         string owner = await test.SetupAsync();
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
-        string product = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
-        string trial = await PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
-        string policy = await PolicyAsync(admin, product, string.Empty);
+        string product = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string trial = await TestService.PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        string policy = await TestService.PolicyAsync(admin, product, string.Empty);
 
         for (int i = 0; i < 20; i++)
         {
             string? trialValue = i % 2 == 0 ? trial : null;
             string trialJson = trialValue is null ? "null" : $"\"{trialValue}\"";
             await Task.WhenAll(
-                PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"name\":\"n{i}\"}}"),
-                PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"trialPolicyId\":{trialJson}}}"),
-                PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"maxActivations\":{i + 1}}}"),
-                PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"overage\":{i}}}")
+                TestService.PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"name\":\"n{i}\"}}"),
+                TestService.PatchAsync(admin, $"v1/admin/products/{product}", $"{{\"trialPolicyId\":{trialJson}}}"),
+                TestService.PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"maxActivations\":{i + 1}}}"),
+                TestService.PatchAsync(admin, $"v1/admin/policies/{policy}", $"{{\"overage\":{i}}}")
             );
 
-            JsonElement p = await GetAsync(admin, $"v1/admin/products/{product}");
+            JsonElement p = await TestService.GetAsync(admin, $"v1/admin/products/{product}");
             Assert.Equal(($"n{i}", trialValue), (p.GetProperty("name").GetString(), p.GetProperty("trialPolicyId").GetString()));
-            JsonElement q = await GetAsync(admin, $"v1/admin/policies/{policy}");
+            JsonElement q = await TestService.GetAsync(admin, $"v1/admin/policies/{policy}");
             Assert.Equal((i + 1, i), (q.GetProperty("maxActivations").GetInt32(), q.GetProperty("overage").GetInt32()));
         }
     }
@@ -366,7 +374,7 @@ public sealed class ElmServiceModelTests
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        string a = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string a = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
         async Task Refused(string body, string code, string detail) =>
             await TestService.AssertProblemAsync(
                 await admin.PostAsync("v1/admin/policies", TestService.Json(body), cancel),
@@ -387,7 +395,7 @@ public sealed class ElmServiceModelTests
             "ELM_INVALID_ARGUMENT",
             "An unbound policy uses expirationBasis fromIssue."
         );
-        Assert.Equal(0, (await GetAsync(admin, "v1/admin/policies")).GetProperty("items").GetArrayLength());
+        Assert.Equal(0, (await TestService.GetAsync(admin, "v1/admin/policies")).GetProperty("items").GetArrayLength());
     }
 
     /// <summary>
@@ -412,9 +420,11 @@ public sealed class ElmServiceModelTests
         ElmService service = await test.StartAsync();
         HttpClient admin = test.Http(service, owner);
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        string a = (await CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
-        string b = (await CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
-        string f = (await CreatedAsync(admin, $"v1/admin/products/{a}/features", """{"code":"f","name":"F"}""")).GetProperty("id").GetString()!;
+        string a = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"a","name":"A"}""")).GetProperty("id").GetString()!;
+        string b = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"b","name":"B"}""")).GetProperty("id").GetString()!;
+        string f = (await TestService.CreatedAsync(admin, $"v1/admin/products/{a}/features", """{"code":"f","name":"F"}"""))
+            .GetProperty("id")
+            .GetString()!;
         string unknown = Guid.CreateVersion7().ToString("D");
         async Task NotFound(Task<HttpResponseMessage> call, string detail) =>
             await TestService.AssertProblemAsync(await call, HttpStatusCode.NotFound, "ELM_NOT_FOUND", detail);
@@ -512,7 +522,7 @@ public sealed class ElmServiceModelTests
         HttpClient admin = test.Http(service, reader);
         DateTimeOffset end = TestService.Start.AddDays(364);
 
-        JsonElement status = await GetAsync(admin, "v1/admin/signing-key");
+        JsonElement status = await TestService.GetAsync(admin, "v1/admin/signing-key");
         Assert.Equal(
             (KeyFiles.KeyId(test.SigningKey), "[\"license\",\"lease\"]", "2027-09-30T00:00:00Z", false),
             (
@@ -525,33 +535,8 @@ public sealed class ElmServiceModelTests
         Assert.Equal(end, DateTimeOffset.Parse(status.GetProperty("expiresAt").GetString()!, System.Globalization.CultureInfo.InvariantCulture));
 
         test.Time.Advance(end - TimeSpan.FromDays(30) - test.Time.GetUtcNow());
-        Assert.False((await GetAsync(admin, "v1/admin/signing-key")).GetProperty("expiresSoon").GetBoolean());
+        Assert.False((await TestService.GetAsync(admin, "v1/admin/signing-key")).GetProperty("expiresSoon").GetBoolean());
         test.Time.Advance(TimeSpan.FromSeconds(1));
-        Assert.True((await GetAsync(admin, "v1/admin/signing-key")).GetProperty("expiresSoon").GetBoolean());
-    }
-
-    private static async Task<string> PolicyAsync(HttpClient admin, string productId, string members)
-    {
-        string body = $"{{\"productId\":\"{productId}\",\"name\":\"p\"{(members.Length > 0 ? "," + members : string.Empty)}}}";
-        return (await CreatedAsync(admin, "v1/admin/policies", body)).GetProperty("id").GetString()!;
-    }
-
-    private static async Task<JsonElement> CreatedAsync(HttpClient admin, string path, string body)
-    {
-        using HttpResponseMessage response = await admin.PostAsync(path, TestService.Json(body), TestContext.Current.CancellationToken);
-        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.True(response.StatusCode == HttpStatusCode.Created, text);
-        return JsonDocument.Parse(text).RootElement.Clone();
-    }
-
-    private static async Task<JsonElement> GetAsync(HttpClient admin, string path) =>
-        JsonDocument.Parse(await admin.GetStringAsync(path, TestContext.Current.CancellationToken)).RootElement.Clone();
-
-    private static async Task<JsonElement> PatchAsync(HttpClient admin, string path, string body)
-    {
-        using HttpResponseMessage response = await admin.PatchAsync(path, TestService.Json(body), TestContext.Current.CancellationToken);
-        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
-        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
-        return JsonDocument.Parse(text).RootElement.Clone();
+        Assert.True((await TestService.GetAsync(admin, "v1/admin/signing-key")).GetProperty("expiresSoon").GetBoolean());
     }
 }

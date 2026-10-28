@@ -308,6 +308,12 @@ M4a2（Issue #54）の実測（同じ条件）:
 - `elm-service` は 20.4 MB（20,441,088 バイト）。同じ日に発行した M4a1 の最終版（コードは main の `e6a56ca` と同じで、PR #47 のレビュー後の修正を含む。19,786,240 バイト）より 654,848 バイト大きい。上の M4a1 の 19,784,192 バイトは、PR #47 のレビュー前の版で測った値である。ILC のマップで分けると、応答の JSON のソース生成（7 つの型と context）が約 195 KB、3 つの表のレコードとその AuraORM の型付けが約 140 KB、管理 API の処理と保存先が約 110 KB で、残りは新しく使う BCL の部分（`JsonDocument` など）と型の情報である。§4.2 の目標 40 MB 以下に収まる。
 - ポリシーの作成 1 件（本文の読み取りと検査、製品の検索、ポリシーと監査ログの行の追記、1 つのトランザクション）は 1.02〜1.14 ms（SQLite、JIT の Release、ループバックの HTTP を含む、3 回の実行で各 200 件の平均）。M4a1 の API キーの作成（1.05〜1.11 ms）と同じ程度である。
 
+M4a3（Issue #58）の実測（同じ条件）:
+
+- `elm-service` は 20.9 MB（20,909,056 バイト）。M4a2 の最終版（main の `23dd023`、20,467,712 バイト）より 441,344 バイト大きい。ILC のマップで分けると、ライセンスの JSON のソース生成（応答の型、保存する機能の配列、`meta` の辞書）が約 138 KB、管理 API の処理と保存先が約 111 KB、サービスで新しく使う発行と検証の部品（`LicenseIssuer` と、発行したファイルを確かめる `LicenseVerifier`）が約 50 KB、表の型付けが約 21 KB で、残りは新しく使う BCL の部分と型の情報である。§4.2 の目標 40 MB 以下に収まる。
+- ライセンスの作成 1 件（本文の読み取りと検査、ポリシーと機能の検索、キーの生成、ライセンスと監査ログの行の追記）は 1.20〜1.34 ms（SQLite、JIT の Release、ループバックの HTTP を含む、3 回の実行で各 200 件の平均）。
+- `Unbound` のライセンスファイル 1 件は 2.19〜2.71 ms（同じ条件）。うち発行（`LicenseIssuer.Issue`）が、署名だけで 0.35〜0.39 ms、出したファイルをトラストストアで確かめるまで含めて 0.96〜1.13 ms（各 200 回の平均、3 回）で、残りはライセンス・ポリシー・製品の読み取りと監査ログの行の追記、HTTP である。
+
 M3c（Issue #25）の実測（同じ条件）:
 
 - `elm-server` は 12.0 MB（12,021,760 バイト。M3b の 11,430,912 から +0.6 MB）。
@@ -810,7 +816,7 @@ stateDiagram-v2
 
 - 形式: `ELM-` に続けて、Crockford の base32 の 5 文字を 4 組、`-` でつなぐ（例: `ELM-7Q2KX-M9D4R-HV0T8-3NPWZ`）。100 ビットの乱数を `RandomNumberGenerator` で作る。
 - サービスは SHA-256 のハッシュだけを保存し、表示は発行のときに一度だけ行う。100 ビットの乱数なので、塩なしのハッシュで総当たりに耐える。
-- 入力では大文字小文字と `-` の有無を区別しない。
+- 入力では大文字小文字と `-` の有無を区別しない。保存するハッシュは、大文字にして `-` を除いた形（`ELM` と 20 文字）の ASCII の SHA-256 である（M4a3）。
 
 ### 9.6 サーバーライセンス
 
@@ -1613,7 +1619,7 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 - SQLite: `Microsoft.Data.Sqlite.Core` と `SQLitePCLRaw.provider.e_sqlite3` を使い、SQLite 本体は `vendor/sqlite/` で版と SHA-256 を固定したアマルガムから、各 OS 向けの静的ライブラリにビルドして、`DirectPInvoke` と `NativeLibrary` で実行ファイルに組み込む（https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop ）。D0 で SQLite 3.54.1 を win-x64 で組み込み、横に DLL のない 25.3 MB の実行ファイルで `sqlite_version()` が動くことを確かめた。M4a1 で 3 OS の CI に足した（§14.1）。
 - SQLite のビルド（0.72）: `vendor/sqlite/` に、版と SHA-256 を固定したアマルガム（`sqlite3.c` と `sqlite3.h`）とビルドのスクリプトを置く。`build.ps1` と CI は、ビルドのたびに各 OS の C コンパイラー（Windows は MSVC の `cl`、Linux は `clang`、macOS は Xcode の `clang`）で静的ライブラリを作る。NativeAOT が同じ C の道具をすでに求めるため、新しく要る道具はない。ビルド済みのライブラリは、中身を確かめられないのでリポジトリに置かない。
 - `vendor/sqlite/build.ps1` は、`SHA256SUMS` と合わないアマルガムをビルドしない。同じアマルガムから、NativeAOT が組み込む静的ライブラリと、JIT で動くとき（テスト、`dotnet run`）に読む共有ライブラリの 2 つを作る。共有ライブラリは発行に含めない。コンパイルの選択肢は `SQLITE_THREADSAFE=1`、`SQLITE_DQS=0`、`SQLITE_DEFAULT_MEMSTATUS=0`、`SQLITE_ENABLE_COLUMN_METADATA=1`（`Microsoft.Data.Sqlite` が使う）である（https://sqlite.org/compile.html ）。
-- 値の持ち方: 時刻は UNIX 秒の整数（両方とも `bigint` 相当）、バイト列は SQLite の `BLOB` と PostgreSQL の `bytea`、真偽は SQLite の `INTEGER`（0 / 1）と PostgreSQL の `boolean` とする。SQLite の接続は外部キーを有効にし、ほかの書き手を 5 秒まで待つ。SQLite のファイルは、移行のときに先行書き込みログ（WAL）にする。読み手が書き手を待たず、コミットごとの書き出しも減る（§4.2）。
+- 値の持ち方: 時刻は UNIX 秒の整数（両方とも `bigint` 相当）、バイト列は SQLite の `BLOB` と PostgreSQL の `bytea`、真偽は SQLite の `INTEGER`（0 / 1）と PostgreSQL の `boolean` とする。SQLite の接続は外部キーを有効にし、ほかの書き手を 5 秒まで待つ。配列と組（ライセンスの `features` と `meta`）は、`ServiceJsonContext` のソース生成で書いた JSON の文字列の列（SQLite は `TEXT`、PostgreSQL は `text`）に持ち、SQL では中を読まない。PostgreSQL の `jsonb` は採らない（中を SQL で読まず、両方のエンジンで同じ形にするため）（PR #59 のレビュー）。SQLite のファイルは、移行のときに先行書き込みログ（WAL）にする。読み手が書き手を待たず、コミットごとの書き出しも減る（§4.2）。
 - スキーマの移行は、版の番号つきの SQL ファイルを実行ファイルに埋め込み、起動時に順に流す。前身はマイグレーションが消えて新しい環境で表が作られなかったため、移行は起動時に必ず行い、テストで空のデータベースから最新まで流す。
 - 移行の形（0.69）: ファイルは `0001_<名前>.sql` の 4 桁の番号から始め、SQLite 用と PostgreSQL 用を別のフォルダーに置く。流した版とファイルの SHA-256 を表 `schema_migrations` に記録し、流した後に書き換えたファイルがあれば起動しない。1 つの版は 1 つのトランザクションで流す。PostgreSQL では助言ロック（`pg_advisory_lock`）を取り、複数のノードが同時に起動しても一度だけ流す。SQLite には助言ロックがないので、各版の書き込みのトランザクションの中で記録を読み直し、ほかのプロセスが先に流した版は流さない（その版の SHA-256 が違えば起動しない）。
 - PostgreSQL は 15〜18 に対応し、CI では 18 で同じテストを流す（0.62, 0.81）。Windows と macOS の CI は SQLite だけを流す。
@@ -1749,7 +1755,7 @@ M4a2 のエンドポイント（0.82〜0.84、0.87）:
 - 一覧の形、`after` と `limit`、時刻の書き方は M4a1 と同じ。`after` は ID である。
 - 知らない `{id}`・`{featureId}`・形の違う ID は `404` と `ELM_NOT_FOUND`。本文の中の ID（`productId`、`trialPolicyId`）が指す実体がなければ `400` と `ELM_INVALID_ARGUMENT` にする（パスの実体ではないため）。
 - 製品・機能・ポリシーを消す操作はない（0.87）。
-- 実体が持つメンバーのうち変えられないもの（製品と機能の `code`、機能の `productId`、ポリシーの `productId`・`licenseKind`・`binding`）を `PATCH` に送れば、知らないメンバーのように無視せず、`400` と `ELM_INVALID_ARGUMENT`（「… cannot be changed.」）にする。「知らないメンバーは無視する」は版の違うクライアントのための決まりで、既知のメンバーには当てない（PR #55 のレビュー）。
+- 実体が持つメンバーのうち変えられないもの（製品と機能の `code`、機能の `productId`、ポリシーの `productId`・`licenseKind`・`binding`、ライセンスの `productId`・`policyId`・`expiresAt`）を `PATCH` に送れば、知らないメンバーのように無視せず、`400` と `ELM_INVALID_ARGUMENT`（「… cannot be changed.」。ライセンスの `expiresAt` は「expiresAt is changed by extend.」と、変える道を示す）にする。「知らないメンバーは無視する」は版の違うクライアントのための決まりで、既知のメンバーには当てない（PR #55 のレビュー）。
 - `PATCH` は、変える行を書き込みのトランザクションの中で読み（PostgreSQL は自分自身への `UPDATE ... RETURNING` で行をロックする）、送ったメンバーを重ねて、その全体を確かめてから書く。別のメンバーを同時に変えた 2 つの `PATCH` は、どちらの変更も残る（PR #55 のレビュー）。
 - 監査ログ（§18.2）: 作成の行の `detail` は送られたメンバー、変更の行の `detail` は変えたメンバーとその新しい値。`target` は実体の ID。
 
@@ -1761,7 +1767,7 @@ M4a3 のエンドポイント（0.85, 0.86）:
 | `GET /v1/admin/licenses` | `license.read` | 一覧。`?productId=`、`?policyId=`、`?state=`（`active`・`suspended`・`expired`・`revoked`）で絞り込める |
 | `GET /v1/admin/licenses/{id}` | `license.read` | 1 件 |
 | `PATCH /v1/admin/licenses/{id}` | `license.update` | 本文 `{name, meta, maxActivations, features}` のうち送ったもの。`maxActivations` に `null` を送ればポリシーの値に戻す |
-| `POST /v1/admin/licenses/{id}/suspend` | `license.update` | `Active` → `Suspended` |
+| `POST /v1/admin/licenses/{id}/suspend` | `license.update` | `Active` → `Suspended`。本文なし（`suspend`・`resume`・`revoke` は本文を読まないので、送られても無視する） |
 | `POST /v1/admin/licenses/{id}/resume` | `license.update` | `Suspended` → `Active` |
 | `POST /v1/admin/licenses/{id}/revoke` | `license.revoke` | `Active`・`Suspended`・`Expired` → `Revoked` |
 | `POST /v1/admin/licenses/{id}/extend` | `license.update` | 本文 `{expiresAt}`。`Active` か `Expired` で、期限のあるライセンスの期限を延ばす |
@@ -1775,7 +1781,7 @@ M4a3 のエンドポイント（0.85, 0.86）:
 | `name` | 文字列 | 作成のとき必須 | 1〜256 文字（顧客名など。顧客の実体は作らない） |
 | `features` | 配列 | 作成のとき必須 | 1〜256 個（§8.6）。各要素は `code`（ポリシーと同じ製品の機能、重なりなし）、`ver`（任意、§9.2 の範囲、64 文字まで）、`seats`（`server` のときだけ必須で 1〜1,000,000、ほかで送れば誤り）、`expiresAt`（任意、機能ごとの期限。下の期限の決まり） |
 | `maxActivations` | 整数か `null` | 任意 | 1〜100,000。`null` か省略はポリシーの値 |
-| `expiresAt` | 時刻 | 任意（作成のときだけ） | 下の期限の決まり |
+| `expiresAt` | 時刻 | 任意（作成のときだけ） | 下の期限の決まり。時刻は秒までの UTC の 1 つの形（`2026-10-27T00:00:00Z`）だけを受け、ほかの形（小数の秒、`+00:00` など）は `ELM_MALFORMED`。機能の `expiresAt` と `extend` の `{expiresAt}` も同じ |
 | `meta` | 文字列の組 | 任意 | §8.6（32 組、キー 64 バイト、値 1 KiB） |
 
 - 期限（0.85）: `fromIssue` のポリシーでは、既定は作った時刻 + `duration`（`null` なら期限なし）。`expiresAt` で上書きでき、今より後でなければ `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のポリシーでは、期限は最初の有効化（M4b）まで `null` で、`expiresAt` を送れば `400`。

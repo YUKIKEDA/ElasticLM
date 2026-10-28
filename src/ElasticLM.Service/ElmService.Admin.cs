@@ -61,6 +61,7 @@ internal sealed partial class ElmService
             (RequestDelegate)(c => AdminAsync(c, Permissions.AuditRead, AuditActions.AuditVerify, VerifyAuditAsync))
         );
         MapModel();
+        MapLicenses();
     }
 
     // design §14.7: every request is limited per source before authentication; an authenticated one also per API key.
@@ -383,7 +384,7 @@ internal sealed partial class ElmService
             ErrorCode.InvalidArgument or ErrorCode.Malformed => StatusCodes.Status400BadRequest,
             ErrorCode.Unauthorized => StatusCodes.Status401Unauthorized,
             ErrorCode.Forbidden => StatusCodes.Status403Forbidden,
-            ErrorCode.NotFound => StatusCodes.Status404NotFound,
+            ErrorCode.NotFound or ErrorCode.LicenseNotFound => StatusCodes.Status404NotFound,
             ErrorCode.Conflict => StatusCodes.Status409Conflict,
             ErrorCode.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
             ErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,

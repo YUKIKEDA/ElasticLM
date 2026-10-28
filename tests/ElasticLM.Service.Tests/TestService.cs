@@ -228,6 +228,44 @@ internal sealed class TestService : IAsyncDisposable
         }
     }
 
+    /// <summary>Creates a policy of a product with the members given (JSON members, or empty) and returns its ID.</summary>
+    public static async Task<string> PolicyAsync(HttpClient admin, string productId, string members)
+    {
+        string body = $"{{\"productId\":\"{productId}\",\"name\":\"p\"{(members.Length > 0 ? "," + members : string.Empty)}}}";
+        return (await CreatedAsync(admin, "v1/admin/policies", body)).GetProperty("id").GetString()!;
+    }
+
+    /// <summary>Posts a body that must give 201 and returns the answer.</summary>
+    public static async Task<JsonElement> CreatedAsync(HttpClient admin, string path, string body)
+    {
+        using HttpResponseMessage response = await admin.PostAsync(path, Json(body), TestContext.Current.CancellationToken);
+        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.Created, text);
+        return JsonDocument.Parse(text).RootElement.Clone();
+    }
+
+    /// <summary>Gets a path that must give 200 and returns the answer.</summary>
+    public static async Task<JsonElement> GetAsync(HttpClient admin, string path) =>
+        JsonDocument.Parse(await admin.GetStringAsync(path, TestContext.Current.CancellationToken)).RootElement.Clone();
+
+    /// <summary>Patches a path with a body that must give 200 and returns the answer.</summary>
+    public static async Task<JsonElement> PatchAsync(HttpClient admin, string path, string body)
+    {
+        using HttpResponseMessage response = await admin.PatchAsync(path, Json(body), TestContext.Current.CancellationToken);
+        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        return JsonDocument.Parse(text).RootElement.Clone();
+    }
+
+    /// <summary>Posts a body that must give 200 and returns the answer.</summary>
+    public static async Task<JsonElement> PostOkAsync(HttpClient admin, string path, string body)
+    {
+        using HttpResponseMessage response = await admin.PostAsync(path, Json(body), TestContext.Current.CancellationToken);
+        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        return JsonDocument.Parse(text).RootElement.Clone();
+    }
+
     // The service runs its timers on the fake clock but on thread-pool threads; wait, in real time, for their work. The same
     // shape as the elm-server tests' wait for a background write.
     public static async Task WaitForAsync(Func<Task<bool>> condition)

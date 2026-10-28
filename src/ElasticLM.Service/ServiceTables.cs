@@ -94,3 +94,21 @@ internal sealed partial record PolicyRow(
     long CreatedAt,
     long UpdatedAt
 );
+
+/// <summary>A license (design §9.3 to §9.5): its key only as a hash; features and meta as JSON.</summary>
+[Table("licenses", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record LicenseRow(
+    [PrimaryKey] Guid Id,
+    Guid ProductId,
+    Guid PolicyId,
+    string Name,
+    byte[] KeyHash,
+    long? MaxActivations,
+    long? ExpiresAt,
+    long? SuspendedAt,
+    long? RevokedAt,
+    string Features,
+    string Meta,
+    long CreatedAt,
+    long UpdatedAt
+);

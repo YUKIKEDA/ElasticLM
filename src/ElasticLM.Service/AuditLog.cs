@@ -168,4 +168,13 @@ internal static class AuditActions
     public const string PolicyGet = "policy.get";
     public const string PolicyUpdate = "policy.update";
     public const string SigningKeyGet = "signingkey.get";
+    public const string LicenseCreate = "license.create";
+    public const string LicenseList = "license.list";
+    public const string LicenseGet = "license.get";
+    public const string LicenseUpdate = "license.update";
+    public const string LicenseSuspend = "license.suspend";
+    public const string LicenseResume = "license.resume";
+    public const string LicenseRevoke = "license.revoke";
+    public const string LicenseExtend = "license.extend";
+    public const string LicenseFile = "license.file";
 }
