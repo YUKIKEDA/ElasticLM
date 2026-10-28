@@ -160,12 +160,12 @@ public sealed class ElmServiceActivationsTests
     /// Steps:
     /// - For each strategy: activate; activate again with seq 0 naming the first request, as after a lost first answer;
     ///   refresh with seq 1, refresh with seq 1 again naming the second request, reactivate with
-    ///   seq 2; deactivate with seq 2 naming the reactivation, as after a lost answer. Then for each clone case (seq 1 without
+    ///   seq 2 and a new fingerprint; deactivate with seq 2 naming the reactivation, as after a lost answer. Then for each clone case (seq 1 without
     ///   retry, seq 0, seq 9, a reactivation without seq) take a new device to seq 2 and send it; read the activation and the
     ///   audit row; under Deny refresh it with seq 2, deactivate it with seq 0, then with seq 2.
     ///
     /// Expected:
-    /// - 201, 200 with the same ID and file, 200 with seq 2, 200 with the same file, 200 with the same ID and seq 3, 204 with no clone row. Under Deny each
+    /// - 201, 200 with the same ID and file, 200 with seq 2, 200 with the same file, 200 with the same ID, seq 3, and only the new fingerprint, 204 with no clone row. Under Deny each
     ///   clone gives 409 ELM_CLONE_DETECTED, the activation is blocked, its audit row says ELM_CLONE_DETECTED with the
     ///   strategy; the later refresh gives 409; the deactivation with seq 0 gives 409, with seq 2 gives 204. Under Flag each
     ///   gives 200 with seq 3, the activation is not blocked, the audit row says ELM_OK.
@@ -194,9 +194,10 @@ public sealed class ElmServiceActivationsTests
             DeviceAnswer retried = await device.RefreshAsync(activated.ActivationId, 1, ["unrelated", second.Jti]);
             Assert.Equal(HttpStatusCode.OK, retried.Status);
             Assert.Equal(second.File, retried.File);
-            DeviceAnswer again = await device.ActivateAsync(key, prints, seq: 2);
+            string[] moved = TestDevice.Fingerprints();
+            DeviceAnswer again = await device.ActivateAsync(key, moved, seq: 2);
             Assert.Equal((HttpStatusCode.OK, activated.ActivationId), (again.Status, again.ActivationId));
-            Assert.Equal(3L, device.Verify(again.File, prints).Sequence);
+            Assert.Equal((3L, moved[0]), (device.Verify(again.File, moved).Sequence, device.Verify(again.File, moved).Fingerprints.Single()));
             Assert.Equal(HttpStatusCode.NoContent, (await device.DeactivateAsync(activated.ActivationId, 2, [again.Jti])).Status);
             Assert.DoesNotContain(
                 await TestService.AuditRowsAsync(test, service, owner),
@@ -499,15 +500,17 @@ public sealed class ElmServiceActivationsTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Policies: the defaults; unbound; fingerprints ignored with client info hostAndUser; a license of each.
+    /// - Policies: the defaults; unbound; fingerprints ignored with client info hostAndUser and 2 activations; a license of
+    ///   each.
     ///
     /// Steps:
     /// - Activate with a key no license has, and with text that is not a key; the unbound license; the default one without
-    ///   fingerprints; the ignoring one without fingerprints and with client info; read that activation.
+    ///   fingerprints; the ignoring one with fingerprints and client info; read that activation; the ignoring one from
+    ///   another device without fingerprints.
     ///
     /// Expected:
     /// - 404 ELM_LICENSE_NOT_FOUND twice; 409 ELM_CONFLICT; 400 ELM_FINGERPRINT_UNAVAILABLE; 201 with a token without
-    ///   fingerprints, and the activation's client is the one sent.
+    ///   fingerprints although some were sent, and the activation's client is the one sent; 201.
     /// </remarks>
     [Fact]
     public async Task Activate_LicenseAndPolicy_AreChecked()
@@ -517,10 +520,8 @@ public sealed class ElmServiceActivationsTests
         string product = await ProductAsync(admin, "app", "core");
         (_, string standard) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
         (_, string unbound) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, "\"binding\":\"unbound\""));
-        (_, string ignoring) = await LicenseAsync(
-            admin,
-            await TestService.PolicyAsync(admin, product, "\"fingerprintMatching\":\"ignore\",\"clientInfoStrategy\":\"hostAndUser\"")
-        );
+        const string Ignoring = "\"fingerprintMatching\":\"ignore\",\"clientInfoStrategy\":\"hostAndUser\",\"maxActivations\":2";
+        (_, string ignoring) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, Ignoring));
         using var device = TestDevice.Create(test, service);
         string[] prints = TestDevice.Fingerprints();
 
@@ -543,11 +544,13 @@ public sealed class ElmServiceActivationsTests
             "ELM_FINGERPRINT_UNAVAILABLE",
             "The policy compares fingerprints, and the request has none."
         );
-        DeviceAnswer bound = await device.ActivateAsync(ignoring, [], more: ""","client":{"host":"pc","user":"u"}""");
+        DeviceAnswer bound = await device.ActivateAsync(ignoring, prints, more: ""","client":{"host":"pc","user":"u"}""");
         Assert.Equal(HttpStatusCode.Created, bound.Status);
         Assert.Empty(device.Verify(bound.File, prints).Fingerprints);
         JsonElement client = (await TestService.GetAsync(admin, $"v1/admin/activations/{bound.ActivationId}")).GetProperty("client");
         Assert.Equal(("pc", "u"), (client.GetProperty("host").GetString(), client.GetProperty("user").GetString()));
+        using var bare = TestDevice.Create(test, service);
+        Assert.Equal(HttpStatusCode.Created, (await bare.ActivateAsync(ignoring, [])).Status);
     }
 
     /// <summary>
