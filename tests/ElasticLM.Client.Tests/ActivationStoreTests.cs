@@ -26,10 +26,11 @@ public sealed class ActivationStoreTests : IDisposable
     ///
     /// Steps:
     /// - Read; write an activation with a license and two jti and read it; write a pending one (no ID, no license, seq 0)
-    ///   and read it; add 17 jti one by one to an empty activation.
+    ///   and read it; write one with a retry list and a pending list and read it; add 17 jti one by one to an empty
+    ///   activation; add one to the pending list.
     ///
     /// Expected:
-    /// - Null and not damaged; the same values; the same values; the 16 last jti in order.
+    /// - Null and not damaged; the same values; the same values; both lists; the 16 last jti in order; the pending one.
     /// </remarks>
     [Fact]
     public void WriteRead_RoundTrips()
@@ -49,6 +50,10 @@ public sealed class ActivationStoreTests : IDisposable
         read = store.Read(out _)!;
         Assert.Equal(((string?)null, 0L, true, "p"), (read.ActivationId, read.Seq, read.License is null, string.Join(' ', read.Retry)));
 
+        store.Write(new StoredActivation(null, 0, null, null, ["r"]) { Pending = ["p1", "p2"] });
+        read = store.Read(out _)!;
+        Assert.Equal(("r", "p1 p2"), (string.Join(' ', read.Retry), string.Join(' ', read.Pending)));
+
         StoredActivation growing = new(null, 0, null, null, []);
         for (int i = 0; i < 17; i++)
         {
@@ -56,6 +61,7 @@ public sealed class ActivationStoreTests : IDisposable
         }
 
         Assert.Equal(Enumerable.Range(1, 16).Select(i => "j" + i), growing.Retry);
+        Assert.Equal(["p"], new StoredActivation(null, 0, null, null, []).WithRetry("p", pending: true).Pending);
     }
 
     /// <summary>
@@ -69,7 +75,7 @@ public sealed class ActivationStoreTests : IDisposable
     /// Steps:
     /// - Read 16 jti of 64 characters; then 17 jti; a jti of 65 characters; an empty jti; an ID that is not a UUID; an ID
     ///   without a license; a license without an ID; seq -1; a missing member; a kind not in the three; an ID and license
-    ///   without a kind; an array; a member twice.
+    ///   without a kind; a pending list of 17 and one with an empty jti; an array; a member twice.
     ///
     /// Expected:
     /// - The first reads; every other is null and damaged.
@@ -98,6 +104,8 @@ public sealed class ActivationStoreTests : IDisposable
         Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null}"""));
         Assert.True(Damaged($$"""{"activationId":"{{Id}}","seq":1,"kind":"other","license":{},"retry":[]}"""));
         Assert.True(Damaged($$"""{"activationId":"{{Id}}","seq":1,"kind":null,"license":{},"retry":[]}"""));
+        Assert.True(Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"pending":{{Retry(17, 1)}}}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"pending":[""]}"""));
         Assert.True(Damaged("[]"));
         Assert.True(Damaged("""{"activationId":null,"seq":0,"seq":0,"kind":null,"license":null,"retry":[]}"""));
     }

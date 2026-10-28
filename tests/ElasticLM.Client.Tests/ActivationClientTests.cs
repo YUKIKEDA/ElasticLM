@@ -460,6 +460,149 @@ public sealed class ActivationClientTests
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
     }
 
+    /// <summary>
+    /// A successful answer whose file this installation cannot keep leaves its request named in the retry list, so the next
+    /// refresh gets the same file again instead of being judged a clone (design §10.4, §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Client A activated; client W on the same folder whose trust store has another root key (an app before a key
+    ///   rotation reached it).
+    ///
+    /// Steps:
+    /// - W refreshes; read W's state and the kept retry list; A refreshes; read the audit log.
+    ///
+    /// Expected:
+    /// - W Failed ELM_UNTRUSTED_KEY, state RefreshFailing, its jti kept (W's own timer, due at once since W cannot check the
+    ///   kept file, may have tried too); A Activated with sequence 2 (the file W could not keep); no activation.clone row.
+    /// </remarks>
+    [Fact]
+    public async Task UnkeptFile_IsAskedForAgain()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        await using ActivationClient a = vendor.Client("a");
+        Activated(await a.ActivateAsync(key, Cancel));
+        using var otherRoot = Issuing.KeyFiles.CreateKey();
+        await using ActivationClient w = vendor.Client("a", trust: TrustStore.Create([Issuing.KeyFiles.ExportPublic(otherRoot)], []));
+
+        // W's own timer comes at once and may hold the lock file; the lock waits on the client's clock, so move it.
+        Task<ActivationResult> refreshW = w.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refreshW);
+        Assert.Equal(ErrorCode.UntrustedKey, Failed(await refreshW).Code);
+        Assert.Equal(ActivationState.RefreshFailing, w.State);
+        Assert.NotEmpty(vendor.Kept("a").Retry);
+        Task<ActivationResult> refreshA = a.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refreshA);
+        Assert.Equal(2L, Activated(await refreshA).Sequence);
+        Assert.DoesNotContain(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
+    }
+
+    /// <summary>
+    /// The automatic refresh stops when the key is not the activation's (ELM_PROOF_INVALID), and waits for a Retry-After
+    /// longer than an hour (design §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A policy with tokens of a day and a refresh window of 12 hours; client A activated; client B on a copy of A's
+    ///   folder whose key file is replaced by another key; a handler on A that counts POSTs and can answer one with 429 and
+    ///   Retry-After 7200.
+    ///
+    /// Steps:
+    /// - B refreshes; let B's own first timer end; count B's POSTs, advance 2 hours, count again. Arm the 429 on A; advance 12 hours and wait for A's
+    ///   refresh to fail; advance an hour; advance another hour and wait for the refresh.
+    ///
+    /// Expected:
+    /// - B Failed ELM_PROOF_INVALID, state RefreshFailing, no POST in the 2 hours. A: state RefreshFailing after the 429;
+    ///   no POST an hour later; the service's activation at sequence 2 after the second hour.
+    /// </remarks>
+    [Fact]
+    public async Task Refresh_StopsOnAnotherKey_AndWaitsForRetryAfter()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"tokenLifetime\":86400,\"refreshWindow\":43200,\"maxActivations\":2");
+        var countA = new ScriptedHandler();
+        await using ActivationClient a = vendor.Client("a", countA);
+        Activated(await a.ActivateAsync(key, Cancel));
+        CopyFolder(vendor.Folder("a"), vendor.Folder("b"));
+        string other = Path.Combine(vendor.Test.Directory, "other-key");
+        Assert.True(new InstallationKeyStore("app", KeyScope.User, other).TryLoadOrCreate(out InstallationKey? made, out _));
+        made!.Dispose();
+        File.Copy(Path.Combine(other, "installation.key"), Path.Combine(vendor.Folder("b"), "installation.key"), overwrite: true);
+        var countB = new ScriptedHandler();
+        await using ActivationClient b = vendor.Client("b", countB);
+
+        Task<ActivationResult> refreshB = b.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refreshB);
+        Assert.Equal(ErrorCode.ProofInvalid, Failed(await refreshB).Code);
+        Assert.Equal(ActivationState.RefreshFailing, b.State);
+
+        // B's own timer came at once (B cannot check the kept file) and may still be sending: let it end first.
+        await vendor.AdvanceForAsync(TimeSpan.FromSeconds(10));
+        int posts = countB.Posts;
+        await vendor.AdvanceForAsync(TimeSpan.FromHours(2), step: TimeSpan.FromMinutes(10));
+        Assert.Equal(posts, countB.Posts);
+
+        countA.TooManyNext = TimeSpan.FromSeconds(7200);
+        vendor.Test.Time.Advance(TimeSpan.FromHours(10));
+        await TestService.WaitForAsync(() => Task.FromResult(a.State == ActivationState.RefreshFailing));
+        posts = countA.Posts;
+        vendor.Test.Time.Advance(TimeSpan.FromHours(1));
+        await vendor.AdvanceForAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(posts, countA.Posts);
+        vendor.Test.Time.Advance(TimeSpan.FromHours(1));
+        await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(a.ActivationId!)).GetProperty("seq").GetInt64() == 2);
+    }
+
+    /// <summary>
+    /// A timer that comes while the last automatic refresh still runs is not lost: the refresh schedules again from the
+    /// kept file when it ends (design §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A policy with tokens of a day and a refresh window of 12 hours; an activated client whose refresh failed (a lost
+    ///   answer), so the next success raises an event; a handler that holds the refresh on that event.
+    ///
+    /// Steps:
+    /// - Advance 12 hours (the timer's refresh succeeds and the handler holds it); advance 13 hours (the next timer comes
+    ///   while the refresh is held); let the handler go; move the clock and wait.
+    ///
+    /// Expected:
+    /// - The service's activation goes from sequence 2 to 3 after the handler lets go.
+    /// </remarks>
+    [Fact]
+    public async Task TimerDuringARefresh_IsNotLost()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"tokenLifetime\":86400,\"refreshWindow\":43200");
+        var lose = new LoseNextAnswer();
+        await using ActivationClient client = vendor.Client("a", lose);
+        Activated(await client.ActivateAsync(key, Cancel));
+        lose.Armed = true;
+        Assert.Equal(ErrorCode.NetworkError, Failed(await client.RefreshAsync(Cancel)).Code);
+
+        using var held = new ManualResetEventSlim();
+        using var hold = new ManualResetEventSlim();
+        client.StateChanged += (_, e) =>
+        {
+            if (e.Current == ActivationState.Active && !held.IsSet)
+            {
+                held.Set();
+#pragma warning disable xUnit1031 // The handler holds the refresh on purpose.
+                hold.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+#pragma warning restore xUnit1031
+            }
+        };
+
+        vendor.Test.Time.Advance(TimeSpan.FromHours(12));
+        await TestService.WaitForAsync(() => Task.FromResult(held.IsSet));
+        Assert.Equal(2L, (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64());
+        vendor.Test.Time.Advance(TimeSpan.FromHours(13));
+        hold.Set();
+        await vendor.AdvanceForAsync(TimeSpan.FromSeconds(5));
+        await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64() == 3);
+    }
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     private static VerifiedLicense Activated(ActivationResult result) =>
@@ -479,6 +622,40 @@ public sealed class ActivationClientTests
             {
                 File.Copy(file, Path.Combine(to, Path.GetFileName(file)));
             }
+        }
+    }
+
+    // Counts POSTs, and answers the next one with 429 and a Retry-After without sending it, when armed.
+    private sealed class ScriptedHandler : DelegatingHandler
+    {
+        private int _posts;
+
+        public TimeSpan? TooManyNext { get; set; }
+
+        public int Posts => Volatile.Read(ref _posts);
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Post)
+            {
+                return base.SendAsync(request, cancellationToken);
+            }
+
+            Interlocked.Increment(ref _posts);
+            if (TooManyNext is TimeSpan wait)
+            {
+                TooManyNext = null;
+                var response = new HttpResponseMessage(HttpStatusCode.TooManyRequests)
+                {
+                    Content = new StringContent(
+                        """{"type":"about:blank","title":"ELM_RATE_LIMITED","status":429,"detail":"Slow down.","code":"ELM_RATE_LIMITED"}"""
+                    ),
+                };
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(wait);
+                return Task.FromResult(response);
+            }
+
+            return base.SendAsync(request, cancellationToken);
         }
     }
 
@@ -601,11 +778,12 @@ public sealed class ActivationClientTests
             [.. (await GetAsync("v1/admin/audit?limit=200")).GetProperty("items").EnumerateArray().Select(e => e.Clone())];
 
         // Moves the clock in small steps, giving the timers' work time to run between them.
-        public async Task AdvanceForAsync(TimeSpan total)
+        public async Task AdvanceForAsync(TimeSpan total, TimeSpan? step = null)
         {
-            for (TimeSpan moved = TimeSpan.Zero; moved < total; moved += TimeSpan.FromMilliseconds(50))
+            TimeSpan by = step ?? TimeSpan.FromMilliseconds(50);
+            for (TimeSpan moved = TimeSpan.Zero; moved < total; moved += by)
             {
-                Test.Time.Advance(TimeSpan.FromMilliseconds(50));
+                Test.Time.Advance(by);
                 await Task.Delay(10, TestContext.Current.CancellationToken);
             }
         }
