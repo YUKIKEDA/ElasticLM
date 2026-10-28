@@ -508,5 +508,55 @@ public sealed class ElmServiceOfflineTests
         Assert.Equal(HttpStatusCode.OK, list.StatusCode);
     }
 
+    /// <summary>
+    /// A server license is activated offline as online: its token carries the lease members and names the request.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app; a server policy (lease 600 s, borrow 1 h, overage 10, borrow returns 3, clone flag) and a license of it
+    ///   with core at 5 seats; a device; each engine.
+    ///
+    /// Steps:
+    /// - Post an activation file; verify the file as a server license.
+    ///
+    /// Expected:
+    /// - 200; kind Server, 5 seats, lease 600 s, borrow 1 h, overage 10, borrow returns 3, clone Flag, areq the request's
+    ///   nonce.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Offline_ServerLicense_CarriesTheLeaseMembers(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(
+            admin,
+            product,
+            "\"licenseKind\":\"server\",\"leaseDuration\":600,\"borrowLimit\":3600,\"overage\":10,\"borrowReturnLimit\":3,\"cloneStrategy\":\"flag\""
+        );
+        (_, string key) = await LicenseAsync(admin, policy, features: """[{"code":"core","seats":5}]""");
+        using var device = TestDevice.Create(test, service);
+        string[] prints = TestDevice.Fingerprints();
+        string nonce = TestDevice.NewNonce();
+
+        DeviceAnswer answer = await device.OfflineAsync(device.ActivationFile(key, prints, nonce));
+        Assert.True(answer.Status == HttpStatusCode.OK, answer.Text);
+        VerifiedLicense license = device.Verify(answer.File, prints, LicenseKind.Server);
+        Assert.Equal(
+            (LicenseKind.Server, 5, TimeSpan.FromSeconds(600), TimeSpan.FromHours(1), 10, 3, CloneStrategy.Flag, nonce),
+            (
+                license.Kind,
+                license.Features.Single().Seats!.Value,
+                license.LeaseDuration!.Value,
+                license.BorrowLimit!.Value,
+                license.OveragePercent!.Value,
+                license.BorrowReturnLimit!.Value,
+                license.CloneStrategy!.Value,
+                license.OfflineRequestNonce
+            )
+        );
+    }
+
     private static string Payload(string file) => Encoding.UTF8.GetString(Base64Url.DecodeFromChars(file.Split('.')[1]));
 }
