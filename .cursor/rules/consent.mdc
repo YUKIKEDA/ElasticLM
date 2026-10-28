@@ -22,6 +22,8 @@ Before recommending how to build a mechanism (a token format, a lease protocol, 
 
 Before recommending a design, search `docs/design-decisions.md` for a rejection of the same shape, and say how the recommendation differs from it.
 
+A reason given with a recommendation (the section a value comes from, a rule it matches) is checked in the design or the code before the question goes to the owner. In M4c1 a Grill question said a 5-minute bound was the proofs' clock skew; proofs do not use their time, and the bound was the license verifier's default ClockSkew (PR #71).
+
 When the owner corrects a criterion, go back over the decisions made before the correction and judge them by the new criterion. Each one that fails gets a roadmap row or a Grill before the row that depends on it.
 
 A consequence written in a report is not a decision either. Write a decision into a rule or the design only on the owner's word.
