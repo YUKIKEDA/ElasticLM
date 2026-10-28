@@ -65,6 +65,19 @@ public sealed class FileClockGuard : IClockGuard
         }
     }
 
+    /// <inheritdoc />
+    /// <remarks>The state is replaced, also by an earlier time, and written at once.</remarks>
+    public void AcceptServerTime(DateTimeOffset serverTime)
+    {
+        long seconds = serverTime.ToUnixTimeSeconds();
+        lock (_lock)
+        {
+            _lastSeen = seconds;
+            _lastFailedWrite = null;
+            WriteState(seconds);
+        }
+    }
+
     private static byte[] SignedBytes(long lastSeen) => Encoding.UTF8.GetBytes("elm-clock-state:" + lastSeen.ToString(CultureInfo.InvariantCulture));
 
     private long? ReadState()

@@ -387,7 +387,8 @@ internal sealed partial class ElmService
     {
         int status = code switch
         {
-            ErrorCode.InvalidArgument or ErrorCode.Malformed or ErrorCode.FingerprintUnavailable => StatusCodes.Status400BadRequest,
+            ErrorCode.InvalidArgument or ErrorCode.Malformed or ErrorCode.FingerprintUnavailable or ErrorCode.WrongProduct =>
+                StatusCodes.Status400BadRequest,
             ErrorCode.Unauthorized or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed => StatusCodes.Status401Unauthorized,
             ErrorCode.Forbidden or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => StatusCodes.Status403Forbidden,
             ErrorCode.NotFound or ErrorCode.LicenseNotFound or ErrorCode.ActivationNotFound or ErrorCode.TrialNotOffered =>

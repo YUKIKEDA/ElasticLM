@@ -108,10 +108,17 @@ internal sealed class TestDevice : IDisposable
         return new DeviceAnswer(response.StatusCode, text, JtiOf(made), fresh);
     }
 
-    public Task<DeviceAnswer> ActivateAsync(string licenseKey, string[] fingerprints, long? seq = null, string[]? retry = null, string more = "") =>
+    public Task<DeviceAnswer> ActivateAsync(
+        string licenseKey,
+        string[] fingerprints,
+        long? seq = null,
+        string[]? retry = null,
+        string more = "",
+        string product = "app"
+    ) =>
         PostAsync(
             "v1/activations",
-            $$"""{"licenseKey":"{{licenseKey}}","fingerprints":{{Array(fingerprints)}}{{Seq(seq)}}{{Retry(retry)}}{{more}}}"""
+            $$"""{"licenseKey":"{{licenseKey}}","product":"{{product}}","fingerprints":{{Array(fingerprints)}}{{Seq(seq)}}{{Retry(retry)}}{{more}}}"""
         );
 
     public Task<DeviceAnswer> RefreshAsync(string activationId, long seq, string[]? retry = null) =>

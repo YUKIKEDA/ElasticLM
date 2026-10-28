@@ -10,6 +10,7 @@ internal sealed record ClientInfo(string Host, string User);
 /// <summary>The body of <c>POST /v1/activations</c> (design §12.3, §12.4).</summary>
 internal sealed record ActivationRequest(
     string LicenseKey,
+    string Product,
     IReadOnlyList<string> Fingerprints,
     long? Seq,
     IReadOnlyList<string> Retry,
@@ -63,9 +64,10 @@ internal static class Activations
     {
         ArgumentNullException.ThrowIfNull(body);
         string key = body.RequiredText("licenseKey");
+        string product = ProductCode(body, Malformed);
         IReadOnlyList<string> fingerprints = Fingerprints(body, Malformed);
         long? seq = body.TryGet("seq", out JsonElement seqValue) ? Sequence(body, seqValue, Malformed) : null;
-        return new ActivationRequest(key, fingerprints, seq, Retry(body), Client(body, Malformed), App(body, Malformed));
+        return new ActivationRequest(key, product, fingerprints, seq, Retry(body), Client(body, Malformed), App(body, Malformed));
     }
 
     /// <summary>Reads the body of a refresh or a deactivation (design §12.6.1): <c>seq</c> and the optional <c>retry</c>.</summary>
@@ -84,13 +86,7 @@ internal static class Activations
     public static TrialRequest ReadTrial(RequestBody body)
     {
         ArgumentNullException.ThrowIfNull(body);
-        string product = body.RequiredText("product");
-        if (product.Length is 0 or > 64 || !product.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-'))
-        {
-            // design §9.1: a product code.
-            throw new BodyException(ErrorCode.Malformed, TrialMalformed);
-        }
-
+        string product = ProductCode(body, TrialMalformed);
         return new TrialRequest(product, Fingerprints(body, TrialMalformed), Retry(body), Client(body, TrialMalformed), App(body, TrialMalformed));
     }
 
@@ -148,6 +144,15 @@ internal static class Activations
         }
 
         return fingerprints;
+    }
+
+    // design §9.1: a product code, 1 to 64 of a-z, 0-9, and '-'.
+    private static string ProductCode(RequestBody body, string malformed)
+    {
+        string product = body.RequiredText("product");
+        return product.Length is 0 or > 64 || !product.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
+            ? throw new BodyException(ErrorCode.Malformed, malformed)
+            : product;
     }
 
     private static long? Sequence(RequestBody body, JsonElement value, string malformed) =>

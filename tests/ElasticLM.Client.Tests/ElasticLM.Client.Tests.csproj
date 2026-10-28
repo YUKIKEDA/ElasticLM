@@ -10,5 +10,8 @@
     <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
     <!-- The server-side proof verifier checks what the client builds. -->
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <!-- design §12.6.2: the activation tests run against a real elm-service on loopback, started by the service tests' helper. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
   </ItemGroup>
 </Project>

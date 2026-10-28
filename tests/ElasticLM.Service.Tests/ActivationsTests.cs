@@ -21,7 +21,7 @@ public sealed class ActivationsTests
     /// Steps:
     /// - Read: 8 fingerprints and 9; one of 31 and 33 characters, upper case, not hexadecimal; the same one twice; client
     ///   host and user of 255 bytes (85 three-byte characters) and 256; app of 64 bytes and 65; retry of 16 and 17 entries,
-    ///   an entry of 64 characters, 65, and an empty one; seq 0 and -1; client that is not an object; no licenseKey; no
+    ///   an entry of 64 characters, 65, and an empty one; seq 0 and -1; client that is not an object; no licenseKey; no product; a product that is not a code; no
     ///   fingerprints.
     ///
     /// Expected:
@@ -35,7 +35,7 @@ public sealed class ActivationsTests
         static string Prints(int count, string print = Print) =>
             "\"fingerprints\":[" + string.Join(',', Enumerable.Repeat($"\"{print}\"", count)) + "]";
         static void Malformed(string members) => Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read(members)).Code);
-        string key = "\"licenseKey\":\"k\",";
+        string key = "\"licenseKey\":\"k\",\"product\":\"app\",";
         string[] eight = [.. Enumerable.Range(0, 8).Select(i => Print[..^1] + i)];
 
         Assert.Equal(8, Read(key + "\"fingerprints\":[" + string.Join(',', eight.Select(p => $"\"{p}\"")) + "]").Fingerprints.Count);
@@ -65,6 +65,8 @@ public sealed class ActivationsTests
         Malformed(key + Prints(1) + ",\"seq\":-1");
         Malformed(Prints(1));
         Malformed(key.TrimEnd(','));
+        Malformed("\"licenseKey\":\"k\"," + Prints(1));
+        Malformed("\"licenseKey\":\"k\",\"product\":\"App\"," + Prints(1));
     }
 
     /// <summary>
