@@ -75,7 +75,7 @@ public sealed class ActivationClientTests
     /// Expected:
     /// - The service's activation reaches sequence 2; the state becomes Refused with ELM_LICENSE_SUSPENDED in the event; the
     ///   check is still Valid; the refresh tried again an hour later succeeds and the state is Active. A handler that disposes
-    ///   the client on the next refusal (revoked, a day later) ends without waiting for itself.
+    ///   the client and waits for it on the next refusal (revoked, a day later) sees the disposal end.
     /// </remarks>
     [Fact]
     public async Task Refresh_OnItsOwn_WhenTheWindowStarts()
@@ -110,12 +110,20 @@ public sealed class ActivationClientTests
         vendor.Test.Time.Advance(TimeSpan.FromHours(1));
         await TestService.WaitForAsync(() => Task.FromResult(client.State == ActivationState.Active));
 
-        // A handler on the timer's thread may dispose the client without waiting for itself (design §12.6.2).
-        Task? disposing = null;
-        client.StateChanged += (_, _) => disposing ??= client.DisposeAsync().AsTask();
+        // A handler on the timer's thread may dispose the client and wait for it: the disposal does not wait for the refresh
+        // that raised the event (design §12.6.2).
+        bool? disposed = null;
+        client.StateChanged += (_, _) =>
+        {
+            Task disposing = client.DisposeAsync().AsTask();
+#pragma warning disable xUnit1031 // The handler blocks on purpose, as an app's synchronous handler would.
+            disposed ??= disposing.Wait(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+#pragma warning restore xUnit1031
+        };
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/revoke", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromDays(1));
-        await TestService.WaitForAsync(() => Task.FromResult(disposing is { IsCompleted: true }));
+        await TestService.WaitForAsync(() => Task.FromResult(disposed is not null));
+        Assert.True(disposed);
     }
 
     /// <summary>
