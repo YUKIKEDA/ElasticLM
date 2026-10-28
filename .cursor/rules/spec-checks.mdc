@@ -14,6 +14,7 @@ A check or a test that stands for a statement in `docs/design.ja.md` implements 
 - A limit whose far side no input can reach is not a check. In M4a1 a name of at most 64 Unicode scalar values cannot pass 256 UTF-8 bytes, so the byte check was removed and the design states the bound as a property (PR #47).
 - A check of a request's authenticity is tested with a captured valid request replayed: with the same body, with another body, and after its time window.
 - When the design fixes an order (the steps of verification, the error priority), test it with one input that fails two adjacent steps and assert the first.
+- An operation the design gives no body is called without one in its test, not with `{}`. A test that sends an empty object passes even when the handler insists on a body. In M4a3 `suspend`, `resume`, and `revoke` refused a `POST` without a body, and the review found it (PR #59).
 - When the design fixes a state machine (lease states, activation states), test every transition it lists and one transition it does not allow.
 - A time bound (expiry, not-before, grace period, lease length) is tested at the instant before, at, and after the bound, with a fake `TimeProvider`.
 - A limit (seat count, token size, request size, clock skew) has a test at the limit and one past it. A seat limit also has a test with concurrent checkouts that would exceed it.
