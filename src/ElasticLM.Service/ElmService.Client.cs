@@ -52,9 +52,13 @@ internal sealed partial class ElmService
             {
                 await ProblemAsync(context, code, result.Message!).ConfigureAwait(false);
             }
+            else if (result.Answer is byte[] stored)
+            {
+                await WriteIssuedAsync(context, result.Status, stored).ConfigureAwait(false);
+            }
             else if (result.File is byte[] file)
             {
-                await WriteIssuedAsync(context, result.Status, result.ActivationId, file).ConfigureAwait(false);
+                await WriteIssuedAsync(context, result.Status, IssuedBody(result.ActivationId, file)).ConfigureAwait(false);
             }
             else
             {
@@ -96,18 +100,24 @@ internal sealed partial class ElmService
             return ClientResult.Fail(e.Code, e.Message);
         }
 
+        return await ActivateCoreAsync(Online(context, proof), request, null).ConfigureAwait(false);
+    }
+
+    // design §12.4, §12.6.1 steps 7 to 14, and §12.8.4 for an offline request: the checks after the request was proven.
+    private async Task<ClientResult> ActivateCoreAsync(Device device, ActivationRequest request, OfflineContext? offline)
+    {
         const string NoKey = "No license has this key.";
         if (
             LicenseKeys.Normalize(request.LicenseKey) is null
-            || await Database.FindLicenseByKeyAsync(LicenseKeys.HashOf(request.LicenseKey), context.RequestAborted).ConfigureAwait(false)
+            || await Database.FindLicenseByKeyAsync(LicenseKeys.HashOf(request.LicenseKey), device.Aborted).ConfigureAwait(false)
                 is not LicenseRow found
         )
         {
             return ClientResult.Fail(ErrorCode.LicenseNotFound, NoKey);
         }
 
-        PolicyRow policy = (await Database.FindPolicyAsync(found.PolicyId, context.RequestAborted).ConfigureAwait(false))!;
-        ProductRow product = (await Database.FindProductAsync(found.ProductId, context.RequestAborted).ConfigureAwait(false))!;
+        PolicyRow policy = (await Database.FindPolicyAsync(found.PolicyId, device.Aborted).ConfigureAwait(false))!;
+        ProductRow product = (await Database.FindProductAsync(found.ProductId, device.Aborted).ConfigureAwait(false))!;
         if (product.Code != request.Product)
         {
             // M4b2's design review: refused before an activation is made, so a key typed into another product's app does not
@@ -133,88 +143,106 @@ internal sealed partial class ElmService
         return await Database
             .WithLicenseAsync(
                 found.Id,
-                async scope =>
-                {
-                    if (scope is null)
-                    {
-                        return ClientResult.Fail(ErrorCode.LicenseNotFound, NoKey);
-                    }
-
-                    LicenseRow license = scope.License;
-                    if (Refusal(license, at) is ClientResult refused)
-                    {
-                        return refused;
-                    }
-
-                    if (await scope.FindActivationByKeyAsync(proof.KeyId, context.RequestAborted).ConfigureAwait(false) is ActivationRow existing)
-                    {
-                        return await NextTokenAsync(
-                                context,
-                                scope,
-                                policy,
-                                product,
-                                existing,
-                                request.Seq,
-                                request.Retry,
-                                proof,
-                                a =>
-                                    a with
-                                    {
-                                        Fingerprints = Activations.Store(request.Fingerprints),
-                                        ClientHost = client?.Host,
-                                        ClientUser = client?.User,
-                                        App = request.App,
-                                    },
-                                "activate",
-                                at
-                            )
-                            .ConfigureAwait(false);
-                    }
-
-                    long limit = license.MaxActivations ?? policy.MaxActivations;
-                    if (await scope.CountActivationsAsync(context.RequestAborted).ConfigureAwait(false) >= limit)
-                    {
-                        return ClientResult.Fail(ErrorCode.ActivationLimit, $"The license has reached its limit of {limit} activations.");
-                    }
-
-                    // design §9.3 FromFirstActivation: the first activation fixes the expiry; later ones leave it.
-                    if (policy.ExpirationBasis == Policies.FromFirstActivation && license.ExpiresAt is null && policy.Duration is long duration)
-                    {
-                        license = license with { ExpiresAt = at + duration, UpdatedAt = at };
-                        await scope.UpdateLicenseAsync(license, context.RequestAborted).ConfigureAwait(false);
-                    }
-
-                    byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1);
-                    var activation = new ActivationRow(
-                        Guid.CreateVersion7(now),
-                        license.Id,
-                        proof.KeyId,
-                        proof.Key.Q.X!,
-                        proof.Key.Q.Y!,
-                        Activations.Store(request.Fingerprints),
-                        client?.Host,
-                        client?.User,
-                        request.App,
-                        1,
-                        file,
-                        proof.ProofId,
-                        null,
-                        at,
-                        at
-                    );
-                    await scope.InsertActivationAsync(activation, context.RequestAborted).ConfigureAwait(false);
-                    await scope
-                        .AppendAuditAsync(
-                            DeviceEntry(context, proof, AuditActions.ActivationActivate, activation, ActivateDetail(license, 1, false)),
-                            context.RequestAborted
-                        )
-                        .ConfigureAwait(false);
-                    return ClientResult.Issued(StatusCodes.Status201Created, activation.Id, file);
-                },
+                scope =>
+                    scope is null
+                        ? Task.FromResult(ClientResult.Fail(ErrorCode.LicenseNotFound, NoKey))
+                        : OfflineAwareAsync(
+                            scope,
+                            device,
+                            offline,
+                            at,
+                            () => ActivateInScopeAsync(scope, device, request, offline, policy, product, client, now)
+                        ),
                 now,
-                context.RequestAborted
+                device.Aborted
             )
             .ConfigureAwait(false);
+    }
+
+    private async Task<ClientResult> ActivateInScopeAsync(
+        LicenseScope scope,
+        Device device,
+        ActivationRequest request,
+        OfflineContext? offline,
+        PolicyRow policy,
+        ProductRow product,
+        ClientInfo? client,
+        DateTimeOffset now
+    )
+    {
+        long at = now.ToUnixTimeSeconds();
+        LicenseRow license = scope.License;
+        if (Refusal(license, at) is ClientResult refused)
+        {
+            return refused;
+        }
+
+        if (await scope.FindActivationByKeyAsync(device.KeyId, device.Aborted).ConfigureAwait(false) is ActivationRow existing)
+        {
+            return await NextTokenAsync(
+                    device,
+                    scope,
+                    policy,
+                    product,
+                    existing,
+                    request.Seq,
+                    request.Retry,
+                    a =>
+                        a with
+                        {
+                            Fingerprints = Activations.Store(request.Fingerprints),
+                            ClientHost = client?.Host,
+                            ClientUser = client?.User,
+                            App = request.App,
+                        },
+                    "activate",
+                    at,
+                    offline?.Nonce
+                )
+                .ConfigureAwait(false);
+        }
+
+        long limit = license.MaxActivations ?? policy.MaxActivations;
+        if (await scope.CountActivationsAsync(device.Aborted).ConfigureAwait(false) >= limit)
+        {
+            return ClientResult.Fail(ErrorCode.ActivationLimit, $"The license has reached its limit of {limit} activations.");
+        }
+
+        // design §9.3 FromFirstActivation: the first activation fixes the expiry; later ones leave it.
+        if (policy.ExpirationBasis == Policies.FromFirstActivation && license.ExpiresAt is null && policy.Duration is long duration)
+        {
+            license = license with { ExpiresAt = at + duration, UpdatedAt = at };
+            await scope.UpdateLicenseAsync(license, device.Aborted).ConfigureAwait(false);
+        }
+
+        byte[] file = IssueFile(license, policy, product, device.KeyId, request.Fingerprints, 1, offline?.Nonce);
+        var activation = new ActivationRow(
+            Guid.CreateVersion7(now),
+            license.Id,
+            device.KeyId,
+            device.Key.Q.X!,
+            device.Key.Q.Y!,
+            Activations.Store(request.Fingerprints),
+            client?.Host,
+            client?.User,
+            request.App,
+            1,
+            file,
+            device.RequestId,
+            null,
+            at,
+            at
+        );
+        await scope.InsertActivationAsync(activation, device.Aborted).ConfigureAwait(false);
+        await scope
+            .AppendAuditAsync(
+                DeviceEntry(device, AuditActions.ActivationActivate, activation, ActivateDetail(device, license, 1, false)),
+                device.Aborted
+            )
+            .ConfigureAwait(false);
+
+        // An offline answer is always 200 (design §12.8.4): the same request answered again gets the same status.
+        return ClientResult.Issued(offline is null ? StatusCodes.Status201Created : StatusCodes.Status200OK, activation.Id, file);
     }
 
     // design §12.5: a new token with the next sequence number, or the last one again for a retry (design §10.4).
@@ -241,28 +269,52 @@ internal sealed partial class ElmService
             return ClientResult.Fail(e.Code, e.Message);
         }
 
-        (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+        return await RefreshCoreAsync(Online(context, proof), found, request, null).ConfigureAwait(false);
+    }
+
+    // design §12.5, §12.6.1 steps 6 to 8, and §12.8.4 for an offline request: the checks after the request was proven.
+    private async Task<ClientResult> RefreshCoreAsync(Device device, ActivationRow found, SequenceRequest request, OfflineContext? offline)
+    {
+        (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, device.Aborted).ConfigureAwait(false);
         DateTimeOffset now = Time.GetUtcNow();
         long at = now.ToUnixTimeSeconds();
         return await Database
             .WithLicenseAsync(
                 found.LicenseId,
-                async scope =>
-                {
-                    if (
-                        scope is null
-                        || await scope.FindActivationAsync(found.Id, context.RequestAborted).ConfigureAwait(false) is not ActivationRow activation
-                    )
-                    {
-                        return ClientResult.Fail(ErrorCode.ActivationNotFound, NoActivation);
-                    }
+                scope =>
+                    scope is null
+                        ? Task.FromResult(ClientResult.Fail(ErrorCode.ActivationNotFound, NoActivation))
+                        : OfflineAwareAsync(
+                            scope,
+                            device,
+                            offline,
+                            at,
+                            async () =>
+                            {
+                                if (await scope.FindActivationAsync(found.Id, device.Aborted).ConfigureAwait(false) is not ActivationRow activation)
+                                {
+                                    return ClientResult.Fail(ErrorCode.ActivationNotFound, NoActivation);
+                                }
 
-                    return Refusal(scope.License, at)
-                        ?? await NextTokenAsync(context, scope, policy, product, activation, request.Seq, request.Retry, proof, a => a, "refresh", at)
-                            .ConfigureAwait(false);
-                },
+                                return Refusal(scope.License, at)
+                                    ?? await NextTokenAsync(
+                                            device,
+                                            scope,
+                                            policy,
+                                            product,
+                                            activation,
+                                            request.Seq,
+                                            request.Retry,
+                                            a => a,
+                                            "refresh",
+                                            at,
+                                            offline?.Nonce
+                                        )
+                                        .ConfigureAwait(false);
+                            }
+                        ),
                 now,
-                context.RequestAborted
+                device.Aborted
             )
             .ConfigureAwait(false);
     }
@@ -294,7 +346,13 @@ internal sealed partial class ElmService
             return ClientResult.Fail(e.Code, e.Message);
         }
 
-        (PolicyRow policy, _) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+        return await DeactivateCoreAsync(Online(context, proof), found, request).ConfigureAwait(false);
+    }
+
+    // design §12.6.1 deactivation steps 6 to 9, and §12.8.4 for an offline proof: the checks after the request was proven.
+    private async Task<ClientResult> DeactivateCoreAsync(Device device, ActivationRow found, SequenceRequest request)
+    {
+        (PolicyRow policy, _) = await PolicyAndProductAsync(found.LicenseId, device.Aborted).ConfigureAwait(false);
         DateTimeOffset now = Time.GetUtcNow();
         long at = now.ToUnixTimeSeconds();
         return await Database
@@ -304,7 +362,7 @@ internal sealed partial class ElmService
                 {
                     if (
                         scope is null
-                        || await scope.FindActivationAsync(found.Id, context.RequestAborted).ConfigureAwait(false) is not ActivationRow activation
+                        || await scope.FindActivationAsync(found.Id, device.Aborted).ConfigureAwait(false) is not ActivationRow activation
                     )
                     {
                         return ClientResult.Fail(ErrorCode.ActivationNotFound, NoActivation);
@@ -319,7 +377,7 @@ internal sealed partial class ElmService
                             );
                         case SequenceJudgement.Clone:
                             if (
-                                await CloneAsync(context, scope, policy, activation, request.Seq, proof, "deactivate", at).ConfigureAwait(false)
+                                await CloneAsync(device, scope, policy, activation, request.Seq, "deactivate", at).ConfigureAwait(false)
                                 is ClientResult stopped
                             )
                             {
@@ -336,20 +394,23 @@ internal sealed partial class ElmService
                     }
 
                     license = license with { Deactivations = license.Deactivations + 1, UpdatedAt = at };
-                    await scope.DeleteActivationAsync(activation.Id, context.RequestAborted).ConfigureAwait(false);
-                    await scope.UpdateLicenseAsync(license, context.RequestAborted).ConfigureAwait(false);
-                    string detail = AuditLog.Detail(w =>
-                    {
-                        w.WriteString("licenseId", license.Id.ToString("D"));
-                        w.WriteNumber("deactivations", license.Deactivations);
-                    });
+                    await scope.DeleteActivationAsync(activation.Id, device.Aborted).ConfigureAwait(false);
+                    await scope.UpdateLicenseAsync(license, device.Aborted).ConfigureAwait(false);
+                    string detail = Detail(
+                        device,
+                        w =>
+                        {
+                            w.WriteString("licenseId", license.Id.ToString("D"));
+                            w.WriteNumber("deactivations", license.Deactivations);
+                        }
+                    );
                     await scope
-                        .AppendAuditAsync(DeviceEntry(context, proof, AuditActions.ActivationDeactivate, activation, detail), context.RequestAborted)
+                        .AppendAuditAsync(DeviceEntry(device, AuditActions.ActivationDeactivate, activation, detail), device.Aborted)
                         .ConfigureAwait(false);
                     return new ClientResult(StatusCodes.Status204NoContent, null, null, activation.Id, null);
                 },
                 now,
-                context.RequestAborted
+                device.Aborted
             )
             .ConfigureAwait(false);
     }
@@ -427,7 +488,7 @@ internal sealed partial class ElmService
             at
         );
         ClientInfo? client = policy.ClientInfoStrategy == "hostAndUser" ? request.Client : null;
-        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1);
+        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1, null);
         var activation = new ActivationRow(
             Guid.CreateVersion7(now),
             license.Id,
@@ -459,17 +520,17 @@ internal sealed partial class ElmService
 
     // design §10.4 step 3 for a refresh or a reactivation, in the license's write transaction.
     private async Task<ClientResult> NextTokenAsync(
-        HttpContext context,
+        Device device,
         LicenseScope scope,
         PolicyRow policy,
         ProductRow product,
         ActivationRow activation,
         long? seq,
         IReadOnlyList<string> retry,
-        ProofResult.Valid proof,
         Func<ActivationRow, ActivationRow> change,
         string operation,
-        long at
+        long at,
+        string? offlineNonce
     )
     {
         bool reactivated = operation == "activate";
@@ -477,11 +538,11 @@ internal sealed partial class ElmService
         {
             case SequenceJudgement.Blocked:
                 return ClientResult.Fail(ErrorCode.CloneDetected, "The activation was stopped because a clone of the installation was detected.");
-            case SequenceJudgement.Retry:
+            case SequenceJudgement.Retry when offlineNonce is null:
                 // The answer to the request that got the last token was lost: the same file again, nothing changes.
                 return ClientResult.Issued(StatusCodes.Status200OK, activation.Id, activation.LastFile);
             case SequenceJudgement.Clone:
-                if (await CloneAsync(context, scope, policy, activation, seq, proof, operation, at).ConfigureAwait(false) is ClientResult stopped)
+                if (await CloneAsync(device, scope, policy, activation, seq, operation, at).ConfigureAwait(false) is ClientResult stopped)
                 {
                     return stopped;
                 }
@@ -489,16 +550,23 @@ internal sealed partial class ElmService
                 break;
         }
 
-        ActivationRow next = change(activation) with { Seq = activation.Seq + 1, LastProof = proof.ProofId, UpdatedAt = at };
-        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq);
+        // design §12.8.4: an offline request judged a retry gets the next file, not the last one, whose areq is not its nonce;
+        // a copy that got the last file sends one behind without this nonce next, and is judged a clone.
+        ActivationRow next = change(activation) with
+        {
+            Seq = activation.Seq + 1,
+            LastProof = device.RequestId,
+            UpdatedAt = at,
+        };
+        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq, offlineNonce);
         next = next with { LastFile = file };
-        await scope.UpdateActivationAsync(next, context.RequestAborted).ConfigureAwait(false);
+        await scope.UpdateActivationAsync(next, device.Aborted).ConfigureAwait(false);
         if (reactivated)
         {
             await scope
                 .AppendAuditAsync(
-                    DeviceEntry(context, proof, AuditActions.ActivationActivate, next, ActivateDetail(scope.License, next.Seq, true)),
-                    context.RequestAborted
+                    DeviceEntry(device, AuditActions.ActivationActivate, next, ActivateDetail(device, scope.License, next.Seq, true)),
+                    device.Aborted
                 )
                 .ConfigureAwait(false);
         }
@@ -508,50 +576,52 @@ internal sealed partial class ElmService
 
     // A detected clone (design §10.4): Deny stops the activation and refuses; Flag records it and lets the request go on.
     private static async Task<ClientResult?> CloneAsync(
-        HttpContext context,
+        Device device,
         LicenseScope scope,
         PolicyRow policy,
         ActivationRow activation,
         long? seq,
-        ProofResult.Valid proof,
         string operation,
         long at
     )
     {
         bool deny = policy.CloneStrategy == "deny";
-        string detail = AuditLog.Detail(w =>
-        {
-            w.WriteString("licenseId", activation.LicenseId.ToString("D"));
-            w.WriteString("operation", operation);
-            if (seq is long sent)
+        string detail = Detail(
+            device,
+            w =>
             {
-                w.WriteNumber("seq", sent);
-            }
-            else
-            {
-                w.WriteNull("seq");
-            }
+                w.WriteString("licenseId", activation.LicenseId.ToString("D"));
+                w.WriteString("operation", operation);
+                if (seq is long sent)
+                {
+                    w.WriteNumber("seq", sent);
+                }
+                else
+                {
+                    w.WriteNull("seq");
+                }
 
-            w.WriteNumber("lastSeq", activation.Seq);
-            w.WriteString("strategy", policy.CloneStrategy);
-        });
+                w.WriteNumber("lastSeq", activation.Seq);
+                w.WriteString("strategy", policy.CloneStrategy);
+            }
+        );
         string result = deny ? ErrorCodes.ToWireName(ErrorCode.CloneDetected) : "ELM_OK";
         var entry = new AuditEntry(
-            InstallationActor,
-            proof.KeyId,
+            device.ActorType,
+            device.ActorId,
             AuditActions.ActivationClone,
             activation.Id.ToString("D"),
             result,
-            Ip(context),
+            device.Ip,
             detail
         );
-        await scope.AppendAuditAsync(entry, context.RequestAborted).ConfigureAwait(false);
+        await scope.AppendAuditAsync(entry, device.Aborted).ConfigureAwait(false);
         if (!deny)
         {
             return null;
         }
 
-        await scope.UpdateActivationAsync(activation with { BlockedAt = at, UpdatedAt = at }, context.RequestAborted).ConfigureAwait(false);
+        await scope.UpdateActivationAsync(activation with { BlockedAt = at, UpdatedAt = at }, device.Aborted).ConfigureAwait(false);
         return ClientResult.Fail(
             ErrorCode.CloneDetected,
             "Another copy of the installation went ahead; the activation is stopped. Deactivate it and activate again."
@@ -613,7 +683,15 @@ internal sealed partial class ElmService
 
     // design §8.4.2: the token of an activation; its expiry is the earlier of TokenLifetime and the license's (Round 1 of the
     // M4b Grill), and every member follows the policy and the license as they are now (decision 0.68).
-    private byte[] IssueFile(LicenseRow license, PolicyRow policy, ProductRow product, string keyId, IReadOnlyList<string> fingerprints, long seq)
+    private byte[] IssueFile(
+        LicenseRow license,
+        PolicyRow policy,
+        ProductRow product,
+        string keyId,
+        IReadOnlyList<string> fingerprints,
+        long seq,
+        string? offlineNonce
+    )
     {
         long now = Time.GetUtcNow().ToUnixTimeSeconds();
         long expires = Math.Min(now + policy.TokenLifetime, license.ExpiresAt ?? long.MaxValue);
@@ -658,6 +736,7 @@ internal sealed partial class ElmService
             BorrowReturnLimit = server ? (int)policy.BorrowReturnLimit : null,
             CloneStrategy = server ? (policy.CloneStrategy == "flag" ? CloneStrategy.Flag : CloneStrategy.Deny) : null,
             Metadata = Licenses.LoadMeta(license.Meta),
+            OfflineRequestNonce = offlineNonce,
         };
 
         // Checked with the service's own trust store before it is returned, as the CLI does (design §16). The issuer refuses
@@ -692,21 +771,38 @@ internal sealed partial class ElmService
     private async Task<ActivationRow?> FindActivationAsync(HttpContext context) =>
         TryRouteId(context, "id", out Guid id) ? await Database.FindActivationAsync(id, context.RequestAborted).ConfigureAwait(false) : null;
 
-    private static AuditEntry DeviceEntry(HttpContext context, ProofResult.Valid proof, string action, ActivationRow activation, string detail) =>
-        new(InstallationActor, proof.KeyId, action, activation.Id.ToString("D"), "ELM_OK", Ip(context), detail);
+    private static AuditEntry DeviceEntry(Device device, string action, ActivationRow activation, string detail) =>
+        new(device.ActorType, device.ActorId, action, activation.Id.ToString("D"), "ELM_OK", device.Ip, detail);
 
-    private static string ActivateDetail(LicenseRow license, long seq, bool again) =>
+    private static string ActivateDetail(Device device, LicenseRow license, long seq, bool again) =>
+        Detail(
+            device,
+            w =>
+            {
+                w.WriteString("licenseId", license.Id.ToString("D"));
+                w.WriteNumber("seq", seq);
+                w.WriteBoolean("reactivated", again);
+            }
+        );
+
+    // An audit detail, with "channel": "offline" for a request that came as a file (design §12.8.4).
+    private static string Detail(Device device, Action<Utf8JsonWriter> write) =>
         AuditLog.Detail(w =>
         {
-            w.WriteString("licenseId", license.Id.ToString("D"));
-            w.WriteNumber("seq", seq);
-            w.WriteBoolean("reactivated", again);
+            write(w);
+            if (device.Channel is string channel)
+            {
+                w.WriteString("channel", channel);
+            }
         });
+
+    private static Device Online(HttpContext context, ProofResult.Valid proof) =>
+        new(proof.KeyId, proof.Key, proof.ProofId, InstallationActor, proof.KeyId, Ip(context), null, context.RequestAborted);
 
     private static string? Ip(HttpContext context) => context.Connection.RemoteIpAddress?.ToString();
 
     // design §12.4: {activationId, license}, the license file as it was signed.
-    private static Task WriteIssuedAsync(HttpContext context, int status, Guid activationId, byte[] file)
+    private static byte[] IssuedBody(Guid activationId, byte[] file)
     {
         using var buffer = new MemoryStream();
         using (var w = new Utf8JsonWriter(buffer))
@@ -718,9 +814,14 @@ internal sealed partial class ElmService
             w.WriteEndObject();
         }
 
+        return buffer.ToArray();
+    }
+
+    private static Task WriteIssuedAsync(HttpContext context, int status, byte[] body)
+    {
         context.Response.StatusCode = status;
         context.Response.ContentType = "application/json";
-        return context.Response.Body.WriteAsync(buffer.ToArray(), context.RequestAborted).AsTask();
+        return context.Response.Body.WriteAsync(body, context.RequestAborted).AsTask();
     }
 
     /// <summary>The signing of a license file failed; the request answers <c>ELM_INTERNAL_ERROR</c>.</summary>
@@ -731,12 +832,33 @@ internal sealed partial class ElmService
 
     /// <summary>What a device request answers: a problem, a license file, or a status alone; or nothing more, when the
     /// proof check already answered.</summary>
-    private sealed record ClientResult(int Status, ErrorCode? Error, string? Message, Guid ActivationId, byte[]? File)
+    private sealed record ClientResult(int Status, ErrorCode? Error, string? Message, Guid ActivationId, byte[]? File, byte[]? Answer = null)
     {
         public static ClientResult Answered { get; } = new(0, null, null, Guid.Empty, null);
 
         public static ClientResult Fail(ErrorCode code, string message) => new(0, code, message, Guid.Empty, null);
 
         public static ClientResult Issued(int status, Guid activationId, byte[] file) => new(status, null, null, activationId, file);
+
+        /// <summary>The stored answer to an offline request, sent again as it was (design §12.8.4).</summary>
+        public static ClientResult Stored(Guid activationId, byte[] answer) => new(StatusCodes.Status200OK, null, null, activationId, null, answer);
     }
+
+    /// <summary>
+    /// Who sent a device request, once it was proven: the installation key, the ID of the request (a proof's jti, or an
+    /// offline request's nonce, design §10.4 step 3), how the audit log names the actor, and the channel (null online).
+    /// </summary>
+    private sealed record Device(
+        string KeyId,
+        ECParameters Key,
+        string RequestId,
+        string ActorType,
+        string ActorId,
+        string? Ip,
+        string? Channel,
+        CancellationToken Aborted
+    );
+
+    /// <summary>An offline request's nonce, the SHA-256 of its signing input, and its expiry (design §12.8.4).</summary>
+    private sealed record OfflineContext(string Nonce, byte[] RequestHash, long ExpiresAt);
 }

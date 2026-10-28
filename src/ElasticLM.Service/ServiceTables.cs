@@ -151,3 +151,18 @@ internal sealed partial record TrialFingerprintRow([PrimaryKey] Guid ProductId, 
 /// <summary>A proof's jti, kept until its nonce has expired (design §12.2 rule 5).</summary>
 [Table("proof_jtis", Naming = ColumnNaming.SnakeCase)]
 internal sealed partial record ProofJtiRow([PrimaryKey, MaxLength(64)] string Jti, long ExpiresAt);
+
+/// <summary>
+/// The answer to an activation's last offline request, with the request's key ID, nonce, and the SHA-256 of its signing
+/// input, kept until the request expires (design §12.8.4).
+/// </summary>
+[Table("offline_requests", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record OfflineRequestRow(
+    [PrimaryKey] Guid ActivationId,
+    string KeyId,
+    [MaxLength(22)] string Nonce,
+    byte[] RequestHash,
+    Guid LicenseId,
+    byte[] Response,
+    long ExpiresAt
+);

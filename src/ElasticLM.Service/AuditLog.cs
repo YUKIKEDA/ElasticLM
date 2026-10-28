@@ -180,6 +180,7 @@ internal static class AuditActions
     public const string ActivationActivate = "activation.activate";
     public const string ActivationDeactivate = "activation.deactivate";
     public const string ActivationClone = "activation.clone";
+    public const string ActivationOffline = "activation.offline";
     public const string ActivationList = "activation.list";
     public const string ActivationGet = "activation.get";
     public const string TrialCreate = "trial.create";

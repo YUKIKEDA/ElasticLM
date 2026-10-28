@@ -64,10 +64,10 @@ internal static class Activations
     {
         ArgumentNullException.ThrowIfNull(body);
         string key = body.RequiredText("licenseKey");
-        string product = ProductCode(body, Malformed);
-        IReadOnlyList<string> fingerprints = Fingerprints(body, Malformed);
+        string product = ProductCode(body, "product", Malformed);
+        IReadOnlyList<string> fingerprints = Fingerprints(body, "fingerprints", Malformed);
         long? seq = body.TryGet("seq", out JsonElement seqValue) ? Sequence(body, seqValue, Malformed) : null;
-        return new ActivationRequest(key, product, fingerprints, seq, Retry(body), Client(body, Malformed), App(body, Malformed));
+        return new ActivationRequest(key, product, fingerprints, seq, Retry(body, Malformed), Client(body, Malformed), App(body, Malformed));
     }
 
     /// <summary>Reads the body of a refresh or a deactivation (design §12.6.1): <c>seq</c> and the optional <c>retry</c>.</summary>
@@ -78,7 +78,7 @@ internal static class Activations
         long seq = body.TryGet("seq", out JsonElement value)
             ? Sequence(body, value, Malformed) ?? throw new BodyException(ErrorCode.Malformed, Malformed)
             : throw new BodyException(ErrorCode.Malformed, Malformed);
-        return new SequenceRequest(seq, Retry(body));
+        return new SequenceRequest(seq, Retry(body, Malformed));
     }
 
     /// <summary>Reads the body of a trial.</summary>
@@ -86,8 +86,14 @@ internal static class Activations
     public static TrialRequest ReadTrial(RequestBody body)
     {
         ArgumentNullException.ThrowIfNull(body);
-        string product = ProductCode(body, TrialMalformed);
-        return new TrialRequest(product, Fingerprints(body, TrialMalformed), Retry(body), Client(body, TrialMalformed), App(body, TrialMalformed));
+        string product = ProductCode(body, "product", TrialMalformed);
+        return new TrialRequest(
+            product,
+            Fingerprints(body, "fingerprints", TrialMalformed),
+            Retry(body, Malformed),
+            Client(body, TrialMalformed),
+            App(body, TrialMalformed)
+        );
     }
 
     /// <summary>
@@ -121,9 +127,9 @@ internal static class Activations
     public static string[] Load(string stored) => JsonSerializer.Deserialize(stored, ServiceJsonContext.Default.StringArray) ?? [];
 
     // design §8.6: at most 8, each 32 lower-case hexadecimal characters (§10.3). The same one twice counts once.
-    private static List<string> Fingerprints(RequestBody body, string malformed)
+    internal static List<string> Fingerprints(RequestBody body, string name, string malformed)
     {
-        if (!body.TryGet("fingerprints", out JsonElement value) || value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > MaxFingerprints)
+        if (!body.TryGet(name, out JsonElement value) || value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > MaxFingerprints)
         {
             throw new BodyException(ErrorCode.Malformed, malformed);
         }
@@ -147,19 +153,19 @@ internal static class Activations
     }
 
     // design §9.1: a product code, 1 to 64 of a-z, 0-9, and '-'.
-    private static string ProductCode(RequestBody body, string malformed)
+    internal static string ProductCode(RequestBody body, string name, string malformed)
     {
-        string product = body.RequiredText("product");
+        string product = body.RequiredText(name);
         return product.Length is 0 or > 64 || !product.All(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-')
             ? throw new BodyException(ErrorCode.Malformed, malformed)
             : product;
     }
 
-    private static long? Sequence(RequestBody body, JsonElement value, string malformed) =>
+    internal static long? Sequence(RequestBody body, JsonElement value, string malformed) =>
         body.Integer(value) is long seq ? (seq >= 0 ? seq : throw new BodyException(ErrorCode.Malformed, malformed)) : null;
 
     // design §10.4 step 2, §8.6: the jti of requests that got no answer, at most 16, each 1 to 64 characters.
-    private static List<string> Retry(RequestBody body)
+    internal static List<string> Retry(RequestBody body, string malformed)
     {
         if (!body.TryGet("retry", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
         {
@@ -168,14 +174,14 @@ internal static class Activations
 
         if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > MaxRetry)
         {
-            throw new BodyException(ErrorCode.Malformed, Malformed);
+            throw new BodyException(ErrorCode.Malformed, malformed);
         }
 
         var retry = new List<string>();
         foreach (JsonElement item in value.EnumerateArray())
         {
             retry.Add(
-                body.Text(item) is { Length: >= 1 and <= MaxRetryLength } text ? text : throw new BodyException(ErrorCode.Malformed, Malformed)
+                body.Text(item) is { Length: >= 1 and <= MaxRetryLength } text ? text : throw new BodyException(ErrorCode.Malformed, malformed)
             );
         }
 

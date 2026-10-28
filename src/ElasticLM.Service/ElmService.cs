@@ -387,12 +387,14 @@ internal sealed partial class ElmService : IAsyncDisposable
         _clientPerKey.Purge();
     }
 
-    // design §14.4: once a minute, the jti records whose nonce has expired.
+    // design §14.4, §12.8.4: once a minute, the jti records whose nonce has expired and the answers of expired offline requests.
     private async Task RemoveOldProofsAsync()
     {
         try
         {
-            await Database.RemoveProofsBeforeAsync(Time.GetUtcNow().ToUnixTimeSeconds(), CancellationToken.None).ConfigureAwait(false);
+            long now = Time.GetUtcNow().ToUnixTimeSeconds();
+            await Database.RemoveProofsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
+            await Database.RemoveOfflineRequestsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
         }
         catch (Exception e) when (e is System.Data.Common.DbException or InvalidOperationException)
         {
