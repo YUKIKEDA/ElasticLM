@@ -1144,11 +1144,9 @@ public sealed class ActivationClient : IAsyncDisposable
             return new ActivationResult.Failed(((LicenseVerificationResult.Invalid)checkedFile).Error, null);
         }
 
-        if (
-            stored?.Offline is not OfflineRequest waiting
-            || valid.License.OfflineRequestNonce != waiting.Nonce
-            || (waiting.Refresh && id != stored.ActivationId)
-        )
+        // A refresh request is for the kept activation: whatever replaces the activation (an online answer, an import, a
+        // deactivation proof) drops the waiting request too, so the nonce alone names the activation.
+        if (stored?.Offline is not OfflineRequest waiting || valid.License.OfflineRequestNonce != waiting.Nonce)
         {
             return Fail(ErrorCode.RequestMismatch, NotWaited);
         }
