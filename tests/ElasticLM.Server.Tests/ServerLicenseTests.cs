@@ -268,6 +268,100 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         return page.GetProperty("items").GetArrayLength() == 0 ? HttpStatusCode.NotFound : HttpStatusCode.OK;
     }
 
+    /// <summary>
+    /// A server started with a license issued by hand picks up an activation made while it runs, after the reload makes its
+    /// client again; then a file put in place by hand is used until the activation's refresh brings its file back (design
+    /// §13.7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy (tokens of 2 hours, refresh window 1 hour); a server with service.url and a license
+    ///   issued by hand for its key.
+    ///
+    /// Steps:
+    /// - Read the status; activate with elm server while it runs; read the status; write the hand license again and reload;
+    ///   move the clock an hour and a minute.
+    ///
+    /// Expected:
+    /// - autoRefresh false; the activation's license in use and autoRefresh true; the hand license in use, autoRefresh still
+    ///   true; then the activation's license again, with sequence 2.
+    /// </remarks>
+    [Fact]
+    public async Task HandFile_AndAnActivationMadeWhileRunning()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string folder = _deployment.NewFolder("server");
+        string license = Path.Combine(folder, "server.elmlic");
+        ServerSettings settings = Settings(test, folder) with { ServiceUrl = service.Url };
+        await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+        byte[] hand = HandLicense(test, Deployment.ServerKeyId(folder));
+        File.WriteAllBytes(license, hand);
+        ElmServer server = await StartAsync(test, settings);
+        Assert.False((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
+
+        (int code, _, string error) = Run(
+            test,
+            [
+                "server",
+                "activate",
+                key,
+                .. Common(folder),
+                "--service",
+                service.Url.ToString(),
+                "--license",
+                license,
+                "--url",
+                server.AdminUrl.ToString(),
+            ]
+        );
+        Assert.True(code == 0, error);
+        string activated = server.Engine.Server.License.LicenseId;
+        Assert.NotEqual("lic-hand", activated);
+        Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
+
+        File.WriteAllBytes(license, hand);
+        using (HttpClient admin = Deployment.AdminHttp(server))
+        {
+            using HttpResponseMessage reloaded = await admin.PostAsync("admin/v1/license/reload", null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, reloaded.StatusCode);
+        }
+
+        Assert.Equal("lic-hand", server.Engine.Server.License.LicenseId);
+        Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
+        for (int minute = 0; minute < 61 && server.Engine.Server.License.LicenseId != activated; minute++)
+        {
+            test.Time.Advance(TimeSpan.FromMinutes(1));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        await Deployment.WaitUntilAsync(() => server.Engine.Server.License.LicenseId == activated);
+        Assert.Equal(2L, server.Engine.Server.License.Sequence);
+    }
+
+    // A server license issued by hand (elm license issue's way) for a server key, signed by the service's signing key.
+    private static byte[] HandLicense(TestService test, string keyId)
+    {
+        var spec = new Issuing.LicenseSpec
+        {
+            LicenseId = "lic-hand",
+            ProductId = Product,
+            Kind = LicenseKind.Server,
+            Features = [new Issuing.FeatureSpec("pro", null, Seats: 2)],
+            ExpiresAt = test.Time.GetUtcNow().AddDays(30),
+            GracePeriod = TimeSpan.FromDays(7),
+            InstallationKeyThumbprint = keyId,
+            LeaseDuration = TimeSpan.FromMinutes(10),
+            BorrowLimit = TimeSpan.Zero,
+            OveragePercent = 0,
+            CloneStrategy = CloneStrategy.Deny,
+            BorrowReturnLimit = 2,
+        };
+        string certificate = File.ReadAllText(
+            test.WriteCertificate("hand.cert", Issuing.KeyUses.License, test.Time.GetUtcNow().AddDays(-1), TimeSpan.FromDays(365))
+        );
+        return Issuing.LicenseIssuer.Issue(test.SigningKey, [certificate], spec, test.Time).File;
+    }
+
     private static string[] Common(string folder) => ["--product", Product, "--data", folder];
 
     // The server keeps today's file open, so it is read with the sharing a second reader needs.
