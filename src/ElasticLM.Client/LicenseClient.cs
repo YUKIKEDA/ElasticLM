@@ -528,7 +528,7 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
-    private static ClientInfoBody? ClientInfo()
+    internal static ClientInfoBody? ClientInfo()
     {
         string host = Environment.MachineName;
         string user = Environment.UserName;
@@ -549,7 +549,7 @@ public sealed class LicenseClient : IAsyncDisposable
         return key is { KeySize: 256 } ? KeyIds.Of(key) : null;
     }
 
-    private static async Task<byte[]?> ReadLimitedAsync(HttpContent content)
+    internal static async Task<byte[]?> ReadLimitedAsync(HttpContent content)
     {
         if (content.Headers.ContentLength > MaxResponseLength)
         {

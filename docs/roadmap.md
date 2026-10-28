@@ -15,8 +15,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M4b2（`ElasticLM.Client` のオンラインの有効化・更新・解除・試用）
-- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）
+- **フェーズ:** M4c（オフラインの有効化・更新・解除（`elm offline process`）と `elm-server` のサーバーライセンスの更新）
+- **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）、M4b2（[#66](https://github.com/YUKIKEDA/ElasticLM/issues/66)）
 
 ## v1 まで
 
@@ -34,7 +34,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M4a2 | `elm-service` のモデル（製品・機能・ポリシー）とその管理 API、署名鍵の状態 | done        | [#54](https://github.com/YUKIKEDA/ElasticLM/issues/54) |
 | M4a3 | ライセンスとライセンスキー、その管理 API と状態の操作、`Unbound` のライセンスファイル | done        | [#58](https://github.com/YUKIKEDA/ElasticLM/issues/58) |
 | M4b1 | `elm-service` のオンラインの有効化・更新・解除・試用（複製の検出とサーバーライセンスを含む）、その管理 API | done        | [#60](https://github.com/YUKIKEDA/ElasticLM/issues/60) |
-| M4b2 | `ElasticLM.Client` のオンラインの有効化・更新・解除・試用 | not-started | —     |
+| M4b2 | `ElasticLM.Client` のオンラインの有効化・更新・解除・試用 | done        | [#66](https://github.com/YUKIKEDA/ElasticLM/issues/66) |
 | M4c | オフラインの有効化・更新・解除（`elm offline process`）と `elm-server` のサーバーライセンスの更新（オンラインと `elm server refresh-request`） | not-started | —     |
 | M4d | `elm-service` のクラウドのリースと借り出し（規則をオンプレミスと共有）、リースと利用ログの管理 API | not-started | —     |
 | W0  | 管理画面の技術の選定                                                                       | not-started | —     |
