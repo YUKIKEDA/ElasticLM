@@ -10,7 +10,7 @@ namespace ElasticLM.Client.Tests;
 /// <see cref="ActivationClient"/> (design §12.6.2) against a real <c>elm-service</c> on loopback, on SQLite: activation,
 /// refresh, deactivation, trials, lost answers, the lock file, refusals, and the kept file.
 /// </summary>
-public sealed class ActivationClientTests
+public sealed partial class ActivationClientTests
 {
     private const string Product = "app";
 
@@ -774,18 +774,21 @@ public sealed class ActivationClientTests
             Uri? url = null,
             string? app = null,
             LicenseVerifierOptions? verifier = null,
-            TimeProvider? time = null
+            TimeProvider? time = null,
+            bool offline = false,
+            IClockGuard? guard = null
         )
         {
             var options = new ActivationClientOptions
             {
                 ProductId = Product,
-                ServiceUrl = url ?? Service.Url,
+                ServiceUrl = offline ? null : url ?? Service.Url,
                 Trust = trust ?? TrustStore.Create([File.ReadAllText(Test.FilePath("root.pub.pem"))], []),
                 DataDirectory = Folder(folder),
                 AppVersion = app,
                 VerifierOptions = verifier,
                 TimeProvider = time ?? Test.Time,
+                ClockGuard = guard,
                 WrapHandler = wrap is null
                     ? null
                     : inner =>
@@ -819,6 +822,14 @@ public sealed class ActivationClientTests
         }
 
         public Task<JsonElement> GetAsync(string path) => TestService.GetAsync(Admin, path);
+
+        // Passes an offline file to POST /v1/offline, as elm offline process does (design §12.8.4).
+        public async Task<(HttpStatusCode Status, string Body)> ProcessAsync(string file)
+        {
+            using var http = new HttpClient { BaseAddress = Service.Url };
+            using HttpResponseMessage response = await http.PostAsync("v1/offline", new StringContent(file), TestContext.Current.CancellationToken);
+            return (response.StatusCode, await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        }
 
         public Task<JsonElement> ActivationAsync(string id) => GetAsync($"v1/admin/activations/{id}");
 

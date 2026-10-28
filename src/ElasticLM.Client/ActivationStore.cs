@@ -26,6 +26,12 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
     /// </summary>
     public string? Unkept { get; init; }
 
+    /// <summary>Gets the offline request waiting for its answer, or <see langword="null"/> (design §12.8.5).</summary>
+    public OfflineRequest? Offline { get; init; }
+
+    /// <summary>Gets the offline deactivation proof not yet passed to the service, or <see langword="null"/> (design §12.8.5).</summary>
+    public string? DeactivationProof { get; init; }
+
     /// <summary>Returns the list a kind of request keeps its jti in.</summary>
     public IReadOnlyList<string> ListFor(bool pending) => pending ? Pending : Retry;
 
@@ -43,6 +49,22 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
 }
 
 /// <summary>
+/// An offline request waiting for its answer (design §12.8.5), kept without the license key: its claims, from which the same
+/// signing input is made again, and the SHA-256 (base64url) of the license key an activation request holds.
+/// </summary>
+internal sealed record OfflineRequest(
+    bool Refresh,
+    string Nonce,
+    long IssuedAt,
+    long ExpiresAt,
+    long Seq,
+    string? ActivationId,
+    string? KeyHash,
+    IReadOnlyList<string> Retry,
+    IReadOnlyList<string> Fingerprints
+);
+
+/// <summary>
 /// The file <c>activation.json</c> beside the installation key, and the lock file <c>activation.lock</c> that makes the
 /// processes of one device send their activation requests one at a time (design §12.5, §12.6.2).
 /// </summary>
@@ -58,6 +80,10 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
     private const string LockName = "activation.lock";
     private const int MaxJtiLength = 64;
     private const int UnkeptLength = 43;
+    private const int MaxFileLength = 16 * 1024;
+    private const int NonceLength = 22;
+    private const int MaxFingerprints = 8;
+    private const int FingerprintLength = 32;
     private static readonly TimeSpan LockPoll = TimeSpan.FromMilliseconds(50);
     private static readonly JsonDocumentOptions Options = new() { MaxDepth = 8, AllowDuplicateProperties = false };
 
@@ -154,6 +180,26 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
 
             w.WriteEndArray();
             w.WriteString("unkept", activation.Unkept);
+            if (activation.Offline is OfflineRequest offline)
+            {
+                w.WriteStartObject("offline");
+                w.WriteString("op", offline.Refresh ? "refresh" : "activate");
+                w.WriteString("nonce", offline.Nonce);
+                w.WriteNumber("iat", offline.IssuedAt);
+                w.WriteNumber("exp", offline.ExpiresAt);
+                w.WriteNumber("seq", offline.Seq);
+                w.WriteString("act", offline.ActivationId);
+                w.WriteString("key", offline.KeyHash);
+                WriteList(w, "retry", offline.Retry);
+                WriteList(w, "fp", offline.Fingerprints);
+                w.WriteEndObject();
+            }
+            else
+            {
+                w.WriteNull("offline");
+            }
+
+            w.WriteString("deactivation", activation.DeactivationProof);
             w.WriteEndObject();
         }
 
@@ -264,6 +310,11 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 unkept = hash;
             }
 
+            if (!TryReadOffline(root, out OfflineRequest? offline) || !TryReadText(root, "deactivation", MaxFileLength, out string? proof))
+            {
+                return null;
+            }
+
             string? id = idValue.ValueKind == JsonValueKind.String ? idValue.GetString() : null;
             if (id is not null && !Guid.TryParseExact(id, "D", out _))
             {
@@ -278,11 +329,121 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             };
             byte[]? license = licenseValue.ValueKind == JsonValueKind.Object ? Encoding.UTF8.GetBytes(licenseValue.GetRawText()) : null;
             bool together = (id is null) == (license is null) && (id is null) == (kind is null);
-            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) { Pending = pending, Unkept = unkept } : null;
+            return together && kind != "?"
+                ? new StoredActivation(id, seq, kind, license, retry)
+                {
+                    Pending = pending,
+                    Unkept = unkept,
+                    Offline = offline,
+                    DeactivationProof = proof,
+                }
+                : null;
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
             return null;
         }
+    }
+
+    // The waiting offline request or null (design §12.6.2, §12.8.5); a member left out is null.
+    private static bool TryReadOffline(JsonElement root, out OfflineRequest? offline)
+    {
+        offline = null;
+        if (!root.TryGetProperty("offline", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (
+            value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty("op", out JsonElement op)
+            || op.GetString() is not ("activate" or "refresh")
+            || !TryReadText(value, "nonce", NonceLength, out string? nonce)
+            || nonce?.Length != NonceLength
+            || !TryReadNumber(value, "iat", out long issued)
+            || !TryReadNumber(value, "exp", out long expires)
+            || !TryReadNumber(value, "seq", out long seq)
+            || !TryReadText(value, "act", 36, out string? act)
+            || (act is not null && !Guid.TryParseExact(act, "D", out _))
+            || !TryReadText(value, "key", UnkeptLength, out string? key)
+            || (key is not null && key.Length != UnkeptLength)
+            || !value.TryGetProperty("retry", out JsonElement retryValue)
+            || Jtis(retryValue) is not List<string> retry
+            || !value.TryGetProperty("fp", out JsonElement fpValue)
+            || Fingerprints(fpValue) is not List<string> fingerprints
+        )
+        {
+            return false;
+        }
+
+        bool refresh = op.GetString() == "refresh";
+        if (refresh ? act is null || key is not null : act is not null || key is null)
+        {
+            return false;
+        }
+
+        offline = new OfflineRequest(refresh, nonce, issued, expires, seq, act, key, retry, fingerprints);
+        return true;
+    }
+
+    private static bool TryReadNumber(JsonElement parent, string name, out long number)
+    {
+        number = 0;
+        return parent.TryGetProperty(name, out JsonElement value) && value.TryGetInt64(out number) && number >= 0;
+    }
+
+    // At most 8, each 32 lower-case hexadecimal characters (design §10.3).
+    private static List<string>? Fingerprints(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() > MaxFingerprints)
+        {
+            return null;
+        }
+
+        var fingerprints = new List<string>();
+        foreach (JsonElement item in value.EnumerateArray())
+        {
+            if (
+                item.ValueKind != JsonValueKind.String
+                || item.GetString() is not { Length: FingerprintLength } fingerprint
+                || !fingerprint.All(c => c is (>= '0' and <= '9') or (>= 'a' and <= 'f'))
+            )
+            {
+                return null;
+            }
+
+            fingerprints.Add(fingerprint);
+        }
+
+        return fingerprints;
+    }
+
+    private static void WriteList(Utf8JsonWriter w, string name, IEnumerable<string> items)
+    {
+        w.WriteStartArray(name);
+        foreach (string item in items)
+        {
+            w.WriteStringValue(item);
+        }
+
+        w.WriteEndArray();
+    }
+
+    // A string of 1 to the most characters, or null or left out.
+    private static bool TryReadText(JsonElement parent, string name, int most, out string? text)
+    {
+        text = null;
+        if (!parent.TryGetProperty(name, out JsonElement value) || value.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (value.ValueKind != JsonValueKind.String || value.GetString() is not { Length: > 0 } read || read.Length > most)
+        {
+            return false;
+        }
+
+        text = read;
+        return true;
     }
 }

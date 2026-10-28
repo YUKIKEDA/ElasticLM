@@ -63,9 +63,30 @@ public abstract record ActivationResult
 }
 
 /// <summary>
+/// The result of making an offline request or deactivation proof (design §12.8.5): <see cref="Created"/> or
+/// <see cref="Failed"/>.
+/// </summary>
+public abstract record OfflineRequestResult
+{
+    private OfflineRequestResult() { }
+
+    /// <summary>The file to carry to the service: an <c>elm-actreq+jws</c> (<c>.elmreq</c>) or <c>elm-deact+jws</c>
+    /// (<c>.elmdeact</c>).</summary>
+    /// <param name="File">The file's text. An activation request holds the license key: keep it where others cannot read it.</param>
+    /// <param name="Replaced">Whether a request that had waited past its expiry, or one for another key, was replaced: tell the
+    /// user to discard the earlier file, which the service would take for a clone after this one (design §5.4).</param>
+    public sealed record Created(string File, bool Replaced) : OfflineRequestResult;
+
+    /// <summary>Nothing was made.</summary>
+    /// <param name="Error">Why.</param>
+    public sealed record Failed(LicenseError Error) : OfflineRequestResult;
+}
+
+/// <summary>
 /// A client of the hosted activation service <c>elm-service</c> (design §12.4 to §12.6.2, §12.9): it activates this
 /// installation with a license key or starts a trial, keeps the license file beside the installation key, refreshes it while
-/// it runs, deactivates it, and checks it offline.
+/// it runs, deactivates it, and checks it offline. A device that cannot reach the service makes request files and imports
+/// their answers instead (design §12.8, §12.8.5).
 /// </summary>
 /// <remarks>
 /// The methods may be called from several threads; the calls of one client run one at a time, and the requests of one device,
@@ -75,6 +96,13 @@ public abstract record ActivationResult
 public sealed class ActivationClient : IAsyncDisposable
 {
     private const int MaxAppBytes = 64;
+    private const int MaxAnswerBytes = 256 * 1024;
+    private const long RequestLifetime = 7 * 24 * 60 * 60;
+    private const string NoService = "No service URL is set; use the offline requests.";
+    private const string ProofKept = "A deactivation proof is kept; pass it to the service and forget it first.";
+    private const string NotWaited = "The answer is not for the request this installation waits for.";
+    private const string DamagedFile = "The kept activation file is damaged.";
+    private const string Full = "16 requests got no answer; an administrator deactivates this installation before it activates again.";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan LongestWait = TimeSpan.FromHours(24);
@@ -85,7 +113,7 @@ public sealed class ActivationClient : IAsyncDisposable
     private static readonly AsyncLocal<bool> OnTimer = new();
 
     private readonly ActivationClientOptions _options;
-    private readonly Uri _service;
+    private readonly Uri? _service;
     private readonly InstallationKeyStore _keys;
     private readonly ActivationStore _files;
     private readonly IReadOnlyList<string> _fingerprints;
@@ -111,7 +139,10 @@ public sealed class ActivationClient : IAsyncDisposable
     private ActivationClient(ActivationClientOptions options, InstallationKeyStore keys, InstallationKey? key, IReadOnlyList<string> fingerprints)
     {
         _options = options;
-        _service = options.ServiceUrl.AbsoluteUri.EndsWith('/') ? options.ServiceUrl : new Uri(options.ServiceUrl.AbsoluteUri + "/");
+        _service =
+            options.ServiceUrl is not Uri url ? null
+            : url.AbsoluteUri.EndsWith('/') ? url
+            : new Uri(url.AbsoluteUri + "/");
         _keys = keys;
         _fingerprints = fingerprints;
         _time = options.TimeProvider;
@@ -163,11 +194,12 @@ public sealed class ActivationClient : IAsyncDisposable
     public static bool TryCreate(ActivationClientOptions options, out ActivationClient? client, out LicenseError? error)
     {
         ArgumentNullException.ThrowIfNull(options);
-        ArgumentNullException.ThrowIfNull(options.ServiceUrl);
         ArgumentNullException.ThrowIfNull(options.Trust);
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
-        Uri url = options.ServiceUrl;
-        if (!url.IsAbsoluteUri || !(url.Scheme == Uri.UriSchemeHttps || (url.Scheme == Uri.UriSchemeHttp && url.IsLoopback)))
+        if (
+            options.ServiceUrl is Uri url
+            && (!url.IsAbsoluteUri || !(url.Scheme == Uri.UriSchemeHttps || (url.Scheme == Uri.UriSchemeHttp && url.IsLoopback)))
+        )
         {
             throw new ArgumentException("The service URL must be an absolute https URL, or http on a loopback address.", nameof(options));
         }
@@ -204,10 +236,20 @@ public sealed class ActivationClient : IAsyncDisposable
     {
         ArgumentException.ThrowIfNullOrEmpty(licenseKey);
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_service is null)
+        {
+            return Task.FromResult<ActivationResult>(Fail(ErrorCode.InvalidState, NoService));
+        }
+
         return WithLockAsync(
             createKey: true,
             async (stored, events) =>
             {
+                if (stored?.DeactivationProof is not null)
+                {
+                    return Fail(ErrorCode.InvalidState, ProofKept);
+                }
+
                 if (stored is { ActivationId: not null, Kind: not "trial" })
                 {
                     return Fail(ErrorCode.InvalidState, "An activation is kept; deactivate it before activating another license.");
@@ -248,10 +290,20 @@ public sealed class ActivationClient : IAsyncDisposable
     public Task<ActivationResult> StartTrialAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_service is null)
+        {
+            return Task.FromResult<ActivationResult>(Fail(ErrorCode.InvalidState, NoService));
+        }
+
         return WithLockAsync(
             createKey: true,
             async (stored, events) =>
             {
+                if (stored?.DeactivationProof is not null)
+                {
+                    return Fail(ErrorCode.InvalidState, ProofKept);
+                }
+
                 if (stored?.ActivationId is not null)
                 {
                     return Fail(ErrorCode.InvalidState, "An activation is kept; deactivate it before starting a trial.");
@@ -288,6 +340,11 @@ public sealed class ActivationClient : IAsyncDisposable
     public Task<ActivationResult> RefreshAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_service is null)
+        {
+            return Task.FromResult<ActivationResult>(Fail(ErrorCode.InvalidState, NoService));
+        }
+
         return WithLockAsync(
             createKey: false,
             (stored, events) => RefreshCoreAsync(stored, onlyWhenDue: false, events, cancellationToken),
@@ -305,6 +362,11 @@ public sealed class ActivationClient : IAsyncDisposable
     public async Task<LicenseError?> DeactivateAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
+        if (_service is null)
+        {
+            return new LicenseError(ErrorCode.InvalidState, NoService);
+        }
+
         ActivationResult result = await WithLockAsync(
                 createKey: false,
                 async (stored, events) =>
@@ -339,6 +401,136 @@ public sealed class ActivationClient : IAsyncDisposable
                     SetState(ActivationState.None, null, events);
                     return Fail(ErrorCode.Ok, "Deactivated.");
                 },
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return result is ActivationResult.Failed { Error.Code: not ErrorCode.Ok } failed ? failed.Error : null;
+    }
+
+    /// <summary>
+    /// Makes an offline activation request (design §12.8.1, §12.8.5) for a device that cannot reach the service. The same
+    /// request is returned, signed again, until it expires (7 days) or its answer is imported; a new one names the requests
+    /// before it, so an answer the service gave to one of them is not taken for a clone. The license key is not kept: each
+    /// call passes it, and another key makes another request. With an activation kept that is not a trial, or a deactivation
+    /// proof kept, nothing is made (<c>ELM_INVALID_STATE</c>).
+    /// </summary>
+    /// <param name="licenseKey">The license key (design §9.5). The request holds it.</param>
+    /// <param name="renew"><see langword="true"/> makes a new request before the waiting one expires: for when the service
+    /// answered <c>ELM_REQUEST_EXPIRED</c> because this device's clock is behind.</param>
+    /// <param name="cancellationToken">Cancels the wait for the lock.</param>
+    /// <returns>The request file's text, or why there is none: <c>ELM_MALFORMED</c> when the kept activation file is damaged.</returns>
+    /// <exception cref="ArgumentException">The license key is empty.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public Task<OfflineRequestResult> CreateActivationRequestAsync(
+        string licenseKey,
+        bool renew = false,
+        CancellationToken cancellationToken = default
+    )
+    {
+        ArgumentException.ThrowIfNullOrEmpty(licenseKey);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return WithLockAsync<OfflineRequestResult>(
+            createKey: true,
+            (stored, _) =>
+                Task.FromResult<OfflineRequestResult>(
+                    Damaged() ? OfflineFail(ErrorCode.Malformed, DamagedFile)
+                    : stored?.DeactivationProof is not null ? OfflineFail(ErrorCode.InvalidState, ProofKept)
+                    : stored is { ActivationId: not null, Kind: not "trial" }
+                        ? OfflineFail(ErrorCode.InvalidState, "An activation is kept; deactivate it before activating another license.")
+                    : MakeRequest(stored, licenseKey, renew)
+                ),
+            e => new OfflineRequestResult.Failed(e),
+            null,
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Makes an offline refresh request for the kept activation (design §12.8.3, §12.8.5). The same request is returned until
+    /// it expires or its answer is imported. Without an activation, nothing is made (<c>ELM_INVALID_STATE</c>). The refresh is
+    /// due when the kept token's expiry less its <see cref="VerifiedLicense.RefreshWindow"/> has passed (see <see cref="Check"/>).
+    /// </summary>
+    /// <param name="renew"><see langword="true"/> makes a new request before the waiting one expires.</param>
+    /// <param name="cancellationToken">Cancels the wait for the lock.</param>
+    /// <returns>The request file's text, or why there is none.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public Task<OfflineRequestResult> CreateRefreshRequestAsync(bool renew = false, CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return WithLockAsync<OfflineRequestResult>(
+            createKey: false,
+            (stored, _) =>
+                Task.FromResult<OfflineRequestResult>(
+                    Damaged() ? OfflineFail(ErrorCode.Malformed, DamagedFile)
+                    : stored?.ActivationId is null || _key is null ? OfflineFail(ErrorCode.InvalidState, "No activation is kept.")
+                    : MakeRequest(stored, null, renew)
+                ),
+            e => new OfflineRequestResult.Failed(e),
+            null,
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Imports the service's answer to the waiting offline request (design §12.8.1 step 4, §12.8.5): it is checked like an
+    /// online answer and kept. Importing the kept answer again changes nothing.
+    /// </summary>
+    /// <param name="response">The answer's text (<c>.elmresp</c>), at most 256 KiB.</param>
+    /// <param name="cancellationToken">Cancels the wait for the lock.</param>
+    /// <returns>The license, or why it was not kept: <c>ELM_REQUEST_MISMATCH</c> when it is not the answer to the waiting
+    /// request, <c>ELM_MALFORMED</c> when it is not an answer, or the verifier's error.</returns>
+    /// <exception cref="ArgumentNullException">The answer is null.</exception>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public Task<ActivationResult> ImportResponseAsync(string response, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(response);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        byte[] bytes = Encoding.UTF8.GetBytes(response.Trim());
+        return WithLockAsync<ActivationResult>(
+            createKey: false,
+            (stored, events) => Task.FromResult(Damaged() ? Fail(ErrorCode.Malformed, DamagedFile) : Import(stored, bytes, events)),
+            e => new ActivationResult.Failed(e, null),
+            new LicenseError(ErrorCode.RequestMismatch, NotWaited),
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Makes an offline deactivation proof (design §12.8.2, §12.8.5) and removes the kept activation; the installation key
+    /// stays. The proof is kept, and returned again, until <see cref="ForgetDeactivationProofAsync"/>; while it is kept,
+    /// activations and trials are refused, as the service still counts the activation until it gets the proof.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the wait for the lock.</param>
+    /// <returns>The proof's text, or why there is none: <c>ELM_INVALID_STATE</c> without an activation.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public Task<OfflineRequestResult> CreateDeactivationProofAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        return WithLockAsync<OfflineRequestResult>(
+            createKey: false,
+            (stored, events) => Task.FromResult(Damaged() ? OfflineFail(ErrorCode.Malformed, DamagedFile) : MakeDeactivationProof(stored, events)),
+            e => new OfflineRequestResult.Failed(e),
+            null,
+            cancellationToken
+        );
+    }
+
+    /// <summary>
+    /// Forgets the kept deactivation proof once the user has passed it to the service (design §12.8.5), so this installation
+    /// may activate again. Without a proof it does nothing.
+    /// </summary>
+    /// <param name="cancellationToken">Cancels the wait for the lock.</param>
+    /// <returns><see langword="null"/> when no proof is kept any more, otherwise why: <c>ELM_MALFORMED</c> when the kept
+    /// activation file is damaged, <c>ELM_INTERNAL_ERROR</c> when it cannot be written.</returns>
+    /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
+    public async Task<LicenseError?> ForgetDeactivationProofAsync(CancellationToken cancellationToken = default)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        ActivationResult result = await WithLockAsync<ActivationResult>(
+                createKey: false,
+                (stored, _) => Task.FromResult<ActivationResult>(Damaged() ? Fail(ErrorCode.Malformed, DamagedFile) : Forget(stored)),
+                e => new ActivationResult.Failed(e, null),
+                new LicenseError(ErrorCode.Ok, "Nothing is kept."),
                 cancellationToken
             )
             .ConfigureAwait(false);
@@ -488,16 +680,27 @@ public sealed class ActivationClient : IAsyncDisposable
             return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing, null);
         }
 
-        _guard?.AcceptServerTime(valid.License.IssuedAt);
+        return Accept(valid.License, id, events, serverTime: true);
+    }
+
+    // After a new file was kept: the guard takes the service's time when the file comes straight from the service (an offline
+    // answer may be days old, design §12.8.5), the state is Active, and the next refresh is scheduled.
+    private ActivationResult.Activated Accept(VerifiedLicense license, string id, List<ActivationStateChangedEventArgs> events, bool serverTime)
+    {
+        if (serverTime)
+        {
+            _guard?.AcceptServerTime(license.IssuedAt);
+        }
+
         _activationId = id;
         SetState(ActivationState.Active, null, events);
 
         // From the file just checked, not from the kept one checked again through the clock guard (M4b2's measurement).
         // A refresh cannot move exp past the license's expiry (design §12.6), so after a saved file the next automatic
         // refresh waits at least the retry interval, or a refresh already due would be sent again at once (design §12.6.2).
-        TimeSpan? due = DueIn(valid.License);
+        TimeSpan? due = DueIn(license);
         Schedule(due < RetryInterval ? RetryInterval : due);
-        return new ActivationResult.Activated(valid.License);
+        return new ActivationResult.Activated(license);
     }
 
     // A successful answer whose file is not kept: the retry list still names the request, the answer's hash is kept so the
@@ -601,14 +804,23 @@ public sealed class ActivationClient : IAsyncDisposable
 
     // Runs an operation under the client's gate and the device's lock file, on the activation read again under the lock;
     // raises the state events after both are released.
-    private async Task<ActivationResult> WithLockAsync(
+    private Task<ActivationResult> WithLockAsync(
         bool createKey,
         Func<StoredActivation?, List<ActivationStateChangedEventArgs>, Task<ActivationResult>> operation,
+        CancellationToken cancellationToken
+    ) => WithLockAsync(createKey, operation, e => new ActivationResult.Failed(e, null), null, cancellationToken);
+
+    // noFolder answers when there is neither a key nor its folder: by default "No activation is kept.".
+    private async Task<T> WithLockAsync<T>(
+        bool createKey,
+        Func<StoredActivation?, List<ActivationStateChangedEventArgs>, Task<T>> operation,
+        Func<LicenseError, T> fail,
+        LicenseError? noFolder,
         CancellationToken cancellationToken
     )
     {
         var events = new List<ActivationStateChangedEventArgs>();
-        ActivationResult result;
+        T result;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -620,14 +832,14 @@ public sealed class ActivationClient : IAsyncDisposable
                 LicenseError? error;
                 if (!(createKey ? _keys.TryLoadOrCreate(out key, out error) : _keys.TryLoad(out key, out error)))
                 {
-                    return new ActivationResult.Failed(error!, null);
+                    return fail(error!);
                 }
 
                 UseKey(key!);
             }
             else if (!Directory.Exists(_keys.Directory))
             {
-                return Fail(ErrorCode.InvalidState, "No activation is kept.");
+                return fail(noFolder ?? new LicenseError(ErrorCode.InvalidState, "No activation is kept."));
             }
 
             (IDisposable? held, LicenseError? lockError) = await _files.LockAsync(cancellationToken).ConfigureAwait(false);
@@ -635,7 +847,7 @@ public sealed class ActivationClient : IAsyncDisposable
             {
                 if (lockError is not null)
                 {
-                    return new ActivationResult.Failed(lockError, null);
+                    return fail(lockError);
                 }
 
                 result = await operation(_files.Read(out _), events).ConfigureAwait(false);
@@ -679,12 +891,12 @@ public sealed class ActivationClient : IAsyncDisposable
         bool pending = false
     )
     {
-        var target = new Uri(_service, path);
+        var target = new Uri(_service!, path);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stopping.Token);
         Reply reply = default;
         for (int attempt = 0; attempt < 2; attempt++)
         {
-            if (stored is not null && stored.ListFor(pending).Count >= StoredActivation.MaxRetry)
+            if (stored is not null && stored.ListFor(pending).Count + (stored.Offline is null ? 0 : 1) >= StoredActivation.MaxRetry)
             {
                 return Reply.Failure(
                     new LicenseError(
@@ -696,7 +908,7 @@ public sealed class ActivationClient : IAsyncDisposable
 
             if (_nonce is null)
             {
-                Reply nonceReply = await SendAsync(HttpMethod.Get, new Uri(_service, "v1/nonce"), null, null, linked.Token).ConfigureAwait(false);
+                Reply nonceReply = await SendAsync(HttpMethod.Get, new Uri(_service!, "v1/nonce"), null, null, linked.Token).ConfigureAwait(false);
                 if (nonceReply.Error is not null)
                 {
                     return nonceReply;
@@ -810,6 +1022,249 @@ public sealed class ActivationClient : IAsyncDisposable
     private static string AnswerHash(byte[] body) =>
         System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(ReadIssued(body) is (_, byte[] license) ? license : body));
 
+    private static OfflineRequestResult.Failed OfflineFail(ErrorCode code, string message) => new(new LicenseError(code, message));
+
+    // design §12.8.5 steps 2 to 4 of a request: the waiting one again while it holds, or a new one. A replaced request's nonce
+    // joins the list of its kind, as an unanswered request, until a new file is kept (the design review of M4c2, R1 and R2).
+    private OfflineRequestResult MakeRequest(StoredActivation? stored, string? licenseKey, bool renew)
+    {
+        bool refresh = licenseKey is null;
+        long now = _time.GetUtcNow().ToUnixTimeSeconds();
+        string? keyHash = licenseKey is null ? null : KeyHash(licenseKey);
+        StoredActivation current = stored ?? new StoredActivation(null, 0, null, null, []);
+        if (
+            current.Offline is OfflineRequest waiting
+            && !renew
+            && now < waiting.ExpiresAt
+            && waiting.Refresh == refresh
+            && waiting.KeyHash == keyHash
+            && waiting.ActivationId == (refresh ? current.ActivationId : null)
+        )
+        {
+            return new OfflineRequestResult.Created(Build(waiting, licenseKey), false);
+        }
+
+        bool replaced = current.Offline is not null;
+        if (current.Offline is OfflineRequest earlier)
+        {
+            if (current.ListFor(!earlier.Refresh).Count >= StoredActivation.MaxRetry)
+            {
+                return OfflineFail(ErrorCode.InvalidState, Full);
+            }
+
+            current = current.WithRetry(earlier.Nonce, pending: !earlier.Refresh) with { Offline = null };
+        }
+
+        var request = new OfflineRequest(
+            refresh,
+            System.Buffers.Text.Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16)),
+            now,
+            now + RequestLifetime,
+            refresh ? current.Seq : 0,
+            refresh ? current.ActivationId : null,
+            keyHash,
+            current.ListFor(pending: !refresh),
+            _fingerprints
+        );
+        try
+        {
+            _files.Write(current with { Offline = request });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return OfflineFail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+        }
+
+        return new OfflineRequestResult.Created(Build(request, licenseKey), replaced);
+    }
+
+    // The request's file (design §8.4.4), made the same way from the same claims each time, so the signing input the service
+    // compares is the same; only the signature changes.
+    private string Build(OfflineRequest request, string? licenseKey)
+    {
+        ECParameters key = _key!.PublicParameters();
+        byte[] payload = Body(w =>
+        {
+            w.WriteNumber("ver", 1);
+            w.WriteString("op", request.Refresh ? "refresh" : "activate");
+            if (request.Refresh)
+            {
+                w.WriteString("act", request.ActivationId);
+            }
+            else
+            {
+                w.WriteString("key", licenseKey);
+                w.WriteString("prd", _options.ProductId);
+            }
+
+            w.WriteNumber("seq", request.Seq);
+            WriteList(w, "retry", request.Retry);
+            WriteList(w, "fp", request.Fingerprints);
+            w.WriteStartObject("jwk");
+            w.WriteString("kty", "EC");
+            w.WriteString("crv", "P-256");
+            w.WriteString("x", System.Buffers.Text.Base64Url.EncodeToString(key.Q.X));
+            w.WriteString("y", System.Buffers.Text.Base64Url.EncodeToString(key.Q.Y));
+            w.WriteEndObject();
+            w.WriteString("nonce", request.Nonce);
+            w.WriteNumber("iat", request.IssuedAt);
+            w.WriteNumber("exp", request.ExpiresAt);
+        });
+        return Sign(TokenTypes.ActivationRequest, payload);
+    }
+
+    private static string KeyHash(string licenseKey) =>
+        System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(licenseKey)));
+
+    private bool Damaged()
+    {
+        _files.Read(out bool damaged);
+        return damaged;
+    }
+
+    // design §12.8.5: an answer is kept only when it is for the waiting request and verifies for this installation.
+    private ActivationResult Import(StoredActivation? stored, byte[] bytes, List<ActivationStateChangedEventArgs> events)
+    {
+        if (bytes.Length > MaxAnswerBytes || ReadIssued(bytes) is not (string id, byte[] license))
+        {
+            return Fail(ErrorCode.Malformed, "The text is not an answer of the service.");
+        }
+
+        LicenseVerificationResult checkedFile = Verify(_received, license, AnyKind);
+        if (stored?.ActivationId == id && stored.License is byte[] kept && kept.AsSpan().SequenceEqual(license))
+        {
+            // The kept answer again: nothing changes (design §12.8.1).
+            return checkedFile is LicenseVerificationResult.Valid same
+                ? new ActivationResult.Activated(same.License)
+                : new ActivationResult.Failed(((LicenseVerificationResult.Invalid)checkedFile).Error, null);
+        }
+
+        if (checkedFile is not LicenseVerificationResult.Valid valid)
+        {
+            return new ActivationResult.Failed(((LicenseVerificationResult.Invalid)checkedFile).Error, null);
+        }
+
+        if (
+            stored?.Offline is not OfflineRequest waiting
+            || valid.License.OfflineRequestNonce != waiting.Nonce
+            || (waiting.Refresh && id != stored.ActivationId)
+        )
+        {
+            return Fail(ErrorCode.RequestMismatch, NotWaited);
+        }
+
+        // As an online answer is kept: an activation clears both lists, a refresh only its own (design §12.6.2).
+        var next = new StoredActivation(id, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
+        {
+            Pending = waiting.Refresh ? stored.Pending : [],
+        };
+        try
+        {
+            _files.Write(next);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+        }
+
+        return Accept(valid.License, id, events, serverTime: false);
+    }
+
+    // design §12.8.2, §12.8.5: the proof names the activation, its sequence number, and the requests that got no answer. The
+    // activation requests that got none stay recorded with the proof.
+    private OfflineRequestResult MakeDeactivationProof(StoredActivation? stored, List<ActivationStateChangedEventArgs> events)
+    {
+        if (stored?.DeactivationProof is string kept)
+        {
+            return new OfflineRequestResult.Created(kept, false);
+        }
+
+        if (stored?.ActivationId is not string id || _key is null)
+        {
+            return OfflineFail(ErrorCode.InvalidState, "No activation is kept.");
+        }
+
+        StoredActivation current = stored;
+        if (current.Offline is OfflineRequest waiting)
+        {
+            if (current.ListFor(!waiting.Refresh).Count >= StoredActivation.MaxRetry)
+            {
+                return OfflineFail(ErrorCode.InvalidState, Full);
+            }
+
+            current = current.WithRetry(waiting.Nonce, pending: !waiting.Refresh) with { Offline = null };
+        }
+
+        byte[] payload = Body(w =>
+        {
+            w.WriteNumber("ver", 1);
+            w.WriteString("act", id);
+            w.WriteNumber("seq", current.Seq);
+            WriteList(w, "retry", current.Retry);
+            w.WriteNumber("iat", _time.GetUtcNow().ToUnixTimeSeconds());
+        });
+        string proof = Sign(TokenTypes.DeactivationProof, payload);
+        try
+        {
+            _files.Write(new StoredActivation(null, 0, null, null, []) { Pending = current.Pending, DeactivationProof = proof });
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return OfflineFail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+        }
+
+        _activationId = null;
+        StopTimer();
+        SetState(ActivationState.None, null, events);
+        return new OfflineRequestResult.Created(proof, false);
+    }
+
+    // The proof is dropped; the activation requests that got no answer stay recorded, for the next activation to name.
+    private ActivationResult.Failed Forget(StoredActivation? stored)
+    {
+        if (stored?.DeactivationProof is null)
+        {
+            return Fail(ErrorCode.Ok, "Nothing is kept.");
+        }
+
+        try
+        {
+            if (stored.Pending.Count == 0)
+            {
+                _files.Delete();
+            }
+            else
+            {
+                _files.Write(stored with { DeactivationProof = null });
+            }
+
+            return Fail(ErrorCode.Ok, "Forgotten.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+        }
+    }
+
+    // A compact JWS signed by the installation key, with the header of design §8.2.
+    private string Sign(string typ, byte[] payload)
+    {
+        byte[] header = JsonSerializer.SerializeToUtf8Bytes(new ProofHeader("ES256", _key!.Thumbprint, typ), ClientJsonContext.Default.ProofHeader);
+        string input = System.Buffers.Text.Base64Url.EncodeToString(header) + "." + System.Buffers.Text.Base64Url.EncodeToString(payload);
+        return input + "." + System.Buffers.Text.Base64Url.EncodeToString(_key.Sign(Encoding.ASCII.GetBytes(input)));
+    }
+
+    private static void WriteList(Utf8JsonWriter w, string name, IEnumerable<string> items)
+    {
+        w.WriteStartArray(name);
+        foreach (string item in items)
+        {
+            w.WriteStringValue(item);
+        }
+
+        w.WriteEndArray();
+    }
+
     private static (string Id, byte[] License)? ReadIssued(byte[] body)
     {
         try
@@ -873,10 +1328,17 @@ public sealed class ActivationClient : IAsyncDisposable
             w.WriteNumber("seq", stored?.Seq ?? 0);
         }
 
-        if (stored is not null && stored.ListFor(pending).Count > 0)
+        // design §12.8.5: a waiting offline request is named too, so its answer, if the service processed it, is not a clone.
+        IEnumerable<string> retry = stored is null ? [] : stored.ListFor(pending);
+        if (stored?.Offline is OfflineRequest offline)
+        {
+            retry = retry.Append(offline.Nonce);
+        }
+
+        if (retry.Any())
         {
             w.WriteStartArray("retry");
-            foreach (string jti in stored.ListFor(pending))
+            foreach (string jti in retry)
             {
                 w.WriteStringValue(jti);
             }
@@ -920,7 +1382,7 @@ public sealed class ActivationClient : IAsyncDisposable
         {
             _timer?.Dispose();
             _timer = null;
-            if (due is TimeSpan wait && !_disposed)
+            if (due is TimeSpan wait && !_disposed && _service is not null)
             {
                 TimeSpan clamped =
                     wait < TimeSpan.Zero ? TimeSpan.Zero

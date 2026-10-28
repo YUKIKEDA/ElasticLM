@@ -118,4 +118,120 @@ public sealed class ActivationStoreTests : IDisposable
         Assert.True(Damaged("[]"));
         Assert.True(Damaged("""{"activationId":null,"seq":0,"seq":0,"kind":null,"license":null,"retry":[]}"""));
     }
+
+    /// <summary>
+    /// A waiting offline request and a deactivation proof read back the same (design §12.8.5), at the limits of their
+    /// members.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty folder.
+    ///
+    /// Steps:
+    /// - Write an activation request with 16 retry jti and 8 fingerprints and a proof of 16 KiB; read; write a refresh request;
+    ///   read.
+    ///
+    /// Expected:
+    /// - Every member of each request and the proof the same.
+    /// </remarks>
+    [Fact]
+    public void WriteRead_OfflineRequestAndProof_RoundTrip()
+    {
+        var store = new ActivationStore(_folder, new FakeTimeProvider());
+        string[] retry = [.. Enumerable.Range(0, 16).Select(i => "j" + i)];
+        string[] prints = [.. Enumerable.Range(0, 8).Select(i => new string((char)('0' + i), 32))];
+        var activate = new OfflineRequest(false, new string('n', 22), 10, 20, 0, null, new string('k', 43), retry, prints);
+        string proof = new('p', 16 * 1024);
+        store.Write(new StoredActivation(null, 0, null, null, []) { Offline = activate, DeactivationProof = proof });
+        StoredActivation read = store.Read(out _)!;
+        Assert.Equal(
+            (false, activate.Nonce, 10L, 20L, 0L, (string?)null, activate.KeyHash, proof),
+            (
+                read.Offline!.Refresh,
+                read.Offline.Nonce,
+                read.Offline.IssuedAt,
+                read.Offline.ExpiresAt,
+                read.Offline.Seq,
+                read.Offline.ActivationId,
+                read.Offline.KeyHash,
+                read.DeactivationProof
+            )
+        );
+        Assert.Equal(retry, read.Offline.Retry);
+        Assert.Equal(prints, read.Offline.Fingerprints);
+
+        var refresh = new OfflineRequest(true, new string('m', 22), 1, 2, 5, Id, null, ["r"], []);
+        store.Write(new StoredActivation(Id, 5, "standard", Encoding.UTF8.GetBytes("{}"), []) { Offline = refresh });
+        read = store.Read(out _)!;
+        Assert.Equal(
+            (true, 5L, Id, (string?)null, "r"),
+            (read.Offline!.Refresh, read.Offline.Seq, read.Offline.ActivationId, read.Offline.KeyHash, read.Offline.Retry.Single())
+        );
+    }
+
+    /// <summary>
+    /// Each form of a waiting offline request or a deactivation proof that Write does not make is damaged (design §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Files written in the test.
+    ///
+    /// Steps:
+    /// - Read a valid activation request; then one with each change: a nonce of 21 characters, another op, an act, no key, a
+    ///   key of 42 characters, 17 retry jti, 9 fingerprints, an upper-case fingerprint, a negative exp, no fp; a refresh request
+    ///   with a key, without an act, with an act that is not a UUID; a proof of 16 KiB and a character, a proof that is a number.
+    ///
+    /// Expected:
+    /// - The first reads; every other is null and damaged.
+    /// </remarks>
+    [Fact]
+    public void Read_EachOtherOfflineForm_IsDamaged()
+    {
+        var store = new ActivationStore(_folder, new FakeTimeProvider());
+        string path = Path.Combine(_folder, "activation.json");
+        string nonce = new('n', 22);
+        string key = new('k', 43);
+        string print = new('a', 32);
+        string Offline(string members) =>
+            "{\"activationId\":null,\"seq\":0,\"kind\":null,\"license\":null,\"retry\":[],\"offline\":{" + members + "}}";
+        string Activate(string change = "") =>
+            Offline(
+                $"\"op\":\"activate\",\"nonce\":\"{nonce}\",\"iat\":1,\"exp\":2,\"seq\":0,\"act\":null,\"key\":\"{key}\",\"retry\":[],\"fp\":[\"{print}\"]{change}"
+            );
+        bool Damaged(string json)
+        {
+            File.WriteAllText(path, json);
+            return store.Read(out bool damaged) is null && damaged;
+        }
+
+        File.WriteAllText(path, Activate());
+        Assert.NotNull(store.Read(out _)!.Offline);
+        string Replace(string from, string to) => Activate().Replace(from, to, StringComparison.Ordinal);
+        Assert.True(Damaged(Replace(nonce, new string('n', 21))));
+        Assert.True(Damaged(Replace("\"activate\"", "\"other\"")));
+        Assert.True(Damaged(Replace("\"act\":null", $"\"act\":\"{Id}\"")));
+        Assert.True(Damaged(Replace($"\"key\":\"{key}\"", "\"key\":null")));
+        Assert.True(Damaged(Replace(key, new string('k', 42))));
+        Assert.True(Damaged(Replace("\"retry\":[]", "\"retry\":[" + string.Join(',', Enumerable.Repeat("\"j\"", 17)) + "]")));
+        Assert.True(Damaged(Replace($"[\"{print}\"]", "[" + string.Join(',', Enumerable.Repeat($"\"{print}\"", 9)) + "]")));
+        Assert.True(Damaged(Replace(print, new string('A', 32))));
+        Assert.True(Damaged(Replace("\"exp\":2", "\"exp\":-1")));
+        Assert.True(Damaged(Replace($",\"fp\":[\"{print}\"]", string.Empty)));
+        string refresh = Replace("\"activate\"", "\"refresh\"").Replace("\"act\":null", $"\"act\":\"{Id}\"", StringComparison.Ordinal);
+        Assert.True(Damaged(refresh));
+        Assert.True(
+            Damaged(
+                refresh
+                    .Replace($"\"key\":\"{key}\"", "\"key\":null", StringComparison.Ordinal)
+                    .Replace($"\"act\":\"{Id}\"", "\"act\":null", StringComparison.Ordinal)
+            )
+        );
+        Assert.True(
+            Damaged(refresh.Replace($"\"key\":\"{key}\"", "\"key\":null", StringComparison.Ordinal).Replace(Id, "x", StringComparison.Ordinal))
+        );
+        Assert.True(
+            Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"deactivation":"{{new string('p', (16 * 1024) + 1)}}"}""")
+        );
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"deactivation":1}"""));
+    }
 }
