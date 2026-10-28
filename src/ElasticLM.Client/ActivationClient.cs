@@ -463,14 +463,14 @@ public sealed class ActivationClient : IAsyncDisposable
 
         if (ReadIssued(reply.Body) is not (string id, byte[] license))
         {
-            return Unkept(new LicenseError(ErrorCode.Malformed, "The service's answer is not an issued license."), events, refreshing);
+            return Unkept(new LicenseError(ErrorCode.Malformed, "The service's answer is not an issued license."), events, refreshing, reply.Body);
         }
 
         LicenseVerificationResult checkedFile = Verify(_received, license, kinds);
         if (checkedFile is not LicenseVerificationResult.Valid valid)
         {
             // A file this installation cannot use never replaces the kept one (design §12.6.2).
-            return Unkept(((LicenseVerificationResult.Invalid)checkedFile).Error, events, refreshing);
+            return Unkept(((LicenseVerificationResult.Invalid)checkedFile).Error, events, refreshing, reply.Body);
         }
 
         // A refresh clears its own list and keeps the activations and trials not yet answered; a new activation clears both.
@@ -485,7 +485,7 @@ public sealed class ActivationClient : IAsyncDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // The retry list keeps this request's jti, so the next request gets the same file again (design §10.4).
-            return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing);
+            return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing, null);
         }
 
         _guard?.AcceptServerTime(valid.License.IssuedAt);
@@ -500,9 +500,15 @@ public sealed class ActivationClient : IAsyncDisposable
         return new ActivationResult.Activated(valid.License);
     }
 
-    // A successful answer whose file is not kept: the retry list still names the request, and a refresh tells the state.
-    private ActivationResult.Failed Unkept(LicenseError error, List<ActivationStateChangedEventArgs> events, bool refreshing)
+    // A successful answer whose file is not kept: the retry list still names the request, the answer's hash is kept so the
+    // same file answered again does not add a jti (design §12.6.2), and a refresh tells the state.
+    private ActivationResult.Failed Unkept(LicenseError error, List<ActivationStateChangedEventArgs> events, bool refreshing, byte[]? answer)
     {
+        if (answer is not null && _files.Read(out _) is StoredActivation kept)
+        {
+            TryWrite(kept with { Unkept = AnswerHash(answer) });
+        }
+
         if (refreshing && _activationId is not null)
         {
             SetState(ActivationState.RefreshFailing, error, events);
@@ -724,6 +730,13 @@ public sealed class ActivationClient : IAsyncDisposable
                 stored = before;
                 TryWrite(stored);
             }
+            else if (reply.Error is null && before.Unkept is string unkept && AnswerHash(reply.Body) == unkept)
+            {
+                // The file this installation did not keep, answered again: the service took this request for a resend
+                // (design §10.4), so the jti it acted on is still the earlier one, and this one is not kept.
+                stored = before;
+                TryWrite(stored);
+            }
 
             _nonce = reply.Nonce ?? (reply.Error?.Code == ErrorCode.NonceRequired ? null : _nonce);
             if (reply.Error?.Code != ErrorCode.NonceRequired)
@@ -793,6 +806,10 @@ public sealed class ActivationClient : IAsyncDisposable
     }
 
     // {activationId, license} (design §12.6.1): the license file is kept as the bytes of its JSON.
+    // The hash of an answered file (of the whole body when it is not an issued license), to know it when it comes again.
+    private static string AnswerHash(byte[] body) =>
+        System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(ReadIssued(body) is (_, byte[] license) ? license : body));
+
     private static (string Id, byte[] License)? ReadIssued(byte[] body)
     {
         try

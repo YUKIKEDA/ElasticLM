@@ -20,6 +20,12 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
     /// </summary>
     public IReadOnlyList<string> Pending { get; init; } = [];
 
+    /// <summary>
+    /// Gets the hash (SHA-256, base64url) of the last file the service answered and this installation did not keep, or null.
+    /// The same file answered again means the service took the request for a resend, so its jti is not kept (design §12.6.2).
+    /// </summary>
+    public string? Unkept { get; init; }
+
     /// <summary>Returns the list a kind of request keeps its jti in.</summary>
     public IReadOnlyList<string> ListFor(bool pending) => pending ? Pending : Retry;
 
@@ -51,6 +57,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
     private const string FileName = "activation.json";
     private const string LockName = "activation.lock";
     private const int MaxJtiLength = 64;
+    private const int UnkeptLength = 43;
     private static readonly TimeSpan LockPoll = TimeSpan.FromMilliseconds(50);
     private static readonly JsonDocumentOptions Options = new() { MaxDepth = 8, AllowDuplicateProperties = false };
 
@@ -146,6 +153,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             }
 
             w.WriteEndArray();
+            w.WriteString("unkept", activation.Unkept);
             w.WriteEndObject();
         }
 
@@ -245,6 +253,17 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 return null;
             }
 
+            string? unkept = null;
+            if (root.TryGetProperty("unkept", out JsonElement unkeptValue) && unkeptValue.ValueKind != JsonValueKind.Null)
+            {
+                if (unkeptValue.ValueKind != JsonValueKind.String || unkeptValue.GetString() is not { Length: UnkeptLength } hash)
+                {
+                    return null;
+                }
+
+                unkept = hash;
+            }
+
             string? id = idValue.ValueKind == JsonValueKind.String ? idValue.GetString() : null;
             if (id is not null && !Guid.TryParseExact(id, "D", out _))
             {
@@ -259,7 +278,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             };
             byte[]? license = licenseValue.ValueKind == JsonValueKind.Object ? Encoding.UTF8.GetBytes(licenseValue.GetRawText()) : null;
             bool together = (id is null) == (license is null) && (id is null) == (kind is null);
-            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) { Pending = pending } : null;
+            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) { Pending = pending, Unkept = unkept } : null;
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
