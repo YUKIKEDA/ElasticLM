@@ -484,7 +484,9 @@ public sealed class ActivationClient : IAsyncDisposable
         _guard?.AcceptServerTime(valid.License.IssuedAt);
         _activationId = id;
         SetState(ActivationState.Active, null, events);
-        Schedule(DueIn(stored));
+
+        // From the file just checked: checking it again through the guard cost about 8 ms on Windows (M4b2's measurement).
+        Schedule(DueIn(valid.License));
         return new ActivationResult.Activated(valid.License);
     }
 
@@ -564,8 +566,11 @@ public sealed class ActivationClient : IAsyncDisposable
             return TimeSpan.Zero;
         }
 
-        return valid.License is { ExpiresAt: DateTimeOffset expires, RefreshWindow: TimeSpan window } ? expires - window - _time.GetUtcNow() : null;
+        return DueIn(valid.License);
     }
+
+    private TimeSpan? DueIn(VerifiedLicense license) =>
+        license is { ExpiresAt: DateTimeOffset expires, RefreshWindow: TimeSpan window } ? expires - window - _time.GetUtcNow() : null;
 
     // Runs an operation under the client's gate and the device's lock file, on the activation read again under the lock;
     // raises the state events after both are released.
