@@ -19,6 +19,8 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <!-- design §12.7.6, decision 0.64: the lease rules shared with elm-server. -->
+    <ProjectReference Include="..\ElasticLM.Leasing\ElasticLM.Leasing.csproj" />
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Service.Tests" />

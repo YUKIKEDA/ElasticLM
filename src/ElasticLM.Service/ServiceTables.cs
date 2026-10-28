@@ -153,6 +153,38 @@ internal sealed partial record TrialFingerprintRow([PrimaryKey] Guid ProductId, 
 internal sealed partial record ProofJtiRow([PrimaryKey, MaxLength(64)] string Jti, long ExpiresAt);
 
 /// <summary>
+/// A cloud lease (design §12.7.6): its license, feature, seats, the installation key that holds it, the last token and the
+/// proof that got it, and for a borrow the values an early return compares with.
+/// </summary>
+[Table("leases", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record LeaseRow(
+    [PrimaryKey, MaxLength(22)] string Id,
+    Guid LicenseId,
+    string Feature,
+    long Seats,
+    string KeyId,
+    byte[] KeyX,
+    byte[] KeyY,
+    long Seq,
+    string LastToken,
+    string IssuedBy,
+    long ExpiresAt,
+    bool Borrow,
+    string? BorrowFingerprints,
+    long? BorrowFeatureSeats,
+    long? BorrowLimit,
+    bool Stopped,
+    string? ClientHost,
+    string? ClientUser,
+    string? App,
+    long CreatedAt
+);
+
+/// <summary>An early return of a borrow, counted against a key or a fingerprint for 30 days (design §12.7.4).</summary>
+[Table("lease_returns", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record LeaseReturnRow([PrimaryKey] Guid LicenseId, [PrimaryKey, MaxLength(64)] string Counter, long ReturnedAt);
+
+/// <summary>
 /// The answer to an activation's last offline request, with the request's key ID, nonce, and the SHA-256 of its signing
 /// input, kept until the request expires (design §12.8.4).
 /// </summary>

@@ -186,4 +186,7 @@ internal static class AuditActions
     public const string TrialCreate = "trial.create";
     public const string TrialList = "trial.list";
     public const string TrialDelete = "trial.delete";
+    public const string LeaseClone = "lease.clone";
+    public const string LeaseList = "lease.list";
+    public const string LeaseRelease = "lease.release";
 }

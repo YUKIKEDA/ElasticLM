@@ -22,6 +22,9 @@ internal sealed record DeviceAnswer(HttpStatusCode Status, string Text, string J
     /// <summary>Gets the activation ID of an issued answer.</summary>
     public string ActivationId => Json.GetProperty("activationId").GetString()!;
 
+    /// <summary>Gets the lease token of a lease answer.</summary>
+    public string Lease => Json.GetProperty("lease").GetString()!;
+
     /// <summary>Gets the license file of an issued answer, as its bytes.</summary>
     public byte[] File => Encoding.UTF8.GetBytes(Json.GetProperty("license").GetRawText());
 }
@@ -73,7 +76,20 @@ internal sealed class TestDevice : IDisposable
     /// Posts a body with a proof for the path. <paramref name="proof"/> may change the proof's header value; <paramref
     /// name="signedPath"/> and <paramref name="signedBody"/> sign another path or body than the one sent.
     /// </summary>
-    public async Task<DeviceAnswer> PostAsync(
+    public Task<DeviceAnswer> PostAsync(
+        string path,
+        string body,
+        bool includeKey = true,
+        string? nonce = null,
+        Func<string, string?>? proof = null,
+        string? signedPath = null,
+        string? signedBody = null,
+        InstallationKey? signer = null
+    ) => SendAsync(HttpMethod.Post, path, body, includeKey, nonce, proof, signedPath, signedBody, signer);
+
+    /// <summary>Sends a request of a method with a body and a proof for the path, as <see cref="PostAsync"/> does.</summary>
+    public async Task<DeviceAnswer> SendAsync(
+        HttpMethod method,
         string path,
         string body,
         bool includeKey = true,
@@ -88,14 +104,14 @@ internal sealed class TestDevice : IDisposable
         byte[] bytes = Encoding.UTF8.GetBytes(body);
         string made = ProofBuilder.Create(
             signer ?? Key,
-            "POST",
+            method.Method,
             new Uri(Service.Url, signedPath ?? path),
             nonce,
             signedBody is null ? bytes : Encoding.UTF8.GetBytes(signedBody),
             includeKey,
             _test.Time
         );
-        using var request = new HttpRequestMessage(HttpMethod.Post, path) { Content = new ByteArrayContent(bytes) };
+        using var request = new HttpRequestMessage(method, path) { Content = new ByteArrayContent(bytes) };
         request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
         if ((proof is null ? made : proof(made)) is string header)
         {
@@ -129,6 +145,31 @@ internal sealed class TestDevice : IDisposable
 
     public Task<DeviceAnswer> TrialAsync(string product, string[] fingerprints, string more = "", string[]? retry = null) =>
         PostAsync("v1/trials", $$"""{"product":"{{product}}","fingerprints":{{Array(fingerprints)}}{{Retry(retry)}}{{more}}}""");
+
+    /// <summary>Acquires a cloud lease (design §12.7.6) of a license key's feature; <paramref name="more"/> adds members.</summary>
+    public Task<DeviceAnswer> AcquireAsync(string licenseKey, int count = 1, string feature = "core", string more = "", string product = "app") =>
+        PostAsync("v1/leases", $$"""{"licenseKey":"{{licenseKey}}","product":"{{product}}","feature":"{{feature}}","count":{{count}}{{more}}}""");
+
+    /// <summary>Acquires a borrow of a seat for a number of seconds, with fingerprints.</summary>
+    public Task<DeviceAnswer> BorrowAsync(string licenseKey, long seconds, string[] fingerprints) =>
+        AcquireAsync(licenseKey, more: $",\"borrow\":{seconds},\"fingerprints\":{Array(fingerprints)}");
+
+    public Task<DeviceAnswer> RenewAsync(string leaseId, long seq, string[]? retry = null) =>
+        PostAsync($"v1/leases/{leaseId}/renew", $$"""{"seq":{{seq}}{{Retry(retry)}}}""", includeKey: false);
+
+    /// <summary>Releases a lease with a proof and an empty body.</summary>
+    public Task<DeviceAnswer> ReleaseAsync(string leaseId, InstallationKey? signer = null) =>
+        SendAsync(HttpMethod.Delete, $"v1/leases/{leaseId}", string.Empty, includeKey: false, signer: signer);
+
+    /// <summary>Verifies a lease answer as a SaaS client would (design §12.7.5), for this device and product app.</summary>
+    public VerifiedLease VerifyLease(DeviceAnswer answer)
+    {
+        TrustStore trust = TrustStore.Create([System.IO.File.ReadAllText(_test.FilePath("root.pub.pem"))], []);
+        var verifier = new LeaseVerifier(trust, _test.Time, StatelessClockGuard.Instance);
+        string[] certificates = [.. answer.Json.GetProperty("certificates").EnumerateArray().Select(c => c.GetString()!)];
+        LeaseVerificationResult result = verifier.VerifyHosted(answer.Lease, certificates, new LeaseExpectation("app", KeyId));
+        return result is LeaseVerificationResult.Valid valid ? valid.Lease : throw new InvalidOperationException(result.ToString());
+    }
 
     /// <summary>Returns a 128-bit nonce in base64url, as an offline request carries (design §8.4.4).</summary>
     public static string NewNonce() => Base64Url.EncodeToString(RandomNumberGenerator.GetBytes(16));

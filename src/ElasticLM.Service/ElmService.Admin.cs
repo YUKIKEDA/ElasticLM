@@ -65,6 +65,7 @@ internal sealed partial class ElmService
         MapActivations();
         MapClient();
         MapOffline();
+        MapLeases();
     }
 
     // design §14.7: every request is limited per source before authentication, devices and administrators in separate
@@ -76,7 +77,8 @@ internal sealed partial class ElmService
             path.StartsWithSegments("/v1/activations")
             || path.StartsWithSegments("/v1/trials")
             || path.StartsWithSegments("/v1/nonce")
-            || path.StartsWithSegments("/v1/offline");
+            || path.StartsWithSegments("/v1/offline")
+            || path.StartsWithSegments("/v1/leases");
         RateLimiter<IPAddress> perIp = device ? _clientPerIp : _perIp;
         if (context.Connection.RemoteIpAddress is IPAddress address && !perIp.TryAcquire(RateLimitSource.Of(address)))
         {
@@ -399,12 +401,19 @@ internal sealed partial class ElmService
             or ErrorCode.FingerprintUnavailable
             or ErrorCode.WrongProduct
             or ErrorCode.RequestExpired => StatusCodes.Status400BadRequest,
+            ErrorCode.FeatureNotLicensed or ErrorCode.FeatureVersionNotLicensed or ErrorCode.FeatureExpired or ErrorCode.BorrowNotAllowed =>
+                StatusCodes.Status403Forbidden,
             ErrorCode.Unauthorized or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed => StatusCodes.Status401Unauthorized,
             ErrorCode.Forbidden or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => StatusCodes.Status403Forbidden,
-            ErrorCode.NotFound or ErrorCode.LicenseNotFound or ErrorCode.ActivationNotFound or ErrorCode.TrialNotOffered =>
+            ErrorCode.NotFound or ErrorCode.LicenseNotFound or ErrorCode.ActivationNotFound or ErrorCode.TrialNotOffered or ErrorCode.UnknownLease =>
                 StatusCodes.Status404NotFound,
-            ErrorCode.Conflict or ErrorCode.ActivationLimit or ErrorCode.DeactivationLimit or ErrorCode.TrialUsed or ErrorCode.CloneDetected =>
-                StatusCodes.Status409Conflict,
+            ErrorCode.Conflict
+            or ErrorCode.ActivationLimit
+            or ErrorCode.DeactivationLimit
+            or ErrorCode.TrialUsed
+            or ErrorCode.CloneDetected
+            or ErrorCode.NoSeats
+            or ErrorCode.ReturnNotAllowed => StatusCodes.Status409Conflict,
             ErrorCode.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
             ErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
             ErrorCode.ServerBusy => StatusCodes.Status503ServiceUnavailable,

@@ -50,6 +50,7 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly RateLimiter<string> _clientPerKey;
     private readonly NonceService _nonces;
     private readonly ProofVerifier _proofs;
+    private readonly LeaseVerifier _leaseCheck;
     private readonly ILogger _log;
     private readonly Lock _denialsLock = new();
     private readonly PeriodicWork _denialWork;
@@ -95,6 +96,9 @@ internal sealed partial class ElmService : IAsyncDisposable
 
         // The jti is recorded in the database after the other checks (design §12.2 rule 5), so the verifier's store accepts all.
         _proofs = new ProofVerifier(_nonces, AcceptingReplays.Instance);
+
+        // design §12.7.6: each lease is checked as a client would before it is returned; the service keeps no clock record.
+        _leaseCheck = new LeaseVerifier(trust, time, StatelessClockGuard.Instance);
         _denialWork = new PeriodicWork(WriteDenialsAsync);
         _proofWork = new PeriodicWork(RemoveOldProofsAsync);
         _retentionWork = new PeriodicWork(RemoveOldAuditAsync);
@@ -387,7 +391,8 @@ internal sealed partial class ElmService : IAsyncDisposable
         _clientPerKey.Purge();
     }
 
-    // design §14.4, §12.8.4: once a minute, the jti records whose nonce has expired and the answers of expired offline requests.
+    // design §14.4, §12.8.4, §12.7.6: once a minute, the jti records whose nonce has expired, the answers of expired offline
+    // requests, the expired leases, and the early returns past the 30-day window.
     private async Task RemoveOldProofsAsync()
     {
         try
@@ -395,6 +400,9 @@ internal sealed partial class ElmService : IAsyncDisposable
             long now = Time.GetUtcNow().ToUnixTimeSeconds();
             await Database.RemoveProofsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
             await Database.RemoveOfflineRequestsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
+            await Database
+                .RemoveOldLeasesAsync(now, now - (long)ElasticLM.Leasing.LeaseRules.ReturnWindow.TotalSeconds, CancellationToken.None)
+                .ConfigureAwait(false);
         }
         catch (Exception e) when (e is System.Data.Common.DbException or InvalidOperationException)
         {

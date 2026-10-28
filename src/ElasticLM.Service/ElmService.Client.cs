@@ -77,7 +77,7 @@ internal sealed partial class ElmService
         {
             // Thrown inside the write transaction, so nothing of the request was written.
             ServiceLog.IssueFailed(_log, e.Message);
-            await ProblemAsync(context, ErrorCode.InternalError, IssueFailedException.Answer).ConfigureAwait(false);
+            await ProblemAsync(context, ErrorCode.InternalError, e.Reply).ConfigureAwait(false);
         }
     }
 
@@ -130,6 +130,12 @@ internal sealed partial class ElmService
             // Round 1 of the M4b Grill: an activation not bound to a key could not be counted, so an unbound license only has
             // its file (decision 0.76).
             return ClientResult.Fail(ErrorCode.Conflict, "A license of an unbound policy is not activated; its file comes from the vendor.");
+        }
+
+        if (policy.Floating == Policies.Cloud)
+        {
+            // design §12.7.6 (M4d1's design review): a cloud-floating license lends seats; activations would add machines.
+            return ClientResult.Fail(ErrorCode.Conflict, "A license of a cloud-floating policy is leased, not activated.");
         }
 
         if (policy.FingerprintMatching != "ignore" && request.Fingerprints.Count == 0)
@@ -630,7 +636,19 @@ internal sealed partial class ElmService
 
     // The checks of design §12.2, then the per-key limit (design §14.7) and the jti, recorded in the database after every
     // other check passed (rule 5): the verifier's own store accepts every jti, so the database is the only record.
-    private async Task<(byte[] Body, ProofResult.Valid Proof)?> ReadProvenAsync(HttpContext context, ActivationRow? known)
+    private Task<(byte[] Body, ProofResult.Valid Proof)?> ReadProvenAsync(HttpContext context, ActivationRow? known) =>
+        ReadProvenAsync(
+            context,
+            known is null ? null : (known.KeyId, known.KeyX, known.KeyY),
+            "The proof is not made with the activation's installation key."
+        );
+
+    // The same with a key known from what the request names (an activation, a lease), and the message when another key signed.
+    private async Task<(byte[] Body, ProofResult.Valid Proof)?> ReadProvenAsync(
+        HttpContext context,
+        (string KeyId, byte[] X, byte[] Y)? known,
+        string wrongKey
+    )
     {
         if (await ReadBodyAsync(context).ConfigureAwait(false) is not byte[] body)
         {
@@ -641,11 +659,11 @@ internal sealed partial class ElmService
         string path = context.Request.Path.Value ?? "/";
         Uri[] targets = [.. _publicUrls.Select(u => new UriBuilder(u) { Path = u.AbsolutePath.TrimEnd('/') + path }.Uri)];
         ECParameters? KnownKey(string kid) =>
-            known is not null && kid == known.KeyId
+            known is (string keyId, byte[] x, byte[] y) && kid == keyId
                 ? new ECParameters
                 {
                     Curve = ECCurve.NamedCurves.nistP256,
-                    Q = new ECPoint { X = known.KeyX, Y = known.KeyY },
+                    Q = new ECPoint { X = x, Y = y },
                 }
                 : null;
         ProofResult result = _proofs.Verify(context.Request.Headers[ProofHeader].ToString(), context.Request.Method, targets, body, KnownKey);
@@ -656,11 +674,10 @@ internal sealed partial class ElmService
         }
 
         var proof = (ProofResult.Valid)result;
-        if (known is not null && proof.KeyId != known.KeyId)
+        if (known is (string expected, _, _) && proof.KeyId != expected)
         {
-            // design §12.5, T19: only the activation's own installation key refreshes or deactivates it.
-            await ProblemAsync(context, ErrorCode.ProofInvalid, "The proof is not made with the activation's installation key.")
-                .ConfigureAwait(false);
+            // design §12.5, §12.7.1, T19: only the installation key an activation or a lease is bound to acts on it.
+            await ProblemAsync(context, ErrorCode.ProofInvalid, wrongKey).ConfigureAwait(false);
             return null;
         }
 
@@ -824,10 +841,13 @@ internal sealed partial class ElmService
         return context.Response.Body.WriteAsync(body, context.RequestAborted).AsTask();
     }
 
-    /// <summary>The signing of a license file failed; the request answers <c>ELM_INTERNAL_ERROR</c>.</summary>
-    private sealed class IssueFailedException(string message) : Exception(message)
+    /// <summary>The signing of a license file or a lease failed; the request answers <c>ELM_INTERNAL_ERROR</c> with
+    /// <see cref="Reply"/>.</summary>
+    private sealed class IssueFailedException(string message, string reply = IssueFailedException.Answer) : Exception(message)
     {
         public const string Answer = "The service cannot sign a license file now.";
+
+        public string Reply { get; } = reply;
     }
 
     /// <summary>What a device request answers: a problem, a license file, or a status alone; or nothing more, when the

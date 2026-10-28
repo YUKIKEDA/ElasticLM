@@ -47,7 +47,7 @@ public sealed class LicensesTests
 
     /// <summary>
     /// A license's features are checked at each rule: count 1 to 256, codes of the product once each, a version range of at
-    /// most 64 characters, seats 1 to 1,000,000 for a server license only, and an expiry after now and not after the
+    /// most 64 characters, seats 1 to 1,000,000 for a server license or a cloud-floating one only, and an expiry after now and not after the
     /// license's; each refusal has its own message.
     /// </summary>
     /// <remarks>
@@ -89,11 +89,14 @@ public sealed class LicensesTests
         const string Ver = "features[].ver must be a version range such as '>=2.0 <3.0', at most 64 characters.";
         Assert.Equal((ErrorCode.InvalidArgument, Ver), Refused($$"""[{"code":"core","ver":"{{range}} "}]"""));
         Assert.Equal((ErrorCode.InvalidArgument, Ver), Refused("""[{"code":"core","ver":"2.0"}]"""));
-        const string Seats = "features[].seats must be between 1 and 1000000 for a server license.";
+        const string Seats = "features[].seats must be between 1 and 1000000 for a server license or a cloud-floating one.";
         Assert.Equal((ErrorCode.InvalidArgument, Seats), Refused("""[{"code":"core","seats":0}]""", Server));
         Assert.Equal((ErrorCode.InvalidArgument, Seats), Refused("""[{"code":"core","seats":1000001}]""", Server));
         Assert.Equal((ErrorCode.InvalidArgument, Seats), Refused("""[{"code":"core"}]""", Server));
-        Assert.Equal((ErrorCode.InvalidArgument, "features[].seats is only for a server license."), Refused("""[{"code":"core","seats":1}]"""));
+        Assert.Equal(
+            (ErrorCode.InvalidArgument, "features[].seats is only for a server license or a cloud-floating one."),
+            Refused("""[{"code":"core","seats":1}]""")
+        );
         const string Expiry = "features[].expiresAt must be later than now and no later than the license's expiry.";
         Assert.Equal((ErrorCode.InvalidArgument, Expiry), Refused($$"""[{"code":"core","expiresAt":"{{Iso(Now)}}"}]"""));
         Assert.Equal((ErrorCode.InvalidArgument, Expiry), Refused($$"""[{"code":"core","expiresAt":"{{Iso(expiry + 1)}}"}]"""));

@@ -21,7 +21,7 @@ public sealed class MigratorTests
     ///   journal_mode.
     ///
     /// Expected:
-    /// - Between them the two runs applied versions 1 to 5 once each; the third applied nothing; five rows; wal.
+    /// - Between them the two runs applied versions 1 to 6 once each; the third applied nothing; six rows; wal.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -36,11 +36,11 @@ public sealed class MigratorTests
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel),
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel)
         );
-        Assert.Equal([1, 2, 3, 4, 5], runs.SelectMany(r => r).Order());
+        Assert.Equal([1, 2, 3, 4, 5, 6], runs.SelectMany(r => r).Order());
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(5L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(6L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");
@@ -111,7 +111,7 @@ public sealed class MigratorTests
     /// - Run the rest; read the license's columns; insert two licenses without a key.
     ///
     /// Expected:
-    /// - Versions 4 and 5 applied; the same values, deactivations 0; both inserts succeed.
+    /// - Versions 4 to 6 applied; the same values, deactivations 0; both inserts succeed.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -138,7 +138,7 @@ public sealed class MigratorTests
                 + $"{hash}, 3, 100, 50, 60, '[]', '{{}}', 10, 20)"
         );
 
-        Assert.Equal([4, 5], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([4, 5, 6], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal(
             (3L, 100L, 50L, 60L, 10L, 20L, 0L, 1L),
             (
