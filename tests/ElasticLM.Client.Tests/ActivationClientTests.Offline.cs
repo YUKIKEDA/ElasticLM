@@ -158,7 +158,7 @@ public sealed partial class ActivationClientTests
     ///   refresh request, and refresh online with a client that has the URL.
     ///
     /// Expected:
-    /// - ELM_REQUEST_MISMATCH; B's answer is refused by the verifier (another key), A has no activation; ELM_MALFORMED; four
+    /// - ELM_REQUEST_MISMATCH; B's answer ELM_WRONG_INSTALLATION (the verifier, before the nonce), A has no activation; ELM_MALFORMED; four
     ///   ELM_MALFORMED "The kept activation file is damaged."; ELM_INVALID_STATE "16 requests got no answer; …" twice.
     /// </remarks>
     [Fact]
@@ -173,7 +173,7 @@ public sealed partial class ActivationClientTests
         Assert.Equal(ErrorCode.RequestMismatch, Failed(await a.ImportResponseAsync("{}", Cancel)).Code);
         Created(await a.CreateActivationRequestAsync(key, cancellationToken: Cancel));
         string foreign = await ProcessedAsync(vendor, Created(await b.CreateActivationRequestAsync(key, cancellationToken: Cancel)).File);
-        Assert.NotEqual(ErrorCode.Ok, Failed(await a.ImportResponseAsync(foreign, Cancel)).Code);
+        Assert.Equal(ErrorCode.WrongInstallation, Failed(await a.ImportResponseAsync(foreign, Cancel)).Code);
         Assert.Null(a.ActivationId);
         Assert.Equal(ErrorCode.Malformed, Failed(await a.ImportResponseAsync("not an answer", Cancel)).Code);
 
@@ -272,6 +272,46 @@ public sealed partial class ActivationClientTests
 
         Assert.False(Created(await client.CreateActivationRequestAsync(other, cancellationToken: Cancel)).Replaced);
         Assert.True(Created(await client.CreateActivationRequestAsync(key, cancellationToken: Cancel)).Replaced);
+    }
+
+    /// <summary>
+    /// An online request whose answer is lost after an offline request was made makes that request stale: the next call makes a
+    /// new one that names both, and the service takes it without a clone.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client with the service URL, activated online, whose next answer can be lost.
+    ///
+    /// Steps:
+    /// - Make an offline refresh request R; refresh online and lose the answer; make the refresh request again; process it and
+    ///   import the answer; read the audit log.
+    ///
+    /// Expected:
+    /// - The second call is replaced and its retry names the lost online request and R, in that order; the answer is imported
+    ///   with sequence 3; no activation.clone row.
+    /// </remarks>
+    [Fact]
+    public async Task Offline_RequestAfterALostOnlineAnswer_IsMadeAgain()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var lose = new LoseNextAnswer();
+        await using ActivationClient client = vendor.Client("a", lose);
+        Activated(await client.ActivateAsync(key, Cancel));
+
+        string first = Created(await client.CreateRefreshRequestAsync(cancellationToken: Cancel)).File;
+        lose.Armed = true;
+        Assert.Equal(ErrorCode.NetworkError, Failed(await client.RefreshAsync(Cancel)).Code);
+        string online = vendor.Kept("a").Retry.Single();
+        OfflineRequestResult.Created again = Created(await client.CreateRefreshRequestAsync(cancellationToken: Cancel));
+        Assert.True(again.Replaced);
+        using (JsonDocument payload = JsonDocument.Parse(Payload(again.File)))
+        {
+            Assert.Equal([online, NonceOf(first)], payload.RootElement.GetProperty("retry").EnumerateArray().Select(j => j.GetString()!));
+        }
+
+        Assert.Equal(3L, Activated(await client.ImportResponseAsync(await ProcessedAsync(vendor, again.File), Cancel)).Sequence);
+        Assert.DoesNotContain(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
     }
 
     private static OfflineRequestResult.Created Created(OfflineRequestResult result) =>
