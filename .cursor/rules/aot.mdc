@@ -27,4 +27,6 @@ The PR's `## Verification` states the warning count (zero), the size of the exec
 
 A size that grew is split by what added it before the PR says so: publish with `-p:IlcGenerateMapFile=true` and compare the map files.
 
+`HttpClient` in an executable that had none adds about 0.76 MB on win-x64: `System.Net.Http` 420,419 bytes, the name resolution, socket, and primitives parts 61,766 bytes, and their type descriptors 275,180 bytes (M4c3, `elm-server`, PR #79). A design that gives an executable an HTTP client shows this size in its Grill.
+
 Under `dotnet run`, a project with `PublishAot` reports `RuntimeFeature.IsDynamicCodeSupported` as false too. To tell the builds apart at run time, use `System.Runtime.JitInfo.GetCompiledMethodCount() > 0` (JIT).

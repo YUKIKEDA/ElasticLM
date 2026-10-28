@@ -24,6 +24,8 @@ A figure of a step taken off a measured path stays in the design as the result b
 
 A commit, a PR, an Issue number, or a figure named in a report to the owner is copied from the output of the command that shows it, not written from memory. In M4b2 a report on PR #67 named a commit hash that did not exist, and the correction came two reports later (PR #71's retrospective).
 
+Figures that are compared or added up come from the same run. In M4c3 the machine's load changed between two runs and every figure of the second was about 1.8 times the first; parts taken from both did not add up to the total (PR #79).
+
 A comment in the code is held to the same line: it says what was measured, and marks a cause that was not confirmed as not confirmed, with the Issue number.
 
 ```text
