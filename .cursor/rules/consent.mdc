@@ -22,6 +22,8 @@ Before recommending how to build a mechanism (a token format, a lease protocol, 
 
 Before recommending a design, search `docs/design-decisions.md` for a rejection of the same shape, and say how the recommendation differs from it.
 
+Before recommending where an operation lives (an API of a component, a command, a service), check that the place runs at the first moment the operation is needed. In M4c3 the recommendation put the server license's activation in the server's local API, but the server does not start without a license, so the first activation could not run there; the answer had to go back to the owner (PR #79).
+
 A reason given with a recommendation (the section a value comes from, a rule it matches) is checked in the design or the code before the question goes to the owner. In M4c1 a Grill question said a 5-minute bound was the proofs' clock skew; proofs do not use their time, and the bound was the license verifier's default ClockSkew (PR #71).
 
 When the owner corrects a criterion, go back over the decisions made before the correction and judge them by the new criterion. Each one that fails gets a roadmap row or a Grill before the row that depends on it.
