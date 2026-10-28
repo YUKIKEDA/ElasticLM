@@ -33,7 +33,8 @@ Part of #12. The NativeAOT check on #12 is still unmet.
 
 1. Read the title and the full body. For each issue number, decide whether this PR finishes it.
 2. If it does not, and a closing verb is the word before the number, rewrite the sentence.
-3. Run `gh pr create` (or `gh pr edit`).
-4. Run `gh pr view <n> --json closingIssuesReferences` and compare the list with step 1.
+3. If it finishes the Issue of a roadmap row, read `docs/roadmap.md` in the PR's diff: the row is `done`, **今** names the next row, and **済み** lists the row (`.cursor/rules/workflow.mdc` step 4). PR #47 and PR #71 were called ready without it, and the review found it both times.
+4. Run `gh pr create` (or `gh pr edit`).
+5. Run `gh pr view <n> --json closingIssuesReferences` and compare the list with step 1.
 
 A PR stacked on another branch shows no closing references: GitHub links them only for a PR into the default branch. Check the list again when the PR targets `main`.
