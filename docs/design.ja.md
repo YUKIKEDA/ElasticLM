@@ -160,6 +160,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.89 | `ElasticLM.Client` の有効化 | M4b2 で、`elm-service` 向けの新しいクラス `ActivationClient` を置く（オンプレミスの `LicenseClient` とは相手と TLS の確かめ方が違うので分け、インストール鍵の保管は共有する。C ABI の対応は M6）。有効化は鍵のフォルダーの `activation.json` に持ち、`activation.lock` で同じ端末のプロセスの要求を 1 つずつにする。トークンの `refresh` から自動で更新し、送る前に `jti` を記録して、応答をなくした要求を送り直せるようにする。受け取ったファイルは確かめてから保存する（§12.6.2）。M4b2 の設計のレビューで、有効化の本文に `product` を足してサービスが製品の違うキーを断り、試用でない有効化があるときの別の有効化を手元で断り、解除でインストール鍵を消さないことにした（持ち主が受けた。§5.4, §12.6, §12.6.1）。受け取ったファイルは時計の守りを使わずに確かめ、その `iat` で守りを上書きする（§11.4） |
 | 0.90 | M4c の分け方とオフラインの要求 | M4c を M4c1（`elm-service` のオフラインの要求と `elm offline process`）、M4c2（`ElasticLM.Client` のオフラインのファイル）、M4c3（`elm-server` のサーバーライセンスの有効化と更新。`ActivationClient` を使う）に分ける。要求ファイルは公開の `POST /v1/offline` と管理の `POST /v1/admin/offline`（`activation.offline`）で受け、中身は同じ処理にする。同じ要求には残した同じ応答を返し（ライセンスと有効化の状態が通るときだけ）、`nonce` が同じで中身の違う要求は断る（`offline_requests` の表、有効化ごとに 1 行）。期限の切れた要求は、前の要求の `nonce` を `retry` に入れた新しい要求で取り直す。管理の入口は 1 回ごとに監査ログに書く。応答はオンラインと同じ発行の応答で、拡張子は `.elmresp`。要求に `prd` と `retry` を足し、オフラインの解除でもインストール鍵を残す（§8.4.4, §8.4.5, §12.8, §12.8.4。M4c の Grill と設計のレビュー、持ち主が受けた） |
 | 0.91 | `ElasticLM.Client` のオフライン | M4c2 で、`ActivationClient` に、オフラインの要求の作成（有効化・更新）、応答の取り込み、解除の証明の作成と破棄を足す。中身は文字列でやり取りし、見せ方（ファイル、QR コード）はアプリが決める（Cryptlex はファイルのパスを受け取る）。`ServiceUrl` を任意にし、ないクライアントはオンラインの操作を手元で断る。待っている要求（ライセンスキーを除いた中身と、キーの SHA-256）と渡していない解除の証明を `activation.json` に持ち、書き出すたびに同じ中身から組み立て直す。置き換えた要求の `nonce` は、その種類の答えのない要求の一覧に入れる。期限の前でも `renew` で作り直せる。オフラインの取り込みは時計の守りを上書きしない。オンラインで新しいファイルを保存したら待っている要求を捨て、解除の証明が残るうちは有効化を断る。更新の時期は `Check` の `ExpiresAt` と `RefreshWindow` でアプリが判断する（§12.8.5。M4c2 の Grill と設計のレビュー、持ち主が受けた） |
+| 0.92 | `elm-server` のサーバーライセンス | M4c3 で、`elm-server` のサーバーライセンスを `elm-service` で有効化・更新・解除する。有効化と手動の操作（オンラインの有効化・更新・解除、オフラインの要求・取り込み・解除の証明）は `elm server` のコマンドがサーバーのデータのフォルダーで `ActivationClient` を直接使って行い、ライセンスファイル（設定 `license`）を書いて、動いているサーバーに再読み込みを頼む。ライセンスがなければ起動しない決まり（§13.1）を変えずに最初の有効化ができるためである。自動の更新は、`service.url` を持つサーバーの中の `ActivationClient` が行い、成功のたびにファイルを書いて再読み込みする。ファイルが正本で、有効化を持つ間は有効化のライセンスが優先する。`kind: server` でないファイルは保存しない。動いているサーバーでの解除と、自動の更新をするサーバーでのオフラインの要求は断る（§13.7、M4c3 の Grill と設計のレビュー、持ち主が受けた） |
 
 ## 1. 目的と利用者
 
@@ -329,6 +330,11 @@ M4b2（Issue #66）の実測（Windows、win-x64、JIT の Release、ループ�
 - 有効化 1 回は 21.7〜23.5 ms。うちインストール鍵の作成（鍵の生成、DPAPI、フォルダーの ACL）が 11.8〜12.4 ms、ノンスの取得が残りの一部で、更新と同じ部分が約 7 ms である。
 - 更新 1 回は 6.9〜7.2 ms。送信と応答が約 3.8 ms、`activation.json` の書き込み 3 回（送る前、応答の後、保存）が各 0.54〜0.57 ms、時計の守りの書き込みが約 0.9 ms、受け取ったファイルの確かめが約 0.3 ms、ロックの開閉が約 0.07 ms である。保存したファイルを時計の守りつきでもう一度確かめて次の更新の時刻を出していた最初の版は、その確かめに約 8 ms かかって 16 ms だったので、確かめ終えたファイルから時刻を出すようにした（16 ms → 7 ms）。
 - `ElasticLM.Client` の NuGet パッケージは 87,481 バイトで、main（`c40136a`）の 69,281 バイトより 18,200 バイト大きい。
+
+M4c3（Issue #78）の実測（Windows、win-x64）:
+
+- `elm-server` の NativeAOT の実行ファイルは 13.6 MB（13,629,440 バイト。main（`a69008c`）の 12,022,784 から +1,606,656 バイト、+13.4%）。目標の 30 MB 以下に収まる。マップのファイル（`-p:IlcGenerateMapFile=true`）で比べると、増えた分は、サーバーライセンスを更新する `ActivationClient` が使う `HttpClient` の一式（`System.Net.Http` が 0 から 420,419 バイト、名前の解決・ソケット・`System.Net.Primitives` で 61,766 バイト、それらの型の記述 `ConstructedEEType` が 275,180 バイト）と、`ElasticLM.Client` の `ActivationClient`（11,337 から 111,974 バイト）である。それまでの `elm-server` は HTTP の受け手（Kestrel）だけで、送り手を持たなかった。
+- `elm` は 8.0 MB（8,025,600 バイト。main の 7,458,304 から +567,296 バイト）。`elm server` のサーバーライセンスのコマンドが `ActivationClient` を使うためである。
 
 M3c（Issue #25）の実測（同じ条件）:
 
@@ -1383,6 +1389,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 ```
 
 - `TryCreate` は、インストール鍵があれば読み（読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。鍵がなければ作らず、最初の `ActivateAsync` か `StartTrialAsync` が送る前に、鍵とそのフォルダーを作る（§10.2 の「最初の有効化・試用のときに作る」）。鍵を持たないクライアントは、操作のたびに、同じ端末のほかのプロセスが作った鍵があれば読む。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。`ServiceUrl` が `null` のクライアントは、オンラインの操作（有効化・試用・更新・解除）を送らずに `ELM_INVALID_STATE`（「No service URL is set; use the offline requests.」）を返し、自動の更新のタイマーを置かない（M4c2）。
+- 内部の設定（`elm-server` と `elm` だけが使う、M4c3）: `RequiredKind`（受け取るファイルの種類を 1 つに絞る。保存した有効化がその種類でなければ、どの操作も `ELM_INVALID_STATE`）、`CreateKey`（`false` なら鍵を作らない）、`LicenseKept`（新しいファイルを保存するたびに、そのバイト列で呼ぶ）。§13.7 のとおりに使う。
 - 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。
 - TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（128 文字まで）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
 - 送るもの: 有効化と試用は、製品の `code`（`product`）、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、どちらかが 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。クライアントは有効化の前にポリシーを知らず、トークンも `ClientInfoStrategy` を持たないので、`client` を送るかはアプリが決め、残すかはサービスがポリシーで決める（§4.4）。
@@ -1799,15 +1806,15 @@ M4c2（0.91）で、§12.8.1〜§12.8.3 の端末の側を `ActivationClient`（
 
 サーバーライセンスの検証に失敗したら、エラーを出して終了する。前身は「機能を絞って動き続ける」としていたが、管理者が失敗に気づかないため採らない。
 
-- インストール鍵は設定の `product` の、端末の範囲の場所（`dataDirectory` で変えられる）に置く。サーバーライセンスがまだないときは、鍵を作ったうえで、その拇印とマシン指紋をエラーの文に出して終了する。管理者はそれをベンダーに渡して、サーバーライセンスを発行してもらう。
-- サーバーライセンスの検証には、インストール鍵の横のファイルの時計の守り（§11.4）を使う。
+- インストール鍵は設定の `product` の、端末の範囲の場所（`dataDirectory` で変えられる）に置く。サーバーライセンスがまだないときは、鍵を作ったうえで、その拇印とマシン指紋をエラーの文に出して終了する。管理者はそれをベンダーに渡して、サーバーライセンスを発行してもらうか、`elm server activate`（オフラインなら `activate-request`）で有効化する（§13.7、M4c3）。
+- サーバーライセンスの検証には、インストール鍵の横のファイルの時計の守り（§11.4）を使う。状態はインストール鍵で署名する（§11.4 の手順 3）。M4c3 で、同じファイルを使う `ActivationClient`（署名する）に合わせて直した。署名のない前の版の状態は、手順 3 のとおりないものとして扱い、トークンの `iat` に戻り、次の書き込みで署名つきに置き換わる。サーバーの検証器と中の `ActivationClient` は、同じ 1 つの時計の守りを使う（§13.7）。
 - 終了コードは、正常な停止が 0、起動できないときが 1、引数と設定の誤りが 2 である。起動の時間（起動から待ち受けまで）を、開始の記録に書く。
 - 上の起動の順は M3c で決めた。
 - 再読み込み（管理 API、§13.7）は、起動のときと同じ検査（製品、自分のインストール鍵、マシン指紋、トラストストア）を通ったファイルだけを使う。通らなければ古いサーバーライセンスを使い続け、`409` と検査のエラーコードを返す。通れば、借り出しの記録に `key.changed` を書けてから、利用ログに書き、新しいサーバーライセンスを使う（§18.1、0.59）。借り出しの記録に書けなければ、`409` と `ELM_INTERNAL_ERROR` を返して古いライセンスを使い続ける。利用ログに書けなければ運用の記録に書き、利用ログの次のファイルを新しいライセンスで始める。
 
 動いている間のサーバーライセンス:
 
-- 期限までの残りが `RefreshWindow` を下回ったら、1 時間ごとにオンラインの更新を試みる（§9.6）。
+- 期限までの残りが `RefreshWindow` を下回ったら、オンラインの更新を試みる（§9.6）。周期と止めるときは §12.6.2 のとおり（M4c3、§13.7）。
 - `exp` を過ぎて `exp + grace` 以内は通常どおり貸す。`exp + grace` を過ぎたら、新しい取得と更新を `ELM_EXPIRED` で断り、利用ログに記録する。すでに貸したリースは期限まで有効である。
 - 再読み込み（更新や、管理者の操作による）で読む新しいファイルは、起動時と同じ検査をする。`cnf.jkt` が自分の鍵と違えば読み込まず、古いライセンスを使い続ける。
 - 新しいライセンスで機能が減ったか席数が減ったときは、減った分のリースの更新を断り（`ELM_FEATURE_NOT_LICENSED` か `ELM_NO_SEATS`）、期限で自然に消す。すでに貸したリースを途中で取り消すことはしない。
@@ -1953,6 +1960,52 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 - 認証された各操作を利用ログに `{"type": "admin.action", "action", "target", "result": <コード>}` で書く。認証の失敗は 1 行ずつ書かず、1 分ごとに `{"type": "admin.denied", "code": "ELM_UNAUTHORIZED", "count"}` で件数を書く（0.58）。ほかの利用者やブラウザーからループバックへ送る要求で、利用ログを際限なく増やせないためである。
 - `elm server status|leases|release <ID>|reload|seal` が、`--data`（データのフォルダー）か `--product`（端末の範囲の既定の場所）から管理者トークンを読み、`--url`（既定 `http://127.0.0.1:7071`）を呼ぶ。要求の時間切れは 30 秒。終了コードは、成功 0、サーバーの拒否 1、引数の誤りとトークンが読めないとき 2、つながらないとき 3。
 
+サーバーライセンスの有効化と更新（M4c3、0.92）:
+
+- `elm server` の次のコマンドは、サーバーのデータのフォルダー（`--data`、なければ `--product` の端末の範囲の既定の場所）で `ActivationClient`（§12.6.2, §12.8.5）を直接使う。サーバーが止まっていても動く。管理者トークンを読むのと同じく、サーバーの利用者として、その機械で実行する（鍵のフォルダーの ACL、§10.2）。
+  - オンライン（`--service <elm-service の URL>` が要る）: `activate <ライセンスキー>`、`refresh`、`deactivate`
+  - オフライン: `activate-request --key <キー> --out <要求>`、`refresh-request --out <要求>`、`import <応答>`、`deactivate-proof --out <証明>`、`forget-proof`。要求の 2 つは `--renew` を受ける（§12.8.5）。
+- どれも `--product`（必須。`ActivationClient` の製品 ID）と、トラストストア（`--trust` か `ELM_TRUST_ROOT_KEYS`、§16）を受け取る。ファイルを得る `activate`・`refresh`・`import` は `--license <ファイル>`（サーバーの設定 `license` と同じパス）が要る。管理 API は `--url`（既定 `http://127.0.0.1:7071`）。
+- コマンドは鍵を作らない。鍵はサーバーが最初の起動で作る（§13.1。ライセンスがなければ、鍵を作ったうえで、拇印と指紋と `elm server activate` の案内を出して終わる）。鍵がなければ「Start elm-server once to make its installation key.」で終了コード 2。`--data` の誤りで別の鍵が有効化され、サービスの台数を使うのを防ぐ（M4c3 の設計のレビュー、R5）。
+- 種類を `Server` に絞る（`ActivationClient` の内部の設定 `RequiredKind`、§12.6.2）。受け取ったファイルが `kind: server` でなければ保存せず `ELM_WRONG_KIND`（確かめに通らない成功の応答と同じ扱いで、`retry` と `unkept` に残す、§12.6.2）。サービスに残った有効化は、ベンダーの管理者が外す。
+- 保存した有効化が `server` でない（同じ製品のアプリが端末の範囲の鍵を使い、`activation.json` を共有している）ときは、どのコマンドもサーバーの更新も何もせずに `ELM_INVALID_STATE`（「The kept activation is not a server license; give the server its own dataDirectory.」）を返す。サーバーにはアプリと別の `dataDirectory` を設定する（§13.8）。
+- ファイルを得たら、`ActivationClient` を閉じて（ロックを放して）から、`--license` のパスに一時ファイルから置き換えて書き、管理 API の再読み込みを呼ぶ。
+  - サーバーが動いていなければ（管理者トークンがない、つながらない）、「次の起動で読む」と出して成功で終える。
+  - 再読み込みの応答のトークン ID が、書いたファイルのトークン ID と違えば、「The server reads another license file than --license.」で終了コード 1（設定 `license` と `--license` のずれ、R6）。
+  - サーバーが新しいファイルを断れば（`409`）、その誤りを出して終了コード 1。
+- `deactivate` と `deactivate-proof` は、サーバーが動いている（管理 API の状態の表示が答える）間は `ELM_INVALID_STATE`（「Stop elm-server before deactivating its license.」）で断る。解除したのに動き続けるサーバーが貸し続け、同じキーで別の機械を有効化して、最長 `exp + grace` の間、席が 2 倍になるのを防ぐ（R8）。成功したら、`--license` のファイルが有効化のライセンスと同じ中身のときだけ消す（手で入れたファイルは消さない）。止めたサーバーはライセンスがなく起動しない。ファイルの写しを残す道は §5.4 の「解除の後に残したライセンスファイル」と同じである。
+- `activate-request` と `refresh-request` は、動いているサーバーが自動の更新をしている（状態の表示の `autoRefresh` が `true`）間は `ELM_INVALID_STATE`（「The server refreshes its license online; use elm server refresh.」）で断る。自動の更新が成功すると待っている要求は捨てられ、その古いファイルを渡すとサーバーライセンスが複製と判定されるためである（§5.4、R9）。
+- 出力と終了コード（§16）:
+
+| 結果 | 終了コード |
+| --- | --- |
+| 成功（サーバーが動いていない、を含む） | 0 |
+| サービスの拒否、検証の誤り（`ELM_WRONG_KIND` など）、手元の状態（`ELM_INVALID_STATE`、壊れた `activation.json` の `ELM_MALFORMED`、`ELM_INSTALLATION_KEY_UNREADABLE`、ロック）、サーバーの再読み込みの拒否とファイルのずれ | 1 |
+| 引数とファイルの誤り（URL の形、読めない応答ファイル、`--out` が既にある）、鍵がまだない | 2 |
+| `elm-service` につながらない（`ELM_NETWORK_ERROR`） | 3 |
+
+- サービスでは成功した後の失敗（`--license` に書けない）は、「The activation is kept, but the license file cannot be written: …. Fix the path and run elm server refresh.」で終了コード 1 にする。有効化は手元に残るので、`activate` を繰り返すと断られる。
+
+サーバーの中の自動の更新:
+
+- 設定 `service.url` があれば、起動のときに次を行う。
+  - `license` のパスに書けるかを確かめる（その横に一時ファイルを作って消す）。書けなければ起動しない（設定の誤り、R6）。既定のパス（実行ファイルの横）にサービスのアカウントが書けない構成を、起動の時点で知らせるためである。
+  - `ActivationClient` を作る（種類は `Server`）。時計の守りは、サーバーの検証器と同じ 1 つのインスタンス（鍵の横の署名つきのファイル）を渡す（R1）。2 つあると、片方だけが `AcceptServerTime` を受け、もう片方がメモリの古い値でファイルを戻すためである。
+  - `ActivationClient` が作れない（鍵が読めない）ときは、起動はして、運用のログと利用ログ（`license.refresh_failed`）に書く。保存した有効化がない（手で発行したライセンス）ときは、何もしない。
+- 保存したファイルを持つかぎり、`ActivationClient` が §12.6.2 のとおり更新する（期限 − `RefreshWindow` から。失敗の後は 1 時間ごと、`Retry-After` があれば 24 時間までそれに従い、`CloneDetected` と `ELM_PROOF_INVALID` では止める）。
+- 更新で新しいファイルを保存したら、`license` のパスに書いて再読み込みする（起動と同じ検査、§13.1。再読み込みは借り出しの記録と利用ログに `key.changed` を書いてから新しいライセンスを使う）。書けないか再読み込みが断れば、古いライセンスで貸し続け、1 時間ごとに、保存した有効化のファイルの書き込みと再読み込みをやり直す（R2）。起動のときも、保存した有効化のファイルが読み込んだライセンスより新しい（同じライセンスで `seq` が大きい）なら、書いて再読み込みする。
+- 管理 API の再読み込みが成功したら（`elm server activate` などの後）、古い `ActivationClient` を閉じて（走っている更新を取り消して）から作り直し、保存した有効化を読み直して更新を置き直す。自分の更新の後の再読み込みでは作り直さない。手で入れたファイルを再読み込みしたときも作り直すので、有効化のトークンの更新の時刻がもう過ぎていれば、すぐに有効化のファイルに戻る。
+- 状態の表示（`GET /admin/v1/status`）に `autoRefresh`（`service.url` があり、`ActivationClient` が有効化を持つ）を足す。
+- `service.url` がなければ自動の更新はしない。管理者が `elm server refresh-request` と `import` で更新する。
+
+利用ログ（§18.1）:
+
+- `license.refreshed`: 自動の更新で新しいライセンスを使い始めたとき。`{"lic", "token", "seq"}`（新しいライセンスの ID、トークン ID、更新番号）。再読み込みの `key.changed` の後に書く。
+- `license.refresh_failed`: `{"stage", "code"}`。`stage` は `service`（状態が `RefreshFailing`・`Refused`・`CloneDetected` に変わった）、`write`（ファイルに書けない）、`reload`（再読み込みが断った）、`start`（`ActivationClient` が作れない）。`None` に変わった（管理者が外した）ときは `stage` を `service`、`code` を `ELM_ACTIVATION_NOT_FOUND` とする。
+- `elm server` のコマンドの操作は、サーバーの外で行うので利用ログに書かない。再読み込みは `admin.action` と `key.changed` で残る。
+
+有効化を持つ間の手の入れ替え: 有効化を持つサーバーで、管理者が別のライセンスファイルを置いて再読み込みすれば、そのファイルを使うが、次の更新（作り直したクライアントの、すでに過ぎていればすぐの更新）で有効化のファイルに戻る。手で入れたライセンスに切り替える管理者は、先にサーバーを止めて `elm server deactivate` で解除する（M4c3 の Grill）。
+
 ノンスの秘密: `elm-server` は、ノンスの HMAC の秘密（§12.2）を起動のたびに `RandomNumberGenerator` で作り、保存しない。`jti` の記録はメモリだけにあり再起動で消えるため、秘密を残すと、再起動の直前に使われた証明を再起動の後 300 秒以内に再送できてしまう。秘密を作り直せば、古いノンスはすべて無効になる。
 
 ### 13.8 設定
@@ -1971,6 +2024,7 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 | `tls.certificate` | なし（自己署名） | §13.5。PKCS#12 のファイル（パスワードは環境変数 `ELM_TLS_PASSWORD`）か、PEM の証明書 |
 | `tls.key` | なし | `tls.certificate` が PEM のときの、PEM の秘密鍵（M3b で足した） |
 | `dataDirectory` | §10.2 の端末の範囲 | インストール鍵と時計の守りの場所（M3b で足した） |
+| `service.url` | なし | サーバーライセンスを自動で更新する `elm-service` の URL（https。ループバックの http は試験のため）。なければ自動の更新をしない。あれば、起動のときに `license` のパスへ書けることを確かめる（§13.7、M4c3 で足した）。同じ製品のアプリと `activation.json` を共有しないよう、サーバーには別の `dataDirectory` を設定する |
 | `borrow.maxDuration` | ポリシーの上限 | §12.7.4。`d.hh:mm:ss` の形（例 `7.00:00:00`）、1 秒〜100 年 |
 | `borrow.reserve` | 0 | §12.7.4。0〜1,000,000 |
 | `log.usage` | `usage.jsonl` | §18.1。フォルダーと、拡張子を除いた名前が日ごとのファイルの名前になる（`usage-<UTC の日時>.jsonl`）。相対のパスはデータのフォルダーから |
@@ -2358,7 +2412,7 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 | `elm admin login` | OIDC のデバイス認可フローで管理 API にログインする |
 | `elm admin ...` | 管理 API の操作。API キーは環境変数 `ELM_API_KEY` で渡す |
 | `elm offline process` | オフラインの有効化・更新・解除のファイルをサービスに渡し、応答を書く（§12.8.4、M4c1） |
-| `elm server ...` | オンプレミスのサーバーのローカル管理（§13.7）。`status`、`leases`、`release <ID>`、`reload`、`seal` |
+| `elm server ...` | オンプレミスのサーバーのローカル管理（§13.7）。`status`、`leases`、`release <ID>`、`reload`、`seal`。サーバーライセンスの `activate`、`refresh`、`deactivate`、`activate-request`、`refresh-request`、`import`、`deactivate-proof`、`forget-proof`（M4c3） |
 
 `key` と `license` のコマンドは M2（Issue #11）で実装した。秘密鍵を読むコマンドのパスフレーズは、`--passphrase-env` が名指す環境変数（既定 `ELM_KEY_PASSPHRASE`）から読み、なければ対話で尋ねる。入力が対話でないときは引数の誤り（2）で終わる。新しい鍵のパスフレーズは 12 文字以上とする。秘密鍵のファイルは上書きせず（`--force` で上書き）、Linux と macOS では権限 `0600` で作る。
 
@@ -2455,7 +2509,7 @@ M3c で作った形:
 - 新しいファイルの名前は、時計が戻っても最新のファイルより後に並べる（最新のファイルの時刻 + 1 ミリ秒）。起動時に読むのは、名前で最新のファイルだからである（0.56）。
 - 拒否の数え方（0.58）: `lease.denied` と `admin.denied` は、署名のタイマー（60 秒）ごとと停止のときに、種類（イベント、機能、コード）ごとの件数を `{"type", "ts", "feat"?, "code", "count"}` の 1 行で書く。1 分に数える種類は 100 までで、超えた分は機能を省いて数える。拒否の行の増え方は、要求の数ではなく、1 分あたりの種類の数で抑える。
 - ディスクが一杯のとき: 利用ログは運用の記録に書いて要求を続ける。借り出しの記録に書けなければ、借り出しと早期返却を断る（§13.4）。
-- イベント（M3c）: `lease.acquired`、`lease.renewed`、`lease.released`、`lease.expired`、`lease.reclaimed`、`lease.denied`（取得・更新・回収・早期返却の拒否を、1 分ごとに機能とコードごとの `count` で）、`borrow.started`、`borrow.returned`、`borrow.expired`、`overage`（`inUse` つき）、`server.started`、`server.stopped`（返却されなかったリースの数）、`admin.action`、`admin.denied`（1 分ごとの `count`）、`records.set_aside`。取得の行は、送られていればホスト名・ユーザー名・アプリの版を持つ。
+- イベント（M3c）: `lease.acquired`、`lease.renewed`、`lease.released`、`lease.expired`、`lease.reclaimed`、`lease.denied`（取得・更新・回収・早期返却の拒否を、1 分ごとに機能とコードごとの `count` で）、`borrow.started`、`borrow.returned`、`borrow.expired`、`overage`（`inUse` つき）、`server.started`、`server.stopped`（返却されなかったリースの数）、`admin.action`、`admin.denied`（1 分ごとの `count`）、`records.set_aside`。M4c3 で `license.refreshed` と `license.refresh_failed`（§13.7）。取得の行は、送られていればホスト名・ユーザー名・アプリの版を持つ。
 - 書き手と検証は `ElasticLM.Issuing` の `SignedLog`（`Open`、`Append`、`Seal`、`ChangeKey`、`FindFiles`）と `LogVerifier.Verify(files, trust, productId, stream)` で、`elm-server` と `elm log verify` が共有する。
 - 利用ログが書けないときは、運用の記録（標準のログ）に書き、要求は失敗させない。利用ログは監査のためで、席の数え上げは記録に頼らないためである。
 
