@@ -14,27 +14,7 @@ internal sealed partial class ServiceStore<TDialect>
         return _db.InTransactionAsync(
             async tx =>
             {
-                await tx.Insert(LicenseRow.Table)
-                    .Values(
-                        new LicenseRow.Insert
-                        {
-                            Id = license.Id,
-                            ProductId = license.ProductId,
-                            PolicyId = license.PolicyId,
-                            Name = license.Name,
-                            KeyHash = license.KeyHash,
-                            MaxActivations = license.MaxActivations,
-                            ExpiresAt = license.ExpiresAt,
-                            SuspendedAt = license.SuspendedAt,
-                            RevokedAt = license.RevokedAt,
-                            Features = license.Features,
-                            Meta = license.Meta,
-                            CreatedAt = license.CreatedAt,
-                            UpdatedAt = license.UpdatedAt,
-                        }
-                    )
-                    .ExecuteAsync(cancellationToken)
-                    .ConfigureAwait(false);
+                await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
                 await AppendAsync(tx, audit, now, cancellationToken).ConfigureAwait(false);
             },
             cancellationToken
@@ -112,6 +92,7 @@ internal sealed partial class ServiceStore<TDialect>
                             Set(l.RevokedAt, after.RevokedAt),
                             Set(l.Features, after.Features),
                             Set(l.Meta, after.Meta),
+                            Set(l.Deactivations, after.Deactivations),
                             Set(l.UpdatedAt, after.UpdatedAt),
                         ]
                     )
@@ -124,4 +105,27 @@ internal sealed partial class ServiceStore<TDialect>
             cancellationToken
         );
     }
+
+    private static Task<int> InsertLicenseAsync(Transaction<TDialect> tx, LicenseRow license, CancellationToken cancellationToken) =>
+        tx.Insert(LicenseRow.Table)
+            .Values(
+                new LicenseRow.Insert
+                {
+                    Id = license.Id,
+                    ProductId = license.ProductId,
+                    PolicyId = license.PolicyId,
+                    Name = license.Name,
+                    KeyHash = license.KeyHash,
+                    MaxActivations = license.MaxActivations,
+                    ExpiresAt = license.ExpiresAt,
+                    SuspendedAt = license.SuspendedAt,
+                    RevokedAt = license.RevokedAt,
+                    Features = license.Features,
+                    Meta = license.Meta,
+                    Deactivations = license.Deactivations,
+                    CreatedAt = license.CreatedAt,
+                    UpdatedAt = license.UpdatedAt,
+                }
+            )
+            .ExecuteAsync(cancellationToken);
 }

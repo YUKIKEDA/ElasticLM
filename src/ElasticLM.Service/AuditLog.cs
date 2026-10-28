@@ -177,4 +177,12 @@ internal static class AuditActions
     public const string LicenseRevoke = "license.revoke";
     public const string LicenseExtend = "license.extend";
     public const string LicenseFile = "license.file";
+    public const string ActivationActivate = "activation.activate";
+    public const string ActivationDeactivate = "activation.deactivate";
+    public const string ActivationClone = "activation.clone";
+    public const string ActivationList = "activation.list";
+    public const string ActivationGet = "activation.get";
+    public const string TrialCreate = "trial.create";
+    public const string TrialList = "trial.list";
+    public const string TrialDelete = "trial.delete";
 }

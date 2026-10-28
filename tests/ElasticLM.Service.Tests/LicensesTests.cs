@@ -34,7 +34,7 @@ public sealed class LicensesTests
     [Fact]
     public void State_OverlappingMarks_ResolveInOrder()
     {
-        LicenseRow row = new(Guid.CreateVersion7(), Guid.Empty, Guid.Empty, "n", [], null, null, null, null, "[]", "{}", 0, 0);
+        LicenseRow row = new(Guid.CreateVersion7(), Guid.Empty, Guid.Empty, "n", [], null, null, null, null, "[]", "{}", 0, 0, 0);
         foreach (long? expires in new long?[] { null, Now - 1, Now, Now + 1 })
         {
             string free = expires is long e && e <= Now ? Licenses.Expired : Licenses.Active;

@@ -33,6 +33,7 @@ internal sealed class ServiceHostOptions
 internal sealed partial class ElmService : IAsyncDisposable
 {
     private static readonly TimeSpan PurgeInterval = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ProofPurgeInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DenialInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan CertificateWarning = TimeSpan.FromDays(30);
@@ -45,14 +46,21 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly X509Certificate2? _tls;
     private readonly RateLimiter<IPAddress> _perIp;
     private readonly RateLimiter<Guid> _perKey;
+    private readonly RateLimiter<IPAddress> _clientPerIp;
+    private readonly RateLimiter<string> _clientPerKey;
+    private readonly NonceService _nonces;
+    private readonly ProofVerifier _proofs;
     private readonly ILogger _log;
     private readonly Lock _denialsLock = new();
-    private readonly Lock _runningLock = new();
-    private readonly HashSet<Task> _running = [];
+    private readonly PeriodicWork _denialWork;
+    private readonly PeriodicWork _proofWork;
+    private readonly PeriodicWork _retentionWork;
     private long _denials;
     private ITimer? _purge;
     private ITimer? _denialTimer;
     private ITimer? _retention;
+    private ITimer? _proofPurge;
+    private IReadOnlyList<Uri> _publicUrls = [];
     private bool _stopped;
     private bool _disposed;
 
@@ -81,6 +89,15 @@ internal sealed partial class ElmService : IAsyncDisposable
         _log = log;
         _perIp = new RateLimiter<IPAddress>(settings.RateLimitPerIp, time);
         _perKey = new RateLimiter<Guid>(settings.RateLimitPerKey, time);
+        _clientPerIp = new RateLimiter<IPAddress>(settings.RateLimitClientPerIp, time);
+        _clientPerKey = new RateLimiter<string>(settings.RateLimitClientPerKey, time);
+        _nonces = new NonceService(settings.NonceSecret, time);
+
+        // The jti is recorded in the database after the other checks (design §12.2 rule 5), so the verifier's store accepts all.
+        _proofs = new ProofVerifier(_nonces, AcceptingReplays.Instance);
+        _denialWork = new PeriodicWork(WriteDenialsAsync);
+        _proofWork = new PeriodicWork(RemoveOldProofsAsync);
+        _retentionWork = new PeriodicWork(RemoveOldAuditAsync);
     }
 
     /// <summary>Gets the URL the service answers on.</summary>
@@ -103,6 +120,11 @@ internal sealed partial class ElmService : IAsyncDisposable
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(host);
+        if (settings.NonceSecret.Length < NonceService.MinSecretLength)
+        {
+            throw new ServiceStartException($"Set {ServiceSettings.NonceSecretVariable} or nonce.secretFile to the nonces' secret.");
+        }
+
         long started = host.Time.GetTimestamp();
         TrustStore trust = ReadTrust(settings, host.Environment);
         (ECDsa signingKey, IReadOnlyList<string> certificates, SigningKeyStatus signing) = ReadSigningKey(settings, trust, host);
@@ -174,7 +196,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         _stopped = true;
-        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention })
+        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention, _proofPurge })
         {
             if (timer is not null)
             {
@@ -189,16 +211,10 @@ internal sealed partial class ElmService : IAsyncDisposable
         ServiceLog.Stopped(_log);
     }
 
-    /// <summary>Waits for the timers' work that has started (the denial count, retention) to end.</summary>
+    /// <summary>Waits for the timers' work that has started (the denial count, the jti records, retention) to end.</summary>
     internal async Task WaitForTimersAsync()
     {
-        Task[] running;
-        lock (_runningLock)
-        {
-            running = [.. _running];
-        }
-
-        await Task.WhenAll(running).ConfigureAwait(false);
+        await Task.WhenAll(_denialWork.WhenIdleAsync(), _proofWork.WhenIdleAsync(), _retentionWork.WhenIdleAsync()).ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -339,12 +355,14 @@ internal sealed partial class ElmService : IAsyncDisposable
             .Features.Get<IServerAddressesFeature>();
         Uri bound = addresses?.Addresses.Select(a => new Uri(a)).FirstOrDefault() ?? _settings.Listen;
         Url = new UriBuilder(_settings.Listen) { Port = bound.Port, Path = "/" }.Uri;
+        _publicUrls = _settings.PublicUrls.Count > 0 ? _settings.PublicUrls : [Url];
 
         _purge = Time.CreateTimer(_ => Purge(), null, PurgeInterval, PurgeInterval);
-        _denialTimer = Time.CreateTimer(_ => Track(WriteDenialsAsync), null, DenialInterval, DenialInterval);
+        _denialTimer = Time.CreateTimer(_ => _denialWork.TryStart(), null, DenialInterval, DenialInterval);
+        _proofPurge = Time.CreateTimer(_ => _proofWork.TryStart(), null, ProofPurgeInterval, ProofPurgeInterval);
         if (_settings.AuditRetention is not null)
         {
-            _retention = Time.CreateTimer(_ => Track(RemoveOldAuditAsync), null, RetentionInterval, RetentionInterval);
+            _retention = Time.CreateTimer(_ => _retentionWork.TryStart(), null, RetentionInterval, RetentionInterval);
         }
 
         if (applied.Count > 0 && _log.IsEnabled(LogLevel.Information))
@@ -361,33 +379,33 @@ internal sealed partial class ElmService : IAsyncDisposable
         ServiceLog.Started(_log, Url, _settings.Database, Signing.KeyId, Signing.ExpiresAt, (long)startup.TotalMilliseconds);
     }
 
-    // Runs a timer's work and keeps it until it ends, so StopAsync can wait for it. The work catches its own failures.
-    private void Track(Func<Task> work)
-    {
-        Task task = work();
-        lock (_runningLock)
-        {
-            _running.Add(task);
-        }
-
-        _ = task.ContinueWith(
-            done =>
-            {
-                lock (_runningLock)
-                {
-                    _running.Remove(done);
-                }
-            },
-            CancellationToken.None,
-            TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default
-        );
-    }
-
     private void Purge()
     {
         _perIp.Purge();
         _perKey.Purge();
+        _clientPerIp.Purge();
+        _clientPerKey.Purge();
+    }
+
+    // design §14.4: once a minute, the jti records whose nonce has expired.
+    private async Task RemoveOldProofsAsync()
+    {
+        try
+        {
+            await Database.RemoveProofsBeforeAsync(Time.GetUtcNow().ToUnixTimeSeconds(), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception e) when (e is System.Data.Common.DbException or InvalidOperationException)
+        {
+            ServiceLog.PeriodicFailed(_log, e);
+        }
+    }
+
+    // The service records each jti in its database (RecordProofAsync), where every node sees it.
+    private sealed class AcceptingReplays : IReplayStore
+    {
+        public static AcceptingReplays Instance { get; } = new();
+
+        public ReplayCheck TryUse(string jti, DateTimeOffset expiresAt) => ReplayCheck.Accepted;
     }
 
     // Counted authentication failures, written as one row a minute (design §14.5), so failing requests cannot grow the log line by line.

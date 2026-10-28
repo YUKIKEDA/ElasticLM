@@ -26,6 +26,12 @@ internal sealed class SettingsFile
     [JsonPropertyName("bootstrapOwner")]
     public OwnerSection? BootstrapOwner { get; set; }
 
+    [JsonPropertyName("publicUrls")]
+    public List<string>? PublicUrls { get; set; }
+
+    [JsonPropertyName("nonce")]
+    public NonceSection? Nonce { get; set; }
+
     [JsonPropertyName("rateLimit")]
     public RateLimitSection? RateLimit { get; set; }
 
@@ -97,6 +103,20 @@ internal sealed class RateLimitSection
 
     [JsonPropertyName("perKey")]
     public int? PerKey { get; set; }
+
+    [JsonPropertyName("clientPerIp")]
+    public int? ClientPerIp { get; set; }
+
+    [JsonPropertyName("clientPerKey")]
+    public int? ClientPerKey { get; set; }
+}
+
+/// <summary><c>nonce</c>: the file of the nonces' HMAC secret (design §12.2, §14.8).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class NonceSection
+{
+    [JsonPropertyName("secretFile")]
+    public string? SecretFile { get; set; }
 }
 
 /// <summary><c>audit</c>.</summary>
@@ -267,7 +287,8 @@ internal sealed record LicenseItem(
     [property: JsonPropertyName("expiresAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? ExpiresAt,
     [property: JsonPropertyName("suspendedAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? SuspendedAt,
     [property: JsonPropertyName("revokedAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? RevokedAt,
-    [property: JsonPropertyName("meta")] Dictionary<string, string> Meta
+    [property: JsonPropertyName("meta")] Dictionary<string, string> Meta,
+    [property: JsonPropertyName("deactivations")] long Deactivations
 )
 {
     [JsonPropertyName("key")]
@@ -276,6 +297,43 @@ internal sealed record LicenseItem(
 
 /// <summary>A page of licenses.</summary>
 internal sealed record LicensePage([property: JsonPropertyName("items")] LicenseItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary><c>GET /v1/nonce</c> (design §12.2), the same shape as <c>elm-server</c>'s.</summary>
+internal sealed record NonceAnswer([property: JsonPropertyName("nonce")] string Nonce);
+
+/// <summary>The host name and OS user an activation sent (design §12.3).</summary>
+internal sealed record ClientItem([property: JsonPropertyName("host")] string Host, [property: JsonPropertyName("user")] string User);
+
+/// <summary>An activation as the administration API shows it (design §14.5, M4b1).</summary>
+internal sealed record ActivationItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("licenseId")] string LicenseId,
+    [property: JsonPropertyName("keyId")] string KeyId,
+    [property: JsonPropertyName("fingerprints")] string[] Fingerprints,
+    [property: JsonPropertyName("client"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] ClientItem? Client,
+    [property: JsonPropertyName("app"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? App,
+    [property: JsonPropertyName("seq")] long Seq,
+    [property: JsonPropertyName("blockedAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? BlockedAt,
+    [property: JsonPropertyName("createdAt")] string CreatedAt,
+    [property: JsonPropertyName("updatedAt")] string UpdatedAt
+);
+
+/// <summary>A page of activations.</summary>
+internal sealed record ActivationPage(
+    [property: JsonPropertyName("items")] ActivationItem[] Items,
+    [property: JsonPropertyName("next")] string? Next
+);
+
+/// <summary>A trial as the administration API shows it (design §14.5, M4b1): its ID is its license's.</summary>
+internal sealed record TrialItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("productId")] string ProductId,
+    [property: JsonPropertyName("fingerprints")] string[] Fingerprints,
+    [property: JsonPropertyName("createdAt")] string CreatedAt
+);
+
+/// <summary>A page of trials.</summary>
+internal sealed record TrialPage([property: JsonPropertyName("items")] TrialItem[] Items, [property: JsonPropertyName("next")] string? Next);
 
 /// <summary>
 /// An error answer (RFC 9457) with the ElasticLM code.
@@ -315,6 +373,11 @@ internal sealed record Problem(
 [JsonSerializable(typeof(LicenseItem))]
 [JsonSerializable(typeof(LicensePage))]
 [JsonSerializable(typeof(StoredLicenseFeature[]))]
+[JsonSerializable(typeof(NonceAnswer))]
+[JsonSerializable(typeof(ActivationItem))]
+[JsonSerializable(typeof(ActivationPage))]
+[JsonSerializable(typeof(TrialItem))]
+[JsonSerializable(typeof(TrialPage))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(string[]))]
 internal sealed partial class ServiceJsonContext : JsonSerializerContext;

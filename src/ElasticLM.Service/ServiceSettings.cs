@@ -44,6 +44,9 @@ internal sealed record ServiceSettings
     /// <summary>The variable that holds the vendor's root keys as PEM text, instead of <c>trust.rootKeys</c> files.</summary>
     public const string TrustRootKeysVariable = "ELM_TRUST_ROOT_KEYS";
 
+    /// <summary>The variable that holds the nonces' HMAC secret in base64, instead of <c>nonce.secretFile</c>.</summary>
+    public const string NonceSecretVariable = "ELM_NONCE_SECRET";
+
     private const int MaxSettingsFileLength = 64 * 1024;
     private const int MaxSecretFileLength = 16 * 1024;
     private const int MaxIdentityLength = 255;
@@ -81,12 +84,27 @@ internal sealed record ServiceSettings
     public TimeSpan? AuditRetention { get; init; }
 
     /// <summary>
+    /// Gets the URLs devices reach the service under (design §12.1), which a proof's <c>htu</c> is checked against; empty
+    /// means the listen URL.
+    /// </summary>
+    public IReadOnlyList<Uri> PublicUrls { get; init; } = [];
+
+    /// <summary>Gets the nonces' HMAC secret, at least 32 bytes (design §12.2, §14.8); empty only for setup.</summary>
+    public byte[] NonceSecret { get; init; } = [];
+
+    /// <summary>Gets the requests per second from one source to the device endpoints (design §14.7).</summary>
+    public int RateLimitClientPerIp { get; init; } = 20;
+
+    /// <summary>Gets the requests per second of one installation key (design §14.7).</summary>
+    public int RateLimitClientPerKey { get; init; } = 2;
+
+    /// <summary>
     /// Reads the settings file (if any) and the environment.
     /// </summary>
     /// <param name="configPath">The settings file, or <see langword="null"/>.</param>
     /// <param name="environment">Reads an environment variable.</param>
-    /// <param name="requireSigning">Whether the signing key and its certificates are required: the service needs them, setup
-    /// does not.</param>
+    /// <param name="requireSigning">Whether the signing key, its certificates, and the nonce secret are required: the service
+    /// needs them, setup does not.</param>
     /// <returns>The settings.</returns>
     /// <exception cref="ServiceStartException">A file, key, or value is not valid, or a required one is missing.</exception>
     public static ServiceSettings Load(string? configPath, Func<string, string?> environment, bool requireSigning = true)
@@ -141,11 +159,33 @@ internal sealed record ServiceSettings
             owner = new AdminIdentity(ownerIssuer, ownerSubject);
         }
 
-        int perIp = Env("ELM_RATELIMIT_PERIP") is string perIpText ? ParseInt(perIpText, "rateLimit.perIp") : file.RateLimit?.PerIp ?? 20;
-        int perKey = Env("ELM_RATELIMIT_PERKEY") is string perKeyText ? ParseInt(perKeyText, "rateLimit.perKey") : file.RateLimit?.PerKey ?? 10;
-        if (perIp is < 1 or > 10_000 || perKey is < 1 or > 10_000)
+        int Rate(string variable, string key, int? inFile, int fallback) =>
+            (Env(variable) is string text ? ParseInt(text, key) : inFile ?? fallback) is int rate and >= 1 and <= 10_000
+                ? rate
+                : throw new ServiceStartException($"{key} must be between 1 and 10000.");
+        int perIp = Rate("ELM_RATELIMIT_PERIP", "rateLimit.perIp", file.RateLimit?.PerIp, 20);
+        int perKey = Rate("ELM_RATELIMIT_PERKEY", "rateLimit.perKey", file.RateLimit?.PerKey, 10);
+        int clientPerIp = Rate("ELM_RATELIMIT_CLIENTPERIP", "rateLimit.clientPerIp", file.RateLimit?.ClientPerIp, 20);
+        int clientPerKey = Rate("ELM_RATELIMIT_CLIENTPERKEY", "rateLimit.clientPerKey", file.RateLimit?.ClientPerKey, 2);
+
+        IReadOnlyList<Uri> publicUrls = [.. (EnvList("ELM_PUBLICURLS") ?? file.PublicUrls ?? []).Select(ParsePublicUrl)];
+        if (publicUrls.Count == 0 && !(listen.IsLoopback || listen.Host == "localhost"))
         {
-            throw new ServiceStartException("rateLimit.perIp and rateLimit.perKey must be between 1 and 10000.");
+            // design §14.8: devices sign the URL they reach; the listen address is not one they reach unless it is loopback.
+            throw new ServiceStartException("Set publicUrls to the https URLs devices reach the service under; listen is not a loopback address.");
+        }
+
+        // design §14.8: no default secret, so that nodes never disagree about the nonces they accept.
+        byte[] nonceSecret = [];
+        string? nonceText =
+            Env(NonceSecretVariable) ?? (file.Nonce?.SecretFile is string secretFile ? ReadSecret(secretFile, "nonce.secretFile") : null);
+        if (nonceText is not null || requireSigning)
+        {
+            nonceSecret = DecodeBase64(nonceText) is { Length: >= Issuing.NonceService.MinSecretLength } secret
+                ? secret
+                : throw new ServiceStartException(
+                    $"Set {NonceSecretVariable} or nonce.secretFile to the nonces' secret: at least 32 random bytes in base64."
+                );
         }
 
         int? retentionDays = Env("ELM_AUDIT_RETENTIONDAYS") is string daysText
@@ -171,6 +211,10 @@ internal sealed record ServiceSettings
             RateLimitPerIp = perIp,
             RateLimitPerKey = perKey,
             AuditRetention = retentionDays is int days ? TimeSpan.FromDays(days) : null,
+            PublicUrls = publicUrls,
+            NonceSecret = nonceSecret,
+            RateLimitClientPerIp = clientPerIp,
+            RateLimitClientPerKey = clientPerKey,
         };
     }
 
@@ -204,6 +248,12 @@ internal sealed record ServiceSettings
         return uri;
     }
 
+    // design §12.1: an https URL without query or fragment, as elm-server's publicUrls.
+    private static Uri ParsePublicUrl(string text) =>
+        Uri.TryCreate(text, UriKind.Absolute, out Uri? uri) && uri.Scheme == Uri.UriSchemeHttps && uri.Query.Length == 0 && uri.Fragment.Length == 0
+            ? uri
+            : throw new ServiceStartException($"publicUrls must be https URLs without query or fragment: '{text}'.");
+
     // A value written in the file may be left out but not empty: "" or null in a list is a mistake, not "use the default".
     private static SettingsFile Check(SettingsFile file)
     {
@@ -232,6 +282,8 @@ internal sealed record ServiceSettings
         List(file.Signing?.Certificates, "signing.certificates");
         List(file.Trust?.RootKeys, "trust.rootKeys");
         List(file.Trust?.RevokedKeyIds, "trust.revokedKeyIds");
+        List(file.PublicUrls, "publicUrls");
+        Text(file.Nonce?.SecretFile, "nonce.secretFile");
         return file;
     }
 
@@ -280,6 +332,18 @@ internal sealed record ServiceSettings
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             throw new ServiceStartException($"{key} '{path}' cannot be read: {e.Message}");
+        }
+    }
+
+    private static byte[]? DecodeBase64(string? text)
+    {
+        try
+        {
+            return text is null ? null : Convert.FromBase64String(text.Trim());
+        }
+        catch (FormatException)
+        {
+            return null;
         }
     }
 

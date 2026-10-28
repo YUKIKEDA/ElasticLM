@@ -25,6 +25,9 @@ internal sealed class TestService : IAsyncDisposable
 
     public static readonly DateTimeOffset Start = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
 
+    /// <summary>The nonces' secret of every test service: 32 bytes, made fresh for each run.</summary>
+    public static readonly byte[] NonceSecret = RandomNumberGenerator.GetBytes(32);
+
     private readonly ECDsa _root = KeyFiles.CreateKey();
     private readonly List<IAsyncDisposable> _owned = [];
     private readonly string? _schema;
@@ -47,7 +50,10 @@ internal sealed class TestService : IAsyncDisposable
             connection.Open();
             using var create = new NpgsqlCommand($"CREATE SCHEMA {_schema}", connection);
             create.ExecuteNonQuery();
-            ConnectionString = new NpgsqlConnectionStringBuilder(server) { SearchPath = _schema }.ConnectionString;
+
+            // Each test has a pool of its own; tests run in parallel against one server, whose connections are limited (100 by
+            // default), so a test's pool stays small.
+            ConnectionString = new NpgsqlConnectionStringBuilder(server) { SearchPath = _schema, MaxPoolSize = 8 }.ConnectionString;
         }
         else
         {
@@ -91,6 +97,9 @@ internal sealed class TestService : IAsyncDisposable
             BootstrapOwner = new AdminIdentity("https://idp.example", "owner-1"),
             RateLimitPerIp = 1_000,
             RateLimitPerKey = 1_000,
+            RateLimitClientPerIp = 1_000,
+            RateLimitClientPerKey = 1_000,
+            NonceSecret = NonceSecret,
         };
         return change?.Invoke(settings) ?? settings;
     }
