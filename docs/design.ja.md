@@ -114,7 +114,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.53 | すでにある端末の範囲のフォルダー | 鍵を書く前と読む前に、フォルダーと親の所有者と ACL（Linux と macOS はモード）を確かめ、ほかの利用者が読めるか置き換えられるなら止める（§10.2） |
 | 0.54 | 借り出しの記録の、署名のない末尾 | 最後の署名の後の `borrow.started` は読み、`borrow.returned` は読まない（§13.4） |
 | 0.55 | ファイルをまたぐ鍵 | 前のファイルの最後の鍵と違う鍵で続くファイルは誤りとする。同じ `lic` の別の鍵（サーバーの移設）は警告にする。起動時の借り出しの記録は、自分の鍵か同じ `lic` のものだけを読む（§13.4, §18.1） |
-| 0.56 | 管理者による借り出しの返却 | 断る（`409`、`ELM_RETURN_NOT_ALLOWED`）。新しいログのファイルの名前は最新のファイルより前に並べない。残る経路（ファイルの削除、時計、記録を退ける操作）は §5.4 で受け入れる（§12.7.4, §13.7, §18.1） |
+| 0.56 | 管理者による借り出しの返却 | オンプレミスでは断る（`409`、`ELM_RETURN_NOT_ALLOWED`）。クラウドでは返す（状態がベンダーのデータベースにあり、利用者の管理者が記録を書き換える経路がないため。§12.7.6、M4d1 の設計レビュー）。新しいログのファイルの名前は最新のファイルより前に並べない。残る経路（ファイルの削除、時計、記録を退ける操作）は §5.4 で受け入れる（§12.7.4, §13.7, §18.1） |
 | 0.57 | 早期返却の数え方 | インストール鍵ごとと、マシン指紋ごとに数え、どれかが `brl` に達したら断る。借り出しにはマシン指紋を必須にする（§12.7.4） |
 | 0.58 | 拒否の記録 | `lease.denied` と管理 API の認証の失敗は、1 分ごとに種類ごとの件数を 1 行で書く（§13.7, §18.1） |
 | 0.59 | ログの書き込みの失敗 | そのファイルを閉じ、次の書き込みで `chain.reset` から新しいファイルを始める。再読み込みは、借り出しの記録に `key.changed` を書けてからライセンスを替える（§13.1, §18.1） |
@@ -161,6 +161,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.90 | M4c の分け方とオフラインの要求 | M4c を M4c1（`elm-service` のオフラインの要求と `elm offline process`）、M4c2（`ElasticLM.Client` のオフラインのファイル）、M4c3（`elm-server` のサーバーライセンスの有効化と更新。`ActivationClient` を使う）に分ける。要求ファイルは公開の `POST /v1/offline` と管理の `POST /v1/admin/offline`（`activation.offline`）で受け、中身は同じ処理にする。同じ要求には残した同じ応答を返し（ライセンスと有効化の状態が通るときだけ）、`nonce` が同じで中身の違う要求は断る（`offline_requests` の表、有効化ごとに 1 行）。期限の切れた要求は、前の要求の `nonce` を `retry` に入れた新しい要求で取り直す。管理の入口は 1 回ごとに監査ログに書く。応答はオンラインと同じ発行の応答で、拡張子は `.elmresp`。要求に `prd` と `retry` を足し、オフラインの解除でもインストール鍵を残す（§8.4.4, §8.4.5, §12.8, §12.8.4。M4c の Grill と設計のレビュー、持ち主が受けた） |
 | 0.91 | `ElasticLM.Client` のオフライン | M4c2 で、`ActivationClient` に、オフラインの要求の作成（有効化・更新）、応答の取り込み、解除の証明の作成と破棄を足す。中身は文字列でやり取りし、見せ方（ファイル、QR コード）はアプリが決める（Cryptlex はファイルのパスを受け取る）。`ServiceUrl` を任意にし、ないクライアントはオンラインの操作を手元で断る。待っている要求（ライセンスキーを除いた中身と、キーの SHA-256）と渡していない解除の証明を `activation.json` に持ち、書き出すたびに同じ中身から組み立て直す。置き換えた要求の `nonce` は、その種類の答えのない要求の一覧に入れる。期限の前でも `renew` で作り直せる。オフラインの取り込みは時計の守りを上書きしない。オンラインで新しいファイルを保存したら待っている要求を捨て、解除の証明が残るうちは有効化を断る。更新の時期は `Check` の `ExpiresAt` と `RefreshWindow` でアプリが判断する（§12.8.5。M4c2 の Grill と設計のレビュー、持ち主が受けた） |
 | 0.92 | `elm-server` のサーバーライセンス | M4c3 で、`elm-server` のサーバーライセンスを `elm-service` で有効化・更新・解除する。有効化と手動の操作（オンラインの有効化・更新・解除、オフラインの要求・取り込み・解除の証明）は `elm server` のコマンドがサーバーのデータのフォルダーで `ActivationClient` を直接使って行い、ライセンスファイル（設定 `license`）を書いて、動いているサーバーに再読み込みを頼む。ライセンスがなければ起動しない決まり（§13.1）を変えずに最初の有効化ができるためである。自動の更新は、`service.url` を持つサーバーの中の `ActivationClient` が行い、成功のたびにファイルを書いて再読み込みする。ファイルが正本で、有効化を持つ間は有効化のライセンスが優先する。`kind: server` でないファイルは保存しない。動いているサーバーでの解除と、自動の更新をするサーバーでのオフラインの要求は断る（§13.7、M4c3 の Grill と設計のレビュー、持ち主が受けた） |
+| 0.93 | M4d の分け方とクラウドのリース | M4d を M4d1（規則の取り出し、`elm-service` のクラウドのリース、リースの管理 API）、M4d2（`LicenseClient` の SaaS 型のモード）、M4d3（サービスの利用ログとその管理 API）に分ける。`LeaseEngine` の判定を `LeaseRules`（純粋な関数）に取り出し、オンプレミスとサービスが同じ関数を使う。クラウドの取得はライセンスキーで名指し（ID は秘密でないため）、本文に `product` を持つ。回収は持たない（状態はデータベースに残る）。`floating` が `cloud` のポリシーのライセンスだけが貸し、借り出しの上限はポリシーの `BorrowLimit`、残す席は 0。`cloud` のポリシーは試用でもサーバーでもなく、そのライセンスは機能ごとに `seats` を必ず持ち、有効化しない（`409`）。`fromFirstActivation` の期限は最初の取得で決める。リースの期限はライセンスと機能の期限で切り、猶予は足さない。取得・更新・返却は監査ログに書かず（利用ログは M4d3）、複製の検出（`lease.clone`）と、管理 API の一覧と強制返却（借り出しも返す。0.56 の例外）は書く（§12.7.6。M4d の Grill と設計レビュー、持ち主が受けた） |
 
 ## 1. 目的と利用者
 
@@ -430,6 +431,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | `allow` / `deny` のホスト名とユーザー名を偽る | クライアントが申告する値で、確かめられない。確実なのは IP の範囲の規則だけである（§13.8） |
 | オフラインのトークンは期限まで失効が届かない | CRL のような失効リストを配る製品は調べた範囲になく、期限の短いトークンとオンラインの更新で失効を届ける（Keygen: https://keygen.sh/docs/api/cryptography/ 、Cryptlex: https://cryptlex.com/docs/sdks-and-apis/best-practices ）。期限はポリシーで短くできる |
 | 期限なしのトークンは失効できない | CLI の手動発行と、期限のないライセンスの `Unbound` のライセンスファイルに限る（0.17, 0.86）。CLI は発行時に警告を出し、`elm-service` では出すたびの監査ログの行（`exp` なし）が記録になる |
+| 借り出しの権利を持つ利用者が、新しいインストール鍵と指紋で借り出しと早期返却を繰り返し、`lease_returns` の行を増やす（§12.7.6） | 行はライセンスごとに数え、30 日で消える。1 回の早期返却は証明と頻度の制限（送信元ごと、鍵ごと、§14.7）を通り、行は鍵 1 つと指紋 8 個までの 9 行である。増やせるのは自分のライセンスの行だけで、ほかのライセンスの判定には響かない |
 | データベースに書ける者が監査ログを書き直す | 連なりは、行の書き換え・削除・番号の付け替えを、`audit_state` の先頭と起点に照らして見つける（§18.2）。しかしデータベースに書ける者は、すべてのハッシュを計算し直して `audit_state` も書き換えられる。末尾を切って先頭を戻すことも、古い行を消して起点を動かすこと（保管期間による削除と見分けがつかない）もできる。この者はほかの表も書き換えられるので、連なりだけでは守れない。署名した先頭や外への書き出しのような、データベースの外の起点は入れない |
 
 ## 6. 全体構成
@@ -815,7 +817,7 @@ erDiagram
 | `ClientInfoStrategy` | `None`, `HostAndUser` | `None` | ホスト名と OS のユーザー名を送るか（§4.4） |
 | `TrialDuration` | 期間 | 14 日 | `LicenseKind: Trial` のときの期間 |
 
-`Overage` で許す席数は $\lfloor \mathit{seats} \times (100 + \mathit{overage}) / 100 \rfloor$ とする（切り捨て）。これを超える要求は、その要求だけを断る。Keygen は厳しい上限を超えると全席を無効にする（https://keygen.sh/docs/api/machines/ ）が、ElasticLM はすでに貸した席に影響させない。
+`Overage` で許す席数は $\lfloor \mathit{seats} \times (100 + \mathit{overage}) / 100 \rfloor$ とする（切り捨て）。これを超える要求は、その要求だけを断る。例外は席を減らしたライセンスの更新で、使う席（その更新のリースを含む）が許す席数を超えている間は、更新を `ELM_NO_SEATS` で断る（§13.1 のオンプレミスと同じ、§12.7.6）。Keygen は厳しい上限を超えると全席を無効にする（https://keygen.sh/docs/api/machines/ ）が、ElasticLM はすでに貸した席に影響させない。
 
 `LicenseKind: Trial` のポリシーには次の制約がある。
 
@@ -823,6 +825,8 @@ erDiagram
 - `FingerprintMatching` は `Any` か `All`。`Ignore` は選べない。起動ごとに変えられる指紋では 1 台 1 回を守れないためである。
 - `GracePeriod` は 0。
 - 製品は試用に使うポリシーを 1 つ指定する（`Product.TrialPolicy`）。指定がなければ、その製品は試用を出さない。
+
+`Floating: Cloud` は `LicenseKind: Standard` のポリシーだけが選べる（`Trial` と `Server` は拒む）。そのライセンスは機能ごとに `seats`（1〜1,000,000）を必ず持ち、席はリースで貸す（§12.7.6）。有効化はしない（`409` と `ELM_CONFLICT`）。`seats` を持たない機能（`Cloud` にする前に作ったライセンス）は貸さない。
 
 `LicenseKind: Server` のポリシーでは、`TokenLifetime` と `RefreshWindow` がサーバーライセンスの更新の周期になる（0.37）。`Binding` は `NodeLocked` に固定する。
 
@@ -1267,7 +1271,7 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 5. `jti` をデータベースに一意で書く（規則 5。書けなければ `401` と `ELM_REPLAYED`）。ここまでで断った要求の `jti` は書かない。
 6. 本文の形（`400` と `ELM_MALFORMED`）。
 7. キーのハッシュでライセンスを探す（`404` と `ELM_LICENSE_NOT_FOUND`）。ライセンスの製品の `code` が本文の `product` と違えば `400` と `ELM_WRONG_PRODUCT`。有効化を作る前に断るので、別の製品のアプリに入れたキーが、そのアプリから外せない台数を使わない（M4b2）。
-8. ポリシーが `unbound` なら `409` と `ELM_CONFLICT`（0.88）。
+8. ポリシーが `unbound` なら `409` と `ELM_CONFLICT`（0.88）。`floating` が `cloud` でも `409` と `ELM_CONFLICT`（席はリースで貸す、§12.7.6）。
 9. ポリシーが `ignore` でなく指紋が 0 個なら `400` と `ELM_FINGERPRINT_UNAVAILABLE`。
 10. ライセンスの行をロックし（§14.4）、その行の状態で断る: `Revoked` は `403` と `ELM_LICENSE_REVOKED`、`Suspended` は `ELM_LICENSE_SUSPENDED`、`Expired` は `ELM_EXPIRED`（§9.4 の順で決めた 1 つの状態）。
 11. このライセンスに同じインストール鍵の有効化があれば、§10.4 の手順 3 で判定する。正しい `seq` なら、指紋・`client`・`app` を送られた値に替え、`seq` を 1 増やしたファイルを `200` で返す。再試行なら最後のファイルをそのまま `200` で返す。複製なら上の `CloneStrategy` に従う（`Flag` は記録して、正しい `seq` と同じに進める）。
@@ -1468,7 +1472,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 | 返却 | `DELETE /v1/leases/{id}` + 証明 |
 
 - `count` は 1 以上で、その機能の席数以下。`borrow` を入れるなら 1 秒以上。外れれば `ELM_INVALID_ARGUMENT`（`borrow` が負か 100 年を超えれば、§8.6 の `ELM_MALFORMED`）。
-- SaaS 型では、取得の本文にライセンス ID かライセンスキーを入れる。オンプレミスでは、サーバーライセンスの機能から貸す。
+- SaaS 型では、取得の本文にライセンスキーと製品の `code` を入れる（§12.7.6。ライセンス ID は秘密でないので、ID では取れない。M4d の Grill）。オンプレミスでは、サーバーライセンスの機能から貸す。
 - 更新の `seq` は §10.4 の手順 3 で判定する。
 - オンプレミスのサーバーは、リースの `exp` を自分のサーバーライセンスの `exp + grace` を超えない値に切り詰める（§12.7.5 の手順 5 を満たすため）。
 - 応答は `{"lease": "<elm-lease+jws>", "certificates": ["<elm-cert+jws>"]}` である。SaaS 型は `use: lease` の署名鍵の証明書を `certificates` に入れ、オンプレミスは空にする（サーバーライセンスで検証するため）。借り出しをオフラインで使うときも、クライアントは手元の証明書で検証できる。
@@ -1553,7 +1557,8 @@ stateDiagram-v2
 - 失敗したら、15 秒から始めて倍にし、60 秒を上限として、期限まで再試行する。Cryptlex が「期限の 30 秒以上前に同期せよ」と書く（https://cryptlex.com/docs/licensing-models/floating-licenses/hosted-floating-licenses ）ように、1 回の遅れで席を失わない間隔にする。
 - 期限が来たら `Lost` にし、アプリに通知する。アプリが何をするか（保存を促す、機能を止める）はアプリが決める。
 - `ELM_CLONE_DETECTED` は再試行しても変わらないので、すぐに `Lost` にする。それ以外の失敗（通信の失敗、`5xx`、サーバーのピンの不一致を含む）は期限まで再試行する。
-- 更新が `ELM_UNKNOWN_LEASE` で断られたら `Reclaiming` にし、そのサーバーから借りているリースを 1 回の要求でまとめて回収する（0.44）。回収できたリースはそのまま、断られたリースは `Lost` にし、回収できたら更新をやり直す。回収の要求自体が失敗したら `Retrying` にする。
+- SaaS 型では、更新が `ELM_UNKNOWN_LEASE` で断られたら、すぐに `Lost` にする。サービスは状態をデータベースに持ち、再起動で失わないので、回収はない（回収の経路もない。`404`、0.93）。
+- オンプレミスで更新が `ELM_UNKNOWN_LEASE` で断られたら `Reclaiming` にし、そのサーバーから借りているリースを 1 回の要求でまとめて回収する（0.44）。回収できたリースはそのまま、断られたリースは `Lost` にし、回収できたら更新をやり直す。回収の要求自体が失敗したら `Retrying` にする。
 
 #### 12.7.4 借り出し
 
@@ -1634,6 +1639,79 @@ public abstract record LeaseVerificationResult { /* Valid(VerifiedLease) / Inval
 - `LeaseVerifier` は、SaaS 型のリースの証明書を、`LicenseVerifier` と同じく検証器ごとに最初の 16 件まで覚える。
 - リースの発行は `ElasticLM.Issuing` の `LeaseIssuer.Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)` で行う。M3b で、発行の時刻を渡す `Issue(ECDsa signingKey, LeaseSpec spec, DateTimeOffset issuedAt)` を足した。サーバーは期間を切り詰める計算と同じ時刻で発行し、その間に秒が進んでも `exp` が §12.7.5 の手順 5 を超えないようにする。
 - `ElasticLM.Issuing` の `KeyFiles` に、公開鍵を JWK で書き出す `ExportPublicJwk` と、PEM の文を鍵ごとに分ける `SplitPem` を足した（M3b。`elm-server` の `GET /v1/server/license` とトラストストアの読み込みで使う）。
+
+#### 12.7.6 `elm-service` のクラウドのリース（M4d1）
+
+M4d1（0.93）で、§12.7.1〜§12.7.4 を `elm-service` に出す。プロトコルはオンプレミスと同じで、状態をデータベースに持つ（§14.4）。回収（§13.4）はない。
+
+規則の共有（決定 0.64）: `ElasticLM.Leasing` の `LeaseRules`（純粋な関数）が、機能の確かめ（付与・機能の期限・版の範囲）、席の上限（`floor(seats × (100 + overage) / 100)`）、空きの判定（使う席 + 求める数 ≤ 上限 − 残す席）、`count` と借り出しの期間と指紋の確かめ、早期返却の可否、`seq` による判定（§10.4 の手順 3: 正しい・再試行・複製）、期限（今 + 期間を、渡された上限で切る）を持つ。オンプレミスの `LeaseEngine` とサービスの両方がこれを呼び、同じ入力に同じ答えを返す。
+
+| 要求 | 本文 | 成功 |
+| --- | --- | --- |
+| `POST /v1/leases` | `{licenseKey, product, feature, version?, count, borrow?, fingerprints?, client?, app?}` | `201`。`{lease, certificates}` |
+| `POST /v1/leases/{id}/renew` | `{seq, retry?}` | `200`。`{lease, certificates}` |
+| `DELETE /v1/leases/{id}` | なし | `204` |
+
+- `certificates` は、サービスの署名鍵の証明書（`use: lease` を持つ、§14.8）である。ヘッダー `ELM-Server-License` は付けない。リーストークン（§8.4.3）は、`iss` と `srv` がサービスの署名鍵の ID、`lic` がライセンス ID、`prd` が製品の `code`、`slic` がない。
+- サービスは、出したトークンを返す前にクライアントと同じ検証（§12.7.5 の手順 1、2、6）にかける。通らなければ（証明書の期限が切れたなど）`500` と `ELM_INTERNAL_ERROR` で答え、トランザクションを戻す。
+- 本文の上限は §12.6.1 と §12.7.1 と同じ。`licenseKey` と `product` の形は有効化と同じ、`feature` は製品の `code` と同じ形、`version` は 32 文字まで、`count` は必須の整数、`borrow` は 0 以上の秒数で 100 年まで、`fingerprints` は 8 個まで。外れれば `ELM_MALFORMED`。
+- リース ID は 128 ビットの乱数の base64url（22 文字、§14.2）。
+- すべての応答（成功も失敗も）は、ヘッダー `ELM-Nonce` で新しいノンスを持つ（§12.6.1 と同じ）。
+- 頻度の制限は、ほかの端末の要求と同じ（送信元ごとと、インストール鍵ごと、§14.7）。証明（§12.2）と `jti` の記録も同じである。
+
+取得の検査の順:
+
+1. 頻度の制限、本文の大きさ、証明（`jwk` を持つ）、インストール鍵ごとの頻度、`jti` の記録、本文の形（§12.6.1 の有効化の 1〜6 と同じ）。
+2. キーのハッシュでライセンスを探す（`404` と `ELM_LICENSE_NOT_FOUND`）。製品の `code` が `product` と違えば `400` と `ELM_WRONG_PRODUCT`（席を使う前に断る）。
+3. ポリシーの `floating` が `cloud` でなければ `409` と `ELM_CONFLICT`。
+4. ライセンスの行をロックし（§14.4）、ライセンスの状態で断る（失効・停止・期限切れ、§12.6.1 の有効化の 10 と同じ）。
+5. 機能の確かめ。ライセンスの `features` にその `code` があり `seats` を持つか（なければ `403` と `ELM_FEATURE_NOT_LICENSED`）、機能の期限（`ELM_FEATURE_EXPIRED`）、`ver` の範囲（`ELM_FEATURE_VERSION_NOT_LICENSED`。`version` の形が違えば `400` と `ELM_INVALID_ARGUMENT`）。
+6. `count` は 1 以上で機能の `seats` 以下（`Overage` の分は含めない。外れれば `400` と `ELM_INVALID_ARGUMENT`）。借り出しは 1 秒以上（`ELM_INVALID_ARGUMENT`）、ポリシーの `BorrowLimit` 以下（なければ 0。`403` と `ELM_BORROW_NOT_ALLOWED`）、指紋が要る（`400` と `ELM_FINGERPRINT_UNAVAILABLE`）。
+7. 期限の来ていないリースの席の和で、空きを判定する（`409` と `ELM_NO_SEATS`）。和には止めたリースと借り出しも入る。残す席は 0（`borrow.reserve` はオンプレミスの設定）。
+8. `fromFirstActivation` で期限がまだなく、`duration` があれば、ライセンスの期限を「今 + `duration`」に書く（§12.6.1 の有効化の 13 と同じ）。
+9. リースの期限を「今 + 期間」とし（期間はポリシーの `LeaseDuration` か借り出しの秒数）、ライセンスの期限と機能の期限の早いほうで切る（`GracePeriod` は足さない）。1 秒未満しか残らなければ `403` と `ELM_EXPIRED`。
+10. トークン（`seq` 1）を出して確かめ、リースの行を書いて返す。クライアントの情報はポリシーの `ClientInfoStrategy` に従って残す。
+
+更新の検査の順:
+
+1. 送信元ごとの頻度の制限。
+2. リース ID で、期限の来ていない行を探す（ロックせずに読む）。なければ `404` と `ELM_UNKNOWN_LEASE`。ID が 22 文字の base64url でなければ、データベースを読まずに同じ答えを返す。
+3. 本文の大きさ、証明（鍵はリースが覚えた公開鍵。違えば `401` と `ELM_PROOF_INVALID`）、インストール鍵ごとの頻度、`jti` の記録、本文の形。
+4. ライセンスの行をロックし、リースを読み直す（消えたか期限が来ていれば `404` と `ELM_UNKNOWN_LEASE`）。
+5. 止めたリースは `409` と `ELM_CLONE_DETECTED`、借り出しは `400` と `ELM_INVALID_ARGUMENT`（借り出しは更新しない）。
+6. ポリシーの `floating` が `cloud` でなければ `409` と `ELM_CONFLICT`。
+7. ライセンスの状態、機能の確かめ（取得の 4 と 5 と同じ。機能を外したライセンスは `ELM_FEATURE_NOT_LICENSED`）。
+8. 使う席（このリースを含む）が許す席数を超えていれば `409` と `ELM_NO_SEATS`（席を減らしたライセンス。§9.3 の例外、§13.1 と同じ）。
+9. `seq` の判定。正しければ次のトークン（期間は今のポリシーの `LeaseDuration`、取得の 9 と同じに切る）、再試行なら最後のトークンをそのまま返す。複製は `CloneStrategy` に従い、監査ログに `lease.clone` を書く。`Deny` は行を止めて期限まで残し（席を持ったまま）`409` と `ELM_CLONE_DETECTED`、`Flag` は次のトークンを出す。
+
+返却の検査の順:
+
+1. 送信元ごとの頻度の制限。
+2. リース ID で、期限の来ていない行を探す。なければ（期限の来たリース、ID の形でないものを含む）`204`（冪等。早期返却の記録はしない）。
+3. 本文の大きさ、証明（リースの鍵で。証明が `jwk` を持っても、覚えた鍵で確かめる）、インストール鍵ごとの頻度、`jti` の記録。
+4. ライセンスの行をロックし、読み直す（なければ `204`）。止めたリースは `409` と `ELM_CLONE_DETECTED`。
+5. 借り出しなら早期返却の判定。30 日の早期返却の回数が、このライセンスのインストール鍵ごとと指紋ごとの最大で `BorrowReturnLimit` 未満で、かつライセンスの機能の `seats` とポリシーの `BorrowLimit` が借り出しのときから減っていない（機能を外したライセンスは `seats` 0 として扱う）。外れれば `409` と `ELM_RETURN_NOT_ALLOWED`。
+6. 行を消し、借り出しなら早期返却を記録して `204`。
+
+表:
+
+| 表 | 列 |
+| --- | --- |
+| `leases` | `id`（主キー）、`license_id`、`feature`、`seats`、`key_id`・`key_x`・`key_y`（取得の証明の公開鍵）、`seq`、`last_token`、`issued_by`（最後のトークンを出した証明の `jti`）、`expires_at`、`borrow`（真偽）、`borrow_fingerprints`・`borrow_feature_seats`・`borrow_limit`（早期返却の判定のため、借り出しのときの値）、`stopped`、`client_host`・`client_user`・`app`、`created_at`。（`license_id`, `feature`, `expires_at`）と `expires_at` に索引 |
+| `lease_returns` | `license_id`、`counter`（`key:<拇印>` か `fp:<指紋>`）、`returned_at`。主キーは 3 つの組（同じ秒の同じ返却は 1 回に数える）。`returned_at` に索引 |
+
+- 期限の過ぎたリースの行と、30 日を過ぎた早期返却の行は、1 分ごとの周期の仕事（§14.4）で消す。席の数え上げとリースを探す読みは `expires_at > 今` に限るので、消す前の行は数えない。
+- 早期返却の行はライセンスごとに数える。ほかのライセンスの返却は数えない。
+- ライセンスを消すことはない（§9.5）ので、行が残るライセンスがなくなることはない。
+
+管理 API（§14.5）:
+
+| 要求 | 許可 | 中身 |
+| --- | --- | --- |
+| `GET /v1/admin/licenses/{id}/leases` | `lease.read` | ライセンスの期限の来ていないリース（止めたものを含む）の一覧（`after` はリース ID、`limit`）。各要素は `{id, feature, seats, keyId, seq, expiresAt, borrow, stopped, client, app, createdAt}`。知らないライセンスは `404` と `ELM_LICENSE_NOT_FOUND`、`after` の形が違えば `400` と `ELM_INVALID_ARGUMENT` |
+| `DELETE /v1/admin/leases/{id}` | `lease.release` | 強制返却。ライセンスの行をロックし、行を消して、監査ログの行を同じトランザクションで書く。止めたリースと借り出しも返す（0.56 の例外）。早期返却としては数えない。知らないリースは `404` と `ELM_UNKNOWN_LEASE`。`204` |
+
+監査ログ: 取得・更新・返却は書かない（端末ごとに数分おきに来る。記録は M4d3 の利用ログ）。書くのは複製の検出（`lease.clone`。`target` はリース ID、`detail` は `{"licenseId", "feature", "seq", "lastSeq", "strategy"}`、結果は `Deny` なら `ELM_CLONE_DETECTED`、`Flag` なら `ELM_OK`）と、管理 API の一覧（`lease.list`）と強制返却（`lease.release`。`target` はリース ID、`detail` は `{"licenseId", "feature", "seats"}`）である。
 
 ### 12.8 オフライン有効化
 
@@ -2215,7 +2293,7 @@ M4a3 のエンドポイント（0.85, 0.86）:
 | --- | --- | --- | --- |
 | `policyId` | 文字列 | 作成のとき必須 | ポリシーの ID。作った後は変えられない |
 | `name` | 文字列 | 作成のとき必須 | 1〜256 文字（顧客名など。顧客の実体は作らない） |
-| `features` | 配列 | 作成のとき必須 | 1〜256 個（§8.6）。各要素は `code`（ポリシーと同じ製品の機能、重なりなし）、`ver`（任意、§9.2 の範囲、64 文字まで）、`seats`（`server` のときだけ必須で 1〜1,000,000、ほかで送れば誤り）、`expiresAt`（任意、機能ごとの期限。下の期限の決まり） |
+| `features` | 配列 | 作成のとき必須 | 1〜256 個（§8.6）。各要素は `code`（ポリシーと同じ製品の機能、重なりなし）、`ver`（任意、§9.2 の範囲、64 文字まで）、`seats`（`server` か `floating: cloud` のときだけ必須で 1〜1,000,000、ほかで送れば誤り）、`expiresAt`（任意、機能ごとの期限。下の期限の決まり） |
 | `maxActivations` | 整数か `null` | 任意 | 1〜100,000。`null` か省略はポリシーの値 |
 | `expiresAt` | 時刻 | 任意（作成のときだけ） | 下の期限の決まり。時刻は秒までの UTC の 1 つの形（`2026-10-27T00:00:00Z`）だけを受け、ほかの形（小数の秒、`+00:00` など）は `ELM_MALFORMED`。機能の `expiresAt` と `extend` の `{expiresAt}` も同じ |
 | `meta` | 文字列の組 | 任意 | §8.6（32 組、キー 64 バイト、値 1 KiB） |
@@ -2256,6 +2334,8 @@ M4b1 のエンドポイント（0.88）:
 | `POST /v1/admin/offline` | `activation.offline` | オフラインの要求ファイルの処理（§12.8.4）。公開の `POST /v1/offline` と同じ処理 |
 | `POST /v1/admin/activations/{id}/deactivate` | `activation.deactivate` | 管理者の解除（§12.6）。本文なし。証明も `seq` も求めず、止めた有効化も外せる。`DeactivationLimit` に数えない。`204` |
 | `GET /v1/admin/trials` | `trial.read` | 試用の一覧（`after` と `limit`）。`?productId=` で絞り込める（UUID でなければ `400` と `ELM_INVALID_ARGUMENT`） |
+| `GET /v1/admin/licenses/{id}/leases` | `lease.read` | クラウドのリースの一覧（§12.7.6） |
+| `DELETE /v1/admin/leases/{id}` | `lease.release` | クラウドのリースの強制返却。借り出しも返す（§12.7.6、0.56 の例外） |
 | `DELETE /v1/admin/trials/{id}` | `trial.delete` | 試用の記録（指紋）を消し、その指紋がもう一度試用できるようにする。試用のライセンスと有効化は残る。`204`。消した後の 2 回目は `404` と `ELM_NOT_FOUND`（消す物がない） |
 
 | 応答 | 形 |
@@ -2301,9 +2381,10 @@ API キー:
 | `signingkey.read` | 署名鍵の状態 | M4a2 |
 | `activation.read`、`activation.deactivate` | 有効化の閲覧と管理者の解除 | M4b1 |
 | `activation.offline` | オフラインの要求ファイルの処理（§12.8.4） | M4c1 |
+| `lease.read`、`lease.release` | クラウドのリースの閲覧と強制返却（§12.7.6） | M4d1 |
 | `trial.read`、`trial.delete` | 試用の記録の閲覧と削除 | M4b1 |
 
-  `owner` はすべて、`admin` は `apikey.*` を除くすべて、`viewer` は `*.read`、`support` は `*.read` と `activation.deactivate` と `activation.offline` を持つ。
+  `owner` はすべて、`admin` は `apikey.*` を除くすべて、`viewer` は `*.read`、`support` は `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ。
 - API キーの許可は、作った人の許可を超えられない。
 - OIDC の利用者の役割は、IdP のクレーム（設定で指定。例: `groups`）から設定の対応表で決める。対応しない利用者は拒否する。
 - サービスは、ログインした管理者の一覧（OIDC の `iss` と `sub`、役割、最後のログイン、有効か無効か）を持つ。無効の管理者は、IdP で認証できてもログインできない。
@@ -2313,8 +2394,8 @@ API キー:
 ### 14.7 入力の上限と頻度の制限
 
 - 本文は 64 KiB まで（§12.1）。一覧の 1 ページは 200 件まで。
-- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、管理 API は送信元 IP と、認証された API キーごとに制限する（§14.5）。端末と管理 API の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。
-- `rateLimit.clientPerKey` の既定は 2 である。正しい端末の要求は、有効化 1 回と数日おきの更新なので、鍵ごとの器は小さくて足りる。1 つの有効化は GET のノンスと POST の 2 つの要求なので、送信元ごとの既定 20 は、1 秒に 10 台の有効化にあたる。
+- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`、`/v1/leases`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、管理 API は送信元 IP と、認証された API キーごとに制限する（§14.5）。端末と管理 API の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。
+- `rateLimit.clientPerKey` の既定は 2 である。正しい端末の要求は、有効化 1 回と数日おきの更新なので、鍵ごとの器は小さくて足りる。1 つの有効化は GET のノンスと POST の 2 つの要求なので、送信元ごとの既定 20 は、1 秒に 10 台の有効化にあたる。クラウドのリース（§12.7.6）も同じ器を使う。更新も 2 つの要求で、端末ごとに期間の 1/3（既定 10 分なら約 200 秒）に 1 回なので、既定 20 で 1 つの送信元（NAT の後ろの事業所）から約 2,000 台が更新できる。それより多い送信元は `rateLimit.clientPerIp` を上げる。鍵ごとの既定 2 は、1 台が取得・更新・返却を順に送る限り足りる。
 - 制限器は `elm-server` と同じ、`TimeProvider` で動くトークンバケット（0.46、`ElasticLM.Issuing` の `RateLimiter<TKey>`）である。ASP.NET Core の RateLimiting は `TimeProvider` を受け取らず、偽の時計でテストできない（[design-decisions.md](./design-decisions.md) の「BCL と ASP.NET Core の頻度の制限器」）。送信元は IPv4 のアドレスか IPv6 の /64、覚える送信元とキーは各 100,000 まで（§13.8 と同じ）。30 秒ごとの掃除で、1 秒以上要求のない送信元とキーを忘れる。
 - `rateLimit.perKey` の既定（10）は `rateLimit.perIp` の既定（20）以下にする。管理 API の要求はまず送信元ごとの制限を受けるので、キーごとの制限が送信元ごとより大きいと、1 台から使うキーには効かない。
 
@@ -2667,7 +2748,9 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M4c1 | `elm-service` のオフラインの有効化・更新・解除（公開と管理の入口、同じ要求への同じ応答）と `elm offline process`（0.90） | §8.4.4, §8.4.5, §12.8, §12.8.4, §14.5, §16 |
 | M4c2 | `ElasticLM.Client` のオフラインのファイル（要求の作成、応答の取り込み、解除の証明）（0.90） | §3.2, §12.8 |
 | M4c3 | `elm-server` のサーバーライセンスの有効化と更新（`ActivationClient` を使う。オンラインと、`elm server refresh-request` によるファイルのやり取り）。M4c3 まで、サーバーライセンスは手で入れ替える（0.90） | §9.6, §12.8.3, §13.1, §13.7 |
-| M4d | `elm-service` のクラウドのリースと借り出し（`LeaseEngine` の規則を共有）、利用ログ、リースと利用ログの管理 API | §12.7, §14.4, §18.1 |
+| M4d1 | `LeaseEngine` の規則の取り出し（`LeaseRules`）、`elm-service` のクラウドのリースと借り出し、リースの管理 API（0.93） | §12.7, §12.7.6, §14.4, §14.5 |
+| M4d2 | `LicenseClient` の SaaS 型のモード: OS の信頼、ライセンスキーと製品、`use: lease` の証明書での確かめ、借り出しのファイル（0.93） | §12.7.5 |
+| M4d3 | `elm-service` の利用ログ（`use: log` の鍵で署名）と、その管理 API（0.93） | §18.1, §14.5 |
 | W0 | 管理画面の技術の選定 | §15.2 |
 | M5 | 管理の OIDC（JwtBearer と BFF）と管理画面。90 日ログインのない管理者のキーを止める規則（0.66） | §14.6, §15 |
 | M6 | `libelasticlm` | §17 |
