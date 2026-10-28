@@ -27,6 +27,10 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 - StyleCop.Analyzers and the .NET analyzers at `latest-recommended` run in every build. `EnforceCodeStyleInBuild` is on.
 - Do not use an alignment in an interpolated string (`{x,5}`): CSharpier writes it `{x, 5}`, which StyleCop's SA1001 refuses. Pad with `PadLeft` instead.
 
+## Scripted edits
+
+A script that replaces text in a source file checks that its anchor occurs exactly once and stops otherwise. Where the same lines repeat in several functions, the anchor includes the function's declaration. In M4a3 a script anchored on lines that two handlers shared, rewrote the wrong one, and broke the file, which was restored from `HEAD` (PR #59).
+
 ## Changing a stored row
 
 An operation that applies a request to a stored row (a `PATCH`, a state change) reads that row in the write transaction that writes it, and on PostgreSQL locks it first (`SELECT … FOR UPDATE`, or an `UPDATE` that sets a column to itself with `RETURNING`). Read outside the transaction, two changes of different members at once write back each other's old values. In M4a2 the first version of the `PATCH` endpoints did that, and the review found it (PR #55).
