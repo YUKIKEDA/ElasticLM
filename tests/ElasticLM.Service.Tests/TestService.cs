@@ -50,7 +50,10 @@ internal sealed class TestService : IAsyncDisposable
             connection.Open();
             using var create = new NpgsqlCommand($"CREATE SCHEMA {_schema}", connection);
             create.ExecuteNonQuery();
-            ConnectionString = new NpgsqlConnectionStringBuilder(server) { SearchPath = _schema }.ConnectionString;
+
+            // Each test has a pool of its own; tests run in parallel against one server, whose connections are limited (100 by
+            // default), so a test's pool stays small.
+            ConnectionString = new NpgsqlConnectionStringBuilder(server) { SearchPath = _schema, MaxPoolSize = 8 }.ConnectionString;
         }
         else
         {

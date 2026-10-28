@@ -131,6 +131,8 @@ jobs:
           & $elm key certify --root root.key.pem --public signing.pub.pem --use license lease --out signing.cert
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
+          # design §14.8: the nonces' secret has no default; a random one is made for this run and not kept.
+          $env:ELM_NONCE_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
           $env:ELM_SIGNING_KEY = 'signing.key.pem'
           $env:ELM_SIGNING_CERTIFICATES = 'signing.cert'
           $env:ELM_TRUST_ROOTKEYS = 'root.pub.pem'
@@ -177,6 +179,8 @@ jobs:
           & $elm key certify --root pg/root.key.pem --public pg/signing.pub.pem --use license lease --out pg/signing.cert
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
+          # design §14.8: the nonces' secret has no default; a random one is made for this run and not kept.
+          $env:ELM_NONCE_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
           $env:ELM_SIGNING_KEY = 'pg/signing.key.pem'
           $env:ELM_SIGNING_CERTIFICATES = 'pg/signing.cert'
           $env:ELM_TRUST_ROOTKEYS = 'pg/root.pub.pem'
