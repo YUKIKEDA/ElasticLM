@@ -81,6 +81,7 @@ public static class ErrorCodes
             ErrorCode.ServerBusy => "ELM_SERVER_BUSY",
             ErrorCode.NotFound => "ELM_NOT_FOUND",
             ErrorCode.Conflict => "ELM_CONFLICT",
+            ErrorCode.ActivationNotFound => "ELM_ACTIVATION_NOT_FOUND",
             ErrorCode.NetworkError => "ELM_NETWORK_ERROR",
             ErrorCode.InternalError => "ELM_INTERNAL_ERROR",
             _ => throw new ArgumentOutOfRangeException(nameof(code), code, "The error code is not defined."),

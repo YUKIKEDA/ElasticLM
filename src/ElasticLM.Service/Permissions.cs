@@ -20,6 +20,10 @@ internal static class Permissions
     public const string LicenseRevoke = "license.revoke";
     public const string LicenseFile = "license.file";
     public const string SigningKeyRead = "signingkey.read";
+    public const string ActivationRead = "activation.read";
+    public const string ActivationDeactivate = "activation.deactivate";
+    public const string TrialRead = "trial.read";
+    public const string TrialDelete = "trial.delete";
 
     public const string RoleOwner = "owner";
     public const string RoleAdmin = "admin";
@@ -43,18 +47,24 @@ internal static class Permissions
         LicenseRevoke,
         LicenseFile,
         SigningKeyRead,
+        ActivationRead,
+        ActivationDeactivate,
+        TrialRead,
+        TrialDelete,
     ];
 
     /// <summary>
-    /// Returns the permissions of a role: <c>owner</c> all, <c>admin</c> all but <c>apikey.*</c>, <c>support</c> and
-    /// <c>viewer</c> the <c>*.read</c> ones; an unknown role none.
+    /// Returns the permissions of a role: <c>owner</c> all, <c>admin</c> all but <c>apikey.*</c>, <c>viewer</c> the
+    /// <c>*.read</c> ones, <c>support</c> those and <c>activation.deactivate</c> (design §14.6); an unknown role none.
     /// </summary>
     public static IReadOnlySet<string> OfRole(string role) =>
         role switch
         {
             RoleOwner => All.ToHashSet(StringComparer.Ordinal),
             RoleAdmin => All.Where(p => !p.StartsWith("apikey.", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal),
-            RoleSupport or RoleViewer => All.Where(p => p.EndsWith(".read", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal),
+            RoleSupport => All.Where(p => p.EndsWith(".read", StringComparison.Ordinal) || p == ActivationDeactivate)
+                .ToHashSet(StringComparer.Ordinal),
+            RoleViewer => All.Where(p => p.EndsWith(".read", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal),
             _ => new HashSet<string>(StringComparer.Ordinal),
         };
 

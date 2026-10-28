@@ -95,20 +95,59 @@ internal sealed partial record PolicyRow(
     long UpdatedAt
 );
 
-/// <summary>A license (design §9.3 to §9.5): its key only as a hash; features and meta as JSON.</summary>
+/// <summary>
+/// A license (design §9.3 to §9.5): its key only as a hash, none for a trial; features and meta as JSON; the deactivations
+/// devices have sent (design §12.6).
+/// </summary>
 [Table("licenses", Naming = ColumnNaming.SnakeCase)]
 internal sealed partial record LicenseRow(
     [PrimaryKey] Guid Id,
     Guid ProductId,
     Guid PolicyId,
     string Name,
-    byte[] KeyHash,
+    byte[]? KeyHash,
     long? MaxActivations,
     long? ExpiresAt,
     long? SuspendedAt,
     long? RevokedAt,
     string Features,
     string Meta,
+    long Deactivations,
     long CreatedAt,
     long UpdatedAt
 );
+
+/// <summary>
+/// An activation (design §10.4, §12.4): an installation key bound to a license, with its P-256 public key, the fingerprints
+/// as a JSON array, the last sequence number, the last license file, and the proof's jti that got it.
+/// </summary>
+[Table("activations", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record ActivationRow(
+    [PrimaryKey] Guid Id,
+    Guid LicenseId,
+    string KeyId,
+    byte[] KeyX,
+    byte[] KeyY,
+    string Fingerprints,
+    string? ClientHost,
+    string? ClientUser,
+    string? App,
+    long Seq,
+    byte[] LastFile,
+    string LastProof,
+    long? BlockedAt,
+    long CreatedAt,
+    long UpdatedAt
+);
+
+/// <summary>A trial (design §12.9), keyed by the license it made.</summary>
+[Table("trials", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record TrialRow([PrimaryKey] Guid LicenseId, Guid ProductId, long CreatedAt);
+
+/// <summary>A fingerprint that has had a trial of a product (design §12.9).</summary>
+[Table("trial_fingerprints", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record TrialFingerprintRow([PrimaryKey] Guid ProductId, [PrimaryKey, MaxLength(32)] string Fingerprint, Guid LicenseId);
+
+/// <summary>A proof's jti, kept until its nonce has expired (design §12.2 rule 5).</summary>
+[Table("proof_jtis", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record ProofJtiRow([PrimaryKey, MaxLength(64)] string Jti, long ExpiresAt);

@@ -25,6 +25,9 @@ internal sealed class TestService : IAsyncDisposable
 
     public static readonly DateTimeOffset Start = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
 
+    /// <summary>The nonces' secret of every test service: 32 bytes, made fresh for each run.</summary>
+    public static readonly byte[] NonceSecret = RandomNumberGenerator.GetBytes(32);
+
     private readonly ECDsa _root = KeyFiles.CreateKey();
     private readonly List<IAsyncDisposable> _owned = [];
     private readonly string? _schema;
@@ -91,6 +94,9 @@ internal sealed class TestService : IAsyncDisposable
             BootstrapOwner = new AdminIdentity("https://idp.example", "owner-1"),
             RateLimitPerIp = 1_000,
             RateLimitPerKey = 1_000,
+            RateLimitClientPerIp = 1_000,
+            RateLimitClientPerKey = 1_000,
+            NonceSecret = NonceSecret,
         };
         return change?.Invoke(settings) ?? settings;
     }

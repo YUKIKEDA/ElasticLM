@@ -109,6 +109,7 @@ internal sealed partial class ElmService
                     null,
                     Licenses.Store(features),
                     Licenses.StoreMeta(meta),
+                    0,
                     at,
                     at
                 );
@@ -565,6 +566,7 @@ internal sealed partial class ElmService
             l.ExpiresAt is long expires ? AdminApi.Time(expires) : null,
             l.SuspendedAt is long suspended ? AdminApi.Time(suspended) : null,
             l.RevokedAt is long revoked ? AdminApi.Time(revoked) : null,
-            Licenses.LoadMeta(l.Meta)
+            Licenses.LoadMeta(l.Meta),
+            l.Deactivations
         );
 }

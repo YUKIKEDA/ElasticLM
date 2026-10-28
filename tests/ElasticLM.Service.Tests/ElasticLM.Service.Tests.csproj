@@ -9,5 +9,6 @@
   <ItemGroup>
     <!-- The service runs in the test process on a loopback port, on SQLite and, when ELM_TEST_POSTGRES is set, on PostgreSQL. -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
   </ItemGroup>
 </Project>

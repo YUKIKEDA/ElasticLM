@@ -13,9 +13,12 @@ public sealed class ServiceSettingsTests : IDisposable
     {
         Directory.CreateDirectory(_folder);
         File.WriteAllText(ConnectionFile, "Host=db;Database=elm\n");
+        File.WriteAllText(NonceFile, Convert.ToBase64String(new byte[32]) + "\n");
     }
 
     private string ConnectionFile => Path.Combine(_folder, "connection.txt");
+
+    private string NonceFile => Path.Combine(_folder, "nonce.txt");
 
     public void Dispose() => Directory.Delete(_folder, recursive: true);
 
@@ -39,12 +42,14 @@ public sealed class ServiceSettingsTests : IDisposable
         string path = Write(
             Base(
                 ",\"listen\":\"http://0.0.0.0:9000\",\"trust\":{\"rootKeys\":[\"r.pem\"],\"revokedKeyIds\":[\"k1\"]},"
-                    + "\"bootstrapOwner\":{\"iss\":\"i\",\"sub\":\"s\"},\"rateLimit\":{\"perIp\":7,\"perKey\":3},\"audit\":{\"retentionDays\":30}"
+                    + "\"bootstrapOwner\":{\"iss\":\"i\",\"sub\":\"s\"},\"rateLimit\":{\"perIp\":7,\"perKey\":3,\"clientPerIp\":9,\"clientPerKey\":5},"
+                    + "\"audit\":{\"retentionDays\":30},\"publicUrls\":[\"https://elm.example/\"]"
             )
         );
         ServiceSettings file = ServiceSettings.Load(path, _ => null);
         Assert.Equal(
-            "http://0.0.0.0:9000/ | Postgres | Host=db;Database=elm | k.pem | c | r.pem | k1 | AdminIdentity { Issuer = i, Subject = s } | 7 | 3 | 30",
+            "http://0.0.0.0:9000/ | Postgres | Host=db;Database=elm | k.pem | c | r.pem | k1 | AdminIdentity { Issuer = i, Subject = s } | 7 | 3 | 30 | "
+                + "https://elm.example/ | 9 | 5 | 32",
             Shape(file)
         );
 
@@ -62,20 +67,36 @@ public sealed class ServiceSettingsTests : IDisposable
             ["ELM_RATELIMIT_PERIP"] = "8",
             ["ELM_RATELIMIT_PERKEY"] = "4",
             ["ELM_AUDIT_RETENTIONDAYS"] = "31",
+            ["ELM_PUBLICURLS"] = "https://a.example/;https://b.example/elm",
+            ["ELM_RATELIMIT_CLIENTPERIP"] = "11",
+            ["ELM_RATELIMIT_CLIENTPERKEY"] = "6",
+            [ServiceSettings.NonceSecretVariable] = Convert.ToBase64String(new byte[48]),
         };
         ServiceSettings env = ServiceSettings.Load(path, name => environment.GetValueOrDefault(name));
         Assert.Equal(
-            "http://127.0.0.1:9100/ | Sqlite | Data Source=elm.db | k2.pem | c2;c3 | r2.pem | k2;k3 | AdminIdentity { Issuer = i2, Subject = s2 } | 8 | 4 | 31",
+            "http://127.0.0.1:9100/ | Sqlite | Data Source=elm.db | k2.pem | c2;c3 | r2.pem | k2;k3 | AdminIdentity { Issuer = i2, Subject = s2 } | 8 | 4 | 31 | "
+                + "https://a.example/;https://b.example/elm | 11 | 6 | 48",
             Shape(env)
         );
 
         ServiceSettings defaults = ServiceSettings.Load(Write(Base()), _ => null);
-        Assert.Equal((20, 10, (TimeSpan?)null), (defaults.RateLimitPerIp, defaults.RateLimitPerKey, defaults.AuditRetention));
+        Assert.Equal(
+            (20, 10, (TimeSpan?)null, 20, 2, 0),
+            (
+                defaults.RateLimitPerIp,
+                defaults.RateLimitPerKey,
+                defaults.AuditRetention,
+                defaults.RateLimitClientPerIp,
+                defaults.RateLimitClientPerKey,
+                defaults.PublicUrls.Count
+            )
+        );
     }
 
     /// <summary>
     /// Each limit is accepted exactly at its bound: the rates 1 and 10000, retention 36600 days, an owner name of 255
-    /// characters, a settings file of 64 KiB, and a connection file of 16 KiB; setup does not need the signing settings.
+    /// characters, a settings file of 64 KiB, a connection file of 16 KiB, and a nonce secret of 32 bytes; setup does not
+    /// need the signing settings or the nonce secret.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -92,9 +113,17 @@ public sealed class ServiceSettingsTests : IDisposable
     {
         foreach (int rate in new[] { 1, 10_000 })
         {
-            ServiceSettings settings = ServiceSettings.Load(Write(Base($",\"rateLimit\":{{\"perIp\":{rate},\"perKey\":{rate}}}")), _ => null);
-            Assert.Equal((rate, rate), (settings.RateLimitPerIp, settings.RateLimitPerKey));
+            ServiceSettings settings = ServiceSettings.Load(
+                Write(Base($",\"rateLimit\":{{\"perIp\":{rate},\"perKey\":{rate},\"clientPerIp\":{rate},\"clientPerKey\":{rate}}}")),
+                _ => null
+            );
+            Assert.Equal(
+                (rate, rate, rate, rate),
+                (settings.RateLimitPerIp, settings.RateLimitPerKey, settings.RateLimitClientPerIp, settings.RateLimitClientPerKey)
+            );
         }
+
+        Assert.Equal(32, ServiceSettings.Load(Write(Base()), _ => null).NonceSecret.Length);
 
         Assert.Equal(TimeSpan.FromDays(36_600), ServiceSettings.Load(Write(Base(",\"audit\":{\"retentionDays\":36600}")), _ => null).AuditRetention);
         string longest = new('i', 255);
@@ -115,7 +144,7 @@ public sealed class ServiceSettingsTests : IDisposable
             _ => null,
             requireSigning: false
         );
-        Assert.Equal((null, 0), (setup.SigningKeyFile, setup.SigningCertificateFiles.Count));
+        Assert.Equal((null, 0, 0), (setup.SigningKeyFile, setup.SigningCertificateFiles.Count, setup.NonceSecret.Length));
     }
 
     /// <summary>
@@ -129,9 +158,11 @@ public sealed class ServiceSettingsTests : IDisposable
     /// Steps:
     /// - Load files with one fault each: an unknown key; provider mysql; https without tls; no connection; an empty
     ///   connection file; one of 16 KiB + 1; no signing key; no certificates; bootstrapOwner without sub; an owner of 256
-    ///   characters; perIp 0 and 10001; perKey 0 and 10001; retentionDays 0 and 36601; a listen with a path; a listen host
-    ///   name; listen ""; signing.key ""; a certificate entry ""; a null certificate entry; tls.certificate ""; a settings
-    ///   file of 64 KiB + 1; a perKey variable that is not a number.
+    ///   characters; perIp, perKey, clientPerIp, clientPerKey 0 and 10001; retentionDays 0 and 36601; a listen with a path;
+    ///   a listen host name; listen ""; signing.key ""; a certificate entry ""; a null certificate entry; tls.certificate "";
+    ///   a settings file of 64 KiB + 1; a perKey variable that is not a number; no nonce secret; one of 31 bytes; one that
+    ///   is not base64; nonce.secretFile ""; a public URL over http, with a query, and ""; listen on 0.0.0.0 without
+    ///   publicUrls.
     ///
     /// Expected:
     /// - A ServiceStartException with the case's own message each time.
@@ -147,7 +178,6 @@ public sealed class ServiceSettingsTests : IDisposable
 
         string Connection(string path) => "\"database\":{\"connectionFile\":" + JsonSerializer.Serialize(path) + "}";
         string WithSigning(string more) => "{\"signing\":{\"key\":\"k\",\"certificates\":[\"c\"]}," + more + "}";
-        const string Rates = "rateLimit.perIp and rateLimit.perKey must be between 1 and 10000.";
 
         Assert.StartsWith(
             "The settings file '",
@@ -178,10 +208,12 @@ public sealed class ServiceSettingsTests : IDisposable
         const string Owner = "bootstrapOwner needs both iss and sub, each 1 to 255 characters.";
         Refused(Base(",\"bootstrapOwner\":{\"iss\":\"i\"}"), Owner);
         Refused(Base($",\"bootstrapOwner\":{{\"iss\":\"{new string('i', 256)}\",\"sub\":\"s\"}}"), Owner);
-        Refused(Base(",\"rateLimit\":{\"perIp\":0}"), Rates);
-        Refused(Base(",\"rateLimit\":{\"perIp\":10001}"), Rates);
-        Refused(Base(",\"rateLimit\":{\"perKey\":0}"), Rates);
-        Refused(Base(",\"rateLimit\":{\"perKey\":10001}"), Rates);
+        foreach (string rate in new[] { "perIp", "perKey", "clientPerIp", "clientPerKey" })
+        {
+            Refused(Base($",\"rateLimit\":{{\"{rate}\":0}}"), $"rateLimit.{rate} must be between 1 and 10000.");
+            Refused(Base($",\"rateLimit\":{{\"{rate}\":10001}}"), $"rateLimit.{rate} must be between 1 and 10000.");
+        }
+
         const string Retention = "audit.retentionDays must be between 1 and 36600, or left out to keep every row.";
         Refused(Base(",\"audit\":{\"retentionDays\":0}"), Retention);
         Refused(Base(",\"audit\":{\"retentionDays\":36601}"), Retention);
@@ -217,6 +249,23 @@ public sealed class ServiceSettingsTests : IDisposable
             Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(tooLargePath, _ => null)).Message
         );
         Refused(Base(), "rateLimit.perKey must be a whole number: '1.5'.", name => name == "ELM_RATELIMIT_PERKEY" ? "1.5" : null);
+
+        string nonce = $"Set {ServiceSettings.NonceSecretVariable} or nonce.secretFile to the nonces' secret: at least 32 random bytes in base64.";
+        string withoutNonce = "{\"signing\":{\"key\":\"k\",\"certificates\":[\"c\"]}," + Connection(ConnectionFile) + "}";
+        Refused(withoutNonce, nonce);
+        Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? Convert.ToBase64String(new byte[31]) : null);
+        Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? "not base64!" : null);
+        Refused(withoutNonce[..^1] + ",\"nonce\":{\"secretFile\":\"\"}}", "nonce.secretFile must not be empty; leave it out instead.");
+        Refused(Base(",\"publicUrls\":[\"http://elm.example/\"]"), "publicUrls must be https URLs without query or fragment: 'http://elm.example/'.");
+        Refused(
+            Base(",\"publicUrls\":[\"https://elm.example/?a=1\"]"),
+            "publicUrls must be https URLs without query or fragment: 'https://elm.example/?a=1'."
+        );
+        Refused(Base(",\"publicUrls\":[\"\"]"), "publicUrls must not hold an empty or null entry.");
+        Refused(
+            Base(",\"listen\":\"http://0.0.0.0:9000\""),
+            "Set publicUrls to the https URLs devices reach the service under; listen is not a loopback address."
+        );
     }
 
     // The values a test compares, as one line.
@@ -233,12 +282,18 @@ public sealed class ServiceSettingsTests : IDisposable
             settings.BootstrapOwner,
             settings.RateLimitPerIp,
             settings.RateLimitPerKey,
-            settings.AuditRetention?.TotalDays
+            settings.AuditRetention?.TotalDays,
+            string.Join(';', settings.PublicUrls),
+            settings.RateLimitClientPerIp,
+            settings.RateLimitClientPerKey,
+            settings.NonceSecret.Length
         );
 
     private string Base(string more = "") =>
         "{\"signing\":{\"key\":\"k.pem\",\"certificates\":[\"c\"]},\"database\":{\"provider\":\"postgres\",\"connectionFile\":"
         + JsonSerializer.Serialize(ConnectionFile)
+        + "},\"nonce\":{\"secretFile\":"
+        + JsonSerializer.Serialize(NonceFile)
         + "}"
         + more
         + "}";

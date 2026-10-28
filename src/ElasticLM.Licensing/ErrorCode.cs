@@ -140,8 +140,12 @@ public enum ErrorCode
     /// <summary>An administration API call names an entity, such as an API key, that does not exist (design §14.5).</summary>
     NotFound = 54,
 
-    /// <summary>An administration API call conflicts with an entity's state or with a unique value, such as a used code (design §14.5).</summary>
+    /// <summary>A request conflicts with an entity's state or with a unique value, such as a used code or an activation of an
+    /// unbound license (design §14.5, §12.4).</summary>
     Conflict = 55,
+
+    /// <summary>No activation has the ID: an administrator removed it, or it was deactivated (design §12.5, §12.6).</summary>
+    ActivationNotFound = 56,
 
     /// <summary>The network call failed.</summary>
     NetworkError = 90,
