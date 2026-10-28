@@ -31,6 +31,8 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 
 A script that replaces text in a source file checks that its anchor occurs exactly once and stops otherwise. Where the same lines repeat in several functions, the anchor includes the function's declaration. In M4a3 a script anchored on lines that two handlers shared, rewrote the wrong one, and broke the file, which was restored from `HEAD` (PR #59).
 
+A Python script on Windows that opens a file in text mode writes CRLF line ends. Open it with `newline=""` on both the read and the write, so the file keeps LF (M4b1, PR #61).
+
 ## Changing a stored row
 
 An operation that applies a request to a stored row (a `PATCH`, a state change) reads that row in the write transaction that writes it, and on PostgreSQL locks it first (`SELECT … FOR UPDATE`, or an `UPDATE` that sets a column to itself with `RETURNING`). Read outside the transaction, two changes of different members at once write back each other's old values. In M4a2 the first version of the `PATCH` endpoints did that, and the review found it (PR #55).
@@ -38,6 +40,8 @@ An operation that applies a request to a stored row (a `PATCH`, a state change) 
 ## Gate
 
 `./build.ps1` before a PR. It runs tool restore, the CSharpier check, restore, then for Release and for Debug a build and every test project. Release is what ships; Debug runs the checks that exist only there. Hosted CI runs the same script on Windows, Linux, and macOS.
+
+A PR that makes a setting required for a server to start adds it, in the same PR, to every step of `.github/workflows/ci.yml` that starts that server (the NativeAOT smoke and measure steps). The gate starts the server from its tests and does not see the missing setting. In M4b1 the nonces' secret became required and the NativeAOT jobs failed on all three OS (PR #61).
 
 A commit and a push follow the build only through its exit code. Piping the build's output into `grep` and chaining `git commit ... && git push` after it runs the commit even when the build failed. Write `if dotnet build ...; then git commit ...; fi`, or check `$LASTEXITCODE` in PowerShell.
 
