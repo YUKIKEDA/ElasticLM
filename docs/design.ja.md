@@ -157,7 +157,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.86 | `Unbound` のライセンスファイルの期限 | トークンの `exp` はライセンスの期限と同じにし、期限なしなら省く（期限なしのトークンを出す場所に足し、0.17 と §5.4 を改めた。PR #51 のレビュー）。`Unbound` には期限の起点になる有効化がないので、`Unbound` と `FromFirstActivation` の組は拒む（§9.3, §14.5） |
 | 0.87 | 管理の実体の削除と同時の変更 | 製品・機能・ポリシーは消さない（発行済みのトークンが参照する）。`PATCH` は送ったメンバーだけを置き換え、版の検査（`If-Match`）は付けない（§14.5） |
 | 0.88 | M4b の分け方とオンラインの有効化 | M4b を M4b1（`elm-service` のオンラインの有効化・更新・解除・試用、複製の検出、その管理 API）と M4b2（`ElasticLM.Client` の対応。始めに別の Grill）に分ける。有効化 ID は応答の本文で渡し、トークンの形式は変えない。`Unbound` のライセンスはオンラインで有効化しない（`409` と `ELM_CONFLICT`）。試用はキーのないライセンスとその有効化で表し、製品の機能をすべて持つ。管理者の解除は `DeactivationLimit` に数えない。`Deny` で止めた有効化は、最後の `seq` を持つ写しか管理者だけが解除できる。解除も `retry` を読む。1 つのインストール鍵はライセンスごとに 1 つの有効化を持つ（試用の後に買ったライセンスを同じ鍵で有効化できる）。この 3 点は Grill の答えを PR #61 の設計のレビューと実装で改め、持ち主が受けた。知らない有効化は `ELM_ACTIVATION_NOT_FOUND`（56）（§5.4, §10.4, §12.4〜§12.6, §12.6.1, §12.9, §14.5〜§14.8, §18.2, §19） |
-| 0.89 | `ElasticLM.Client` の有効化 | M4b2 で、`elm-service` 向けの新しいクラス `ActivationClient` を置く（オンプレミスの `LicenseClient` とは相手と TLS の確かめ方が違うので分け、インストール鍵の保管は共有する。C ABI の対応は M6）。有効化は鍵のフォルダーの `activation.json` に持ち、`activation.lock` で同じ端末のプロセスの要求を 1 つずつにする。トークンの `refresh` から自動で更新し、送る前に `jti` を記録して、応答をなくした要求を送り直せるようにする。受け取ったファイルは確かめてから保存する（§12.6.2） |
+| 0.89 | `ElasticLM.Client` の有効化 | M4b2 で、`elm-service` 向けの新しいクラス `ActivationClient` を置く（オンプレミスの `LicenseClient` とは相手と TLS の確かめ方が違うので分け、インストール鍵の保管は共有する。C ABI の対応は M6）。有効化は鍵のフォルダーの `activation.json` に持ち、`activation.lock` で同じ端末のプロセスの要求を 1 つずつにする。トークンの `refresh` から自動で更新し、送る前に `jti` を記録して、応答をなくした要求を送り直せるようにする。受け取ったファイルは確かめてから保存する（§12.6.2）。M4b2 の設計のレビューで、有効化の本文に `product` を足してサービスが製品の違うキーを断り、試用でない有効化があるときの別の有効化を手元で断り、解除でインストール鍵を消さないことにした（持ち主が受けた。§5.4, §12.6, §12.6.1）。受け取ったファイルは時計の守りを使わずに確かめ、その `iat` で守りを上書きする（§11.4） |
 
 ## 1. 目的と利用者
 
@@ -337,7 +337,7 @@ M3c（Issue #25）の実測（同じ条件）:
 ### 4.4 プライバシー
 
 - OS のマシン ID の生の値を端末の外へ出さない。送るのはマシン指紋（§10.3）だけである。
-- クライアントが送る端末情報（ホスト名、OS のユーザー名）は、ポリシーで送るかどうかを選べる（§9.3 の `ClientInfoStrategy`）。既定は送らない。
+- クライアントが送る端末情報（ホスト名、OS のユーザー名）は、ポリシーで残すかどうかを選べる（§9.3 の `ClientInfoStrategy`）。既定は残さない。オンプレミスのリースではサーバーがポリシーを持つ。SaaS 型の有効化では、クライアントが有効化の前にポリシーを知らないので、送るかどうかはアプリの設定（`SendClientInfo`、既定は送らない）で決め、サービスは `HostAndUser` のときだけ残して、ほかは捨てる（§12.6.1, §12.6.2）。
 
 ### 4.5 可用性
 
@@ -406,6 +406,8 @@ M3c（Issue #25）の実測（同じ条件）:
 | 返却・早期返却の後もリーストークンを残して使う | トークンは期限まで有効である。通常のリースは期間が短い（既定 10 分）ため、被害は 1 期間分に限られる。借り出しは早期返却の回数をポリシーで絞り、インストール鍵ごとと、マシン指紋ごとに数える（0.40, 0.57）。マシン ID を書き換えれば数え直せるのは、上のマシン ID の行と同じである |
 | 利用者の管理者が借り出しの席を空ける | 借り出しの記録のファイルを消す、時計を進める、`--set-aside-broken-records` を使う、で空けられる。管理者はサーバーの鍵も取り出せる（上の行）ため、防ぎ切れない。管理 API では空けられない（0.56）。痕跡は利用ログに残り（`records.set_aside`、`chain.reset`、欠けたファイル）、被害は借り出しの期限（`borrow`）までに限られる |
 | 有効化を持つ利用者が、再有効化か `Flag` の複製の検出を繰り返して監査ログの行を増やす（§12.6.1） | 行を書けるのは、ライセンスの有効化のインストール鍵を持つ利用者だけで、鍵ごとの頻度の制限（既定 2 件/秒）で抑える。行は鍵の拇印を持つので、ベンダーは管理者の解除でその有効化を外せる。行の保管は `audit.retentionDays` で決める |
+| 解除の後に、残しておいたライセンスファイルを使う | 解除はインストール鍵を消さない（§12.6.2、0.89）。`activation.json` の写しを戻せば、トークンの期限と猶予（既定で 30 日と 7 日）まで使える。鍵を消しても、端末の利用者は鍵のファイルごと写せるので守りにならず、同じフォルダーの借り出し・ピン・時計の守りを壊す。オフラインの解除の「鍵の写しを残すことは防げない」（§12.8.2）と同じで、回数は `DeactivationLimit` で絞る |
+| OS が信頼する証明書を持つ中継が、`elm-service` の問題の応答を偽る（T17 と同じ中継） | 署名のない問題の応答は偽れる。偽の `ELM_ACTIVATION_NOT_FOUND` は手元の有効化を消す（§12.6.2）。通信を止めるだけならトークンの期限と猶予まで使えるのに対し、すぐに使えなくなるが、害は利用者自身の端末の妨害に限られ、有効化し直せば戻る。管理者が外した端末をすぐに止めるために消す（M4b2 の設計のレビュー、持ち主が受けた） |
 | 最新のログのファイルを消すか、最後の署名の後で切り詰める | 次のファイルがまだないため、連なりでは分からない。途中で切れた最後の行だけは警告になる。利用ログは監査のためで、席の数え上げは利用ログに頼らない（§18.1） |
 | 無効の鍵の一覧はアプリの更新でしか届かない | 漏れた署名鍵で `iat` を偽ったトークンは、無効の一覧を持つ版に更新していないアプリでは止められない（§7.5）。この表の「オフラインのトークンは期限まで失効が届かない」と同じく、失効リストを配らない決定から受け入れる |
 | 時計の守りの状態を消すか書き換える | 状態を消しても、時計はトークンの `iat` より前には戻せない（§11.4）。実際の上限はトークンの期限なので、短い `TokenLifetime` で抑える |
@@ -986,6 +988,7 @@ public abstract record LicenseVerificationResult
 public interface IClockGuard
 {
     bool Observe(DateTimeOffset now, DateTimeOffset tokenIssuedAt, TimeSpan allowedSkew);
+    void AcceptServerTime(DateTimeOffset serverTime) { }     // M4b2: オンラインの更新の後（§11.4 の手順 4）
 }
 
 public sealed class FileClockGuard(string path, ECDsa? installationKey = null) : IClockGuard;
@@ -1051,7 +1054,7 @@ public static class ErrorCodes
 1. §11.2 の手順 1〜6 に通ったトークンごとに（手順 7 で）、そのときの時刻と、トークンの `iat` の大きいほうを「最後に確認した時刻」として記録する。手順 8 以降で失敗するトークン（別の製品、期限切れ）でも記録する。署名と証明書を通ったトークンの `iat` なので、記録してよい。トークンの `iat` は署名鍵の時計なので、端末の時計を進めて戻しても、`iat` より前には戻せない。
 2. 現在の時刻が「最後に確認した時刻 − 許容のずれ」より前なら、巻き戻りとみなす。
 3. 状態はアプリが指定する場所（既定はインストール鍵と同じ場所、§10.2）に置く。インストール鍵があれば状態に署名し、署名が合わなければ書き換えとみなす。端末に紐づかないライセンスにはインストール鍵がないため、署名しない。状態が書き換えられた、消された、読めないときは、最後に確認した時刻を「検証中のトークンの `iat`」とみなして続ける。どの場合も、時計をトークンの `iat` より前には戻せない。
-4. FlexNet Embedded は、時計を進めて使い、戻すと、本当の時刻が追いつくまで使えなくなると書いている（https://community.revenera.com/s/article/clock-windback-detection-with-an-flexnet-embedded-client ）。ElasticLM も同じ振る舞いになる。オンラインの更新に成功すれば、サーバーの時刻を「最後に確認した時刻」として上書きし、戻せる。
+4. FlexNet Embedded は、時計を進めて使い、戻すと、本当の時刻が追いつくまで使えなくなると書いている（https://community.revenera.com/s/article/clock-windback-detection-with-an-flexnet-embedded-client ）。ElasticLM も同じ振る舞いになる。オンラインの更新に成功すれば、サーバーの時刻を「最後に確認した時刻」として上書きし、戻せる。上書きは `IClockGuard.AcceptServerTime(serverTime)` で行い、サーバーの時刻は、時計の守りを使わずに確かめた新しいトークンの `iat` である（M4b2、§12.6.2）。`FileClockGuard` は記録をその時刻に置き換えて書き、状態を持たない実装は何もしない。
 
 5. 対象: 時計の守りは、ライセンストークンの検証と、リーストークン（借り出しを含む）の検証の両方で行う（§12.7.5）。借り出したリースはオフラインで端末の時計と比べるため、リースにも行わなければ、時計を戻して期限を延ばせる。
 6. 書き込み: 状態は「最後に確認した時刻」が 60 秒以上進んだときだけ書き込む。書き込めない（ディレクトリがない、権限がない、ディスクが一杯）ときは、例外にせず、メモリの値とトークンの `iat` で守りを続け、次の 60 秒までは書き込みを試みない。書けない場所でも検証のたびにファイルの I/O が走らないためである。§4.2 の 1 ms の目標は、書き込まない検証で測る。書き込みは一時ファイルへの書き込みと置き換え（アトミックな改名）で行い、複数のプロセスが同時に書いても壊れた状態を残さない。読み込んだ値と書き込む値の大きいほうを残すので、どのプロセスの書き込みが残っても巻き戻らない。
@@ -1193,7 +1196,7 @@ sequenceDiagram
 
 ### 12.6 解除
 
-- オンライン: `POST /v1/activations/{id}/deactivate {seq}` を証明つきで送る。`seq` を本文に置くのは、証明の `bdy` で守るためである（クエリは `htu` から除かれ、§12.1）。サービスは、証明の鍵が有効化のインストール鍵と一致することと `seq`（§10.4）を確かめ、台数を戻す。アプリはライセンスファイルとインストール鍵を消す。
+- オンライン: `POST /v1/activations/{id}/deactivate {seq}` を証明つきで送る。`seq` を本文に置くのは、証明の `bdy` で守るためである（クエリは `htu` から除かれ、§12.1）。サービスは、証明の鍵が有効化のインストール鍵と一致することと `seq`（§10.4）を確かめ、台数を戻す。アプリはライセンスファイルを消す。インストール鍵は消さない（§12.6.2、0.89。M4b2 の設計のレビューで改め、持ち主が受けた。残した写しは §5.4）。
 - 管理者による解除（管理 API、§14.5）は、証明なしで行える。
 - `DeactivationLimit` を超えれば `ELM_DEACTIVATION_LIMIT`。数えるのは、ライセンスごとの端末からの解除（オンラインと M4c のオフライン）の通算で、管理者の解除は数えない（0.88）。運用の都合で端末を外すことを、回数で縛らないためである。
 - オフラインの解除は §12.8。
@@ -1205,7 +1208,7 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 | 要求 | 本文 | 成功 |
 | --- | --- | --- |
 | `GET /v1/nonce` | — | `200` と `{"nonce"}`（`elm-server` と同じ形） |
-| `POST /v1/activations` | `{licenseKey, fingerprints, seq?, retry?, client?, app?}` | 新しい有効化は `201`、同じ鍵の再有効化（再試行を含む）は `200`。本文は下の「発行の応答」 |
+| `POST /v1/activations` | `{licenseKey, product, fingerprints, seq?, retry?, client?, app?}` | 新しい有効化は `201`、同じ鍵の再有効化（再試行を含む）は `200`。本文は下の「発行の応答」 |
 | `POST /v1/activations/{id}/refresh` | `{seq, retry?}` | `200`。発行の応答 |
 | `POST /v1/activations/{id}/deactivate` | `{seq, retry?}` | `204`（本文なし） |
 | `POST /v1/trials` | `{product, fingerprints, retry?, client?, app?}` | `201`、再試行は `200`。発行の応答 |
@@ -1224,7 +1227,7 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 | `retry` | 文字列の配列 | 有効化・更新・解除・試用で任意 | §10.4 の手順 2。16 件まで、各 1〜64 文字。外れれば `ELM_MALFORMED` |
 | `client` | `{host, user}` | 任意 | `host` と `user` は両方とも必須の文字列で、各 255 バイトまで（UTF-8）。外れれば `ELM_MALFORMED`。ポリシーが `hostAndUser` のときだけ保存し、ほかは捨てる。クライアントは有効化の前にポリシーを知らないので、断ると有効化できなくなる |
 | `app` | 文字列 | 任意 | 64 バイトまで（UTF-8）。外れれば `ELM_MALFORMED` |
-| `product` | 文字列 | 試用で必須 | 製品の `code`（クライアントの製品 ID と同じ値、§9.1 の `^[a-z0-9-]{1,64}$`）。形が違えば `ELM_MALFORMED`、知らない製品は `404` と `ELM_TRIAL_NOT_OFFERED` |
+| `product` | 文字列 | 有効化と試用で必須 | 製品の `code`（クライアントの製品 ID と同じ値、§9.1 の `^[a-z0-9-]{1,64}$`）。形が違えば `ELM_MALFORMED`。有効化では、キーのライセンスの製品と違えば `400` と `ELM_WRONG_PRODUCT`（M4b2 の設計のレビュー）。試用では、知らない製品は `404` と `ELM_TRIAL_NOT_OFFERED` |
 
 有効化の検査の順:
 
@@ -1234,7 +1237,7 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 4. インストール鍵ごとの頻度の制限（`rateLimit.clientPerKey`、`429`）。
 5. `jti` をデータベースに一意で書く（規則 5。書けなければ `401` と `ELM_REPLAYED`）。ここまでで断った要求の `jti` は書かない。
 6. 本文の形（`400` と `ELM_MALFORMED`）。
-7. キーのハッシュでライセンスを探す（`404` と `ELM_LICENSE_NOT_FOUND`）。
+7. キーのハッシュでライセンスを探す（`404` と `ELM_LICENSE_NOT_FOUND`）。ライセンスの製品の `code` が本文の `product` と違えば `400` と `ELM_WRONG_PRODUCT`。有効化を作る前に断るので、別の製品のアプリに入れたキーが、そのアプリから外せない台数を使わない（M4b2）。
 8. ポリシーが `unbound` なら `409` と `ELM_CONFLICT`（0.88）。
 9. ポリシーが `ignore` でなく指紋が 0 個なら `400` と `ELM_FINGERPRINT_UNAVAILABLE`。
 10. ライセンスの行をロックし（§14.4）、その行の状態で断る: `Revoked` は `403` と `ELM_LICENSE_REVOKED`、`Suspended` は `ELM_LICENSE_SUSPENDED`、`Expired` は `ELM_EXPIRED`（§9.4 の順で決めた 1 つの状態）。
@@ -1315,7 +1318,7 @@ public sealed class ActivationClientOptions
     public string? DataDirectory { get; init; }              // null なら §10.2 の既定
     public bool SendClientInfo { get; init; }                // client を送る（§4.4）
     public string? AppVersion { get; init; }                 // app。64 バイトまで
-    public IClockGuard? ClockGuard { get; init; }            // null なら鍵の横の FileClockGuard
+    public IClockGuard? ClockGuard { get; init; }            // null なら鍵の横の FileClockGuard（鍵で署名）
     public LicenseVerifierOptions? VerifierOptions { get; init; }
     public TimeProvider TimeProvider { get; init; }          // 既定 TimeProvider.System
 }
@@ -1343,49 +1346,68 @@ public abstract record ActivationResult
 }
 ```
 
-- `TryCreate` はインストール鍵を読むか作り（§10.2。読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。
-- 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコードである。
-- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
-- 送るもの: 有効化と試用は、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、各 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。
+- `TryCreate` は、インストール鍵があれば読み（読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。鍵がなければ作らず、最初の `ActivateAsync` か `StartTrialAsync` が送る前に、鍵とそのフォルダーを作る（§10.2 の「最初の有効化・試用のときに作る」）。鍵を持たないクライアントは、操作のたびに、同じ端末のほかのプロセスが作った鍵があれば読む。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。
+- 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。
+- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（128 文字まで）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
+- 送るもの: 有効化と試用は、製品の `code`（`product`）、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、どちらかが 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。クライアントは有効化の前にポリシーを知らず、トークンも `ClientInfoStrategy` を持たないので、`client` を送るかはアプリが決め、残すかはサービスがポリシーで決める（§4.4）。
 
 保存（鍵のフォルダー、§10.2 の ACL と権限の内）:
 
-- `activation.json` は `{"activationId": <UUID か null>, "seq": <整数>, "license": <§8.5 のファイルか null>, "retry": [<jti>, ...]}` で、一時ファイルに書いてから置き換える（読み手は書きかけを見ない）。ライセンスキーは保存しない。
-- 読むのは 256 KiB まで。超えるか、この形でなければ壊れているとし、`Check` は `ELM_MALFORMED` を返す。次の `ActivateAsync` と `StartTrialAsync` は、有効化がないものとして送り、成功すれば書き直す。
-- `activation.lock` は OS のファイルのロック（Windows は共有モード、Linux と macOS は `flock`）で、同じ端末のプロセスの有効化・試用・更新・解除を 1 つずつにする。取るまでクライアントの時計で最長 10 秒待ち、取れなければ呼ばれた操作は `ELM_INVALID_STATE`（「Another process of this device holds the activation lock.」）、自動の更新は 1 時間後に回す。ロックを取った後に `activation.json` を読み直し、その `seq` と `retry` で送る（§12.5）。
+- `activation.json` は `{"activationId": <UUID か null>, "seq": <0 以上の整数>, "kind": <"standard"・"trial"・"server" か null>, "license": <§8.5 のファイルか null>, "retry": [<jti>, ...]}` である。`seq` と `kind` は保存のときに確かめたトークンの値で、送るときは `seq` を使う。ライセンスキーは保存しない。
+- 書くときは一時ファイルに書いてから置き換える（読み手は書きかけを見ない）。読み手は削除と置き換えを許す共有で開くので、Windows でも別のプロセスの `Check` が置き換えを止めない。書けなければ（ディスク、権限）、送る前なら送らずに、受け取った後なら `retry` を残したまま、`ELM_INTERNAL_ERROR` を返す。
+- 読むのは 256 KiB まで。超えるか、この形（`activationId` は UUID、`retry` は 16 件まで各 1〜64 文字、`activationId`・`kind`・`license` はそろって値かそろって `null`）でなければ壊れているとし、`Check` は `ELM_MALFORMED` を返す。壊れたときの `ActivateAsync` と `StartTrialAsync` は有効化がないものとして送る。サービスにまだ有効化があれば、`seq` のない再有効化は複製になる（§10.4 の手順 4）ので、管理者の解除で戻る。
+- `Check` は呼ばれるたびにファイルを読み直す。別のプロセスの更新と解除は次の `Check` から見える。
+- `activation.lock` は OS のファイルのロック（Windows は共有モード、Linux と macOS は .NET の `flock`）で、同じ端末のプロセスの有効化・試用・更新・解除を 1 つずつにする。同じプロセスの同じクライアントの呼び出しは、その前にクライアントの中の排他で 1 つずつにする（自動の更新と手動の更新が自分のロックを待たない）。
+- ロックはクライアントの時計で最長 10 秒待つ。取れなければ、呼ばれた操作は `ELM_INVALID_STATE`（「Another process of this device holds the activation lock.」）を返し、自動の更新は 1 時間後に回す。ほかのプロセスの要求は打ち切りまで最長 2 分ロックを持つので、その間の操作は断られ、アプリは後で呼び直す。待っている間も `CancellationToken` で止められる。ロックのファイルが開けない（権限）ときは `ELM_INTERNAL_ERROR`。
+- ロックを取った後に `activation.json` を読み直し、その `seq` と `retry` で送る（§12.5）。
+- 受け入れる限り: .NET の `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` でロックを切った環境と、`flock` の効かないネットワークのファイルシステムでは、ロックが効かない。そのとき同時の更新は複製と判定されうる（§5.4）。
 
 送り直しと記録（§10.4 の手順 2）:
 
-- 証明を作るたびに、その `jti` を `activation.json` の `retry` に書いてから送る（16 件まで、古いものから落とす）。応答で新しいファイルを保存したら `retry` を空にする。断られた要求の `jti` は次の要求まで残るが、サービスは判定にしか使わないので害はない。
-- 最初の有効化と試用の前は、`activationId` と `license` が `null`、`seq` が 0 の `activation.json` に `retry` だけを持つ。応答をなくした最初の有効化の送り直しは `seq` 0 と `retry` を持ち、試用は `retry` を持つ（§12.6.1）。
-- 有効化があるときの `ActivateAsync` は、保存した `seq` と `retry` を付けて送る。同じライセンスならサービスが再有効化として判定し、別のライセンス（試用の後に買ったもの）なら新しい有効化になる。成功すれば手元の有効化を置き換える。
+- 証明を作るたびに、その `jti` を `retry` に書いてから送る（送った後に落ちても、次の要求が名指せる）。
+- 応答があった要求（問題の応答を含む）と、送る前に失敗した要求（名前の解決、接続、TLS）の `jti` は、`retry` から消す。サービスが受け取ったかわからない要求（送った後の打ち切りと切断）の `jti` だけを残す。§10.4 の判定で効くのは、最後のファイルを出した 1 つの要求だけで、確かに断られた要求を残すと、オフラインが長いと 16 件を使い切って効く `jti` を押し出すためである（M4b2 の設計のレビュー）。
+- わからない要求が 16 件たまったら、それ以上は送らずに `ELM_INVALID_STATE` を返す。古いものを落とすと、効く `jti` を失って複製と判定されうるためで、管理者の解除と有効化で戻る。
+- 新しいファイルを保存したら `retry` を空にする。
+- 最初の有効化と試用の前は、`activationId`・`kind`・`license` が `null`、`seq` が 0 の `activation.json` に `retry` だけを持つ。応答をなくした最初の有効化の送り直しは `seq` 0 と `retry` を持ち、試用は `retry` を持つ（§12.6.1）。
 - 解除の送り直しで `ELM_ACTIVATION_NOT_FOUND` を受けたら、解除済みとして扱う。
 
 受け取ったファイル:
 
-- 保存の前に `LicenseVerifier` で、この端末の鍵と今の指紋、`ProductId` で確かめる。種類は `Standard`・`Trial`・`Server` の順に試す（`AcceptTrialAsStandard` が切られていても試用のキーのライセンスを受けるため）。試用は `Trial` だけを受ける。通らなければ保存せず、検証器の誤りで `Failed` を返す。サービスの誤りや中継の改ざんで、使えないファイルが手元の正しいファイルを上書きしない。
+- 保存の前に、時計の守りを使わない検証器で、この端末の鍵と今の指紋、`ProductId` で確かめる（§11.2 の手順 7 の巻き戻りの判定を除く。署名鍵の時刻の `iat` が、端末の時計を確かめる側である）。種類は `Standard`・`Trial`・`Server` の順に試し、試用は `Trial` だけを受ける。通らなければ保存せず、検証器の誤りで `Failed` を返す。サービスの誤りや中継の改ざんで、使えないファイルが手元の正しいファイルを上書きしない。通らなかった有効化はサービスに残り、管理者が外す。
+- 確かめに通れば、時計の守りに、そのトークンの `iat`（サービスの時刻）を「最後に確認した時刻」として渡す（`IClockGuard.AcceptServerTime`、§11.4 の手順 4）。端末の時計を進めて戻した利用者は、オンラインの更新で戻れる。
+
+有効化があるときの操作:
+
+- `ActivateAsync` は、試用でない有効化を持つときは送らずに `ELM_INVALID_STATE`（「An activation is kept; deactivate it before activating another license.」）を返す。別のライセンスで上書きすると、前の有効化がサービスに残り、手元から届かなくなるためである。試用を持つときは送り、成功すれば試用を置き換える（試用の後の購入。試用の有効化はサービスに残るが、試用のライセンスの 1 台だけである）。
+- `ActivateAsync` は、いつも `seq` 0 と、保存した `retry` を送る。新しい有効化には `seq` は効かず、応答をなくした有効化の送り直し（試用を持つときの購入も）は、サービスの最初の `seq` の 1 小さいものとして判定される（§10.4 の手順 3、4）。
+- `StartTrialAsync` は、有効化（試用を含む）を持つときは送らずに `ELM_INVALID_STATE` を返す。
+- 有効化を持たないとき、`StartTrialAsync` は送り直しの `retry` だけを持って送る。
 
 自動の更新（§12.5）:
 
-- 保存したトークンの `exp` − `refresh` の時刻にタイマーを置く（`refresh` のないトークンは更新しない。保存したファイルが確かめに通らなければすぐに）。タイマーは `TimeProvider.CreateTimer` で作り、`DisposeAsync` で止めて走っている更新を待つ。
-- タイマーの更新は、ロックの後に読み直したファイルの更新の時刻がまだなら送らずに置き直す（別のプロセスが先に更新したとき）。失敗すれば、有効化があるかぎり 1 時間後（`Retry-After` が長ければそれまで）に置き直す。
+- 保存したトークンの `exp` − `refresh` の時刻にタイマーを置く（`refresh` のないトークンは更新しない。保存したファイルが確かめに通らなければすぐに）。タイマーの待ちは 24 時間で区切り、来たら時刻を見直して置き直す（`TimeProvider.CreateTimer` の待ちの上限、約 49.7 日を超えないため）。
+- タイマーの更新は、ロックの後に読み直したファイルの更新の時刻がまだなら送らずに置き直す（別のプロセスが先に更新したとき）。失敗すれば、有効化があるかぎり 1 時間後（`Retry-After` が長ければそれまで、ただし 24 時間まで）に置き直す。`CloneDetected` と、鍵が合わない（`ELM_PROOF_INVALID`）ときは、置き直さない（どちらも利用者か管理者の操作が要る）。
+- タイマーは `DisposeAsync` で止める。走っている更新の要求は取り消し（`jti` は記録済みなので、次の要求が名指せる）、終わるのを最長 5 秒待つ（§17.2 の寿命の規則）。`DisposeAsync` の後にイベントは起きない。
+- `TryCreate` が置いたタイマーは、更新の時刻が来ていれば、アプリが `StateChanged` に登録する前に走りうる。アプリは `TryCreate` の後に `State` を読み、その後の変化をイベントで受ける。
 
 断られたとき（状態とイベント）:
 
-| 応答 | 手元のファイル | 状態 |
-| --- | --- | --- |
-| `ELM_ACTIVATION_NOT_FOUND`（更新） | 消す（管理者が外した） | `None` |
-| `ELM_CLONE_DETECTED` | 残す | `CloneDetected` |
-| `ELM_LICENSE_REVOKED`・`ELM_LICENSE_SUSPENDED`・`ELM_EXPIRED` | 残す | `Refused` |
-| ほか（通信、`5xx`、`429`）の更新の失敗 | 残す | `RefreshFailing` |
+| 応答 | 操作 | 手元のファイル | 状態 |
+| --- | --- | --- | --- |
+| `ELM_ACTIVATION_NOT_FOUND` | 更新 | 消す（管理者が外した） | `None` |
+| `ELM_CLONE_DETECTED` | 更新・再有効化・解除 | 残す | `CloneDetected`（自動の更新を止める） |
+| `ELM_LICENSE_REVOKED`・`ELM_LICENSE_SUSPENDED`・`ELM_EXPIRED` | 更新 | 残す | `Refused` |
+| `ELM_PROOF_INVALID` | 更新 | 残す | `RefreshFailing`（自動の更新を止める。鍵が替わった） |
+| ほか（通信、`5xx`、`429`） | 更新 | 残す | `RefreshFailing` |
+| `ELM_ACTIVATION_LIMIT`・`ELM_CONFLICT`・`ELM_WRONG_PRODUCT` など | 有効化・試用 | 変えない | 変えない |
+| `ELM_DEACTIVATION_LIMIT` など | 解除 | 変えない | 変えない |
 
 - 残したファイルは、トークンの期限と猶予の間、`Check` で使える（§5.4）。成功すれば `Active` に戻る。
-- 状態の変化は `StateChanged` で、クライアントのロックの外で知らせる。タイマーのスレッドで投げられたハンドラーの例外は無視する。
+- 状態の変化は `StateChanged` で、クライアントの排他の外で知らせる。ハンドラーの例外は、タイマーのスレッドでも呼び出しのスレッドでも無視する。ハンドラーの中から `DisposeAsync` を呼んでよい（走っている更新を待たずに止める）。
 
-そのほか:
+解除と確かめ:
 
-- `StartTrialAsync` は、有効化があるときは送らずに `ELM_INVALID_STATE` を返す（買ったライセンスを試用で上書きしない）。
-- `DeactivateAsync` は、解除に成功すれば `activation.json` とインストール鍵を消す（§12.6）。同じフォルダーの鍵を使う `LicenseClient` は、次に作るときに新しい鍵になる。同じクライアントの次の `ActivateAsync` と `StartTrialAsync` は新しい鍵を作る。
+- `DeactivateAsync` は、解除に成功すれば `activation.json` を消す。インストール鍵は消さない。同じフォルダーの借り出し（§12.7.4）、サーバーのピン（§13.5）、時計の守りの状態（§11.4）が鍵に結びつくためで、残した写しの扱いは §5.4 に書く。
 - `Check` は通信せずに、保存したファイルを鍵・今の指紋・時計の守り（§11.4）で確かめる。有効化がなければ `ELM_LICENSE_NOT_FOUND`。
 
 ### 12.7 リースと借り出し
@@ -2241,7 +2263,7 @@ const char* elm_last_error_message(void);
   - コールバックはライブラリのスレッドから呼ばれる。コールバックの中から、同じ `elm_client` の `destroy` と `lease_release` を呼んではいけない。呼べば `ELM_INVALID_STATE` を返し、何もしない。
   - `destroy` の後に、そのハンドルでコールバックは呼ばれない。
   - プロセスの終了時に `destroy` を呼ばなかった場合、リースは返却されず、サーバーの期限で消える。
-- 正確な関数の一覧と構造体は M6 の行で決め、本節を直す。
+- 正確な関数の一覧と構造体は M6 の行で決め、本節を直す。上の `elm_client_activate` は D0 の案で、.NET では有効化をリースの `LicenseClient` と分けて `ActivationClient` に置いた（0.89、§12.6.2）。C ABI での形（別のハンドルにするか）も M6 で決める。
 
 .NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。返却は合わせて最長 5 秒で打ち切り、返却できなかったリースはサーバーの期限で消える。違いは 1 つだけで、.NET はイベントをクライアントの排他の外で呼ぶので、ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい（C ABI のコールバックの中の `lease_release` は `ELM_INVALID_STATE`）。リースごとのタイマーは、そのリースが `Lost` か `Released` になったときに破棄する。
 
@@ -2302,7 +2324,7 @@ M3c で作った形:
 | 4 | `ELM_BAD_SIGNATURE` | 署名が合わない | 401 |
 | 5 | `ELM_CERTIFICATE_EXPIRED` | 鍵の証明書の期限外 | — |
 | 6 | `ELM_CLOCK_TAMPERED` | 時計の巻き戻し | — |
-| 7 | `ELM_WRONG_PRODUCT` | 製品が違う | — |
+| 7 | `ELM_WRONG_PRODUCT` | 製品が違う（`elm-service` では、有効化のキーが要求の `product` の製品のものでない、M4b2） | 400 |
 | 8 | `ELM_WRONG_INSTALLATION` | インストール鍵が違う | — |
 | 9 | `ELM_FINGERPRINT_MISMATCH` | マシン指紋が合わない | — |
 | 10 | `ELM_EXPIRED` | 期限と猶予期間を過ぎた（サーバー側ではサーバーライセンスの期限切れ） | 403 |
@@ -2314,7 +2336,7 @@ M3c で作った形:
 | 16 | `ELM_WRONG_KIND` | ライセンスの種類が違う（試用をサーバーライセンスとして使う等） | — |
 | 17 | `ELM_KEY_REVOKED` | 無効にした鍵 | — |
 | 18 | `ELM_LEASE_OUT_OF_BOUNDS` | リースがサーバーライセンスの範囲外（§12.7.5） | — |
-| 19 | `ELM_INVALID_STATE` | 呼び出してはいけない状態での呼び出し（C ABI のコールバックの中など） | — |
+| 19 | `ELM_INVALID_STATE` | 呼び出してはいけない状態での呼び出し（C ABI のコールバックの中など）。`ActivationClient` では、有効化があるときの別の有効化と試用、ほかのプロセスが有効化のロックを持つとき、応答のわからない要求が 16 件たまったとき（§12.6.2） | — |
 | 20 | `ELM_PROOF_INVALID` | 証明が無効（署名・メソッド・URI・本文） | 401 |
 | 21 | `ELM_NONCE_REQUIRED` | ノンスがないか期限切れ（`ELM-Nonce` で新しいノンスを返す） | 401 |
 | 22 | `ELM_REPLAYED` | `jti` の再利用 | 401 |
@@ -2432,7 +2454,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M4a2 | `elm-service` のモデル: 製品・機能・ポリシーとその管理 API、署名鍵の状態の API | §9.1〜§9.3, §14.5, §14.8 |
 | M4a3 | ライセンス（ライセンスキーを含む）とその管理 API、状態の操作、`Unbound` のライセンスファイル | §8.5, §9.3〜§9.5, §14.5 |
 | M4b1 | `elm-service` のオンラインの有効化・更新・解除・試用と、その複製の検出。サーバーライセンスの有効化。有効化と試用の管理 API（0.88） | §10.4, §12.4〜§12.6.1, §12.9, §14.5〜§14.8 |
-| M4b2 | `ElasticLM.Client` の有効化・更新・解除・試用（公開 API、保存、ロックファイル、自動更新）（0.89） | §3.2, §12.4〜§12.6, §12.9 |
+| M4b2 | `ElasticLM.Client` の有効化・更新・解除・試用（公開 API、保存、ロックファイル、自動更新）（0.89） | §3.2, §4.4, §11.4, §12.4〜§12.6.2, §12.9 |
 | M4c | オフラインの有効化・更新・解除（`elm offline process`）と `ElasticLM.Client` のオフラインのファイル。`elm-server` のサーバーライセンスの更新（オンラインと、`elm server refresh-request` によるファイルのやり取り）。オフライン有効化の処理の管理 API。M4c まで、サーバーライセンスは手で入れ替える | §9.6, §12.8, §12.8.3, §13.7 |
 | M4d | `elm-service` のクラウドのリースと借り出し（`LeaseEngine` の規則を共有）、利用ログ、リースと利用ログの管理 API | §12.7, §14.4, §18.1 |
 | W0 | 管理画面の技術の選定 | §15.2 |

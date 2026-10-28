@@ -15,19 +15,21 @@ public sealed class ActivationClientTests
     private const string Product = "app";
 
     /// <summary>
-    /// A license key activates the installation; the kept file checks offline; a refresh moves the sequence number; a
-    /// deactivation removes the file and the key, and a later activation makes a new key.
+    /// A license key activates the installation; the kept file checks offline; a refresh moves the sequence number; another
+    /// activation is refused while one is kept; a deactivation removes the file and keeps the key (design §12.6.2).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Product app with feature core; a license of 2 activations; a client of a fresh folder.
     ///
     /// Steps:
-    /// - Check before activating; activate; check core; refresh; deactivate; check; look for the key file; activate again.
+    /// - Look for the key file; check before activating; activate; check core; refresh; activate again; deactivate; check;
+    ///   look for the key file; activate again.
     ///
     /// Expected:
-    /// - ELM_LICENSE_NOT_FOUND; Activated with sequence 1, state Active, the activation ID; Valid; sequence 2; null, state
-    ///   None, ID null; ELM_LICENSE_NOT_FOUND; no key file; Activated with another key thumbprint.
+    /// - No key file (it is made by the first activation); ELM_LICENSE_NOT_FOUND; Activated with sequence 1, state Active,
+    ///   the activation ID; Valid; sequence 2; ELM_INVALID_STATE without sending; null, state None, ID null;
+    ///   ELM_LICENSE_NOT_FOUND; the key file is there; Activated with the same key thumbprint.
     /// </remarks>
     [Fact]
     public async Task Activate_RefreshDeactivate_FollowTheDesign()
@@ -35,20 +37,26 @@ public sealed class ActivationClientTests
         await using Vendor vendor = await Vendor.StartAsync();
         string key = await vendor.LicenseAsync("\"maxActivations\":2");
         await using ActivationClient client = vendor.Client("a");
+        string keyFile = Path.Combine(vendor.Folder("a"), "installation.key");
 
+        Assert.False(File.Exists(keyFile));
         Assert.Equal(ErrorCode.LicenseNotFound, Invalid(client.Check("core", null)).Code);
         VerifiedLicense license = Activated(await client.ActivateAsync(key, Cancel));
         Assert.Equal((1L, ActivationState.Active), (license.Sequence, client.State));
         Assert.NotNull(client.ActivationId);
-        string firstKey = license.InstallationKeyThumbprint!;
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
         Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        LicenseError again = Failed(await client.ActivateAsync(key, Cancel));
+        Assert.Equal(
+            (ErrorCode.InvalidState, "An activation is kept; deactivate it before activating another license."),
+            (again.Code, again.Message)
+        );
 
         Assert.Null(await client.DeactivateAsync(Cancel));
         Assert.Equal((ActivationState.None, (string?)null), (client.State, client.ActivationId));
         Assert.Equal(ErrorCode.LicenseNotFound, Invalid(client.Check("core", null)).Code);
-        Assert.False(File.Exists(Path.Combine(vendor.Folder("a"), "installation.key")));
-        Assert.NotEqual(firstKey, Activated(await client.ActivateAsync(key, Cancel)).InstallationKeyThumbprint);
+        Assert.True(File.Exists(keyFile));
+        Assert.Equal(license.InstallationKeyThumbprint, Activated(await client.ActivateAsync(key, Cancel)).InstallationKeyThumbprint);
     }
 
     /// <summary>
@@ -60,11 +68,14 @@ public sealed class ActivationClientTests
     /// - A policy with tokens of a day and a refresh window of 12 hours; an activated client with a state handler.
     ///
     /// Steps:
-    /// - Advance 12 hours and wait for the refresh; suspend the license; advance 12 hours and wait for the state; check.
+    /// - Advance 12 hours and wait for the refresh; suspend the license; advance 12 hours and wait for the state; check;
+    ///   resume the license; advance an hour and wait for the state; add a handler that disposes the client, revoke, advance a
+    ///   day.
     ///
     /// Expected:
     /// - The service's activation reaches sequence 2; the state becomes Refused with ELM_LICENSE_SUSPENDED in the event; the
-    ///   check is still Valid.
+    ///   check is still Valid; the refresh tried again an hour later succeeds and the state is Active. A handler that disposes
+    ///   the client on the next refusal (revoked, a day later) ends without waiting for itself.
     /// </remarks>
     [Fact]
     public async Task Refresh_OnItsOwn_WhenTheWindowStarts()
@@ -94,6 +105,17 @@ public sealed class ActivationClientTests
         }
 
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
+
+        (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/resume", null, TestContext.Current.CancellationToken)).Dispose();
+        vendor.Test.Time.Advance(TimeSpan.FromHours(1));
+        await TestService.WaitForAsync(() => Task.FromResult(client.State == ActivationState.Active));
+
+        // A handler on the timer's thread may dispose the client without waiting for itself (design §12.6.2).
+        Task? disposing = null;
+        client.StateChanged += (_, _) => disposing ??= client.DisposeAsync().AsTask();
+        (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/revoke", null, TestContext.Current.CancellationToken)).Dispose();
+        vendor.Test.Time.Advance(TimeSpan.FromDays(1));
+        await TestService.WaitForAsync(() => Task.FromResult(disposing is { IsCompleted: true }));
     }
 
     /// <summary>
@@ -109,8 +131,8 @@ public sealed class ActivationClientTests
     ///   answer and start it again; lose a deactivation's answer and deactivate again.
     ///
     /// Expected:
-    /// - The network error, then the same activation ID and file; the error, then sequence 2 with the same file as the service
-    ///   issued; the same for the trial; the error, then null. The service has one activation of the license at each step.
+    /// - The network error, then the same activation ID and file; the error and state RefreshFailing, then sequence 2 with the
+    ///   same file as the service issued and state Active (the lost request's jti kept between, none after); the same for the trial; the error, then null. The service has one activation of the license at each step.
     /// </remarks>
     [Fact]
     public async Task LostAnswers_AreRecoveredBySendingAgain()
@@ -129,7 +151,9 @@ public sealed class ActivationClientTests
 
         lose.Armed = true;
         Assert.Equal(ErrorCode.NetworkError, Failed(await client.RefreshAsync(Cancel)).Code);
+        Assert.Equal((ActivationState.RefreshFailing, 1), (client.State, vendor.Kept("a").Retry.Count));
         Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Equal((ActivationState.Active, 0), (client.State, vendor.Kept("a").Retry.Count));
         Assert.Equal(3L, Activated(await client.RefreshAsync(Cancel)).Sequence);
 
         lose.Armed = true;
@@ -153,10 +177,12 @@ public sealed class ActivationClientTests
     /// - Two clients on the same folder (one installation key); an activation.
     ///
     /// Steps:
-    /// - Refresh with both at once, moving the clock while they wait; read the audit log.
+    /// - Refresh with both at once, moving the clock while they wait; read the audit log. Then let both timers come due at
+    ///   the same instant and move the clock while they run.
     ///
     /// Expected:
-    /// - Both Activated, with sequence numbers 2 and 3; no activation.clone row.
+    /// - Both Activated, with sequence numbers 2 and 3; no activation.clone row. Only one of the two timers sends: the
+    ///   service's activation is at sequence 4.
     /// </remarks>
     [Fact]
     public async Task Refresh_FromTwoProcesses_IsNotAClone()
@@ -171,6 +197,11 @@ public sealed class ActivationClientTests
         await vendor.AdvanceUntilAsync(Task.WhenAll(both));
         Assert.Equal([2L, 3L], both.Select(t => Activated(t.Result).Sequence!.Value).Order());
         Assert.DoesNotContain(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
+
+        // The second timer reads the file the first refreshed and finds the refresh not due (design §12.6.2).
+        vendor.Test.Time.Advance(TimeSpan.FromDays(20));
+        await vendor.AdvanceForAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal(4L, (await vendor.ActivationAsync(one.ActivationId!)).GetProperty("seq").GetInt64());
     }
 
     /// <summary>
@@ -187,7 +218,8 @@ public sealed class ActivationClientTests
     ///
     /// Expected:
     /// - B Activated; A Failed ELM_CLONE_DETECTED, state CloneDetected, check Valid. C Failed ELM_ACTIVATION_NOT_FOUND,
-    ///   state None, ID null, check ELM_LICENSE_NOT_FOUND. D Failed ELM_LICENSE_REVOKED, state Refused, check Valid.
+    ///   state None, ID null, check ELM_LICENSE_NOT_FOUND. D Failed ELM_LICENSE_REVOKED, state Refused, no jti kept (the
+    ///   answer came), check Valid.
     /// </remarks>
     [Fact]
     public async Task Refusals_ChangeTheStateAsDesigned()
@@ -215,7 +247,7 @@ public sealed class ActivationClientTests
         Activated(await d.ActivateAsync(key, Cancel));
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/revoke", null, TestContext.Current.CancellationToken)).Dispose();
         Assert.Equal(ErrorCode.LicenseRevoked, Failed(await d.RefreshAsync(Cancel)).Code);
-        Assert.Equal(ActivationState.Refused, d.State);
+        Assert.Equal((ActivationState.Refused, 0), (d.State, vendor.Kept("d").Retry.Count));
         Assert.IsType<LicenseVerificationResult.Valid>(d.Check("core", null));
     }
 
@@ -228,10 +260,12 @@ public sealed class ActivationClientTests
     /// - Product app with a trial policy and a standard license.
     ///
     /// Steps:
-    /// - Start a trial; start another; activate the license key; check as Standard.
+    /// - With a client that does not take trials as standard: start a trial; start another; lose the answer of the license
+    ///   key's activation; activate it again; check as Standard.
     ///
     /// Expected:
-    /// - Activated trial; Failed ELM_INVALID_STATE; Activated with the license's ID; Valid with that ID.
+    /// - Activated trial; Failed ELM_INVALID_STATE; the network error with the state still Active; Activated with the
+    ///   license's ID; Valid with that ID.
     /// </remarks>
     [Fact]
     public async Task Trial_ThenPurchase_ReplacesTheTrial()
@@ -239,10 +273,14 @@ public sealed class ActivationClientTests
         await using Vendor vendor = await Vendor.StartAsync();
         (string licenseId, string key) = await vendor.LicenseWithIdAsync(string.Empty);
         await vendor.TrialPolicyAsync();
-        await using ActivationClient client = vendor.Client("a");
+        var lose = new LoseNextAnswer();
+        await using ActivationClient client = vendor.Client("a", lose, verifier: new LicenseVerifierOptions { AcceptTrialAsStandard = false });
 
         Assert.Equal(LicenseKind.Trial, Activated(await client.StartTrialAsync(Cancel)).Kind);
         Assert.Equal(ErrorCode.InvalidState, Failed(await client.StartTrialAsync(Cancel)).Code);
+        lose.Armed = true;
+        Assert.Equal(ErrorCode.NetworkError, Failed(await client.ActivateAsync(key, Cancel)).Code);
+        Assert.Equal(ActivationState.Active, client.State);
         Assert.Equal(licenseId, Activated(await client.ActivateAsync(key, Cancel)).LicenseId);
         Assert.Equal(licenseId, Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null)).License.LicenseId);
     }
@@ -257,10 +295,11 @@ public sealed class ActivationClientTests
     ///
     /// Steps:
     /// - Activate with the wrong trust; check. With the right client: write text that is not JSON as the kept file; check;
-    ///   write a file of 256 KiB + 1; check; activate; check.
+    ///   activate; pad the kept file with spaces to 256 KiB and check; to 256 KiB + 1 and check.
     ///
     /// Expected:
-    /// - Failed with the verifier's error (ELM_UNTRUSTED_KEY); ELM_LICENSE_NOT_FOUND. ELM_MALFORMED twice; Activated; Valid.
+    /// - Failed with the verifier's error (ELM_UNTRUSTED_KEY); ELM_LICENSE_NOT_FOUND. ELM_MALFORMED; Activated; Valid;
+    ///   ELM_MALFORMED.
     /// </remarks>
     [Fact]
     public async Task KeptFile_IsCheckedAndBounded()
@@ -274,12 +313,15 @@ public sealed class ActivationClientTests
 
         await using ActivationClient client = vendor.Client("a");
         string kept = Path.Combine(vendor.Folder("a"), "activation.json");
+        Directory.CreateDirectory(vendor.Folder("a"));
         File.WriteAllText(kept, "not json");
         Assert.Equal(ErrorCode.Malformed, Invalid(client.Check("core", null)).Code);
-        File.WriteAllText(kept, new string(' ', ActivationStore.MaxLength + 1));
-        Assert.Equal(ErrorCode.Malformed, Invalid(client.Check("core", null)).Code);
         Activated(await client.ActivateAsync(key, Cancel));
+        string text = File.ReadAllText(kept);
+        File.WriteAllText(kept, text + new string(' ', ActivationStore.MaxLength - System.Text.Encoding.UTF8.GetByteCount(text)));
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
+        File.AppendAllText(kept, " ");
+        Assert.Equal(ErrorCode.Malformed, Invalid(client.Check("core", null)).Code);
     }
 
     /// <summary>
@@ -320,6 +362,94 @@ public sealed class ActivationClientTests
 
         LicenseError error = Failed(result);
         Assert.Equal((ErrorCode.InvalidState, "Another process of this device holds the activation lock."), (error.Code, error.Message));
+    }
+
+    /// <summary>
+    /// A key of another product is refused by the service before an activation is made (design §12.6.1); 16 requests without
+    /// an answer stop further sends (design §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product other with a license; product app with a license; a client of app.
+    ///
+    /// Steps:
+    /// - Activate other's key; count other's activations. Activate app's key; write the kept file with 16 jti in its retry
+    ///   list; refresh.
+    ///
+    /// Expected:
+    /// - Failed ELM_WRONG_PRODUCT, no activation of other. Activated; Failed ELM_INVALID_STATE "16 requests got no answer;
+    ///   ...", and nothing sent (the service's activation stays at sequence 1).
+    /// </remarks>
+    [Fact]
+    public async Task OtherProduct_AndUnansweredRequests_AreRefused()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string other = (await TestService.CreatedAsync(vendor.Admin, "v1/admin/products", """{"code":"other","name":"Other"}"""))
+            .GetProperty("id")
+            .GetString()!;
+        await TestService.CreatedAsync(vendor.Admin, $"v1/admin/products/{other}/features", """{"code":"core","name":"Core"}""");
+        string otherPolicy = await TestService.PolicyAsync(vendor.Admin, other, string.Empty);
+        JsonElement otherLicense = await TestService.CreatedAsync(
+            vendor.Admin,
+            "v1/admin/licenses",
+            $$"""{"policyId":"{{otherPolicy}}","name":"n","features":[{"code":"core"}]}"""
+        );
+        string key = await vendor.LicenseAsync(string.Empty);
+        await using ActivationClient client = vendor.Client("a");
+
+        Assert.Equal(ErrorCode.WrongProduct, Failed(await client.ActivateAsync(otherLicense.GetProperty("key").GetString()!, Cancel)).Code);
+        Assert.Equal(0, await vendor.ActivationCountAsync(otherLicense.GetProperty("id").GetString()!));
+
+        Activated(await client.ActivateAsync(key, Cancel));
+        StoredActivation kept = vendor.Kept("a");
+        new ActivationStore(vendor.Folder("a"), vendor.Test.Time).Write(
+            kept with
+            {
+                Retry = [.. Enumerable.Range(0, StoredActivation.MaxRetry).Select(i => "lost" + i)],
+            }
+        );
+        LicenseError stopped = Failed(await client.RefreshAsync(Cancel));
+        Assert.Equal(
+            (ErrorCode.InvalidState, "16 requests got no answer; an administrator deactivates this installation before it activates again."),
+            (stopped.Code, stopped.Message)
+        );
+        Assert.Equal(1L, (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64());
+    }
+
+    /// <summary>
+    /// A device whose clock was set forward and back recovers with an online refresh: the received file is checked without
+    /// the clock guard, and its iat replaces the guard's last time (design §11.4 step 4, §12.6.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An activation of a policy with a refresh window of a day; a second client on the same folder whose clock is 10 days
+    ///   ahead.
+    ///
+    /// Steps:
+    /// - Check with the client ahead; check with the first client (its clock is now behind the guard's state); refresh with the
+    ///   first client; check again.
+    ///
+    /// Expected:
+    /// - Valid; ELM_CLOCK_TAMPERED; Activated; Valid.
+    /// </remarks>
+    [Fact]
+    public async Task ClockSetBack_RecoversWithARefresh()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+
+        // A refresh window of a day: the client ahead is not due for a refresh, so its timer stays quiet.
+        string key = await vendor.LicenseAsync("\"refreshWindow\":86400");
+        await using ActivationClient client = vendor.Client("a");
+        Activated(await client.ActivateAsync(key, Cancel));
+        await using ActivationClient ahead = vendor.Client(
+            "a",
+            time: new Microsoft.Extensions.Time.Testing.FakeTimeProvider(vendor.Test.Time.GetUtcNow().AddDays(10))
+        );
+
+        Assert.IsType<LicenseVerificationResult.Valid>(ahead.Check("core", null));
+        Assert.Equal(ErrorCode.ClockTampered, Invalid(client.Check("core", null)).Code);
+        Activated(await client.RefreshAsync(Cancel));
+        Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
     }
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
@@ -399,7 +529,17 @@ public sealed class ActivationClientTests
 
         public string Folder(string name) => Path.Combine(Test.Directory, "client-" + name);
 
-        public ActivationClient Client(string folder, DelegatingHandler? wrap = null, TrustStore? trust = null, Uri? url = null, string? app = null)
+        public StoredActivation Kept(string name) => new ActivationStore(Folder(name), Test.Time).Read(out _)!;
+
+        public ActivationClient Client(
+            string folder,
+            DelegatingHandler? wrap = null,
+            TrustStore? trust = null,
+            Uri? url = null,
+            string? app = null,
+            LicenseVerifierOptions? verifier = null,
+            TimeProvider? time = null
+        )
         {
             var options = new ActivationClientOptions
             {
@@ -408,7 +548,8 @@ public sealed class ActivationClientTests
                 Trust = trust ?? TrustStore.Create([File.ReadAllText(Test.FilePath("root.pub.pem"))], []),
                 DataDirectory = Folder(folder),
                 AppVersion = app,
-                TimeProvider = Test.Time,
+                VerifierOptions = verifier,
+                TimeProvider = time ?? Test.Time,
                 WrapHandler = wrap is null
                     ? null
                     : inner =>
@@ -450,6 +591,16 @@ public sealed class ActivationClientTests
 
         public async Task<JsonElement[]> AuditAsync() =>
             [.. (await GetAsync("v1/admin/audit?limit=200")).GetProperty("items").EnumerateArray().Select(e => e.Clone())];
+
+        // Moves the clock in small steps, giving the timers' work time to run between them.
+        public async Task AdvanceForAsync(TimeSpan total)
+        {
+            for (TimeSpan moved = TimeSpan.Zero; moved < total; moved += TimeSpan.FromMilliseconds(50))
+            {
+                Test.Time.Advance(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(10, TestContext.Current.CancellationToken);
+            }
+        }
 
         // The lock waits on the client's clock: move it in small steps until the work is done.
         public async Task AdvanceUntilAsync(Task work)

@@ -13,6 +13,14 @@ public interface IClockGuard
     /// <param name="allowedSkew">The allowed clock skew.</param>
     /// <returns><see langword="true"/> when the clock has not been set back; otherwise <see langword="false"/>.</returns>
     bool Observe(DateTimeOffset now, DateTimeOffset tokenIssuedAt, TimeSpan allowedSkew);
+
+    /// <summary>
+    /// Takes the service's time as the last time seen, after a successful online refresh (design §11.4 step 4), so a device
+    /// whose clock was set forward and back recovers. The time is the <c>iat</c> of a token checked without this guard. A
+    /// guard without state does nothing.
+    /// </summary>
+    /// <param name="serverTime">The service's time.</param>
+    void AcceptServerTime(DateTimeOffset serverTime) { }
 }
 
 /// <summary>

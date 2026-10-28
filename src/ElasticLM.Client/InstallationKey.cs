@@ -52,6 +52,12 @@ public sealed class InstallationKey : IDisposable
     internal ECParameters PublicParameters() => _key.ExportParameters(false);
 
     /// <summary>
+    /// Returns a copy of the key for the clock guard to sign its state with (design §11.4 step 3). The guard keeps its key, so
+    /// it gets its own; the caller disposes it.
+    /// </summary>
+    internal ECDsa CopyForClockGuard() => WithPrivateKey(k => ECDsa.Create(k.ExportParameters(true)));
+
+    /// <summary>
     /// Runs an operation with the private key under the key's lock. The operation must not keep the key.
     /// </summary>
     internal T WithPrivateKey<T>(Func<ECDsa, T> use)

@@ -1,14 +1,15 @@
 using System.Text;
 using System.Text.Json;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
 /// <summary>
-/// An activation as kept on the disk (design §12.6.2): its ID and last sequence number, the license file it got, and the
-/// <c>jti</c> of requests sent and not yet answered (design §10.4 step 2). A request sent before the first activation has
-/// no ID and sequence number 0.
+/// An activation as kept on the disk (design §12.6.2): its ID, last sequence number, and kind (<c>standard</c>,
+/// <c>trial</c>, <c>server</c>), the license file it got, and the <c>jti</c> of requests sent and not yet answered (design
+/// §10.4 step 2). A request sent before the first activation has no ID, kind, or license, and sequence number 0.
 /// </summary>
-internal sealed record StoredActivation(string? ActivationId, long Seq, byte[]? License, IReadOnlyList<string> Retry)
+internal sealed record StoredActivation(string? ActivationId, long Seq, string? Kind, byte[]? License, IReadOnlyList<string> Retry)
 {
     /// <summary>Gets the most <c>jti</c> kept (design §8.6).</summary>
     public const int MaxRetry = 16;
@@ -60,7 +61,10 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 return null;
             }
 
-            bytes = File.ReadAllBytes(FilePath);
+            // A reader lets a writer replace or remove the file, so another process's Check never blocks a save on Windows.
+            using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            bytes = new byte[stream.Length];
+            stream.ReadExactly(bytes);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -91,6 +95,15 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             }
 
             w.WriteNumber("seq", activation.Seq);
+            if (activation.Kind is string kind)
+            {
+                w.WriteString("kind", kind);
+            }
+            else
+            {
+                w.WriteNull("kind");
+            }
+
             w.WritePropertyName("license");
             if (activation.License is byte[] license)
             {
@@ -122,8 +135,9 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
     /// <summary>
     /// Takes the lock file, waiting up to <see cref="LockWait"/> on the client's clock for another process to let it go.
     /// </summary>
-    /// <returns>The lock, released when disposed; or <see langword="null"/> when the wait ran out.</returns>
-    public async Task<IDisposable?> LockAsync(CancellationToken cancellationToken)
+    /// <returns>The lock, released when disposed; or why there is none: <c>ELM_INVALID_STATE</c> when the wait ran out,
+    /// <c>ELM_INTERNAL_ERROR</c> when the lock file cannot be opened.</returns>
+    public async Task<(IDisposable? Lock, LicenseError? Error)> LockAsync(CancellationToken cancellationToken)
     {
         string path = Path.Combine(directory, LockName);
         long start = time.GetTimestamp();
@@ -132,13 +146,21 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             try
             {
                 // FileShare.None is a share mode on Windows and an flock on Linux and macOS: either way one holder at a time.
-                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+                return (new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None), null);
+            }
+            catch (UnauthorizedAccessException e)
+            {
+                return (null, new LicenseError(ErrorCode.InternalError, "The activation lock cannot be opened: " + e.Message));
+            }
+            catch (DirectoryNotFoundException e)
+            {
+                return (null, new LicenseError(ErrorCode.InternalError, "The activation lock cannot be opened: " + e.Message));
             }
             catch (IOException)
             {
                 if (time.GetElapsedTime(start) >= LockWait)
                 {
-                    return null;
+                    return (null, new LicenseError(ErrorCode.InvalidState, "Another process of this device holds the activation lock."));
                 }
             }
 
@@ -157,6 +179,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 root.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("activationId", out JsonElement idValue)
                 || !root.TryGetProperty("seq", out JsonElement seqValue)
+                || !root.TryGetProperty("kind", out JsonElement kindValue)
                 || !root.TryGetProperty("license", out JsonElement licenseValue)
                 || !root.TryGetProperty("retry", out JsonElement retryValue)
                 || idValue.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
@@ -187,8 +210,15 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 return null;
             }
 
+            string? kind = kindValue.ValueKind switch
+            {
+                JsonValueKind.Null => null,
+                JsonValueKind.String when kindValue.GetString() is "standard" or "trial" or "server" => kindValue.GetString(),
+                _ => "?",
+            };
             byte[]? license = licenseValue.ValueKind == JsonValueKind.Object ? Encoding.UTF8.GetBytes(licenseValue.GetRawText()) : null;
-            return (id is null) == (license is null) ? new StoredActivation(id, seq, license, retry) : null;
+            bool together = (id is null) == (license is null) && (id is null) == (kind is null);
+            return together && kind != "?" ? new StoredActivation(id, seq, kind, license, retry) : null;
         }
         catch (Exception e) when (e is JsonException or InvalidOperationException)
         {

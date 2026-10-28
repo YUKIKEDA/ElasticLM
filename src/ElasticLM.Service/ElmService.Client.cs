@@ -108,6 +108,13 @@ internal sealed partial class ElmService
 
         PolicyRow policy = (await Database.FindPolicyAsync(found.PolicyId, context.RequestAborted).ConfigureAwait(false))!;
         ProductRow product = (await Database.FindProductAsync(found.ProductId, context.RequestAborted).ConfigureAwait(false))!;
+        if (product.Code != request.Product)
+        {
+            // M4b2's design review: refused before an activation is made, so a key typed into another product's app does not
+            // use a place the app could never free.
+            return ClientResult.Fail(ErrorCode.WrongProduct, "The license key is for another product.");
+        }
+
         if (policy.Binding == Policies.Unbound)
         {
             // Round 1 of the M4b Grill: an activation not bound to a key could not be counted, so an unbound license only has

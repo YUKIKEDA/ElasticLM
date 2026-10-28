@@ -433,7 +433,7 @@ public sealed class ElmServiceActivationsTests
         using var a = TestDevice.Create(test, service);
         using var b = TestDevice.Create(test, service);
         string[] prints = TestDevice.Fingerprints();
-        string body = $$"""{"licenseKey":"{{key}}","fingerprints":["{{prints[0]}}"]}""";
+        string body = $$"""{"licenseKey":"{{key}}","product":"app","fingerprints":["{{prints[0]}}"]}""";
         var answers = new List<DeviceAnswer>();
         async Task Expect(Task<DeviceAnswer> send, HttpStatusCode status, string code, string detail)
         {
@@ -504,12 +504,13 @@ public sealed class ElmServiceActivationsTests
     ///   each.
     ///
     /// Steps:
-    /// - Activate with a key no license has, and with text that is not a key; the unbound license; the default one without
+    /// - Activate with a key no license has, and with text that is not a key; a key of app sent for product other; the
+    ///   unbound license; the default one without
     ///   fingerprints; the ignoring one with fingerprints and client info; read that activation; the ignoring one from
     ///   another device without fingerprints.
     ///
     /// Expected:
-    /// - 404 ELM_LICENSE_NOT_FOUND twice; 409 ELM_CONFLICT; 400 ELM_FINGERPRINT_UNAVAILABLE; 201 with a token without
+    /// - 404 ELM_LICENSE_NOT_FOUND twice; 400 ELM_WRONG_PRODUCT; 409 ELM_CONFLICT; 400 ELM_FINGERPRINT_UNAVAILABLE; 201 with a token without
     ///   fingerprints although some were sent, and the activation's client is the one sent; 201.
     /// </remarks>
     [Fact]
@@ -532,6 +533,12 @@ public sealed class ElmServiceActivationsTests
             "No license has this key."
         );
         AssertProblem(await device.ActivateAsync("not a key", prints), HttpStatusCode.NotFound, "ELM_LICENSE_NOT_FOUND", "No license has this key.");
+        AssertProblem(
+            await device.ActivateAsync(standard, prints, product: "other"),
+            HttpStatusCode.BadRequest,
+            "ELM_WRONG_PRODUCT",
+            "The license key is for another product."
+        );
         AssertProblem(
             await device.ActivateAsync(unbound, prints),
             HttpStatusCode.Conflict,

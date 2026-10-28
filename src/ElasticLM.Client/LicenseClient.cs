@@ -36,6 +36,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private readonly LicenseClientOptions _options;
     private readonly Uri _server;
     private readonly InstallationKey _key;
+    private readonly System.Security.Cryptography.ECDsa? _guardKey;
     private readonly IReadOnlyList<string> _fingerprints;
     private readonly ClientInfoBody? _clientInfo;
     private readonly LicenseVerifier _licenseVerifier;
@@ -66,7 +67,10 @@ public sealed class LicenseClient : IAsyncDisposable
         _fingerprints = fingerprints;
         _time = options.TimeProvider;
         _clientInfo = options.SendClientInfo ? ClientInfo() : null;
-        IClockGuard guard = options.ClockGuard ?? new FileClockGuard(Path.Combine(store.Directory, "clock"));
+
+        // design §11.4 step 3: the guard's state is signed with the installation key (a copy the guard keeps).
+        _guardKey = options.ClockGuard is null ? key.CopyForClockGuard() : null;
+        IClockGuard guard = options.ClockGuard ?? new FileClockGuard(Path.Combine(store.Directory, "clock"), _guardKey);
         _licenseVerifier = new LicenseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _leaseVerifier = new LeaseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _pins = new ServerPins(store.Directory);
@@ -357,6 +361,7 @@ public sealed class LicenseClient : IAsyncDisposable
             }
 
             _key.Dispose();
+            _guardKey?.Dispose();
         }
         finally
         {

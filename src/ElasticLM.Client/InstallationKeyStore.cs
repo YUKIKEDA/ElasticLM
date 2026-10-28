@@ -46,6 +46,9 @@ public sealed partial class InstallationKeyStore
 
     private string KeyPath => Path.Combine(Directory, KeyFileName);
 
+    /// <summary>Gets a value indicating whether a key file is there (it may still be unreadable).</summary>
+    internal bool HasKey => File.Exists(KeyPath);
+
     /// <summary>
     /// Reads the key, or creates it when none exists.
     /// </summary>

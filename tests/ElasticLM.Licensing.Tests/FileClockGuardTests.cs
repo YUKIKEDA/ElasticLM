@@ -45,6 +45,34 @@ public sealed class FileClockGuardTests : IDisposable
     }
 
     /// <summary>
+    /// The service's time after an online refresh replaces the last time seen, also by an earlier time, in this guard and in
+    /// the file (design §11.4 step 4); a guard without state ignores it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A guard that observed T0 + 10 days (the clock was set forward).
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0; accept T0 as the service's time; observe T0 again in this guard and in a new
+    ///   guard on the same file; accept a time on the stateless guard.
+    ///
+    /// Expected:
+    /// - Rejected; accepted twice; no exception.
+    /// </remarks>
+    [Fact]
+    public void AcceptServerTime_ReplacesTheLastTimeSeen()
+    {
+        var guard = new FileClockGuard(StatePath);
+        Assert.True(guard.Observe(T0.AddDays(10), T0, Skew));
+        Assert.False(guard.Observe(T0, T0, Skew));
+
+        guard.AcceptServerTime(T0);
+        Assert.True(guard.Observe(T0, T0, Skew));
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+        ((IClockGuard)StatelessClockGuard.Instance).AcceptServerTime(T0);
+    }
+
+    /// <summary>
     /// Without a state file, the token's iat is the floor: a clock before iat minus the skew is rejected.
     /// </summary>
     /// <remarks>
