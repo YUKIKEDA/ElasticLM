@@ -56,6 +56,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private const long MaxBorrowSeconds = 3_162_240_000;
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan SealInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan SyncInterval = TimeSpan.FromHours(1);
 
     private readonly WebApplication _app;
     private readonly ServerSettings _settings;
@@ -75,9 +76,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private readonly byte[] _adminToken;
     private readonly List<ServerIdentity> _identities = [];
     private readonly Lock _reloadLock = new();
+    private readonly FileClockGuard _guard;
+    private readonly System.Security.Cryptography.ECDsa _guardKey;
     private byte[] _licenseFile;
     private ITimer? _cleanup;
     private ITimer? _seal;
+    private ITimer? _sync;
     private IReadOnlyList<Uri> _publicUrls;
     private Uri? _adminUrl;
     private bool _stopped;
@@ -108,6 +112,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _replays = new MemoryReplayStore(parts.Time, MaxReplayEntries);
         _proofs = new ProofVerifier(_nonces, _replays);
         _log = parts.Log;
+        _guard = parts.Guard;
+        _guardKey = parts.GuardKey;
     }
 
     /// <summary>Gets the lease engine.</summary>
@@ -147,10 +153,19 @@ internal sealed partial class ElmServer : IAsyncDisposable
             throw new ServerStartException(keyError!.Message);
         }
 
-        var disposables = new List<IDisposable> { key! };
+        // design §11.4 step 3, §13.7: one guard, its state signed with the installation key, for the license checks and the
+        // server's ActivationClient alike.
+        System.Security.Cryptography.ECDsa guardKey = key!.CopyForClockGuard();
+        var guard = new FileClockGuard(Path.Combine(store.Directory, "clock"), guardKey);
+        var disposables = new List<IDisposable> { key!, guardKey };
         try
         {
-            (VerifiedLicense? license, byte[]? licenseFile, LicenseError? licenseError) = TryVerifyLicense(settings, store, key!, trust, host.Time);
+            if (settings.ServiceUrl is not null)
+            {
+                EnsureWritable(settings.LicensePath);
+            }
+
+            (VerifiedLicense? license, byte[]? licenseFile, LicenseError? licenseError) = TryVerifyLicense(settings, key!, trust, guard, host.Time);
             if (licenseError is not null)
             {
                 throw new ServerStartException(licenseError.Message);
@@ -219,12 +234,15 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     journal,
                     adminToken,
                     host.Time,
-                    log
+                    log,
+                    guard,
+                    guardKey
                 )
             );
             server.Map();
             await app.StartAsync(cancellationToken).ConfigureAwait(false);
             server.AfterStart(host.Time.GetElapsedTime(started));
+            await server.RestartActivationAsync().ConfigureAwait(false);
             return server;
         }
         catch
@@ -253,6 +271,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         }
 
         _stopped = true;
+        await StopActivationAsync().ConfigureAwait(false);
         if (_cleanup is not null)
         {
             await _cleanup.DisposeAsync().ConfigureAwait(false);
@@ -261,6 +280,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
         if (_seal is not null)
         {
             await _seal.DisposeAsync().ConfigureAwait(false);
+        }
+
+        if (_sync is not null)
+        {
+            await _sync.DisposeAsync().ConfigureAwait(false);
         }
 
         await _app.StopAsync().ConfigureAwait(false);
@@ -290,6 +314,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         }
 
         _key.Dispose();
+        _guardKey.Dispose();
     }
 
     /// <summary>
@@ -300,7 +325,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <returns><see langword="null"/> when the new license is in place, otherwise why it was not.</returns>
     public LicenseError? ReloadLicense()
     {
-        (VerifiedLicense? license, byte[]? file, LicenseError? error) = TryVerifyLicense(_settings, _store, _key, _trust, Time);
+        (VerifiedLicense? license, byte[]? file, LicenseError? error) = TryVerifyLicense(_settings, _key, _trust, _guard, Time);
         if (error is not null)
         {
             return error;
@@ -413,9 +438,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     // at a reload it keeps the old license.
     private static (VerifiedLicense? License, byte[]? File, LicenseError? Error) TryVerifyLicense(
         ServerSettings settings,
-        InstallationKeyStore store,
         InstallationKey key,
         TrustStore trust,
+        IClockGuard guard,
         TimeProvider time
     )
     {
@@ -428,7 +453,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
             {
                 string missing =
                     $"The server license '{settings.LicensePath}' does not exist. Ask the vendor for a server license bound to "
-                    + $"this server: installation key {key.Thumbprint}, fingerprints {string.Join(", ", fingerprints)}.";
+                    + $"this server: installation key {key.Thumbprint}, fingerprints {string.Join(", ", fingerprints)}. Or activate one "
+                    + "with elm server activate, or elm server activate-request offline.";
                 return (null, null, new LicenseError(ErrorCode.LicenseNotFound, missing));
             }
 
@@ -444,7 +470,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return (null, null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' cannot be read: {e.Message}"));
         }
 
-        var verifier = new LicenseVerifier(trust, time, new FileClockGuard(Path.Combine(store.Directory, "clock")));
+        var verifier = new LicenseVerifier(trust, time, guard);
         var requirement = new LicenseRequirement(settings.Product, LicenseKind.Server, null, null, key.Identity(fingerprints));
         switch (verifier.Verify(file, requirement))
         {
@@ -598,6 +624,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
         _cleanup = Time.CreateTimer(_ => Cleanup(), null, CleanupInterval, CleanupInterval);
         _seal = Time.CreateTimer(_ => SealLogs(), null, SealInterval, SealInterval);
+        if (_settings.ServiceUrl is not null)
+        {
+            // design §13.7: a refreshed file that could not be written or reloaded is tried again every hour.
+            _sync = Time.CreateTimer(_ => SyncKept(), null, SyncInterval, SyncInterval);
+        }
+
         if (_journal.SetAside is string aside)
         {
             ServerLog.RecordSetAside(_log, aside);
@@ -1037,6 +1069,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
         BorrowJournal Journal,
         string AdminToken,
         TimeProvider Time,
-        ILogger Log
+        ILogger Log,
+        FileClockGuard Guard,
+        System.Security.Cryptography.ECDsa GuardKey
     );
 }

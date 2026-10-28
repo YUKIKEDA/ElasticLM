@@ -14,7 +14,7 @@ internal sealed class ServerStartException(string message) : Exception(message);
 /// The server's settings (design §13.8): a JSON file, then environment variables named <c>ELM_</c> + the key path in upper
 /// case with <c>.</c> as <c>_</c> (for example <c>ELM_RATELIMIT_PERIP</c>). Lists in variables are separated by <c>;</c>.
 /// </summary>
-internal sealed partial class ServerSettings
+internal sealed partial record ServerSettings
 {
     /// <summary>The variable that holds the vendor's root keys as PEM text, instead of <c>trust.rootKeys</c> files.</summary>
     public const string TrustRootKeysVariable = "ELM_TRUST_ROOT_KEYS";
@@ -61,6 +61,10 @@ internal sealed partial class ServerSettings
     /// address only.</summary>
     public Uri AdminListen { get; init; } = new("http://127.0.0.1:7071");
 
+    /// <summary>Gets the <c>elm-service</c> that refreshes the server license on its own (<c>service.url</c>, design §13.7), or
+    /// <see langword="null"/> for none.</summary>
+    public Uri? ServiceUrl { get; init; }
+
     /// <summary>
     /// Reads the settings file (if any) and the environment.
     /// </summary>
@@ -106,8 +110,10 @@ internal sealed partial class ServerSettings
             throw new ServerStartException($"log.usage must name a file: '{usage}'.");
         }
 
+        Uri? service = (Env("ELM_SERVICE_URL") ?? file.Service?.Url) is string serviceText ? ParseService(serviceText) : null;
         return new ServerSettings
         {
+            ServiceUrl = service,
             BorrowMaxDuration = borrowMax,
             BorrowReserve = reserve,
             AdminListen = admin,
@@ -212,6 +218,13 @@ internal sealed partial class ServerSettings
 
         return uri;
     }
+
+    // design §13.8: https, or http on a loopback address for tests, as ActivationClient takes it.
+    private static Uri ParseService(string text) =>
+        Uri.TryCreate(text, UriKind.Absolute, out Uri? uri)
+        && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
+            ? uri
+            : throw new ServerStartException($"service.url must be an https URL, or http on a loopback address: '{text}'.");
 
     private static int ParseInt(string text, string key) =>
         int.TryParse(text, NumberStyles.None, CultureInfo.InvariantCulture, out int value)

@@ -11,5 +11,8 @@
     <ProjectReference Include="..\..\src\ElasticLM.Server\ElasticLM.Server.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Cli\ElasticLM.Cli.csproj" />
+    <!-- design §13.7: the server license is activated against a real elm-service (M4c3). -->
+    <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
   </ItemGroup>
 </Project>

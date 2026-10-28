@@ -74,7 +74,8 @@ internal sealed partial class ElmServer
             Engine.IsRecovering(),
             Engine.RecoveryEndsAt.ToUnixTimeSeconds(),
             Engine.LeaseCount,
-            [.. Engine.Usage().Select(u => new FeatureItem(u.FeatureId, u.Seats, u.Allowed, u.InUse, u.Borrowed))]
+            [.. Engine.Usage().Select(u => new FeatureItem(u.FeatureId, u.Seats, u.Allowed, u.InUse, u.Borrowed))],
+            AutoRefresh
         );
         await WriteJsonAsync(context, StatusCodes.Status200OK, answer, ServerJsonContext.Default.StatusAnswer).ConfigureAwait(false);
         return "ELM_OK";
@@ -124,6 +125,8 @@ internal sealed partial class ElmServer
             return ErrorCodes.ToWireName(error.Code);
         }
 
+        // design §13.7: after elm server activate or import, the server's client reads the kept activation again.
+        await RestartActivationAsync().ConfigureAwait(false);
         VerifiedLicense license = Engine.Server.License;
         await WriteJsonAsync(
                 context,

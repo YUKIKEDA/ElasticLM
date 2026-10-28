@@ -48,4 +48,22 @@ public sealed class ActivationClientOptions
 
     /// <summary>Gets a wrapper around the HTTP handler, so tests can lose an answer after the service acted on it.</summary>
     internal Func<HttpMessageHandler, HttpMessageHandler>? WrapHandler { get; init; }
+
+    /// <summary>
+    /// Gets the only kind of license kept, or <see langword="null"/> for any (standard, trial, server). <c>elm-server</c> and
+    /// <c>elm server</c> keep only server licenses (design §13.7, M4c3).
+    /// </summary>
+    internal LicenseKind? RequiredKind { get; init; }
+
+    /// <summary>
+    /// Gets a value indicating whether an activation or an activation request makes the installation key when there is none.
+    /// <c>elm server</c> does not: the server makes its key at its first start (design §13.7).
+    /// </summary>
+    internal bool CreateKey { get; init; } = true;
+
+    /// <summary>
+    /// Gets what runs after a new license file is kept, with the file's bytes: <c>elm-server</c> writes it to its license path
+    /// and reloads (design §13.7). An exception it throws is ignored.
+    /// </summary>
+    internal Action<byte[]>? LicenseKept { get; init; }
 }

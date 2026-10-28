@@ -242,7 +242,7 @@ public sealed class ActivationClient : IAsyncDisposable
         }
 
         return WithLockAsync(
-            createKey: true,
+            createKey: _options.CreateKey,
             async (stored, events) =>
             {
                 if (stored?.DeactivationProof is not null)
@@ -274,7 +274,7 @@ public sealed class ActivationClient : IAsyncDisposable
                         pending: true
                     )
                     .ConfigureAwait(false);
-                return Keep(reply, AnyKind, events, refreshing: false);
+                return Keep(reply, Kinds(AnyKind), events, refreshing: false);
             },
             cancellationToken
         );
@@ -296,7 +296,7 @@ public sealed class ActivationClient : IAsyncDisposable
         }
 
         return WithLockAsync(
-            createKey: true,
+            createKey: _options.CreateKey,
             async (stored, events) =>
             {
                 if (stored?.DeactivationProof is not null)
@@ -324,7 +324,7 @@ public sealed class ActivationClient : IAsyncDisposable
                         pending: true
                     )
                     .ConfigureAwait(false);
-                return Keep(reply, [LicenseKind.Trial], events, refreshing: false);
+                return Keep(reply, Kinds([LicenseKind.Trial]), events, refreshing: false);
             },
             cancellationToken
         );
@@ -430,7 +430,7 @@ public sealed class ActivationClient : IAsyncDisposable
         ArgumentException.ThrowIfNullOrEmpty(licenseKey);
         ObjectDisposedException.ThrowIf(_disposed, this);
         return WithLockAsync<OfflineRequestResult>(
-            createKey: true,
+            createKey: _options.CreateKey,
             (stored, _) =>
                 Task.FromResult<OfflineRequestResult>(
                     Damaged() ? OfflineFail(ErrorCode.Malformed, DamagedFile)
@@ -641,7 +641,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 cancellationToken
             )
             .ConfigureAwait(false);
-        return Keep(reply, AnyKind, events, refreshing: true);
+        return Keep(reply, Kinds(AnyKind), events, refreshing: true);
     }
 
     // Keeps an issued license file once it verifies for this installation; a failure leaves the kept file as it was.
@@ -680,13 +680,28 @@ public sealed class ActivationClient : IAsyncDisposable
             return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing, null);
         }
 
-        return Accept(valid.License, id, events, serverTime: true);
+        return Accept(valid.License, id, license, events, serverTime: true);
     }
 
     // After a new file was kept: the guard takes the service's time when the file comes straight from the service (an offline
     // answer may be days old, design §12.8.5), the state is Active, and the next refresh is scheduled.
-    private ActivationResult.Activated Accept(VerifiedLicense license, string id, List<ActivationStateChangedEventArgs> events, bool serverTime)
+    private ActivationResult.Activated Accept(
+        VerifiedLicense license,
+        string id,
+        byte[] file,
+        List<ActivationStateChangedEventArgs> events,
+        bool serverTime
+    )
     {
+        try
+        {
+            _options.LicenseKept?.Invoke(file);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException)
+        {
+            // The file is kept; what the owner does with it is its own (design §13.7).
+        }
+
         if (serverTime)
         {
             _guard?.AcceptServerTime(license.IssuedAt);
@@ -766,6 +781,9 @@ public sealed class ActivationClient : IAsyncDisposable
             return false;
         }
     }
+
+    // The kinds an answer may have: those of the operation, or only the one the options require (design §13.7).
+    private LicenseKind[] Kinds(LicenseKind[] kinds) => _options.RequiredKind is LicenseKind only ? [only] : kinds;
 
     private LicenseVerificationResult Verify(LicenseVerifier verifier, byte[] license, LicenseKind[] kinds)
     {
@@ -850,7 +868,19 @@ public sealed class ActivationClient : IAsyncDisposable
                     return fail(lockError);
                 }
 
-                result = await operation(_files.Read(out _), events).ConfigureAwait(false);
+                StoredActivation? stored = _files.Read(out _);
+                if (_options.RequiredKind is LicenseKind only && stored?.Kind is string kind && kind != KindName(only))
+                {
+                    // design §13.7: an activation of another kind in a shared folder is not this owner's to touch.
+                    return fail(
+                        new LicenseError(
+                            ErrorCode.InvalidState,
+                            "The kept activation is not a server license; give the server its own dataDirectory."
+                        )
+                    );
+                }
+
+                result = await operation(stored, events).ConfigureAwait(false);
             }
         }
         finally
@@ -1133,7 +1163,7 @@ public sealed class ActivationClient : IAsyncDisposable
             return Fail(ErrorCode.Malformed, "The text is not an answer of the service.");
         }
 
-        LicenseVerificationResult checkedFile = Verify(_received, license, AnyKind);
+        LicenseVerificationResult checkedFile = Verify(_received, license, Kinds(AnyKind));
         if (stored?.ActivationId == id && stored.License is byte[] kept && kept.AsSpan().SequenceEqual(license))
         {
             // The kept answer again: nothing changes (design §12.8.1).
@@ -1168,7 +1198,7 @@ public sealed class ActivationClient : IAsyncDisposable
             return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
         }
 
-        return Accept(valid.License, id, events, serverTime: false);
+        return Accept(valid.License, id, license, events, serverTime: false);
     }
 
     // design §12.8.2, §12.8.5: the proof names the activation, its sequence number, and the requests that got no answer. The

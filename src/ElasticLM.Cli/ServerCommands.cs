@@ -55,6 +55,7 @@ internal static class ServerCommands
             )
         );
         server.Subcommands.Add(release);
+        ServerLicenseCommands.Add(server, host);
         return server;
     }
 
