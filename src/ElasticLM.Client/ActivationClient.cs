@@ -1026,6 +1026,8 @@ public sealed class ActivationClient : IAsyncDisposable
 
     // design §12.8.5 steps 2 to 4 of a request: the waiting one again while it holds, or a new one. A replaced request's nonce
     // joins the list of its kind, as an unanswered request, until a new file is kept (the design review of M4c2, R1 and R2).
+    // The waiting one holds only while its list is as it was: an online request whose answer was lost since then must be
+    // named too, or the carried file is one behind without it (PR #75's review).
     private OfflineRequestResult MakeRequest(StoredActivation? stored, string? licenseKey, bool renew)
     {
         bool refresh = licenseKey is null;
@@ -1039,6 +1041,7 @@ public sealed class ActivationClient : IAsyncDisposable
             && waiting.Refresh == refresh
             && waiting.KeyHash == keyHash
             && waiting.ActivationId == (refresh ? current.ActivationId : null)
+            && waiting.Retry.SequenceEqual(current.ListFor(pending: !refresh), StringComparer.Ordinal)
         )
         {
             return new OfflineRequestResult.Created(Build(waiting, licenseKey), false);
