@@ -693,6 +693,13 @@ public sealed class ActivationClient : IAsyncDisposable
         bool serverTime
     )
     {
+        // The service's time goes to the guard first: elm-server's callback reloads through the same guard, which a clock set
+        // forward and back would otherwise still refuse (PR #79's review).
+        if (serverTime)
+        {
+            _guard?.AcceptServerTime(license.IssuedAt);
+        }
+
         try
         {
             _options.LicenseKept?.Invoke(file);
@@ -700,11 +707,6 @@ public sealed class ActivationClient : IAsyncDisposable
         catch (Exception e) when (e is not OutOfMemoryException)
         {
             // The file is kept; what the owner does with it is its own (design §13.7).
-        }
-
-        if (serverTime)
-        {
-            _guard?.AcceptServerTime(license.IssuedAt);
         }
 
         _activationId = id;
