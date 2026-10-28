@@ -367,6 +367,7 @@ public sealed class ElmServiceOfflineTests
     ///   file; read the audit log.
     ///
     /// Expected:
+    /// - support holds activation.offline and viewer does not.
     /// - 200, 400 ELM_REQUEST_EXPIRED, 400 ELM_MALFORMED, 403 ELM_FORBIDDEN; an activation.activate row by the API key
     ///   with "channel": "offline"; activation.offline rows: ELM_OK with the activation and {"operation":"activate",...},
     ///   ELM_REQUEST_EXPIRED with operation activate, ELM_MALFORMED with operation null and no target, and ELM_FORBIDDEN.
@@ -379,6 +380,8 @@ public sealed class ElmServiceOfflineTests
         (ElmService service, HttpClient admin, string owner) = await StartAsync(test);
         string product = await ProductAsync(admin, "app", "core");
         (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        Assert.Contains("activation.offline", Permissions.OfRole(Permissions.RoleSupport));
+        Assert.DoesNotContain("activation.offline", Permissions.OfRole(Permissions.RoleViewer));
         string processor = await TestService.CreateKeyAsync(admin, "\"activation.offline\"");
         string reader = await TestService.CreateKeyAsync(admin, "\"activation.read\"");
         using var device = TestDevice.Create(test, service);
@@ -468,6 +471,41 @@ public sealed class ElmServiceOfflineTests
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"));
         test.Time.Advance(TimeSpan.FromDays(7) + TimeSpan.FromMinutes(1));
         await TestService.WaitForAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests") == 0);
+    }
+
+    /// <summary>
+    /// The public entry is limited per address in the devices' bucket, apart from the administration API's.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with rateLimit.clientPerIp 2 and the administration API's per-address limit at its default (SQLite: the
+    ///   limit is in the HTTP layer).
+    ///
+    /// Steps:
+    /// - Post three texts to /v1/offline at once; list licenses through the administration API.
+    ///
+    /// Expected:
+    /// - Two 400 ELM_MALFORMED and one 429 ELM_RATE_LIMITED "Too many requests from this address."; the list is 200.
+    /// </remarks>
+    [Fact]
+    public async Task Offline_PublicEntry_SharesTheDevicesLimit()
+    {
+        await using var test = new TestService();
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync(s => s with { RateLimitClientPerIp = 2 });
+        HttpClient admin = test.Http(service, owner);
+        using var device = TestDevice.Create(test, service);
+
+        DeviceAnswer[] answers = await Task.WhenAll(device.OfflineAsync("x"), device.OfflineAsync("x"), device.OfflineAsync("x"));
+        Assert.Equal(2, answers.Count(a => a.Status == HttpStatusCode.BadRequest));
+        AssertProblem(
+            answers.Single(a => a.Status != HttpStatusCode.BadRequest),
+            HttpStatusCode.TooManyRequests,
+            "ELM_RATE_LIMITED",
+            "Too many requests from this address."
+        );
+        using HttpResponseMessage list = await admin.GetAsync("v1/admin/licenses", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, list.StatusCode);
     }
 
     private static string Payload(string file) => Encoding.UTF8.GetString(Base64Url.DecodeFromChars(file.Split('.')[1]));
