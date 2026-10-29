@@ -118,6 +118,7 @@ public sealed partial class KeycloakTests
             }
 
             using var content = new FormUrlEncodedContent(fields);
+
             // A form action may be relative to the page (/realms/...); it is resolved against the page's URL.
             answer = await http.PostAsync(new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
         }
