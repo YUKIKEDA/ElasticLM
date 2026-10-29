@@ -49,6 +49,12 @@ internal sealed class SettingsFile
 
     [JsonPropertyName("apiKeys")]
     public ApiKeysSection? ApiKeys { get; set; }
+
+    [JsonPropertyName("dataProtection")]
+    public DataProtectionSection? DataProtection { get; set; }
+
+    [JsonPropertyName("session")]
+    public SessionSection? Session { get; set; }
 }
 
 /// <summary><c>tls</c>: PEM files of the certificate and its key.</summary>
@@ -176,6 +182,12 @@ internal sealed class OidcSection
 
     [JsonPropertyName("roleMap")]
     public Dictionary<string, string>? RoleMap { get; set; }
+
+    [JsonPropertyName("webClientId")]
+    public string? WebClientId { get; set; }
+
+    [JsonPropertyName("webClientSecretFile")]
+    public string? WebClientSecretFile { get; set; }
 }
 
 /// <summary><c>apiKeys</c> (design §14.6, M5a).</summary>
@@ -184,6 +196,25 @@ internal sealed class ApiKeysSection
 {
     [JsonPropertyName("inactiveAdminDays")]
     public int? InactiveAdminDays { get; set; }
+}
+
+/// <summary><c>dataProtection</c>: the key encryption key of the Data Protection keys (design §14.8, §15.3, M5b).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class DataProtectionSection
+{
+    [JsonPropertyName("kekFile")]
+    public string? KekFile { get; set; }
+}
+
+/// <summary><c>session</c>: the admin UI's sessions (design §14.8, §15.3, M5b).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class SessionSection
+{
+    [JsonPropertyName("idleMinutes")]
+    public int? IdleMinutes { get; set; }
+
+    [JsonPropertyName("maxHours")]
+    public int? MaxHours { get; set; }
 }
 
 /// <summary>
@@ -237,6 +268,22 @@ internal sealed record AdminItem(
 
 /// <summary>A page of administrators.</summary>
 internal sealed record AdminPage([property: JsonPropertyName("items")] AdminItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>A session of the admin UI as the administration API shows it (design §14.5, M5b): never its cookie or hash.</summary>
+internal sealed record SessionItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("adminId")] string AdminId,
+    [property: JsonPropertyName("createdAt")] string CreatedAt,
+    [property: JsonPropertyName("lastSeenAt")] string LastSeenAt,
+    [property: JsonPropertyName("expiresAt")] string ExpiresAt,
+    [property: JsonPropertyName("ip"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? Ip
+);
+
+/// <summary>A page of sessions.</summary>
+internal sealed record SessionPage([property: JsonPropertyName("items")] SessionItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>The answer of <c>POST /auth/logout</c> (design §15.3): where the UI goes to end the identity provider's session.</summary>
+internal sealed record LogoutAnswer([property: JsonPropertyName("endSession"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? EndSession);
 
 /// <summary>The OIDC settings <c>elm admin login</c> reads from <c>GET /v1/admin/oidc</c> (design §14.5, M5a).</summary>
 internal sealed record OidcInfo(
@@ -474,6 +521,8 @@ internal sealed record Problem(
 [JsonSerializable(typeof(ApiKeyPage))]
 [JsonSerializable(typeof(AdminPage))]
 [JsonSerializable(typeof(OidcInfo))]
+[JsonSerializable(typeof(SessionPage))]
+[JsonSerializable(typeof(LogoutAnswer))]
 [JsonSerializable(typeof(AuditPage))]
 [JsonSerializable(typeof(VerifyAnswer))]
 [JsonSerializable(typeof(Problem))]

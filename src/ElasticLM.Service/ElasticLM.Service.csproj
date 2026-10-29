@@ -17,6 +17,8 @@
     <PackageReference Include="Npgsql" />
     <PackageReference Include="AuraORM" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <!-- design §15.3, §21 (M5b): the admin UI's sign-in through the service. -->
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />

@@ -52,6 +52,34 @@ internal sealed partial record AuditLogRow(
 [Table("audit_state", Naming = ColumnNaming.SnakeCase)]
 internal sealed partial record AuditStateRow([PrimaryKey] int Id, long HeadN, byte[] HeadHash, long AnchorN, byte[] AnchorHash);
 
+/// <summary>A session of the admin UI: the SHA-256 of its cookie's value, never the value (design §15.3, M5b).</summary>
+[Table("admin_sessions", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record AdminSessionRow(
+    [PrimaryKey] Guid Id,
+    Guid AdminId,
+    byte[] Hash,
+    long CreatedAt,
+    long LastSeenAt,
+    long ExpiresAt,
+    string? Ip
+);
+
+/// <summary>
+/// A Data Protection key, encrypted with the key encryption key: AES-256-GCM with the name as associated data (design §15.3).
+/// </summary>
+[Table("dataprotection_keys", Naming = ColumnNaming.SnakeCase)]
+internal sealed partial record DataProtectionKeyRow(
+    [PrimaryKey, MaxLength(64)] string Name,
+    byte[] Nonce,
+    byte[] Ciphertext,
+    byte[] Tag,
+    long CreatedAt
+);
+
+/// <summary>A session joined with its administrator, as the session check reads it (design §15.3).</summary>
+[QueryResult]
+internal sealed partial record SessionHolderRow(Guid Id, Guid AdminId, long CreatedAt, long LastSeenAt, long ExpiresAt, string Role, bool Enabled);
+
 /// <summary>An API key joined with its administrator's role and state, as authentication reads it.</summary>
 [QueryResult]
 internal sealed partial record KeyHolderRow(

@@ -21,6 +21,7 @@ internal sealed partial class ElmService
             "/v1/admin/admins/{id}/enable",
             (RequestDelegate)(c => AdminAsync(c, Permissions.AdminUpdate, AuditActions.AdminEnable, SetEnabled(true)))
         );
+        MapSessions();
     }
 
     // design §14.5: no authentication and no audit row; it returns no secret.
@@ -82,15 +83,16 @@ internal sealed partial class ElmService
                 enabled,
                 caller.AdminId,
                 _settings.BootstrapOwner,
-                unchanged => new AuditEntry(
-                    caller.ActorType,
-                    caller.ActorId,
-                    action,
-                    target,
-                    "ELM_OK",
-                    Ip(context),
-                    unchanged ? AuditLog.Detail(w => w.WriteBoolean("unchanged", true)) : null
-                ),
+                (unchanged, sessions) =>
+                    new AuditEntry(
+                        caller.ActorType,
+                        caller.ActorId,
+                        action,
+                        target,
+                        "ELM_OK",
+                        Ip(context),
+                        DisableDetail(enabled, unchanged, sessions)
+                    ),
                 Time.GetUtcNow(),
                 context.RequestAborted
             )
@@ -112,6 +114,13 @@ internal sealed partial class ElmService
                 return new AdminOutcome("ELM_OK", target, Recorded: true);
         }
     }
+
+    // design §14.5: {"unchanged": true} when nothing changed; from M5b, a disable that changed the state counts the sessions
+    // it removed.
+    private static string? DisableDetail(bool enabled, bool unchanged, long sessions) =>
+        unchanged ? AuditLog.Detail(w => w.WriteBoolean("unchanged", true))
+        : enabled ? null
+        : AuditLog.Detail(w => w.WriteNumber("sessions", sessions));
 
     private static AdminItem ToItem(AdminRow row) =>
         new(

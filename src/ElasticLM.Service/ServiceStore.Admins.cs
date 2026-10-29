@@ -115,7 +115,7 @@ internal sealed partial class ServiceStore<TDialect>
         bool enabled,
         Guid callerId,
         AdminIdentity? bootstrap,
-        Func<bool, AuditEntry> audit,
+        Func<bool, long, AuditEntry> audit,
         DateTimeOffset now,
         CancellationToken cancellationToken
     )
@@ -155,6 +155,7 @@ internal sealed partial class ServiceStore<TDialect>
                 }
 
                 bool unchanged = admin.Enabled == enabled;
+                long sessions = 0;
                 if (!unchanged)
                 {
                     await tx.Update(AdminRow.Table)
@@ -162,9 +163,17 @@ internal sealed partial class ServiceStore<TDialect>
                         .Where(a => Eq(a.Id, id))
                         .ExecuteAsync(cancellationToken)
                         .ConfigureAwait(false);
+                    if (!enabled)
+                    {
+                        // design §14.5 (M5b): a disabled administrator's sessions end with it.
+                        sessions = await tx.Delete(AdminSessionRow.Table)
+                            .Where(s => Eq(s.AdminId, id))
+                            .ExecuteAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                    }
                 }
 
-                await AppendAsync(tx, audit(unchanged), now, cancellationToken).ConfigureAwait(false);
+                await AppendAsync(tx, audit(unchanged, sessions), now, cancellationToken).ConfigureAwait(false);
                 return AdminChange.Done;
             },
             cancellationToken

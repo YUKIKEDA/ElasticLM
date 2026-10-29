@@ -16,14 +16,17 @@ namespace ElasticLM.Service.Tests;
 
 /// <summary>
 /// A minimal OIDC provider for tests (design §15.3, decision 0.97): discovery, JWKS, the device authorization flow (RFC 8628),
-/// refresh tokens, and revocation, on loopback http. Its signing key is made by the test, and it mints access tokens with any
-/// claims the test asks for.
+/// refresh tokens, revocation, and the authorization code flow with PKCE of the admin UI's sign-in (M5b), on loopback http.
+/// Its signing key is made by the test, and it mints access tokens and ID tokens with any claims the test asks for. The
+/// authorization endpoint signs in <see cref="Subject"/> at once, without a page.
 /// </summary>
 internal sealed class FakeIdp : IAsyncDisposable
 {
     public const string Realm = "/realms/test";
     public const string Audience = "elm-service";
     public const string CliClientId = "elm-cli";
+    public const string WebClientId = "elm-web";
+    public const string WebClientSecret = "web-secret-test-only";
 
     private static readonly Dictionary<string, string> DefaultRoleMap = new(StringComparer.Ordinal)
     {
@@ -36,6 +39,7 @@ internal sealed class FakeIdp : IAsyncDisposable
     private readonly WebApplication _app;
     private readonly TimeProvider _time;
     private readonly ConcurrentDictionary<string, string> _refreshTokens = new(StringComparer.Ordinal);
+    private readonly ConcurrentDictionary<string, CodeGrant> _codes = new(StringComparer.Ordinal);
     private ECDsa _key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
 
     private FakeIdp(WebApplication app, TimeProvider time)
@@ -95,6 +99,21 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <summary>Gets the tokens sent to the revocation endpoint.</summary>
     public ConcurrentQueue<string> Revoked { get; } = new();
 
+    /// <summary>Gets the query strings of the authorization requests.</summary>
+    public ConcurrentQueue<string> Authorizations { get; } = new();
+
+    /// <summary>Gets or sets an error the authorization endpoint sends back instead of a code, or <see langword="null"/>.</summary>
+    public string? AuthorizeError { get; set; }
+
+    /// <summary>Gets or sets a status the token endpoint answers a code with instead of tokens, or <see langword="null"/>.</summary>
+    public int? CodeTokenStatus { get; set; }
+
+    /// <summary>Gets or sets a change made to every ID token's payload before signing.</summary>
+    public Action<Dictionary<string, object?>>? IdTokenChange { get; set; }
+
+    /// <summary>Gets or sets whether the discovery document names an end_session_endpoint.</summary>
+    public bool EndSession { get; set; } = true;
+
     /// <summary>Starts the provider on a free loopback port.</summary>
     public static async Task<FakeIdp> StartAsync(TimeProvider time)
     {
@@ -109,6 +128,10 @@ internal sealed class FakeIdp : IAsyncDisposable
         idp.Issuer = new Uri(address).GetLeftPart(UriPartial.Authority) + Realm;
         return idp;
     }
+
+    /// <summary>Returns the web sign-in's settings for the service (M5b) with a key encryption key.</summary>
+    public static WebLoginSettings WebSettings(byte[] kek) =>
+        new(WebClientId, WebClientSecret, kek, TimeSpan.FromMinutes(30), TimeSpan.FromHours(12));
 
     /// <summary>Returns OIDC settings for the service that trust this provider.</summary>
     public OidcSettings Settings(IReadOnlyDictionary<string, string>? roleMap = null) =>
@@ -207,6 +230,9 @@ internal sealed class FakeIdp : IAsyncDisposable
             case Realm + "/token":
                 await TokenAsync(context).ConfigureAwait(false);
                 break;
+            case Realm + "/auth":
+                Authorize(context);
+                break;
             case "/v1/admin/redirect":
                 // A service that redirects: elm admin request must not follow it (design §16).
                 context.Response.StatusCode = StatusCodes.Status302Found;
@@ -245,6 +271,12 @@ internal sealed class FakeIdp : IAsyncDisposable
             return;
         }
 
+        if (grant == "authorization_code")
+        {
+            await CodeAsync(context, form).ConfigureAwait(false);
+            return;
+        }
+
         if (grant == "refresh_token" && _refreshTokens.TryRemove(form["refresh_token"].ToString(), out _))
         {
             await TokensAsync(context, Rotate ? null : form["refresh_token"].ToString()).ConfigureAwait(false);
@@ -272,6 +304,99 @@ internal sealed class FakeIdp : IAsyncDisposable
         return JsonAsync(context, answer);
     }
 
+    // The authorization endpoint (RFC 6749 §4.1): signs in Subject at once and sends the browser back with a code and the state.
+    private void Authorize(HttpContext context)
+    {
+        IQueryCollection query = context.Request.Query;
+        Authorizations.Enqueue(context.Request.QueryString.Value ?? string.Empty);
+        string redirect = query["redirect_uri"].ToString();
+        string state = Uri.EscapeDataString(query["state"].ToString());
+        context.Response.StatusCode = StatusCodes.Status302Found;
+        if (AuthorizeError is string error)
+        {
+            context.Response.Headers.Location = redirect + "?error=" + Uri.EscapeDataString(error) + "&state=" + state;
+            return;
+        }
+
+        string code = "code-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
+        _codes[code] = new CodeGrant(
+            query["client_id"].ToString(),
+            redirect,
+            query["nonce"].ToString(),
+            query["code_challenge"].ToString(),
+            Subject,
+            Groups
+        );
+        context.Response.Headers.Location = redirect + "?code=" + code + "&state=" + state;
+    }
+
+    // The token endpoint's code grant: the client and its secret in the body (client_secret_post), the same redirect_uri, and
+    // the PKCE verifier whose S256 is the challenge.
+    private async Task CodeAsync(HttpContext context, IFormCollection form)
+    {
+        if (form["client_id"] != WebClientId || form["client_secret"] != WebClientSecret)
+        {
+            context.Response.StatusCode = StatusCodes.Status401Unauthorized;
+            await JsonAsync(context, new Dictionary<string, object?> { ["error"] = "invalid_client" }).ConfigureAwait(false);
+            return;
+        }
+
+        string verifier = form["code_verifier"].ToString();
+        string challenge = Base64Url.EncodeToString(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+        if (
+            !_codes.TryRemove(form["code"].ToString(), out CodeGrant? grant)
+            || grant.RedirectUri != form["redirect_uri"]
+            || grant.Challenge != challenge
+        )
+        {
+            await ErrorAsync(context, "invalid_grant").ConfigureAwait(false);
+            return;
+        }
+
+        if (CodeTokenStatus is int status)
+        {
+            context.Response.StatusCode = status;
+            return;
+        }
+
+        await JsonAsync(
+                context,
+                new Dictionary<string, object?>
+                {
+                    ["access_token"] = Token(grant.Subject, grant.Groups),
+                    ["id_token"] = IdToken(grant.ClientId, grant.Nonce, grant.Subject, grant.Groups),
+                    ["token_type"] = "Bearer",
+                    ["expires_in"] = (long)Lifetime.TotalSeconds,
+                }
+            )
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>Mints an ID token for a client, with the nonce of its authorization request.</summary>
+    public string IdToken(string clientId, string nonce, string subject, string[] groups)
+    {
+        long now = _time.GetUtcNow().ToUnixTimeSeconds();
+        var header = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["alg"] = "ES256",
+            ["typ"] = "JWT",
+            ["kid"] = KeyId,
+        };
+        var payload = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["iss"] = Issuer,
+            ["sub"] = subject,
+            ["aud"] = clientId,
+            ["iat"] = now,
+            ["exp"] = now + (long)Lifetime.TotalSeconds,
+            ["nonce"] = nonce,
+            ["groups"] = groups,
+        };
+        IdTokenChange?.Invoke(payload);
+        string signingInput = Encode(header) + "." + Encode(payload);
+        return signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256));
+    }
+
     private static Task ErrorAsync(HttpContext context, string error)
     {
         context.Response.StatusCode = StatusCodes.Status400BadRequest;
@@ -286,8 +411,14 @@ internal sealed class FakeIdp : IAsyncDisposable
             ["jwks_uri"] = Issuer + "/jwks",
             ["token_endpoint"] = Issuer + "/token",
             ["device_authorization_endpoint"] = Issuer + "/device",
+            ["authorization_endpoint"] = Issuer + "/auth",
             ["id_token_signing_alg_values_supported"] = new[] { "ES256" },
         };
+        if (EndSession)
+        {
+            document["end_session_endpoint"] = Issuer + "/logout";
+        }
+
         if (Revocation)
         {
             document["revocation_endpoint"] = Issuer + "/revoke";
@@ -323,6 +454,9 @@ internal sealed class FakeIdp : IAsyncDisposable
         return context.Response.Body.WriteAsync(JsonSerializer.SerializeToUtf8Bytes(body, FakeIdpJson.Default.DictionaryStringObject)).AsTask();
     }
 }
+
+/// <summary>An authorization code waiting to be redeemed.</summary>
+internal sealed record CodeGrant(string ClientId, string RedirectUri, string Nonce, string Challenge, string Subject, string[] Groups);
 
 /// <summary>The JSON the fake provider writes.</summary>
 [System.Text.Json.Serialization.JsonSerializable(typeof(Dictionary<string, object?>))]
