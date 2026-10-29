@@ -22,13 +22,15 @@ A reason written as likely ("probably", 「と考えられる」) is checked fir
 
 A figure of a step taken off a measured path stays in the design as the result before and after (16 ms → 7 ms). Its breakdown may stay in the PR body, as measured facts; a cause that was not found is not written in either. If the cause matters, it becomes a roadmap row. In M4b2 the design said the cause of 8 ms was "not known", and two reviews in a row asked for it to go (PR #67).
 
-A commit, a PR, an Issue number, or a figure named in a report to the owner is copied from the output of the command that shows it, not written from memory. In M4b2 a report on PR #67 named a commit hash that did not exist, and the correction came two reports later (PR #71's retrospective).
+A commit, a PR, an Issue number, or a figure named in a report to the owner is copied from the output of the command that shows it, not written from memory. In M4b2 a report on PR #67 named a commit hash that did not exist, and the correction came two reports later (PR #71's retrospective). A hash that goes into a PR body or a comment is read from `git log --oneline -1` (or `git rev-parse --short`) in the same step that writes the text. In M4d3 a PR body named `50b8f1e` for the commit `11e6240` (PR #91).
 
 Figures that are compared or added up come from the same run. In M4c3 the machine's load changed between two runs and every figure of the second was about 1.8 times the first; parts taken from both did not add up to the total (PR #79).
 
 A figure kept in the design is measured on the code of the PR's head. A change to the code after the measurement means measuring again, and the heading names the commit of the code measured. In M4d2 two fixes went in after the measurement and the PR said the figures were not taken again; the review asked for them (PR #87).
 
 A measurement is compared with the baseline the Issue names. Another baseline is used only after the owner changes the Issue; otherwise the PR says `Part of #N`, not `Closes #N`. In M4d1 the Issue named `elm-server`, the PR compared with the service's own activation and closed the Issue, and the review caught it (PR #83).
+
+A figure of an earlier row that the Issue names for comparison is measured again with that figure's own method (the same harness and the same kind of build) on the head, and the two are put side by side. A figure taken another way is not compared with it. In M4d3 the Issue named the 6.7–7.5 µs of M3c's NativeAOT self-test, the PR set a JIT test of a longer line beside it, and the review asked for the comparison (PR #91).
 
 The two sides of a timed comparison are measured the same way: both on warm connections or both on new ones, and both with or without the client's own checks. The order of the batches is swapped once to see whether the first batch of a round is slower. In M4d1 most of a gap between acquiring a lease and activating came from the batch order and a new connection per device, not from the request (PR #83).
 
