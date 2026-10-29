@@ -182,14 +182,16 @@ public sealed class ElmServiceWebTests
     /// - A service with the web sign-in; idle 30 minutes and lifetime 12 hours (the defaults); an owner key from setup.
     ///
     /// Steps:
-    /// - Sign in; a request at 30 seconds and at 61 seconds, reading last_seen_at; requests every 29 minutes to 58 minutes;
-    ///   then 31 minutes without one.
+    /// - Sign in; a request at 30 seconds and at 61 seconds, reading last_seen_at; then 31 minutes without one, before the
+    ///   hourly sweep.
+    /// - Sign in again; a request 29 and 58 minutes later.
     /// - Sign in again; a request every 20 minutes up to 11 hours 40 minutes; then one at 12 hours.
     /// - Sign in again; disable alice with the owner key; a request with the cookie.
     ///
     /// Expected:
-    /// - last_seen_at unchanged at 30 seconds and written at 61 seconds; 200 while used; 401 with the session message after
-    ///   31 idle minutes, and its row is removed.
+    /// - last_seen_at unchanged at 30 seconds and written at 61 seconds; 401 with the session message after 31 idle minutes,
+    ///   and its row is removed.
+    /// - 200 for both, since each request starts the idle time again.
     /// - 200 up to 11 hours 40 minutes; 401 at 12 hours.
     /// - The disable row's detail is {"sessions":1}; then 401.
     /// </remarks>
@@ -212,12 +214,8 @@ public sealed class ElmServiceWebTests
             test.Time.Advance(TimeSpan.FromSeconds(31));
             Assert.Equal(HttpStatusCode.OK, (await browser.SendAsync(HttpMethod.Get, admins)).StatusCode);
             Assert.Equal(first + 61, await test.ScalarAsync("SELECT last_seen_at FROM admin_sessions"));
-            for (int i = 0; i < 2; i++)
-            {
-                test.Time.Advance(TimeSpan.FromMinutes(29));
-                Assert.Equal(HttpStatusCode.OK, (await browser.SendAsync(HttpMethod.Get, admins)).StatusCode);
-            }
 
+            // Before the hourly sweep, so that the 401 comes from the request's own idle check, not from a swept row.
             test.Time.Advance(TimeSpan.FromMinutes(31));
             await TestService.AssertProblemAsync(
                 await browser.SendAsync(HttpMethod.Get, admins),
@@ -226,6 +224,16 @@ public sealed class ElmServiceWebTests
                 SessionEnded
             );
             Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
+        }
+
+        using (var browser = new WebBrowser())
+        {
+            await SignInAsync(browser, service);
+            for (int i = 0; i < 2; i++)
+            {
+                test.Time.Advance(TimeSpan.FromMinutes(29));
+                Assert.Equal(HttpStatusCode.OK, (await browser.SendAsync(HttpMethod.Get, admins)).StatusCode);
+            }
         }
 
         using (var browser = new WebBrowser())
@@ -263,6 +271,76 @@ public sealed class ElmServiceWebTests
                 SessionEnded
             );
         }
+    }
+
+    /// <summary>
+    /// A session whose administrator is disabled is refused and removed even when its row is still there (design §15.3,
+    /// check step 6): the disable endpoint removes the rows, and this check covers a row left by a disable that raced it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A signed-in browser.
+    ///
+    /// Steps:
+    /// - Set alice's enabled to false in the database, leaving the session row; list administrators with the cookie.
+    ///
+    /// Expected:
+    /// - 401 with the session message; no session row.
+    /// </remarks>
+    [Fact]
+    public async Task Session_OfADisabledAdministrator_IsRefused()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        ElmService service = await StartAsync(test, idp);
+        using var browser = new WebBrowser();
+        await SignInAsync(browser, service);
+
+        await test.ExecuteAsync("UPDATE admins SET enabled = false WHERE subject = 'alice'");
+        await TestService.AssertProblemAsync(
+            await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "v1/admin/admins")),
+            HttpStatusCode.Unauthorized,
+            "ELM_UNAUTHORIZED",
+            SessionEnded
+        );
+        Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
+    }
+
+    /// <summary>
+    /// The redirect_uri and the Origin check use the first public URL, not the host the request named (design §15.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in and the public URLs https://elm.example/ and https://other.example/.
+    ///
+    /// Steps:
+    /// - GET /auth/login on the loopback address; POST /auth/logout with X-ELM-CSRF and the Origin of the loopback address,
+    ///   then with the Origin https://elm.example.
+    ///
+    /// Expected:
+    /// - The redirect_uri is https://elm.example/auth/callback; the logout with the loopback Origin is 403 and the one with
+    ///   https://elm.example is 200.
+    /// </remarks>
+    [Fact]
+    public async Task PublicUrl_GivesTheRedirectUriAndTheOrigin()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        ElmService service = await StartAsync(
+            test,
+            idp,
+            s => s with { PublicUrls = [new Uri("https://elm.example/"), new Uri("https://other.example/")] }
+        );
+        using var browser = new WebBrowser();
+
+        using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+        Assert.Equal("https://elm.example/auth/callback", Query(login.Headers.Location!)["redirect_uri"]);
+        var logout = new Uri(service.Url, "auth/logout");
+        Assert.Equal(
+            HttpStatusCode.Forbidden,
+            (await browser.SendAsync(HttpMethod.Post, logout, r => Csrf(r, service.Url.GetLeftPart(UriPartial.Authority)))).StatusCode
+        );
+        Assert.Equal(HttpStatusCode.OK, (await browser.SendAsync(HttpMethod.Post, logout, r => Csrf(r, "https://elm.example"))).StatusCode);
     }
 
     /// <summary>
@@ -391,11 +469,12 @@ public sealed class ElmServiceWebTests
     ///
     /// Steps:
     /// - GET /auth/login while the provider answers 503; sign in while its token endpoint answers 500; sign in as bob of no
-    ///   mapped group; sign in as carol, disable carol with the owner key, and sign in as carol again.
+    ///   mapped group; sign in as carol, disable carol with the owner key, and sign in as carol again, then again with no
+    ///   mapped group.
     ///
     /// Expected:
-    /// - 503 with the unreachable text twice; 403 with the refusal text twice and no session; a session.create row
-    ///   ELM_FORBIDDEN without an actor ID and with bob's issuer and subject.
+    /// - 503 with the unreachable text twice; 403 with the refusal text three times and no session; a session.create row
+    ///   ELM_FORBIDDEN without an actor ID and with bob's issuer and subject; carol keeps the role admin.
     /// </remarks>
     [Fact]
     public async Task Callback_ProviderOutOfReach_AndRefusedAccounts()
@@ -443,6 +522,12 @@ public sealed class ElmServiceWebTests
             .PostAsync($"v1/admin/admins/{carol.AdminId:D}/disable", null, TestContext.Current.CancellationToken);
         Assert.Equal(HttpStatusCode.NoContent, disabled.StatusCode);
         await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.Forbidden, Refused);
+
+        // design §14.6 step 6 before 7: a disabled administrator is refused before its claims are read, so its role stays.
+        idp.Groups = ["nobody"];
+        await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.Forbidden, Refused);
+        AdminRow row = (await service.Database.FindAdminAsync(new AdminIdentity(idp.Issuer, "carol"), TestContext.Current.CancellationToken))!;
+        Assert.Equal("admin", row.Role);
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
     }
 

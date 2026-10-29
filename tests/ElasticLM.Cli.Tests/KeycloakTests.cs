@@ -103,6 +103,118 @@ public sealed partial class KeycloakTests
         Assert.Equal(HttpStatusCode.Unauthorized, (await test.Http(other, access).GetAsync("v1/admin/admins", cancel)).StatusCode);
     }
 
+    /// <summary>
+    /// The admin UI's sign-in end to end against Keycloak (design §15.3, M5b): the authorization code flow with PKCE and the
+    /// confidential client elm-web, through Keycloak's own login page over HTTP (no browser); the session cookie then signs
+    /// in to the administration API, and logout gives Keycloak's end of session.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keycloak with the test realm (alice in elm-owners; the elm-web client with the secret elm-web-test-only, the redirect
+    ///   URI http://127.0.0.1:18089/auth/callback, and the groups claim in the ID token); a service on the real clock that
+    ///   listens on 127.0.0.1:18089 with the web sign-in.
+    ///
+    /// Steps:
+    /// - GET /auth/login and follow it to Keycloak's login page; post the login form as alice and follow the redirects back
+    ///   through the callback to /; list administrators with the session cookie; POST /auth/logout with X-ELM-CSRF; follow
+    ///   the endSession URL.
+    ///
+    /// Expected:
+    /// - The callback leads to / (200, the placeholder) with __Host-elm-session; the list holds alice as owner of Keycloak's
+    ///   issuer; logout answers 200 with endSession of the realm's logout endpoint with client_id elm-web and the
+    ///   post_logout_redirect_uri http://127.0.0.1:18089/; following it answers 200.
+    /// </remarks>
+    [Fact]
+    public async Task CodeFlow_SignsInToTheAdminUi()
+    {
+        string realm = Realm();
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await using var test = new TestService();
+        test.Time.SetUtcNow(TimeProvider.System.GetUtcNow());
+        var web = new WebLoginSettings(
+            "elm-web",
+            "elm-web-test-only",
+            System.Security.Cryptography.RandomNumberGenerator.GetBytes(WebLoginSettings.KekLength),
+            TimeSpan.FromMinutes(30),
+            TimeSpan.FromHours(12)
+        );
+        ElmService service = await test.StartAsync(s =>
+            s with
+            {
+                Listen = new Uri("http://127.0.0.1:18089"),
+                Oidc = Settings(realm, "elm-service"),
+                Web = web,
+            }
+        );
+
+        using var http = new HttpClient(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        var trace = new List<string>();
+        (Uri page, HttpStatusCode status, string html) = await BrowseAsync(
+            http,
+            cookies,
+            trace,
+            HttpMethod.Get,
+            new Uri(service.Url, "auth/login"),
+            null
+        );
+        for (int step = 0; step < 3 && page.Port != service.Url.Port; step++)
+        {
+            Assert.True((int)status is >= 200 and < 300, $"Keycloak answered {(int)status}: {Excerpt(html)}{Steps(trace)}");
+            Match form = FormAction().Match(html);
+            Assert.True(
+                form.Success && html.Contains("name=\"username\"", StringComparison.Ordinal),
+                $"Not a login page: {Excerpt(html)}{Steps(trace)}"
+            );
+            var fields = new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["username"] = "alice",
+                ["password"] = "alice-test-only",
+                ["credentialId"] = string.Empty,
+            };
+            (page, status, html) = await BrowseAsync(
+                http,
+                cookies,
+                trace,
+                HttpMethod.Post,
+                new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value)),
+                fields
+            );
+        }
+
+        Assert.True(status == HttpStatusCode.OK && page.AbsolutePath == "/", $"{(int)status} {page}: {Excerpt(html)}{Steps(trace)}");
+        Assert.Equal("The admin UI is not built yet.", html.Trim());
+        string session = cookies[ElmService.SessionCookie];
+
+        using var admins = new HttpRequestMessage(HttpMethod.Get, new Uri(service.Url, "v1/admin/admins"));
+        admins.Headers.Add("Cookie", ElmService.SessionCookie + "=" + session);
+        using HttpResponseMessage listed = await http.SendAsync(admins, cancel);
+        string text = await listed.Content.ReadAsStringAsync(cancel);
+        Assert.True(listed.StatusCode == HttpStatusCode.OK, text);
+        using (JsonDocument document = JsonDocument.Parse(text))
+        {
+            JsonElement alice = Assert.Single(document.RootElement.GetProperty("items").EnumerateArray());
+            Assert.Equal((realm, "owner"), (alice.GetProperty("issuer").GetString(), alice.GetProperty("role").GetString()));
+        }
+
+        using var logout = new HttpRequestMessage(HttpMethod.Post, new Uri(service.Url, "auth/logout"));
+        logout.Headers.Add("Cookie", ElmService.SessionCookie + "=" + session);
+        logout.Headers.Add(ElmService.CsrfHeader, "1");
+        using HttpResponseMessage ended = await http.SendAsync(logout, cancel);
+        Assert.Equal(HttpStatusCode.OK, ended.StatusCode);
+        using JsonDocument answer = JsonDocument.Parse(await ended.Content.ReadAsStringAsync(cancel));
+        string endSession = answer.RootElement.GetProperty("endSession").GetString()!;
+        Assert.Equal(
+            realm + "/protocol/openid-connect/logout?client_id=elm-web&post_logout_redirect_uri=" + Uri.EscapeDataString("http://127.0.0.1:18089/"),
+            endSession
+        );
+        (_, status, html) = await BrowseAsync(http, cookies, trace, HttpMethod.Get, new Uri(endSession), null);
+        Assert.True(status == HttpStatusCode.OK, $"{(int)status}: {Excerpt(html)}{Steps(trace)}");
+    }
+
     private static string Realm()
     {
         string? realm = Environment.GetEnvironmentVariable(KeycloakVariable);
