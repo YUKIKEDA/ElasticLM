@@ -52,10 +52,14 @@ internal sealed class TestDevice : IDisposable
 
     public string KeyId => Key.Thumbprint;
 
-    /// <summary>Makes a device with a new installation key.</summary>
-    public static TestDevice Create(TestService test, ElmService service)
+    /// <summary>Makes a device with a new installation key, or with the key kept in a folder (another copy of an installation).</summary>
+    public static TestDevice Create(TestService test, ElmService service, string? directory = null)
     {
-        var store = new InstallationKeyStore("app", KeyScope.User, Path.Combine(test.Directory, "device-" + Guid.NewGuid().ToString("N")));
+        var store = new InstallationKeyStore(
+            "app",
+            KeyScope.User,
+            directory ?? Path.Combine(test.Directory, "device-" + Guid.NewGuid().ToString("N"))
+        );
         Assert.True(store.TryLoadOrCreate(out InstallationKey? key, out LicenseError? error), error?.Message);
         return new TestDevice(test, service, key!);
     }

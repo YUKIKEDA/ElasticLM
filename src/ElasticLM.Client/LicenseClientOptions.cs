@@ -10,15 +10,27 @@ public sealed class LicenseClientOptions
     /// <summary>Gets the product ID of the app.</summary>
     public required string ProductId { get; init; }
 
-    /// <summary>Gets the URL of the on-premises license server, for example <c>https://licenses.example:7070/</c>.</summary>
+    /// <summary>
+    /// Gets the URL of the on-premises license server, for example <c>https://licenses.example:7070/</c>; or, with
+    /// <see cref="LicenseKey"/>, of <c>elm-service</c> (https, or http on a loopback address only, for tests).
+    /// </summary>
     public required Uri ServerUrl { get; init; }
+
+    /// <summary>
+    /// Gets the license key that leases from <c>elm-service</c> (design §12.7.6), or <see langword="null"/> for an
+    /// on-premises server. With a key, the client checks TLS with the OS's trust, keeps no server pin, and verifies leases
+    /// with the certificates the service sends (§12.7.5 steps 1, 2, and 6). The key is held in memory only and sent only
+    /// with an acquisition.
+    /// </summary>
+    public string? LicenseKey { get; init; }
 
     /// <summary>Gets the vendor's trust store, from which the server license is verified (design §13.5 step 2).</summary>
     public required TrustStore Trust { get; init; }
 
     /// <summary>
     /// Gets the server license ID the server must hold, or <see langword="null"/> to accept the first one seen and require it
-    /// afterwards (design §13.5 step 3). With an ID, a server moved to another machine is accepted under the same ID.
+    /// afterwards (design §13.5 step 3). With an ID, a server moved to another machine is accepted under the same ID. Not
+    /// with <see cref="LicenseKey"/>.
     /// </summary>
     public string? ExpectedServerLicenseId { get; init; }
 

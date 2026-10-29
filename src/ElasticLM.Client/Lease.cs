@@ -70,6 +70,9 @@ public sealed class Lease
 
     internal ITimer? Timer { get; set; }
 
+    // design §12.7.6: the certificates that came with the last token from elm-service; a hosted borrow is saved with them.
+    internal IReadOnlyList<string> Certificates { get; set; } = [];
+
     internal TimeSpan RetryDelay { get; private set; } = FirstRetry;
 
     /// <summary>

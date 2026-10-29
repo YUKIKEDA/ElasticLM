@@ -162,6 +162,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.91 | `ElasticLM.Client` のオフライン | M4c2 で、`ActivationClient` に、オフラインの要求の作成（有効化・更新）、応答の取り込み、解除の証明の作成と破棄を足す。中身は文字列でやり取りし、見せ方（ファイル、QR コード）はアプリが決める（Cryptlex はファイルのパスを受け取る）。`ServiceUrl` を任意にし、ないクライアントはオンラインの操作を手元で断る。待っている要求（ライセンスキーを除いた中身と、キーの SHA-256）と渡していない解除の証明を `activation.json` に持ち、書き出すたびに同じ中身から組み立て直す。置き換えた要求の `nonce` は、その種類の答えのない要求の一覧に入れる。期限の前でも `renew` で作り直せる。オフラインの取り込みは時計の守りを上書きしない。オンラインで新しいファイルを保存したら待っている要求を捨て、解除の証明が残るうちは有効化を断る。更新の時期は `Check` の `ExpiresAt` と `RefreshWindow` でアプリが判断する（§12.8.5。M4c2 の Grill と設計のレビュー、持ち主が受けた） |
 | 0.92 | `elm-server` のサーバーライセンス | M4c3 で、`elm-server` のサーバーライセンスを `elm-service` で有効化・更新・解除する。有効化と手動の操作（オンラインの有効化・更新・解除、オフラインの要求・取り込み・解除の証明）は `elm server` のコマンドがサーバーのデータのフォルダーで `ActivationClient` を直接使って行い、ライセンスファイル（設定 `license`）を書いて、動いているサーバーに再読み込みを頼む。ライセンスがなければ起動しない決まり（§13.1）を変えずに最初の有効化ができるためである。自動の更新は、`service.url` を持つサーバーの中の `ActivationClient` が行い、成功のたびにファイルを書いて再読み込みする。ファイルが正本で、有効化を持つ間は有効化のライセンスが優先する。`kind: server` でないファイルは保存しない。動いているサーバーでの解除と、自動の更新をするサーバーでのオフラインの要求は断る（§13.7、M4c3 の Grill と設計のレビュー、持ち主が受けた） |
 | 0.93 | M4d の分け方とクラウドのリース | M4d を M4d1（規則の取り出し、`elm-service` のクラウドのリース、リースの管理 API）、M4d2（`LicenseClient` の SaaS 型のモード）、M4d3（サービスの利用ログとその管理 API）に分ける。`LeaseEngine` の判定を `LeaseRules`（純粋な関数）に取り出し、オンプレミスとサービスが同じ関数を使う。クラウドの取得はライセンスキーで名指し（ID は秘密でないため）、本文に `product` を持つ。回収は持たない（状態はデータベースに残る）。`floating` が `cloud` のポリシーのライセンスだけが貸し、借り出しの上限はポリシーの `BorrowLimit`、残す席は 0。`cloud` のポリシーは試用でもサーバーでもなく、そのライセンスは機能ごとに `seats` を必ず持ち、有効化しない（`409`）。`fromFirstActivation` の期限は最初の取得で決める。リースの期限はライセンスと機能の期限で切り、猶予は足さない。取得・更新・返却は監査ログに書かず（利用ログは M4d3）、複製の検出（`lease.clone`）と、管理 API の一覧と強制返却（借り出しも返す。0.56 の例外）は書く（§12.7.6。M4d の Grill と設計レビュー、持ち主が受けた） |
+| 0.94 | `LicenseClient` の SaaS 型のモード | M4d2 で、既存の `LicenseClient` に `LicenseClientOptions.LicenseKey` を足し、値があれば `elm-service` からリースを借りる（別のクラスにしない。0.42 の形をそのまま使う）。TLS は OS の信頼で確かめ、ピンは持たない。URL は `ActivationClient` と同じく https か、ループバックの http だけ。`ExpectedServerLicenseId` は断る。ライセンスキーはメモリーにだけ持ち、取得の本文にだけ入れる。リースは応答の `certificates` で確かめ（§12.7.5 の手順 1・2・6）、借り出しのファイルは `license` と `key` の代わりに `certificates` を持つ（`ver` は 1 のまま）。更新の `ELM_UNKNOWN_LEASE` はすぐに `Lost`、`429` の `Retry-After` は取得の `RetryAfter` に入れる（§12.7.1, §12.7.3, §12.7.4。M4d2 の Grill、持ち主が受けた） |
 
 ## 1. 目的と利用者
 
@@ -359,6 +360,22 @@ M4d1（Issue #82）の実測（Windows、win-x64）:
   - `elm-server` は状態をメモリーに持ち、要求ごとのコミットがない。
 - ほかに、サービスは出したトークンを返す前に確かめる（ECDSA の検証 1 回。M3b の証明の検証で約 120 µs）。
 - 残りの 0.3〜0.5 ms は分けていない。上の目標の表にクラウドのリースの行はなく、いちばん近い `elm-service` の有効化の目標（p99 200 ms 以下）から十分に遠いためである。
+
+M4d2（Issue #86）の実測（Windows、JIT の Release、ループバック、1 回の実行の中の値）:
+
+- SaaS 型のリースの確かめ（`LeaseVerifier.VerifyHosted`、証明書を覚えた 2 回目以降）は 1 回 119〜127 µs（各 1,000 回の平均、3 回）。§4.2 の検証の目標 1 ms 以下に収まる。
+- `LicenseClient` の取得・更新・返却（各 100 件の平均、3 回。2 回目と 3 回目の値を書く）:
+
+  | 要求 | SaaS 型（`elm-service`、SQLite、HTTP） | オンプレミス（`elm-server`、HTTPS） |
+  | --- | --- | --- |
+  | 取得 | 3.10〜3.15 ms | 1.37〜1.79 ms |
+  | 更新 | 3.50〜3.89 ms | 1.22〜1.33 ms |
+  | 返却 | 1.95〜1.97 ms | 0.58〜0.59 ms |
+
+  - 更新は、100 件のタイマーを一度に動かして、全件が終わるまでの時間を件数で割った値である。
+  - 表は、2 つの側の順序を入れ替えた 2 回目の実行の値である。先にサービスを流した 1 回目の実行でも、差は同じ程度だった。
+  - クライアントの仕事は、トークンの確かめ（上の 119〜127 µs）を除いて両方で同じである。差（同じ回どうしで 1.4〜2.7 ms）は相手の側の仕事で、M4d1 の実測（上、別の実行）でサービスとサーバーの差 1.6〜1.9 ms を分けたとおり、主にデータベースのコミットと読み取りである。実行が違うので、ここでは足し合わせない。
+- `ElasticLM.Client` の NuGet パッケージは 100,750 バイトで、main（`699df4f`）の 97,846 バイトより 2,904 バイト大きい。
 
 M3c（Issue #25）の実測（同じ条件）:
 
@@ -1519,6 +1536,7 @@ public sealed class LicenseClientOptions
     public required Uri ServerUrl { get; init; }
     public required TrustStore Trust { get; init; }
     public string? ExpectedServerLicenseId { get; init; }   // §13.5 手順 3。null なら最初に見たものをピンする
+    public string? LicenseKey { get; init; }                 // M4d2。あれば elm-service から借りる（下を見よ）
     public KeyScope KeyScope { get; init; }                  // 既定 User
     public string? DataDirectory { get; init; }              // インストール鍵とピンの場所。null なら §10.2 の既定
     public bool SendClientInfo { get; init; }                // ClientInfoStrategy: HostAndUser
@@ -1549,6 +1567,14 @@ public sealed class LeaseStateChangedEventArgs : EventArgs  // Lease, Previous, 
 - `TryCreate` はインストール鍵を読み込むか作り、マシン指紋を計算する。サーバーにはつながない。
 - 要求は 1 つずつ送る（クライアントの中の排他）。イベントはタイマーのスレッドから、排他の外で呼ぶ。ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい。タイマーのスレッドで投げられた例外は無視する（プロセスを落とさないため）。
 - `DisposeAsync` の後にイベントは呼ばれない。
+
+SaaS 型のモード（M4d2、0.94）: `LicenseKey` があれば、`ServerUrl` は `elm-service` の URL で、次のように動く。ほかの API と振る舞い（更新の間隔、再試行、イベント、`DisposeAsync` での返却）はオンプレミスと同じである。
+
+- `TryCreate` は、URL が https か、ループバックの http でなければ、また `LicenseKey` が空か `ExpectedServerLicenseId` があれば `ArgumentException` を投げる。
+- TLS は OS の信頼で確かめる。サーバーライセンスを取りに行かず（`GET /v1/server/license` はない）、ピンは書かない。`ResetServerPin` は消すピンがないので `false` を返す。
+- 取得の本文に `licenseKey` と `product`（`ProductId`）を足す（§12.7.6）。キーはメモリーにだけ持ち、ファイルには書かない。更新と返却には送らない。
+- 受け取ったトークンは、応答の `certificates` で `LeaseVerifier.VerifyHosted` により確かめる（§12.7.5 の手順 1・2・6）。`certificates` のない応答は `ELM_MALFORMED` とする。
+- 更新が `ELM_UNKNOWN_LEASE` で断られたら、回収せずにすぐ `Lost` にする（§12.7.3）。
 
 #### 12.7.2 席の数え上げ
 
@@ -1617,6 +1643,7 @@ public sealed class Lease { public bool IsBorrow { get; } }
 - 保存: インストール鍵の場所の `borrows/<リース ID>.json` に `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "license": <サーバーライセンスのファイル>, "key": <サーバーの公開鍵の JWK>}` を、一時ファイルから置き換えて書く。読むときは `ver` が 1 でなければ使わず、知らないメンバーは無視する。フォルダーは 1,000 ファイルまでで、超える借り出しは保存しない。保存できなければ借り出しは失敗とする（`ELM_INTERNAL_ERROR`）。サーバーの席はその期限まで使われたままになる。
 - `GetBorrowedLeases` は、このクライアントのサーバーの URL のファイルだけを読み、保存したサーバーライセンスと公開鍵から `ServerIdentity.TryVerify`（§13.5）と §12.7.5 で確かめる（時計の守りも含む）。サーバーのピン（`ExpectedServerLicenseId` を設定していればその `lic`、なければ保存したピンの `lic` と `cnf.jkt`）とも合わなければ使わない（0.60）。読むのは 1,000 ファイルまでである。期限の切れたファイルは消し、確かめられないファイル（書き換え・壊れ）は残して返さない。
 - `ReleaseLeaseAsync` で早期に返却する。成功（サーバーが知らないときを含む）ならファイルを消して `Released` にする。断られたか届かなければ、ファイルと `Held` のままにしてエラーを返す。
+- SaaS 型のモード（0.94）では、ファイルは `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "certificates": [<証明書>]}` で、`license` と `key` を持たない。`GetBorrowedLeases` は同じ URL の、`certificates`（1〜4 個の文字列）を持つファイルだけを `VerifyHosted` で確かめる。ピンはない。ほかの規則（1,000 ファイル、期限切れは消す、確かめられないものは残して返さない）は同じである。`ver` を上げないのは、読み手が URL とモードで分かれ、知らないメンバーを無視するためである。
 
 #### 12.7.5 クライアントによるリースの確かめ方
 

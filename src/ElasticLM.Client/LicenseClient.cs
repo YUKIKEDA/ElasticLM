@@ -12,8 +12,10 @@ namespace ElasticLM.Client;
 /// <summary>
 /// A client of an on-premises license server (design §12.7, §13.5): it checks the server against the vendor's trust store
 /// and its pin, acquires leases, renews them every third of their duration, reclaims them after a server restart, and
-/// returns them. It has the lifetime rules of the C ABI (design §17.2): <see cref="DisposeAsync"/> stops the timers and
-/// returns the leases it holds.
+/// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead (design
+/// §12.7.6, decision 0.93): TLS is checked with the OS's trust, leases with the service's certificates, and a lease the
+/// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI (design §17.2):
+/// <see cref="DisposeAsync"/> stops the timers and returns the leases it holds.
 /// </summary>
 /// <remarks>
 /// The methods may be called from several threads; requests to the server are made one at a time. <see cref="LeaseStateChanged"/>
@@ -29,6 +31,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxReclaimTokens = 64;
     private const int MaxBorrowFileLength = 256 * 1024;
     private const int MaxBorrowFiles = 1_000;
+    private const int MaxCertificates = 4; // design §8.6
     private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -45,6 +48,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private readonly string _storeDirectory;
     private readonly HttpClient _http;
     private readonly TimeProvider _time;
+    private readonly bool _hosted;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<Lease> _leases = [];
 
@@ -66,6 +70,7 @@ public sealed class LicenseClient : IAsyncDisposable
         _key = key;
         _fingerprints = fingerprints;
         _time = options.TimeProvider;
+        _hosted = options.LicenseKey is not null;
         _clientInfo = options.SendClientInfo ? ClientInfo() : null;
 
         // design §11.4 step 3: the guard's state is signed with the installation key (a copy the guard keeps).
@@ -75,10 +80,14 @@ public sealed class LicenseClient : IAsyncDisposable
         _leaseVerifier = new LeaseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _pins = new ServerPins(store.Directory);
         _storeDirectory = store.Directory;
+
+        // design §12.7.6 (M4d2's Grill): elm-service is checked with the OS's trust, as ActivationClient does.
         var handler = new SocketsHttpHandler
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-            SslOptions = new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = ValidateServerCertificate },
+            SslOptions = _hosted
+                ? new SslClientAuthenticationOptions()
+                : new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = ValidateServerCertificate },
         };
         _http = new HttpClient(options.WrapHandler?.Invoke(handler) ?? handler) { Timeout = RequestTimeout };
     }
@@ -99,15 +108,29 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="client">The client, or <see langword="null"/> on failure.</param>
     /// <param name="error">Why it failed: <c>ELM_INSTALLATION_KEY_UNREADABLE</c>.</param>
     /// <returns><see langword="true"/> when the client was created.</returns>
-    /// <exception cref="ArgumentException">The product ID is not valid, the server URL is not an absolute https URL, or the
-    /// app version is longer than 64 bytes.</exception>
+    /// <exception cref="ArgumentException">The product ID is not valid; the server URL is not an absolute https URL (or, with
+    /// a license key, http on a loopback address); the license key is empty or comes with an expected server license ID; or
+    /// the app version is longer than 64 bytes.</exception>
     public static bool TryCreate(LicenseClientOptions options, out LicenseClient? client, out LicenseError? error)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.ServerUrl);
         ArgumentNullException.ThrowIfNull(options.Trust);
         ArgumentNullException.ThrowIfNull(options.TimeProvider);
-        if (!options.ServerUrl.IsAbsoluteUri || options.ServerUrl.Scheme != Uri.UriSchemeHttps)
+        if (options.LicenseKey is string licenseKey)
+        {
+            Uri url = options.ServerUrl;
+            if (!url.IsAbsoluteUri || !(url.Scheme == Uri.UriSchemeHttps || (url.Scheme == Uri.UriSchemeHttp && url.IsLoopback)))
+            {
+                throw new ArgumentException("The service URL must be an absolute https URL, or http on a loopback address.", nameof(options));
+            }
+
+            if (licenseKey.Length == 0 || options.ExpectedServerLicenseId is not null)
+            {
+                throw new ArgumentException("A license key must not be empty, and has no expected server license ID.", nameof(options));
+            }
+        }
+        else if (!options.ServerUrl.IsAbsoluteUri || options.ServerUrl.Scheme != Uri.UriSchemeHttps)
         {
             throw new ArgumentException("The server URL must be an absolute https URL.", nameof(options));
         }
@@ -237,7 +260,9 @@ public sealed class LicenseClient : IAsyncDisposable
                 _fingerprints.Count > 0 ? _fingerprints : null,
                 _clientInfo,
                 _options.AppVersion,
-                borrow
+                borrow,
+                _options.LicenseKey,
+                _hosted ? _options.ProductId : null
             );
             Reply reply = await SendSignedAsync(
                     HttpMethod.Post,
@@ -252,12 +277,13 @@ public sealed class LicenseClient : IAsyncDisposable
                 return new LeaseResult.Failed(reply.Error, reply.RetryAfter);
             }
 
-            switch (await ReadLeaseAsync(reply).ConfigureAwait(false))
+            (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
+            switch (result)
             {
                 case LeaseVerificationResult.Valid valid when valid.Lease.IsBorrow != (borrow is not null):
                     return new LeaseResult.Failed(new LicenseError(ErrorCode.Malformed, "The server's lease is not of the kind asked for."), null);
                 case LeaseVerificationResult.Valid valid:
-                    var lease = new Lease(valid.Lease);
+                    var lease = new Lease(valid.Lease) { Certificates = certificates };
                     if (lease.IsBorrow && SaveBorrow(lease) is LicenseError saveError)
                     {
                         return new LeaseResult.Failed(saveError, null);
@@ -317,10 +343,12 @@ public sealed class LicenseClient : IAsyncDisposable
     /// </summary>
     /// <param name="serverUrl">The server URL.</param>
     /// <returns><see langword="true"/> when a pin was deleted; <see langword="false"/> when there was none or the file
-    /// cannot be deleted.</returns>
+    /// cannot be deleted. A client with a license key writes no pin, so for its own service URL this is
+    /// <see langword="false"/>.</returns>
     public bool ResetServerPin(Uri serverUrl)
     {
         ArgumentNullException.ThrowIfNull(serverUrl);
+
         bool deleted = _pins.Delete(serverUrl);
         if (HttpTargetUri.Normalize(serverUrl) == HttpTargetUri.Normalize(_server))
         {
@@ -370,10 +398,12 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // A borrow is saved as {"ver": 1, "server", "lease", "license", "key"} in borrows/<lease ID>.json next to the installation
-    // key, written to a temporary file and moved into place. The folder holds at most MaxBorrowFiles borrows.
+    // key, or with "certificates" instead of "license" and "key" from elm-service (design §12.7.6), written to a temporary
+    // file and moved into place. The folder holds at most MaxBorrowFiles borrows.
     private LicenseError? SaveBorrow(Lease lease)
     {
-        if (!_identityFiles.TryGetValue(lease.Token.ServerLicenseTokenId ?? string.Empty, out (byte[] License, byte[] Key) files))
+        (byte[] License, byte[] Key) files = default;
+        if (!_hosted && !_identityFiles.TryGetValue(lease.Token.ServerLicenseTokenId ?? string.Empty, out files))
         {
             return new LicenseError(ErrorCode.InternalError, "The server license of the borrow is not known.");
         }
@@ -396,10 +426,24 @@ public sealed class LicenseClient : IAsyncDisposable
                 writer.WriteNumber("ver", 1);
                 writer.WriteString("server", HttpTargetUri.Normalize(_server));
                 writer.WriteString("lease", lease.Token.Token);
-                writer.WritePropertyName("license");
-                writer.WriteRawValue(files.License);
-                writer.WritePropertyName("key");
-                writer.WriteRawValue(files.Key);
+                if (_hosted)
+                {
+                    writer.WriteStartArray("certificates");
+                    foreach (string certificate in lease.Certificates)
+                    {
+                        writer.WriteStringValue(certificate);
+                    }
+
+                    writer.WriteEndArray();
+                }
+                else
+                {
+                    writer.WritePropertyName("license");
+                    writer.WriteRawValue(files.License);
+                    writer.WritePropertyName("key");
+                    writer.WriteRawValue(files.Key);
+                }
+
                 writer.WriteEndObject();
             }
 
@@ -443,6 +487,19 @@ public sealed class LicenseClient : IAsyncDisposable
             return null;
         }
 
+        if (_hosted)
+        {
+            return
+                TryReadHostedBorrowFile(bytes, out string? hostedServer, out string? hostedToken, out IReadOnlyList<string>? certificates)
+                && hostedServer == HttpTargetUri.Normalize(_server)
+                ? Restored(
+                    path,
+                    _leaseVerifier.VerifyHosted(hostedToken!, certificates!, new LeaseExpectation(_options.ProductId, _key.Thumbprint)),
+                    certificates!
+                )
+                : null;
+        }
+
         if (
             !TryReadBorrowFile(bytes, out string? server, out string? token, out byte[]? license, out byte[]? key)
             || server != HttpTargetUri.Normalize(_server)
@@ -468,10 +525,16 @@ public sealed class LicenseClient : IAsyncDisposable
             new LeaseExpectation(_options.ProductId, _key.Thumbprint)
         );
         identity!.Dispose();
+        return Restored(path, result, []);
+    }
+
+    // A saved borrow that verified is used; an expired one is deleted; anything else is left alone and not returned.
+    private static Lease? Restored(string path, LeaseVerificationResult result, IReadOnlyList<string> certificates)
+    {
         switch (result)
         {
             case LeaseVerificationResult.Valid { Lease.IsBorrow: true } valid:
-                return new Lease(valid.Lease);
+                return new Lease(valid.Lease) { Certificates = certificates };
             case LeaseVerificationResult.Invalid { Error.Code: ErrorCode.Expired }:
                 TryDelete(path);
                 return null;
@@ -491,15 +554,7 @@ public sealed class LicenseClient : IAsyncDisposable
             using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 8 });
             JsonElement root = document.RootElement;
             if (
-                root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("ver", out JsonElement ver)
-                || ver.ValueKind != JsonValueKind.Number
-                || !ver.TryGetInt32(out int version)
-                || version != 1
-                || !root.TryGetProperty("server", out JsonElement s)
-                || s.ValueKind != JsonValueKind.String
-                || !root.TryGetProperty("lease", out JsonElement l)
-                || l.ValueKind != JsonValueKind.String
+                !TryReadBorrowHeader(root, out server, out token)
                 || !root.TryGetProperty("license", out JsonElement f)
                 || f.ValueKind != JsonValueKind.Object
                 || !root.TryGetProperty("key", out JsonElement k)
@@ -509,8 +564,6 @@ public sealed class LicenseClient : IAsyncDisposable
                 return false;
             }
 
-            server = s.GetString();
-            token = l.GetString();
             license = Encoding.UTF8.GetBytes(f.GetRawText());
             key = Encoding.UTF8.GetBytes(k.GetRawText());
             return true;
@@ -519,6 +572,61 @@ public sealed class LicenseClient : IAsyncDisposable
         {
             return false;
         }
+    }
+
+    // A borrow from elm-service (design §12.7.6): the common members and "certificates", one to four strings.
+    internal static bool TryReadHostedBorrowFile(byte[] bytes, out string? server, out string? token, out IReadOnlyList<string>? certificates)
+    {
+        server = null;
+        token = null;
+        certificates = null;
+        try
+        {
+            using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 8 });
+            JsonElement root = document.RootElement;
+            if (
+                !TryReadBorrowHeader(root, out server, out token)
+                || !root.TryGetProperty("certificates", out JsonElement c)
+                || c.ValueKind != JsonValueKind.Array
+                || c.GetArrayLength() is 0 or > MaxCertificates
+                || c.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String)
+            )
+            {
+                return false;
+            }
+
+            certificates = [.. c.EnumerateArray().Select(e => e.GetString()!)];
+            return true;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
+    }
+
+    // The members every saved borrow has: "ver" 1, "server", and "lease".
+    private static bool TryReadBorrowHeader(JsonElement root, out string? server, out string? token)
+    {
+        server = null;
+        token = null;
+        if (
+            root.ValueKind != JsonValueKind.Object
+            || !root.TryGetProperty("ver", out JsonElement ver)
+            || ver.ValueKind != JsonValueKind.Number
+            || !ver.TryGetInt32(out int version)
+            || version != 1
+            || !root.TryGetProperty("server", out JsonElement s)
+            || s.ValueKind != JsonValueKind.String
+            || !root.TryGetProperty("lease", out JsonElement l)
+            || l.ValueKind != JsonValueKind.String
+        )
+        {
+            return false;
+        }
+
+        server = s.GetString();
+        token = l.GetString();
+        return true;
     }
 
     private static void TryDelete(string path)
@@ -651,7 +759,8 @@ public sealed class LicenseClient : IAsyncDisposable
     // certificate, and check or store the pin.
     private async Task<LicenseError?> EnsureConnectedAsync(CancellationToken cancellationToken = default)
     {
-        if (Volatile.Read(ref _current) is not null)
+        // design §12.7.6: elm-service has no server license; its leases verify with the certificates of each answer.
+        if (_hosted || Volatile.Read(ref _current) is not null)
         {
             return null;
         }
@@ -807,8 +916,9 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // Reads a lease answer and verifies the token with the identity of the server license the answer names (design §13.5,
-    // the ELM-Server-License header); a new server license is fetched and checked first.
-    private async Task<LeaseVerificationResult> ReadLeaseAsync(Reply reply)
+    // the ELM-Server-License header); a new server license is fetched and checked first. From elm-service, the token is
+    // verified with the certificates of the answer (design §12.7.5 steps 1, 2, and 6), which are returned with the result.
+    private async Task<(LeaseVerificationResult Result, IReadOnlyList<string> Certificates)> ReadLeaseAsync(Reply reply)
     {
         LeaseAnswerBody? answer = null;
         try
@@ -820,9 +930,15 @@ public sealed class LicenseClient : IAsyncDisposable
             answer = null;
         }
 
-        if (answer is null)
+        var expectation = new LeaseExpectation(_options.ProductId, _key.Thumbprint);
+        if (answer is null || (_hosted && answer.Certificates is null))
         {
-            return new LeaseVerificationResult.Invalid(new LicenseError(ErrorCode.Malformed, "The server's lease answer is not valid."));
+            return (new LeaseVerificationResult.Invalid(new LicenseError(ErrorCode.Malformed, "The server's lease answer is not valid.")), []);
+        }
+
+        if (_hosted)
+        {
+            return (_leaseVerifier.VerifyHosted(answer.Lease, answer.Certificates!, expectation), answer.Certificates!);
         }
 
         ServerIdentity? identity = _identities.Find(i => i.License.TokenId == reply.ServerLicenseTokenId);
@@ -831,13 +947,13 @@ public sealed class LicenseClient : IAsyncDisposable
             Volatile.Write(ref _current, null);
             if (await EnsureConnectedAsync().ConfigureAwait(false) is LicenseError error)
             {
-                return new LeaseVerificationResult.Invalid(error);
+                return (new LeaseVerificationResult.Invalid(error), []);
             }
 
             identity = _current!;
         }
 
-        return _leaseVerifier.VerifyOnPremises(answer.Lease, identity, new LeaseExpectation(_options.ProductId, _key.Thumbprint));
+        return (_leaseVerifier.VerifyOnPremises(answer.Lease, identity, expectation), []);
     }
 
     private void ScheduleRenewal(Lease lease, VerifiedLease token)
@@ -917,12 +1033,14 @@ public sealed class LicenseClient : IAsyncDisposable
 
             if (error is null)
             {
-                switch (await ReadLeaseAsync(reply).ConfigureAwait(false))
+                (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
+                switch (result)
                 {
                     case LeaseVerificationResult.Valid valid:
                         // The next renewal is set before the new token is visible, so whoever sees the new token also
                         // finds the renewal after it already scheduled.
                         ScheduleRenewal(lease, valid.Lease);
+                        lease.Certificates = certificates;
                         lease.Update(valid.Lease);
                         SetState(lease, LeaseState.Held, null, events);
                         return;
@@ -933,7 +1051,14 @@ public sealed class LicenseClient : IAsyncDisposable
             }
         }
 
-        if (error!.Code == ErrorCode.UnknownLease && allowReclaim)
+        if (error!.Code == ErrorCode.UnknownLease && _hosted)
+        {
+            // design §12.7.3: elm-service keeps its leases in its database, so a lease it does not know is gone; no reclaim.
+            SetState(lease, LeaseState.Lost, error, events);
+            return;
+        }
+
+        if (error.Code == ErrorCode.UnknownLease && allowReclaim)
         {
             // design §13.4 step 4: the server restarted; reclaim every lease held there, then renew again.
             SetState(lease, LeaseState.Reclaiming, null, events);
