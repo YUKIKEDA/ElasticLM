@@ -12,7 +12,7 @@ namespace ElasticLM.Service;
 /// </summary>
 /// <typeparam name="TDialect">The engine's dialect.</typeparam>
 internal sealed partial class ServiceStore<TDialect> : Database
-    where TDialect : IUpdateReturningDialect, IOnConflictDialect
+    where TDialect : IUpdateReturningDialect, IDeleteReturningDialect, IOnConflictDialect
 {
     private readonly Database<TDialect> _db;
 

@@ -66,6 +66,7 @@ internal sealed partial class ElmService
         MapClient();
         MapOffline();
         MapLeases();
+        MapUsageLog();
     }
 
     // design §14.7: every request is limited per source before authentication, devices and administrators in separate

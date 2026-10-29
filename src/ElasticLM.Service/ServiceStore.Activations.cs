@@ -207,14 +207,15 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override async Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken)
+    public override async Task<IReadOnlyList<LeaseRow>> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken)
     {
-        long leases = await _db.Delete(LeaseRow.Table).Where(l => Le(l.ExpiresAt, now)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
-        long returns = await _db.Delete(LeaseReturnRow.Table)
-            .Where(r => Lt(r.ReturnedAt, returnsBefore))
-            .ExecuteAsync(cancellationToken)
+        List<LeaseRow> leases = await _db.Delete(LeaseRow.Table)
+            .Where(l => Le(l.ExpiresAt, now))
+            .Returning(l => l)
+            .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return leases + returns;
+        await _db.Delete(LeaseReturnRow.Table).Where(r => Lt(r.ReturnedAt, returnsBefore)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        return leases;
     }
 
     public override async Task<long> RemoveOfflineRequestsBeforeAsync(long before, CancellationToken cancellationToken) =>
@@ -345,8 +346,8 @@ internal sealed partial class ServiceStore<TDialect>
                 )
                 .ExecuteAsync(cancellationToken);
 
-        public override Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
-            tx.Update(LeaseRow.Table)
+        public override async Task<bool> UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
+            await tx.Update(LeaseRow.Table)
                 .Set(l =>
                     [
                         Set(l.Seq, lease.Seq),
@@ -357,10 +358,11 @@ internal sealed partial class ServiceStore<TDialect>
                     ]
                 )
                 .Where(l => Eq(l.Id, lease.Id))
-                .ExecuteAsync(cancellationToken);
+                .ExecuteAsync(cancellationToken)
+                .ConfigureAwait(false) > 0;
 
-        public override Task DeleteLeaseAsync(string id, CancellationToken cancellationToken) =>
-            tx.Delete(LeaseRow.Table).Where(l => Eq(l.Id, id)).ExecuteAsync(cancellationToken);
+        public override async Task<bool> DeleteLeaseAsync(string id, CancellationToken cancellationToken) =>
+            await tx.Delete(LeaseRow.Table).Where(l => Eq(l.Id, id)).ExecuteAsync(cancellationToken).ConfigureAwait(false) > 0;
 
         public override async Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken)
         {

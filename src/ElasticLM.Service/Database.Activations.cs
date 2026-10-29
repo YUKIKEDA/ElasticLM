@@ -44,10 +44,12 @@ internal abstract class LicenseScope
     public abstract Task InsertLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
 
     /// <summary>Writes a lease's sequence number, last token, proof, expiry, and stop mark.</summary>
-    public abstract Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
+    /// <returns>Whether the lease was there to write: the sweep, which takes no license lock, may have removed it.</returns>
+    public abstract Task<bool> UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
 
     /// <summary>Removes a lease.</summary>
-    public abstract Task DeleteLeaseAsync(string id, CancellationToken cancellationToken);
+    /// <returns>Whether this call removed it (and not the sweep before it).</returns>
+    public abstract Task<bool> DeleteLeaseAsync(string id, CancellationToken cancellationToken);
 
     /// <summary>Returns the most early returns of the license since a time among some counters (design §12.7.4).</summary>
     public abstract Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken);
@@ -143,8 +145,8 @@ internal abstract partial class Database
     );
 
     /// <summary>Removes the leases that expired and the early returns older than a time (design §14.4).</summary>
-    /// <returns>The rows removed.</returns>
-    public abstract Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken);
+    /// <returns>The leases removed, for the usage log's expiry lines (design §18.1): each by the one node that removed it.</returns>
+    public abstract Task<IReadOnlyList<LeaseRow>> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken);
 
     /// <summary>Removes the stored answers of offline requests that expired before a time (design §12.8.4).</summary>
     /// <returns>The rows removed.</returns>
