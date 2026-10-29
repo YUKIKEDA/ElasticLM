@@ -37,6 +37,7 @@ Make an invalid state unrepresentable; do not document it away or catch it at ru
 - A `catch` that runs cleanup which can throw keeps the exception it caught: when the cleanup throws too, throw an `AggregateException` with the caught exception first, then the cleanup's.
 - A comment that states how a runtime or OS API behaves names what was checked: the call, the version, and the result.
 - A call that can fail by its result is checked (`TryParse`, `TryImport...`, `TryGetValue`).
+- A refactor that moves checks into a shared function compares each message the callers returned before and after. A changed message is listed under Risk in the PR. In M4d1 three refusals of `elm-server` changed wording when its checks moved to `LeaseRules`, and one place kept the old wording (PR #83).
 
 ## Cryptography objects
 

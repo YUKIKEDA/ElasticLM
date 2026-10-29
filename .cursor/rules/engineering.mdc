@@ -33,6 +33,11 @@ A script that replaces text in a source file checks that its anchor occurs exact
 
 A Python script on Windows that opens a file in text mode writes CRLF line ends. Open it with `newline=""` on both the read and the write, so the file keeps LF (M4b1, PR #61).
 
+## Data access (AuraORM)
+
+- A string primary key column has `[MaxLength(n)]`. Without it the generator makes no `Table` for the record and reports nothing. In M4d1 `LeaseReturnRow` had no table until its `Counter` key had a length (PR #83).
+- A sum or a count is an aggregate in SQL (`Sum`, `Count`), not rows read and added in C#: the rows bring every column, a token included, and the read grows with the rows (PR #83).
+
 ## Changing a stored row
 
 An operation that applies a request to a stored row (a `PATCH`, a state change) reads that row in the write transaction that writes it, and on PostgreSQL locks it first (`SELECT … FOR UPDATE`, or an `UPDATE` that sets a column to itself with `RETURNING`). Read outside the transaction, two changes of different members at once write back each other's old values. In M4a2 the first version of the `PATCH` endpoints did that, and the review found it (PR #55).
