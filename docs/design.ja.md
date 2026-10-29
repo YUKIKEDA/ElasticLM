@@ -397,6 +397,19 @@ M4d3（Issue #90）の実測（PR の head `d69a3bd` のコード。Windows、1 
   - サービスの形とサーバーの形を同じ実行で比べた値（JIT の Release、`lease.acquired` の 7 つのメンバーの行、交互に 3 回）: サービスの形が 7.77〜8.65 µs、サーバーの形が 7.87〜10.25 µs。10.25 µs は最初の回の値で、JIT の温まりを含む（2 回目と 3 回目は 7.87〜8.51 µs）。2 つの形の差はない（違うのは最初の行だけ）。この値は測り方（JIT のビルド、7 つのメンバーの行）が M3c と違うので、M3c の値とは比べない。M3c と比べるのは上の同じ測り方の値である。
 - 取得と更新の往復（JIT の Release、ループバック、SQLite、100 台の端末で各 100 回の平均。利用ログを書くサービスと書かないサービスを交互に 3 回立てた。2 回目と 3 回目を書く）: 取得は書くとき 2.73〜3.14 ms、書かないとき 2.95〜3.00 ms。更新は書くとき 2.39〜2.69 ms、書かないとき 2.36〜2.56 ms。1 行の約 8 µs は、同じ側の回ごとの揺れ（0.05〜0.41 ms）に隠れて見えない。
 
+M5a（Issue #102）の実測（PR の head `b022680` のコード。その後のコミットはテストだけ。Windows、win-x64）:
+
+- `elm-service` の NativeAOT の実行ファイルは 27.5 MB（27,478,016 バイト。main（`806fec1`）の 22,136,832 から +5,341,184 バイト、+24.1%）。警告は 0 件。目標の 40 MB 以下に収まる。マップのファイル（`-p:IlcGenerateMapFile=true`）で分けた内訳（マップの中は合わせて +4,838,932 バイト、残りの 502,252 バイトはセクションの詰め物）:
+  - IdP の discovery と JWKS を取る `HttpClient` の一式（`System.Net`）: +815,412
+  - `System.Private.CoreLib`、`Microsoft.Extensions`、`System.Text`、ASP.NET Core のほかの部分（新しく使う汎用の型）: +856,142
+  - `Microsoft.IdentityModel.*` と `System.IdentityModel.Tokens.Jwt`（トークンの確かめ）: +466,224
+  - メタデータ: +250,534
+  - ASP.NET Core の認証（JwtBearer）: +99,097、Data Protection（認証が登録する。鍵は書かない、§14.6）: +136,457
+  - 暗号（RSA と PSS の署名の確かめ）: +233,258
+  - サービスのコード（OIDC、管理者の API、設定）: +195,097、ElasticLM のほかの部分: +11,629
+  - どのアセンブリにも分けられない生成コードと実行時の表（`MethodCode`、凍結したオブジェクト、GC の情報、型の記述など）: +1,775,082
+- `elm` は 8.1 MB（8,110,592 バイト。main の 8,044,032 から +66,560 バイト、+0.8%）。警告は 0 件。`elm admin` は、既にある `HttpClient` と `ElasticLM.Client` の守ったファイルを使う。
+
 M3c（Issue #25）の実測（同じ条件）:
 
 - `elm-server` は 12.0 MB（12,021,760 バイト。M3b の 11,430,912 から +0.6 MB）。
@@ -2514,7 +2527,7 @@ OIDC のアクセストークン（M5a、0.98）:
 - 2〜4 と 6 の失敗は、API キーと同じ 1 つの答え `401` と `ELM_UNAUTHORIZED` にし、1 分ごとの認証の失敗の件数（§14.5）に数える。IdP に届かず鍵を取れないときも同じで、理由はサービスのログに書く。
 - トークンの確かめ（JwtBearer の既定の値に頼らず、次を明示する。`design-docs` の規則）:
   - 署名を求める（`RequireSignedTokens`）。アルゴリズムは RS256、PS256、ES256 だけ（`ValidAlgorithms`）。鍵は JWKS の鍵で、`kid` のないトークンは JWKS のすべての鍵で試す（`TryAllIssuerSigningKeys`）。
-  - ヘッダーの `typ` が `at+jwt`、`application/at+jwt`、`JWT`（大文字と小文字を区別しない）のどれか（RFC 9068 §2.1）。JWS の形でない値と、暗号化したトークン（JWE）は断る。
+  - ヘッダーの `typ` は `at+jwt`、`application/at+jwt`、`JWT` のどれかだけを受ける（大文字と小文字を区別しない）。RFC 9068 §4 は、受け取る側に `at+jwt` か `application/at+jwt` だけを受け、ほかの値のトークンを断るよう求めるが、Entra ID のアクセストークンの `typ` は常に `JWT` なので（https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference ）、`JWT` も受ける。これは §4 からの意図した逸脱で、ID トークンを受けない守りは `aud`（下の起動の確かめ）が受け持つ。JWS の形でない値と、暗号化したトークン（JWE）は断る。
   - `iss` が `oidc.issuer` と文字列で一致し（`ValidIssuer`）、`aud` が `oidc.audience` を含む（`ValidAudience`）。
   - `exp` を求め（`RequireExpirationTime`）、`exp` と `nbf` を、サービスの `TimeProvider` の今の時刻で、時計の差 60 秒まで認めて確かめる。期限の確かめは、ライブラリーの時計でなく、サービスの時計を渡す関数（`LifetimeValidator`）で行う。
   - クレームの名前を書き換えない（`MapInboundClaims = false`）。`sub` と `oidc.roleClaim` を、トークンのままの名前で読むためである。
@@ -2523,7 +2536,7 @@ OIDC のアクセストークン（M5a、0.98）:
 - discovery と鍵:
   - discovery の URL は、`oidc.issuer` の末尾の `/` を除いて `/.well-known/openid-configuration` を足したもの（OpenID Connect Discovery 1.0 §4）。discovery の `issuer` が `oidc.issuer` と一致し、`jwks_uri` が https（ループバックの http は可）であること。違えば鍵を取れないものとして扱う。
   - 取り方: 転送を追わず、時間切れは 30 秒、応答は 256 KiB まで（外から来る入力）。https を求める（`RequireHttpsMetadata`。ループバックの http の発行者のときだけ外す）。
-  - 12 時間ごとに取り直し（`AutomaticRefreshInterval`）、知らない `kid` を見たら取り直す（`RefreshOnIssuerKeyNotFound`、5 分に 1 回まで、`RefreshInterval`）。そのトークンの要求は `401` で、取り直した後の要求から通る（JwtBearer は、取り直しを頼んだ要求を失敗させる。M5a のテストで確かめた）。取り直しに失敗したら、前に取れた鍵を使い続け、5 分後にまた取りに行く。起動の後、一度も取れていない間は、すべてのトークンが `401` である。
+  - 12 時間ごとに取り直し（`AutomaticRefreshInterval`）、知らない `kid` を見たら取り直す（`RefreshOnIssuerKeyNotFound`、5 分に 1 回まで、`RefreshInterval`）。そのトークンの要求は `401` で、取り直しが終わった後の要求から通る（JwtBearer は取り直しを頼んだ要求を失敗させ、`Microsoft.IdentityModel` は前の鍵を持っている間、取り直しを裏で行う。M5a のテストで確かめた）。取り直しに失敗したら、前に取れた鍵を使い続け、5 分後にまた取りに行く。起動の後、一度も取れていない間は、すべてのトークンが `401` である。
 - IdP の側の設定: アクセストークンの `aud` に `oidc.audience` が入るよう IdP を設定する。Keycloak はクライアントのスコープに audience のマッパーを足す（テストの realm もそうする）。Entra ID と Auth0 は、資源のスコープ（または `audience` の値）を `oidc.cliScopes` に入れないと、サービスのためのトークンを出さない。
 - 役割: `oidc.roleClaim` はトップレベルのクレームの名前で、ネストしたパス（Keycloak の `realm_access.roles` など）は読まない（IdP の側で、トップレベルのクレームに出すマッパーを置く）。値は文字列か文字列の配列で、ほかの型の値は無視する。値が 100 個を超えるトークンは `401`。各値を `oidc.roleMap` で役割にし、複数あれば強い方（`owner` > `admin` > `support` > `viewer`）を取る。
 - 最後のログイン: 認証が通り、`last_login_at` がないか今より 1 時間以上前なら、今の時刻を書く（要求ごとに書かない）。M5b の画面のログインも同じ列を書く。
@@ -2981,7 +2994,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | --- | --- | --- | --- |
 | （BCL のみ） | `ElasticLM.Licensing`, `ElasticLM.Client`, `ElasticLM.Native` | アプリに入る部品は外部の依存を持たない | — |
 | ASP.NET Core（共有フレームワーク） | `ElasticLM.Server`, `ElasticLM.Service` | HTTP サーバー | 対応（Slim ビルダー）。M3b の `elm-server` で警告 0 件、11.4 MB（win-x64）。ランタイムパックの IIS のモジュール（`aspnetcorev2_inprocess.dll`）は公開から外す |
-| `Microsoft.AspNetCore.Authentication.JwtBearer` | `ElasticLM.Service` | CLI のアクセストークンの検証 | D0 で警告 0 件 |
+| `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.14 | `ElasticLM.Service` | 管理 API の OIDC のアクセストークンの検証（§14.6、M5a）。MIT。`Microsoft.IdentityModel.*` 8.x と `System.IdentityModel.Tokens.Jwt` を連れてくる | D0 と M5a で警告 0 件。`elm-service` が +5.3 MB（22,136,832 から 27,478,016 バイト、win-x64、内訳は §4.2） |
 | `Microsoft.AspNetCore.Authentication.OpenIdConnect` | `ElasticLM.Service` | 管理画面の BFF | D0 で警告 0 件（§15.3） |
 | `Microsoft.Extensions.FileProviders.Embedded` | `ElasticLM.Service` | 管理画面の配信 | D0 で警告 0 件 |
 | `Npgsql` 10.0.3 | `ElasticLM.Service` | PostgreSQL。`NpgsqlSlimDataSourceBuilder` を使う。PostgreSQL License | D0 と M4a1 で警告 0 件 |
