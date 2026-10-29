@@ -1,0 +1,22 @@
+{
+  "name": "preact-lean",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "preact": "^11.0.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "happy-dom": "^21.0.4",
+    "typescript": "~7.0.2",
+    "vite": "^8.3.5",
+    "vitest": "^4.1.11"
+  }
+}
