@@ -27,6 +27,8 @@ internal static class Permissions
     public const string TrialDelete = "trial.delete";
     public const string LeaseRead = "lease.read";
     public const string LeaseRelease = "lease.release";
+    public const string UsageLogRead = "usagelog.read";
+    public const string UsageLogSeal = "usagelog.seal";
 
     public const string RoleOwner = "owner";
     public const string RoleAdmin = "admin";
@@ -57,6 +59,8 @@ internal static class Permissions
         TrialDelete,
         LeaseRead,
         LeaseRelease,
+        UsageLogRead,
+        UsageLogSeal,
     ];
 
     /// <summary>

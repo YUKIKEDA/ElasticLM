@@ -143,8 +143,8 @@ internal abstract partial class Database
     );
 
     /// <summary>Removes the leases that expired and the early returns older than a time (design §14.4).</summary>
-    /// <returns>The rows removed.</returns>
-    public abstract Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken);
+    /// <returns>The leases removed, for the usage log's expiry lines (design §18.1): each by the one node that removed it.</returns>
+    public abstract Task<IReadOnlyList<LeaseRow>> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken);
 
     /// <summary>Removes the stored answers of offline requests that expired before a time (design §12.8.4).</summary>
     /// <returns>The rows removed.</returns>

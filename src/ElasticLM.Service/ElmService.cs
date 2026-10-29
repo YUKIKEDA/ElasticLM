@@ -23,6 +23,9 @@ internal sealed class ServiceHostOptions
     public Func<string, string?> Environment { get; init; } = System.Environment.GetEnvironmentVariable;
 
     public LogLevel MinimumLogLevel { get; init; } = LogLevel.Information;
+
+    /// <summary>Gets a wrapper around the usage log's access to the signing key, so tests can make a write fail.</summary>
+    public Func<SigningKeyAccess, SigningKeyAccess>? WrapUsageLogKey { get; init; }
 }
 
 /// <summary>
@@ -36,6 +39,7 @@ internal sealed partial class ElmService : IAsyncDisposable
     private static readonly TimeSpan ProofPurgeInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DenialInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan RetentionInterval = TimeSpan.FromHours(1);
+    private static readonly TimeSpan UsageSealInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan CertificateWarning = TimeSpan.FromDays(30);
 
     private readonly WebApplication _app;
@@ -56,7 +60,10 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly PeriodicWork _denialWork;
     private readonly PeriodicWork _proofWork;
     private readonly PeriodicWork _retentionWork;
+    private readonly PeriodicWork _usageWork;
+    private readonly ServiceUsageLog? _usage;
     private long _denials;
+    private ITimer? _usageTimer;
     private ITimer? _purge;
     private ITimer? _denialTimer;
     private ITimer? _retention;
@@ -75,10 +82,12 @@ internal sealed partial class ElmService : IAsyncDisposable
         TrustStore trust,
         X509Certificate2? tls,
         TimeProvider time,
-        ILogger log
+        ILogger log,
+        ServiceUsageLog? usage
     )
     {
         _app = app;
+        _usage = usage;
         _settings = settings;
         Database = database;
         _signingKey = signingKey;
@@ -102,6 +111,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         _denialWork = new PeriodicWork(WriteDenialsAsync);
         _proofWork = new PeriodicWork(RemoveOldProofsAsync);
         _retentionWork = new PeriodicWork(RemoveOldAuditAsync);
+        _usageWork = new PeriodicWork(SealUsageAsync);
     }
 
     /// <summary>Gets the URL the service answers on.</summary>
@@ -134,6 +144,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         (ECDsa signingKey, IReadOnlyList<string> certificates, SigningKeyStatus signing) = ReadSigningKey(settings, trust, host);
         var disposables = new List<IAsyncDisposable>();
         X509Certificate2? tls = null;
+        ServiceUsageLog? usage = null;
         try
         {
             Database database = Database.Create(settings.Database, settings.ConnectionString);
@@ -158,7 +169,30 @@ internal sealed partial class ElmService : IAsyncDisposable
             WebApplication app = Build(settings, tls, host);
             disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
-            var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log);
+
+            // design §18.1, 0.95: this node's usage log, signed with the signing key, whose certificates verify it.
+            if (settings.UsageLogDirectory is string usageDirectory)
+            {
+                ECDsa key = signingKey;
+                try
+                {
+                    SigningKeyAccess access = use => use(key);
+                    usage = ServiceUsageLog.Open(
+                        usageDirectory,
+                        settings.NodeName,
+                        host.WrapUsageLogKey?.Invoke(access) ?? access,
+                        certificates,
+                        host.Time,
+                        log
+                    );
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    throw new ServiceStartException($"The usage log cannot be written in '{usageDirectory}': {e.Message}");
+                }
+            }
+
+            var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log, usage);
             service.MapAdmin();
             try
             {
@@ -175,6 +209,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
         catch
         {
+            usage?.Dispose();
             tls?.Dispose();
             signingKey.Dispose();
             foreach (IAsyncDisposable disposable in Enumerable.Reverse(disposables))
@@ -200,7 +235,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         _stopped = true;
-        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention, _proofPurge })
+        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention, _proofPurge, _usageTimer })
         {
             if (timer is not null)
             {
@@ -212,13 +247,22 @@ internal sealed partial class ElmService : IAsyncDisposable
         await WaitForTimersAsync().ConfigureAwait(false);
         await _app.StopAsync().ConfigureAwait(false);
         await WriteDenialsAsync().ConfigureAwait(false);
+        if (_usage is not null)
+        {
+            // design §18.1: the counted refusals, the stop, and the last signature before the file is closed.
+            _usage.WriteDenials();
+            _usage.Write("service.stopped", w => w.WriteString("node", _settings.NodeName));
+            _usage.Dispose();
+        }
+
         ServiceLog.Stopped(_log);
     }
 
     /// <summary>Waits for the timers' work that has started (the denial count, the jti records, retention) to end.</summary>
     internal async Task WaitForTimersAsync()
     {
-        await Task.WhenAll(_denialWork.WhenIdleAsync(), _proofWork.WhenIdleAsync(), _retentionWork.WhenIdleAsync()).ConfigureAwait(false);
+        await Task.WhenAll(_denialWork.WhenIdleAsync(), _proofWork.WhenIdleAsync(), _retentionWork.WhenIdleAsync(), _usageWork.WhenIdleAsync())
+            .ConfigureAwait(false);
     }
 
     public async ValueTask DisposeAsync()
@@ -271,7 +315,8 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
     }
 
-    // design §14.8, decision 0.75: one signing key, read at the start; its certificates must let it sign licenses and leases now.
+    // design §14.8, decision 0.75: one signing key, read at the start; its certificates must let it sign licenses and leases now,
+    // and logs too when the usage log is written (decision 0.95).
     private static (ECDsa Key, IReadOnlyList<string> Certificates, SigningKeyStatus Status) ReadSigningKey(
         ServiceSettings settings,
         TrustStore trust,
@@ -308,7 +353,7 @@ internal sealed partial class ElmService : IAsyncDisposable
                 key!,
                 certificates,
                 trust,
-                KeyUses.License | KeyUses.Lease,
+                settings.UsageLogDirectory is null ? KeyUses.License | KeyUses.Lease : KeyUses.License | KeyUses.Lease | KeyUses.Log,
                 host.Time.GetUtcNow(),
                 out SigningKeyStatus? status,
                 out string? problem
@@ -380,6 +425,18 @@ internal sealed partial class ElmService : IAsyncDisposable
             ServiceLog.CertificateEndsSoon(_log, Signing.ExpiresAt);
         }
 
+        if (_usage is not null)
+        {
+            _usage.Write("service.started", w => w.WriteString("node", _settings.NodeName));
+            _usageTimer = Time.CreateTimer(_ => _usageWork.TryStart(), null, UsageSealInterval, UsageSealInterval);
+            string files = Path.Combine(_usage.Directory, _usage.BaseName + "-*.jsonl");
+            ServiceLog.UsageLogAt(_log, files);
+        }
+        else
+        {
+            ServiceLog.UsageLogAt(_log, "not written (usageLog.directory is not set)");
+        }
+
         ServiceLog.Started(_log, Url, _settings.Database, Signing.KeyId, Signing.ExpiresAt, (long)startup.TotalMilliseconds);
     }
 
@@ -400,14 +457,46 @@ internal sealed partial class ElmService : IAsyncDisposable
             long now = Time.GetUtcNow().ToUnixTimeSeconds();
             await Database.RemoveProofsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
             await Database.RemoveOfflineRequestsBeforeAsync(now, CancellationToken.None).ConfigureAwait(false);
-            await Database
+            IReadOnlyList<LeaseRow> expired = await Database
                 .RemoveOldLeasesAsync(now, now - (long)ElasticLM.Leasing.LeaseRules.ReturnWindow.TotalSeconds, CancellationToken.None)
                 .ConfigureAwait(false);
+            await WriteExpiredAsync(expired).ConfigureAwait(false);
         }
         catch (Exception e) when (e is System.Data.Common.DbException or InvalidOperationException)
         {
             ServiceLog.PeriodicFailed(_log, e);
         }
+    }
+
+    // design §18.1, 0.95: one line for each lease the sweep removed; only the node that removed a row sees it, so it is
+    // written once.
+    private async Task WriteExpiredAsync(IReadOnlyList<LeaseRow> expired)
+    {
+        if (_usage is null || expired.Count == 0)
+        {
+            return;
+        }
+
+        var products = new Dictionary<Guid, string>();
+        foreach (LeaseRow lease in expired)
+        {
+            if (!products.TryGetValue(lease.LicenseId, out string? code))
+            {
+                (_, ProductRow product) = await PolicyAndProductAsync(lease.LicenseId, CancellationToken.None).ConfigureAwait(false);
+                code = product.Code;
+                products[lease.LicenseId] = code;
+            }
+
+            _usage.Lease(lease.Borrow ? "borrow.expired" : "lease.expired", lease, code);
+        }
+    }
+
+    // The usage log's minute (design §18.1): the counted refusals, then a signature over the pending lines.
+    private Task SealUsageAsync()
+    {
+        _usage?.WriteDenials();
+        _usage?.Seal();
+        return Task.CompletedTask;
     }
 
     // The service records each jti in its database (RecordProofAsync), where every node sees it.

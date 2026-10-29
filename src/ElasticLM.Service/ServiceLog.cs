@@ -45,4 +45,10 @@ internal static partial class ServiceLog
 
     [LoggerMessage(EventId = 8, Level = LogLevel.Error, Message = "A license file or a lease could not be signed: {Reason}")]
     public static partial void IssueFailed(ILogger log, string reason);
+
+    [LoggerMessage(EventId = 9, Level = LogLevel.Error, Message = "The usage log cannot be written; the request goes on.")]
+    public static partial void UsageLogFailed(ILogger log, Exception exception);
+
+    [LoggerMessage(EventId = 10, Level = LogLevel.Information, Message = "usage log: {Where}")]
+    public static partial void UsageLogAt(ILogger log, string where);
 }

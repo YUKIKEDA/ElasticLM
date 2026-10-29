@@ -668,6 +668,189 @@ public sealed class SignedLogTests : IDisposable
         Assert.Empty(Verify(files).Issues);
     }
 
+    /// <summary>
+    /// A log of <c>elm-service</c> carries the certificates of its signing key instead of a server license, and verifies
+    /// across a restart without a product (design §18.1, decision 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A certificate of the signing key for license, lease, and log; a log signed every 3 lines with it.
+    ///
+    /// Steps:
+    /// - Append 4 events; dispose; reopen and append 1; read the first line; verify with no product, then with a product.
+    ///
+    /// Expected:
+    /// - The first line has "certificates" with the certificate and no "license" or "key"; no issue either way; 5 signed
+    ///   entries; the files' key is the signing key with no license ID.
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_Certificates_VerifyWithoutProduct()
+    {
+        string certificate = Certificate(_signing, KeyUses.License | KeyUses.Lease | KeyUses.Log);
+        using (SignedLog log = OpenService(certificate, _signing, sealEvery: 3))
+        {
+            Append(log, 4);
+        }
+
+        using (SignedLog log = OpenService(certificate, _signing))
+        {
+            Append(log, 1);
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        using (var first = System.Text.Json.JsonDocument.Parse(File.ReadLines(files[0]).First()))
+        {
+            Assert.Equal(
+                (certificate, false, false),
+                (
+                    first.RootElement.GetProperty("certificates").EnumerateArray().Single().GetString(),
+                    first.RootElement.TryGetProperty("license", out _),
+                    first.RootElement.TryGetProperty("key", out _)
+                )
+            );
+        }
+
+        foreach (string? product in new[] { null, "acme-cad" })
+        {
+            LogReport report = LogVerifier.Verify(files, _trust, product, "usage");
+            Assert.Empty(report.Issues);
+            Assert.Equal(5, report.Entries.Count(e => e.IsSigned));
+            Assert.All(report.Files, f => Assert.Equal((null, KeyFiles.KeyId(_signing)), (f.LicenseId, f.KeyId)));
+        }
+    }
+
+    /// <summary>
+    /// A service log is refused when no certificate on its first line is certified for log by the trust store at the line's
+    /// time, or when a signature is made with a key the certificates do not name.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Certificates of the signing key: for license and lease only; for log from another root; for log from tomorrow; for
+    ///   log (good). A log signed with another key under the good certificate.
+    ///
+    /// Steps:
+    /// - Write a log with each certificate and verify it alone with no product.
+    ///
+    /// Expected:
+    /// - "No certificate on the line is certified for log by the trust store at the line's time." three times; "The
+    ///   signature is not made with a key certified for log." for the other key.
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_UncertifiedKey_IsRefused()
+    {
+        using ECDsa otherRoot = KeyFiles.CreateKey();
+        const string NoLog = "No certificate on the line is certified for log by the trust store at the line's time.";
+        (string Certificate, ECDsa Signer, string Message)[] cases =
+        [
+            (Certificate(_signing, KeyUses.License | KeyUses.Lease), _signing, NoLog),
+            (CertificateIssuer.Issue(otherRoot, _signing, KeyUses.Log, Now.AddDays(-1), TimeSpan.FromDays(365), _time), _signing, NoLog),
+            (Certificate(_signing, KeyUses.Log, Now.AddDays(1)), _signing, NoLog),
+            (Certificate(_signing, KeyUses.Log), _server, "The signature is not made with a key certified for log."),
+        ];
+        foreach ((string certificate, ECDsa signer, string message) in cases)
+        {
+            foreach (string file in Directory.EnumerateFiles(_dir))
+            {
+                File.Delete(file);
+            }
+
+            using (SignedLog log = OpenService(certificate, signer))
+            {
+                Append(log, 2);
+            }
+
+            LogIssue error = Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
+            Assert.Equal((LogIssueSeverity.Error, message), (error.Severity, error.Message));
+        }
+    }
+
+    /// <summary>
+    /// A service log whose next file is signed by another key certified for log is a warning (a replaced signing key); a
+    /// service file after a server's file is an error; a server's log verified without a product is an error.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Two signing keys, each certified for log.
+    ///
+    /// Steps:
+    /// - Write a file with the first key, restart with the second, verify with no product. In another folder write a
+    ///   server's file, then a service file, and verify with the product. Verify the server's file alone with no product.
+    ///
+    /// Expected:
+    /// - One warning, "The file is signed by another key certified for log than …: the signing key was replaced."; the error
+    ///   "… a server's and the service's logs are mixed."; the error "The line carries a server license, and no product was
+    ///   given to verify it.".
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_KeyReplacedOrMixed_IsReported()
+    {
+        using ECDsa replacement = KeyFiles.CreateKey();
+        using (SignedLog log = OpenService(Certificate(_signing, KeyUses.Log), _signing))
+        {
+            Append(log, 1);
+        }
+
+        using (SignedLog log = OpenService(Certificate(replacement, KeyUses.Log), replacement))
+        {
+            Append(log, 1);
+        }
+
+        LogIssue replaced = Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
+        Assert.Equal(
+            (
+                LogIssueSeverity.Warning,
+                $"The file is signed by another key certified for log than {KeyFiles.KeyId(_signing)}: the signing key was replaced."
+            ),
+            (replaced.Severity, replaced.Message)
+        );
+
+        foreach (string file in Directory.EnumerateFiles(_dir))
+        {
+            File.Delete(file);
+        }
+
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string serverFile = SignedLog.FindFiles(_dir, "usage").Single();
+        Assert.Equal(
+            "The line carries a server license, and no product was given to verify it.",
+            Assert.Single(LogVerifier.Verify([serverFile], _trust, null, "usage").Issues).Message
+        );
+        using (SignedLog log = OpenService(Certificate(_signing, KeyUses.Log), _signing))
+        {
+            Append(log, 1);
+        }
+
+        LogIssue mixed = Assert.Single(Verify().Issues);
+        Assert.Equal(LogIssueSeverity.Error, mixed.Severity);
+        Assert.EndsWith("a server's and the service's logs are mixed.", mixed.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The certificates of a service log are one to four, none empty.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - None.
+    ///
+    /// Steps:
+    /// - Make the material with no certificate, five, and an empty one; with four.
+    ///
+    /// Expected:
+    /// - ArgumentException three times; the last is made.
+    /// </remarks>
+    [Fact]
+    public void LogKeyMaterial_Certificates_AreChecked()
+    {
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates([]));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", "b", "c", "d", "e"]));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", string.Empty]));
+        Assert.NotNull(LogKeyMaterial.Certificates(["a", "b", "c", "d"]));
+    }
+
     private static void Append(SignedLog log, int count)
     {
         for (int i = 0; i < count; i++)
@@ -689,6 +872,12 @@ public sealed class SignedLogTests : IDisposable
 
     private SignedLog Open(int sealEvery = 100) =>
         SignedLog.Open(_dir, "usage", "usage", Access(_server), LicenseFile(_server), KeyFiles.ExportPublicJwk(_server), _time, sealEvery);
+
+    private SignedLog OpenService(string certificate, ECDsa signer, int sealEvery = 100) =>
+        SignedLog.Open(_dir, "usage", "usage", Access(signer), LogKeyMaterial.Certificates([certificate]), _time, sealEvery);
+
+    private string Certificate(ECDsa key, KeyUses uses, DateTimeOffset? notBefore = null) =>
+        CertificateIssuer.Issue(_root, key, uses, notBefore ?? Now.AddDays(-1), TimeSpan.FromDays(365), _time);
 
     private LogReport Verify(IReadOnlyList<string>? files = null) =>
         LogVerifier.Verify(files ?? SignedLog.FindFiles(_dir, "usage"), _trust, "acme-cad", "usage");

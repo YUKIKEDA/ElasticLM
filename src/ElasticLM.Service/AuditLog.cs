@@ -189,4 +189,7 @@ internal static class AuditActions
     public const string LeaseClone = "lease.clone";
     public const string LeaseList = "lease.list";
     public const string LeaseRelease = "lease.release";
+    public const string UsageLogList = "usagelog.list";
+    public const string UsageLogGet = "usagelog.get";
+    public const string UsageLogSeal = "usagelog.seal";
 }

@@ -37,6 +37,12 @@ internal sealed class SettingsFile
 
     [JsonPropertyName("audit")]
     public AuditSection? Audit { get; set; }
+
+    [JsonPropertyName("usageLog")]
+    public UsageLogSection? UsageLog { get; set; }
+
+    [JsonPropertyName("node")]
+    public NodeSection? Node { get; set; }
 }
 
 /// <summary><c>tls</c>: PEM files of the certificate and its key.</summary>
@@ -125,6 +131,22 @@ internal sealed class AuditSection
 {
     [JsonPropertyName("retentionDays")]
     public int? RetentionDays { get; set; }
+}
+
+/// <summary><c>usageLog</c>: the folder of the usage log (design §18.1, decision 0.95).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class UsageLogSection
+{
+    [JsonPropertyName("directory")]
+    public string? Directory { get; set; }
+}
+
+/// <summary><c>node</c>: this node's name, part of its usage log's file names (decision 0.95).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class NodeSection
+{
+    [JsonPropertyName("name")]
+    public string? Name { get; set; }
 }
 
 /// <summary>
@@ -339,6 +361,19 @@ internal sealed record LeaseItem(
     [property: JsonPropertyName("createdAt")] string CreatedAt
 );
 
+/// <summary>A file of this node's usage log (design §14.5, §18.1).</summary>
+internal sealed record UsageLogFileItem(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("size")] long Size,
+    [property: JsonPropertyName("modifiedAt")] string ModifiedAt
+);
+
+/// <summary>This node's usage log files, oldest first.</summary>
+internal sealed record UsageLogFiles(
+    [property: JsonPropertyName("node")] string Node,
+    [property: JsonPropertyName("items")] UsageLogFileItem[] Items
+);
+
 /// <summary>A page of leases.</summary>
 internal sealed record LeasePage([property: JsonPropertyName("items")] LeaseItem[] Items, [property: JsonPropertyName("next")] string? Next);
 
@@ -395,6 +430,7 @@ internal sealed record Problem(
 [JsonSerializable(typeof(ActivationItem))]
 [JsonSerializable(typeof(ActivationPage))]
 [JsonSerializable(typeof(LeasePage))]
+[JsonSerializable(typeof(UsageLogFiles))]
 [JsonSerializable(typeof(TrialItem))]
 [JsonSerializable(typeof(TrialPage))]
 [JsonSerializable(typeof(Dictionary<string, string>))]

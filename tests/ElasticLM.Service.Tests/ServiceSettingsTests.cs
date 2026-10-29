@@ -268,6 +268,57 @@ public sealed class ServiceSettingsTests : IDisposable
         );
     }
 
+    /// <summary>
+    /// The usage log's folder and the node name (design §14.8, decision 0.95) come from the file or a variable, which wins;
+    /// without them no log is written and the node is named after the host; a node name is 1 to 64 characters of
+    /// [A-Za-z0-9-].
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Settings files written in the test.
+    ///
+    /// Steps:
+    /// - Load a file with usageLog.directory "logs" and node.name "node-1"; load it with ELM_USAGELOG_DIRECTORY and
+    ///   ELM_NODE_NAME set; load a file without them; load names of 64 and 65 characters, "a_b", and empty values.
+    ///
+    /// Expected:
+    /// - logs and node-1; the variables' values; no folder and a valid default name; the 64-character name loads; the others
+    ///   are refused with "node.name must be 1 to 64 characters of A-Z, a-z, 0-9, and '-': …" or "… must not be empty;
+    ///   leave it out instead.".
+    /// </remarks>
+    [Fact]
+    public void Load_UsageLogAndNode_AreRead()
+    {
+        string path = Write(Base(",\"usageLog\":{\"directory\":\"logs\"},\"node\":{\"name\":\"node-1\"}"));
+        ServiceSettings file = ServiceSettings.Load(path, _ => null);
+        Assert.Equal(("logs", "node-1"), (file.UsageLogDirectory, file.NodeName));
+        var environment = new Dictionary<string, string> { ["ELM_USAGELOG_DIRECTORY"] = "other", ["ELM_NODE_NAME"] = "N2" };
+        ServiceSettings env = ServiceSettings.Load(path, name => environment.GetValueOrDefault(name));
+        Assert.Equal(("other", "N2"), (env.UsageLogDirectory, env.NodeName));
+        ServiceSettings defaults = ServiceSettings.Load(Write(Base()), _ => null);
+        Assert.Null(defaults.UsageLogDirectory);
+        Assert.True(ServiceSettings.IsNodeName(defaults.NodeName));
+
+        string longest = new('n', 64);
+        Assert.Equal(longest, ServiceSettings.Load(Write(Base($",\"node\":{{\"name\":\"{longest}\"}}")), _ => null).NodeName);
+        foreach (string name in new[] { longest + "n", "a_b" })
+        {
+            Assert.Equal(
+                $"node.name must be 1 to 64 characters of A-Z, a-z, 0-9, and '-': '{name}'.",
+                Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base($",\"node\":{{\"name\":\"{name}\"}}")), _ => null)).Message
+            );
+        }
+
+        Assert.Equal(
+            "node.name must not be empty; leave it out instead.",
+            Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(",\"node\":{\"name\":\"\"}")), _ => null)).Message
+        );
+        Assert.Equal(
+            "usageLog.directory must not be empty; leave it out instead.",
+            Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(",\"usageLog\":{\"directory\":\"\"}")), _ => null)).Message
+        );
+    }
+
     // The values a test compares, as one line.
     private static string Shape(ServiceSettings settings) =>
         string.Join(

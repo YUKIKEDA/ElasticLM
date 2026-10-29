@@ -48,6 +48,11 @@ internal sealed partial class ElmService
                 return;
             }
 
+            if (result.Error is null)
+            {
+                result.After?.Invoke();
+            }
+
             if (result.Error is ErrorCode code)
             {
                 await ProblemAsync(context, code, result.Message!).ConfigureAwait(false);
@@ -854,6 +859,12 @@ internal sealed partial class ElmService
     /// proof check already answered.</summary>
     private sealed record ClientResult(int Status, ErrorCode? Error, string? Message, Guid ActivationId, byte[]? File, byte[]? Answer = null)
     {
+        /// <summary>Gets the feature a refused lease request named, for the usage log's count (design §18.1).</summary>
+        public string? Feature { get; init; }
+
+        /// <summary>Gets what runs after the request's transaction committed and before the answer: its usage log line.</summary>
+        public Action? After { get; init; }
+
         public static ClientResult Answered { get; } = new(0, null, null, Guid.Empty, null);
 
         public static ClientResult Fail(ErrorCode code, string message) => new(0, code, message, Guid.Empty, null);

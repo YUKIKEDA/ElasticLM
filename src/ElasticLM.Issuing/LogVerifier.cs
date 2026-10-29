@@ -36,12 +36,13 @@ public sealed record LogIssue(string File, int Line, LogIssueSeverity Severity, 
 public sealed record LogEntry(string File, int Line, string Type, JsonElement Value, bool IsSigned);
 
 /// <summary>
-/// The server license and key that sign the end of a verified file.
+/// The key that signs the end of a verified file.
 /// </summary>
 /// <param name="File">The file name.</param>
-/// <param name="LicenseId">The server license ID.</param>
-/// <param name="KeyId">The thumbprint of the server's key (the license's <c>cnf.jkt</c>).</param>
-public sealed record LogFileKey(string File, string LicenseId, string KeyId);
+/// <param name="LicenseId">The server license ID, or <see langword="null"/> for a log of <c>elm-service</c>, whose key is
+/// certified for <c>log</c> instead (decision 0.95).</param>
+/// <param name="KeyId">The thumbprint of the key: the server license's <c>cnf.jkt</c>, or the service's signing key.</param>
+public sealed record LogFileKey(string File, string? LicenseId, string KeyId);
 
 /// <summary>
 /// The result of <see cref="LogVerifier.Verify"/>.
@@ -56,10 +57,12 @@ public sealed record LogReport(IReadOnlyList<LogIssue> Issues, IReadOnlyList<Log
 }
 
 /// <summary>
-/// Verifies the files of a signed log (design §8.4.6, §18.1): each file's first line and the server license in it, every
-/// signature, the numbering and the links between signatures and between files, key changes signed by the old key, and that
-/// each file is signed by the key that signed the end of the file before it. A file signed by another key of the same
-/// server license (a server moved to a new machine) is a warning; a key of another server license is an error.
+/// Verifies the files of a signed log (design §8.4.6, §18.1): each file's first line and what it carries (a server license
+/// and key, or the certificates of <c>elm-service</c>'s signing key), every signature, the numbering and the links between
+/// signatures and between files, key changes signed by the old key, and that each file is signed by the key that signed the
+/// end of the file before it. A file signed by another key of the same server license (a server moved to a new machine), or
+/// by another key certified for <c>log</c> (a replaced signing key of the service), is a warning; a key of another server
+/// license, or a change between the two kinds, is an error.
 /// </summary>
 public static class LogVerifier
 {
@@ -71,14 +74,14 @@ public static class LogVerifier
     /// </summary>
     /// <param name="files">The file paths, oldest first.</param>
     /// <param name="trust">The vendor's trust store.</param>
-    /// <param name="productId">The product of the server license.</param>
+    /// <param name="productId">The product of the server license, needed for a server's log; <see langword="null"/> for a
+    /// log of <c>elm-service</c>, which serves many products. A server's log without it is an error.</param>
     /// <param name="stream">The expected stream name, such as <c>usage</c>.</param>
     /// <returns>The findings and the event lines.</returns>
-    public static LogReport Verify(IReadOnlyList<string> files, TrustStore trust, string productId, string stream)
+    public static LogReport Verify(IReadOnlyList<string> files, TrustStore trust, string? productId, string stream)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(trust);
-        ArgumentException.ThrowIfNullOrEmpty(productId);
         ArgumentException.ThrowIfNullOrEmpty(stream);
         var issues = new List<LogIssue>();
         var entries = new List<LogEntry>();
@@ -95,7 +98,7 @@ public static class LogVerifier
         string path,
         string? previousName,
         TrustStore trust,
-        string productId,
+        string? productId,
         string stream,
         ChainState state,
         List<LogIssue> issues,
@@ -129,8 +132,8 @@ public static class LogVerifier
             return;
         }
 
-        ServerIdentity? key = null;
-        ServerIdentity? nextKey = null;
+        LogSigner? key = null;
+        LogSigner? nextKey = null;
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         int covered = 0;
         var pendingEntries = new List<LogEntry>();
@@ -230,7 +233,7 @@ public static class LogVerifier
         {
             if (key is not null)
             {
-                state.Files.Add(new LogFileKey(name, key.License.LicenseId, key.KeyId));
+                state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId));
             }
 
             key?.Dispose();
@@ -238,19 +241,19 @@ public static class LogVerifier
         }
     }
 
-    // The first line of a file: chain.start (linked to the previous file when it is given) or chain.reset; either names the
-    // server license and key that verify the signatures.
+    // The first line of a file: chain.start (linked to the previous file when it is given) or chain.reset; either names what
+    // verifies the signatures.
     private static bool StartChain(
         JsonElement value,
         string type,
         string name,
         string? previousName,
         TrustStore trust,
-        string productId,
+        string? productId,
         string stream,
         ChainState state,
         Action<int, LogIssueSeverity, string> issue,
-        out ServerIdentity? key
+        out LogSigner? key
     )
     {
         key = null;
@@ -312,10 +315,27 @@ public static class LogVerifier
         }
 
         // design §18.1: a later file cannot be signed again with another server's key. Only the old key can endorse a new
-        // one (key.changed); a new machine of the same license cannot, so that is reported for the operator to explain.
-        if (previousName is not null && state.Files.Count > 0 && state.Files[^1] is LogFileKey last && last.KeyId != key.KeyId)
+        // one (key.changed); a new machine of the same license cannot, so that is reported for the operator to explain. The
+        // service's keys are certified by the vendor's root, so a replaced signing key is reported, not refused (0.95).
+        if (previousName is not null && state.Files.Count > 0 && state.Files[^1] is LogFileKey last && !key.Has(last.KeyId))
         {
-            if (last.LicenseId == key.License.LicenseId)
+            if ((last.LicenseId is null) != key.IsService)
+            {
+                issue(
+                    1,
+                    LogIssueSeverity.Error,
+                    $"The file is signed by another kind of key than '{last.File}': a server's and the service's logs are mixed."
+                );
+            }
+            else if (key.IsService)
+            {
+                issue(
+                    1,
+                    LogIssueSeverity.Warning,
+                    $"The file is signed by another key certified for log than {last.KeyId}: the signing key was replaced."
+                );
+            }
+            else if (last.LicenseId == key.LicenseId)
             {
                 issue(
                     1,
@@ -328,7 +348,7 @@ public static class LogVerifier
                 issue(
                     1,
                     LogIssueSeverity.Error,
-                    $"The file is signed by the key of server license {key.License.LicenseId}, not by the key of {last.LicenseId} that signed '{last.File}'."
+                    $"The file is signed by the key of server license {key.LicenseId}, not by the key of {last.LicenseId} that signed '{last.File}'."
                 );
             }
         }
@@ -336,9 +356,21 @@ public static class LogVerifier
         return true;
     }
 
-    // The server license and key on a chain or key line, verified at the time the line was written.
-    private static ServerIdentity? ReadKey(JsonElement value, TrustStore trust, string productId, out string? problem)
+    // What verifies the signatures on a chain or key line, verified at the time the line was written: the certificates of the
+    // service's signing key (use: log), or a server license and key.
+    private static LogSigner? ReadKey(JsonElement value, TrustStore trust, string? productId, out string? problem)
     {
+        if (value.TryGetProperty("certificates", out JsonElement certificates))
+        {
+            return ReadCertificates(value, certificates, trust, out problem);
+        }
+
+        if (string.IsNullOrEmpty(productId))
+        {
+            problem = "The line carries a server license, and no product was given to verify it.";
+            return null;
+        }
+
         if (
             !value.TryGetProperty("license", out JsonElement license)
             || license.ValueKind != JsonValueKind.Object
@@ -372,7 +404,50 @@ public static class LogVerifier
         }
 
         problem = null;
-        return identity;
+        return new LogSigner(identity!);
+    }
+
+    // design §18.1, 0.95: one to four certificates, of which those the trust store vouches for with use log at the line's
+    // time give the keys that may sign.
+    private static LogSigner? ReadCertificates(JsonElement value, JsonElement certificates, TrustStore trust, out string? problem)
+    {
+        problem = "The line does not carry one to four certificates and a time.";
+        if (
+            certificates.ValueKind != JsonValueKind.Array
+            || certificates.GetArrayLength() is 0 or > 4
+            || certificates.EnumerateArray().Any(c => c.ValueKind != JsonValueKind.String)
+            || !value.TryGetProperty("ts", out JsonElement ts)
+            || ts.ValueKind != JsonValueKind.Number
+            || !ts.TryGetInt64(out long seconds)
+        )
+        {
+            return null;
+        }
+
+        var keys = new List<VerificationKey>();
+        foreach (JsonElement certificate in certificates.EnumerateArray())
+        {
+            if (CertificateSet.TryVerify(trust, CertificateSet.UseLog, certificate.GetString()!, out CertifiedKey? entry))
+            {
+                if (seconds >= entry!.Nbf && seconds <= entry.Exp && !keys.Exists(k => k.KeyId == entry.Key.KeyId))
+                {
+                    keys.Add(entry.Key);
+                }
+                else
+                {
+                    entry.Key.Dispose();
+                }
+            }
+        }
+
+        if (keys.Count == 0)
+        {
+            problem = "No certificate on the line is certified for log by the trust store at the line's time.";
+            return null;
+        }
+
+        problem = null;
+        return new LogSigner(keys);
     }
 
     private static bool CheckAuth(
@@ -381,7 +456,7 @@ public static class LogVerifier
         IncrementalHash digest,
         int covered,
         string stream,
-        ServerIdentity key,
+        LogSigner key,
         ChainState state,
         out string? problem
     )
@@ -397,16 +472,16 @@ public static class LogVerifier
             return false;
         }
 
-        if (jws!.Header.Kid != key.KeyId || !key.Key.Verify(jws))
+        if (!key.Verify(jws!))
         {
-            problem = "The signature is not made with the server's key.";
+            problem = key.IsService ? "The signature is not made with a key certified for log." : "The signature is not made with the server's key.";
             return false;
         }
 
         LogPayload? payload;
         try
         {
-            payload = JsonSerializer.Deserialize(jws.Payload, LicensingJsonContext.Default.LogPayload);
+            payload = JsonSerializer.Deserialize(jws!.Payload, LicensingJsonContext.Default.LogPayload);
         }
         catch (JsonException)
         {
@@ -480,6 +555,53 @@ public static class LogVerifier
 
         partial = current.Length > 0;
         return lines;
+    }
+
+    // What may sign a file: a server's identity (its license and key), or the service's keys certified for log.
+    private sealed class LogSigner : IDisposable
+    {
+        private readonly ServerIdentity? _server;
+        private readonly List<VerificationKey> _keys = [];
+        private string? _signedBy;
+
+        public LogSigner(ServerIdentity server) => _server = server;
+
+        public LogSigner(List<VerificationKey> keys) => _keys = keys;
+
+        public bool IsService => _server is null;
+
+        public string? LicenseId => _server?.License.LicenseId;
+
+        // The key that signed last, or the first key that may sign.
+        public string KeyId => _server?.KeyId ?? _signedBy ?? _keys[0].KeyId;
+
+        public bool Has(string keyId) => _server is not null ? _server.KeyId == keyId : _keys.Exists(k => k.KeyId == keyId);
+
+        public bool Verify(CompactJws jws)
+        {
+            if (_server is not null)
+            {
+                return jws.Header.Kid == _server.KeyId && _server.Key.Verify(jws);
+            }
+
+            VerificationKey? key = _keys.Find(k => k.KeyId == jws.Header.Kid);
+            if (key is null || !key.Verify(jws))
+            {
+                return false;
+            }
+
+            _signedBy = key.KeyId;
+            return true;
+        }
+
+        public void Dispose()
+        {
+            _server?.Dispose();
+            foreach (VerificationKey key in _keys)
+            {
+                key.Dispose();
+            }
+        }
     }
 
     private sealed class ChainState

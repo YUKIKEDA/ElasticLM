@@ -207,14 +207,15 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override async Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken)
+    public override async Task<IReadOnlyList<LeaseRow>> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken)
     {
-        long leases = await _db.Delete(LeaseRow.Table).Where(l => Le(l.ExpiresAt, now)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
-        long returns = await _db.Delete(LeaseReturnRow.Table)
-            .Where(r => Lt(r.ReturnedAt, returnsBefore))
-            .ExecuteAsync(cancellationToken)
+        List<LeaseRow> leases = await _db.Delete(LeaseRow.Table)
+            .Where(l => Le(l.ExpiresAt, now))
+            .Returning(l => l)
+            .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return leases + returns;
+        await _db.Delete(LeaseReturnRow.Table).Where(r => Lt(r.ReturnedAt, returnsBefore)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        return leases;
     }
 
     public override async Task<long> RemoveOfflineRequestsBeforeAsync(long before, CancellationToken cancellationToken) =>

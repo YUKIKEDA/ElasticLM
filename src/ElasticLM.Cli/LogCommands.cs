@@ -6,7 +6,8 @@ using ElasticLM.Licensing;
 namespace ElasticLM.Cli;
 
 /// <summary>
-/// <c>elm log</c>: verifying the signed usage log and borrow record of a server (design §16, §18.1).
+/// <c>elm log</c>: verifying the signed usage log and borrow record of a server, and the usage log of <c>elm-service</c>
+/// (design §16, §18.1, decision 0.95).
 /// </summary>
 internal static class LogCommands
 {
@@ -17,7 +18,14 @@ internal static class LogCommands
             Description = "The log files, or a folder of them. They are verified in the order of their names (oldest first).",
             Arity = ArgumentArity.OneOrMore,
         };
-        var productOption = new Option<string>("--product") { Description = "The product ID of the server license.", Required = true };
+        var productOption = new Option<string>("--product")
+        {
+            Description = "The product ID of the server license; needed for a server's log, not for elm-service's.",
+        };
+        var nodeOption = new Option<string>("--node")
+        {
+            Description = "For a folder of elm-service's usage logs: the node whose files to verify (files usage-<node>-*.jsonl).",
+        };
         var streamOption = new Option<string>("--stream") { Description = "usage or borrows. Default: usage.", DefaultValueFactory = _ => "usage" };
         var trustOption = new Option<string[]>("--trust")
         {
@@ -26,10 +34,11 @@ internal static class LogCommands
         var revokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         Option<bool> jsonOption = CommonOptions.Json();
 
-        var verify = new Command("verify", "Verify the signatures and the chain of a server's log files.")
+        var verify = new Command("verify", "Verify the signatures and the chain of a server's or elm-service's log files.")
         {
             filesArgument,
             productOption,
+            nodeOption,
             streamOption,
             trustOption,
             revokedOption,
@@ -50,8 +59,14 @@ internal static class LogCommands
                         TrustKeys.Read(host, parse.GetValue(trustOption) ?? []),
                         parse.GetValue(revokedOption) ?? []
                     );
-                    string[] files = ExpandFiles(parse.GetValue(filesArgument)!, stream);
-                    LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption)!, stream);
+                    string? node = parse.GetValue(nodeOption);
+                    if (node is not null && (stream != "usage" || !IsNodeName(node)))
+                    {
+                        throw new CliException("--node must be 1 to 64 characters of A-Z, a-z, 0-9, and '-', for the usage stream.");
+                    }
+
+                    string[] files = ExpandFiles(parse.GetValue(filesArgument)!, node is null ? stream : $"{stream}-{node}");
+                    LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream);
                     if (parse.GetValue(jsonOption))
                     {
                         var output = new LogVerifyOutput(
@@ -87,10 +102,15 @@ internal static class LogCommands
             )
         );
 
-        return new Command("log", "Verify the signed logs of a license server.") { verify };
+        return new Command("log", "Verify the signed logs of a license server or of elm-service.") { verify };
     }
 
-    // A folder stands for the files of the stream in it; files are taken in name order, which is time order.
+    // design §14.8: a node name of elm-service, which is part of its usage log's file names.
+    private static bool IsNodeName(string node) =>
+        node.Length is >= 1 and <= 64 && node.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
+
+    // A folder stands for the files of the stream (or of one node's usage log) in it; files are taken in name order, which
+    // is time order.
     private static string[] ExpandFiles(string[] paths, string stream)
     {
         var files = new List<string>();

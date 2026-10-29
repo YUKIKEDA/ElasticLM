@@ -34,8 +34,9 @@ public static class LogLineTypes
 
 /// <summary>
 /// An append-only log in JSON Lines, closed every so often by a signed line (design §8.4.6, §18.1). Files rotate each UTC day
-/// and at each start; each file starts with a line that carries what verifies its signatures (the server license and the
-/// server's public key) and, when it can, a link to the last signature of the previous file.
+/// and at each start; each file starts with a line that carries what verifies its signatures (<see cref="LogKeyMaterial"/>:
+/// the server license and the server's public key, or the certificates of <c>elm-service</c>'s signing key) and, when it
+/// can, a link to the last signature of the previous file.
 /// </summary>
 /// <remarks>
 /// Every line is one compact JSON object followed by a line feed. A signature's <c>digest</c> is the SHA-256 of the bytes of
@@ -57,8 +58,7 @@ public sealed partial class SignedLog : IDisposable
     private readonly Lock _lock = new();
     private readonly Action<SignedLog>? _fileStarted;
     private SigningKeyAccess _key;
-    private byte[] _licenseFile;
-    private byte[] _keyJwk;
+    private LogKeyMaterial _material;
     private FileStream? _file;
     private string _fileName = string.Empty;
     private DateOnly _fileDay;
@@ -74,8 +74,7 @@ public sealed partial class SignedLog : IDisposable
         string baseName,
         string stream,
         SigningKeyAccess key,
-        byte[] licenseFile,
-        byte[] keyJwk,
+        LogKeyMaterial material,
         TimeProvider time,
         int sealEvery,
         Action<SignedLog>? fileStarted
@@ -85,8 +84,7 @@ public sealed partial class SignedLog : IDisposable
         _baseName = baseName;
         _stream = stream;
         _key = key;
-        _licenseFile = licenseFile;
-        _keyJwk = keyJwk;
+        _material = material;
         _time = time;
         _sealEvery = sealEvery;
         _fileStarted = fileStarted;
@@ -136,18 +134,44 @@ public sealed partial class SignedLog : IDisposable
         int sealEvery = 100,
         Action<SignedLog>? fileStarted = null,
         string? resetReason = null
+    ) => Open(directory, baseName, stream, key, LogKeyMaterial.ServerLicense(licenseFile, keyJwk), time, sealEvery, fileStarted, resetReason);
+
+    /// <summary>
+    /// Opens a log signed with a key that <paramref name="material"/> lets a reader verify, as
+    /// <see cref="Open(string, string, string, SigningKeyAccess, byte[], byte[], TimeProvider, int, Action{SignedLog}?, string?)"/> does.
+    /// </summary>
+    /// <param name="directory">The folder of the files.</param>
+    /// <param name="baseName">The file name prefix; files are named <c>{baseName}-{UTC time}.jsonl</c>.</param>
+    /// <param name="stream">The stream name in the signatures.</param>
+    /// <param name="key">Signs with the key.</param>
+    /// <param name="material">What verifies the key, written to the first line of each file.</param>
+    /// <param name="time">The time provider.</param>
+    /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
+    /// <param name="fileStarted">Called after the first line of each new file, under the log's lock.</param>
+    /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason.</param>
+    /// <returns>The open log.</returns>
+    /// <exception cref="IOException">The folder or the new file cannot be written.</exception>
+    public static SignedLog Open(
+        string directory,
+        string baseName,
+        string stream,
+        SigningKeyAccess key,
+        LogKeyMaterial material,
+        TimeProvider time,
+        int sealEvery = 100,
+        Action<SignedLog>? fileStarted = null,
+        string? resetReason = null
     )
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
         ArgumentException.ThrowIfNullOrEmpty(baseName);
         ArgumentException.ThrowIfNullOrEmpty(stream);
         ArgumentNullException.ThrowIfNull(key);
-        ArgumentNullException.ThrowIfNull(licenseFile);
-        ArgumentNullException.ThrowIfNull(keyJwk);
+        ArgumentNullException.ThrowIfNull(material);
         ArgumentNullException.ThrowIfNull(time);
         ArgumentOutOfRangeException.ThrowIfLessThan(sealEvery, 1);
         Directory.CreateDirectory(directory);
-        var log = new SignedLog(directory, baseName, stream, key, licenseFile, keyJwk, time, sealEvery, fileStarted);
+        var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, fileStarted);
         lock (log._lock)
         {
             IReadOnlyList<string> files = FindFiles(directory, baseName);
@@ -245,9 +269,8 @@ public sealed partial class SignedLog : IDisposable
     /// <exception cref="IOException">The change cannot be written.</exception>
     public void ChangeKey(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key, bool takeOnFailure)
     {
-        ArgumentNullException.ThrowIfNull(licenseFile);
-        ArgumentNullException.ThrowIfNull(keyJwk);
         ArgumentNullException.ThrowIfNull(key);
+        LogKeyMaterial material = LogKeyMaterial.ServerLicense(licenseFile, keyJwk);
         lock (_lock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -255,7 +278,7 @@ public sealed partial class SignedLog : IDisposable
             {
                 Guarded(() =>
                 {
-                    WriteLine(LogLineTypes.KeyChanged, w => WriteKeyMaterial(w, licenseFile, keyJwk));
+                    WriteLine(LogLineTypes.KeyChanged, material.Write);
                     WriteAuth();
                 });
             }
@@ -265,11 +288,11 @@ public sealed partial class SignedLog : IDisposable
             }
             catch (IOException)
             {
-                Take(licenseFile, keyJwk, key);
+                Take(material, key);
                 throw;
             }
 
-            Take(licenseFile, keyJwk, key);
+            Take(material, key);
         }
     }
 
@@ -303,14 +326,6 @@ public sealed partial class SignedLog : IDisposable
     }
 
     internal static string Hash(ReadOnlySpan<byte> bytes) => Base64UrlCodec.Encode(SHA256.HashData(bytes));
-
-    private static void WriteKeyMaterial(Utf8JsonWriter writer, byte[] licenseFile, byte[] keyJwk)
-    {
-        writer.WritePropertyName("license");
-        writer.WriteRawValue(licenseFile);
-        writer.WritePropertyName("key");
-        writer.WriteRawValue(keyJwk);
-    }
 
     // The last signature of a file, read from its end: (the hash of the line, its n), or a reason it has none.
     private static (string? Hash, long N, string? Problem) ReadLastAuth(string path)
@@ -391,11 +406,10 @@ public sealed partial class SignedLog : IDisposable
             DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
         );
 
-    private void Take(byte[] licenseFile, byte[] keyJwk, SigningKeyAccess key)
+    private void Take(LogKeyMaterial material, SigningKeyAccess key)
     {
         _key = key;
-        _licenseFile = licenseFile;
-        _keyJwk = keyJwk;
+        _material = material;
     }
 
     // Runs a write. After a failure the file is closed and the next write starts a new file with chain.reset; the lines
@@ -507,7 +521,7 @@ public sealed partial class SignedLog : IDisposable
                         w.WriteEndObject();
                     }
 
-                    WriteKeyMaterial(w, _licenseFile, _keyJwk);
+                    _material.Write(w);
                 }
             );
         }
@@ -519,7 +533,7 @@ public sealed partial class SignedLog : IDisposable
                 {
                     w.WriteString("stream", _stream);
                     w.WriteString("reason", reset);
-                    WriteKeyMaterial(w, _licenseFile, _keyJwk);
+                    _material.Write(w);
                 }
             );
         }

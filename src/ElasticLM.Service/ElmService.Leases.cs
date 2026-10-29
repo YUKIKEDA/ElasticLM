@@ -21,9 +21,12 @@ internal sealed partial class ElmService
 
     private void MapLeases()
     {
-        _app.MapPost("/v1/leases", (RequestDelegate)(c => ClientAsync(c, AcquireAsync)));
-        _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)(c => ClientAsync(c, RenewAsync)));
-        _app.MapDelete("/v1/leases/{id}", (RequestDelegate)(c => ClientAsync(c, ReleaseAsync)));
+        Func<HttpContext, Task<ClientResult>> acquire = Counted(AcquireAsync);
+        Func<HttpContext, Task<ClientResult>> renew = Counted(RenewAsync);
+        Func<HttpContext, Task<ClientResult>> release = Counted(ReleaseAsync);
+        _app.MapPost("/v1/leases", (RequestDelegate)(c => ClientAsync(c, acquire)));
+        _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)(c => ClientAsync(c, renew)));
+        _app.MapDelete("/v1/leases/{id}", (RequestDelegate)(c => ClientAsync(c, release)));
         _app.MapGet(
             "/v1/admin/licenses/{id}/leases",
             (RequestDelegate)(c => AdminAsync(c, Permissions.LeaseRead, AuditActions.LeaseList, ListLeasesAsync))
@@ -53,6 +56,11 @@ internal sealed partial class ElmService
             return ClientResult.Fail(e.Code, e.Message);
         }
 
+        return WithFeature(await AcquireParsedAsync(context, proof, request).ConfigureAwait(false), request.Feature);
+    }
+
+    private async Task<ClientResult> AcquireParsedAsync(HttpContext context, ProofResult.Valid proof, AcquireRequest request)
+    {
         const string NoKey = "No license has this key.";
         CancellationToken aborted = context.RequestAborted;
         if (
@@ -167,7 +175,10 @@ internal sealed partial class ElmService
         );
         lease = lease with { LastToken = IssueLease(lease, product, now) };
         await scope.InsertLeaseAsync(lease, device.Aborted).ConfigureAwait(false);
-        return LeaseAnswer(StatusCodes.Status201Created, lease.LastToken);
+        return LeaseAnswer(StatusCodes.Status201Created, lease.LastToken) with
+        {
+            After = () => _usage?.Lease(lease.Borrow ? "borrow.started" : "lease.acquired", lease, product.Code, w => Acquired(w, lease)),
+        };
     }
 
     // design §12.7.6 renewal: the lease's key proves it; the next token, the last one again for a retry, or a clone.
@@ -202,7 +213,7 @@ internal sealed partial class ElmService
         (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
         DateTimeOffset now = Time.GetUtcNow();
         Device device = Online(context, proof);
-        return await Database
+        ClientResult result = await Database
             .WithLicenseAsync(
                 found.LicenseId,
                 async scope =>
@@ -219,6 +230,7 @@ internal sealed partial class ElmService
                 device.Aborted
             )
             .ConfigureAwait(false);
+        return WithFeature(result, found.Feature);
     }
 
     private async Task<ClientResult> RenewInScopeAsync(
@@ -289,7 +301,10 @@ internal sealed partial class ElmService
         LeaseRow next = lease with { Seq = lease.Seq + 1, IssuedBy = device.RequestId, ExpiresAt = expires };
         next = next with { LastToken = IssueLease(next, product, now) };
         await scope.UpdateLeaseAsync(next, device.Aborted).ConfigureAwait(false);
-        return LeaseAnswer(StatusCodes.Status200OK, next.LastToken);
+        return LeaseAnswer(StatusCodes.Status200OK, next.LastToken) with
+        {
+            After = () => _usage?.Lease("lease.renewed", next, product.Code, w => w.WriteNumber("exp", next.ExpiresAt)),
+        };
     }
 
     // design §12.7.6 release: a lease that is not there is released already; a borrow only within the early-return limit.
@@ -310,10 +325,10 @@ internal sealed partial class ElmService
             return ClientResult.Answered;
         }
 
-        (PolicyRow policy, _) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+        (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
         DateTimeOffset now = Time.GetUtcNow();
         Device device = Online(context, proof);
-        return await Database
+        ClientResult result = await Database
             .WithLicenseAsync(
                 found.LicenseId,
                 async scope =>
@@ -360,13 +375,52 @@ internal sealed partial class ElmService
                         await scope.RecordReturnAsync(counters, at, device.Aborted).ConfigureAwait(false);
                     }
 
-                    return Released;
+                    return Released with
+                    {
+                        After = () => ReleasedLine(lease, product.Code, "device"),
+                    };
                 },
                 now,
                 device.Aborted
             )
             .ConfigureAwait(false);
+        return WithFeature(result, found.Feature);
     }
+
+    // design §18.1, 0.95: every refusal of a lease request is counted for the minute's lease.denied line.
+    private Func<HttpContext, Task<ClientResult>> Counted(Func<HttpContext, Task<ClientResult>> operation) =>
+        async context =>
+        {
+            ClientResult result = await operation(context).ConfigureAwait(false);
+            if (result.Error is ErrorCode code)
+            {
+                _usage?.Denied(result.Feature, code);
+            }
+
+            return result;
+        };
+
+    private static ClientResult WithFeature(ClientResult result, string feature) => result.Error is null ? result : result with { Feature = feature };
+
+    // The members of an acquisition's line: the expiry, and the client and app the policy keeps.
+    private static void Acquired(Utf8JsonWriter writer, LeaseRow lease)
+    {
+        writer.WriteNumber("exp", lease.ExpiresAt);
+        if (lease.ClientHost is string host && lease.ClientUser is string user)
+        {
+            writer.WriteString("host", host);
+            writer.WriteString("user", user);
+        }
+
+        if (lease.App is string app)
+        {
+            writer.WriteString("app", app);
+        }
+    }
+
+    // A release by the device or an administrator: lease.released, or borrow.returned for a borrow.
+    private void ReleasedLine(LeaseRow lease, string productCode, string by) =>
+        _usage?.Lease(lease.Borrow ? "borrow.returned" : "lease.released", lease, productCode, w => w.WriteString("by", by));
 
     // A detected clone of a lease (design §10.4, §12.7.3): Deny stops the lease until its expiry, Flag lets the renewal go on;
     // both write lease.clone, the only device request of a lease with an audit row (M4d1's design review).
@@ -475,6 +529,12 @@ internal sealed partial class ElmService
         if (!removed)
         {
             return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", found.Id).ConfigureAwait(false);
+        }
+
+        if (_usage is not null)
+        {
+            (_, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+            ReleasedLine(found, product.Code, "admin");
         }
 
         context.Response.StatusCode = StatusCodes.Status204NoContent;

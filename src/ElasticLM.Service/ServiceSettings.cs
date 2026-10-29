@@ -98,6 +98,15 @@ internal sealed record ServiceSettings
     /// <summary>Gets the requests per second of one installation key (design §14.7).</summary>
     public int RateLimitClientPerKey { get; init; } = 2;
 
+    /// <summary>Gets the folder of the usage log (design §18.1), or <see langword="null"/> to write none.</summary>
+    public string? UsageLogDirectory { get; init; }
+
+    /// <summary>
+    /// Gets this node's name: 1 to 64 characters of <c>[A-Za-z0-9-]</c>, part of the usage log's file names, so that nodes
+    /// sharing a folder keep separate chains (decision 0.95). By default the host name, its other characters made <c>-</c>.
+    /// </summary>
+    public string NodeName { get; init; } = DefaultNodeName();
+
     /// <summary>
     /// Reads the settings file (if any) and the environment.
     /// </summary>
@@ -188,6 +197,12 @@ internal sealed record ServiceSettings
                 );
         }
 
+        string nodeName = Env("ELM_NODE_NAME") ?? file.Node?.Name ?? DefaultNodeName();
+        if (!IsNodeName(nodeName))
+        {
+            throw new ServiceStartException($"node.name must be 1 to 64 characters of A-Z, a-z, 0-9, and '-': '{nodeName}'.");
+        }
+
         int? retentionDays = Env("ELM_AUDIT_RETENTIONDAYS") is string daysText
             ? ParseInt(daysText, "audit.retentionDays")
             : file.Audit?.RetentionDays;
@@ -215,7 +230,20 @@ internal sealed record ServiceSettings
             NonceSecret = nonceSecret,
             RateLimitClientPerIp = clientPerIp,
             RateLimitClientPerKey = clientPerKey,
+            UsageLogDirectory = Env("ELM_USAGELOG_DIRECTORY") ?? file.UsageLog?.Directory,
+            NodeName = nodeName,
         };
+    }
+
+    /// <summary>Returns whether a text is a node name: 1 to 64 characters of <c>[A-Za-z0-9-]</c>.</summary>
+    public static bool IsNodeName(string? name) =>
+        name is { Length: >= 1 and <= 64 } && name.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
+
+    // The host name with characters a node name does not allow made '-', cut to 64; "node" when nothing is left.
+    private static string DefaultNodeName()
+    {
+        string name = new([.. Environment.MachineName.Select(c => IsNodeName(c.ToString()) ? c : '-').Take(64)]);
+        return name.Length > 0 ? name : "node";
     }
 
     /// <summary>
@@ -284,6 +312,8 @@ internal sealed record ServiceSettings
         List(file.Trust?.RevokedKeyIds, "trust.revokedKeyIds");
         List(file.PublicUrls, "publicUrls");
         Text(file.Nonce?.SecretFile, "nonce.secretFile");
+        Text(file.UsageLog?.Directory, "usageLog.directory");
+        Text(file.Node?.Name, "node.name");
         return file;
     }
 
