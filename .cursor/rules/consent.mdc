@@ -18,7 +18,9 @@ A question at the end of a report is held to the same. In M3c the agent ended a 
 
 The reason for a recommendation is the product's goal and its functional and non-functional requirements (`docs/design.ja.md`). Implementation effort, volume, or ease is not a reason (`.cursor/rules/scope.mdc`), and neither is how soon it can be built.
 
-Before recommending how to build a mechanism (a token format, a lease protocol, a key store, a machine ID), find how established license systems and standards do it (FlexLM / FlexNet, Keygen, Cryptlex, LicenseSpring, JWS / COSE / PASETO, the OS's own APIs), cite the sources, and judge each way against the requirements. A statement about how another system behaves is checked in its source or its official documentation before it goes to the owner, and what was not checked is said to be unchecked.
+Before recommending how to build a mechanism (a token format, a lease protocol, a key store, a machine ID), find how established license systems and standards do it (FlexLM / FlexNet, Keygen, Cryptlex, LicenseSpring, JWS / COSE / PASETO, the OS's own APIs), cite the sources, and judge each way against the requirements. A statement about how another system behaves is checked in its source or its official documentation before it goes to the owner, and what was not checked is said to be unchecked. This holds for every outside fact an option relies on, including one inside the recommended option. In M5b the recommendation was to name the tested browsers that send `__Host-` cookies over http loopback; after the owner chose it, the check showed that only Firefox does, and the option could not be written as chosen (Issue #109, R16).
+
+Count the questions after writing them. A report that says how many questions follow asks that many. In M5b the report said five and asked four, and the fifth went out in a second round (Issue #109, R9).
 
 Before recommending a design, search `docs/design-decisions.md` for a rejection of the same shape, and say how the recommendation differs from it.
 
