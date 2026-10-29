@@ -64,3 +64,4 @@ Skills live in `.agents/skills/`. `skills-lock.json` pins the ones that come fro
 - .NET 10 SDK (`global.json`). If `dotnet --list-sdks` shows none, install it; do not stop to ask.
 - Windows is the primary host. CI runs the same gate on Windows, Linux, and macOS.
 - The agent shell is PowerShell (`.cursor/rules/powershell-shell.mdc`).
+- Linux containers run in WSL containers (`wslc`, WSL 3.0.1 or later), not Docker. The images of the CI steps (PostgreSQL, Keycloak) start the same way on Windows (`.cursor/rules/testing.mdc`).

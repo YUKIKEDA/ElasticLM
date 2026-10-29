@@ -48,6 +48,8 @@ An operation that applies a request to a stored row (a `PATCH`, a state change) 
 
 A PR that makes a setting required for a server to start adds it, in the same PR, to every step of `.github/workflows/ci.yml` that starts that server (the NativeAOT smoke and measure steps). The gate starts the server from its tests and does not see the missing setting. In M4b1 the nonces' secret became required and the NativeAOT jobs failed on all three OS (PR #61).
 
+A push that only asks CI to try something still builds the changed projects in Release first (with the analyzers) and runs the CSharpier check. In M5a a missing blank line before a comment (SA1515) stopped the gate on all three OS (PR #105).
+
 A commit and a push follow the build only through its exit code. Piping the build's output into `grep` and chaining `git commit ... && git push` after it runs the commit even when the build failed. Write `if dotnet build ...; then git commit ...; fi`, or check `$LASTEXITCODE` in PowerShell.
 
 If `dotnet --list-sdks` does not show a 10.0 SDK, install it; do not stop to ask.
