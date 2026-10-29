@@ -24,13 +24,13 @@ public sealed class ServiceLogCommandTests
     ///
     /// Steps:
     /// - Acquire and release a lease with a LicenseClient that has the key; stop the service. Verify the folder with --node
-    ///   n1; without --node; with --node a_b; with --node n1 --stream borrows; the file with --node n1; the file alone. Change
-    ///   "lease.acquired" in the file and verify again.
+    ///   n1; without --node; with --node a_b; with --node n1 --stream borrows; the file with --node n1; the file alone; a
+    ///   copy named as node n2's, with --node n2. Change "lease.acquired" in the file and verify again.
     ///
     /// Expected:
     /// - 0 and "intact: 1 file(s), 4 event line(s)"; 2 "No usage log file was found; for elm-service's files, add --node
     ///   <name>."; 2 for the name and for the stream, "--node must be …"; 2 for the file with --node and 0 for the file
-    ///   without it; 1 and "NOT INTACT".
+    ///   without it; 1 with "The file is of node 'n1', not of node 'n2'."; 1 and "NOT INTACT".
     /// </remarks>
     [Fact]
     public async Task Verify_ServiceLog_WithNode()
@@ -97,6 +97,12 @@ public sealed class ServiceLogCommandTests
             Trimmed(Run(test, ["log", "verify", file, "--node", "n1"]))
         );
         Assert.Equal(0, Run(test, ["log", "verify", file]).Code);
+        string renamed = test.FilePath("renamed");
+        Directory.CreateDirectory(renamed);
+        File.Copy(file, Path.Combine(renamed, "usage-n2-" + Path.GetFileName(file)["usage-n1-".Length..]));
+        (code, output, _) = Run(test, ["log", "verify", renamed, "--node", "n2"]);
+        Assert.Equal(1, code);
+        Assert.Contains("The file is of node 'n1', not of node 'n2'.", output, StringComparison.Ordinal);
         File.WriteAllText(file, File.ReadAllText(file).Replace("\"lease.acquired\"", "\"lease.acquireX\"", StringComparison.Ordinal));
         (code, output, _) = Run(test, ["log", "verify", folder, "--node", "n1"]);
         Assert.Equal(1, code);
