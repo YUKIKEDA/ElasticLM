@@ -117,6 +117,9 @@ internal sealed partial class ElmService : IAsyncDisposable
     /// <summary>Gets the URL the service answers on.</summary>
     public Uri Url { get; private set; } = new("http://127.0.0.1/");
 
+    /// <summary>Gets the host's services, for tests that look at what the host registered (the Data Protection key ring, M5a).</summary>
+    internal IServiceProvider Services => _app.Services;
+
     /// <summary>Gets the database.</summary>
     public Database Database { get; }
 

@@ -351,6 +351,93 @@ public sealed class ServiceSettingsTests : IDisposable
             settings.NonceSecret.Length
         );
 
+    /// <summary>
+    /// The oidc settings and apiKeys.inactiveAdminDays (design §14.8, M5a): read from the file and the environment, with the
+    /// defaults, and refused outside their limits, including an audience equal to the CLI client and a bootstrap owner of
+    /// another issuer.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A settings file with the required values.
+    ///
+    /// Steps:
+    /// - Load an oidc section; load it with the ELM_OIDC_* variables and ELM_APIKEYS_INACTIVEADMINDAYS; load a file without
+    ///   oidc; load each invalid value.
+    ///
+    /// Expected:
+    /// - The section's values with the default scopes and role claim, the issuer kept as written; the variables' values;
+    ///   no oidc and 90 days; each invalid value refused with its message.
+    /// </remarks>
+    [Fact]
+    public void Load_Oidc_IsReadAndChecked()
+    {
+        const string Section =
+            ",\"oidc\":{\"issuer\":\"https://idp.example/\",\"audience\":\"elm-service\",\"cliClientId\":\"elm-cli\",\"roleMap\":{\"admins\":\"owner\"}}";
+        OidcSettings oidc = ServiceSettings.Load(Write(Base(Section)), _ => null).Oidc!;
+        Assert.Equal(("https://idp.example/", "elm-service", "elm-cli", "groups"), (oidc.Issuer, oidc.Audience, oidc.CliClientId, oidc.RoleClaim));
+        Assert.Equal(["openid", "offline_access"], oidc.CliScopes);
+        Assert.Equal("owner", oidc.RoleMap["admins"]);
+
+        var environment = new Dictionary<string, string>
+        {
+            ["ELM_OIDC_ISSUER"] = "http://127.0.0.1:8180/realms/elm",
+            ["ELM_OIDC_AUDIENCE"] = "api",
+            ["ELM_OIDC_CLICLIENTID"] = "cli",
+            ["ELM_OIDC_CLISCOPES"] = "openid api://elm/admin",
+            ["ELM_OIDC_ROLECLAIM"] = "roles",
+            ["ELM_OIDC_ROLEMAP"] = "a=b=owner; viewers=viewer",
+            ["ELM_APIKEYS_INACTIVEADMINDAYS"] = "0",
+        };
+        ServiceSettings env = ServiceSettings.Load(Write(Base(Section)), name => environment.GetValueOrDefault(name));
+        Assert.Equal(
+            ("http://127.0.0.1:8180/realms/elm", "api", "cli", "roles", 0),
+            (env.Oidc!.Issuer, env.Oidc.Audience, env.Oidc.CliClientId, env.Oidc.RoleClaim, env.InactiveAdminDays)
+        );
+        Assert.Equal(["openid", "api://elm/admin"], env.Oidc.CliScopes);
+        Assert.Equal(("owner", "viewer"), (env.Oidc.RoleMap["a=b"], env.Oidc.RoleMap["viewers"]));
+
+        ServiceSettings plain = ServiceSettings.Load(Write(Base()), _ => null);
+        Assert.Equal((null, 90), (plain.Oidc, plain.InactiveAdminDays));
+
+        string Refused(string json) => Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(json)), _ => null)).Message;
+        string With(string issuer, string more = "") =>
+            ",\"oidc\":{\"issuer\":\""
+            + issuer
+            + "\",\"audience\":\"elm-service\",\"cliClientId\":\"elm-cli\",\"roleMap\":{\"admins\":\"owner\"}"
+            + more
+            + "}";
+        Assert.Equal("The oidc settings need oidc.issuer.", Refused(",\"oidc\":{\"audience\":\"a\"}"));
+        Assert.StartsWith("oidc.issuer must be an https URL", Refused(With("http://idp.example")), StringComparison.Ordinal);
+        Assert.StartsWith("oidc.issuer must be an https URL", Refused(With("https://idp.example/?q=1")), StringComparison.Ordinal);
+        Assert.StartsWith(
+            "oidc.issuer must be an https URL",
+            Refused(With("https://idp.example/" + new string('p', 2048))),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            "oidc.audience must differ from oidc.cliClientId, or the client's ID tokens would pass as access tokens.",
+            Refused(",\"oidc\":{\"issuer\":\"https://idp.example\",\"audience\":\"x\",\"cliClientId\":\"x\",\"roleMap\":{\"a\":\"owner\"}}")
+        );
+        Assert.StartsWith(
+            "oidc.roleMap must map values",
+            Refused(With("https://idp.example").Replace("\"owner\"", "\"root\"", StringComparison.Ordinal)),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            "oidc.roleMap must map 1 to 100 claim values to roles.",
+            Refused(With("https://idp.example").Replace("{\"admins\":\"owner\"}", "{}", StringComparison.Ordinal))
+        );
+        Assert.StartsWith("oidc.cliScopes must hold", Refused(With("https://idp.example", ",\"cliScopes\":[\"a b\"]")), StringComparison.Ordinal);
+        Assert.Equal(
+            "bootstrapOwner.iss must equal oidc.issuer.",
+            Refused(With("https://idp.example") + ",\"bootstrapOwner\":{\"iss\":\"https://idp.example/\",\"sub\":\"boss\"}")
+        );
+        Assert.Equal(
+            "apiKeys.inactiveAdminDays must be between 0 and 3650; 0 turns the rule off.",
+            Refused(",\"apiKeys\":{\"inactiveAdminDays\":3651}")
+        );
+    }
+
     private string Base(string more = "") =>
         "{\"signing\":{\"key\":\"k.pem\",\"certificates\":[\"c\"]},\"database\":{\"provider\":\"postgres\",\"connectionFile\":"
         + JsonSerializer.Serialize(ConnectionFile)

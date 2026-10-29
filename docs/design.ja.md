@@ -2523,7 +2523,7 @@ OIDC のアクセストークン（M5a、0.98）:
 - discovery と鍵:
   - discovery の URL は、`oidc.issuer` の末尾の `/` を除いて `/.well-known/openid-configuration` を足したもの（OpenID Connect Discovery 1.0 §4）。discovery の `issuer` が `oidc.issuer` と一致し、`jwks_uri` が https（ループバックの http は可）であること。違えば鍵を取れないものとして扱う。
   - 取り方: 転送を追わず、時間切れは 30 秒、応答は 256 KiB まで（外から来る入力）。https を求める（`RequireHttpsMetadata`。ループバックの http の発行者のときだけ外す）。
-  - 12 時間ごとに取り直し（`AutomaticRefreshInterval`）、知らない `kid` を見たら取り直す（`RefreshOnIssuerKeyNotFound`、5 分に 1 回まで、`RefreshInterval`）。取り直しに失敗したら、前に取れた鍵を使い続け、5 分後にまた取りに行く。起動の後、一度も取れていない間は、すべてのトークンが `401` である。
+  - 12 時間ごとに取り直し（`AutomaticRefreshInterval`）、知らない `kid` を見たら取り直す（`RefreshOnIssuerKeyNotFound`、5 分に 1 回まで、`RefreshInterval`）。そのトークンの要求は `401` で、取り直した後の要求から通る（JwtBearer は、取り直しを頼んだ要求を失敗させる。M5a のテストで確かめた）。取り直しに失敗したら、前に取れた鍵を使い続け、5 分後にまた取りに行く。起動の後、一度も取れていない間は、すべてのトークンが `401` である。
 - IdP の側の設定: アクセストークンの `aud` に `oidc.audience` が入るよう IdP を設定する。Keycloak はクライアントのスコープに audience のマッパーを足す（テストの realm もそうする）。Entra ID と Auth0 は、資源のスコープ（または `audience` の値）を `oidc.cliScopes` に入れないと、サービスのためのトークンを出さない。
 - 役割: `oidc.roleClaim` はトップレベルのクレームの名前で、ネストしたパス（Keycloak の `realm_access.roles` など）は読まない（IdP の側で、トップレベルのクレームに出すマッパーを置く）。値は文字列か文字列の配列で、ほかの型の値は無視する。値が 100 個を超えるトークンは `401`。各値を `oidc.roleMap` で役割にし、複数あれば強い方（`owner` > `admin` > `support` > `viewer`）を取る。
 - 最後のログイン: 認証が通り、`last_login_at` がないか今より 1 時間以上前なら、今の時刻を書く（要求ごとに書かない）。M5b の画面のログインも同じ列を書く。
