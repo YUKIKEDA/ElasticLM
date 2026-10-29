@@ -70,21 +70,21 @@ public sealed partial class KeycloakTests
         Assert.Equal((0, "Signed out."), (code, output.Trim()));
     }
 
-    // Approves a device code through Keycloak's own pages, as a person would: the verification page takes the user code, the
-    // login page the user, and a consent page, if any, the approval. A page that is none of these fails the test with its text.
+    // Approves a device code through Keycloak's own pages, as a person would, from the verification URL with the code: a page
+    // that asks for the user code gets it, the login page the user, and a consent page, if any, the approval. A page that is none
+    // of these fails the test with its text and the steps so far.
     private static async Task ApproveAsync(string verification, string userCode)
     {
         using var handler = new HttpClientHandler { CookieContainer = new CookieContainer(), AllowAutoRedirect = true };
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
         CancellationToken cancel = TestContext.Current.CancellationToken;
+        var trace = new List<string>();
         HttpResponseMessage answer = await http.GetAsync(new Uri(verification), cancel);
         for (int step = 0; step < 8; step++)
         {
             string html = await answer.Content.ReadAsStringAsync(cancel);
-            Assert.True(
-                answer.IsSuccessStatusCode,
-                $"Keycloak answered {(int)answer.StatusCode} at {answer.RequestMessage?.RequestUri}: {Excerpt(html)}"
-            );
+            trace.Add($"{(int)answer.StatusCode} {answer.RequestMessage?.RequestUri} form: {FormAction().Match(html).Value}");
+            Assert.True(answer.IsSuccessStatusCode, $"Keycloak answered {(int)answer.StatusCode}: {Excerpt(html)}{Steps(trace)}");
             Uri page = answer.RequestMessage!.RequestUri!;
             answer.Dispose();
             Match form = FormAction().Match(html);
@@ -114,17 +114,20 @@ public sealed partial class KeycloakTests
             }
             else
             {
-                Assert.Fail("Keycloak showed a page the test does not know: " + Excerpt(html));
+                Assert.Fail($"Keycloak showed a page the test does not know: {Excerpt(html)}{Steps(trace)}");
             }
 
+            trace.Add("post " + string.Join(',', fields.Keys));
             using var content = new FormUrlEncodedContent(fields);
 
             // A form action may be relative to the page (/realms/...); it is resolved against the page's URL.
             answer = await http.PostAsync(new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
         }
 
-        Assert.Fail("Keycloak did not finish the approval in 8 pages.");
+        Assert.Fail("Keycloak did not finish the approval in 8 pages." + Steps(trace));
     }
+
+    private static string Steps(List<string> trace) => Environment.NewLine + "Steps:" + Environment.NewLine + string.Join(Environment.NewLine, trace);
 
     private static string Excerpt(string html) => html.Length <= 3000 ? html : html[..3000];
 
@@ -134,7 +137,7 @@ public sealed partial class KeycloakTests
     [GeneratedRegex("<input[^>]*type=\"hidden\"[^>]*name=\"(?<name>[^\"]+)\"[^>]*value=\"(?<value>[^\"]*)\"", RegexOptions.IgnoreCase)]
     private static partial Regex HiddenInput();
 
-    [GeneratedRegex("Open (?<url>\\S+) and enter the code (?<code>\\S+)\\.")]
+    [GeneratedRegex("enter the code (?<code>\\S+)\\.\\s+Or open (?<url>\\S+)")]
     private static partial Regex Verification();
 
     private (int Code, string Out, string Error) Run(params string[] args)
