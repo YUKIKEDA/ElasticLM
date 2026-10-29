@@ -58,6 +58,19 @@ jobs:
           if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
           "ELM_TEST_POSTGRES=Host=127.0.0.1;Port=5432;Username=postgres;Password=elm-ci;Database=postgres" >> $env:GITHUB_ENV
 
+      # design §15.3, decision 0.97 (M5a): the OIDC sign-in is checked end to end against Keycloak, on Linux. The image is
+      # pinned by digest (26.8.0, published 2026-10-10); a newer one is taken by changing the digest in a PR. The realm is a
+      # test file with a test user only.
+      - name: Keycloak
+        if: runner.os == 'Linux'
+        run: |
+          docker run -d --name elm-keycloak -p 8180:8080 -v "${{ github.workspace }}/tests/keycloak:/opt/keycloak/data/import:ro" quay.io/keycloak/keycloak@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741 start-dev --import-realm
+          for ($i = 0; $i -lt 120; $i++) {
+            try { Invoke-WebRequest -Uri http://127.0.0.1:8180/realms/elm/.well-known/openid-configuration -UseBasicParsing | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
+          }
+          if (-not $ready) { docker logs elm-keycloak; "::error::Keycloak did not start"; exit 1 }
+          "ELM_TEST_KEYCLOAK=http://127.0.0.1:8180/realms/elm" >> $env:GITHUB_ENV
+
       - name: Gate
         run: ./build.ps1
 
