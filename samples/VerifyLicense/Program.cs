@@ -193,7 +193,7 @@ internal static class SelfTest
                 );
                 var spec = new ElasticLM.Issuing.LeaseSpec
                 {
-                    LeaseId = "lease-1",
+                    LeaseId = "lease-1-AAAAAAAAAAAAAA",
                     ProductId = "acme-cad",
                     LicenseId = "lic-1",
                     FeatureId = "pro",
@@ -283,7 +283,7 @@ internal static class SelfTest
             // A fresh engine is in its reclaim window, so the lease comes in as a reclaim, as after a restart.
             var leaseSpec = new ElasticLM.Issuing.LeaseSpec
             {
-                LeaseId = "lease-1",
+                LeaseId = "lease-1-AAAAAAAAAAAAAA",
                 ProductId = "acme-cad",
                 LicenseId = "lic-srv",
                 FeatureId = "pro",
@@ -305,7 +305,7 @@ internal static class SelfTest
             for (int i = 1; i <= Runs; i++)
             {
                 if (
-                    engine.Renew("lease-1", i, clientKid, "proof-" + i.ToString(CultureInfo.InvariantCulture), [])
+                    engine.Renew("lease-1-AAAAAAAAAAAAAA", i, clientKid, "proof-" + i.ToString(CultureInfo.InvariantCulture), [])
                     is not ElasticLM.Leasing.LeaseOutcome.Granted
                 )
                 {
@@ -346,7 +346,7 @@ internal static class SelfTest
                         {
                             w.WriteString("lic", "lic-srv");
                             w.WriteString("key", clientKid);
-                            w.WriteString("lease", "lease-1");
+                            w.WriteString("lease", "lease-1-AAAAAAAAAAAAAA");
                         }
                     );
                 }

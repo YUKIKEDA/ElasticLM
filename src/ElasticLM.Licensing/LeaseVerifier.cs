@@ -241,7 +241,7 @@ public sealed class LeaseVerifier
             && parsed.Ver == 1
             && parsed.Iss == jws.Header.Kid
             && parsed.Srv == jws.Header.Kid
-            && parsed.Lse.Length > 0
+            && Limits.IsLeaseId(parsed.Lse)
             && parsed.Prd.Length > 0
             && parsed.Lic.Length > 0
             && parsed.Feat.Length > 0

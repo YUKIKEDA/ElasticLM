@@ -86,6 +86,9 @@ public sealed class LicenseClient : IAsyncDisposable
         var handler = new SocketsHttpHandler
         {
             PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+
+            // design §12.1: a redirect would send the body, a license key with it, to another place; a 3xx is an error.
+            AllowAutoRedirect = false,
             SslOptions = _hosted
                 ? new SslClientAuthenticationOptions()
                 : new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = ValidateServerCertificate },
@@ -776,6 +779,7 @@ public sealed class LicenseClient : IAsyncDisposable
         bool osValidated = false;
         var handler = new SocketsHttpHandler
         {
+            AllowAutoRedirect = false,
             SslOptions = new SslClientAuthenticationOptions
             {
                 // The certificate is recorded here and checked against the server license once it has verified
