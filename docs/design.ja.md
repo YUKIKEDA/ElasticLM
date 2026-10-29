@@ -164,6 +164,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.93 | M4d の分け方とクラウドのリース | M4d を M4d1（規則の取り出し、`elm-service` のクラウドのリース、リースの管理 API）、M4d2（`LicenseClient` の SaaS 型のモード）、M4d3（サービスの利用ログとその管理 API）に分ける。`LeaseEngine` の判定を `LeaseRules`（純粋な関数）に取り出し、オンプレミスとサービスが同じ関数を使う。クラウドの取得はライセンスキーで名指し（ID は秘密でないため）、本文に `product` を持つ。回収は持たない（状態はデータベースに残る）。`floating` が `cloud` のポリシーのライセンスだけが貸し、借り出しの上限はポリシーの `BorrowLimit`、残す席は 0。`cloud` のポリシーは試用でもサーバーでもなく、そのライセンスは機能ごとに `seats` を必ず持ち、有効化しない（`409`）。`fromFirstActivation` の期限は最初の取得で決める。リースの期限はライセンスと機能の期限で切り、猶予は足さない。取得・更新・返却は監査ログに書かず（利用ログは M4d3）、複製の検出（`lease.clone`）と、管理 API の一覧と強制返却（借り出しも返す。0.56 の例外）は書く（§12.7.6。M4d の Grill と設計レビュー、持ち主が受けた） |
 | 0.94 | `LicenseClient` の SaaS 型のモード | M4d2 で、既存の `LicenseClient` に `LicenseClientOptions.LicenseKey` を足し、値があれば `elm-service` からリースを借りる（別のクラスにしない。0.42 の形をそのまま使う）。TLS は OS の信頼で確かめ、ピンは持たない。URL は `ActivationClient` と同じく https か、ループバックの http だけ。`ExpectedServerLicenseId` は断る。ライセンスキーはメモリーにだけ持ち、取得の本文にだけ入れる。リースは応答の `certificates` で確かめ（§12.7.5 の手順 1・2・6）、借り出しのファイルは `license` と `key` の代わりに `certificates` を持つ（`ver` は 1 のまま）。更新の `ELM_UNKNOWN_LEASE` はすぐに `Lost`、`429` の `Retry-After` は取得の `RetryAfter` に入れる（§12.7.1, §12.7.3, §12.7.4。M4d2 の Grill、持ち主が受けた）。設計の独立レビューを受けて、リース ID の形（`[A-Za-z0-9_-]` の 22 文字）を検証と発行で確かめ（§8.4.3）、両方のクライアントはリダイレクトに従わず（§12.1）、中継が偽る問題の応答とキーの読み取りを §5.4 で受け入れた（持ち主が受けた） |
 | 0.95 | `elm-service` の利用ログ | M4d3 で、`elm-service` がクラウドのリースと借り出しの利用ログを、ノードごとのファイルに書く（設定 `usageLog.directory`、なければ書かない。ファイル名にノード名 `node.name`、既定はホスト名）。署名はサービスの署名鍵で、利用ログを書くときは証明書に `log` が要る。各ファイルの最初の行は署名鍵の証明書を持ち、`key.changed` は使わない（鍵は起動のときだけ読む）。`SignedLog` と `LogVerifier` は「サーバーライセンスと鍵」か「証明書」のどちらでも確かめ、製品の確かめはサーバーの形だけにする（`elm log verify` の `--product` はサーバーのログだけ、`--node` でノードを選ぶ）。書くのはリースと借り出しのイベント（期限切れは掃除が消した行から）と拒否の数とサービスの開始と停止で、有効化・管理の操作・複製の検出は監査ログだけに書く。管理 API はそのノードのファイルの一覧・取得・区切りで、全ノードの記録を集めるのは運用者（§14.5, §14.8, §16, §18.1。M4d3 の Grill、持ち主が受けた）。設計の独立レビューを受けて、別の `log` の鍵で続くファイルを警告にし（0.55 の例外）、最初の行にノード名を入れて検証で照らし、同じ名前のノードの起動を断り、署名鍵を持つ者による書き直しを §5.4 で受け入れた（持ち主が受けた） |
+| 0.96 | 管理画面の技術 | W0 で、管理画面の SPA を Preact 11 と TypeScript で書き、Vite 8 でビルドする（Preact 用の Vite のプリセットは使わない）。テストは Vitest と happy-dom。ビルドの道具は Node.js 22（22.12 以上）と pnpm 12 に版を固定し、`pnpm-lock.yaml` から `pnpm install --frozen-lockfile` で入れる。ビルドの結果はリポジトリに入れず、`build.ps1` と CI がビルドする（M5）。Preact、Svelte 5、Vue 3、SolidJS、フレームワークなしの 5 つを同じ試作で比べ、持ち主の希望（依存が少なく、小さく、書きやすい）で選んだ。pnpm は持ち主の問いから npm と比べて選んだ（§15.2、§21、ADR 0001。W0 の Grill と Issue #94 の結果、持ち主が受けた） |
 
 ## 1. 目的と利用者
 
@@ -2533,7 +2534,18 @@ M4a1 の設定:
 ### 15.2 形
 
 - 静的な SPA を `web/admin/` で作り、ビルド結果を `ElasticLM.Service` の埋め込みリソースにする。`ManifestEmbeddedFileProvider` と `UseStaticFiles` で配る。D0 で、この構成が NativeAOT で警告 0 件で、実行ファイルだけで `index.html` を返すことを確かめた。`MapStaticAssets` は埋め込みリソースに使えない（https://learn.microsoft.com/en-us/aspnet/core/fundamentals/map-static-files?view=aspnetcore-10.0 ）。
-- SPA の技術（フレームワークとビルドの道具）は、ロードマップ W0 の行で選ぶ。条件は、ビルド結果が圧縮後 1 MB 以下であること、`build.ps1` と CI で再現してビルドできること、依存の数と保守の状態を `.cursor/rules/dependencies.mdc` と同じ観点で比べること。
+- SPA は Preact 11 と TypeScript で書き、Vite 8 でビルドする（W0、0.96、ADR 0001）。
+  - JSX は Vite 自身が `preact` の JSX ランタイムに変換する（`oxc.jsx.importSource: 'preact'`）。Preact 用の Vite のプリセット（`@preact/preset-vite`）は使わない。プリセットは Babel を連れて入るパッケージを 56 個から 124 個にし、得られるのは状態を保ったままのホットリロードだけである（W0 の計測）。
+  - 画面の型は `tsc` で確かめる。部品のテストは Vitest と happy-dom で、ブラウザを入れずに行う。
+  - 実行時の依存は `preact` だけで、その先の依存はない。W0 の試作（一覧・検索・ページ・詳細・失効）の本番のビルドは、HTML・CSS・JS を合わせて brotli で 6,771 バイトだった（上限は圧縮後 1 MB）。
+  - 文言は英語で、1 つのファイルにまとめる（日本語は v1 の後）。CSS は自前で書き、CSS のフレームワークも部品の集まりも入れない。
+  - インラインのスクリプトとスタイルを使わない（§15.1）。W0 で、試作はヘッドレスの Chrome で `Content-Security-Policy: default-src 'self'` のもとで一覧から失効と `401` での `/auth/login` への移動まで動き、CSP の違反は 0 件だった。
+- ビルドの道具は版を固定する。
+  - Node.js は 22 系の 1 つの版にする。Vite 8.3.5 の `engines` は `node: ^20.19.0 || >=22.12.0` なので、22.12 以上にする（`node_modules/vite/package.json` で読んだ）。
+  - パッケージマネージャーは pnpm 12 で、`web/admin/package.json` の `packageManager` で版を固定する。依存は `pnpm-lock.yaml` に固定し、`pnpm install --frozen-lockfile` で入れる。
+  - pnpm 12 は、`allowBuilds` に載せていない依存のビルドスクリプトを走らせず、既定の `strictDepBuilds: true` ではそのような依存があればインストールを失敗させる（https://pnpm.io/settings/build ）。公開から 1440 分（1 日）たたない版を入れない（`minimumReleaseAge` の既定、https://pnpm.io/settings/dependency-resolution ）。どちらも既定のまま使う。
+  - W0 で、Node.js 22 に同梱の npm 10.9.9 と npm 11.0.0 は依存の解決の途中で止まり、pnpm 9.12.1 は Rolldown のネイティブの部品を入れずにビルドが止まった。同梱の道具に任せず版を固定するのはこのためである。
+- `build.ps1` は、`web/admin/` があれば、.NET のビルドの前に SPA をビルドする。Node.js か pnpm がない、または固定した版と違えば、誤りで止める。CI も同じ版を使う。ビルドの結果はリポジトリに入れない。W0 で、同じ lock から `node_modules` と `dist` を消して入れ直し、ビルドする回を 3 回行い、3 回とも同じバイト列の `dist` になった。この組み込みは M5 で作る。
 
 ### 15.3 ログイン（BFF）
 
@@ -2826,8 +2838,9 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | `AuraORM` 0.1.0 | `ElasticLM.Service` | SQL の組み立て（0.81）。MIT。実行時の依存は BCL と `System.Data.Common` だけで、行の読み取りはソース生成。このリポジトリの持ち主が作り、NuGet に公開した版を使う | M4a1 で警告 0 件。`elm-service` が +0.7 MB（19,079,168 から 19,784,192 バイト、win-x64） |
 | `System.CommandLine` 2.0.14 | `ElasticLM.Cli`（`elm`）だけ | 引数の解析、ヘルプ、検証。アプリには入らない。MIT。`net10.0` が使う `net8.0` のアセットにパッケージ依存はない（`netstandard2.0` のアセットだけが `System.Memory` 4.5.5 に依存する） | M2 で警告 0 件。何もしないコンソールの 0.93 MB に対して 2.83 MB（+1.9 MB、win-x64）。`elm` の全体は 4.44 MB |
 | `xunit.v3`, `Microsoft.Extensions.TimeProvider.Testing` | テスト | テスト | 対象外 |
-
-管理画面の SPA の依存は W0 の行で決め、この表に足す。
+| `preact` 11 | `web/admin/`（管理画面の SPA。ビルド結果が `ElasticLM.Service` に埋め込まれる） | 画面の部品と状態（§15.2、0.96）。MIT。実行時の依存はこれだけで、その先の依存はない | 対象外（ブラウザで動く）。W0 の試作で `dist` が brotli 6,771 バイト |
+| `vite` 8, `typescript`, `vitest`, `happy-dom` | `web/admin/` のビルドとテストだけ | ビルド、型の確かめ、ブラウザのないテスト。ビルド結果には入らない。MIT。W0 の試作で、`preact` と合わせて入るパッケージは 56 個 | 対象外 |
+| Node.js 22（22.12 以上）、pnpm 12 | `web/admin/` のビルドの道具 | 版を固定する（`packageManager`、§15.2） | 対象外 |
 
 ## 22. 段階
 
