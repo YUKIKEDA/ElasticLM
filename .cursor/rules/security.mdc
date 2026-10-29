@@ -32,6 +32,8 @@ ElasticLM decides whether software may run. The threat model and the properties 
 - Input with no whole unit (an empty file, a file cut inside its first line, a body of zero bytes) is malformed, not empty and valid. In M3c the log verifier reported such a file as intact with no key, and the server's start threw an unhandled exception on the newest borrow record when a crash had left it empty (PR #27).
 - A limit on the length of a line or record is checked on the whole line or record, not where a read buffer ends. In M3c the 1 MiB line limit was checked only at the end of each 64 KiB read, so a whole line could pass with up to 64 KiB more (PR #27).
 - Every `JsonSerializerContext` that reads untrusted input sets `RespectNullableAnnotations = true` and `AllowDuplicateProperties = false`. Collection elements are outside `RespectNullableAnnotations`, so a `null` element is rejected where the payload is read.
+- An identifier from a token, a request, or an answer is checked against its form (its characters and length) before it becomes part of a file name or a path, even when the token's signature verified. In M4d2 a borrow's file was named after the lease ID as it came: an on-premises server admin holding the server key could sign `..\x` or a rooted path and make every client that borrowed overwrite or delete that file (PR #87).
+- A client that sends a secret (a license key, a token) in a request body does not follow redirects (`AllowAutoRedirect = false`). .NET follows them by default, and a `307` or `308` sends the same body on to the place it names. In M4d2 `LicenseClient`, `ActivationClient`, and `elm offline process` followed them (PR #87).
 
 ## Time
 
