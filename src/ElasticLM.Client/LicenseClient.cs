@@ -13,7 +13,7 @@ namespace ElasticLM.Client;
 /// A client of an on-premises license server (design §12.7, §13.5): it checks the server against the vendor's trust store
 /// and its pin, acquires leases, renews them every third of their duration, reclaims them after a server restart, and
 /// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead (design
-/// §12.7.6, decision 0.93): TLS is checked with the OS's trust, leases with the service's certificates, and a lease the
+/// §12.7.6, decision 0.94): TLS is checked with the OS's trust, leases with the service's certificates, and a lease the
 /// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI (design §17.2):
 /// <see cref="DisposeAsync"/> stops the timers and returns the leases it holds.
 /// </summary>
@@ -32,6 +32,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxBorrowFileLength = 256 * 1024;
     private const int MaxBorrowFiles = 1_000;
     private const int MaxCertificates = 4; // design §8.6
+    private const int MaxCertificateLength = 16 * 1024; // design §8.6: one token
     private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
@@ -152,8 +153,9 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Acquires a lease (design §12.7.1) and starts renewing it. The first call fetches and checks the server license and the
-    /// server's key (design §13.5).
+    /// Acquires a lease (design §12.7.1) and starts renewing it. From an on-premises server, the first call fetches and checks
+    /// the server license and the server's key (design §13.5); from <c>elm-service</c>, each lease is checked with the
+    /// certificates of its answer (design §12.7.5).
     /// </summary>
     /// <param name="featureId">The feature.</param>
     /// <param name="version">The app's version of the feature (<c>major.minor[.patch]</c>), or <see langword="null"/>.</param>
@@ -173,8 +175,8 @@ public sealed class LicenseClient : IAsyncDisposable
 
     /// <summary>
     /// Borrows a lease for a period (design §12.7.4): it is not renewed, is valid until it expires, and is saved next to the
-    /// installation key with the server license and key that verify it, so <see cref="GetBorrowedLeases"/> finds it after a
-    /// restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules.
+    /// installation key with what verifies it (the server license and key, or the certificates from <c>elm-service</c>), so
+    /// <see cref="GetBorrowedLeases"/> finds it after a restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules.
     /// </summary>
     /// <param name="featureId">The feature.</param>
     /// <param name="period">The borrow period, at least one second; the server refuses more than it allows.</param>
@@ -202,8 +204,9 @@ public sealed class LicenseClient : IAsyncDisposable
 
     /// <summary>
     /// Reads the borrowed leases saved for this server (at most 1,000 files) and checks each as when it was borrowed (design
-    /// §12.7.5), with the server license and key saved beside it and against the server pin or the expected server license;
-    /// no request is sent. Expired borrows are deleted; a file that does not verify is left alone and not returned.
+    /// §12.7.5): with the server license and key saved beside it and against the server pin or the expected server license,
+    /// or, from <c>elm-service</c>, with the certificates saved beside it; no request is sent. A client reads only the files
+    /// of its own URL and mode. Expired borrows are deleted; a file that does not verify is left alone and not returned.
     /// </summary>
     /// <returns>The borrowed leases that are still valid.</returns>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
@@ -343,11 +346,15 @@ public sealed class LicenseClient : IAsyncDisposable
     /// </summary>
     /// <param name="serverUrl">The server URL.</param>
     /// <returns><see langword="true"/> when a pin was deleted; <see langword="false"/> when there was none or the file
-    /// cannot be deleted. A client with a license key writes no pin, so for its own service URL this is
-    /// <see langword="false"/>.</returns>
+    /// cannot be deleted; always <see langword="false"/> for a client with a license key, which has no pin and leaves the pins
+    /// of an on-premises client sharing its folder.</returns>
     public bool ResetServerPin(Uri serverUrl)
     {
         ArgumentNullException.ThrowIfNull(serverUrl);
+        if (_hosted)
+        {
+            return false;
+        }
 
         bool deleted = _pins.Delete(serverUrl);
         if (HttpTargetUri.Normalize(serverUrl) == HttpTargetUri.Normalize(_server))
@@ -589,7 +596,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 || !root.TryGetProperty("certificates", out JsonElement c)
                 || c.ValueKind != JsonValueKind.Array
                 || c.GetArrayLength() is 0 or > MaxCertificates
-                || c.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String)
+                || c.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String || e.GetString()!.Length > MaxCertificateLength)
             )
             {
                 return false;
@@ -931,7 +938,10 @@ public sealed class LicenseClient : IAsyncDisposable
         }
 
         var expectation = new LeaseExpectation(_options.ProductId, _key.Thumbprint);
-        if (answer is null || (_hosted && answer.Certificates is null))
+        if (
+            answer is null
+            || (_hosted && (answer.Certificates is null || answer.Certificates.Exists(c => c is null || c.Length > MaxCertificateLength)))
+        )
         {
             return (new LeaseVerificationResult.Invalid(new LicenseError(ErrorCode.Malformed, "The server's lease answer is not valid.")), []);
         }
@@ -1157,8 +1167,8 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error is null)
         {
-            // A borrow may come back from the disk after a server restart, when the server no longer knows its key: the proof
-            // carries it.
+            // A borrow's return carries the key (design §12.7.1): an on-premises server restored from its record may not know it.
+            // elm-service checks it against the key the lease keeps.
             Reply reply = await SendSignedAsync(
                     HttpMethod.Delete,
                     $"v1/leases/{Uri.EscapeDataString(lease.Id)}",

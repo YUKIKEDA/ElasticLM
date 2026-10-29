@@ -24,7 +24,8 @@ public sealed class LicenseClientOptions
     /// </summary>
     public string? LicenseKey { get; init; }
 
-    /// <summary>Gets the vendor's trust store, from which the server license is verified (design §13.5 step 2).</summary>
+    /// <summary>Gets the vendor's trust store, from which the server license (design §13.5 step 2) or, with
+    /// <see cref="LicenseKey"/>, the certificates of the service's leases (§12.7.5 step 1) are verified.</summary>
     public required TrustStore Trust { get; init; }
 
     /// <summary>

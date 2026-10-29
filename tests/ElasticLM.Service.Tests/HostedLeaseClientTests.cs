@@ -27,11 +27,11 @@ public sealed class HostedLeaseClientTests
     /// - A cloud-floating policy (lease 600 seconds) and a license with 2 seats of core; a client with its key; each engine.
     ///
     /// Steps:
-    /// - Acquire; move the clock 200 seconds; release; acquire again and dispose the client; list the leases; read every file
-    ///   in the client's folder.
+    /// - Acquire and look for a pin folder; move the clock 200 seconds; release; acquire again and dispose the client; list
+    ///   the leases; read every file in the client's folder.
     ///
     /// Expected:
-    /// - The lease is held with sequence 1, for core, 1 seat; after 200 seconds its sequence is 2 and it is still held; the
+    /// - The lease is held with sequence 1, for core, 1 seat, and no pin folder exists; after 200 seconds its sequence is 2 and it is still held; the
     ///   release returns no error and the lease is released; after the dispose the service holds no lease; no file contains
     ///   the license key.
     /// </remarks>
@@ -48,6 +48,7 @@ public sealed class HostedLeaseClientTests
 
         Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: cancel));
         Assert.Equal((LeaseState.Held, 1L, "core", 1), (lease.State, lease.Token.Sequence, lease.FeatureId, lease.Seats));
+        Assert.Empty(Directory.EnumerateDirectories(folder, "servers", SearchOption.AllDirectories));
         test.Time.Advance(TimeSpan.FromSeconds(200));
         await TestService.WaitForAsync(() => Task.FromResult(lease.Token.Sequence == 2));
         Assert.Equal(LeaseState.Held, lease.State);
@@ -143,13 +144,13 @@ public sealed class HostedLeaseClientTests
     ///
     /// Steps:
     /// - Borrow core for 3600 seconds twice; read the saved files; dispose the client. Write a copy of the first file with a
-    ///   changed signature, and one naming another URL. With a new client on the same folder, read the borrowed leases;
+    ///   changed signature, one in the on-premises form for the same URL, and one naming another URL. With a new client on the same folder, read the borrowed leases;
     ///   return the first early; move the clock 3601 seconds and read the borrowed leases.
     ///
     /// Expected:
     /// - Each file has ver 1, the service URL, the token, and the service's certificate, and no license, key, or license key;
     ///   the new client returns the two borrows only; the return gives no error, deletes the file, and the service lists one
-    ///   lease; after the expiry no borrow is returned and the second file is deleted, the two copies are left.
+    ///   lease; after the expiry no borrow is returned and the second file is deleted, the three copies are left.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -191,6 +192,10 @@ public sealed class HostedLeaseClientTests
         string changed = token[..^4] + (token[^4] == 'A' ? 'B' : 'A') + token[^3..];
         File.WriteAllText(Path.Combine(borrows, "changed.json"), original.Replace(token, changed, StringComparison.Ordinal));
         File.WriteAllText(
+            Path.Combine(borrows, "onpremises.json"),
+            $$$"""{"ver":1,"server":"{{{HttpTargetUri.Normalize(service.Url)}}}","lease":"{{{token}}}","license":{},"key":{}}"""
+        );
+        File.WriteAllText(
             Path.Combine(borrows, "elsewhere.json"),
             original.Replace(HttpTargetUri.Normalize(service.Url), "https://elsewhere.example/", StringComparison.Ordinal)
         );
@@ -204,12 +209,12 @@ public sealed class HostedLeaseClientTests
 
         test.Time.Advance(TimeSpan.FromSeconds(3601));
         Assert.Empty(second.GetBorrowedLeases());
-        Assert.Equal(["changed.json", "elsewhere.json"], [.. Directory.EnumerateFiles(borrows).Select(Path.GetFileName).Order()]);
+        Assert.Equal(["changed.json", "elsewhere.json", "onpremises.json"], [.. Directory.EnumerateFiles(borrows).Select(Path.GetFileName).Order()]);
         await second.DisposeAsync();
     }
 
     /// <summary>
-    /// A lease is used only when the client's trust store certifies the service's signing key (design §12.7.5 step 1, T18);
+    /// A lease is used only when the client's trust store certifies the service's signing key (design §12.7.5 step 1, T1);
     /// a service whose TLS certificate the OS does not trust is not reached, since a client with a license key keeps no pin.
     /// </summary>
     /// <remarks>
@@ -303,13 +308,13 @@ public sealed class HostedLeaseClientTests
     /// - A trust store; a folder for the key.
     ///
     /// Steps:
-    /// - Make clients with a license key and: http on another host; an empty key; an expected server license ID. Make one
-    ///   with http on 127.0.0.1 and reset its pin.
+    /// - Make clients with a license key and: http on another host; an empty key; an expected server license ID. Write an
+    ///   on-premises pin for http://127.0.0.1:9/ in the folder; make a client with a key for that URL and reset its pin.
     ///
     /// Expected:
     /// - ArgumentException with "The service URL must be an absolute https URL, or http on a loopback address." and twice
-    ///   "A license key must not be empty, and has no expected server license ID."; the last is made, and the reset returns
-    ///   false.
+    ///   "A license key must not be empty, and has no expected server license ID."; the last is made, the reset returns false,
+    ///   and the on-premises pin is still there.
     /// </remarks>
     [Fact]
     public async Task Hosted_Options_AreChecked()
@@ -341,12 +346,180 @@ public sealed class HostedLeaseClientTests
             KeyRule,
             Assert.Throws<ArgumentException>(() => LicenseClient.TryCreate(Options("https://elm.example/", "K", "lic"), out _, out _)).Message
         );
+        var pins = new ServerPins(new InstallationKeyStore("app", KeyScope.User, test.FilePath("client")).Directory);
+        Assert.True(pins.TryWrite(new Uri("http://127.0.0.1:9/"), "lic-srv", "key-1"));
         Assert.True(LicenseClient.TryCreate(Options("http://127.0.0.1:9/", "K"), out LicenseClient? client, out LicenseError? error), error?.Message);
         Assert.False(client!.ResetServerPin(new Uri("http://127.0.0.1:9/")));
+        Assert.True(pins.TryRead(new Uri("http://127.0.0.1:9/"), out PinFile? pin) && pin is not null);
         await client.DisposeAsync();
     }
 
-    private static LicenseClient Client(TestService test, ElmService service, string key, string folder, TrustStore? trust = null)
+    /// <summary>
+    /// The license key goes only into an acquisition, with the product; an answer without one to four certificates of at
+    /// most 16 KiB is refused (design §12.7.1, §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating license with 10 seats of core; a client whose requests are recorded and whose acquisition answers
+    ///   can be rewritten.
+    ///
+    /// Steps:
+    /// - Acquire; move the clock 200 seconds; release; read the recorded bodies. Acquire with the answer's certificates
+    ///   removed, empty, five, with a null, and with one of 16,385 characters.
+    ///
+    /// Expected:
+    /// - Only the acquisition's body holds the key and "product":"app"; the renewal and the release do not hold the key.
+    ///   The rewritten answers fail with ELM_MALFORMED: "The server's lease answer is not valid." when removed, null, or too
+    ///   long; "Between one and four certificates are required." when empty or five.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_KeyAndCertificates_AreChecked()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), """[{"code":"core","seats":10}]""");
+        var recorder = new Recorder();
+        LicenseClient client = Client(test, service, key, test.FilePath("client"), wrap: recorder.Over);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: cancel));
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.Token.Sequence == 2));
+        Assert.Null(await client.ReleaseLeaseAsync(lease, cancel));
+        (string Method, string Path, string Body)[] sent = recorder.Sent();
+        Assert.Contains(
+            sent,
+            r =>
+                r.Path == "/v1/leases"
+                && r.Body.Contains(key, StringComparison.Ordinal)
+                && r.Body.Contains("\"product\":\"app\"", StringComparison.Ordinal)
+        );
+        Assert.Contains(sent, r => r.Path.EndsWith("/renew", StringComparison.Ordinal));
+        Assert.Contains(sent, r => r.Method == "DELETE");
+        Assert.All(sent.Where(r => r.Path != "/v1/leases"), r => Assert.DoesNotContain(key, r.Body, StringComparison.Ordinal));
+
+        const string NotValid = "The server's lease answer is not valid.";
+        const string Count = "Between one and four certificates are required.";
+        string longest = new('c', (16 * 1024) + 1);
+        (Func<string, string> Rewrite, string Message)[] cases =
+        [
+            (a => Answer(a, null), NotValid),
+            (a => Answer(a, "[]"), Count),
+            (a => Answer(a, """["a","b","c","d","e"]"""), Count),
+            (a => Answer(a, """["a",null]"""), NotValid),
+            (a => Answer(a, "[\"" + longest + "\"]"), NotValid),
+        ];
+        foreach ((Func<string, string> rewrite, string message) in cases)
+        {
+            recorder.Rewrite = rewrite;
+            LeaseResult result = await client.AcquireLeaseAsync("core", cancellationToken: cancel);
+            Assert.Equal((ErrorCode.Malformed, message), result is LeaseResult.Failed failed ? (failed.Error.Code, failed.Error.Message) : default);
+        }
+
+        recorder.Rewrite = null;
+        await client.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A lease that is retrying after a failed renewal is lost, not reclaimed, when the service no longer knows it (design
+    /// §12.7.3, the Retrying to Lost transition).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating license with 2 seats of core; a client whose renewals can be made to fail.
+    ///
+    /// Steps:
+    /// - Acquire; make renewals fail; move the clock 200 seconds; release the lease with the administration API; let
+    ///   renewals through; move the clock 15 seconds.
+    ///
+    /// Expected:
+    /// - Retrying with ELM_NETWORK_ERROR; then lost with ELM_UNKNOWN_LEASE.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_RetryingUnknownLease_IsLost()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
+        var recorder = new Recorder();
+        LicenseClient client = Client(test, service, key, test.FilePath("client"), wrap: recorder.Over);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: cancel));
+        recorder.FailRenewals = true;
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.State == LeaseState.Retrying));
+        Assert.Equal(ErrorCode.NetworkError, lease.LastError?.Code);
+        using (HttpResponseMessage released = await admin.DeleteAsync($"v1/admin/leases/{lease.Id}", cancel))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+        }
+
+        recorder.FailRenewals = false;
+        test.Time.Advance(TimeSpan.FromSeconds(15));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.State == LeaseState.Lost));
+        Assert.Equal(ErrorCode.UnknownLease, lease.LastError?.Code);
+        await client.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A saved borrow from the service is checked with the clock guard (design §12.7.5 step 6, §11.4): a clock set back
+    /// before a time the guard saw refuses it, although its token is valid at that time.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with borrowLimit 86400 and a license with 2 seats of core.
+    ///
+    /// Steps:
+    /// - Borrow for 3600 seconds; move the clock 3000 seconds; read the borrowed leases; dispose. With a new client on the
+    ///   same folder whose clock is 100 seconds after the start, read the borrowed leases.
+    ///
+    /// Expected:
+    /// - The first read returns the borrow; the second returns none, and the file is still there.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_BorrowWithClockSetBack_IsRefused()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, "\"borrowLimit\":86400"), TwoSeats);
+        string folder = test.FilePath("client");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        LicenseClient first = Client(test, service, key, folder);
+        Lease borrow = Acquired(await first.BorrowLeaseAsync("core", TimeSpan.FromHours(1), cancellationToken: cancel));
+        test.Time.Advance(TimeSpan.FromSeconds(3000));
+        Assert.Equal(borrow.Id, first.GetBorrowedLeases().Single().Id);
+        await first.DisposeAsync();
+
+        var earlier = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(TestService.Start.AddSeconds(100));
+        LicenseClient second = Client(test, service, key, folder, time: earlier);
+        Assert.Empty(second.GetBorrowedLeases());
+        Assert.Single(Directory.EnumerateFiles(Directory.EnumerateDirectories(folder, "borrows", SearchOption.AllDirectories).Single()));
+        await second.DisposeAsync();
+    }
+
+    // The acquisition answer with its certificates replaced by a JSON value, or removed.
+    private static string Answer(string answer, string? certificates)
+    {
+        System.Text.Json.Nodes.JsonObject node = System.Text.Json.Nodes.JsonNode.Parse(answer)!.AsObject();
+        node.Remove("certificates");
+        if (certificates is not null)
+        {
+            node["certificates"] = System.Text.Json.Nodes.JsonNode.Parse(certificates);
+        }
+
+        return node.ToJsonString();
+    }
+
+    private static LicenseClient Client(
+        TestService test,
+        ElmService service,
+        string key,
+        string folder,
+        TrustStore? trust = null,
+        Func<HttpMessageHandler, HttpMessageHandler>? wrap = null,
+        TimeProvider? time = null
+    )
     {
         var options = new LicenseClientOptions
         {
@@ -355,7 +528,8 @@ public sealed class HostedLeaseClientTests
             LicenseKey = key,
             Trust = trust ?? TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []),
             DataDirectory = folder,
-            TimeProvider = test.Time,
+            TimeProvider = time ?? test.Time,
+            WrapHandler = wrap,
         };
         Assert.True(LicenseClient.TryCreate(options, out LicenseClient? client, out LicenseError? error), error?.Message);
         return client!;

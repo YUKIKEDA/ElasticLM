@@ -189,5 +189,54 @@ public sealed class ServerAnswerTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A borrow saved from <c>elm-service</c> has the common members and one to four certificate strings of at most 16 KiB
+    /// (design §12.7.4, §8.6); the two kinds of file are read only by their own reader.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Files with 1 and with 4 certificates, the 4th of 16,384 characters; with none, 5, an empty list, a number, a
+    ///   certificate of 16,385 characters, and no list; an on-premises file.
+    ///
+    /// Steps:
+    /// - Read each with the hosted reader; read the hosted file with the on-premises reader.
+    ///
+    /// Expected:
+    /// - The first two give their parts; the others are refused; the on-premises reader refuses the hosted file.
+    /// </remarks>
+    [Fact]
+    public void HostedBorrowFile_ShapeIsChecked()
+    {
+        static string File(string certificates) => """{"ver":1,"server":"https://s/","lease":"a.b.c","certificates":""" + certificates + "}";
+        string longest = new('c', 16 * 1024);
+        Assert.True(
+            LicenseClient.TryReadHostedBorrowFile(Bytes(File("""["x"]""")), out string? server, out string? token, out IReadOnlyList<string>? one)
+        );
+        Assert.Equal(("https://s/", "a.b.c"), (server, token));
+        Assert.Equal(["x"], one!);
+        Assert.True(
+            LicenseClient.TryReadHostedBorrowFile(Bytes(File($$"""["a","b","c","{{longest}}"]""")), out _, out _, out IReadOnlyList<string>? four)
+        );
+        Assert.Equal(4, four!.Count);
+
+        foreach (
+            string file in new[]
+            {
+                File("[]"),
+                File("""["a","b","c","d","e"]"""),
+                File("""["a",1]"""),
+                File($$"""["{{longest}}c"]"""),
+                File("null"),
+                """{"ver":1,"server":"https://s/","lease":"a.b.c"}""",
+                """{"ver":1,"server":"https://s/","lease":"a.b.c","license":{},"key":{}}""",
+            }
+        )
+        {
+            Assert.False(LicenseClient.TryReadHostedBorrowFile(Bytes(file), out _, out _, out _));
+        }
+
+        Assert.False(LicenseClient.TryReadBorrowFile(Bytes(File("""["x"]""")), out _, out _, out _, out _));
+    }
+
     private static byte[] Bytes(string text) => Encoding.UTF8.GetBytes(text);
 }

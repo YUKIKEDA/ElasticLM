@@ -364,17 +364,19 @@ M4d1（Issue #82）の実測（Windows、win-x64）:
 M4d2（Issue #86）の実測（Windows、JIT の Release、ループバック、1 回の実行の中の値）:
 
 - SaaS 型のリースの確かめ（`LeaseVerifier.VerifyHosted`、証明書を覚えた 2 回目以降）は 1 回 119〜127 µs（各 1,000 回の平均、3 回）。§4.2 の検証の目標 1 ms 以下に収まる。
-- `LicenseClient` の取得・更新・返却（各 100 件の平均、3 回。2 回目と 3 回目の値を書く）:
+- `LicenseClient` の取得・更新・返却。各 100 件の平均を、同じ実行の中で SaaS 型とオンプレミスを交互に 3 回取った。1 回目は JIT の温まりを含むので、2 回目と 3 回目を回ごとに書く。
 
-  | 要求 | SaaS 型（`elm-service`、SQLite、HTTP） | オンプレミス（`elm-server`、HTTPS） |
-  | --- | --- | --- |
-  | 取得 | 3.10〜3.15 ms | 1.37〜1.79 ms |
-  | 更新 | 3.50〜3.89 ms | 1.22〜1.33 ms |
-  | 返却 | 1.95〜1.97 ms | 0.58〜0.59 ms |
+  | 要求 | SaaS 型 2 回目 | オンプレミス 2 回目 | SaaS 型 3 回目 | オンプレミス 3 回目 |
+  | --- | --- | --- | --- | --- |
+  | 取得 | 3.10 ms | 1.37 ms | 3.15 ms | 1.79 ms |
+  | 更新 | 3.50 ms | 1.33 ms | 3.89 ms | 1.22 ms |
+  | 返却 | 1.97 ms | 0.58 ms | 1.95 ms | 0.59 ms |
 
-  - 更新は、100 件のタイマーを一度に動かして、全件が終わるまでの時間を件数で割った値である。
-  - 表は、2 つの側の順序を入れ替えた 2 回目の実行の値である。先にサービスを流した 1 回目の実行でも、差は同じ程度だった。
-  - クライアントの仕事は、トークンの確かめ（上の 119〜127 µs）を除いて両方で同じである。差（同じ回どうしで 1.4〜2.7 ms）は相手の側の仕事で、M4d1 の実測（上、別の実行）でサービスとサーバーの差 1.6〜1.9 ms を分けたとおり、主にデータベースのコミットと読み取りである。実行が違うので、ここでは足し合わせない。
+  - SaaS 型は `elm-service`（SQLite、HTTP）、オンプレミスは `elm-server`（メモリー、HTTPS）が相手である。TLS の仕事はオンプレミスの側にだけある。
+  - 更新は、100 件のタイマーを一度に動かし、全件が終わるまでの時間を件数で割った値である。M4d1 の、生の要求を 1 件ずつ送る計測とは測り方が違う。
+  - どちらのクライアントも、受け取ったトークンを確かめる（SaaS 型は上の 119〜127 µs、オンプレミスの確かめはこの行では測っていない）。
+  - 回ごとの差は、取得 1.36〜1.73 ms、更新 2.17〜2.67 ms、返却 1.36〜1.39 ms である。M4d1 の実測（上、別の実行）では、相手の側の差のうち約 1.2 ms がサービスのデータベースのコミットと読み取りだった。この行では差をそれ以上分けていない。目標の表にクラウドのリースの行はなく、いちばん近い `elm-service` の有効化の目標（p99 200 ms 以下）から十分に遠いためである。
+  - 先にサービスを流した別の実行でも、差は同じ程度だった（表は、順序を入れ替えた実行の値）。
 - `ElasticLM.Client` の NuGet パッケージは 100,750 バイトで、main（`699df4f`）の 97,846 バイトより 2,904 バイト大きい。
 
 M3c（Issue #25）の実測（同じ条件）:
@@ -784,6 +786,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | リースの取得の `version` | 32 文字 |
 | `elm-server` の応答（クライアントが読む大きさ） | 256 KiB |
 | `elm-service` の発行の応答（`ActivationClient` と `elm offline process` が読む大きさ） | 256 KiB |
+| `elm-service` のリースの応答（SaaS 型の `LicenseClient` が読む大きさ、0.94） | 256 KiB。`certificates` は 1〜4 個、各 16 KiB まで（1 つのトークンと同じ）。外れれば `ELM_MALFORMED` |
 | オフラインの要求ファイル（`elm-service` と `elm offline process` が読む大きさ） | 64 KiB |
 | 問題の応答の `detail`（クライアントがアプリに渡す長さ） | 512 文字。超えれば状態コードだけを伝える |
 | サーバーのピンのファイル | 4 KiB |
@@ -1573,7 +1576,7 @@ SaaS 型のモード（M4d2、0.94）: `LicenseKey` があれば、`ServerUrl` �
 - `TryCreate` は、URL が https か、ループバックの http でなければ、また `LicenseKey` が空か `ExpectedServerLicenseId` があれば `ArgumentException` を投げる。
 - TLS は OS の信頼で確かめる。サーバーライセンスを取りに行かず（`GET /v1/server/license` はない）、ピンは書かない。`ResetServerPin` は消すピンがないので `false` を返す。
 - 取得の本文に `licenseKey` と `product`（`ProductId`）を足す（§12.7.6）。キーはメモリーにだけ持ち、ファイルには書かない。更新と返却には送らない。
-- 受け取ったトークンは、応答の `certificates` で `LeaseVerifier.VerifyHosted` により確かめる（§12.7.5 の手順 1・2・6）。`certificates` のない応答は `ELM_MALFORMED` とする。
+- 受け取ったトークンは、応答の `certificates` で `LeaseVerifier.VerifyHosted` により確かめる（§12.7.5 の手順 1・2・6）。`certificates` がないか、`null` か 16 KiB を超える要素を持つ応答は `ELM_MALFORMED`（§8.6）、0 個か 5 個以上は検証が `ELM_MALFORMED` で断る。各要素を 16 KiB までにするのは、借り出しのファイル（256 KiB まで）に必ず収めるためである。
 - 更新が `ELM_UNKNOWN_LEASE` で断られたら、回収せずにすぐ `Lost` にする（§12.7.3）。
 
 #### 12.7.2 席の数え上げ
@@ -1589,13 +1592,15 @@ stateDiagram-v2
     Held --> Held: 更新の成功（期間の 1/3 ごと）
     Held --> Retrying: 更新の失敗
     Retrying --> Held: 再試行の成功
-    Retrying --> Reclaiming: ELM_UNKNOWN_LEASE
+    Retrying --> Reclaiming: ELM_UNKNOWN_LEASE（オンプレミス）
+    Retrying --> Lost: ELM_UNKNOWN_LEASE（SaaS 型）
     Reclaiming --> Held: 回収の成功
     Reclaiming --> Lost: 回収の拒否
     Retrying --> Lost: 期限
     Held --> Lost: ELM_CLONE_DETECTED
     Retrying --> Lost: ELM_CLONE_DETECTED
-    Held --> Reclaiming: ELM_UNKNOWN_LEASE
+    Held --> Reclaiming: ELM_UNKNOWN_LEASE（オンプレミス）
+    Held --> Lost: ELM_UNKNOWN_LEASE（SaaS 型）
     Reclaiming --> Retrying: 回収の要求の失敗
     Held --> Released: 返却
     Lost --> [*]
@@ -1643,7 +1648,7 @@ public sealed class Lease { public bool IsBorrow { get; } }
 - 保存: インストール鍵の場所の `borrows/<リース ID>.json` に `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "license": <サーバーライセンスのファイル>, "key": <サーバーの公開鍵の JWK>}` を、一時ファイルから置き換えて書く。読むときは `ver` が 1 でなければ使わず、知らないメンバーは無視する。フォルダーは 1,000 ファイルまでで、超える借り出しは保存しない。保存できなければ借り出しは失敗とする（`ELM_INTERNAL_ERROR`）。サーバーの席はその期限まで使われたままになる。
 - `GetBorrowedLeases` は、このクライアントのサーバーの URL のファイルだけを読み、保存したサーバーライセンスと公開鍵から `ServerIdentity.TryVerify`（§13.5）と §12.7.5 で確かめる（時計の守りも含む）。サーバーのピン（`ExpectedServerLicenseId` を設定していればその `lic`、なければ保存したピンの `lic` と `cnf.jkt`）とも合わなければ使わない（0.60）。読むのは 1,000 ファイルまでである。期限の切れたファイルは消し、確かめられないファイル（書き換え・壊れ）は残して返さない。
 - `ReleaseLeaseAsync` で早期に返却する。成功（サーバーが知らないときを含む）ならファイルを消して `Released` にする。断られたか届かなければ、ファイルと `Held` のままにしてエラーを返す。
-- SaaS 型のモード（0.94）では、ファイルは `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "certificates": [<証明書>]}` で、`license` と `key` を持たない。`GetBorrowedLeases` は同じ URL の、`certificates`（1〜4 個の文字列）を持つファイルだけを `VerifyHosted` で確かめる。ピンはない。ほかの規則（1,000 ファイル、期限切れは消す、確かめられないものは残して返さない）は同じである。`ver` を上げないのは、読み手が URL とモードで分かれ、知らないメンバーを無視するためである。
+- SaaS 型のモード（0.94）では、ファイルは `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "certificates": [<証明書>]}` で、`license` と `key` を持たない。`GetBorrowedLeases` は同じ URL の、`certificates`（1〜4 個の文字列）を持つファイルだけを `VerifyHosted` で確かめる。ピンはない。ほかの規則（1,000 ファイル、期限切れは消す、確かめられないものは残して返さない）は同じである。`ver` を上げないのは、読み手が URL とモードで分かれ、知らないメンバーを無視するためである。期限の切れたファイルを消すのも同じ URL とモードのクライアントだけなので、ほかのモードや URL のファイルは、それを読むクライアントが動くまで 1,000 ファイルの上限に数えられたまま残る。
 
 #### 12.7.5 クライアントによるリースの確かめ方
 
@@ -2023,7 +2028,7 @@ POST /v1/leases/reclaim + 証明（jwk つき）
 | 運用者の証明書 | 運用者が PEM か PFX を渡す。クライアントは OS の通常の検証を行う |
 | 自己署名（既定） | サーバーが自分のインストール鍵で自己署名の証明書を作る。クライアントは次の手順で確かめる |
 
-どちらの方式でも、クライアントは次を行う。
+どちらの方式でも、クライアントは次を行う（オンプレミスのサーバーに対して。SaaS 型のモード（0.94）は、サーバーライセンスもピンも持たないので、手順 1〜3 を行わない）。
 
 1. `GET /v1/server/license` でサーバーライセンスのファイルと、サーバーの公開鍵を受け取る（自己署名のときは TLS の検証を保留する）。応答は `{"license": <ライセンスファイル>, "key": <公開鍵の JWK（§8.4.1 と同じ EC P-256 の 4 メンバー）>}` である。サーバーライセンスには公開鍵の拇印（`cnf.jkt`）しかなく、リースの署名を確かめるには公開鍵そのものが要る（M3a、Issue #15 で足した）。
 2. ルート鍵から §11.2 で検証する。要求の `Kind` は `Server` である（T18）。受け取った公開鍵の拇印が `cnf.jkt` と一致しなければ、`ELM_SERVER_PIN_MISMATCH` とする。
