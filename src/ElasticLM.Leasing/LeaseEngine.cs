@@ -23,8 +23,6 @@ public sealed class LeaseEngine : IDisposable
     /// <summary>The most proof IDs a renewal may name as earlier attempts (design §8.6).</summary>
     public const int MaxRetryProofIds = 16;
 
-    private static readonly TimeSpan ReturnWindow = TimeSpan.FromDays(30);
-
     private readonly LeaseSigner _sign;
     private readonly LeaseVerifier _verifier;
     private readonly TimeProvider _time;
@@ -444,35 +442,9 @@ public sealed class LeaseEngine : IDisposable
 
     private static string NewLeaseId() => Base64UrlCodec.Encode(RandomNumberGenerator.GetBytes(16));
 
-    private static LicenseError? CheckFeature(LicensedFeature? feature, string? version, long nowSeconds)
-    {
-        if (feature is null)
-        {
-            return new LicenseError(ErrorCode.FeatureNotLicensed, "The server license does not grant the feature.");
-        }
-
-        if (feature.ExpiresAt is DateTimeOffset featureExpires && nowSeconds > featureExpires.ToUnixTimeSeconds())
-        {
-            return new LicenseError(ErrorCode.FeatureExpired, "The feature has expired.");
-        }
-
-        if (version is null)
-        {
-            return null;
-        }
-
-        if (!FeatureVersion.TryParse(version, out FeatureVersion parsed))
-        {
-            return new LicenseError(ErrorCode.InvalidArgument, "The version must be major.minor[.patch].");
-        }
-
-        // The range was validated when the server license was verified, so parsing it again does not fail.
-        return
-            feature.VersionRange is not null
-            && (!FeatureVersionRange.TryParse(feature.VersionRange, out FeatureVersionRange? range) || !range!.Contains(parsed))
-            ? new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the licensed range.")
-            : null;
-    }
+    // design §12.7.2, decision 0.64: the shared rule, on the server license's feature.
+    private static LicenseError? CheckFeature(LicensedFeature? feature, string? version, long nowSeconds) =>
+        LeaseRules.CheckFeature(feature is not null, feature?.ExpiresAt, feature?.VersionRange, version, nowSeconds);
 
     private LeaseOutcome AcquireCore(LeaseRequest request, LicenseState state)
     {
@@ -485,7 +457,7 @@ public sealed class LeaseEngine : IDisposable
 
         if (!state.Pools.TryGetValue(request.FeatureId ?? string.Empty, out FeaturePool? pool) || pool.Feature is null)
         {
-            return Refuse(ErrorCode.FeatureNotLicensed, "The server license does not grant the feature.");
+            return Refuse(ErrorCode.FeatureNotLicensed, "The license does not grant the feature.");
         }
 
         LicenseError? featureError = CheckFeature(pool.Feature, request.Version, nowSeconds);
@@ -494,32 +466,11 @@ public sealed class LeaseEngine : IDisposable
             return new LeaseOutcome.Refused(featureError);
         }
 
-        if (request.Count < 1 || request.Count > pool.Seats)
-        {
-            return Refuse(ErrorCode.InvalidArgument, "The seat count must be at least 1 and at most the feature's seats.");
-        }
-
         TimeSpan? borrow = request.Borrow;
-        if (borrow is TimeSpan wanted)
+        TimeSpan limit = _options.MaxBorrow is TimeSpan max && max < state.BorrowLimit ? max : state.BorrowLimit;
+        if (LeaseRules.CheckRequest(request.Count, pool.Seats, borrow, limit, request.Fingerprints is { Count: > 0 }) is LicenseError requestError)
         {
-            if (wanted < TimeSpan.FromSeconds(1))
-            {
-                return Refuse(ErrorCode.InvalidArgument, "A borrow period is at least one second.");
-            }
-
-            TimeSpan limit = _options.MaxBorrow is TimeSpan max && max < state.BorrowLimit ? max : state.BorrowLimit;
-            if (wanted > limit)
-            {
-                return Refuse(
-                    ErrorCode.BorrowNotAllowed,
-                    limit == TimeSpan.Zero ? "The server does not lend borrows." : "The borrow period is longer than the server allows."
-                );
-            }
-
-            if (request.Fingerprints is not { Count: > 0 })
-            {
-                return Refuse(ErrorCode.FingerprintUnavailable, "A borrow needs the machine fingerprints of the client.");
-            }
+            return new LeaseOutcome.Refused(requestError);
         }
 
         if (!_recoveryOver && now < _recoveryEnds)
@@ -532,8 +483,7 @@ public sealed class LeaseEngine : IDisposable
         lock (pool.Lock)
         {
             RemoveExpired(pool, nowSeconds);
-            long free = pool.Allowed - (borrow is null ? 0 : _options.BorrowReserve);
-            if (pool.Used + request.Count > free)
+            if (!LeaseRules.Fits(pool.Used, request.Count, pool.Allowed, _options.BorrowReserve, borrow is not null))
             {
                 return Refuse(
                     ErrorCode.NoSeats,
@@ -636,15 +586,13 @@ public sealed class LeaseEngine : IDisposable
                 return Refuse(ErrorCode.NoSeats, "The server license now allows fewer seats than are held.");
             }
 
-            if (sequence == record.Sequence)
+            switch (LeaseRules.Judge(sequence, record.Sequence, record.IssuedBy, retryOf))
             {
-                return IssueNext(record, now, proofId, state, borrow: null);
-            }
-
-            if (sequence == record.Sequence - 1 && record.IssuedBy is string issuedBy && retryOf.Contains(issuedBy))
-            {
-                // The client did not receive the last answer and retries; give it the same token again.
-                return new LeaseOutcome.Granted(record.LastToken, record.Id, DateTimeOffset.FromUnixTimeSeconds(record.ExpiresAt), false);
+                case LeaseSequence.Current:
+                    return IssueNext(record, now, proofId, state, borrow: null);
+                case LeaseSequence.Retry:
+                    // The client did not receive the last answer and retries; give it the same token again.
+                    return new LeaseOutcome.Granted(record.LastToken, record.Id, DateTimeOffset.FromUnixTimeSeconds(record.ExpiresAt), false);
             }
 
             if (state.CloneStrategy == CloneStrategy.Deny)
@@ -711,26 +659,20 @@ public sealed class LeaseEngine : IDisposable
         }
     }
 
-    // The counters an early return counts against: the installation key and each machine fingerprint (design §12.7.4), so a
-    // new key on the same machine does not start a new count.
-    private static IEnumerable<string> Counters(string keyId, IReadOnlyList<string> fingerprints) =>
-        fingerprints.Select(f => "fp:" + f).Prepend("key:" + keyId);
-
     // design §12.7.4: the early returns of the last 30 days of the key and of each fingerprint are under the license's limit,
     // and the server license has not changed in content since the borrow (the license ID, the feature, its seats, and the
     // borrow limit).
-    private bool MayReturnEarly(LeaseRecord record, BorrowRecord borrow, FeaturePool pool, LicenseState state, DateTimeOffset now)
-    {
-        if (CountReturns(Counters(record.KeyId, borrow.Fingerprints), now) >= state.BorrowReturnLimit)
-        {
-            return false;
-        }
-
-        // A feature the new license no longer grants has a pool of 0 seats, so the seat comparison covers it.
-        return state.Server.License.LicenseId == borrow.LicenseId
-            && pool.Seats >= borrow.FeatureSeats
-            && state.BorrowLimit >= borrow.FeatureBorrowLimit;
-    }
+    // A feature the new license no longer grants has a pool of 0 seats, so the seat comparison covers it.
+    private bool MayReturnEarly(LeaseRecord record, BorrowRecord borrow, FeaturePool pool, LicenseState state, DateTimeOffset now) =>
+        LeaseRules.MayReturnEarly(
+            CountReturns(LeaseRules.ReturnCounters(record.KeyId, borrow.Fingerprints), now),
+            state.BorrowReturnLimit,
+            state.Server.License.LicenseId == borrow.LicenseId,
+            pool.Seats,
+            borrow.FeatureSeats,
+            state.BorrowLimit,
+            borrow.FeatureBorrowLimit
+        );
 
     // The largest count of early returns in the last 30 days among the counters.
     private int CountReturns(IEnumerable<string> counters, DateTimeOffset now)
@@ -742,7 +684,7 @@ public sealed class LeaseEngine : IDisposable
             {
                 if (_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
                 {
-                    most = Math.Max(most, times.Count(t => now - t < ReturnWindow));
+                    most = Math.Max(most, times.Count(t => now - t < LeaseRules.ReturnWindow));
                 }
             }
 
@@ -754,7 +696,7 @@ public sealed class LeaseEngine : IDisposable
     {
         lock (_returnsLock)
         {
-            foreach (string counter in Counters(keyId, fingerprints))
+            foreach (string counter in LeaseRules.ReturnCounters(keyId, fingerprints))
             {
                 if (!_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
                 {
@@ -773,7 +715,7 @@ public sealed class LeaseEngine : IDisposable
         {
             foreach ((string counter, List<DateTimeOffset> times) in _returns.ToArray())
             {
-                times.RemoveAll(t => now - t >= ReturnWindow);
+                times.RemoveAll(t => now - t >= LeaseRules.ReturnWindow);
                 if (times.Count == 0)
                 {
                     _returns.Remove(counter);
@@ -804,8 +746,7 @@ public sealed class LeaseEngine : IDisposable
     {
         long nowSeconds = now.ToUnixTimeSeconds();
         long period = borrow is TimeSpan b ? (long)b.TotalSeconds : state.LeaseSeconds;
-        long expires = state.LicenseLimit is long limit ? Math.Min(nowSeconds + period, limit) : nowSeconds + period;
-        if (expires - nowSeconds < 1)
+        if (LeaseRules.Expiry(nowSeconds, period, state.LicenseLimit) is not long expires)
         {
             return Refuse(ErrorCode.Expired, "The server license has expired.");
         }
@@ -894,7 +835,8 @@ public sealed class LeaseEngine : IDisposable
             return new ReclaimResult(lease.LeaseId, new LicenseError(ErrorCode.CloneDetected, "The lease was stopped as a clone."));
         }
 
-        if (lease.Sequence == existing.Sequence)
+        // design §13.4: a reclaim carries no retry list, so only the same sequence number is the same client (decision 0.47).
+        if (LeaseRules.Judge(lease.Sequence, existing.Sequence, null, []) == LeaseSequence.Current)
         {
             return new ReclaimResult(lease.LeaseId, null);
         }
@@ -993,7 +935,7 @@ public sealed class LeaseEngine : IDisposable
         }
 
         // design §9.3: floor(seats × (100 + overage) / 100). Seats and overage are bounded (int, 1,000 %), so long cannot overflow.
-        private long Allowed(int seats) => (long)seats * (100 + _overage) / 100;
+        private long Allowed(int seats) => LeaseRules.Allowed(seats, _overage);
     }
 
     // Leases changes only under Lock. Used is also read without the lock (EndRecoveryIfFull), so it is updated atomically.

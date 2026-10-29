@@ -189,6 +189,34 @@ internal sealed partial class ServiceStore<TDialect>
     public override async Task<long> RemoveProofsBeforeAsync(long before, CancellationToken cancellationToken) =>
         await _db.Delete(ProofJtiRow.Table).Where(j => Lt(j.ExpiresAt, before)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
 
+    public override Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken) =>
+        _db.From(LeaseRow.Table).Where(l => And(Eq(l.Id, id), Gt(l.ExpiresAt, now))).Select(l => l).SingleOrDefaultAsync(cancellationToken);
+
+    public override async Task<IReadOnlyList<LeaseRow>> ListLeasesAsync(
+        Guid licenseId,
+        string? after,
+        int limit,
+        long now,
+        CancellationToken cancellationToken
+    ) =>
+        await _db.From(LeaseRow.Table)
+            .Where(l => And([Eq(l.LicenseId, licenseId), Gt(l.ExpiresAt, now), after is string id ? Gt(l.Id, id) : null]))
+            .Select(l => l)
+            .OrderBy(l => [Asc(l.Id)])
+            .Limit(limit)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+
+    public override async Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken)
+    {
+        long leases = await _db.Delete(LeaseRow.Table).Where(l => Le(l.ExpiresAt, now)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
+        long returns = await _db.Delete(LeaseReturnRow.Table)
+            .Where(r => Lt(r.ReturnedAt, returnsBefore))
+            .ExecuteAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return leases + returns;
+    }
+
     public override async Task<long> RemoveOfflineRequestsBeforeAsync(long before, CancellationToken cancellationToken) =>
         await _db.Delete(OfflineRequestRow.Table).Where(r => Lt(r.ExpiresAt, before)).ExecuteAsync(cancellationToken).ConfigureAwait(false);
 
@@ -272,6 +300,110 @@ internal sealed partial class ServiceStore<TDialect>
 
         public override Task AppendAuditAsync(AuditEntry entry, CancellationToken cancellationToken) =>
             AppendAsync(tx, entry, now, cancellationToken);
+
+        public override Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken) =>
+            tx.From(LeaseRow.Table)
+                .Where(l => And([Eq(l.Id, id), Eq(l.LicenseId, license.Id), Gt(l.ExpiresAt, now)]))
+                .Select(l => l)
+                .SingleOrDefaultAsync(cancellationToken);
+
+        // Summed in the database, so counting the seats does not read every lease row with its token.
+        public override async Task<long> SeatsHeldAsync(string feature, long now, CancellationToken cancellationToken) =>
+            await tx.From(LeaseRow.Table)
+                .Where(l => And([Eq(l.LicenseId, license.Id), Eq(l.Feature, feature), Gt(l.ExpiresAt, now)]))
+                .Select(l => Sum(l.Seats))
+                .SingleAsync(cancellationToken)
+                .ConfigureAwait(false)
+            ?? 0;
+
+        public override Task InsertLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
+            tx.Insert(LeaseRow.Table)
+                .Values(
+                    new LeaseRow.Insert
+                    {
+                        Id = lease.Id,
+                        LicenseId = lease.LicenseId,
+                        Feature = lease.Feature,
+                        Seats = lease.Seats,
+                        KeyId = lease.KeyId,
+                        KeyX = lease.KeyX,
+                        KeyY = lease.KeyY,
+                        Seq = lease.Seq,
+                        LastToken = lease.LastToken,
+                        IssuedBy = lease.IssuedBy,
+                        ExpiresAt = lease.ExpiresAt,
+                        Borrow = lease.Borrow,
+                        BorrowFingerprints = lease.BorrowFingerprints,
+                        BorrowFeatureSeats = lease.BorrowFeatureSeats,
+                        BorrowLimit = lease.BorrowLimit,
+                        Stopped = lease.Stopped,
+                        ClientHost = lease.ClientHost,
+                        ClientUser = lease.ClientUser,
+                        App = lease.App,
+                        CreatedAt = lease.CreatedAt,
+                    }
+                )
+                .ExecuteAsync(cancellationToken);
+
+        public override Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
+            tx.Update(LeaseRow.Table)
+                .Set(l =>
+                    [
+                        Set(l.Seq, lease.Seq),
+                        Set(l.LastToken, lease.LastToken),
+                        Set(l.IssuedBy, lease.IssuedBy),
+                        Set(l.ExpiresAt, lease.ExpiresAt),
+                        Set(l.Stopped, lease.Stopped),
+                    ]
+                )
+                .Where(l => Eq(l.Id, lease.Id))
+                .ExecuteAsync(cancellationToken);
+
+        public override Task DeleteLeaseAsync(string id, CancellationToken cancellationToken) =>
+            tx.Delete(LeaseRow.Table).Where(l => Eq(l.Id, id)).ExecuteAsync(cancellationToken);
+
+        public override async Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken)
+        {
+            int most = 0;
+            foreach (string counter in counters)
+            {
+                long count = await tx.From(LeaseReturnRow.Table)
+                    .Where(r => And([Eq(r.LicenseId, license.Id), Eq(r.Counter, counter), Gt(r.ReturnedAt, since)]))
+                    .Select(r => Count())
+                    .SingleAsync(cancellationToken)
+                    .ConfigureAwait(false);
+                most = (int)Math.Max(most, count);
+            }
+
+            return most;
+        }
+
+        public override async Task RecordReturnAsync(IEnumerable<string> counters, long at, CancellationToken cancellationToken)
+        {
+            foreach (string counter in counters.Distinct(StringComparer.Ordinal))
+            {
+                // Two returns of one counter in the same second count once; the window is 30 days, so this does not matter.
+                await tx.Insert(LeaseReturnRow.Table)
+                    .Values(
+                        new LeaseReturnRow.Insert
+                        {
+                            LicenseId = license.Id,
+                            Counter = counter,
+                            ReturnedAt = at,
+                        }
+                    )
+                    .OnConflict(r => [r.LicenseId, r.Counter, r.ReturnedAt])
+                    .DoNothing()
+                    .ExecuteAsync(cancellationToken)
+                    .ConfigureAwait(false);
+            }
+        }
+
+        public override Task SetExpiryAsync(long expiresAt, long at, CancellationToken cancellationToken) =>
+            tx.Update(LicenseRow.Table)
+                .Set(l => [Set(l.ExpiresAt, expiresAt), Set(l.UpdatedAt, at)])
+                .Where(l => Eq(l.Id, license.Id))
+                .ExecuteAsync(cancellationToken);
 
         public override async Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(
             string keyId,

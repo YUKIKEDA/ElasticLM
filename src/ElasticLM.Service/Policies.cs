@@ -67,6 +67,7 @@ internal static class Policies
     public const string Trial = "trial";
     public const string Server = "server";
     public const string Unbound = "unbound";
+    public const string Cloud = "cloud";
     public const string NodeLocked = "nodeLocked";
     public const string FromIssue = "fromIssue";
     public const string FromFirstActivation = "fromFirstActivation";
@@ -125,6 +126,12 @@ internal static class Policies
         if (p.RefreshWindow >= p.TokenLifetime)
         {
             return "refreshWindow must be shorter than tokenLifetime.";
+        }
+
+        // design §12.7.6: a server license floats on premises, and a trial is bound to one machine.
+        if (p.Floating == Cloud && p.LicenseKind is Trial or Server)
+        {
+            return "A trial or server policy cannot be floating cloud.";
         }
 
         if (p.LicenseKind == Trial && p.FingerprintMatching == "ignore")

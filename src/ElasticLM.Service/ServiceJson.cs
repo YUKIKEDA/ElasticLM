@@ -324,6 +324,24 @@ internal sealed record ActivationPage(
     [property: JsonPropertyName("next")] string? Next
 );
 
+/// <summary>A cloud lease as the administration API shows it (design §12.7.6, M4d1).</summary>
+internal sealed record LeaseItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("feature")] string Feature,
+    [property: JsonPropertyName("seats")] long Seats,
+    [property: JsonPropertyName("keyId")] string KeyId,
+    [property: JsonPropertyName("seq")] long Seq,
+    [property: JsonPropertyName("expiresAt")] string ExpiresAt,
+    [property: JsonPropertyName("borrow")] bool Borrow,
+    [property: JsonPropertyName("stopped")] bool Stopped,
+    [property: JsonPropertyName("client"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] ClientItem? Client,
+    [property: JsonPropertyName("app"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? App,
+    [property: JsonPropertyName("createdAt")] string CreatedAt
+);
+
+/// <summary>A page of leases.</summary>
+internal sealed record LeasePage([property: JsonPropertyName("items")] LeaseItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
 /// <summary>A trial as the administration API shows it (design §14.5, M4b1): its ID is its license's.</summary>
 internal sealed record TrialItem(
     [property: JsonPropertyName("id")] string Id,
@@ -376,6 +394,7 @@ internal sealed record Problem(
 [JsonSerializable(typeof(NonceAnswer))]
 [JsonSerializable(typeof(ActivationItem))]
 [JsonSerializable(typeof(ActivationPage))]
+[JsonSerializable(typeof(LeasePage))]
 [JsonSerializable(typeof(TrialItem))]
 [JsonSerializable(typeof(TrialPage))]
 [JsonSerializable(typeof(Dictionary<string, string>))]

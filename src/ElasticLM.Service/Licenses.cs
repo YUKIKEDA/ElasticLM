@@ -63,7 +63,8 @@ internal static class Licenses
 
     /// <summary>
     /// Reads and checks the features of a license (design §14.5): codes of the product's features, no code twice, a version
-    /// range, seats for a server license only, and an expiry after now and not after the license's.
+    /// range, seats for a server license or a cloud-floating one only (design §12.7.6), and an expiry after now and not after
+    /// the license's.
     /// </summary>
     /// <param name="body">The body.</param>
     /// <param name="value">The <c>features</c> member.</param>
@@ -95,7 +96,8 @@ internal static class Licenses
             throw new BodyException(ErrorCode.InvalidArgument, "features must hold 1 to 256 features.");
         }
 
-        bool server = policy.LicenseKind == Policies.Server;
+        // design §12.7.6: cloud leases count the seats of the license's features, as a server license does.
+        bool server = policy.LicenseKind == Policies.Server || policy.Floating == Policies.Cloud;
         var features = new List<LicenseFeature>(count);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (JsonElement item in value.EnumerateArray())
@@ -131,12 +133,15 @@ internal static class Licenses
             long? seats = item.TryGetProperty("seats", out JsonElement seatsValue) ? body.Integer(seatsValue) : null;
             if (server && seats is not (>= 1 and <= MaxSeats))
             {
-                throw new BodyException(ErrorCode.InvalidArgument, "features[].seats must be between 1 and 1000000 for a server license.");
+                throw new BodyException(
+                    ErrorCode.InvalidArgument,
+                    "features[].seats must be between 1 and 1000000 for a server license or a cloud-floating one."
+                );
             }
 
             if (!server && seats is not null)
             {
-                throw new BodyException(ErrorCode.InvalidArgument, "features[].seats is only for a server license.");
+                throw new BodyException(ErrorCode.InvalidArgument, "features[].seats is only for a server license or a cloud-floating one.");
             }
 
             long? expires =

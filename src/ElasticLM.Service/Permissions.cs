@@ -25,6 +25,8 @@ internal static class Permissions
     public const string ActivationOffline = "activation.offline";
     public const string TrialRead = "trial.read";
     public const string TrialDelete = "trial.delete";
+    public const string LeaseRead = "lease.read";
+    public const string LeaseRelease = "lease.release";
 
     public const string RoleOwner = "owner";
     public const string RoleAdmin = "admin";
@@ -53,18 +55,22 @@ internal static class Permissions
         ActivationOffline,
         TrialRead,
         TrialDelete,
+        LeaseRead,
+        LeaseRelease,
     ];
 
     /// <summary>
     /// Returns the permissions of a role: <c>owner</c> all, <c>admin</c> all but <c>apikey.*</c>, <c>viewer</c> the
-    /// <c>*.read</c> ones, <c>support</c> those, <c>activation.deactivate</c>, and <c>activation.offline</c> (design §14.6); an unknown role none.
+    /// <c>*.read</c> ones, <c>support</c> those, <c>activation.deactivate</c>, <c>activation.offline</c>, and <c>lease.release</c> (design §14.6); an unknown role none.
     /// </summary>
     public static IReadOnlySet<string> OfRole(string role) =>
         role switch
         {
             RoleOwner => All.ToHashSet(StringComparer.Ordinal),
             RoleAdmin => All.Where(p => !p.StartsWith("apikey.", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal),
-            RoleSupport => All.Where(p => p.EndsWith(".read", StringComparison.Ordinal) || p is ActivationDeactivate or ActivationOffline)
+            RoleSupport => All.Where(p =>
+                    p.EndsWith(".read", StringComparison.Ordinal) || p is ActivationDeactivate or ActivationOffline or LeaseRelease
+                )
                 .ToHashSet(StringComparer.Ordinal),
             RoleViewer => All.Where(p => p.EndsWith(".read", StringComparison.Ordinal)).ToHashSet(StringComparer.Ordinal),
             _ => new HashSet<string>(StringComparer.Ordinal),

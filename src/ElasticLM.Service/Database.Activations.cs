@@ -33,6 +33,31 @@ internal abstract class LicenseScope
     /// <summary>Appends an audit row in the same transaction.</summary>
     public abstract Task AppendAuditAsync(AuditEntry entry, CancellationToken cancellationToken);
 
+    /// <summary>Returns a lease of the license that has not expired, or <see langword="null"/> (design §12.7.6).</summary>
+    public abstract Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken);
+
+    /// <summary>Returns the seats held of a feature of the license by leases that have not expired: stopped ones and borrows
+    /// too (design §12.7.6).</summary>
+    public abstract Task<long> SeatsHeldAsync(string feature, long now, CancellationToken cancellationToken);
+
+    /// <summary>Adds a lease.</summary>
+    public abstract Task InsertLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
+
+    /// <summary>Writes a lease's sequence number, last token, proof, expiry, and stop mark.</summary>
+    public abstract Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
+
+    /// <summary>Removes a lease.</summary>
+    public abstract Task DeleteLeaseAsync(string id, CancellationToken cancellationToken);
+
+    /// <summary>Returns the most early returns of the license since a time among some counters (design §12.7.4).</summary>
+    public abstract Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken);
+
+    /// <summary>Records an early return against some counters.</summary>
+    public abstract Task RecordReturnAsync(IEnumerable<string> counters, long at, CancellationToken cancellationToken);
+
+    /// <summary>Writes the license's expiry when the first lease fixes it (design §9.3 FromFirstActivation, §12.7.6).</summary>
+    public abstract Task SetExpiryAsync(long expiresAt, long at, CancellationToken cancellationToken);
+
     /// <summary>Returns the stored answers to offline requests with an installation key and a nonce (design §12.8.4).</summary>
     public abstract Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(string keyId, string nonce, CancellationToken cancellationToken);
 
@@ -104,6 +129,22 @@ internal abstract partial class Database
     /// <summary>Removes the jti records that expired before a time.</summary>
     /// <returns>The records removed.</returns>
     public abstract Task<long> RemoveProofsBeforeAsync(long before, CancellationToken cancellationToken);
+
+    /// <summary>Returns a lease that has not expired, or <see langword="null"/>; read outside a transaction, to find its license.</summary>
+    public abstract Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken);
+
+    /// <summary>Returns a license's leases that have not expired, after an ID, in ID order (design §12.7.6).</summary>
+    public abstract Task<IReadOnlyList<LeaseRow>> ListLeasesAsync(
+        Guid licenseId,
+        string? after,
+        int limit,
+        long now,
+        CancellationToken cancellationToken
+    );
+
+    /// <summary>Removes the leases that expired and the early returns older than a time (design §14.4).</summary>
+    /// <returns>The rows removed.</returns>
+    public abstract Task<long> RemoveOldLeasesAsync(long now, long returnsBefore, CancellationToken cancellationToken);
 
     /// <summary>Removes the stored answers of offline requests that expired before a time (design §12.8.4).</summary>
     /// <returns>The rows removed.</returns>

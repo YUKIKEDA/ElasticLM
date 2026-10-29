@@ -189,7 +189,7 @@ internal static class Activations
     }
 
     // design §12.3, §8.6: {host, user}, each at most 255 bytes in UTF-8.
-    private static ClientInfo? Client(RequestBody body, string malformed)
+    internal static ClientInfo? Client(RequestBody body, string malformed)
     {
         if (!body.TryGet("client", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
         {
@@ -209,7 +209,7 @@ internal static class Activations
     }
 
     // design §12.3, §8.6: the app's version, at most 64 bytes in UTF-8.
-    private static string? App(RequestBody body, string malformed) =>
+    internal static string? App(RequestBody body, string malformed) =>
         !body.TryGet("app", out JsonElement value) ? null
         : body.Text(value) is not string text ? null
         : Encoding.UTF8.GetByteCount(text) <= MaxAppBytes ? text
