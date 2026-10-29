@@ -281,7 +281,7 @@ public sealed class ElmServiceLeasesTests
         Assert.Equal(HttpStatusCode.NoContent, (await device.ReleaseAsync(id)).Status);
         test.Time.Advance(TimeSpan.FromMinutes(1));
         Assert.Equal(0, (await TestService.GetAsync(admin, $"v1/admin/licenses/{licenseId}/leases")).GetProperty("items").GetArrayLength());
-        await TestService.WaitForAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM leases") == 0);
+        await test.WaitWithClockAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM leases") == 0);
     }
 
     /// <summary>

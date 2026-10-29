@@ -294,6 +294,32 @@ internal sealed class TestService : IAsyncDisposable
         Assert.Fail("The condition did not hold within 10 seconds.");
     }
 
+    /// <summary>
+    /// Waits for a condition that the service's minute timers bring about, moving the fake clock a minute every 10 polls.
+    /// A periodic task runs one run at a time and skips the ticks that come while it runs: a run that read the clock
+    /// before one long move ended sees nothing to do, and no later tick comes unless the clock moves again. In M4d3 the
+    /// expiry lines did not come on PostgreSQL this way (PR #91).
+    /// </summary>
+    public async Task WaitWithClockAsync(Func<Task<bool>> condition)
+    {
+        for (int i = 0; i < 500; i++)
+        {
+            if (await condition())
+            {
+                return;
+            }
+
+            if (i % 10 == 9)
+            {
+                Time.Advance(TimeSpan.FromMinutes(1));
+            }
+
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        Assert.Fail("The condition did not hold within 10 seconds.");
+    }
+
     private sealed class DisposableHttp(HttpClient http) : IAsyncDisposable
     {
         public ValueTask DisposeAsync()

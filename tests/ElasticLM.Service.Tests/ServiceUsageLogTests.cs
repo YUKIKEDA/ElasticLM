@@ -153,7 +153,7 @@ public sealed class ServiceUsageLogTests
         string borrow = LeaseId(await device.BorrowAsync(key, 700, TestDevice.Fingerprints()));
 
         test.Time.Advance(TimeSpan.FromSeconds(701));
-        await TestService.WaitForAsync(() =>
+        await test.WaitWithClockAsync(() =>
             Task.FromResult(
                 Text(test, "n1").Contains("\"lease.expired\"", StringComparison.Ordinal)
                     && Text(test, "n1").Contains("\"borrow.expired\"", StringComparison.Ordinal)
@@ -539,7 +539,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key)).Status);
 
         test.Time.Advance(TimeSpan.FromSeconds(601));
-        await TestService.WaitForAsync(() =>
+        await test.WaitWithClockAsync(() =>
             Task.FromResult((Text(test, "n1") + Text(test, "n2")).Contains("\"lease.expired\"", StringComparison.Ordinal))
         );
         test.Time.Advance(TimeSpan.FromMinutes(1));
@@ -580,7 +580,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key, more: ""","client":{"host":"pc","user":"u"},"app":"2.0" """)).Status);
 
         test.Time.Advance(TimeSpan.FromSeconds(60));
-        await TestService.WaitForAsync(() =>
+        await test.WaitWithClockAsync(() =>
             Task.FromResult(Text(test, "n1").TrimEnd('\n').Split('\n')[^1].StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal))
         );
         JsonElement line = Verify(test, "n1").Entries.Single(e => e.Type == "lease.acquired").Value;
