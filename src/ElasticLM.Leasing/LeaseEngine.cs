@@ -457,7 +457,7 @@ public sealed class LeaseEngine : IDisposable
 
         if (!state.Pools.TryGetValue(request.FeatureId ?? string.Empty, out FeaturePool? pool) || pool.Feature is null)
         {
-            return Refuse(ErrorCode.FeatureNotLicensed, "The server license does not grant the feature.");
+            return Refuse(ErrorCode.FeatureNotLicensed, "The license does not grant the feature.");
         }
 
         LicenseError? featureError = CheckFeature(pool.Feature, request.Version, nowSeconds);
