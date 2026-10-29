@@ -16,6 +16,24 @@ internal sealed class CliHost
     /// <summary>Gets the reader of a secret typed by a person, or <see langword="null"/> when nobody can type (redirected input).</summary>
     public Func<string, string?>? ReadSecret { get; init; }
 
+    /// <summary>
+    /// Gets how a command waits, as <c>elm admin login</c> between polls (design §16); <see langword="null"/> waits on a timer of
+    /// <see cref="Time"/>.
+    /// </summary>
+    public Action<TimeSpan>? Wait { get; init; }
+
+    /// <summary>Waits for a time: with <see cref="Wait"/> when set, otherwise on a timer of <see cref="Time"/>.</summary>
+    public void Pause(TimeSpan time)
+    {
+        if (Wait is not null)
+        {
+            Wait(time);
+            return;
+        }
+
+        Task.Delay(time, Time).GetAwaiter().GetResult();
+    }
+
     public static CliHost System() =>
         new()
         {

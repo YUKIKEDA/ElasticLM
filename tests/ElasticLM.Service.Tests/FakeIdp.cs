@@ -102,6 +102,9 @@ internal sealed class FakeIdp : IAsyncDisposable
     public OidcSettings Settings(IReadOnlyDictionary<string, string>? roleMap = null) =>
         new(Issuer, Audience, CliClientId, OidcSettings.DefaultScopes, "groups", roleMap ?? DefaultRoleMap);
 
+    /// <summary>Forgets every refresh token, as a provider whose sessions ended.</summary>
+    public void ForgetRefreshTokens() => _refreshTokens.Clear();
+
     /// <summary>Replaces the signing key and its ID, as a provider that rotates its keys.</summary>
     public void RotateKey(string keyId)
     {
@@ -230,7 +233,7 @@ internal sealed class FakeIdp : IAsyncDisposable
 
     private Task TokensAsync(HttpContext context, string? keepRefresh)
     {
-        string refresh = keepRefresh ?? "refresh-" + Guid.NewGuid().ToString("N");
+        string refresh = keepRefresh ?? "refresh-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         _refreshTokens[refresh] = Subject;
         var answer = new Dictionary<string, object?>
         {

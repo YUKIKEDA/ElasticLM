@@ -191,7 +191,7 @@ public sealed partial class InstallationKeyStore
         }
     }
 
-    private static string DefaultDirectory(string productId, KeyScope scope)
+    internal static string DefaultDirectory(string productId, KeyScope scope)
     {
         if (OperatingSystem.IsWindows())
         {

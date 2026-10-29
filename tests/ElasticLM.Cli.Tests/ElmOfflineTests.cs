@@ -13,7 +13,15 @@ namespace ElasticLM.Cli.Tests;
 /// </summary>
 public sealed class ElmOfflineTests
 {
-    private readonly Dictionary<string, string> _environment = [];
+    // The login file is pointed at a file that does not exist, so the tests never read the person's own login (M5a).
+    private readonly Dictionary<string, string> _environment = new()
+    {
+        ["ELM_ADMIN_LOGIN"] = Path.Combine(
+            Path.GetTempPath(),
+            "elm-offline-tests-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)),
+            "login"
+        ),
+    };
 
     /// <summary>
     /// A request file is passed and its answer written; an answer file is not overwritten without --force; a deactivation

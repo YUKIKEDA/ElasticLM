@@ -12,5 +12,6 @@
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\TestDevice.cs" Link="TestDevice.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\FakeIdp.cs" Link="FakeIdp.cs" />
   </ItemGroup>
 </Project>
