@@ -170,7 +170,8 @@ internal static class AdminLoginFile
         {
             try
             {
-                Directory.CreateDirectory(folder);
+                // design §16: the folder is made with mode 0700 on Linux and macOS before the lock file is made in it.
+                ProtectedFiles.CreateDirectory(folder, KeyScope.User);
                 return new FileStream(path + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
             }
             catch (IOException) when (host.Time.GetElapsedTime(start) < LockWait)

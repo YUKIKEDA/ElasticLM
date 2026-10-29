@@ -152,7 +152,10 @@ internal static class AuditActors
     /// <summary>An API key; the actor is the key's ID.</summary>
     public const string ApiKey = "apikey";
 
-    /// <summary>An OIDC access token (M5a); the actor is the token's <c>iss</c> and <c>sub</c> joined by a space.</summary>
+    /// <summary>
+    /// An OIDC access token (M5a); the actor is the administrator's ID, and the token's <c>iss</c> and <c>sub</c> are in the
+    /// <c>admin.create</c> row's detail.
+    /// </summary>
     public const string Oidc = "oidc";
 }
 

@@ -31,7 +31,7 @@ public sealed class ElmAdminTests
     ///
     /// Expected:
     /// - 0 "Signed in to …"; the error output names the service and issuer before the code ABCD-EFGH; waits of 1, 1, 6, and
-    ///   12 seconds; the file does not hold the access token as text on Windows and has mode 0600 elsewhere; the request is 0
+    ///   12 seconds; the file does not hold the access token as text on Windows and has mode 0600 in a folder of mode 0700 elsewhere; the request is 0
     ///   and its output is the list with alice.
     /// </remarks>
     [Fact]
@@ -61,6 +61,10 @@ public sealed class ElmAdminTests
         else
         {
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(login));
+            Assert.Equal(
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute,
+                File.GetUnixFileMode(Path.GetDirectoryName(login)!)
+            );
         }
 
         (code, output, error) = Run("admin", "request", "GET", "/v1/admin/admins");
