@@ -85,6 +85,7 @@ public sealed partial class KeycloakTests
                 answer.IsSuccessStatusCode,
                 $"Keycloak answered {(int)answer.StatusCode} at {answer.RequestMessage?.RequestUri}: {Excerpt(html)}"
             );
+            Uri page = answer.RequestMessage!.RequestUri!;
             answer.Dispose();
             Match form = FormAction().Match(html);
             if (!form.Success)
@@ -117,7 +118,8 @@ public sealed partial class KeycloakTests
             }
 
             using var content = new FormUrlEncodedContent(fields);
-            answer = await http.PostAsync(new Uri(WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
+            // A form action may be relative to the page (/realms/...); it is resolved against the page's URL.
+            answer = await http.PostAsync(new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
         }
 
         Assert.Fail("Keycloak did not finish the approval in 8 pages.");
