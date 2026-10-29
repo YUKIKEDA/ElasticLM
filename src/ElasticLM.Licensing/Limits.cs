@@ -29,4 +29,14 @@ internal static class Limits
     public static bool IsTime(long? value) => value is null || IsTime(value.Value);
 
     public static bool IsDuration(long? value) => value is null or (>= 0 and <= MaxDurationSeconds);
+
+    /// <summary>The length of a lease ID: 128 random bits in base64url without padding (design §8.4.3, §14.2).</summary>
+    public const int LeaseIdLength = 22;
+
+    /// <summary>
+    /// Returns whether a lease ID has the form of design §8.4.3: 22 characters of <c>[A-Za-z0-9_-]</c>. A client names a
+    /// borrow's file after it, so a path (<c>..\x</c>, a rooted path) must never pass.
+    /// </summary>
+    public static bool IsLeaseId(string? id) =>
+        id is { Length: LeaseIdLength } && id.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_');
 }

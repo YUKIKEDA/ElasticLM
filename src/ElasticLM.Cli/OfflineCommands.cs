@@ -69,7 +69,9 @@ internal static class OfflineCommands
         }
 
         string? apiKey = host.GetEnvironmentVariable("ELM_API_KEY") is { Length: > 0 } key ? key : null;
-        using var http = new HttpClient { Timeout = RequestTimeout };
+
+        // design §12.1: a redirect would send the request file, the license key in it, to another place; a 3xx is an error.
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = RequestTimeout };
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(service, apiKey is null ? "v1/offline" : "v1/admin/offline"))
         {
             Content = new StringContent(text, Encoding.ASCII, "application/jose"),

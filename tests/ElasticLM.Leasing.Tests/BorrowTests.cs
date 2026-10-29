@@ -326,7 +326,7 @@ public sealed class BorrowTests : IDisposable
                 other,
                 new LeaseSpec
                 {
-                    LeaseId = "foreign",
+                    LeaseId = "foreign-AAAAAAAAAAAAAA",
                     ProductId = "acme-cad",
                     LicenseId = "lic-srv",
                     FeatureId = "pro",

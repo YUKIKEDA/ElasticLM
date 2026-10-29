@@ -49,7 +49,7 @@ public sealed class LeaseTests : IDisposable
         ServerIdentity server = Server();
 
         var valid = Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyOnPremises(Lease(server), server, Expect()));
-        Assert.Equal("lease-1", valid.Lease.LeaseId);
+        Assert.Equal("lease-1-AAAAAAAAAAAAAA", valid.Lease.LeaseId);
         Assert.Equal(2, valid.Lease.Seats);
         Assert.False(valid.Lease.IsBorrow);
         Assert.Equal(server.License.TokenId, valid.Lease.ServerLicenseTokenId);
@@ -172,17 +172,19 @@ public sealed class LeaseTests : IDisposable
 
     /// <summary>
     /// Lease issuance refuses specs the verifier would reject: zero seats, a negative sequence, a duration under one
-    /// second, and an empty ID.
+    /// second, an empty ID, and an ID that is not 22 characters of base64url (design §8.4.3).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A valid lease spec.
     ///
     /// Steps:
-    /// - Issue with each change.
+    /// - Issue with each change, the IDs a path with "..", one with a '.', one of 21 and one of 23 characters; issue with
+    ///   an ID of 22 characters using each kind of character, and with the smallest seats, sequence, and duration.
     ///
     /// Expected:
-    /// - ArgumentException each time.
+    /// - ArgumentException each time, for the IDs "The lease ID must be 22 characters of base64url (design §8.4.3)."; the
+    ///   last two are issued.
     /// </remarks>
     [Fact]
     public void LeaseIssuer_InvalidSpec_Throws()
@@ -193,6 +195,15 @@ public sealed class LeaseTests : IDisposable
         Assert.ThrowsAny<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { Sequence = -1 }, _time));
         Assert.ThrowsAny<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { Duration = TimeSpan.FromMilliseconds(500) }, _time));
         Assert.ThrowsAny<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { LeaseId = string.Empty }, _time));
+        foreach (string id in new[] { @"..\..\AAAAAAAAAAAAAAAA", "lease-1-AAAAAAAAAAAAA.", "lease-1-AAAAAAAAAAAAA", "lease-1-AAAAAAAAAAAAAAA" })
+        {
+            Assert.Equal(
+                "The lease ID must be 22 characters of base64url (design §8.4.3). (Parameter 'spec')",
+                Assert.Throws<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { LeaseId = id }, _time)).Message
+            );
+        }
+
+        Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { LeaseId = "Az09-_Az09-_Az09-_Az09" }, _time));
         Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Seats = 1, Sequence = 0, Duration = TimeSpan.FromSeconds(1) }, _time));
     }
 
@@ -253,7 +264,7 @@ public sealed class LeaseTests : IDisposable
         TrustStore otherTrust = TrustStore.Create([KeyFiles.ExportPublic(otherRoot)], []);
         LeaseSpec spec = new()
         {
-            LeaseId = "lease-h",
+            LeaseId = "lease-h-AAAAAAAAAAAAAA",
             ProductId = "acme-cad",
             LicenseId = "lic-h",
             FeatureId = "pro",
@@ -293,7 +304,14 @@ public sealed class LeaseTests : IDisposable
 
         for (int i = 0; i < 3; i++)
         {
-            string lease = LeaseIssuer.Issue(_signing, spec with { LeaseId = "lease-" + i }, _time);
+            string lease = LeaseIssuer.Issue(
+                _signing,
+                spec with
+                {
+                    LeaseId = "lease-" + i.ToString("D16", System.Globalization.CultureInfo.InvariantCulture),
+                },
+                _time
+            );
             Assert.IsType<LeaseVerificationResult.Valid>(verifier.VerifyHosted(lease, [leaseCert], Expect()));
         }
 
@@ -302,7 +320,8 @@ public sealed class LeaseTests : IDisposable
 
     /// <summary>
     /// Malformed lease payloads, correctly signed, are refused without an exception: null members, zero seats, an expiry
-    /// not after the issue time, a server ID other than the signer, and an empty token.
+    /// not after the issue time, a server ID other than the signer, an empty token, and a lease ID that is not 22
+    /// characters of base64url (design §8.4.3), since a client names a borrow's file after it.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -321,6 +340,11 @@ public sealed class LeaseTests : IDisposable
     [InlineData("exp-not-after-iat")]
     [InlineData("srv-other")]
     [InlineData("empty")]
+    [InlineData("lse-path")]
+    [InlineData("lse-rooted")]
+    [InlineData("lse-character")]
+    [InlineData("lse-short")]
+    [InlineData("lse-long")]
     public void VerifyOnPremises_MalformedPayload_IsMalformed(string kind)
     {
         ServerIdentity server = Server();
@@ -333,7 +357,7 @@ public sealed class LeaseTests : IDisposable
             ["iat"] = now,
             ["exp"] = now + 600,
             ["jti"] = "j",
-            ["lse"] = "lease-1",
+            ["lse"] = "lease-1-AAAAAAAAAAAAAA",
             ["prd"] = "acme-cad",
             ["lic"] = "lic-srv",
             ["feat"] = "pro",
@@ -360,6 +384,21 @@ public sealed class LeaseTests : IDisposable
                 break;
             case "srv-other":
                 payload["srv"] = "other";
+                break;
+            case "lse-path":
+                payload["lse"] = @"..\..\AAAAAAAAAAAAAAAA";
+                break;
+            case "lse-rooted":
+                payload["lse"] = @"C:\AAAAAAAAAAAAAAAAAAA";
+                break;
+            case "lse-character":
+                payload["lse"] = "lease-1-AAAAAAAAAAAAA.";
+                break;
+            case "lse-short":
+                payload["lse"] = "lease-1-AAAAAAAAAAAAA";
+                break;
+            case "lse-long":
+                payload["lse"] = "lease-1-AAAAAAAAAAAAAAA";
                 break;
             default:
                 break;
@@ -489,7 +528,7 @@ public sealed class LeaseTests : IDisposable
     private LeaseSpec Spec(ServerIdentity server) =>
         new()
         {
-            LeaseId = "lease-1",
+            LeaseId = "lease-1-AAAAAAAAAAAAAA",
             ProductId = "acme-cad",
             LicenseId = "lic-srv",
             FeatureId = "pro",

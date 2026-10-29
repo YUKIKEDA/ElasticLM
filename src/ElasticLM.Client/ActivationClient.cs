@@ -151,7 +151,9 @@ public sealed class ActivationClient : IAsyncDisposable
 
         // A received file is checked without the clock guard, whose state the service's time then replaces (design §11.4 step 4).
         _received = new LicenseVerifier(options.Trust, _time, StatelessClockGuard.Instance, options.VerifierOptions);
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2) };
+
+        // design §12.1: a redirect would send the body, a license key with it, to another place; a 3xx is an error.
+        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2), AllowAutoRedirect = false };
         _http = new HttpClient(options.WrapHandler?.Invoke(handler) ?? handler) { Timeout = RequestTimeout };
         if (key is not null)
         {

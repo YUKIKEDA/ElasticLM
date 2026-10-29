@@ -2,7 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Client;
 
-/// <summary><c>POST /v1/leases</c> (design §12.3, §12.7.1).</summary>
+/// <summary><c>POST /v1/leases</c> (design §12.3, §12.7.1); the license key and the product only to <c>elm-service</c> (§12.7.6).</summary>
 internal sealed record AcquireRequestBody(
     [property: JsonPropertyName("feature")] string Feature,
     [property: JsonPropertyName("version")] string? Version,
@@ -10,7 +10,9 @@ internal sealed record AcquireRequestBody(
     [property: JsonPropertyName("fingerprints")] IReadOnlyList<string>? Fingerprints,
     [property: JsonPropertyName("client")] ClientInfoBody? Client,
     [property: JsonPropertyName("app")] string? App,
-    [property: JsonPropertyName("borrow")] long? Borrow
+    [property: JsonPropertyName("borrow")] long? Borrow,
+    [property: JsonPropertyName("licenseKey")] string? LicenseKey,
+    [property: JsonPropertyName("product")] string? Product
 );
 
 /// <summary>The host name and OS user name, sent only when the app enables it (design §4.4).</summary>
@@ -31,6 +33,10 @@ internal sealed class LeaseAnswerBody
     [JsonPropertyName("lease")]
     [JsonRequired]
     public string Lease { get; set; } = string.Empty;
+
+    // design §12.7.1: the certificates of the service's signing key (use: lease); empty from an on-premises server.
+    [JsonPropertyName("certificates")]
+    public List<string>? Certificates { get; set; }
 }
 
 /// <summary>The answer to a reclaim.</summary>

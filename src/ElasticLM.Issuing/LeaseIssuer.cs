@@ -79,6 +79,11 @@ public static class LeaseIssuer
             ArgumentException.ThrowIfNullOrEmpty(value, nameof(spec));
         }
 
+        if (!Limits.IsLeaseId(spec.LeaseId))
+        {
+            throw new ArgumentException("The lease ID must be 22 characters of base64url (design §8.4.3).", nameof(spec));
+        }
+
         if (spec.Seats < 1 || spec.Sequence < 0)
         {
             throw new ArgumentException("The seat count must be at least 1 and the sequence number not negative.", nameof(spec));

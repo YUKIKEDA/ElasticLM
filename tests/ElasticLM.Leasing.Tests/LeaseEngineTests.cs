@@ -557,10 +557,18 @@ public sealed class LeaseEngineTests : IDisposable
         string foreign;
         using (System.Security.Cryptography.ECDsa other = KeyFiles.CreateKey())
         {
-            foreign = LeaseIssuer.Issue(other, Spec(a, "foreign"), _server.Time);
+            foreign = LeaseIssuer.Issue(other, Spec(a, "foreign-AAAAAAAAAAAAAA"), _server.Time);
         }
 
-        string borrow = LeaseIssuer.Issue(_server.Key, Spec(a, "borrow") with { IsBorrow = true, Duration = TimeSpan.FromDays(1) }, _server.Time);
+        string borrow = LeaseIssuer.Issue(
+            _server.Key,
+            Spec(a, "borrow-AAAAAAAAAAAAAAA") with
+            {
+                IsBorrow = true,
+                Duration = TimeSpan.FromDays(1),
+            },
+            _server.Time
+        );
 
         LeaseEngine after = _server.Engine();
         Assert.Equal(ErrorCode.WrongInstallation, Assert.Single(after.Reclaim([two.Token], b.KeyId, b.PublicKey)).Error?.Code);
