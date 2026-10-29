@@ -26,12 +26,14 @@ public sealed class ServiceUsageLogTests
     ///   that keeps client info and lends borrows up to 86400 seconds; a license with 3 seats of core; each engine.
     ///
     /// Steps:
-    /// - Device A acquires with client info and app 1.2, renews after 200 seconds, and releases; acquires again, and an
+    /// - Device A acquires with client info and app 1.2, renews after 200 seconds, sends that renewal again as a retry, and
+    ///   releases; acquires again, and an
     ///   administrator releases it. Device B borrows for 3600 seconds and returns it early; borrows again, and an
     ///   administrator releases it. Device A asks twice for feature nope. Stop the service; verify the node's files; read them.
     ///
     /// Expected:
-    /// - Intact with no issue. The signed lines are service.started, lease.acquired, lease.renewed, lease.released (by
+    /// - Intact with no issue. The signed lines (the retry writes none) are service.started, lease.acquired, lease.renewed,
+    ///   lease.released (by
     ///   device), lease.acquired, lease.released (by admin), borrow.started, borrow.returned (by device), borrow.started,
     ///   borrow.returned (by admin), lease.denied (nope, ELM_FEATURE_NOT_LICENSED, 2), service.stopped. The first acquisition
     ///   has the license, app, core, 1, A's key, the lease ID, its expiry, pc, u, and 1.2. No file holds the license key.
@@ -50,7 +52,9 @@ public sealed class ServiceUsageLogTests
         DeviceAnswer acquired = await a.AcquireAsync(key, more: ""","client":{"host":"pc","user":"u"},"app":"1.2" """);
         string first = LeaseId(acquired);
         test.Time.Advance(TimeSpan.FromSeconds(200));
-        Assert.Equal(HttpStatusCode.OK, (await a.RenewAsync(first, 1)).Status);
+        DeviceAnswer renewed = await a.RenewAsync(first, 1);
+        Assert.Equal(HttpStatusCode.OK, renewed.Status);
+        Assert.Equal(HttpStatusCode.OK, (await a.RenewAsync(first, 1, [renewed.Jti])).Status);
         Assert.Equal(HttpStatusCode.NoContent, (await a.ReleaseAsync(first)).Status);
         string second = LeaseId(await a.AcquireAsync(key));
         await DeleteAsync(admin, $"v1/admin/leases/{second}");
@@ -165,11 +169,12 @@ public sealed class ServiceUsageLogTests
     /// - The signing key's certificate for license and lease only.
     ///
     /// Steps:
-    /// - Start with usageLog.directory set; start without it.
+    /// - Start with usageLog.directory set; start with a log certificate and a usageLog.directory that is a file; start
+    ///   without the setting.
     ///
     /// Expected:
     /// - ServiceStartException "No certificate that the trust store vouches for lets the signing key … sign for Log at …";
-    ///   the second starts, and its folder has no file.
+    ///   ServiceStartException "The usage log cannot be written in '…': …"; the third starts, and its folder has no file.
     /// </remarks>
     [Fact]
     public async Task Usage_WithoutLogCertificate_DoesNotStart()
@@ -188,6 +193,18 @@ public sealed class ServiceUsageLogTests
             refused.Message,
             StringComparison.Ordinal
         );
+        File.WriteAllText(test.FilePath("taken"), "a file, not a folder");
+        ServiceStartException unwritable = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(
+                Logged(test, "n1") with
+                {
+                    UsageLogDirectory = test.FilePath("taken"),
+                },
+                test.HostOptions(),
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.StartsWith($"The usage log cannot be written in '{test.FilePath("taken")}': ", unwritable.Message, StringComparison.Ordinal);
         await test.StartAsync();
         Assert.Empty(Directory.Exists(test.FilePath("usage")) ? Directory.EnumerateFiles(test.FilePath("usage")) : []);
     }
@@ -373,6 +390,57 @@ public sealed class ServiceUsageLogTests
         Assert.Equal((2, 1), (Files(test, "a").Count, Files(test, "b").Count));
         Assert.Empty(Verify(test, "a").Issues);
         Assert.Empty(Verify(test, "b").Issues);
+    }
+
+    /// <summary>
+    /// Refusals are counted per feature and code; beyond 100 kinds in a minute they are counted without the feature, as
+    /// elm-server does (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A usage log opened in a folder with a certificate for log.
+    ///
+    /// Steps:
+    /// - Count refusals of 101 features, the first one twice, with ELM_NO_SEATS; write the counts; close; verify.
+    ///
+    /// Expected:
+    /// - 101 lease.denied lines: f0 with 2, f1 to f99 with 1, and one without a feature with 1.
+    /// </remarks>
+    [Fact]
+    public async Task Usage_Denials_AreCountedUpTo100Kinds()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        Logged(test, "n1");
+        string certificate = File.ReadAllText(test.FilePath("log.cert"));
+        using (
+            ServiceUsageLog log = ServiceUsageLog.Open(
+                test.FilePath("usage"),
+                "n1",
+                use => use(test.SigningKey),
+                [certificate],
+                test.Time,
+                Microsoft.Extensions.Logging.Abstractions.NullLogger.Instance
+            )
+        )
+        {
+            log.Denied("f0", ErrorCode.NoSeats);
+            for (int i = 0; i < 101; i++)
+            {
+                log.Denied("f" + i.ToString(System.Globalization.CultureInfo.InvariantCulture), ErrorCode.NoSeats);
+            }
+
+            log.WriteDenials();
+        }
+
+        JsonElement[] denied = [.. Verify(test, "n1").Entries.Where(e => e.Type == "lease.denied").Select(e => e.Value)];
+        Assert.Equal(101, denied.Length);
+        Assert.Equal(2, denied.Single(d => d.TryGetProperty("feat", out JsonElement f) && f.GetString() == "f0").GetProperty("count").GetInt64());
+        Assert.Equal(
+            99,
+            denied.Count(d => d.TryGetProperty("feat", out JsonElement f) && f.GetString() != "f0" && d.GetProperty("count").GetInt64() == 1)
+        );
+        JsonElement rest = denied.Single(d => !d.TryGetProperty("feat", out _));
+        Assert.Equal(("ELM_NO_SEATS", 1L), (rest.GetProperty("code").GetString(), rest.GetProperty("count").GetInt64()));
     }
 
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.

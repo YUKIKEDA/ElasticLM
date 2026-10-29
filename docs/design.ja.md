@@ -163,6 +163,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.92 | `elm-server` のサーバーライセンス | M4c3 で、`elm-server` のサーバーライセンスを `elm-service` で有効化・更新・解除する。有効化と手動の操作（オンラインの有効化・更新・解除、オフラインの要求・取り込み・解除の証明）は `elm server` のコマンドがサーバーのデータのフォルダーで `ActivationClient` を直接使って行い、ライセンスファイル（設定 `license`）を書いて、動いているサーバーに再読み込みを頼む。ライセンスがなければ起動しない決まり（§13.1）を変えずに最初の有効化ができるためである。自動の更新は、`service.url` を持つサーバーの中の `ActivationClient` が行い、成功のたびにファイルを書いて再読み込みする。ファイルが正本で、有効化を持つ間は有効化のライセンスが優先する。`kind: server` でないファイルは保存しない。動いているサーバーでの解除と、自動の更新をするサーバーでのオフラインの要求は断る（§13.7、M4c3 の Grill と設計のレビュー、持ち主が受けた） |
 | 0.93 | M4d の分け方とクラウドのリース | M4d を M4d1（規則の取り出し、`elm-service` のクラウドのリース、リースの管理 API）、M4d2（`LicenseClient` の SaaS 型のモード）、M4d3（サービスの利用ログとその管理 API）に分ける。`LeaseEngine` の判定を `LeaseRules`（純粋な関数）に取り出し、オンプレミスとサービスが同じ関数を使う。クラウドの取得はライセンスキーで名指し（ID は秘密でないため）、本文に `product` を持つ。回収は持たない（状態はデータベースに残る）。`floating` が `cloud` のポリシーのライセンスだけが貸し、借り出しの上限はポリシーの `BorrowLimit`、残す席は 0。`cloud` のポリシーは試用でもサーバーでもなく、そのライセンスは機能ごとに `seats` を必ず持ち、有効化しない（`409`）。`fromFirstActivation` の期限は最初の取得で決める。リースの期限はライセンスと機能の期限で切り、猶予は足さない。取得・更新・返却は監査ログに書かず（利用ログは M4d3）、複製の検出（`lease.clone`）と、管理 API の一覧と強制返却（借り出しも返す。0.56 の例外）は書く（§12.7.6。M4d の Grill と設計レビュー、持ち主が受けた） |
 | 0.94 | `LicenseClient` の SaaS 型のモード | M4d2 で、既存の `LicenseClient` に `LicenseClientOptions.LicenseKey` を足し、値があれば `elm-service` からリースを借りる（別のクラスにしない。0.42 の形をそのまま使う）。TLS は OS の信頼で確かめ、ピンは持たない。URL は `ActivationClient` と同じく https か、ループバックの http だけ。`ExpectedServerLicenseId` は断る。ライセンスキーはメモリーにだけ持ち、取得の本文にだけ入れる。リースは応答の `certificates` で確かめ（§12.7.5 の手順 1・2・6）、借り出しのファイルは `license` と `key` の代わりに `certificates` を持つ（`ver` は 1 のまま）。更新の `ELM_UNKNOWN_LEASE` はすぐに `Lost`、`429` の `Retry-After` は取得の `RetryAfter` に入れる（§12.7.1, §12.7.3, §12.7.4。M4d2 の Grill、持ち主が受けた）。設計の独立レビューを受けて、リース ID の形（`[A-Za-z0-9_-]` の 22 文字）を検証と発行で確かめ（§8.4.3）、両方のクライアントはリダイレクトに従わず（§12.1）、中継が偽る問題の応答とキーの読み取りを §5.4 で受け入れた（持ち主が受けた） |
+| 0.95 | `elm-service` の利用ログ | M4d3 で、`elm-service` がクラウドのリースと借り出しの利用ログを、ノードごとのファイルに書く（設定 `usageLog.directory`、なければ書かない。ファイル名にノード名 `node.name`、既定はホスト名）。署名はサービスの署名鍵で、利用ログを書くときは証明書に `log` が要る。各ファイルの最初の行は署名鍵の証明書を持ち、`key.changed` は使わない（鍵は起動のときだけ読む）。`SignedLog` と `LogVerifier` は「サーバーライセンスと鍵」か「証明書」のどちらでも確かめ、製品の確かめはサーバーの形だけにする（`elm log verify` の `--product` はサーバーのログだけ、`--node` でノードを選ぶ）。書くのはリースと借り出しのイベント（期限切れは掃除が消した行から）と拒否の数とサービスの開始と停止で、有効化・管理の操作・複製の検出は監査ログだけに書く。管理 API はそのノードのファイルの一覧・取得・区切りで、全ノードの記録を集めるのは運用者（§14.5, §14.8, §16, §18.1。M4d3 の Grill、持ち主が受けた） |
 
 ## 1. 目的と利用者
 
@@ -2392,6 +2393,9 @@ M4b1 のエンドポイント（0.88）:
 | `GET /v1/admin/trials` | `trial.read` | 試用の一覧（`after` と `limit`）。`?productId=` で絞り込める（UUID でなければ `400` と `ELM_INVALID_ARGUMENT`） |
 | `GET /v1/admin/licenses/{id}/leases` | `lease.read` | クラウドのリースの一覧（§12.7.6） |
 | `DELETE /v1/admin/leases/{id}` | `lease.release` | クラウドのリースの強制返却。借り出しも返す（§12.7.6、0.56 の例外） |
+| `GET /v1/admin/usage-log/files` | `usagelog.read` | このノードの利用ログのファイルの一覧 `{node, items: [{name, size, modifiedAt}]}`（古い順、§18.1） |
+| `GET /v1/admin/usage-log/files/{name}` | `usagelog.read` | 1 つのファイルの中身（`application/x-ndjson`）。名前はこのノードのファイルの一覧と照らし、パスとしては使わない。ない名前は `404` と `ELM_NOT_FOUND` |
+| `POST /v1/admin/usage-log/seal` | `usagelog.seal` | 数えた拒否の行と区切りの署名を今すぐ書く。`204` |
 | `DELETE /v1/admin/trials/{id}` | `trial.delete` | 試用の記録（指紋）を消し、その指紋がもう一度試用できるようにする。試用のライセンスと有効化は残る。`204`。消した後の 2 回目は `404` と `ELM_NOT_FOUND`（消す物がない） |
 
 | 応答 | 形 |
@@ -2438,6 +2442,7 @@ API キー:
 | `activation.read`、`activation.deactivate` | 有効化の閲覧と管理者の解除 | M4b1 |
 | `activation.offline` | オフラインの要求ファイルの処理（§12.8.4） | M4c1 |
 | `lease.read`、`lease.release` | クラウドのリースの閲覧と強制返却（§12.7.6） | M4d1 |
+| `usagelog.read`、`usagelog.seal` | 利用ログのファイルの閲覧と、区切りの署名（§18.1） | M4d3 |
 | `trial.read`、`trial.delete` | 試用の記録の閲覧と削除 | M4b1 |
 
   `owner` はすべて、`admin` は `apikey.*` を除くすべて、`viewer` は `*.read`、`support` は `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ。
@@ -2490,6 +2495,8 @@ M4a1 の設定:
 | `publicUrls` | `ELM_PUBLICURLS`（`;` 区切り） | `listen` がループバックのときだけ、待ち受けた `listen` の URL（http でもよい。手元の試験のため） | 端末が使う公開 URL。各要素は https でクエリと断片のない URL で、数の上限は設定ファイルの 64 KiB だけ。証明の `htu` をこれと比べる（§12.1）。`listen` がループバックでなければ必須で、ないか形が違えば起動しない（終了コード 2）。TLS を終端するプロキシの後ろでは、`listen` が http でも公開 URL は https である（M4b1） |
 | `nonce.secretFile` | `ELM_NONCE_SECRET`（秘密そのもの） | なし（必須。`setup` は読まない） | ノンスの HMAC の秘密（base64 で 32 バイト以上）のファイル（16 KiB まで、末尾の改行は除く）。複数ノードは同じ値を持つ（§14.3、M4b1） |
 | `audit.retentionDays` | `ELM_AUDIT_RETENTIONDAYS` | なし（消さない） | 監査ログを残す日数（1〜36,600）。1 時間ごとに、それより古い行を消す |
+| `usageLog.directory` | `ELM_USAGELOG_DIRECTORY` | なし（利用ログを書かない） | このノードの利用ログのフォルダー（§18.1、M4d3）。設定すると、署名鍵の証明書に `log` が要り、なければ起動しない。書けないフォルダーでも起動しない |
+| `node.name` | `ELM_NODE_NAME` | ホスト名（`[A-Za-z0-9-]` 以外の文字は `-` にし、64 文字で切る） | このノードの名前。`[A-Za-z0-9-]` の 1〜64 文字で、利用ログのファイル名に入る。フォルダーを共有するノードは別の名前にする |
 
 - 設定ファイルの値は、省けるが空にはできない。空の文字列と、リストの空か `null` の要素は誤りである（既定の値とはみなさない）。
 - 終了コードは、正常な停止と `setup` の成功が 0、引数の誤りと設定の形の誤り（設定ファイルが読めないか形が違う、知らないキー、範囲の外の値、必須の値がない）が 2、それ以外で起動できないとき（設定が指すファイルが読めない、署名鍵や証明書が合わない、待ち受けられない、データベースの誤り）が 1 である。`setup` は署名の設定を読まない。
@@ -2545,7 +2552,7 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 | `elm key thumbprint` | 公開鍵の鍵 ID（§7.4）を表示する |
 | `elm license issue` | ライセンスファイルを発行する（サービスなしの運用）。`--expires` は日時か `never` を必ず指定し、`never` には警告を出す。機能は `--feature "ID;ver=範囲;seats=N;exp=日時"`。発行の前に §8.4.2・§8.6・§9.3 の規則で確かめ、検証側が拒否するものは発行しない。さらに、書き出す前に必ず検証器そのもの（`LicenseVerifier`）でトラストストアから検証し、通らなければ書き出さない。ベンダーはルートの公開鍵をいつも持っているので、この検証は省けない |
 | `elm license inspect` / `elm license verify` | ライセンスファイルの中身の表示と、トラストストアでの検証 |
-| `elm log verify` | 利用ログと借り出しの記録の署名の連なりを検証する（§18.1）。ファイルかフォルダーを受け取り、名前の順（時刻の順）に確かめる。`--product`（必須）、`--stream usage|borrows`（既定 `usage`）、`--trust`。誤りがあれば終了コード 1、警告だけなら 0 |
+| `elm log verify` | 利用ログと借り出しの記録の署名の連なりを検証する（§18.1）。ファイルかフォルダーを受け取り、名前の順（時刻の順）に確かめる。`--product`（サーバーのログで必須、`elm-service` のログでは要らない）、`--node`（フォルダーから `elm-service` の 1 つのノードのファイル `usage-<ノード名>-*.jsonl` を選ぶ。`usage` だけ）、`--stream usage|borrows`（既定 `usage`）、`--trust`。誤りがあれば終了コード 1、警告だけなら 0 |
 | `elm admin login` | OIDC のデバイス認可フローで管理 API にログインする |
 | `elm admin ...` | 管理 API の操作。API キーは環境変数 `ELM_API_KEY` で渡す |
 | `elm offline process` | オフラインの有効化・更新・解除のファイルをサービスに渡し、応答を書く（§12.8.4、M4c1） |
@@ -2649,6 +2656,23 @@ M3c で作った形:
 - イベント（M3c）: `lease.acquired`、`lease.renewed`、`lease.released`、`lease.expired`、`lease.reclaimed`、`lease.denied`（取得・更新・回収・早期返却の拒否を、1 分ごとに機能とコードごとの `count` で）、`borrow.started`、`borrow.returned`、`borrow.expired`、`overage`（`inUse` つき）、`server.started`、`server.stopped`（返却されなかったリースの数）、`admin.action`、`admin.denied`（1 分ごとの `count`）、`records.set_aside`。M4c3 で `license.refreshed` と `license.refresh_failed`（§13.7）。取得の行は、送られていればホスト名・ユーザー名・アプリの版を持つ。
 - 書き手と検証は `ElasticLM.Issuing` の `SignedLog`（`Open`、`Append`、`Seal`、`ChangeKey`、`FindFiles`）と `LogVerifier.Verify(files, trust, productId, stream)` で、`elm-server` と `elm log verify` が共有する。
 - 利用ログが書けないときは、運用の記録（標準のログ）に書き、要求は失敗させない。利用ログは監査のためで、席の数え上げは記録に頼らないためである。
+
+`elm-service` の利用ログ（M4d3、0.95）:
+
+- 設定 `usageLog.directory` があるノードだけが書く（§14.8）。ファイル名は `usage-<ノード名>-<UTC の日時>.jsonl` で、ノードごとに別の連なりである。複数ノードがフォルダーを共有しても、各ノードは自分の最新のファイルから続ける。全ノードの記録を集めるのは運用者である（管理 API は答えるノードのファイルだけを返す、§14.5）。
+- 署名はサービスの署名鍵（§14.8）でする。最初の行（`chain.start` と `chain.reset`）は、サーバーライセンスと鍵の代わりに、署名鍵の証明書を `{"certificates": [<elm-cert+jws>]}`（1〜4 個）で持つ。鍵は起動のときだけ読むので、`key.changed` は使わない。鍵を入れ替えると、再起動の後のファイルが新しい鍵で始まる。
+- 書くイベント:
+  - `lease.acquired`、`borrow.started`（取得。`exp`、ポリシーの `ClientInfoStrategy` が許すときだけ `host`・`user`、`app`）
+  - `lease.renewed`（`exp`）
+  - `lease.released`、`borrow.returned`（`by` が `device` か `admin`）
+  - `lease.expired`、`borrow.expired`（1 分ごとの掃除が消した行から。消した行は、消したノードだけが受け取るので 1 回だけ書く。`DELETE ... RETURNING`）
+  - `lease.denied`（取得・更新・返却の拒否を、1 分ごとと停止のときに、機能とコードごとの `count` で。1 分に数える種類は 100 まで）
+  - `service.started`、`service.stopped`（`node`）
+- 各リースの行は `lic`（ライセンス ID）、`prd`（製品の `code`）、`feat`、`n`、`key`（インストール鍵の拇印）、`lease`（リース ID）を持つ。ライセンスキーは書かない。有効化・管理の操作・複製の検出は監査ログ（§18.2）にあるので書かない。
+- 行は要求のトランザクションがコミットした後、応答の前に書く。更新の再試行（最後のトークンをもう一度返す）は、何も変えないので書かない。
+- 書けないときは `elm-server` と同じで、運用の記録に書いて要求は続け、次の書き込みで `chain.reset` から新しいファイルを始める。
+- 検証（`LogVerifier`、`elm log verify`）は、最初の行の形で確かめ方を選ぶ。`certificates` の行は、各証明書をトラストストアから `use: log` で確かめ、行の `ts` の時刻がその期間に入るものだけを、署名してよい鍵とする（サーバーライセンスを行の `ts` で確かめるのと同じ考え）。署名の `kid` がそれらの鍵のどれでもなければ誤り。製品は確かめない（サービスは多くの製品を扱う）。サーバーの形の行を製品なしで確かめようとすれば誤りである。
+- ファイルをまたぐ鍵: 次のファイルが、前のファイルの鍵を持たない別の `log` の証明書で始まれば警告（署名鍵の入れ替え）。ルートが両方を保証するためである。サーバーの形とサービスの形が 1 つの連なりに混ざれば誤り。
 
 ### 18.2 監査ログ
 
