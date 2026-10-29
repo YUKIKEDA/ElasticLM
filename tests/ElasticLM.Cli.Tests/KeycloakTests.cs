@@ -9,12 +9,16 @@ namespace ElasticLM.Cli.Tests;
 /// <summary>
 /// The OIDC sign-in end to end against Keycloak (design §15.3, decision 0.97, M5a): <c>elm admin login</c> runs the device
 /// flow, the device code is approved through Keycloak's own pages over HTTP (no browser), and <c>elm-service</c> accepts the
-/// access token with JwtBearer. Runs where <c>ELM_TEST_KEYCLOAK</c> names the test realm (the Linux CI job).
+/// access token with JwtBearer. Runs where <c>ELM_TEST_KEYCLOAK</c> names the test realm: the Linux CI job, or a machine that
+/// starts tests/keycloak's realm in a WSL container (<c>wslc run -p 8180:8080 -v …/tests/keycloak:/opt/keycloak/data/import</c>
+/// with the image and arguments of the CI step) and sets the variable to <c>http://127.0.0.1:8180/realms/elm</c>.
 /// </summary>
 public sealed partial class KeycloakTests
 {
     /// <summary>The variable that names the Keycloak realm of tests/keycloak/elm-realm.json.</summary>
     public const string KeycloakVariable = "ELM_TEST_KEYCLOAK";
+
+    private static readonly Dictionary<string, string> Roles = new(StringComparer.Ordinal) { ["elm-owners"] = "owner" };
 
     private readonly Dictionary<string, string> _environment = [];
 
@@ -28,9 +32,8 @@ public sealed partial class KeycloakTests
     ///   groups claim); a service on the real clock that trusts the realm.
     ///
     /// Steps:
-    /// - Run elm admin login; at its first wait, open the printed verification URL, post the user code, and post Keycloak's
-    ///   login form as alice;
-    ///   run elm admin request GET /v1/admin/admins; run elm admin logout.
+    /// - Run elm admin login; at its first wait, open the printed verification URL with the code, post Keycloak's login form
+    ///   as alice, and post the consent; run elm admin request GET /v1/admin/admins; run elm admin logout.
     ///
     /// Expected:
     /// - login 0; request 0 with one owner of Keycloak's issuer, enabled, with a last login; logout 0 "Signed out.".
@@ -38,19 +41,10 @@ public sealed partial class KeycloakTests
     [Fact]
     public async Task DeviceFlow_SignsInToTheService()
     {
-        string? realm = Environment.GetEnvironmentVariable(KeycloakVariable);
-        Assert.SkipUnless(realm is { Length: > 0 }, $"Set {KeycloakVariable} to the Keycloak realm of tests/keycloak to run this test.");
+        string realm = Realm();
         await using var test = new TestService();
         test.Time.SetUtcNow(TimeProvider.System.GetUtcNow());
-        var oidc = new OidcSettings(
-            realm,
-            "elm-service",
-            "elm-cli",
-            OidcSettings.DefaultScopes,
-            "groups",
-            new Dictionary<string, string>(StringComparer.Ordinal) { ["elm-owners"] = "owner" }
-        );
-        ElmService service = await test.StartAsync(s => s with { Oidc = oidc });
+        ElmService service = await test.StartAsync(s => s with { Oidc = Settings(realm, "elm-service") });
         _environment[AdminLoginFile.PathVariable] = test.FilePath(Path.Combine("home", "login"));
 
         (int code, string output, string error) = await Task.Run(() => Run("admin", "login", "--url", service.Url.ToString()));
@@ -70,66 +64,163 @@ public sealed partial class KeycloakTests
         Assert.Equal((0, "Signed out."), (code, output.Trim()));
     }
 
-    // Approves a device code through Keycloak's own pages, as a person would, from the verification URL with the code: a page
-    // that asks for the user code gets it, the login page the user, and a consent page, if any, the approval. A page that is none
-    // of these fails the test with its text and the steps so far.
-    private static async Task ApproveAsync(string verification, string userCode)
+    /// <summary>
+    /// A Keycloak access token is refused by a service that wants another audience (design §14.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keycloak with the test realm; a service on the real clock that trusts the realm with the audience other-service.
+    ///
+    /// Steps:
+    /// - Take an access token for alice from the test-only client elm-test-direct (password grant); list administrators.
+    ///
+    /// Expected:
+    /// - 401.
+    /// </remarks>
+    [Fact]
+    public async Task AccessToken_OfAnotherAudience_IsRefused()
     {
-        using var handler = new HttpClientHandler { CookieContainer = new CookieContainer(), AllowAutoRedirect = true };
-        using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
+        string realm = Realm();
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        var trace = new List<string>();
-        HttpResponseMessage answer = await http.GetAsync(new Uri(verification), cancel);
-        for (int step = 0; step < 8; step++)
-        {
-            string html = await answer.Content.ReadAsStringAsync(cancel);
-            trace.Add($"{(int)answer.StatusCode} {answer.RequestMessage?.RequestUri} form: {FormAction().Match(html).Value}");
-            Assert.True(answer.IsSuccessStatusCode, $"Keycloak answered {(int)answer.StatusCode}: {Excerpt(html)}{Steps(trace)}");
-            Uri page = answer.RequestMessage!.RequestUri!;
-            answer.Dispose();
-            Match form = FormAction().Match(html);
-            if (!form.Success)
-            {
-                return;
-            }
+        await using var test = new TestService();
+        test.Time.SetUtcNow(TimeProvider.System.GetUtcNow());
+        ElmService other = await test.StartAsync(s => s with { Oidc = Settings(realm, "other-service") });
 
+        using var http = new HttpClient();
+        using var form = new FormUrlEncodedContent([
+            new("grant_type", "password"),
+            new("client_id", "elm-test-direct"),
+            new("username", "alice"),
+            new("password", "alice-test-only"),
+            new("scope", "openid"),
+        ]);
+        using HttpResponseMessage issued = await http.PostAsync(new Uri(realm + "/protocol/openid-connect/token"), form, cancel);
+        string body = await issued.Content.ReadAsStringAsync(cancel);
+        Assert.True(issued.IsSuccessStatusCode, body);
+        using JsonDocument tokens = JsonDocument.Parse(body);
+        string access = tokens.RootElement.GetProperty("access_token").GetString()!;
+
+        Assert.Equal(HttpStatusCode.Unauthorized, (await test.Http(other, access).GetAsync("v1/admin/admins", cancel)).StatusCode);
+    }
+
+    private static string Realm()
+    {
+        string? realm = Environment.GetEnvironmentVariable(KeycloakVariable);
+        Assert.SkipUnless(realm is { Length: > 0 }, $"Set {KeycloakVariable} to the Keycloak realm of tests/keycloak to run this test.");
+        return realm;
+    }
+
+    private static OidcSettings Settings(string realm, string audience) =>
+        new(realm, audience, "elm-cli", OidcSettings.DefaultScopes, "groups", Roles);
+
+    // Approves a device code on Keycloak's pages, as a person would: the verification URL with the code leads to the login
+    // page, the login to the consent page (Keycloak asks for consent in the device flow), and the consent ends the approval;
+    // Keycloak then redirects to /device/status, which answers 404.
+    //
+    // Keycloak marks its session cookies Secure also on http; a browser sends them to 127.0.0.1 all the same, but .NET's
+    // CookieContainer does not send Secure cookies over http. The cookies and the redirects are kept here, as a browser would.
+    private static async Task ApproveAsync(string verification)
+    {
+        using var http = new HttpClient(new HttpClientHandler { UseCookies = false, AllowAutoRedirect = false })
+        {
+            Timeout = TimeSpan.FromSeconds(30),
+        };
+        var cookies = new Dictionary<string, string>(StringComparer.Ordinal);
+        var trace = new List<string>();
+        (Uri page, HttpStatusCode status, string html) = await BrowseAsync(http, cookies, trace, HttpMethod.Get, new Uri(verification), null);
+        for (int step = 0; step < 4; step++)
+        {
+            Assert.True((int)status is >= 200 and < 300, $"Keycloak answered {(int)status}: {Excerpt(html)}{Steps(trace)}");
+            Match form = FormAction().Match(html);
+            Assert.True(form.Success, $"Keycloak's page has no form: {Excerpt(html)}{Steps(trace)}");
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (Match input in HiddenInput().Matches(html))
             {
                 fields[WebUtility.HtmlDecode(input.Groups["name"].Value)] = WebUtility.HtmlDecode(input.Groups["value"].Value);
             }
 
-            if (html.Contains("name=\"device_user_code\"", StringComparison.Ordinal))
+            bool consent = html.Contains("name=\"accept\"", StringComparison.Ordinal);
+            if (consent)
             {
-                fields["device_user_code"] = userCode;
+                fields["accept"] = "Yes";
             }
             else if (html.Contains("name=\"username\"", StringComparison.Ordinal))
             {
                 fields["username"] = "alice";
                 fields["password"] = "alice-test-only";
-            }
-            else if (html.Contains("name=\"accept\"", StringComparison.Ordinal))
-            {
-                fields["accept"] = "Yes";
+                fields["credentialId"] = string.Empty;
             }
             else
             {
                 Assert.Fail($"Keycloak showed a page the test does not know: {Excerpt(html)}{Steps(trace)}");
             }
 
-            trace.Add("post " + string.Join(',', fields.Keys));
-            using var content = new FormUrlEncodedContent(fields);
-
             // A form action may be relative to the page (/realms/...); it is resolved against the page's URL.
-            answer = await http.PostAsync(new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
+            var action = new Uri(page, WebUtility.HtmlDecode(form.Groups["action"].Value));
+            (page, status, html) = await BrowseAsync(http, cookies, trace, HttpMethod.Post, action, fields);
+            if (consent)
+            {
+                return;
+            }
         }
 
-        Assert.Fail("Keycloak did not finish the approval in 8 pages." + Steps(trace));
+        Assert.Fail("Keycloak did not reach the consent in 4 pages." + Steps(trace));
     }
 
-    private static string Steps(List<string> trace) => Environment.NewLine + "Steps:" + Environment.NewLine + string.Join(Environment.NewLine, trace);
+    // Sends a request with the kept cookies, keeps the cookies of each answer, and follows up to 5 redirects with GET.
+    private static async Task<(Uri Page, HttpStatusCode Status, string Html)> BrowseAsync(
+        HttpClient http,
+        Dictionary<string, string> cookies,
+        List<string> trace,
+        HttpMethod method,
+        Uri url,
+        Dictionary<string, string>? form
+    )
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        for (int hop = 0; hop < 6; hop++)
+        {
+            using var request = new HttpRequestMessage(method, url);
+            if (form is not null)
+            {
+                request.Content = new FormUrlEncodedContent(form);
+            }
+
+            if (cookies.Count > 0)
+            {
+                request.Headers.Add("Cookie", string.Join("; ", cookies.Select(c => c.Key + "=" + c.Value)));
+            }
+
+            using HttpResponseMessage answer = await http.SendAsync(request, cancel);
+            if (answer.Headers.TryGetValues("Set-Cookie", out IEnumerable<string>? set))
+            {
+                foreach (string cookie in set)
+                {
+                    string pair = cookie.Split(';', 2)[0];
+                    int equals = pair.IndexOf('=', StringComparison.Ordinal);
+                    cookies[pair[..equals]] = pair[(equals + 1)..];
+                }
+            }
+
+            trace.Add($"{method} {url.AbsolutePath} {(int)answer.StatusCode}");
+            if ((int)answer.StatusCode is >= 300 and < 400 && answer.Headers.Location is Uri next)
+            {
+                url = new Uri(url, next);
+                method = HttpMethod.Get;
+                form = null;
+                continue;
+            }
+
+            return (url, answer.StatusCode, await answer.Content.ReadAsStringAsync(cancel));
+        }
+
+        Assert.Fail("Keycloak redirected more than 5 times." + Steps(trace));
+        return default;
+    }
 
     private static string Excerpt(string html) => html.Length <= 3000 ? html : html[..3000];
+
+    private static string Steps(List<string> trace) => Environment.NewLine + "Steps:" + Environment.NewLine + string.Join(Environment.NewLine, trace);
 
     [GeneratedRegex("<form[^>]*action=\"(?<action>[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex FormAction();
@@ -137,7 +228,7 @@ public sealed partial class KeycloakTests
     [GeneratedRegex("<input[^>]*type=\"hidden\"[^>]*name=\"(?<name>[^\"]+)\"[^>]*value=\"(?<value>[^\"]*)\"", RegexOptions.IgnoreCase)]
     private static partial Regex HiddenInput();
 
-    [GeneratedRegex("enter the code (?<code>\\S+)\\.\\s+Or open (?<url>\\S+)")]
+    [GeneratedRegex("Or open (?<url>\\S+)")]
     private static partial Regex Verification();
 
     private (int Code, string Out, string Error) Run(params string[] args)
@@ -157,7 +248,7 @@ public sealed partial class KeycloakTests
                 if (!approved && Verification().Match(error.ToString()) is { Success: true } url)
                 {
                     approved = true;
-                    ApproveAsync(url.Groups["url"].Value, url.Groups["code"].Value).GetAwaiter().GetResult();
+                    ApproveAsync(url.Groups["url"].Value).GetAwaiter().GetResult();
                 }
 
                 Task.Delay(wait, TimeProvider.System).GetAwaiter().GetResult();
