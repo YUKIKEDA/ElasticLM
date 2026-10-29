@@ -68,12 +68,24 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <summary>Gets or sets the access tokens' lifetime.</summary>
     public TimeSpan Lifetime { get; set; } = TimeSpan.FromMinutes(5);
 
+    /// <summary>Gets or sets the token_type of the token answers.</summary>
+    public string TokenType { get; set; } = "Bearer";
+
+    /// <summary>Gets or sets whether the token answers leave out expires_in.</summary>
+    public bool OmitExpiresIn { get; set; }
+
+    /// <summary>Gets or sets the device authorization's interval in seconds.</summary>
+    public int DeviceInterval { get; set; } = 1;
+
+    /// <summary>Gets or sets the device authorization's expires_in in seconds.</summary>
+    public int DeviceExpiresIn { get; set; } = 600;
+
     /// <summary>Gets or sets whether a refresh gives a new refresh token (rotation).</summary>
     public bool Rotate { get; set; } = true;
 
     /// <summary>
-    /// Gets the answers the token endpoint gives to device-code polls, in order: an error code, or <see langword="null"/> for
-    /// tokens. When empty, a poll gets tokens.
+    /// Gets the answers the token endpoint gives to device-code polls, in order: an error code, <c>drop</c> to close the
+    /// connection without an answer, or <see langword="null"/> for tokens. When empty, a poll gets tokens.
     /// </summary>
     public ConcurrentQueue<string?> DevicePolls { get; } = new();
 
@@ -186,14 +198,19 @@ internal sealed class FakeIdp : IAsyncDisposable
                             ["user_code"] = "ABCD-EFGH",
                             ["verification_uri"] = Issuer + "/device",
                             ["verification_uri_complete"] = Issuer + "/device?user_code=ABCD-EFGH",
-                            ["expires_in"] = 600,
-                            ["interval"] = 1,
+                            ["expires_in"] = DeviceExpiresIn,
+                            ["interval"] = DeviceInterval,
                         }
                     )
                     .ConfigureAwait(false);
                 break;
             case Realm + "/token":
                 await TokenAsync(context).ConfigureAwait(false);
+                break;
+            case "/v1/admin/redirect":
+                // A service that redirects: elm admin request must not follow it (design §16).
+                context.Response.StatusCode = StatusCodes.Status302Found;
+                context.Response.Headers.Location = Issuer + "/jwks";
                 break;
             case Realm + "/revoke":
                 IFormCollection form = await context.Request.ReadFormAsync().ConfigureAwait(false);
@@ -212,7 +229,13 @@ internal sealed class FakeIdp : IAsyncDisposable
         string grant = form["grant_type"].ToString();
         if (grant == "urn:ietf:params:oauth:grant-type:device_code")
         {
-            if (DevicePolls.TryDequeue(out string? error) && error is not null)
+            if (DevicePolls.TryDequeue(out string? error) && error == "drop")
+            {
+                context.Abort();
+                return;
+            }
+
+            if (error is not null)
             {
                 await ErrorAsync(context, error).ConfigureAwait(false);
                 return;
@@ -235,12 +258,12 @@ internal sealed class FakeIdp : IAsyncDisposable
     {
         string refresh = keepRefresh ?? "refresh-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
         _refreshTokens[refresh] = Subject;
-        var answer = new Dictionary<string, object?>
+        var answer = new Dictionary<string, object?> { ["access_token"] = Token(Subject, Groups), ["token_type"] = TokenType };
+        if (!OmitExpiresIn)
         {
-            ["access_token"] = Token(Subject, Groups),
-            ["token_type"] = "Bearer",
-            ["expires_in"] = (long)Lifetime.TotalSeconds,
-        };
+            answer["expires_in"] = (long)Lifetime.TotalSeconds;
+        }
+
         if (keepRefresh is null)
         {
             answer["refresh_token"] = refresh;

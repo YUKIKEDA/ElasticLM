@@ -2533,7 +2533,7 @@ OIDC のアクセストークン（M5a、0.98）:
 - 監査ログ: `actorType` は `oidc`、`actorId` は管理者の ID（§18.2）。`iss` と `sub` は `admin.create` の行の `detail` にある。
 - `bootstrapOwner` と `oidc.issuer` が両方あれば、`bootstrapOwner.iss` は `oidc.issuer` と文字列で一致すること。違えば起動しない（終了コード 2）。
 - `oidc.audience` が `oidc.cliClientId` と同じなら起動しない（終了コード 2）。そのクライアントの ID トークンが、アクセストークンとして通るのを防ぐ（T13）。
-- Data Protection: 認証を足すと Data Protection が登録される（§14.8 の D0 の確かめ）。JwtBearer は Data Protection で何も守らないので、M5a は鍵を書かない。M5a のテストで、鍵のフォルダーに何も書かれないことを確かめる。書かれたら、鍵暗号化鍵（`ELM_DATAPROTECTION_KEK`）を M5a に移して本節を直す。
+- Data Protection: 認証を足すと Data Protection が登録される（§14.8 の D0 の確かめ）。JwtBearer は Data Protection で何も守らないので、M5a は鍵を書かない。M5a のテストで、トークンを受ける前と後で、ホストの Data Protection のキーマネージャーが持つ鍵の数が変わらないことを確かめる（`ElmServiceOidcTests.Tokens_WriteNoDataProtectionKey`）。書かれたら、鍵暗号化鍵（`ELM_DATAPROTECTION_KEK`）を M5a に移して本節を直す。
 
 90 日ログインのない管理者のキー（M5a、0.66、0.98）:
 

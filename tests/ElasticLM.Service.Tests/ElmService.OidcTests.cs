@@ -74,7 +74,8 @@ public sealed class ElmServiceOidcTests
     ///
     /// Steps:
     /// - Send tokens: signed by another key, unsigned, of another issuer, of another audience, expired 61 seconds ago, not
-    ///   valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, 8,193 characters, without sub, with a sub of
+    ///   valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, a valid token longer than 8,192 characters
+    ///   (a large claim), without sub, with a sub of
     ///   256 characters, with 101 role values; then one that expired 30 seconds ago, one with typ JWT, and one without kid.
     ///
     /// Expected:
@@ -103,7 +104,7 @@ public sealed class ElmServiceOidcTests
             idp.Token(change: (h, _) => h.Remove("typ")),
             idp.Token(change: (h, _) => h["alg"] = "HS256"),
             "a.b.c.d.e",
-            new string('x', ElmService.MaxAccessTokenLength + 1),
+            idp.Token(change: (_, p) => p["pad"] = new string('p', ElmService.MaxAccessTokenLength)),
             idp.Token(change: (_, p) => p.Remove("sub")),
             idp.Token(new string('s', 256)),
             idp.Token(groups: [.. Enumerable.Range(0, ElmService.MaxRoleValues + 1).Select(i => "g" + i)]),

@@ -17,19 +17,21 @@ public sealed class ElmAdminTests
 
     /// <summary>
     /// The device flow (RFC 8628 §3.4, §3.5): the service URL and issuer are shown before polling, pending waits the interval,
-    /// slow_down adds 5 seconds, and the tokens are kept in the protected login file; request then calls the API with them.
+    /// slow_down adds 5 seconds, a dropped connection doubles the interval, and the tokens are kept in the protected login
+    /// file; request then calls the API with them.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service that trusts the fake provider; the provider answers authorization_pending, then slow_down, then tokens;
+    /// - A service that trusts the fake provider; the provider answers authorization_pending, slow_down, a dropped
+    ///   connection, then tokens;
     ///   ELM_ADMIN_LOGIN points into the test folder.
     ///
     /// Steps:
     /// - Run elm admin login --url; read the login file's bytes; run elm admin request GET /v1/admin/admins.
     ///
     /// Expected:
-    /// - 0 "Signed in to …"; the error output names the service and issuer before the code ABCD-EFGH; waits of 1, 1, and 6
-    ///   seconds; the file does not hold the access token as text on Windows and has mode 0600 elsewhere; the request is 0
+    /// - 0 "Signed in to …"; the error output names the service and issuer before the code ABCD-EFGH; waits of 1, 1, 6, and
+    ///   12 seconds; the file does not hold the access token as text on Windows and has mode 0600 elsewhere; the request is 0
     ///   and its output is the list with alice.
     /// </remarks>
     [Fact]
@@ -42,13 +44,14 @@ public sealed class ElmAdminTests
         string login = SetLoginFile(test);
         idp.DevicePolls.Enqueue("authorization_pending");
         idp.DevicePolls.Enqueue("slow_down");
+        idp.DevicePolls.Enqueue("drop");
 
         (int code, string output, string error) = Run("admin", "login", "--url", service.Url.ToString());
         Assert.True(code == 0, error);
         Assert.Equal($"Signed in to {service.Url}", output.Trim().TrimEnd('.'));
         int named = error.IndexOf($"Signing in to {service.Url} with the identity provider {idp.Issuer}.", StringComparison.Ordinal);
         Assert.InRange(named, 0, error.IndexOf("ABCD-EFGH", StringComparison.Ordinal));
-        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(6)], _waits);
+        Assert.Equal([TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(6), TimeSpan.FromSeconds(12)], _waits);
 
         byte[] stored = File.ReadAllBytes(login);
         if (OperatingSystem.IsWindows())
@@ -67,8 +70,9 @@ public sealed class ElmAdminTests
     }
 
     /// <summary>
-    /// The device flow stops on any other error and when the code expires; a network failure doubles the interval; a service
-    /// without OIDC is told (design §16).
+    /// The device flow stops on any other error and when the code expires; a service without OIDC and a token answer that is
+    /// not Bearer are told; interval is kept within 1 to 60 seconds and expires_in within 1,800; a token answer without
+    /// expires_in counts as 300 seconds (design §16).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -76,11 +80,13 @@ public sealed class ElmAdminTests
     ///
     /// Steps:
     /// - Log in while the provider answers access_denied; expired_token; authorization_pending until past the code's 600
-    ///   seconds; log in to the service without OIDC.
+    ///   seconds; log in to the service without OIDC; with token_type mac; with interval 0 and 120 (access_denied at the
+    ///   first poll); with expires_in 100,000 and authorization_pending; with a token answer without expires_in.
     ///
     /// Expected:
     /// - 1 with "ended the sign-in: access_denied."; 1 with "expired_token."; 1 "The device code expired …"; 1 "The service does
-    ///   not accept OIDC sign-in; use ELM_API_KEY."; no login file in any case.
+    ///   not accept OIDC sign-in; use ELM_API_KEY."; 1 "… not a Bearer token."; no login file so far; first waits of 1 and
+    ///   60 seconds; 1 "The device code expired …" after 1,801 seconds of waits; 0 with expiresAt now + 300.
     /// </remarks>
     [Fact]
     public async Task Login_Refusals_EndTheFlow()
@@ -107,24 +113,56 @@ public sealed class ElmAdminTests
             (1, "error: The service does not accept OIDC sign-in; use ELM_API_KEY."),
             Last(Run("admin", "login", "--url", plain.Url.ToString()))
         );
+        idp.TokenType = "mac";
+        Assert.Equal((1, "error: The identity provider's token answer is not a Bearer token."), Last(Run("admin", "login", "--url", url)));
         Assert.False(File.Exists(login));
+
+        idp.TokenType = "Bearer";
+        idp.DeviceInterval = 0;
+        _waits.Clear();
+        idp.DevicePolls.Enqueue("access_denied");
+        Assert.Equal(1, Run("admin", "login", "--url", url).Code);
+        Assert.Equal([TimeSpan.FromSeconds(1)], _waits);
+        idp.DeviceInterval = 120;
+        _waits.Clear();
+        idp.DevicePolls.Enqueue("access_denied");
+        Assert.Equal(1, Run("admin", "login", "--url", url).Code);
+        Assert.Equal([TimeSpan.FromSeconds(60)], _waits);
+
+        idp.DeviceInterval = 1;
+        idp.DeviceExpiresIn = 100_000;
+        _waits.Clear();
+        for (int i = 0; i < 2_000; i++)
+        {
+            idp.DevicePolls.Enqueue("authorization_pending");
+        }
+
+        Assert.Equal((1, "error: The device code expired before the sign-in was approved."), Last(Run("admin", "login", "--url", url)));
+        Assert.Equal(TimeSpan.FromSeconds(1_801), _waits.Aggregate(TimeSpan.Zero, (sum, w) => sum + w));
+        idp.DevicePolls.Clear();
+
+        idp.DeviceExpiresIn = 600;
+        idp.OmitExpiresIn = true;
+        Assert.Equal(0, Run("admin", "login", "--url", url).Code);
+        Assert.Equal(test.Time.GetUtcNow().ToUnixTimeSeconds() + 300, AdminLoginFile.Read(login)!.ExpiresAt);
     }
 
     /// <summary>
     /// A login that expires within 60 seconds is refreshed under the lock: a new refresh token replaces the old one, a missing
-    /// one keeps it; invalid_grant asks for a new login (design §16, RFC 6749 §6).
+    /// one keeps it, a held lock is waited for 10 seconds; invalid_grant asks for a new login (design §16, RFC 6749 §6).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A signed-in login of five minutes at a service that trusts the fake provider.
     ///
     /// Steps:
-    /// - Move the clock 4 minutes 1 second and request; move 5 minutes with rotation off and request twice; make the provider
-    ///   forget its refresh tokens, move 5 minutes, and request.
+    /// - Move the clock 4 minutes 1 second and request; move 5 minutes with rotation off and request twice; move 5 minutes and
+    ///   request while another process holds the lock file; make the provider forget its refresh tokens and request.
     ///
     /// Expected:
-    /// - 0 with one refresh grant and a new refresh token in the file; 0 twice with the same refresh token kept; 1 "The login
-    ///   can no longer be refreshed; run 'elm admin login' again."
+    /// - 0 with one refresh grant and a new refresh token in the file; 0 twice with the same refresh token kept; 1 "Another elm
+    ///   process holds the login …" after waiting 10 seconds; 1 "The login can no longer be refreshed; run 'elm admin login'
+    ///   again."
     /// </remarks>
     [Fact]
     public async Task Request_ExpiringLogin_IsRefreshed()
@@ -149,8 +187,17 @@ public sealed class ElmAdminTests
         Assert.Equal(0, Run("admin", "request", "GET", "/v1/admin/admins").Code);
         Assert.Equal(second, AdminLoginFile.Read(login)!.RefreshToken);
 
-        idp.ForgetRefreshTokens();
         test.Time.Advance(TimeSpan.FromMinutes(5));
+        using (new FileStream(login + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+        {
+            _waits.Clear();
+            (int held, _, string heldError) = Run("admin", "request", "GET", "/v1/admin/admins");
+            Assert.Equal(1, held);
+            Assert.Contains("Another elm process holds the login for more than 10 seconds", heldError, StringComparison.Ordinal);
+            Assert.True(_waits.Sum(w => w.Ticks) >= TimeSpan.FromSeconds(10).Ticks);
+        }
+
+        idp.ForgetRefreshTokens();
         Assert.Equal(
             (1, "error: The login can no longer be refreshed; run 'elm admin login' again."),
             Last(Run("admin", "request", "GET", "/v1/admin/admins"))
@@ -200,11 +247,11 @@ public sealed class ElmAdminTests
     /// Steps:
     /// - Request with method TRACE; paths /v1/other, /v1/admin/../x, /v1/admin/%2E%2E/x, /v1/admin/a#b, /v1/admin/a\b; a 64 KiB
     ///   + 1 body; --url of another port; a 403 (GET /v1/admin/admins as a viewer); with ELM_API_KEY; to a closed port with
-    ///   ELM_API_KEY.
+    ///   ELM_API_KEY; to a service that answers 302.
     ///
     /// Expected:
     /// - 2 for each argument; 2 naming the login's service; 1 with the problem body in the error output; 0 with the key's
-    ///   answer; 3.
+    ///   answer; 3; 1 with "the service answered 302", the redirect not followed.
     /// </remarks>
     [Fact]
     public async Task Request_ChecksAndAnswers()
@@ -244,6 +291,9 @@ public sealed class ElmAdminTests
         Assert.Equal(0, code);
         Assert.Contains("\"items\"", output, StringComparison.Ordinal);
         Assert.Equal(3, Run("admin", "request", "GET", "/v1/admin/admins", "--url", "http://127.0.0.1:1/").Code);
+        (code, _, error) = Run("admin", "request", "GET", "/v1/admin/redirect", "--url", new Uri(idp.Issuer).GetLeftPart(UriPartial.Authority));
+        Assert.Equal(1, code);
+        Assert.Contains("the service answered 302", error, StringComparison.Ordinal);
     }
 
     /// <summary>
