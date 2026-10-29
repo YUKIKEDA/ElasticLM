@@ -166,6 +166,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.95 | `elm-service` の利用ログ | M4d3 で、`elm-service` がクラウドのリースと借り出しの利用ログを、ノードごとのファイルに書く（設定 `usageLog.directory`、なければ書かない。ファイル名にノード名 `node.name`、既定はホスト名）。署名はサービスの署名鍵で、利用ログを書くときは証明書に `log` が要る。各ファイルの最初の行は署名鍵の証明書を持ち、`key.changed` は使わない（鍵は起動のときだけ読む）。`SignedLog` と `LogVerifier` は「サーバーライセンスと鍵」か「証明書」のどちらでも確かめ、製品の確かめはサーバーの形だけにする（`elm log verify` の `--product` はサーバーのログだけ、`--node` でノードを選ぶ）。書くのはリースと借り出しのイベント（期限切れは掃除が消した行から）と拒否の数とサービスの開始と停止で、有効化・管理の操作・複製の検出は監査ログだけに書く。管理 API はそのノードのファイルの一覧・取得・区切りで、全ノードの記録を集めるのは運用者（§14.5, §14.8, §16, §18.1。M4d3 の Grill、持ち主が受けた）。設計の独立レビューを受けて、別の `log` の鍵で続くファイルを警告にし（0.55 の例外）、最初の行にノード名を入れて検証で照らし、同じ名前のノードの起動を断り、署名鍵を持つ者による書き直しを §5.4 で受け入れた（持ち主が受けた） |
 | 0.96 | 管理画面の技術 | W0 で、管理画面の SPA を Preact 11 と TypeScript で書き、Vite 8 でビルドする（Preact 用の Vite のプリセットは使わない）。テストは Vitest と happy-dom。ビルドの道具は Node.js 24 と pnpm 12 に版を固定し（pnpm は Corepack がハッシュで確かめる）、`pnpm-lock.yaml` から `pnpm install --frozen-lockfile` で入れ、公開から 1 日たたない版を入れない。ビルドの結果はリポジトリに入れず、`build.ps1` と CI がビルドする。CI は秘密を持たない別のジョブで 1 回ビルドし、`dist` を 3 つの OS のジョブに渡す（M5c、0.97）。Preact、Svelte 5、Vue 3、SolidJS、フレームワークなしの 5 つを同じ試作で比べ、持ち主の希望（依存が少なく、小さく、書きやすい）で選んだ。pnpm は持ち主の問いから npm と比べて選んだ。設計の独立レビューを受けて、Node.js を 22 から 24 にし（22 は 2027-04-30 にサポートが終わる）、依存の乗っ取り（T21）の守りと受け入れる残り（§5.4）を書いた（§5.2, §5.3, §5.4, §15.2, §21、ADR 0001。W0 の Grill と Issue #94 の結果、持ち主が受けた） |
 | 0.97 | M5 の分け方 | M5 を M5a（管理者の土台と CLI のログイン: JwtBearer、`elm admin`、管理者の一覧と無効化の API、最後のログイン、90 日ルール）、M5b（管理画面のログイン: BFF、データベースのセッション、Data Protection の鍵の保存、`X-ELM-CSRF`、Keycloak のテスト）、M5c（管理画面の土台: `web/admin/` のビルドとゲート、CI の SPA のジョブ、埋め込みと配信、大きさの計測、最初の画面）、M5d（残りの画面）の 4 行に分け、この順に進める。各行の細かい設計は、その行の始まりの Grill で決め、PR の前に独立した設計のレビューを当てて、その行の実装と同じ PR に入れる（0.61 と同じ）。`elm admin` は `login`・`logout` と汎用の `request` だけにする（§16）。OIDC のテストは、テストの中の偽の IdP（3 つの OS）と、CI の Linux の Keycloak の 2 段にする（§15.3）。M5b の画面のログインも、M5a と同じ「最後のログイン」を更新する。各行の Grill で決める点は §14.6 に挙げる（M5 の Grill、持ち主が受けた）。設計の独立レビューを受けて、Keycloak のテストを M5a から始め（デバイス認可フローと JwtBearer、M5b で認可コードのフローを足す）、画面を §15.1 の日々の操作と `support` の操作、管理者・API キー・セッションまでにした（持ち主が受けた） |
+| 0.98 | 管理者の土台と CLI のログイン | M5a で、管理 API が `elm_` で始まらない Bearer を OIDC のアクセストークンとして JwtBearer で確かめ（署名・発行者・`audience`・期限、RS256・PS256・ES256）、`iss` と `sub` で管理者を探すか作り、役割を `oidc.roleClaim` と `oidc.roleMap` から決める（`bootstrapOwner` は `owner`）。最後のログインは、認証された要求で 1 時間に 1 回まで書く。90 日の規則は、キーを使うたびに最後のログイン（なければ管理者を作った時刻）と比べる（`apiKeys.inactiveAdminDays`、既定 90、0 で切る）。管理者の一覧・無効化・有効化の API は `admin.read`・`admin.update` で、`owner` だけが持つ。`elm admin login` はデバイス認可フロー（RFC 8628）でトークンを得て、インストール鍵と同じ守り方のユーザーの範囲のファイルに置く。`request` は保存したログインを、その URL と同じオリジンにだけ使い、応答の本文をそのまま書き、転送を追わない（§14.5, §14.6, §14.8, §16。M5a の Grill、Issue #102） |
 
 ## 1. 目的と利用者
 
@@ -2431,6 +2432,23 @@ M4b1 のエンドポイント（0.88）:
 
 - TLS とリバースプロキシ: `listen` が http なら、API キーは平文で流れる。ループバック以外で待ち受けるなら https にするか、TLS を終端するリバースプロキシの後ろに置く。プロキシの後ろでは、送信元ごとの制限と監査ログの `ip` はプロキシの IP になる。`elm-service` は `X-Forwarded-For` を信じない（偽れるため。§13.8 と同じ）。プロキシの後ろに置くなら、`rateLimit.perIp` をプロキシの先の利用者の数に合わせて上げる。
 
+M5a のエンドポイント（0.98）:
+
+| メソッドとパス | 許可 | 中身 |
+| --- | --- | --- |
+| `GET /v1/admin/oidc` | なし（認証しない） | `elm admin login` のための OIDC の設定 `{"issuer", "clientId", "scopes"}`（§16）。`oidc.issuer` がなければ `404` と `ELM_NOT_FOUND`。送信元ごとの頻度の制限（`rateLimit.perIp`）だけを受け、監査ログには書かない（秘密を返さない） |
+| `GET /v1/admin/admins` | `admin.read` | 管理者の一覧（`after` と `limit`、ID の順） |
+| `POST /v1/admin/admins/{id}/disable` | `admin.update` | 管理者を無効にする。本文なし。`204`。無効の管理者は OIDC でも API キーでも認証できない（§14.6） |
+| `POST /v1/admin/admins/{id}/enable` | `admin.update` | 管理者を有効にする。本文なし。`204` |
+
+| 応答 | 形 |
+| --- | --- |
+| 管理者の 1 件 | `{"id", "issuer", "subject", "role", "enabled", "createdAt", "lastLoginAt": <なければ null>}` |
+
+- 知らない管理者と形の違う ID は `404` と `ELM_NOT_FOUND`。自分（呼び出し元の API キーかアクセストークンの管理者）を無効にする要求は `409` と `ELM_CONFLICT` で、`owner` が自分を締め出すのを防ぐ。すでにその状態の管理者への操作は、何も変えずに `204` を返す。
+- 監査ログ: `admin.list`、`admin.disable`、`admin.enable`（`target` は管理者の ID）。
+- 管理者の表に、最後のログインの列 `last_login_at`（UNIX 秒、なければ `NULL`）を足す（移行 `0007`）。
+
 ### 14.6 管理の認証と認可
 
 | 呼び出し元 | 方式 |
@@ -2465,17 +2483,47 @@ API キー:
 | `lease.read`、`lease.release` | クラウドのリースの閲覧と強制返却（§12.7.6） | M4d1 |
 | `usagelog.read`、`usagelog.seal` | 利用ログのファイルの閲覧と、区切りの署名（§18.1） | M4d3 |
 | `trial.read`、`trial.delete` | 試用の記録の閲覧と削除 | M4b1 |
+| `admin.read`、`admin.update` | 管理者の一覧と、無効化・有効化（`owner` だけ） | M5a |
 
-  `owner` はすべて、`admin` は `apikey.*` を除くすべて、`viewer` は `*.read`、`support` は `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ。
+  `owner` はすべて、`admin` は `apikey.*` と `admin.*` を除くすべて、`viewer` は `admin.read` を除く `*.read`、`support` は `admin.read` を除く `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ（`admin.*` は M5a）。
 - API キーの許可は、作った人の許可を超えられない。
 - OIDC の利用者の役割は、IdP のクレーム（設定で指定。例: `groups`）から設定の対応表で決める。対応しない利用者は拒否する。
 - サービスは、ログインした管理者の一覧（OIDC の `iss` と `sub`、役割、最後のログイン、有効か無効か）を持つ。無効の管理者は、IdP で認証できてもログインできない。
 - 最初の `owner` は、起動時の設定（`bootstrapOwner`: IdP の `iss` と `sub`）で決める。
 - 最初の API キーは、サービスのホストで `elm-service setup` を流して作る（0.63）。`bootstrapOwner` に結びついた `owner` の許可のキーで、期限は 90 日、作ったときに一度だけ表示する。何度でも流せ、流すたびに新しいキーを作って監査ログに残す（前のキーは消さない）。`bootstrapOwner` がなければ誤りで止める。出力（0.80）: キー本体だけを標準出力に 1 行で書き、キーの ID・期限・持ち主は標準エラーに書く（`elm-service setup > key.txt` でそのまま渡せる）。終了コードは、成功 0、データベースの誤り 1、設定の誤り 2。Keygen CE も、ホストで `setup` を流して最初の管理者を作る（https://keygen.sh/docs/self-hosting/ ）。
 
+OIDC のアクセストークン（M5a、0.98）:
+
+- 受けるのは `oidc.issuer` があるときだけで、なければ `elm_` で始まらない Bearer は `401` と `ELM_UNAUTHORIZED` である。
+- 見分け方: `Bearer` の値が `elm_` で始まれば API キー、そうでなければアクセストークンとして JwtBearer（`Microsoft.AspNetCore.Authentication.JwtBearer`、§21）で確かめる。
+- 確かめること:
+  - 署名。鍵は発行者の discovery（`oidc.issuer` に `/.well-known/openid-configuration` を足した URL）の `jwks_uri` から取る。アルゴリズムは RS256、PS256、ES256 だけを受ける。
+  - `iss` が `oidc.issuer` と一致し、`aud` が `oidc.audience` を含み、`exp` と `nbf` が今の時刻を含む（時計の差は 60 秒まで）。
+  - JWS の形でない値と、暗号化したトークン（JWE）は断る。
+- discovery と鍵の取り直しは、既定の値に頼らずに設定する（`design-docs` の規則）。12 時間ごとに取り直し、知らない `kid` を見たら取り直す（5 分に 1 回まで）。discovery の URL は https（ループバックの http は手元の試験のために受ける）。IdP に届かず鍵を取れないときも `401` と `ELM_UNAUTHORIZED` で、理由はサービスのログに書く。
+- 確かめられないトークンは、すべて `401` と `ELM_UNAUTHORIZED` の 1 つの答えにする（§14.5 の API キーと同じ）。
+- 管理者:
+  - `iss` と `sub` で管理者の表を探し、なければ作る（監査ログに `admin.create`）。
+  - 役割は、`oidc.roleClaim` のクレーム（文字列か文字列の配列）の値を `oidc.roleMap` で役割にしたもので、複数あれば強い方（`owner` > `admin` > `support` > `viewer`）を取る。対応する値がなければ `403` と `ELM_FORBIDDEN` で、管理者の行は作らない。
+  - `bootstrapOwner` の `iss` と `sub` は、クレームによらず `owner` である。
+  - 役割がクレームで変わったら、管理者の行を書き直し、監査ログに `admin.role`（`detail` は `{"from", "to"}`）を書く。
+  - 無効の管理者は `401` と `ELM_UNAUTHORIZED`。
+- 許可は役割の許可（上の表）で、API キーのように絞られない。
+- 最後のログイン: 認証が通り、`last_login_at` がないか今より 1 時間以上前なら、今の時刻を書く（要求ごとに書かない）。M5b の画面のログインも同じ列を書く。
+- 頻度の制限: 管理者の ID ごとに、API キーと同じ器（`rateLimit.perKey`）で数える。キーの ID と管理者の ID は別の UUID なので重ならない。
+- 監査ログ: `actorType` は `oidc`、`actorId` は `iss` と `sub` を空白でつないだもの（§18.2）。
+- Data Protection: 認証を足すと Data Protection が登録される（§14.8 の D0 の確かめ）。JwtBearer は Data Protection で何も守らないので、M5a は鍵を書かない。M5a のテストで、鍵のフォルダーに何も書かれないことを確かめる。書かれたら、鍵暗号化鍵（`ELM_DATAPROTECTION_KEK`）を M5a に移して本節を直す。
+
+90 日ログインのない管理者のキー（M5a、0.66、0.98）:
+
+- 設定 `apiKeys.inactiveAdminDays`（既定 90、0〜3,650。0 で規則を切る）。
+- API キーで認証するたびに、キーの管理者の `last_login_at`（なければ管理者の `created_at`）にその日数を足した時刻が今以前なら、そのキーを断る。答えはほかの止め方と同じ `401` と `ELM_UNAUTHORIZED` である。
+- 止めた状態は書かない。管理者が OIDC でログインすれば、キーはまた使える。時計の仕事は作らない。
+- `elm-service setup` はログインに数えない。`bootstrapOwner` が一度も OIDC でログインしないまま日数を過ぎると、`setup` のキーも止まる。
+
 M5 の各行の Grill で決める点（0.97）:
 
-- M5a:
+- M5a（決めた形は 0.98、上の 2 つの節、§14.5、§16）:
   - 「最後のログイン」を何で更新するか。CLI のログインはサービスを通らず、サービスが見るのは Bearer の要求だけなので、新しいトークンの最初の要求で更新するか、要求のたびに更新するかを決める。`admins` の表に最後のログインの列を足す。
   - 90 日の規則を時計の仕事にするか、キーを使うときに確かめるか。一度もログインしていない管理者（`setup` のキーだけを使う `bootstrapOwner` を含む）の 90 日を何から数えるか。
   - OIDC の設定（発行者、`audience`、役割のクレームとその対応表、CLI のクライアント ID）。CLI はクライアントの秘密を持たない公開クライアントにする。
@@ -2544,6 +2592,13 @@ M4a1 の設定:
 | `audit.retentionDays` | `ELM_AUDIT_RETENTIONDAYS` | なし（消さない） | 監査ログを残す日数（1〜36,600）。1 時間ごとに、それより古い行を消す |
 | `usageLog.directory` | `ELM_USAGELOG_DIRECTORY` | なし（利用ログを書かない） | このノードの利用ログのフォルダー（§18.1、M4d3）。設定すると、署名鍵の証明書に `log` が要り、なければ起動しない。書けないフォルダーでも起動しない |
 | `node.name` | `ELM_NODE_NAME` | ホスト名（`[A-Za-z0-9-]` 以外の文字は `-` にし、64 文字で切る。残らなければ `node`） | このノードの名前。`[A-Za-z0-9-]` の 1〜64 文字で、利用ログのファイル名と最初の行に入る。フォルダーを共有するノードは別の名前にする。同じ名前のノードがフォルダーで利用ログを書いていれば起動しない（§18.1） |
+| `oidc.issuer` | `ELM_OIDC_ISSUER` | なし（OIDC を使わない） | IdP の発行者の URL（M5a）。https でクエリと断片のない URL（ループバックは http も可）。設定すると `oidc.audience`、`oidc.cliClientId`、`oidc.roleMap` が必須 |
+| `oidc.audience` | `ELM_OIDC_AUDIENCE` | なし | アクセストークンの `aud` に求める値（1〜255 文字） |
+| `oidc.cliClientId` | `ELM_OIDC_CLICLIENTID` | なし | `elm admin login` のクライアント ID（秘密を持たない公開クライアント、1〜255 文字） |
+| `oidc.cliScopes` | `ELM_OIDC_CLISCOPES`（空白区切り） | `openid offline_access` | CLI が求めるスコープ（1〜20 個、各 1〜100 文字の空白のない印字可能な ASCII） |
+| `oidc.roleClaim` | `ELM_OIDC_ROLECLAIM` | `groups` | 役割を読むクレームの名前（1〜255 文字） |
+| `oidc.roleMap` | `ELM_OIDC_ROLEMAP`（`値=役割` を `;` 区切り。`;` と `=` を含む値は設定ファイルで書く） | なし | クレームの値と役割の対応（1〜100 組。値は 1〜255 文字、役割は `owner`・`admin`・`support`・`viewer`） |
+| `apiKeys.inactiveAdminDays` | `ELM_APIKEYS_INACTIVEADMINDAYS` | 90 | ログインのない管理者のキーを止めるまでの日数（0〜3,650。0 で切る、M5a） |
 
 - 設定ファイルの値は、省けるが空にはできない。空の文字列と、リストの空か `null` の要素は誤りである（既定の値とはみなさない）。
 - 終了コードは、正常な停止と `setup` の成功が 0、引数の誤りと設定の形の誤り（設定ファイルが読めないか形が違う、知らないキー、範囲の外の値、必須の値がない）が 2、それ以外で起動できないとき（設定が指すファイルが読めない、署名鍵や証明書が合わない、待ち受けられない、データベースの誤り）が 1 である。`setup` は署名の設定を読まない。
@@ -2605,7 +2660,7 @@ RFC 10017（OAuth 2.0 for Browser-Based Applications、BCP 212）は、業務ア
 - 未認証の要求が IdP へ `code_challenge_method=S256` つきで `302` 転送される。
 - Cookie でのサインインと、その Cookie での認証が動く。
 
-IdP からの戻りでのコードの交換と ID トークンの検証は、IdP がないため D0 では確かめていない。Keycloak を相手にした端から端までのテストを、M5a（デバイス認可フローと JwtBearer）と M5b（認可コードのフロー）の受け入れ条件に入れる。テストは 2 段にする（0.97）。普段のテストは、テストの中に立てる最小の偽の IdP（鍵はテストで作る）で 3 つの OS で回す。偽の IdP は、M5a で discovery、JWKS、トークン、デバイス認可のエンドポイントを持ち、M5b で認可のエンドポイントを足す。Keycloak は CI の Linux だけで、イメージをダイジェストで固定したコンテナに立て、ほかの OS では飛ばす（PostgreSQL のテストと同じ）。そこで動かなければ、コードの交換とセッションを BCL と `Microsoft.IdentityModel`（NativeAOT 対応）で書く案に切り替え、本節を直す。
+IdP からの戻りでのコードの交換と ID トークンの検証は、IdP がないため D0 では確かめていない。Keycloak を相手にした端から端までのテストを、M5a（デバイス認可フローと JwtBearer）と M5b（認可コードのフロー）の受け入れ条件に入れる。テストは 2 段にする（0.97）。普段のテストは、テストの中に立てる最小の偽の IdP（鍵はテストで作る）で 3 つの OS で回す。偽の IdP は、M5a で discovery、JWKS、トークン、デバイス認可のエンドポイントを持ち、M5b で認可のエンドポイントを足す。Keycloak は CI の Linux だけで、イメージをダイジェストで固定したコンテナに立て、ほかの OS では飛ばす（PostgreSQL のテストと同じ）。M5a の Keycloak のテストは、`start-dev` のコンテナにテストの realm を読ませ、デバイスのコードの承認を、Keycloak のログインの画面のフォームを HTTP で送って行う（ブラウザを使わない）。そこで動かなければ、コードの交換とセッションを BCL と `Microsoft.IdentityModel`（NativeAOT 対応）で書く案に切り替え、本節を直す。
 
 ## 16. CLI
 
@@ -2631,6 +2686,32 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 サーバー側の `trust.rootKeys` は運用者の設定の誤りを早く知らせるためのもので、安全性の要ではない。利用者の管理者が自分のルート鍵を設定して自分でサーバーライセンスを作っても、アプリはベンダーのルート鍵だけを信じるため、そのサーバーのリースを受け付けない（§12.7.5）。
 
 出力は既定で人が読む形、`--json` で JSON にする。終了コードは、成功 0、検証の失敗 1、引数の誤り 2、通信の失敗 3 とする。
+
+`elm admin`（M5a、0.98）:
+
+- `elm admin login --url <サービスの URL>`:
+  1. `GET <URL>/v1/admin/oidc` で、発行者・クライアント ID・スコープを読む（§14.5）。
+  2. 発行者の discovery を読む。その `issuer` が発行者と一致し、`device_authorization_endpoint` と `token_endpoint` を持つこと。どの URL も https（ループバックの http は可）。
+  3. デバイス認可の要求（RFC 8628 §3.1）を `client_id` と `scope` で送る。応答の `user_code` と `verification_uri`（あれば `verification_uri_complete` も）を標準エラーに書く。
+  4. トークンの要求（RFC 8628 §3.4）を `interval`（なければ 5 秒）ごとに、`expires_in` まで送る。`authorization_pending` は待ち、`slow_down` は間隔に 5 秒足す。`access_denied` と `expired_token` は終了コード 1。
+  5. 得たものを、ユーザーの範囲の秘密のファイルに置く（下）。前のログインは置き換える。
+- ログインのファイル:
+  - 中身は `{"version": 1, "url", "issuer", "clientId", "accessToken", "refreshToken": <なければ null>, "expiresAt"}` の JSON で、64 KiB まで。
+  - インストール鍵と同じ守り方をする（§10.2）。Windows は DPAPI のユーザーの範囲で、付加エントロピーは `ElasticLM admin login v1`。Linux と macOS はファイルが `0600`、フォルダーが `0700`。
+  - 置き場所: Windows は `%LOCALAPPDATA%\ElasticLM\elm\login`、Linux は `$XDG_DATA_HOME/elasticlm/elm/login`（未設定なら `~/.local/share/...`）、macOS は `~/Library/Application Support/ElasticLM/elm/login`。環境変数 `ELM_ADMIN_LOGIN` でファイルを変えられる。
+  - 書き換えは、別名のファイルに書いてから置き換える。読めないか壊れたファイルは、ログインがないものとして扱い、`elm admin login` をやり直すよう書く。
+- 認証の選び方（`request` と `elm offline process`）:
+  - 環境変数 `ELM_API_KEY` があればそれを使う。なければ保存したログインを使う。どちらもなければ終了コード 2。
+  - 保存したログインは、その `url` と同じオリジン（スキーム・ホスト・ポート）への要求にだけ使う。ほかのサービスにトークンを送らないためで、違えば終了コード 2。
+  - アクセストークンの期限まで 60 秒を切っていれば、リフレッシュトークンで取り直し（`grant_type=refresh_token`）、ファイルを書き直す。取れなければ、`elm admin login` をやり直すよう書いて終了コード 1。
+- `elm admin logout`: ログインのファイルを消す。リフレッシュトークンがあり、discovery が `revocation_endpoint` を示していれば、その取り消し（RFC 7009）を先に送る。取り消しの失敗は標準エラーに書き、ファイルは消す。ログインがなければ何もせず 0。
+- `elm admin request <METHOD> <path> [--body <ファイル>] [--url <URL>]`:
+  - METHOD は `GET`、`POST`、`PUT`、`PATCH`、`DELETE`。path は `/v1/admin/` で始まり、クエリを含めてよく、断片を含まず、2,048 文字まで。
+  - URL は `--url`、環境変数 `ELM_SERVICE_URL`、保存したログインの `url` の順に使う。https（ループバックの http は可）。
+  - `--body` のファイルは 64 KiB までで、`application/json` で送る。
+  - `2xx` は応答の本文をそのまま標準出力に書き、終了コード 0。ほかの状態は本文を標準エラーに書き、終了コード 1。転送（`3xx`）は追わず、終了コード 1（§12.1 と同じく、Bearer の値をほかの場所に送らない）。
+  - 通信の失敗（接続、TLS、100 秒の時間切れ）は終了コード 3。
+- トークンとキーの値は、標準出力にも標準エラーにも書かない。
 
 サーバーライセンス（`--kind server`）の発行は、`--lease-minutes`（既定 10）、`--borrow-days`（既定 0）、`--borrow-returns`（既定 2、§8.4.2 の `brl`）、`--overage`（既定 0）、`--clone`（`deny` か `flag`、既定 `deny`、§8.4.2）を受け取る。ほかの種類にこれらを渡せば誤りとする。
 
