@@ -13,7 +13,15 @@ namespace ElasticLM.Cli.Tests;
 /// </summary>
 public sealed class ElmOfflineTests
 {
-    private readonly Dictionary<string, string> _environment = [];
+    // The login file is pointed at a file that does not exist, so the tests never read the person's own login (M5a).
+    private readonly Dictionary<string, string> _environment = new()
+    {
+        ["ELM_ADMIN_LOGIN"] = Path.Combine(
+            Path.GetTempPath(),
+            "elm-offline-tests-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(8)),
+            "login"
+        ),
+    };
 
     /// <summary>
     /// A request file is passed and its answer written; an answer file is not overwritten without --force; a deactivation
@@ -31,7 +39,8 @@ public sealed class ElmOfflineTests
     /// Expected:
     /// - 0 with "activation <ID>, license <ID>, seq 1: resp", and resp holds {activationId, license}; 2 "… exists. Pass
     ///   --force …"; 0 with the JSON output, the same answer; 1 with "error: ELM_REQUEST_EXPIRED: The request has expired; make
-    ///   a new one."; 2 "… leave out --out."; 0 "deactivated"; 0, and an activation.offline row by the API key.
+    ///   a new one."; 2 "… leave out --out."; 0 "deactivated"; 0, and an activation.offline row by the API key; no folder
+    ///   where the login would be.
     /// </remarks>
     [Fact]
     public async Task Process_PassesFilesAndWritesAnswers()
@@ -97,6 +106,9 @@ public sealed class ElmOfflineTests
             await TestService.AuditRowsAsync(test, service, owner),
             r => r.GetProperty("action").GetString() == "activation.offline" && r.GetProperty("actorType").GetString() == "apikey"
         );
+
+        // design §16 (M5a): without a login, nothing is created where the login would be.
+        Assert.False(Directory.Exists(Path.GetDirectoryName(_environment["ELM_ADMIN_LOGIN"])));
     }
 
     /// <summary>

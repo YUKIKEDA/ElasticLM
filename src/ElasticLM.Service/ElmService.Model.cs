@@ -487,7 +487,7 @@ internal sealed partial class ElmService
     }
 
     private static AuditEntry Entry(HttpContext context, Caller caller, string action, Guid target, string detail) =>
-        new("apikey", caller.Key.Id.ToString("D"), action, target.ToString("D"), "ELM_OK", context.Connection.RemoteIpAddress?.ToString(), detail);
+        new(caller.ActorType, caller.ActorId, action, target.ToString("D"), "ELM_OK", context.Connection.RemoteIpAddress?.ToString(), detail);
 
     private static bool TryRouteId(HttpContext context, string name, out Guid id) =>
         Guid.TryParseExact(context.Request.RouteValues[name] as string, "D", out id);

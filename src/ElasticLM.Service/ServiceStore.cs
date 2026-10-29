@@ -104,6 +104,8 @@ internal sealed partial class ServiceStore<TDialect> : Database
                         RevokedAt = k.RevokedAt,
                         Role = a.Role,
                         Enabled = a.Enabled,
+                        AdminCreatedAt = a.CreatedAt,
+                        LastLoginAt = a.LastLoginAt,
                     }
             )
             .SingleOrDefaultAsync(cancellationToken)
@@ -122,7 +124,9 @@ internal sealed partial class ServiceStore<TDialect> : Database
                     row.RevokedAt
                 ),
                 row.Role,
-                row.Enabled
+                row.Enabled,
+                row.AdminCreatedAt,
+                row.LastLoginAt
             );
     }
 

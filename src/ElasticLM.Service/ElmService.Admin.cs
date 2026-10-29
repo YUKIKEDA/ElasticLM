@@ -67,6 +67,7 @@ internal sealed partial class ElmService
         MapOffline();
         MapLeases();
         MapUsageLog();
+        MapAdmins();
     }
 
     // design §14.7: every request is limited per source before authentication, devices and administrators in separate
@@ -111,17 +112,58 @@ internal sealed partial class ElmService
         {
             string header = context.Request.Headers.Authorization.ToString();
             string? presented = header.StartsWith(BearerPrefix, StringComparison.OrdinalIgnoreCase) ? header[BearerPrefix.Length..] : null;
-            Caller? caller = await ApiKeys.AuthenticateAsync(Database, presented, Time.GetUtcNow(), context.RequestAborted).ConfigureAwait(false);
+            Caller? caller;
+            bool token = presented is not null && !presented.StartsWith(ApiKeys.Prefix, StringComparison.Ordinal) && _settings.Oidc is not null;
+
+            // design §14.6: a value that starts with elm_ is an API key; any other is an OIDC access token when OIDC is set.
+            if (token)
+            {
+                OidcResult result = await AuthenticateOidcAsync(context, _settings.Oidc!, presented!).ConfigureAwait(false);
+                if (result.Forbidden)
+                {
+                    CountDenial();
+                    string detail = AuditLog.Detail(w =>
+                    {
+                        w.WriteString("issuer", result.Identity!.Issuer);
+                        w.WriteString("subject", result.Identity.Subject);
+                    });
+                    await ProblemAsync(context, ErrorCode.Forbidden, "The access token's claims map to no role.").ConfigureAwait(false);
+                    var refused = new AuditEntry(AuditActors.Oidc, result.Caller?.ActorId, action, null, "ELM_FORBIDDEN", ip, detail);
+                    await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                    return;
+                }
+
+                caller = result.Caller;
+            }
+            else
+            {
+                // design §14.6: the 90-day rule holds only when administrators can sign in with OIDC.
+                caller = await ApiKeys
+                    .AuthenticateAsync(
+                        Database,
+                        presented,
+                        Time.GetUtcNow(),
+                        _settings.Oidc is null ? 0 : _settings.InactiveAdminDays,
+                        (key, admin) => ServiceLog.KeyInactive(_log, key, admin),
+                        context.RequestAborted
+                    )
+                    .ConfigureAwait(false);
+            }
+
             if (caller is null)
             {
                 CountDenial();
-                await ProblemAsync(context, ErrorCode.Unauthorized, "The API key is missing, unknown, stopped, or expired.").ConfigureAwait(false);
+                string why = token
+                    ? "The access token is not valid, or its administrator is disabled."
+                    : "The API key is missing, unknown, stopped, or expired.";
+                await ProblemAsync(context, ErrorCode.Unauthorized, why).ConfigureAwait(false);
                 return;
             }
 
-            if (!_perKey.TryAcquire(caller.Key.Id))
+            if (!_perKey.TryAcquire(caller.RateKey))
             {
-                await ProblemAsync(context, ErrorCode.RateLimited, "Too many requests with this API key.").ConfigureAwait(false);
+                string why = token ? "Too many requests from this administrator." : "Too many requests with this API key.";
+                await ProblemAsync(context, ErrorCode.RateLimited, why).ConfigureAwait(false);
                 return;
             }
 
@@ -129,7 +171,8 @@ internal sealed partial class ElmService
             if (!caller.Permissions.Contains(permission))
             {
                 outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: AuditLog.Detail(w => w.WriteString("permission", permission)));
-                await ProblemAsync(context, ErrorCode.Forbidden, $"The API key does not have the permission {permission}.").ConfigureAwait(false);
+                string who = token ? "The administrator's role" : "The API key";
+                await ProblemAsync(context, ErrorCode.Forbidden, $"{who} does not have the permission {permission}.").ConfigureAwait(false);
             }
             else
             {
@@ -138,7 +181,7 @@ internal sealed partial class ElmService
 
             if (!outcome.Recorded)
             {
-                var entry = new AuditEntry("apikey", caller.Key.Id.ToString("D"), action, outcome.Target, outcome.Result, ip, outcome.Detail);
+                var entry = new AuditEntry(caller.ActorType, caller.ActorId, action, outcome.Target, outcome.Result, ip, outcome.Detail);
                 await Database.AppendAuditAsync(entry, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
             }
         }
@@ -213,8 +256,8 @@ internal sealed partial class ElmService
                 {
                     detail = AuditLog.KeyCreatedDetail(created, null);
                     return new AuditEntry(
-                        "apikey",
-                        caller.Key.Id.ToString("D"),
+                        caller.ActorType,
+                        caller.ActorId,
                         AuditActions.ApiKeyCreate,
                         created.Id.ToString("D"),
                         "ELM_OK",
@@ -268,8 +311,8 @@ internal sealed partial class ElmService
 
         DateTimeOffset now = Time.GetUtcNow();
         var entry = new AuditEntry(
-            "apikey",
-            caller.Key.Id.ToString("D"),
+            caller.ActorType,
+            caller.ActorId,
             AuditActions.ApiKeyRevoke,
             id.ToString("D"),
             "ELM_OK",

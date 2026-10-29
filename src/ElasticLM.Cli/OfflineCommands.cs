@@ -8,7 +8,8 @@ namespace ElasticLM.Cli;
 
 /// <summary>
 /// <c>elm offline process</c> (design §12.8.4, §16): passes an offline request file to <c>elm-service</c> and writes the
-/// answer the device imports. With <c>ELM_API_KEY</c> it uses the administration entry, otherwise the public one.
+/// answer the device imports. With <c>ELM_API_KEY</c>, or a saved <c>elm admin login</c> for the same origin (M5a), it uses the
+/// administration entry, otherwise the public one.
 /// </summary>
 internal static class OfflineCommands
 {
@@ -68,7 +69,8 @@ internal static class OfflineCommands
             CliFiles.EnsureWritable(output, force);
         }
 
-        string? apiKey = host.GetEnvironmentVariable("ELM_API_KEY") is { Length: > 0 } key ? key : null;
+        // design §12.8.4, §16: without credentials the public entry, as before M5a.
+        string? apiKey = AdminCredentials.ApiKey(host) ?? AdminCredentials.AccessToken(host, service);
 
         // design §12.1: a redirect would send the request file, the license key in it, to another place; a 3xx is an error.
         using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = RequestTimeout };

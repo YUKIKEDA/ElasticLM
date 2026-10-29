@@ -8,7 +8,12 @@ namespace ElasticLM.Service;
 /// <summary>
 /// An API key and what its administrator allows, as read for authentication.
 /// </summary>
-internal sealed record KeyHolder(ApiKeyRecord Key, string Role, bool Enabled);
+/// <param name="Key">The key.</param>
+/// <param name="Role">The administrator's role.</param>
+/// <param name="Enabled">Whether the administrator is enabled.</param>
+/// <param name="AdminCreatedAt">When the administrator was added, in UNIX seconds.</param>
+/// <param name="LastLoginAt">The administrator's last OIDC login in UNIX seconds, or <see langword="null"/> (M5a).</param>
+internal sealed record KeyHolder(ApiKeyRecord Key, string Role, bool Enabled, long AdminCreatedAt, long? LastLoginAt);
 
 /// <summary>
 /// The service's database (design §14.2): the operations the service needs, each in the transaction it needs. Statements are

@@ -525,15 +525,7 @@ internal sealed partial class ElmService
                         return false;
                     }
 
-                    var entry = new AuditEntry(
-                        "apikey",
-                        caller.Key.Id.ToString("D"),
-                        AuditActions.LeaseRelease,
-                        found.Id,
-                        "ELM_OK",
-                        Ip(context),
-                        detail
-                    );
+                    var entry = new AuditEntry(caller.ActorType, caller.ActorId, AuditActions.LeaseRelease, found.Id, "ELM_OK", Ip(context), detail);
                     await scope.AppendAuditAsync(entry, context.RequestAborted).ConfigureAwait(false);
                     return true;
                 },

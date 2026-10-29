@@ -150,7 +150,7 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.NotFound, NoTrial, RouteText(context, "id")).ConfigureAwait(false);
         }
 
-        var entry = new AuditEntry("apikey", caller.Key.Id.ToString("D"), AuditActions.TrialDelete, id.ToString("D"), "ELM_OK", Ip(context), null);
+        var entry = new AuditEntry(caller.ActorType, caller.ActorId, AuditActions.TrialDelete, id.ToString("D"), "ELM_OK", Ip(context), null);
         if (!await Database.DeleteTrialAsync(id, entry, Time.GetUtcNow(), context.RequestAborted).ConfigureAwait(false))
         {
             return await RefuseAsync(context, ErrorCode.NotFound, NoTrial, id.ToString("D")).ConfigureAwait(false);

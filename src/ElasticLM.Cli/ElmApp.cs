@@ -10,6 +10,7 @@ internal static class ElmApp
     public static int Run(string[] args, CliHost host)
     {
         var root = new RootCommand("elm: keys, license files, and ElasticLM servers.");
+        root.Subcommands.Add(AdminCommands.Create(host));
         root.Subcommands.Add(KeyCommands.Create(host));
         root.Subcommands.Add(LicenseCommands.Create(host));
         root.Subcommands.Add(LogCommands.Create(host));
