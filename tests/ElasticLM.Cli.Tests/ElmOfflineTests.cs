@@ -194,6 +194,32 @@ public sealed class ElmOfflineTests
         Assert.Equal(3, await RunAgainstAsync(atLimit + " ", request, test.FilePath("over.elmresp")));
     }
 
+    /// <summary>
+    /// A redirect is not followed (design §12.1): the request file holds the license key, and a 307 would send it on.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake loopback service that answers its one request with 307 and a Location of /moved.
+    ///
+    /// Steps:
+    /// - Process an activation request against it.
+    ///
+    /// Expected:
+    /// - Exit code 1 (an answer that is not a success), and no answer file; a followed redirect would wait on the fake
+    ///   service, which answers once, and end with exit code 3.
+    /// </remarks>
+    [Fact]
+    public async Task Process_Redirect_IsNotFollowed()
+    {
+        await using var test = new TestService();
+        using var device = TestDevice.Create(test, (await StartedAsync(test)).Service);
+        string request = Write(test, "a.elmreq", device.ActivationFile("ELM-AAAA-AAAA-AAAA-AAAA", TestDevice.Fingerprints()));
+        string answer = test.FilePath("a.elmresp");
+
+        Assert.Equal(1, await RunAgainstAsync(string.Empty, request, answer, "307 Temporary Redirect", "Location: /moved\r\n"));
+        Assert.False(File.Exists(answer));
+    }
+
     private static async Task<(ElmService Service, HttpClient Admin)> StartedAsync(TestService test)
     {
         string owner = await test.SetupAsync();
@@ -224,8 +250,9 @@ public sealed class ElmOfflineTests
     private static (int Code, string Text) Trimmed((int Code, string Out, string Error) result, bool output = false) =>
         (result.Code, (output ? result.Out : result.Error).Trim());
 
-    // A fake service on loopback that answers one request with 200 and a body, read after the whole request arrived.
-    private async Task<int> RunAgainstAsync(string body, string request, string answer)
+    // A fake service on loopback that answers one request with a status (200 by default) and a body, read after the whole
+    // request arrived.
+    private async Task<int> RunAgainstAsync(string body, string request, string answer, string status = "200 OK", string headers = "")
     {
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
@@ -250,7 +277,7 @@ public sealed class ElmOfflineTests
 
             byte[] bytes = Encoding.UTF8.GetBytes(body);
             byte[] head = Encoding.ASCII.GetBytes(
-                $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n"
+                $"HTTP/1.1 {status}\r\n{headers}Content-Type: application/json\r\nContent-Length: {bytes.Length}\r\nConnection: close\r\n\r\n"
             );
             await stream.WriteAsync(head, TestContext.Current.CancellationToken);
             await stream.WriteAsync(bytes, TestContext.Current.CancellationToken);
