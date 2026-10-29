@@ -19,6 +19,8 @@ Check each point and write the result in the PR's `## Verification`:
 4. **Cryptography**: a package that implements cryptography is not added; use `System.Security.Cryptography`. A package that only wraps the OS's or the BCL's cryptography may be considered through a `design` Issue.
 5. **License and upkeep**: MIT-compatible, maintained, a version pinned in `Directory.Packages.props`, and its own dependencies listed.
 
+A tool or runtime line chosen for the build (Node.js, a package manager, an SDK) names the date its support ends, read from the vendor's schedule before it is chosen. A line that ends before v1 is not chosen. The W0 Grill chose Node.js 22, which ends on 2027-04-30, and the design review moved it to 24 (PR #95, R9).
+
 Then add a row to the dependency table in `docs/design.ja.md` in the same PR. A dependency that changes what the product means (a database engine, a web framework, a cloud SDK) is a `design` Issue first.
 
 Test, benchmark, and tool projects may use packages that only those projects reference (xUnit, BenchmarkDotNet, `Microsoft.Extensions.TimeProvider.Testing`); points 2 and 3 do not apply to them.
