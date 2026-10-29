@@ -40,7 +40,7 @@ public sealed class MigratorTests
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(6L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(7L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");
