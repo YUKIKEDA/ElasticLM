@@ -28,3 +28,12 @@ Test, benchmark, and tool projects may use packages that only those projects ref
 # GOOD — NativeAOT publish of the verifier sample with the package: 0 warnings; binary +38 KB;
 #        no cryptography of its own; row added to the dependency table in docs/design.ja.md
 ```
+
+## npm packages of the admin UI
+
+The admin UI in `web/admin/` uses npm packages (`docs/design.ja.md` §15.2, decision 0.96). The five points above are about NuGet packages. For npm packages, these apply instead:
+
+- A runtime package (one that ends up in `dist`) runs in the administrator's browser with the administrator's session (threat T21). Add one only through a `design` Issue. Today there is one: `preact`.
+- Versions and integrity hashes are pinned in `pnpm-lock.yaml`, which also lists the transitive packages. Install with `pnpm install --frozen-lockfile`. Keep `minimumReleaseAge` explicit and do not add packages to `allowBuilds` without a reason in the PR.
+- Read the `pnpm-lock.yaml` diff of every PR that changes it.
+- Add a row to the dependency table in `docs/design.ja.md` §21, with the license.

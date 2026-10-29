@@ -417,10 +417,16 @@
   - SolidJS: 小さい（7,264 バイト）が、2.0 が RC で、選ぶとすぐに大きな版の移行が来る。テストに設定の追加が要った。
   - フレームワークなし: 一番小さい（1,744 バイト）が、M5 の多くの画面で状態と描き直しの仕組みを自分で作って保守することになる。
   - Preact と `@preact/preset-vite`: Babel が入り、パッケージが 124 個になる。得られるのは状態を保ったままのホットリロードだけ。
-  - React、Blazor WebAssembly、htmx（W0 の Grill で比べる前に外した）: React は Preact と同じ書き方で大きい。Blazor WebAssembly は 1 MB を超える見込み。htmx とサーバー側の HTML は §15.2 の静的な SPA と違い、CSP とぶつかりやすい。
+  - React、Blazor WebAssembly、htmx（W0 の Grill で、測らずに比べる前に外した）: React は Preact と同じ書き方なので、比べるのは Preact で足りる。Blazor WebAssembly は .NET のランタイムをブラウザに送る形で、0.20 が Blazor を採らないと決めている。htmx はサーバーが HTML を作る形で、§15.2 の静的な SPA と形が違う。
 
 ### 管理画面の依存を npm で入れる（W0、Issue #94）
 
 - **決定:** pnpm 12 を `packageManager` で固定し、`pnpm install --frozen-lockfile` で入れる（[design.ja.md](./design.ja.md) 0.96、§15.2）。
 - **理由:** 持ち主の問いから、選んだ Preact の試作で比べた。入るパッケージも `dist` も同じで、入れる時間は 1.0–1.2 秒（npm は 8.1–9.5 秒）。依存のビルドスクリプトを既定で走らせず、公開から 1 日たたない版を入れない。
 - **却下した案:** Grill で決めた `package-lock.json` と `npm ci`。Node.js 22 に同梱の npm 10.9.9 は依存の解決で止まり、どちらにしても npm の版を別に固定する必要があった。
+
+### 管理画面のビルドに Node.js 22 を使う（W0 の Grill、設計のレビューで改めた）
+
+- **決定:** Node.js 24（[design.ja.md](./design.ja.md) 0.96、§15.2）。
+- **理由:** 22 は 2027-04-30 にサポートが終わる。24 は 2028-04-30 まで続き（https://github.com/nodejs/Release ）、pnpm を入れる Corepack も同梱する。W0 の試作は 24.22.2 でも 22.23.4 と同じバイト列の `dist` になった。
+- **却下した案:** Grill で決めた「LTS 22 系」。
