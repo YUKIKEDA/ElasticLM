@@ -26,6 +26,10 @@ A commit, a PR, an Issue number, or a figure named in a report to the owner is c
 
 Figures that are compared or added up come from the same run. In M4c3 the machine's load changed between two runs and every figure of the second was about 1.8 times the first; parts taken from both did not add up to the total (PR #79).
 
+A measurement is compared with the baseline the Issue names. Another baseline is used only after the owner changes the Issue; otherwise the PR says `Part of #N`, not `Closes #N`. In M4d1 the Issue named `elm-server`, the PR compared with the service's own activation and closed the Issue, and the review caught it (PR #83).
+
+The two sides of a timed comparison are measured the same way: both on warm connections or both on new ones, and both with or without the client's own checks. The order of the batches is swapped once to see whether the first batch of a round is slower. In M4d1 most of a gap between acquiring a lease and activating came from the batch order and a new connection per device, not from the request (PR #83).
+
 A comment in the code is held to the same line: it says what was measured, and marks a cause that was not confirmed as not confirmed, with the Issue number.
 
 ```text
