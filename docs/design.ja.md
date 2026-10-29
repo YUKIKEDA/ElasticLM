@@ -468,7 +468,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | T18 | 試用・通常のライセンスを使った偽のサーバー | A1 | クライアントは `kind: server` 以外のライセンスを持つサーバーのリースを受け付けない（§11.2, §12.7.5） |
 | T19 | 他人の有効化の解除・更新 | A2, A3 | 有効化に関わるすべての要求で、証明の鍵が有効化のインストール鍵と一致することを求める（§12.5, §12.6, §12.8） |
 | T20 | ローカルの管理 API・管理者トークン・データのフォルダーの不正利用 | A6 | 管理 API はループバックだけで待ち受け、256 ビットのトークンを一定時間で比べる。認証の失敗は件数だけを書く。データのフォルダーは Administrators・SYSTEM・作った利用者に限り、ほかの利用者が先に作ったフォルダーは使わない（0.50, 0.51, 0.53, 0.58, §10.2, §13.7） |
-| T21 | 管理画面の依存の乗っ取り | A7 | 悪い版のコードは、`dist` に入れば管理者のブラウザで管理者のセッションのまま動き（CSP `default-src 'self'` は同じオリジンのコードを止めない）、ビルドの道具ならビルドの機械で動く。依存は `pnpm-lock.yaml` の版と完全性のハッシュに固定し、`pnpm install --frozen-lockfile` で入れる。依存のビルドスクリプトは走らせない（`strictDepBuilds`）。公開から 1440 分たたない版は解決で断る（`minimumReleaseAge` を明示して厳格にする）。pnpm は Corepack が `packageManager` のハッシュで確かめる。lock の差分は PR でレビューする。CI は SPA を、秘密も `id-token` も持たない別のジョブでビルドし、`dist` だけを .NET のジョブに渡す（§15.2、0.96） |
+| T21 | 管理画面の依存の乗っ取り | A7 | 悪い版のコードは、`dist` に入れば管理者のブラウザで管理者のセッションのまま動き（CSP `default-src 'self'` は同じオリジンのコードを止めない）、ビルドの道具ならビルドの機械で動く。依存は `pnpm-lock.yaml` の版と完全性のハッシュに固定し、`pnpm install --frozen-lockfile` で入れる。依存のビルドスクリプトは走らせない（`strictDepBuilds: true` を明示する）。公開から 1440 分たたない版は解決で断る（`minimumReleaseAge` を明示して厳格にする）。pnpm は Corepack が `packageManager` のハッシュで確かめる。lock の差分は PR でレビューする。CI は SPA を、秘密も `id-token` も持たない別のジョブでビルドし、`dist` だけを .NET のジョブに渡す（§15.2、0.96） |
 
 ### 5.4 受け入れる脅威
 
@@ -2548,7 +2548,7 @@ M4a1 の設定:
   - Node.js は 24 系（LTS、サポートは 2028-04-30 まで、https://github.com/nodejs/Release ）の 1 つの版にし、`web/admin/.node-version` に書く。Vite 8.3.5 の `engines` は `node: ^20.19.0 || >=22.12.0` である（`npm view vite@8.3.5 engines`）。22 系は 2027-04-30 にサポートが終わるので使わない。
   - パッケージマネージャーは pnpm 12 で、`web/admin/package.json` の `packageManager` に `pnpm@<版>+sha512.<ハッシュ>` の形で版とハッシュを書く。pnpm は Node.js に同梱の Corepack で入れ、Corepack がその版とハッシュを確かめる（Corepack は Node.js 14.19.0 から 25.0.0 の前まで同梱され、ハッシュは「検証のため」に書く、https://github.com/nodejs/corepack ）。Node.js を 25 以降に上げるときは、pnpm の入れ方を決め直す。
   - 依存は `pnpm-lock.yaml` に版と完全性のハッシュで固定し、`pnpm install --frozen-lockfile` で入れる。
-  - pnpm 12 は、`allowBuilds` に載せていない依存のビルドスクリプトを走らせず、既定の `strictDepBuilds: true` ではそのような依存があればインストールを失敗させる（https://pnpm.io/settings/build ）。これは既定のまま使う。
+  - pnpm 12 は、`allowBuilds` に載せていない依存のビルドスクリプトを走らせず、`strictDepBuilds: true` ではそのような依存があればインストールを失敗させる（https://pnpm.io/settings/build 。既定も `true`）。`strictDepBuilds: true` も `web/admin/pnpm-workspace.yaml` に明示する。pnpm の既定が版で変わっても守りが残り、T21 が頼る設定を lock の横の 1 つのファイルで読めるようにするためである。W0 で、ビルドスクリプトを持つパッケージ（`pnpm@12.16.1`）の追加は `ERR_PNPM_IGNORED_BUILDS` で失敗した。
   - `minimumReleaseAge` は `web/admin/pnpm-workspace.yaml` に 1440（分）と明示する。既定値も 1440 だが、既定のままでは条件を満たす版がないときに新しすぎる版を入れる。明示すると `minimumReleaseAgeStrict` が `true` になり、解決が失敗する（https://pnpm.io/settings/dependency-resolution ）。
   - W0 で、Node.js 22 に同梱の npm 10.9.9 と npm 11.0.0 は依存の解決の途中で止まり、pnpm 9.12.1 は Rolldown のネイティブの部品を入れずにビルドが止まった。同梱の道具に任せず版を固定するのはこのためである。
 - `build.ps1` は、`web/admin/` があれば、.NET のビルドの前に SPA をビルドし、`tsc` と Vitest を通す。Node.js か pnpm がない、または `.node-version` と `packageManager` の版と違えば、誤りで止める。

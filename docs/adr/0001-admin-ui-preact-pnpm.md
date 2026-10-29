@@ -61,7 +61,7 @@ W0 では、5 つの候補で同じ試作を作った。候補は Preact、Svelt
 
 - 管理画面は Preact 11 と TypeScript で書き、Vite 8 でビルドする。Preact 用の Vite のプリセットは使わない。テストは Vitest と happy-dom で行う。
 - ビルドの道具は Node.js 24 と pnpm 12 に版を固定する。pnpm は Corepack で入れ、`packageManager` のハッシュで確かめる。
-- 依存は `pnpm-lock.yaml` から `pnpm install --frozen-lockfile` で入れ、`minimumReleaseAge` を明示して公開から 1 日たたない版を断る。
+- 依存は `pnpm-lock.yaml` から `pnpm install --frozen-lockfile` で入れる。`pnpm-workspace.yaml` に `strictDepBuilds: true` と `minimumReleaseAge: 1440` を明示し、依存のビルドスクリプトを走らせず、公開から 1 日たたない版を断る。
 - CI は SPA を秘密を持たない別のジョブで 1 回ビルドし、`dist` を 3 つの OS のジョブに渡す。
 
 設計は §5.2（A7）、§5.3（T21）、§5.4、§15.2、§21、0.96 にある。
