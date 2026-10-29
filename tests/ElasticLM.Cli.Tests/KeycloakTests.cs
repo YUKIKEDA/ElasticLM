@@ -28,7 +28,8 @@ public sealed partial class KeycloakTests
     ///   groups claim); a service on the real clock that trusts the realm.
     ///
     /// Steps:
-    /// - Run elm admin login; at its first wait, open the printed verification URL and post Keycloak's login form as alice;
+    /// - Run elm admin login; at its first wait, open the printed verification URL, post the user code, and post Keycloak's
+    ///   login form as alice;
     ///   run elm admin request GET /v1/admin/admins; run elm admin logout.
     ///
     /// Expected:
@@ -69,30 +70,39 @@ public sealed partial class KeycloakTests
         Assert.Equal((0, "Signed out."), (code, output.Trim()));
     }
 
-    // Approves a device code through Keycloak's pages: each page's first form is posted with the login, the user code, or the
-    // consent filled in, until the page says the device is signed in.
-    private static async Task ApproveAsync(string verification)
+    // Approves a device code through Keycloak's own pages, as a person would: the verification page takes the user code, the
+    // login page the user, and a consent page, if any, the approval. A page that is none of these fails the test with its text.
+    private static async Task ApproveAsync(string verification, string userCode)
     {
         using var handler = new HttpClientHandler { CookieContainer = new CookieContainer(), AllowAutoRedirect = true };
         using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(30) };
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        string html = await http.GetStringAsync(new Uri(verification), cancel);
-        for (int step = 0; step < 6; step++)
+        HttpResponseMessage answer = await http.GetAsync(new Uri(verification), cancel);
+        for (int step = 0; step < 8; step++)
         {
-            if (html.Contains("kc-page-title", StringComparison.Ordinal) && Regex.IsMatch(html, "(?i)device.{0,40}(success|signed in|logged in)"))
+            string html = await answer.Content.ReadAsStringAsync(cancel);
+            Assert.True(
+                answer.IsSuccessStatusCode,
+                $"Keycloak answered {(int)answer.StatusCode} at {answer.RequestMessage?.RequestUri}: {Excerpt(html)}"
+            );
+            answer.Dispose();
+            Match form = FormAction().Match(html);
+            if (!form.Success)
             {
                 return;
             }
 
-            Match form = FormAction().Match(html);
-            Assert.True(form.Success, "Keycloak's page has no form: " + html[..Math.Min(html.Length, 2000)]);
             var fields = new Dictionary<string, string>(StringComparer.Ordinal);
             foreach (Match input in HiddenInput().Matches(html))
             {
                 fields[WebUtility.HtmlDecode(input.Groups["name"].Value)] = WebUtility.HtmlDecode(input.Groups["value"].Value);
             }
 
-            if (html.Contains("name=\"username\"", StringComparison.Ordinal))
+            if (html.Contains("name=\"device_user_code\"", StringComparison.Ordinal))
+            {
+                fields["device_user_code"] = userCode;
+            }
+            else if (html.Contains("name=\"username\"", StringComparison.Ordinal))
             {
                 fields["username"] = "alice";
                 fields["password"] = "alice-test-only";
@@ -101,16 +111,19 @@ public sealed partial class KeycloakTests
             {
                 fields["accept"] = "Yes";
             }
-            else if (!html.Contains("name=\"device_user_code\"", StringComparison.Ordinal))
+            else
             {
-                return;
+                Assert.Fail("Keycloak showed a page the test does not know: " + Excerpt(html));
             }
 
             using var content = new FormUrlEncodedContent(fields);
-            using HttpResponseMessage answer = await http.PostAsync(new Uri(WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
-            html = await answer.Content.ReadAsStringAsync(cancel);
+            answer = await http.PostAsync(new Uri(WebUtility.HtmlDecode(form.Groups["action"].Value)), content, cancel);
         }
+
+        Assert.Fail("Keycloak did not finish the approval in 8 pages.");
     }
+
+    private static string Excerpt(string html) => html.Length <= 3000 ? html : html[..3000];
 
     [GeneratedRegex("<form[^>]*action=\"(?<action>[^\"]+)\"", RegexOptions.IgnoreCase)]
     private static partial Regex FormAction();
@@ -118,7 +131,7 @@ public sealed partial class KeycloakTests
     [GeneratedRegex("<input[^>]*type=\"hidden\"[^>]*name=\"(?<name>[^\"]+)\"[^>]*value=\"(?<value>[^\"]*)\"", RegexOptions.IgnoreCase)]
     private static partial Regex HiddenInput();
 
-    [GeneratedRegex("Or open (?<url>\\S+)")]
+    [GeneratedRegex("Open (?<url>\\S+) and enter the code (?<code>\\S+)\\.")]
     private static partial Regex Verification();
 
     private (int Code, string Out, string Error) Run(params string[] args)
@@ -138,7 +151,7 @@ public sealed partial class KeycloakTests
                 if (!approved && Verification().Match(error.ToString()) is { Success: true } url)
                 {
                     approved = true;
-                    ApproveAsync(url.Groups["url"].Value).GetAwaiter().GetResult();
+                    ApproveAsync(url.Groups["url"].Value, url.Groups["code"].Value).GetAwaiter().GetResult();
                 }
 
                 Task.Delay(wait, TimeProvider.System).GetAwaiter().GetResult();

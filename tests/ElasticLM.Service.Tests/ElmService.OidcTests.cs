@@ -444,7 +444,8 @@ public sealed class ElmServiceOidcTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A service that trusts the fake provider; alice signed in and holding a 365-day key.
+    /// - A service that trusts the fake provider; setup run on the first day (the bootstrap owner added then); alice signed
+    ///   in and holding a 365-day key.
     ///
     /// Steps:
     /// - Use the key 89 days later and 90 days later; sign in as alice; use the key; 90 more days later run setup and use its
@@ -458,6 +459,7 @@ public sealed class ElmServiceOidcTests
     {
         await using TestService test = new();
         await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        _ = await test.SetupAsync();
         ElmService service = await StartAsync(test, idp);
         string key = await TestService.CreateKeyAsync(test.Http(service, idp.Token("alice")), "\"license.read\"", days: 365);
         CancellationToken cancel = TestContext.Current.CancellationToken;
@@ -528,8 +530,8 @@ public sealed class ElmServiceOidcTests
 
     /// <summary>
     /// Discovery (design §14.6): a document that names another issuer gives 401; keys read once stay in use while the
-    /// provider is down; a token of a new key ID is refused once and starts the fetch, then passes; a provider down from the
-    /// start gives 401.
+    /// provider is down; a token of a new key ID is refused and starts a fetch in the background, then passes; a provider down
+    /// from the start gives 401.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -541,7 +543,7 @@ public sealed class ElmServiceOidcTests
     ///   down from the start, send a token.
     ///
     /// Expected:
-    /// - 401; 200, 200; 401 then 200; 401.
+    /// - 401; 200, 200; 401, then 200 once the fetch ends; 401.
     /// </remarks>
     [Fact]
     public async Task Discovery_IsCheckedAndCached()
@@ -566,9 +568,10 @@ public sealed class ElmServiceOidcTests
         idp.Available = true;
         idp.RotateKey("k2");
         string rotated = idp.Token();
-        HttpStatusCode first = (await GetAdminsAsync(test, service, rotated)).StatusCode;
-        HttpStatusCode second = (await GetAdminsAsync(test, service, rotated)).StatusCode;
-        Assert.Equal((HttpStatusCode.Unauthorized, HttpStatusCode.OK), (first, second));
+        Assert.Equal(HttpStatusCode.Unauthorized, (await GetAdminsAsync(test, service, rotated)).StatusCode);
+
+        // The refetch runs in the background (Microsoft.IdentityModel keeps answering with the keys it has until it ends).
+        await TestService.WaitForAsync(async () => (await GetAdminsAsync(test, service, rotated)).StatusCode == HttpStatusCode.OK);
 
         idp.Available = false;
         ElmService cold = await StartAsync(test, idp);
