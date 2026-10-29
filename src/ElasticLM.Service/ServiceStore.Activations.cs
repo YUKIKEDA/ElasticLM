@@ -346,8 +346,8 @@ internal sealed partial class ServiceStore<TDialect>
                 )
                 .ExecuteAsync(cancellationToken);
 
-        public override Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
-            tx.Update(LeaseRow.Table)
+        public override async Task<bool> UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken) =>
+            await tx.Update(LeaseRow.Table)
                 .Set(l =>
                     [
                         Set(l.Seq, lease.Seq),
@@ -358,10 +358,11 @@ internal sealed partial class ServiceStore<TDialect>
                     ]
                 )
                 .Where(l => Eq(l.Id, lease.Id))
-                .ExecuteAsync(cancellationToken);
+                .ExecuteAsync(cancellationToken)
+                .ConfigureAwait(false) > 0;
 
-        public override Task DeleteLeaseAsync(string id, CancellationToken cancellationToken) =>
-            tx.Delete(LeaseRow.Table).Where(l => Eq(l.Id, id)).ExecuteAsync(cancellationToken);
+        public override async Task<bool> DeleteLeaseAsync(string id, CancellationToken cancellationToken) =>
+            await tx.Delete(LeaseRow.Table).Where(l => Eq(l.Id, id)).ExecuteAsync(cancellationToken).ConfigureAwait(false) > 0;
 
         public override async Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken)
         {

@@ -368,10 +368,11 @@ internal sealed record UsageLogFileItem(
     [property: JsonPropertyName("modifiedAt")] string ModifiedAt
 );
 
-/// <summary>This node's usage log files, oldest first.</summary>
+/// <summary>A page of this node's usage log files, oldest first, and the name to ask after for the next page.</summary>
 internal sealed record UsageLogFiles(
     [property: JsonPropertyName("node")] string Node,
-    [property: JsonPropertyName("items")] UsageLogFileItem[] Items
+    [property: JsonPropertyName("items")] UsageLogFileItem[] Items,
+    [property: JsonPropertyName("next")] string? Next
 );
 
 /// <summary>A page of leases.</summary>

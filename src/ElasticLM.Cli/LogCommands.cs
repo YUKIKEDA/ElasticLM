@@ -65,7 +65,13 @@ internal static class LogCommands
                         throw new CliException("--node must be 1 to 64 characters of A-Z, a-z, 0-9, and '-', for the usage stream.");
                     }
 
-                    string[] files = ExpandFiles(parse.GetValue(filesArgument)!, node is null ? stream : $"{stream}-{node}");
+                    string[] paths = parse.GetValue(filesArgument)!;
+                    if (node is not null && paths.Any(File.Exists))
+                    {
+                        throw new CliException("--node chooses a node's files in a folder; give folders, or files without --node.");
+                    }
+
+                    string[] files = ExpandFiles(paths, node is null ? stream : $"{stream}-{node}");
                     LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream);
                     if (parse.GetValue(jsonOption))
                     {
@@ -132,7 +138,11 @@ internal static class LogCommands
 
         if (files.Count == 0)
         {
-            throw new CliException($"No {stream} log file was found.");
+            // design §16: a folder of elm-service's usage logs holds usage-<node>-*.jsonl, which need --node.
+            bool nodes = stream == "usage" && paths.Any(p => Directory.Exists(p) && Directory.EnumerateFiles(p, "usage-*-*.jsonl").Any());
+            throw new CliException(
+                nodes ? "No usage log file was found; for elm-service's files, add --node <name>." : $"No {stream} log file was found."
+            );
         }
 
         return [.. files.Distinct(StringComparer.Ordinal).OrderBy(Path.GetFileName, StringComparer.Ordinal)];

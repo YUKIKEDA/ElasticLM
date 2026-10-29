@@ -239,12 +239,18 @@ internal sealed record ServiceSettings
     public static bool IsNodeName(string? name) =>
         name is { Length: >= 1 and <= 64 } && name.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
-    // The host name with characters a node name does not allow made '-', cut to 64; "node" when nothing is left.
-    private static string DefaultNodeName()
+    /// <summary>
+    /// Returns the node name made from a host name (design §14.8): characters a node name does not allow become <c>-</c>,
+    /// cut to 64; <c>node</c> when nothing is left.
+    /// </summary>
+    public static string NodeNameOf(string hostName)
     {
-        string name = new([.. Environment.MachineName.Select(c => IsNodeName(c.ToString()) ? c : '-').Take(64)]);
+        ArgumentNullException.ThrowIfNull(hostName);
+        string name = new([.. hostName.Select(c => IsNodeName(c.ToString()) ? c : '-').Take(64)]);
         return name.Length > 0 ? name : "node";
     }
+
+    private static string DefaultNodeName() => NodeNameOf(Environment.MachineName);
 
     /// <summary>
     /// Returns the address to listen on: the host must be an IP address, <c>localhost</c>, <c>0.0.0.0</c>, or <c>[::]</c>.

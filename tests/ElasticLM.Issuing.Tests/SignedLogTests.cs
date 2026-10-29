@@ -851,6 +851,245 @@ public sealed class SignedLogTests : IDisposable
         Assert.NotNull(LogKeyMaterial.Certificates(["a", "b", "c", "d"]));
     }
 
+    /// <summary>
+    /// The first signature of a service's file fixes the key for the rest of it, and a file is compared with the previous
+    /// one by the key that signed it, not by the keys its certificates name (decision 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Two signing keys A and B, each certified for log.
+    ///
+    /// Steps:
+    /// - Write a file whose certificates name A and B, signed every line, A for the first signature and B after; verify. In
+    ///   a new folder write a file signed by A, then one whose certificates name A and B, signed by B; verify.
+    ///
+    /// Expected:
+    /// - The error "The signature is made with another key than the earlier signatures of the file."; then one warning,
+    ///   "The file is signed by another key certified for log than A: the signing key was replaced.".
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_KeysAreFixedPerFile()
+    {
+        using ECDsa other = KeyFiles.CreateKey();
+        string a = Certificate(_signing, KeyUses.Log);
+        string b = Certificate(other, KeyUses.Log);
+        int signatures = 0;
+        string Switching(Func<ECDsa, string> use) => use(signatures++ < 1 ? _signing : other);
+        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Switching, LogKeyMaterial.Certificates([a, b]), _time, sealEvery: 1))
+        {
+            Append(log, 2);
+        }
+
+        Assert.Contains(
+            Verify2().Issues,
+            i =>
+                i.Severity == LogIssueSeverity.Error && i.Message == "The signature is made with another key than the earlier signatures of the file."
+        );
+
+        ClearFolder();
+        using (SignedLog log = OpenService(a, _signing))
+        {
+            Append(log, 1);
+        }
+
+        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access(other), LogKeyMaterial.Certificates([a, b]), _time))
+        {
+            Append(log, 1);
+        }
+
+        LogIssue replaced = Assert.Single(Verify2().Issues);
+        Assert.Equal(
+            (
+                LogIssueSeverity.Warning,
+                $"The file is signed by another key certified for log than {KeyFiles.KeyId(_signing)}: the signing key was replaced."
+            ),
+            (replaced.Severity, replaced.Message)
+        );
+    }
+
+    /// <summary>
+    /// A service's file changes no key, and a server's file does not change into the service's form (design §18.1, 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service's file and a server's file, each with a signed key.changed line appended by hand: the first carrying
+    ///   certificates, the second carrying certificates too.
+    ///
+    /// Steps:
+    /// - Verify each alone (the server's with its product).
+    ///
+    /// Expected:
+    /// - "A log of elm-service changes no key while it runs, and this file has a key change."; "A key change turns a
+    ///   server's log into a log of elm-service.".
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_KeyChange_IsRefused()
+    {
+        string certificate = Certificate(_signing, KeyUses.Log);
+        using (SignedLog log = OpenService(certificate, _signing))
+        {
+            Append(log, 1);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage").Single();
+        AppendSigned(file, _signing, $$"""{"type":"key.changed","ts":{{Now.ToUnixTimeSeconds()}},"certificates":["{{certificate}}"]}""");
+        Assert.Equal(
+            "A log of elm-service changes no key while it runs, and this file has a key change.",
+            Assert.Single(LogVerifier.Verify([file], _trust, null, "usage").Issues).Message
+        );
+
+        ClearFolder();
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        file = SignedLog.FindFiles(_dir, "usage").Single();
+        AppendSigned(file, _server, $$"""{"type":"key.changed","ts":{{Now.ToUnixTimeSeconds()}},"certificates":["{{certificate}}"]}""");
+        Assert.Equal("A key change turns a server's log into a log of elm-service.", Assert.Single(Verify([file]).Issues).Message);
+    }
+
+    // Appends a line and a signature over it that continues the file's chain, as SignedLog would write them.
+    private static void AppendSigned(string path, ECDsa key, string json)
+    {
+        string[] lines = File.ReadAllText(path).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        string lastAuth = lines.Last(l => l.StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal));
+        byte[] line = Encoding.UTF8.GetBytes(json + "\n");
+        var payload = new LogPayload
+        {
+            Ver = 1,
+            Iat = Now.ToUnixTimeSeconds(),
+            Jti = JwsWriter.NewTokenId(),
+            Stream = "usage",
+            N = ReadPayload(lastAuth).N + 1,
+            Prev = SignedLog.Hash(Encoding.UTF8.GetBytes(lastAuth + "\n")),
+            Digest = Base64UrlCodec.Encode(SHA256.HashData(line)),
+            Lines = 1,
+        };
+        string signature = JwsWriter.Sign(key, TokenTypes.Log, payload, LicensingJsonContext.Default.LogPayload);
+        File.AppendAllText(path, json + "\n" + $$"""{"type":"auth","ts":{{Now.ToUnixTimeSeconds()}},"sig":"{{signature}}"}""" + "\n");
+    }
+
+    private LogReport Verify2() => LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage");
+
+    private void ClearFolder()
+    {
+        foreach (string file in Directory.EnumerateFiles(_dir))
+        {
+            File.Delete(file);
+        }
+    }
+
+    /// <summary>
+    /// In a service's log, a missing file, a file cut after its last signature, and a removed line are errors, as in a
+    /// server's log (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service's log of three files (two restarts), signed every 2 lines.
+    ///
+    /// Steps:
+    /// - Verify the first and the third; remove the last line of the first file and verify all; restore it, remove an event
+    ///   line from the second, and verify all.
+    ///
+    /// Expected:
+    /// - An error that a file is missing; an error that the link does not match; an error that lines were changed, added, or
+    ///   removed.
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_RemovedOrCut_IsFound()
+    {
+        string certificate = Certificate(_signing, KeyUses.Log);
+        for (int file = 0; file < 3; file++)
+        {
+            using SignedLog log = OpenService(certificate, _signing, sealEvery: 2);
+            Append(log, 4);
+            _time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Contains(
+            LogVerifier.Verify([files[0], files[2]], _trust, null, "usage").Issues,
+            i => i.Message.Contains("a file is missing", StringComparison.Ordinal)
+        );
+
+        string first = File.ReadAllText(files[0]);
+        string[] firstLines = first.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        File.WriteAllText(files[0], string.Join('\n', firstLines[..^1]) + "\n");
+        Assert.Contains(Verify2().Issues, i => i.Message.Contains("does not match its last signature", StringComparison.Ordinal));
+
+        File.WriteAllText(files[0], first);
+        string[] secondLines = File.ReadAllText(files[1]).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        File.WriteAllText(files[1], string.Join('\n', secondLines.Where((_, i) => i != 2)) + "\n");
+        Assert.Contains(Verify2().Issues, i => i.Message == "The lines before the signature were changed, added, or removed.");
+    }
+
+    /// <summary>
+    /// A certificate counts for a service's file only when it is valid at the time of the file's first line, its bounds
+    /// included, and its key is not revoked; a server's file after a service's file is an error (design §18.1, 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Certificates for log from now, ending now, from a second after now, ending a second before now.
+    ///
+    /// Steps:
+    /// - Write a service's file with each and verify it; verify the good one with its key revoked; write a service's file and
+    ///   then a server's file and verify both with the product.
+    ///
+    /// Expected:
+    /// - The first two verify; the next two and the revoked key give "No certificate on the line is certified for log by the
+    ///   trust store at the line's time."; the last ends with "a server's and the service's logs are mixed.".
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_CertificateBounds_AndRevocation()
+    {
+        const string NoLog = "No certificate on the line is certified for log by the trust store at the line's time.";
+        (DateTimeOffset NotBefore, TimeSpan Validity, string? Problem)[] cases =
+        [
+            (Now, TimeSpan.FromDays(1), null),
+            (Now.AddDays(-1), TimeSpan.FromDays(1), null),
+            (Now.AddSeconds(1), TimeSpan.FromDays(1), NoLog),
+            (Now.AddDays(-1).AddSeconds(-1), TimeSpan.FromDays(1), NoLog),
+        ];
+        foreach ((DateTimeOffset notBefore, TimeSpan validity, string? problem) in cases)
+        {
+            ClearFolder();
+            string certificate = CertificateIssuer.Issue(_root, _signing, KeyUses.Log, notBefore, validity, _time);
+            using (SignedLog log = OpenService(certificate, _signing))
+            {
+                Append(log, 1);
+            }
+
+            IReadOnlyList<LogIssue> issues = Verify2().Issues;
+            if (problem is null)
+            {
+                Assert.Empty(issues);
+            }
+            else
+            {
+                Assert.Equal(problem, Assert.Single(issues).Message);
+            }
+        }
+
+        ClearFolder();
+        using (SignedLog log = OpenService(Certificate(_signing, KeyUses.Log), _signing))
+        {
+            Append(log, 1);
+        }
+
+        TrustStore revoked = TrustStore.Create([KeyFiles.ExportPublic(_root)], [KeyFiles.KeyId(_signing)]);
+        Assert.Equal(NoLog, Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), revoked, null, "usage").Issues).Message);
+
+        _time.Advance(TimeSpan.FromSeconds(1));
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        LogIssue mixed = Assert.Single(Verify().Issues);
+        Assert.EndsWith("a server's and the service's logs are mixed.", mixed.Message, StringComparison.Ordinal);
+    }
+
     private static void Append(SignedLog log, int count)
     {
         for (int i = 0; i < count; i++)

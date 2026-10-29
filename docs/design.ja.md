@@ -2200,12 +2200,13 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 
 - SQLite は 1 ノードだけとする。
 - PostgreSQL では複数ノードで動かせる。ノード間で共有するのはデータベースと、ノンスの HMAC の秘密・署名鍵・Data Protection の鍵（§14.8）である。
+- 利用ログは各ノードが自分のファイル（`usage-<ノード名>-*.jsonl`）に書く（§18.1、0.95）。ノードごとに `node.name` を変える。
 
 ### 14.4 席と台数の排他
 
 - PostgreSQL: ライセンスの行を `SELECT ... FOR UPDATE` で固定してから、数え上げと追加を同じトランザクションで行う。
 - SQLite: `BEGIN IMMEDIATE` で書き込みを直列にする。
-- クラウドのフローティングのリースも同じ表と排他で扱う。期限の切れたリースは、数え上げの条件（`expires_at > now`）で除き、掃除は 1 分ごとに行う。同じ掃除で、期限の切れた `jti`（§12.2）とノンスの有効期間を過ぎた記録も消す。掃除のタイマーは `TimeProvider.CreateTimer` で起動時に作り、停止の処理で止める。複数ノードでは各ノードが掃除してよい（消す条件が同じで、重なっても結果は変わらない）。
+- クラウドのフローティングのリースも同じ表と排他で扱う。期限の切れたリースは、数え上げの条件（`expires_at > now`）で除き、掃除は 1 分ごとに行う。同じ掃除で、期限の切れた `jti`（§12.2）とノンスの有効期間を過ぎた記録も消す。掃除のタイマーは `TimeProvider.CreateTimer` で起動時に作り、停止の処理で止める。複数ノードでは各ノードが掃除してよい（消す条件が同じで、重なっても結果は変わらない）。掃除は期限の切れたリースを `DELETE ... RETURNING` で消し、消した行を受け取ったノードだけが利用ログに期限切れの行を書く（§18.1）。1 つの行を消すのは 1 つのノードだけなので、行は 1 回だけ書かれる。掃除はライセンスの行をロックしないので、返却・更新・強制返却は、自分が行を変えたときだけ利用ログに書く。
 
 ### 14.5 管理 API
 
@@ -2393,9 +2394,9 @@ M4b1 のエンドポイント（0.88）:
 | `GET /v1/admin/trials` | `trial.read` | 試用の一覧（`after` と `limit`）。`?productId=` で絞り込める（UUID でなければ `400` と `ELM_INVALID_ARGUMENT`） |
 | `GET /v1/admin/licenses/{id}/leases` | `lease.read` | クラウドのリースの一覧（§12.7.6） |
 | `DELETE /v1/admin/leases/{id}` | `lease.release` | クラウドのリースの強制返却。借り出しも返す（§12.7.6、0.56 の例外） |
-| `GET /v1/admin/usage-log/files` | `usagelog.read` | このノードの利用ログのファイルの一覧 `{node, items: [{name, size, modifiedAt}]}`（古い順、§18.1） |
+| `GET /v1/admin/usage-log/files` | `usagelog.read` | このノードの利用ログのファイルの一覧 `{node, items: [{name, size, modifiedAt}], next}`（古い順、§18.1）。`after`（ファイル名。その名前より後のもの）と `limit`（1〜200、既定 50）でページにする。`modifiedAt` はほかの時刻と同じ ISO 8601。利用ログを書かないノードは、3 つの操作とも `409` と `ELM_CONFLICT`（「This node writes no usage log; set usageLog.directory.」） |
 | `GET /v1/admin/usage-log/files/{name}` | `usagelog.read` | 1 つのファイルの中身（`application/x-ndjson`）。名前はこのノードのファイルの一覧と照らし、パスとしては使わない。ない名前は `404` と `ELM_NOT_FOUND` |
-| `POST /v1/admin/usage-log/seal` | `usagelog.seal` | 数えた拒否の行と区切りの署名を今すぐ書く。`204` |
+| `POST /v1/admin/usage-log/seal` | `usagelog.seal` | 数えた拒否の行と区切りの署名を今すぐ書く。本文なし。`204` |
 | `DELETE /v1/admin/trials/{id}` | `trial.delete` | 試用の記録（指紋）を消し、その指紋がもう一度試用できるようにする。試用のライセンスと有効化は残る。`204`。消した後の 2 回目は `404` と `ELM_NOT_FOUND`（消す物がない） |
 
 | 応答 | 形 |
@@ -2484,7 +2485,7 @@ M4a1 の設定:
 | `database.provider` | `ELM_DATABASE_PROVIDER` | `sqlite` | `sqlite` か `postgres` |
 | `database.connectionFile` | `ELM_DATABASE_CONNECTION`（接続文字列そのもの） | なし（必須） | 接続文字列のファイル（16 KiB まで、末尾の改行は除く） |
 | `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE` |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` は読まない） | 署名鍵の証明書のファイル |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` は読まない） | 署名鍵の証明書のファイル。1〜4 個（§8.6）で、空のファイルは誤り。各ファイルの前後の空白と改行は除いて読む（`elm key certify` は末尾に改行を書く。M4d3 の設計のレビュー R1） |
 | `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`（`;` 区切り）、またはそれがないとき PEM の本文を `ELM_TRUST_ROOT_KEYS` | なし（必須） | 証明書を確かめるルート鍵（§13.8 と同じ） |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS`（`;` 区切り） | なし | 無効にした鍵の ID（§13.8 と同じ） |
 | `bootstrapOwner.iss`, `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_ISS`, `ELM_BOOTSTRAPOWNER_SUB` | なし | 最初の `owner`（各 1〜255 文字、両方そろえる） |
@@ -2552,7 +2553,7 @@ IdP からの戻りでのコードの交換と ID トークンの検証は、IdP
 | `elm key thumbprint` | 公開鍵の鍵 ID（§7.4）を表示する |
 | `elm license issue` | ライセンスファイルを発行する（サービスなしの運用）。`--expires` は日時か `never` を必ず指定し、`never` には警告を出す。機能は `--feature "ID;ver=範囲;seats=N;exp=日時"`。発行の前に §8.4.2・§8.6・§9.3 の規則で確かめ、検証側が拒否するものは発行しない。さらに、書き出す前に必ず検証器そのもの（`LicenseVerifier`）でトラストストアから検証し、通らなければ書き出さない。ベンダーはルートの公開鍵をいつも持っているので、この検証は省けない |
 | `elm license inspect` / `elm license verify` | ライセンスファイルの中身の表示と、トラストストアでの検証 |
-| `elm log verify` | 利用ログと借り出しの記録の署名の連なりを検証する（§18.1）。ファイルかフォルダーを受け取り、名前の順（時刻の順）に確かめる。`--product`（サーバーのログで必須、`elm-service` のログでは要らない）、`--node`（フォルダーから `elm-service` の 1 つのノードのファイル `usage-<ノード名>-*.jsonl` を選ぶ。`usage` だけ）、`--stream usage|borrows`（既定 `usage`）、`--trust`。誤りがあれば終了コード 1、警告だけなら 0 |
+| `elm log verify` | 利用ログと借り出しの記録の署名の連なりを検証する（§18.1）。ファイルかフォルダーを受け取り、名前の順（時刻の順）に確かめる。`--product`（サーバーのログで必須、`elm-service` のログでは要らない）、`--node`（フォルダーから `elm-service` の 1 つのノードのファイル `usage-<ノード名>-*.jsonl` を選ぶ。`usage` だけで、ファイルを渡したときは誤り。ノードのファイルだけがあるフォルダーを `--node` なしで渡すと、`--node` を案内する）、`--stream usage|borrows`（既定 `usage`）、`--trust`。誤りがあれば終了コード 1、警告だけなら 0 |
 | `elm admin login` | OIDC のデバイス認可フローで管理 API にログインする |
 | `elm admin ...` | 管理 API の操作。API キーは環境変数 `ELM_API_KEY` で渡す |
 | `elm offline process` | オフラインの有効化・更新・解除のファイルをサービスに渡し、応答を書く（§12.8.4、M4c1） |
@@ -2628,7 +2629,7 @@ const char* elm_last_error_message(void);
 - イベント: `lease.acquired`, `lease.renewed`, `lease.released`, `lease.expired`, `lease.reclaimed`, `lease.denied`, `borrow.started`, `borrow.returned`, `server.started`, `server.stopped`, `admin.action`, `overage`。
 - 各行は `ts`、`type`、`lic`、`feat`、`n`、インストール鍵の拇印、（許されていれば）ホスト名とユーザー名を持つ。
 - 区切りの署名: 100 行ごとか 60 秒ごと（行があるとき）に、`type: "auth"` の行を挟む。その行は `elm-log+jws`（§8.4.6）を持ち、サーバーの鍵（オンプレミスはインストール鍵、SaaS 型は `use: log` の署名鍵）で署名する。RLM の利用ログの `AUTH` 行（https://docs.reprisesoftware.com/docs/admin/reportlog-format.html ）と同じ考え方で、中身は読める形のまま改ざんを検出できる。
-- 署名を確かめる鍵: 各ファイルの `chain.start` の行は、署名に使う鍵を確かめるためのもの（SaaS 型は `use: log` の署名鍵の証明書、オンプレミスはサーバーライセンスのファイル）を持つ。動いている間に鍵が変わったら（署名鍵の入れ替え、サーバーライセンスの更新）、`key.changed` の行に新しいものを書いてから、新しい鍵で署名する。`elm log verify` は、これらをトラストストア（`--trust`）から §11.2 の手順で検証してから、`auth` 行を確かめる。
+- 署名を確かめる鍵: 各ファイルの `chain.start` の行は、署名に使う鍵を確かめるためのもの（SaaS 型は `use: log` の署名鍵の証明書、オンプレミスはサーバーライセンスのファイル）を持つ。オンプレミスのサーバーは、動いている間に鍵が変わったら（サーバーライセンスの更新）、`key.changed` の行に新しいものを書いてから、新しい鍵で署名する。`elm-service` は鍵を起動のときだけ読むので、`key.changed` を書かない（0.95）。`elm log verify` は、これらをトラストストア（`--trust`）から §11.2 の手順で検証してから、`auth` 行を確かめる。
 - ファイルをまたぐ連なり:
   - ファイルは日ごとに切り替える。切り替えの直前に、その日の最後の `auth` 行を必ず書く。
   - 新しいファイルの最初の行は `chain.start` で、前のファイルの名前と、その最後の `auth` 行の SHA-256 を持つ。最初の `auth` 行の `prev` もその値である。
@@ -2662,17 +2663,21 @@ M3c で作った形:
 - 設定 `usageLog.directory` があるノードだけが書く（§14.8）。ファイル名は `usage-<ノード名>-<UTC の日時>.jsonl` で、ノードごとに別の連なりである。複数ノードがフォルダーを共有しても、各ノードは自分の最新のファイルから続ける。全ノードの記録を集めるのは運用者である（管理 API は答えるノードのファイルだけを返す、§14.5）。
 - 署名はサービスの署名鍵（§14.8）でする。最初の行（`chain.start` と `chain.reset`）は、サーバーライセンスと鍵の代わりに、署名鍵の証明書を `{"certificates": [<elm-cert+jws>]}`（1〜4 個）で持つ。鍵は起動のときだけ読むので、`key.changed` は使わない。鍵を入れ替えると、再起動の後のファイルが新しい鍵で始まる。
 - 書くイベント:
-  - `lease.acquired`、`borrow.started`（取得。`exp`、ポリシーの `ClientInfoStrategy` が許すときだけ `host`・`user`、`app`）
+  - `lease.acquired`、`borrow.started`（取得。`exp`、ポリシーの `ClientInfoStrategy` が許すときだけ `host`・`user`。`app` は送られていれば書く。§4.4 の制御は端末の名前とユーザー名に限るため）
   - `lease.renewed`（`exp`）
   - `lease.released`、`borrow.returned`（`by` が `device` か `admin`）
   - `lease.expired`、`borrow.expired`（1 分ごとの掃除が消した行から。消した行は、消したノードだけが受け取るので 1 回だけ書く。`DELETE ... RETURNING`）
   - `lease.denied`（取得・更新・返却の拒否を、1 分ごとと停止のときに、機能とコードごとの `count` で。1 分に数える種類は 100 まで）
-  - `service.started`、`service.stopped`（`node`）
+  - `service.started`、`service.stopped`（`node`）。`service.started` は待ち受けを始める前に書くので、最初のリースの行より前にある。
 - 各リースの行は `lic`（ライセンス ID）、`prd`（製品の `code`）、`feat`、`n`、`key`（インストール鍵の拇印）、`lease`（リース ID）を持つ。ライセンスキーは書かない。有効化・管理の操作・複製の検出は監査ログ（§18.2）にあるので書かない。
-- 行は要求のトランザクションがコミットした後、応答の前に書く。更新の再試行（最後のトークンをもう一度返す）は、何も変えないので書かない。
+- 行は要求のトランザクションがコミットした後、応答の前に書く。更新の再試行（最後のトークンをもう一度返す）は、何も変えないので書かない。返却・更新・強制返却は、自分が行を変えたときだけ書く。掃除が先に行を消していれば、更新は `404` と `ELM_UNKNOWN_LEASE`、返却は `204` で、どちらも行を書かない（§14.4）。
+- 掃除が行を消した後、製品の `code` を読むのに失敗すると、残りの期限切れの行は書かれず、運用の記録に残る（行はもう消えている）。
+- 60 秒ごとの区切りのタイマーは、起動の終わりに `TimeProvider.CreateTimer` で作り、停止の処理で止める。停止は、タイマーを止め、待ち受けを止め、数えた拒否の行と `service.stopped` を書き、最後の署名を書いてファイルを閉じる。
 - 書けないときは `elm-server` と同じで、運用の記録に書いて要求は続け、次の書き込みで `chain.reset` から新しいファイルを始める。
 - 検証（`LogVerifier`、`elm log verify`）は、最初の行の形で確かめ方を選ぶ。`certificates` の行は、各証明書をトラストストアから `use: log` で確かめ、行の `ts` の時刻がその期間に入るものだけを、署名してよい鍵とする（サーバーライセンスを行の `ts` で確かめるのと同じ考え）。署名の `kid` がそれらの鍵のどれでもなければ誤り。製品は確かめない（サービスは多くの製品を扱う）。サーバーの形の行を製品なしで確かめようとすれば誤りである。
-- ファイルをまたぐ鍵: 次のファイルが、前のファイルの鍵を持たない別の `log` の証明書で始まれば警告（署名鍵の入れ替え）。ルートが両方を保証するためである。サーバーの形とサービスの形が 1 つの連なりに混ざれば誤り。
+- 1 つのファイルの署名は 1 つの鍵でする。最初の署名をした鍵が、そのファイルの残りの署名の鍵になり、別の鍵の署名は誤り。サービスの形のファイルの `key.changed` は誤りで、`key.changed` でサーバーの形からサービスの形に変わるのも誤り。
+- ファイルをまたぐ鍵: 次のファイルを署名した鍵が、前のファイルの最後の署名の鍵と違えば警告（署名鍵の入れ替え）。比べるのは実際に署名した鍵で、証明書が名指す鍵ではない。サーバーの形とサービスの形が 1 つの連なりに混ざれば誤り。
+- 公開の API: `LogKeyMaterial`（`ServerLicense(licenseFile, keyJwk)` と `Certificates(certificates)`）、`SignedLog.Open(directory, baseName, stream, key, LogKeyMaterial, time, ...)`。サーバーライセンスと鍵を取る今の `Open` もそのまま使える。`LogFileKey.LicenseId` は、サービスのログでは `null` である。`LogVerifier.Verify` の `productId` はサービスのログでは `null` でよい。
 
 ### 18.2 監査ログ
 

@@ -44,10 +44,12 @@ internal abstract class LicenseScope
     public abstract Task InsertLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
 
     /// <summary>Writes a lease's sequence number, last token, proof, expiry, and stop mark.</summary>
-    public abstract Task UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
+    /// <returns>Whether the lease was there to write: the sweep, which takes no license lock, may have removed it.</returns>
+    public abstract Task<bool> UpdateLeaseAsync(LeaseRow lease, CancellationToken cancellationToken);
 
     /// <summary>Removes a lease.</summary>
-    public abstract Task DeleteLeaseAsync(string id, CancellationToken cancellationToken);
+    /// <returns>Whether this call removed it (and not the sweep before it).</returns>
+    public abstract Task<bool> DeleteLeaseAsync(string id, CancellationToken cancellationToken);
 
     /// <summary>Returns the most early returns of the license since a time among some counters (design §12.7.4).</summary>
     public abstract Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken);

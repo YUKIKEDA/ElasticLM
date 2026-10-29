@@ -300,7 +300,13 @@ internal sealed partial class ElmService
 
         LeaseRow next = lease with { Seq = lease.Seq + 1, IssuedBy = device.RequestId, ExpiresAt = expires };
         next = next with { LastToken = IssueLease(next, product, now) };
-        await scope.UpdateLeaseAsync(next, device.Aborted).ConfigureAwait(false);
+
+        // design §18.1: the sweep takes no license lock, so the lease may have gone since it was read; then it is unknown.
+        if (!await scope.UpdateLeaseAsync(next, device.Aborted).ConfigureAwait(false))
+        {
+            return ClientResult.Fail(ErrorCode.UnknownLease, UnknownLease);
+        }
+
         return LeaseAnswer(StatusCodes.Status200OK, next.LastToken) with
         {
             After = () => _usage?.Lease("lease.renewed", next, product.Code, w => w.WriteNumber("exp", next.ExpiresAt)),
@@ -369,7 +375,12 @@ internal sealed partial class ElmService
                         }
                     }
 
-                    await scope.DeleteLeaseAsync(lease.Id, device.Aborted).ConfigureAwait(false);
+                    // The sweep may have removed it since it was read: released already, with no line and no early return.
+                    if (!await scope.DeleteLeaseAsync(lease.Id, device.Aborted).ConfigureAwait(false))
+                    {
+                        return Released;
+                    }
+
                     if (lease.Borrow)
                     {
                         await scope.RecordReturnAsync(counters, at, device.Aborted).ConfigureAwait(false);
@@ -509,7 +520,11 @@ internal sealed partial class ElmService
                         return false;
                     }
 
-                    await scope.DeleteLeaseAsync(found.Id, context.RequestAborted).ConfigureAwait(false);
+                    if (!await scope.DeleteLeaseAsync(found.Id, context.RequestAborted).ConfigureAwait(false))
+                    {
+                        return false;
+                    }
+
                     var entry = new AuditEntry(
                         "apikey",
                         caller.Key.Id.ToString("D"),

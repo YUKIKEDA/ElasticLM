@@ -27,16 +27,18 @@ public sealed class ServiceUsageLogTests
     ///
     /// Steps:
     /// - Device A acquires with client info and app 1.2, renews after 200 seconds, sends that renewal again as a retry, and
-    ///   releases; acquires again, and an
-    ///   administrator releases it. Device B borrows for 3600 seconds and returns it early; borrows again, and an
-    ///   administrator releases it. Device A asks twice for feature nope. Stop the service; verify the node's files; read them.
+    ///   releases; acquires again, and an administrator releases it.
+    /// - Device B borrows for 3600 seconds and returns it early; borrows again, tries to renew the borrow, and an
+    ///   administrator releases it.
+    /// - Device A asks twice for feature nope. Stop the service; verify the node's files; read them.
     ///
     /// Expected:
     /// - Intact with no issue. The signed lines (the retry writes none) are service.started, lease.acquired, lease.renewed,
-    ///   lease.released (by
-    ///   device), lease.acquired, lease.released (by admin), borrow.started, borrow.returned (by device), borrow.started,
-    ///   borrow.returned (by admin), lease.denied (nope, ELM_FEATURE_NOT_LICENSED, 2), service.stopped. The first acquisition
-    ///   has the license, app, core, 1, A's key, the lease ID, its expiry, pc, u, and 1.2. No file holds the license key.
+    ///   lease.released (by device), lease.acquired, lease.released (by admin), borrow.started, borrow.returned (by device),
+    ///   borrow.started, borrow.returned (by admin), two lease.denied lines (nope, ELM_FEATURE_NOT_LICENSED, 2; core,
+    ///   ELM_INVALID_ARGUMENT, 1), service.stopped.
+    /// - The first acquisition has the license, app, core, 1, A's key, the lease ID, its expiry, pc, u, and 1.2. No file
+    ///   holds the license key.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -62,6 +64,7 @@ public sealed class ServiceUsageLogTests
         string borrow = LeaseId(await b.BorrowAsync(key, 3600, prints));
         Assert.Equal(HttpStatusCode.NoContent, (await b.ReleaseAsync(borrow)).Status);
         string borrowAgain = LeaseId(await b.BorrowAsync(key, 3600, prints));
+        Assert.Equal(HttpStatusCode.BadRequest, (await b.RenewAsync(borrowAgain, 1)).Status);
         await DeleteAsync(admin, $"v1/admin/leases/{borrowAgain}");
         Assert.Equal(HttpStatusCode.Forbidden, (await a.AcquireAsync(key, feature: "nope")).Status);
         Assert.Equal(HttpStatusCode.Forbidden, (await a.AcquireAsync(key, feature: "nope")).Status);
@@ -82,6 +85,7 @@ public sealed class ServiceUsageLogTests
                 "borrow.returned",
                 "borrow.started",
                 "borrow.returned",
+                "lease.denied",
                 "lease.denied",
                 "service.stopped",
             ],
@@ -107,10 +111,14 @@ public sealed class ServiceUsageLogTests
             ["device", "admin", "device", "admin"],
             report.Entries.Where(e => e.Type is "lease.released" or "borrow.returned").Select(e => e.Value.GetProperty("by").GetString())
         );
-        JsonElement denied = report.Entries[10].Value;
         Assert.Equal(
-            ("nope", "ELM_FEATURE_NOT_LICENSED", 2L),
-            (denied.GetProperty("feat").GetString(), denied.GetProperty("code").GetString(), denied.GetProperty("count").GetInt64())
+            [("core", "ELM_INVALID_ARGUMENT", 1L), ("nope", "ELM_FEATURE_NOT_LICENSED", 2L)],
+            report
+                .Entries.Where(e => e.Type == "lease.denied")
+                .Select(e =>
+                    (e.Value.GetProperty("feat").GetString(), e.Value.GetProperty("code").GetString(), e.Value.GetProperty("count").GetInt64())
+                )
+                .Order()
         );
         Assert.Equal("n1", report.Entries[^1].Value.GetProperty("node").GetString());
         foreach (string file in Files(test, "n1"))
@@ -124,7 +132,7 @@ public sealed class ServiceUsageLogTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A node writing its usage log; a cloud-floating license with 3 seats of core.
+    /// - A node writing its usage log; a cloud-floating license with 3 seats of core; each engine.
     ///
     /// Steps:
     /// - Acquire a lease (600 seconds) and borrow for 700 seconds; move the clock 701 seconds; wait for both expiry lines;
@@ -133,10 +141,11 @@ public sealed class ServiceUsageLogTests
     /// Expected:
     /// - Intact; one lease.expired with the lease's ID and one borrow.expired with the borrow's.
     /// </remarks>
-    [Fact]
-    public async Task Usage_Expiry_IsWrittenOnce()
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Usage_Expiry_IsWrittenOnce(string provider)
     {
-        await using TestService test = TestService.Open("sqlite");
+        await using TestService test = TestService.Open(provider);
         (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
         (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
         using var device = TestDevice.Create(test, service);
@@ -277,12 +286,14 @@ public sealed class ServiceUsageLogTests
     /// - A node "n1" writing its usage log; a key with usagelog.read alone; a second service without a usage log.
     ///
     /// Steps:
-    /// - Seal; list; get the listed file; get an unknown name and "..%5Celm.db"; seal with the reader; list on the second
-    ///   service; read the audit log.
+    /// - Seal; list; copy the file as node n2's; get the listed file; get an unknown name, n2's file, and "..%5Celm.db"; move
+    ///   the clock a day and seal (a second file); list with limit 1, after its next, and with limit 0; seal with the
+    ///   reader; list on the second service; read the audit log.
     ///
     /// Expected:
     /// - 204; node n1 with one file whose size is the file's; its content is the file's, ending with a signature line; 404
-    ///   ELM_NOT_FOUND "No usage log file of this node has this name." twice; 403 ELM_FORBIDDEN; 409 ELM_CONFLICT "This node
+    ///   ELM_NOT_FOUND "No usage log file of this node has this name." three times; the first file with next its name, the
+    ///   second with no next, 400 ELM_INVALID_ARGUMENT; 403 ELM_FORBIDDEN; 409 ELM_CONFLICT "This node
     ///   writes no usage log; set usageLog.directory."; audit rows usagelog.seal, usagelog.list, and usagelog.get with the
     ///   file's name. viewer and support have usagelog.read, only admin and owner usagelog.seal.
     /// </remarks>
@@ -306,10 +317,11 @@ public sealed class ServiceUsageLogTests
             ("n1", Path.GetFileName(path), new FileInfo(path).Length),
             (list.GetProperty("node").GetString(), name, item.GetProperty("size").GetInt64())
         );
+        File.Copy(path, Path.Combine(test.FilePath("usage"), "usage-n2-20261001T000000000Z.jsonl"));
         string content = await admin.GetStringAsync($"v1/admin/usage-log/files/{name}", cancel);
         Assert.Equal(Text(test, "n1"), content);
         Assert.StartsWith("{\"type\":\"auth\"", content.TrimEnd('\n').Split('\n')[^1], StringComparison.Ordinal);
-        foreach (string other in new[] { "usage-n1-20261002T000000000Z.jsonl", "..%5Celm.db" })
+        foreach (string other in new[] { "usage-n1-20261002T000000000Z.jsonl", "usage-n2-20261001T000000000Z.jsonl", "..%5Celm.db" })
         {
             await TestService.AssertProblemAsync(
                 await admin.GetAsync($"v1/admin/usage-log/files/{other}", cancel),
@@ -318,6 +330,23 @@ public sealed class ServiceUsageLogTests
                 "No usage log file of this node has this name."
             );
         }
+
+        test.Time.Advance(TimeSpan.FromDays(1));
+        using (HttpResponseMessage rotated = await admin.PostAsync("v1/admin/usage-log/seal", null, cancel))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, rotated.StatusCode);
+        }
+
+        JsonElement page = await TestService.GetAsync(admin, "v1/admin/usage-log/files?limit=1");
+        Assert.Equal((name, name), (page.GetProperty("items")[0].GetProperty("name").GetString(), page.GetProperty("next").GetString()));
+        JsonElement rest = await TestService.GetAsync(admin, $"v1/admin/usage-log/files?after={name}");
+        Assert.Equal((1, false), (rest.GetProperty("items").GetArrayLength(), rest.TryGetProperty("next", out _)));
+        await TestService.AssertProblemAsync(
+            await admin.GetAsync("v1/admin/usage-log/files?limit=0", cancel),
+            HttpStatusCode.BadRequest,
+            "ELM_INVALID_ARGUMENT",
+            "limit must be between 1 and 200."
+        );
 
         HttpClient reader = test.Http(service, await TestService.CreateKeyAsync(admin, "\"usagelog.read\""));
         await TestService.AssertProblemAsync(
@@ -479,6 +508,129 @@ public sealed class ServiceUsageLogTests
         }
 
         await test.StartAsync(s => s with { SigningCertificateFiles = [.. Enumerable.Repeat(certificate, 4)] });
+    }
+
+    /// <summary>
+    /// Two nodes on one PostgreSQL database each run the sweep, and a lease that runs out is written once, by the node whose
+    /// sweep removed it (design §18.1, 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Nodes n1 and n2 on one PostgreSQL database, sharing the usage log folder; a cloud-floating license.
+    ///
+    /// Steps:
+    /// - Acquire a lease on n1; move the clock 601 seconds and then a minute; wait until a lease.expired line is written;
+    ///   stop both.
+    ///
+    /// Expected:
+    /// - Exactly one lease.expired line across both nodes' files; each node's files verify.
+    /// </remarks>
+    [Theory]
+    [InlineData("postgres")]
+    public async Task Usage_TwoNodes_WriteAnExpiryOnce(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        ElmService n1 = await test.StartAsync(_ => Logged(test, "n1"));
+        ElmService n2 = await test.StartAsync(_ => Logged(test, "n2"));
+        HttpClient admin = test.Http(n1, owner);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, n1);
+        Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key)).Status);
+
+        test.Time.Advance(TimeSpan.FromSeconds(601));
+        await TestService.WaitForAsync(() =>
+            Task.FromResult((Text(test, "n1") + Text(test, "n2")).Contains("\"lease.expired\"", StringComparison.Ordinal))
+        );
+        test.Time.Advance(TimeSpan.FromMinutes(1));
+        await n1.WaitForTimersAsync();
+        await n2.WaitForTimersAsync();
+        await n1.StopAsync();
+        await n2.StopAsync();
+
+        LogReport one = Verify(test, "n1");
+        LogReport two = Verify(test, "n2");
+        Assert.True(one.Intact && two.Intact);
+        Assert.Single(one.Entries.Concat(two.Entries), e => e.Type == "lease.expired");
+    }
+
+    /// <summary>
+    /// The pending lines are signed every 60 seconds; a policy that keeps no client info writes no host or user, but the
+    /// app's version (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node writing its usage log; a cloud-floating policy with clientInfoStrategy none; a license with 3 seats of core.
+    ///
+    /// Steps:
+    /// - Acquire with client info and app 2.0; move the clock 60 seconds; wait for a signature after the acquisition; read
+    ///   the acquisition's line.
+    ///
+    /// Expected:
+    /// - The file's last line is a signature; the line has app 2.0 and no host or user.
+    /// </remarks>
+    [Fact]
+    public async Task Usage_EveryMinute_IsSigned()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string policy = await TestService.PolicyAsync(admin, await ProductAsync(admin, "app", "core"), "\"floating\":\"cloud\"");
+        (_, string key) = await LicenseAsync(admin, policy, ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+        Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key, more: ""","client":{"host":"pc","user":"u"},"app":"2.0" """)).Status);
+
+        test.Time.Advance(TimeSpan.FromSeconds(60));
+        await TestService.WaitForAsync(() =>
+            Task.FromResult(Text(test, "n1").TrimEnd('\n').Split('\n')[^1].StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal))
+        );
+        JsonElement line = Verify(test, "n1").Entries.Single(e => e.Type == "lease.acquired").Value;
+        Assert.Equal(
+            ("2.0", false, false),
+            (line.GetProperty("app").GetString(), line.TryGetProperty("host", out _), line.TryGetProperty("user", out _))
+        );
+    }
+
+    /// <summary>
+    /// A lease written or removed reports whether it was there, so a request that the sweep went ahead of writes no line
+    /// (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A lease row inserted under its license's lock; each engine.
+    ///
+    /// Steps:
+    /// - Update it; remove it; remove it again; update it again.
+    ///
+    /// Expected:
+    /// - true, true, false, false.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Store_LeaseWrites_ReportTheRow(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        (string licenseId, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+        string id = LeaseId(await device.AcquireAsync(key));
+        DateTimeOffset now = test.Time.GetUtcNow();
+        bool[] results = await service.Database.WithLicenseAsync(
+            Guid.Parse(licenseId),
+            async scope =>
+            {
+                LeaseRow lease = (await scope!.FindLeaseAsync(id, now.ToUnixTimeSeconds(), CancellationToken.None))!;
+                return new[]
+                {
+                    await scope.UpdateLeaseAsync(lease with { Seq = 2 }, CancellationToken.None),
+                    await scope.DeleteLeaseAsync(id, CancellationToken.None),
+                    await scope.DeleteLeaseAsync(id, CancellationToken.None),
+                    await scope.UpdateLeaseAsync(lease, CancellationToken.None),
+                };
+            },
+            now,
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal([true, true, false, false], results);
     }
 
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.

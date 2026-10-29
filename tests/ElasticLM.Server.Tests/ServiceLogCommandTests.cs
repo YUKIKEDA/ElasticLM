@@ -24,12 +24,13 @@ public sealed class ServiceLogCommandTests
     ///
     /// Steps:
     /// - Acquire and release a lease with a LicenseClient that has the key; stop the service. Verify the folder with --node
-    ///   n1; without --node; with --node a_b; with --node n1 --stream borrows. Change "lease.acquired" in the file and verify
-    ///   again.
+    ///   n1; without --node; with --node a_b; with --node n1 --stream borrows; the file with --node n1; the file alone. Change
+    ///   "lease.acquired" in the file and verify again.
     ///
     /// Expected:
-    /// - 0 and "intact: 1 file(s), 4 event line(s)"; 2 "No usage log file was found."; 2 for the name and for the stream,
-    ///   "--node must be …"; 1 and "NOT INTACT".
+    /// - 0 and "intact: 1 file(s), 4 event line(s)"; 2 "No usage log file was found; for elm-service's files, add --node
+    ///   <name>."; 2 for the name and for the stream, "--node must be …"; 2 for the file with --node and 0 for the file
+    ///   without it; 1 and "NOT INTACT".
     /// </remarks>
     [Fact]
     public async Task Verify_ServiceLog_WithNode()
@@ -85,12 +86,17 @@ public sealed class ServiceLogCommandTests
         Assert.True(code == 0, output + fault);
         Assert.Equal("intact: 1 file(s), 4 event line(s)", output.Trim());
         (code, _, fault) = Run(test, ["log", "verify", folder]);
-        Assert.Equal((2, "error: No usage log file was found."), (code, fault.Trim()));
+        Assert.Equal((2, "error: No usage log file was found; for elm-service's files, add --node <name>."), (code, fault.Trim()));
         const string NodeRule = "error: --node must be 1 to 64 characters of A-Z, a-z, 0-9, and '-', for the usage stream.";
         Assert.Equal((2, NodeRule), Trimmed(Run(test, ["log", "verify", folder, "--node", "a_b"])));
         Assert.Equal((2, NodeRule), Trimmed(Run(test, ["log", "verify", folder, "--node", "n1", "--stream", "borrows"])));
 
         string file = SignedLog.FindFiles(folder, "usage-n1").Single();
+        Assert.Equal(
+            (2, "error: --node chooses a node's files in a folder; give folders, or files without --node."),
+            Trimmed(Run(test, ["log", "verify", file, "--node", "n1"]))
+        );
+        Assert.Equal(0, Run(test, ["log", "verify", file]).Code);
         File.WriteAllText(file, File.ReadAllText(file).Replace("\"lease.acquired\"", "\"lease.acquireX\"", StringComparison.Ordinal));
         (code, output, _) = Run(test, ["log", "verify", folder, "--node", "n1"]);
         Assert.Equal(1, code);

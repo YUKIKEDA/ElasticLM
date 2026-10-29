@@ -282,7 +282,8 @@ public sealed class ServiceSettingsTests : IDisposable
     ///   ELM_NODE_NAME set; load a file without them; load names of 64 and 65 characters, "a_b", and empty values.
     ///
     /// Expected:
-    /// - logs and node-1; the variables' values; no folder and a valid default name; the 64-character name loads; the others
+    /// - logs and node-1; the variables' values; no folder and the host name as a node name ("web_1" and "web.1" become
+    ///   "web-1", 70 characters are cut to 64, an empty name is "node"); the 64-character name loads; the others
     ///   are refused with "node.name must be 1 to 64 characters of A-Z, a-z, 0-9, and '-': …" or "… must not be empty;
     ///   leave it out instead.".
     /// </remarks>
@@ -297,7 +298,17 @@ public sealed class ServiceSettingsTests : IDisposable
         Assert.Equal(("other", "N2"), (env.UsageLogDirectory, env.NodeName));
         ServiceSettings defaults = ServiceSettings.Load(Write(Base()), _ => null);
         Assert.Null(defaults.UsageLogDirectory);
-        Assert.True(ServiceSettings.IsNodeName(defaults.NodeName));
+        Assert.Equal(ServiceSettings.NodeNameOf(Environment.MachineName), defaults.NodeName);
+        Assert.Equal(
+            ("web-1", "web-1", new string('h', 64), "node", "Node-9"),
+            (
+                ServiceSettings.NodeNameOf("web_1"),
+                ServiceSettings.NodeNameOf("web.1"),
+                ServiceSettings.NodeNameOf(new string('h', 70)),
+                ServiceSettings.NodeNameOf(string.Empty),
+                ServiceSettings.NodeNameOf("Node-9")
+            )
+        );
 
         string longest = new('n', 64);
         Assert.Equal(longest, ServiceSettings.Load(Write(Base($",\"node\":{{\"name\":\"{longest}\"}}")), _ => null).NodeName);

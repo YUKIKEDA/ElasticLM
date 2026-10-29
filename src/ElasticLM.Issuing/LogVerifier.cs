@@ -134,6 +134,11 @@ public static class LogVerifier
 
         LogSigner? key = null;
         LogSigner? nextKey = null;
+
+        // design §18.1, 0.95: a service's file is compared with the previous file by the key that signs it, known at its
+        // first signature.
+        LogFileKey? previousKey = previousName is not null && state.Files.Count > 0 ? state.Files[^1] : null;
+        bool firstSignature = true;
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         int covered = 0;
         var pendingEntries = new List<LogEntry>();
@@ -183,6 +188,17 @@ public static class LogVerifier
                         return;
                     }
 
+                    if (firstSignature && key!.IsService && previousKey is { LicenseId: null } before && before.KeyId != key.KeyId)
+                    {
+                        Issue(
+                            number,
+                            LogIssueSeverity.Warning,
+                            $"The file is signed by another key certified for log than {before.KeyId}: the signing key was replaced."
+                        );
+                    }
+
+                    firstSignature = false;
+
                     foreach (LogEntry entry in pendingEntries)
                     {
                         entries.Add(entry with { IsSigned = true });
@@ -210,10 +226,24 @@ public static class LogVerifier
                 covered++;
                 if (type == LogLineTypes.KeyChanged)
                 {
+                    // design §18.1, 0.95: the service reads its key only at the start, so its files change no key; and a
+                    // server's log does not turn into the service's.
+                    if (key!.IsService)
+                    {
+                        Issue(number, LogIssueSeverity.Error, "A log of elm-service changes no key while it runs, and this file has a key change.");
+                        return;
+                    }
+
                     nextKey = ReadKey(value, trust, productId, out string? keyProblem);
                     if (nextKey is null)
                     {
                         Issue(number, LogIssueSeverity.Error, keyProblem!);
+                        return;
+                    }
+
+                    if (nextKey.IsService)
+                    {
+                        Issue(number, LogIssueSeverity.Error, "A key change turns a server's log into a log of elm-service.");
                         return;
                     }
                 }
@@ -315,9 +345,9 @@ public static class LogVerifier
         }
 
         // design §18.1: a later file cannot be signed again with another server's key. Only the old key can endorse a new
-        // one (key.changed); a new machine of the same license cannot, so that is reported for the operator to explain. The
-        // service's keys are certified by the vendor's root, so a replaced signing key is reported, not refused (0.95).
-        if (previousName is not null && state.Files.Count > 0 && state.Files[^1] is LogFileKey last && !key.Has(last.KeyId))
+        // one (key.changed); a new machine of the same license cannot, so that is reported for the operator to explain. A
+        // service's file is compared at its first signature, by the key that made it (0.95).
+        if (previousName is not null && state.Files.Count > 0 && state.Files[^1] is LogFileKey last)
         {
             if ((last.LicenseId is null) != key.IsService)
             {
@@ -327,13 +357,9 @@ public static class LogVerifier
                     $"The file is signed by another kind of key than '{last.File}': a server's and the service's logs are mixed."
                 );
             }
-            else if (key.IsService)
+            else if (key.IsService || last.KeyId == key.KeyId)
             {
-                issue(
-                    1,
-                    LogIssueSeverity.Warning,
-                    $"The file is signed by another key certified for log than {last.KeyId}: the signing key was replaced."
-                );
+                // Compared at the first signature, or the same server key.
             }
             else if (last.LicenseId == key.LicenseId)
             {
@@ -472,9 +498,9 @@ public static class LogVerifier
             return false;
         }
 
-        if (!key.Verify(jws!))
+        if (key.Verify(jws!) is string keyProblem)
         {
-            problem = key.IsService ? "The signature is not made with a key certified for log." : "The signature is not made with the server's key.";
+            problem = keyProblem;
             return false;
         }
 
@@ -575,23 +601,28 @@ public static class LogVerifier
         // The key that signed last, or the first key that may sign.
         public string KeyId => _server?.KeyId ?? _signedBy ?? _keys[0].KeyId;
 
-        public bool Has(string keyId) => _server is not null ? _server.KeyId == keyId : _keys.Exists(k => k.KeyId == keyId);
-
-        public bool Verify(CompactJws jws)
+        // Verifies a signature; null when it holds, otherwise why not. The first signature of a service's file fixes the key
+        // that may sign the rest of it (0.95): a file is not signed by two keys.
+        public string? Verify(CompactJws jws)
         {
             if (_server is not null)
             {
-                return jws.Header.Kid == _server.KeyId && _server.Key.Verify(jws);
+                return jws.Header.Kid == _server.KeyId && _server.Key.Verify(jws) ? null : "The signature is not made with the server's key.";
+            }
+
+            if (_signedBy is not null && jws.Header.Kid != _signedBy)
+            {
+                return "The signature is made with another key than the earlier signatures of the file.";
             }
 
             VerificationKey? key = _keys.Find(k => k.KeyId == jws.Header.Kid);
             if (key is null || !key.Verify(jws))
             {
-                return false;
+                return "The signature is not made with a key certified for log.";
             }
 
             _signedBy = key.KeyId;
-            return true;
+            return null;
         }
 
         public void Dispose()

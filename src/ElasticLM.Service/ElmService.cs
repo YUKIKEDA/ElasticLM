@@ -194,6 +194,9 @@ internal sealed partial class ElmService : IAsyncDisposable
 
             var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log, usage);
             service.MapAdmin();
+
+            // design §18.1: the start is the first line after the chain line, before any request can write one.
+            usage?.Write("service.started", w => w.WriteString("node", settings.NodeName));
             try
             {
                 await app.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -435,7 +438,6 @@ internal sealed partial class ElmService : IAsyncDisposable
 
         if (_usage is not null)
         {
-            _usage.Write("service.started", w => w.WriteString("node", _settings.NodeName));
             _usageTimer = Time.CreateTimer(_ => _usageWork.TryStart(), null, UsageSealInterval, UsageSealInterval);
             string files = Path.Combine(_usage.Directory, _usage.BaseName + "-*.jsonl");
             ServiceLog.UsageLogAt(_log, files);

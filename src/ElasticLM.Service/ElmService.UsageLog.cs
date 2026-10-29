@@ -36,8 +36,26 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.Conflict, NoUsageLog).ConfigureAwait(false);
         }
 
+        if (!TryReadLimit(context, out int limit))
+        {
+            return await RefuseAsync(context, ErrorCode.InvalidArgument, "limit must be between 1 and 200.").ConfigureAwait(false);
+        }
+
+        string? after = null;
+        if (context.Request.Query["after"] is { Count: > 0 } afterText)
+        {
+            if (afterText.Count != 1 || afterText[0] is not { Length: >= 1 and <= 255 })
+            {
+                return await RefuseAsync(context, ErrorCode.InvalidArgument, "after must be a file name.").ConfigureAwait(false);
+            }
+
+            after = afterText[0];
+        }
+
+        // Oldest first, after the name given; the names sort in time order.
+        string[] names = [.. _usage.Files().Where(n => after is null || string.CompareOrdinal(n, after) > 0)];
         var items = new List<UsageLogFileItem>();
-        foreach (string name in _usage.Files())
+        foreach (string name in names.Take(limit))
         {
             var info = new FileInfo(Path.Combine(_usage.Directory, name));
             if (info.Exists)
@@ -46,7 +64,7 @@ internal sealed partial class ElmService
             }
         }
 
-        var answer = new UsageLogFiles(_settings.NodeName, [.. items]);
+        var answer = new UsageLogFiles(_settings.NodeName, [.. items], names.Length > limit ? names[limit - 1] : null);
         await WriteJsonAsync(context, StatusCodes.Status200OK, answer, ServiceJsonContext.Default.UsageLogFiles).ConfigureAwait(false);
         return new AdminOutcome("ELM_OK", _settings.NodeName);
     }
