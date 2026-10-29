@@ -80,7 +80,9 @@ internal sealed class TestService : IAsyncDisposable
     public string WriteCertificate(string name, KeyUses uses, DateTimeOffset notBefore, TimeSpan validity, ECDsa? key = null)
     {
         string certificate = CertificateIssuer.Issue(_root, key ?? SigningKey, uses, notBefore, validity, Time);
-        File.WriteAllText(FilePath(name), certificate);
+
+        // As elm key certify writes it: the certificate and a line break.
+        File.WriteAllText(FilePath(name), certificate + "\n");
         return FilePath(name);
     }
 

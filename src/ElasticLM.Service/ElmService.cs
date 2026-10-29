@@ -332,12 +332,20 @@ internal sealed partial class ElmService : IAsyncDisposable
             );
             foreach (string path in settings.SigningCertificateFiles)
             {
-                certificates.Add(File.ReadAllText(path));
+                // A certificate file ends with a line break (elm key certify); the certificate is the text without it, as it
+                // goes into license files, lease answers, and the usage log, where a stray line break fails verification.
+                certificates.Add(File.ReadAllText(path).Trim());
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             throw new ServiceStartException($"The signing key or a certificate file cannot be read: {e.Message}");
+        }
+
+        // design §8.6, §14.8: a license file, a lease answer, and a usage log carry one to four certificates.
+        if (certificates.Count > 4 || certificates.Exists(c => c.Length == 0))
+        {
+            throw new ServiceStartException("signing.certificates must name one to four certificate files, none empty.");
         }
 
         string passphrase =

@@ -411,7 +411,7 @@ public sealed class ServiceUsageLogTests
     {
         await using TestService test = TestService.Open("sqlite");
         Logged(test, "n1");
-        string certificate = File.ReadAllText(test.FilePath("log.cert"));
+        string certificate = File.ReadAllText(test.FilePath("log.cert")).Trim();
         using (
             ServiceUsageLog log = ServiceUsageLog.Open(
                 test.FilePath("usage"),
@@ -441,6 +441,44 @@ public sealed class ServiceUsageLogTests
         );
         JsonElement rest = denied.Single(d => !d.TryGetProperty("feat", out _));
         Assert.Equal(("ELM_NO_SEATS", 1L), (rest.GetProperty("code").GetString(), rest.GetProperty("count").GetInt64()));
+    }
+
+    /// <summary>
+    /// The service starts with one to four certificate files, read without their line breaks (elm key certify ends each
+    /// with one), and refuses five or an empty one (design §8.6, §14.8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Certificate files ending with a line break, as every test writes them; an empty file.
+    ///
+    /// Steps:
+    /// - Start with five certificate files; with the certificate and the empty file; with four.
+    ///
+    /// Expected:
+    /// - ServiceStartException "signing.certificates must name one to four certificate files, none empty." twice; the
+    ///   last starts.
+    /// </remarks>
+    [Fact]
+    public async Task Start_CertificateFiles_AreOneToFour()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        string certificate = test.FilePath("signing.cert");
+        File.WriteAllText(test.FilePath("empty.cert"), string.Empty);
+        const string Rule = "signing.certificates must name one to four certificate files, none empty.";
+        foreach (string[] files in new[] { Enumerable.Repeat(certificate, 5).ToArray(), [certificate, test.FilePath("empty.cert")] })
+        {
+            ServiceStartException refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+                ElmService.StartAsync(
+                    test.Settings(s => s with { SigningCertificateFiles = files }),
+                    test.HostOptions(),
+                    TestContext.Current.CancellationToken
+                )
+            );
+            Assert.Equal(Rule, refused.Message);
+        }
+
+        await test.StartAsync(s => s with { SigningCertificateFiles = [.. Enumerable.Repeat(certificate, 4)] });
     }
 
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.
