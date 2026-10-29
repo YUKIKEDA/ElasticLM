@@ -23,9 +23,14 @@ internal sealed record ApiKeyRecord(
 internal sealed record NewApiKey(string Key, string Name, IEnumerable<string> Permissions, int Days);
 
 /// <summary>
-/// An authenticated caller: the API key, its administrator, and the permissions both allow (design §14.6).
+/// An authenticated caller of the administration API (design §14.6): an API key or an OIDC access token (M5a).
 /// </summary>
-internal sealed record Caller(ApiKeyRecord Key, Guid AdminId, IReadOnlySet<string> Permissions);
+/// <param name="AdminId">The administrator the caller acts for.</param>
+/// <param name="Permissions">The permissions the caller holds now.</param>
+/// <param name="ActorType">The audit log's actor type: <c>apikey</c> or <c>oidc</c> (design §18.2).</param>
+/// <param name="ActorId">The audit log's actor: the API key's ID, or the token's <c>iss</c> and <c>sub</c> joined by a space.</param>
+/// <param name="RateKey">What the per-caller rate limit counts by: the API key's ID or the administrator's ID (design §14.7).</param>
+internal sealed record Caller(Guid AdminId, IReadOnlySet<string> Permissions, string ActorType, string ActorId, Guid RateKey);
 
 /// <summary>
 /// API keys (design §14.6): <c>elm_</c> and a 256-bit random value in base64url, kept as a SHA-256 hash, with permissions and
@@ -68,13 +73,21 @@ internal static class ApiKeys
     }
 
     /// <summary>
-    /// Finds the caller of a presented key. Unknown, stopped, and expired keys, and keys of a disabled administrator, give
-    /// <see langword="null"/>, one answer for all (design §14.5).
+    /// Finds the caller of a presented key. Unknown, stopped, and expired keys, keys of a disabled administrator, and keys
+    /// the 90-day rule stops give <see langword="null"/>, one answer for all (design §14.5, §14.6).
     /// </summary>
+    /// <param name="database">The database.</param>
+    /// <param name="presented">The presented key, or <see langword="null"/>.</param>
+    /// <param name="now">The time.</param>
+    /// <param name="inactiveAdminDays">The days without a login after which a key stops; 0 for no such rule (decision 0.66).</param>
+    /// <param name="stopped">Told the key and the administrator when the 90-day rule stops a key, for the service log.</param>
+    /// <param name="cancellationToken">Cancels the work.</param>
     public static async Task<Caller?> AuthenticateAsync(
         Database database,
         string? presented,
         DateTimeOffset now,
+        int inactiveAdminDays = 0,
+        Action<Guid, Guid>? stopped = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -90,9 +103,37 @@ internal static class ApiKeys
             return null;
         }
 
+        if (IsInactive(holder, now, inactiveAdminDays))
+        {
+            stopped?.Invoke(holder.Key.Id, holder.Key.AdminId);
+            return null;
+        }
+
         IReadOnlySet<string> allowed = Service.Permissions.OfRole(holder.Role);
         ApiKeyRecord key = holder.Key;
-        return new Caller(key, key.AdminId, key.Permissions.Where(allowed.Contains).ToHashSet(StringComparer.Ordinal));
+        return new Caller(
+            key.AdminId,
+            key.Permissions.Where(allowed.Contains).ToHashSet(StringComparer.Ordinal),
+            AuditActors.ApiKey,
+            key.Id.ToString("D"),
+            key.Id
+        );
+    }
+
+    /// <summary>
+    /// Returns whether the 90-day rule stops a key (design §14.6): the latest of the administrator's last login, the
+    /// administrator's creation, and the key's creation, plus the days, is not after now.
+    /// </summary>
+    public static bool IsInactive(KeyHolder holder, DateTimeOffset now, int inactiveAdminDays)
+    {
+        ArgumentNullException.ThrowIfNull(holder);
+        if (inactiveAdminDays <= 0)
+        {
+            return false;
+        }
+
+        long since = Math.Max(Math.Max(holder.LastLoginAt ?? 0, holder.AdminCreatedAt), holder.Key.CreatedAt);
+        return now.ToUnixTimeSeconds() >= since + (inactiveAdminDays * 86_400L);
     }
 
     /// <summary>Reads a stored key.</summary>

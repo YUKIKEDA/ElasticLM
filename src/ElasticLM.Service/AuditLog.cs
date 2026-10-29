@@ -145,11 +145,28 @@ internal static class AuditLog
 }
 
 /// <summary>
+/// The actor types of the audit log's administrators (design §18.2).
+/// </summary>
+internal static class AuditActors
+{
+    /// <summary>An API key; the actor is the key's ID.</summary>
+    public const string ApiKey = "apikey";
+
+    /// <summary>An OIDC access token (M5a); the actor is the token's <c>iss</c> and <c>sub</c> joined by a space.</summary>
+    public const string Oidc = "oidc";
+}
+
+/// <summary>
 /// The actions written in the audit log (design §18.2). They name operations; the permissions of <see cref="Permissions"/>
 /// name what a key may do, and some share their text.
 /// </summary>
 internal static class AuditActions
 {
+    public const string AdminCreate = "admin.create";
+    public const string AdminRole = "admin.role";
+    public const string AdminList = "admin.list";
+    public const string AdminDisable = "admin.disable";
+    public const string AdminEnable = "admin.enable";
     public const string ApiKeyCreate = "apikey.create";
     public const string ApiKeyList = "apikey.list";
     public const string ApiKeyRevoke = "apikey.revoke";

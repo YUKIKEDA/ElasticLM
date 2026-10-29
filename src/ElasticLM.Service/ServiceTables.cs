@@ -8,7 +8,15 @@ namespace ElasticLM.Service;
 
 /// <summary>An administrator (design §14.6).</summary>
 [Table("admins", Naming = ColumnNaming.SnakeCase)]
-internal sealed partial record AdminRow([PrimaryKey] Guid Id, string Issuer, string Subject, string Role, bool Enabled, long CreatedAt);
+internal sealed partial record AdminRow(
+    [PrimaryKey] Guid Id,
+    string Issuer,
+    string Subject,
+    string Role,
+    bool Enabled,
+    long CreatedAt,
+    long? LastLoginAt
+);
 
 /// <summary>An API key: its hash, never the key (design §14.6).</summary>
 [Table("api_keys", Naming = ColumnNaming.SnakeCase)]
@@ -56,7 +64,9 @@ internal sealed partial record KeyHolderRow(
     long ExpiresAt,
     long? RevokedAt,
     string Role,
-    bool Enabled
+    bool Enabled,
+    long AdminCreatedAt,
+    long? LastLoginAt
 );
 
 /// <summary>A product (design §9.1): its <c>code</c> is the tokens' <c>prd</c> and never changes.</summary>

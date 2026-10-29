@@ -51,4 +51,17 @@ internal static partial class ServiceLog
 
     [LoggerMessage(EventId = 10, Level = LogLevel.Information, Message = "usage log: {Where}")]
     public static partial void UsageLogAt(ILogger log, string where);
+
+    [LoggerMessage(
+        EventId = 11,
+        Level = LogLevel.Information,
+        Message = "API key {KeyId} was refused: its administrator {AdminId} has not signed in for the days of apiKeys.inactiveAdminDays."
+    )]
+    public static partial void KeyInactive(ILogger log, Guid keyId, Guid adminId);
+
+    [LoggerMessage(EventId = 12, Level = LogLevel.Debug, Message = "An access token was refused: {Reason}")]
+    public static partial void TokenRefused(ILogger log, string reason);
+
+    [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "The identity provider's keys cannot be read: {Reason}")]
+    public static partial void IdentityProviderUnavailable(ILogger log, string reason);
 }

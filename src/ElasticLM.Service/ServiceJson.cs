@@ -43,6 +43,12 @@ internal sealed class SettingsFile
 
     [JsonPropertyName("node")]
     public NodeSection? Node { get; set; }
+
+    [JsonPropertyName("oidc")]
+    public OidcSection? Oidc { get; set; }
+
+    [JsonPropertyName("apiKeys")]
+    public ApiKeysSection? ApiKeys { get; set; }
 }
 
 /// <summary><c>tls</c>: PEM files of the certificate and its key.</summary>
@@ -149,6 +155,37 @@ internal sealed class NodeSection
     public string? Name { get; set; }
 }
 
+/// <summary><c>oidc</c>: the identity provider whose access tokens the administration API accepts (design §14.6, M5a).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class OidcSection
+{
+    [JsonPropertyName("issuer")]
+    public string? Issuer { get; set; }
+
+    [JsonPropertyName("audience")]
+    public string? Audience { get; set; }
+
+    [JsonPropertyName("cliClientId")]
+    public string? CliClientId { get; set; }
+
+    [JsonPropertyName("cliScopes")]
+    public List<string>? CliScopes { get; set; }
+
+    [JsonPropertyName("roleClaim")]
+    public string? RoleClaim { get; set; }
+
+    [JsonPropertyName("roleMap")]
+    public Dictionary<string, string>? RoleMap { get; set; }
+}
+
+/// <summary><c>apiKeys</c> (design §14.6, M5a).</summary>
+[JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
+internal sealed class ApiKeysSection
+{
+    [JsonPropertyName("inactiveAdminDays")]
+    public int? InactiveAdminDays { get; set; }
+}
+
 /// <summary>
 /// <c>POST /v1/admin/api-keys</c> (design §14.5). Unknown members are ignored, so a newer client does not break.
 /// </summary>
@@ -186,6 +223,27 @@ internal sealed record ApiKeyItem(
 
 /// <summary>A page of API keys.</summary>
 internal sealed record ApiKeyPage([property: JsonPropertyName("items")] ApiKeyItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>An administrator as the administration API shows it (design §14.5, M5a).</summary>
+internal sealed record AdminItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("issuer")] string Issuer,
+    [property: JsonPropertyName("subject")] string Subject,
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("enabled")] bool Enabled,
+    [property: JsonPropertyName("createdAt")] string CreatedAt,
+    [property: JsonPropertyName("lastLoginAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? LastLoginAt
+);
+
+/// <summary>A page of administrators.</summary>
+internal sealed record AdminPage([property: JsonPropertyName("items")] AdminItem[] Items, [property: JsonPropertyName("next")] string? Next);
+
+/// <summary>The OIDC settings <c>elm admin login</c> reads from <c>GET /v1/admin/oidc</c> (design §14.5, M5a).</summary>
+internal sealed record OidcInfo(
+    [property: JsonPropertyName("issuer")] string Issuer,
+    [property: JsonPropertyName("clientId")] string ClientId,
+    [property: JsonPropertyName("scopes")] string[] Scopes
+);
 
 /// <summary>
 /// An audit row as the administration API shows it (design §14.5): the stored <c>detail</c> string is returned as it is, so
@@ -414,6 +472,8 @@ internal sealed record Problem(
 [JsonSerializable(typeof(CreateApiKeyBody))]
 [JsonSerializable(typeof(ApiKeyItem))]
 [JsonSerializable(typeof(ApiKeyPage))]
+[JsonSerializable(typeof(AdminPage))]
+[JsonSerializable(typeof(OidcInfo))]
 [JsonSerializable(typeof(AuditPage))]
 [JsonSerializable(typeof(VerifyAnswer))]
 [JsonSerializable(typeof(Problem))]

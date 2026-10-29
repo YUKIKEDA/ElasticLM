@@ -405,6 +405,11 @@ internal sealed partial class ElmService : IAsyncDisposable
                 }
             );
         });
+        if (settings.Oidc is OidcSettings oidc)
+        {
+            AddOidc(builder, oidc, host.Time);
+        }
+
         return builder.Build();
     }
 

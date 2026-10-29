@@ -107,6 +107,14 @@ internal sealed record ServiceSettings
     /// </summary>
     public string NodeName { get; init; } = DefaultNodeName();
 
+    /// <summary>Gets the identity provider whose access tokens the administration API accepts, or <see langword="null"/> for API keys only (M5a).</summary>
+    public OidcSettings? Oidc { get; init; }
+
+    /// <summary>
+    /// Gets the days without a login after which an administrator's API keys stop (decision 0.66, M5a); 0 turns the rule off.
+    /// </summary>
+    public int InactiveAdminDays { get; init; } = 90;
+
     /// <summary>
     /// Reads the settings file (if any) and the environment.
     /// </summary>
@@ -211,6 +219,21 @@ internal sealed record ServiceSettings
             throw new ServiceStartException("audit.retentionDays must be between 1 and 36600, or left out to keep every row.");
         }
 
+        int inactiveDays = Env("ELM_APIKEYS_INACTIVEADMINDAYS") is string inactiveText
+            ? ParseInt(inactiveText, "apiKeys.inactiveAdminDays")
+            : file.ApiKeys?.InactiveAdminDays ?? 90;
+        if (inactiveDays is < 0 or > 3_650)
+        {
+            throw new ServiceStartException("apiKeys.inactiveAdminDays must be between 0 and 3650; 0 turns the rule off.");
+        }
+
+        OidcSettings? oidc = OidcSettings.Load(file.Oidc, Env);
+        if (oidc is not null && owner is not null && owner.Issuer != oidc.Issuer)
+        {
+            // design §14.6: otherwise the bootstrap owner could never sign in, and the 90-day rule would stop its keys.
+            throw new ServiceStartException("bootstrapOwner.iss must equal oidc.issuer.");
+        }
+
         return new ServiceSettings
         {
             Listen = listen,
@@ -232,6 +255,8 @@ internal sealed record ServiceSettings
             RateLimitClientPerKey = clientPerKey,
             UsageLogDirectory = Env("ELM_USAGELOG_DIRECTORY") ?? file.UsageLog?.Directory,
             NodeName = nodeName,
+            Oidc = oidc,
+            InactiveAdminDays = inactiveDays,
         };
     }
 
@@ -320,6 +345,11 @@ internal sealed record ServiceSettings
         Text(file.Nonce?.SecretFile, "nonce.secretFile");
         Text(file.UsageLog?.Directory, "usageLog.directory");
         Text(file.Node?.Name, "node.name");
+        Text(file.Oidc?.Issuer, "oidc.issuer");
+        Text(file.Oidc?.Audience, "oidc.audience");
+        Text(file.Oidc?.CliClientId, "oidc.cliClientId");
+        List(file.Oidc?.CliScopes, "oidc.cliScopes");
+        Text(file.Oidc?.RoleClaim, "oidc.roleClaim");
         return file;
     }
 

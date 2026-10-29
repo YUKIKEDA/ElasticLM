@@ -254,7 +254,7 @@ internal sealed partial class ElmService
     private static Device OfflineDevice(HttpContext context, Caller? admin, string keyId, ECParameters key, string nonce) =>
         admin is null
             ? new(keyId, key, nonce, InstallationActor, keyId, Ip(context), OfflineChannel, context.RequestAborted)
-            : new(keyId, key, nonce, "apikey", admin.Key.Id.ToString("D"), Ip(context), OfflineChannel, context.RequestAborted);
+            : new(keyId, key, nonce, admin.ActorType, admin.ActorId, Ip(context), OfflineChannel, context.RequestAborted);
 
     private static ECParameters KeyOf(ActivationRow activation) =>
         new()

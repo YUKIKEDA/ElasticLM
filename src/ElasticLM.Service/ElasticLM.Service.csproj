@@ -16,6 +16,7 @@
     <PackageReference Include="SQLitePCLRaw.provider.e_sqlite3" />
     <PackageReference Include="Npgsql" />
     <PackageReference Include="AuraORM" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
