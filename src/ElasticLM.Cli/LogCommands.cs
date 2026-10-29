@@ -72,7 +72,7 @@ internal static class LogCommands
                     }
 
                     string[] files = ExpandFiles(paths, node is null ? stream : $"{stream}-{node}");
-                    LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream);
+                    LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream, node);
                     if (parse.GetValue(jsonOption))
                     {
                         var output = new LogVerifyOutput(

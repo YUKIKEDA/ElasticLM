@@ -1090,6 +1090,49 @@ public sealed class SignedLogTests : IDisposable
         Assert.EndsWith("a server's and the service's logs are mixed.", mixed.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// A service's files name their node on the signed first line: a chain is of one node, and the node asked for must be
+    /// the files' (decision 0.95).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A certificate for log; files written as node a, then as node b, and one with no node.
+    ///
+    /// Steps:
+    /// - Verify a's file as node a; a's file then b's; a's file as node b; the file with no node as node a; a's file alone.
+    ///
+    /// Expected:
+    /// - No issue; "The file is of node 'b', not of node 'a'."; "The file is of node 'a', not of node 'b'."; "The file names no
+    ///   node, and the log is of node 'a'."; no issue.
+    /// </remarks>
+    [Fact]
+    public void ServiceLog_Node_IsChecked()
+    {
+        string certificate = Certificate(_signing, KeyUses.Log);
+        string Write(string? node)
+        {
+            using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access(_signing), LogKeyMaterial.Certificates([certificate], node), _time))
+            {
+                Append(log, 1);
+            }
+
+            _time.Advance(TimeSpan.FromSeconds(1));
+            return SignedLog.FindFiles(_dir, "usage")[^1];
+        }
+
+        string a = Write("a");
+        string b = Write("b");
+        Assert.Empty(LogVerifier.Verify([a], _trust, null, "usage", "a").Issues);
+        Assert.Equal("The file is of node 'b', not of node 'a'.", Assert.Single(LogVerifier.Verify([a, b], _trust, null, "usage").Issues).Message);
+        Assert.Equal("The file is of node 'a', not of node 'b'.", Assert.Single(LogVerifier.Verify([a], _trust, null, "usage", "b").Issues).Message);
+        string none = Write(null);
+        Assert.Equal(
+            "The file names no node, and the log is of node 'a'.",
+            Assert.Single(LogVerifier.Verify([none], _trust, null, "usage", "a").Issues).Message
+        );
+        Assert.Empty(LogVerifier.Verify([a], _trust, null, "usage").Issues);
+    }
+
     private static void Append(SignedLog log, int count)
     {
         for (int i = 0; i < count; i++)

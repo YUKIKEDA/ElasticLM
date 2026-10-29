@@ -633,6 +633,47 @@ public sealed class ServiceUsageLogTests
         Assert.Equal([true, true, false, false], results);
     }
 
+    /// <summary>
+    /// A second node of the same name does not start while the first writes in the folder; it starts once the first stops
+    /// (decision 0.95). The files name the node on their first line.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Node n1 writing its usage log.
+    ///
+    /// Steps:
+    /// - Start a second n1 on the same folder; stop the first; start the second again; stop it; read the first lines; verify
+    ///   as node n1 and as node n2.
+    ///
+    /// Expected:
+    /// - ServiceStartException "Another node named 'n1' writes its usage log in '…'; give each node its own node.name."; the
+    ///   second starts; each first line has node n1; as n1 no issue, as n2 an error.
+    /// </remarks>
+    [Fact]
+    public async Task Usage_SameNodeName_DoesNotStartTwice()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService first, _) = await StartLoggedAsync(test, "n1");
+        ServiceStartException refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(Logged(test, "n1"), test.HostOptions(), TestContext.Current.CancellationToken)
+        );
+        Assert.Equal(
+            $"Another node named 'n1' writes its usage log in '{Path.GetFullPath(test.FilePath("usage"))}'; give each node its own node.name.",
+            refused.Message
+        );
+
+        await first.StopAsync();
+        await using (ElmService second = await ElmService.StartAsync(Logged(test, "n1"), test.HostOptions(), TestContext.Current.CancellationToken))
+        {
+            await second.StopAsync();
+        }
+
+        Assert.All(Files(test, "n1"), f => Assert.Contains("\"node\":\"n1\"", File.ReadLines(f).First(), StringComparison.Ordinal));
+        TrustStore trust = TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []);
+        Assert.Empty(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n1").Issues);
+        Assert.False(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n2").Intact);
+    }
+
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.
     private static ServiceSettings Logged(TestService test, string node)
     {

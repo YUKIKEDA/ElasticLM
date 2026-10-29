@@ -77,15 +77,17 @@ public static class LogVerifier
     /// <param name="productId">The product of the server license, needed for a server's log; <see langword="null"/> for a
     /// log of <c>elm-service</c>, which serves many products. A server's log without it is an error.</param>
     /// <param name="stream">The expected stream name, such as <c>usage</c>.</param>
+    /// <param name="node">The node of <c>elm-service</c> whose log this is, checked against the <c>node</c> of each file's
+    /// first line; <see langword="null"/> to check only that the files of a chain name one node.</param>
     /// <returns>The findings and the event lines.</returns>
-    public static LogReport Verify(IReadOnlyList<string> files, TrustStore trust, string? productId, string stream)
+    public static LogReport Verify(IReadOnlyList<string> files, TrustStore trust, string? productId, string stream, string? node = null)
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(trust);
         ArgumentException.ThrowIfNullOrEmpty(stream);
         var issues = new List<LogIssue>();
         var entries = new List<LogEntry>();
-        var state = new ChainState();
+        var state = new ChainState { Node = node };
         for (int i = 0; i < files.Count; i++)
         {
             VerifyFile(files[i], i == 0 ? null : Path.GetFileName(files[i - 1]), trust, productId, stream, state, issues, entries);
@@ -337,6 +339,25 @@ public static class LogVerifier
         }
 
         state.Broken = false;
+
+        // design §18.1, 0.95: a service's files name their node on the signed first line, one node for the whole chain.
+        if (value.TryGetProperty("node", out JsonElement nodeValue))
+        {
+            string? fileNode = nodeValue.ValueKind == JsonValueKind.String ? nodeValue.GetString() : null;
+            if (fileNode is null || (state.Node is not null && fileNode != state.Node))
+            {
+                issue(1, LogIssueSeverity.Error, $"The file is of node '{fileNode ?? "?"}', not of node '{state.Node}'.");
+                return false;
+            }
+
+            state.Node = fileNode;
+        }
+        else if (state.Node is not null && value.TryGetProperty("certificates", out _))
+        {
+            issue(1, LogIssueSeverity.Error, $"The file names no node, and the log is of node '{state.Node}'.");
+            return false;
+        }
+
         key = ReadKey(value, trust, productId, out string? problem);
         if (key is null)
         {
@@ -643,6 +664,9 @@ public static class LogVerifier
         public long N { get; set; } = -1;
 
         public bool Broken { get; set; }
+
+        // The node of a service's chain: given by the caller, or taken from its first file that names one.
+        public string? Node { get; set; }
 
         public List<LogFileKey> Files { get; } = [];
     }

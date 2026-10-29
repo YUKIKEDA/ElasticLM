@@ -20,13 +20,15 @@ internal sealed class ServiceUsageLog : IDisposable
     private const int MaxDenialKinds = 100;
 
     private readonly SignedLog _log;
+    private readonly FileStream _nodeLock;
     private readonly ILogger _operational;
     private readonly Lock _denialsLock = new();
     private readonly Dictionary<(string? Feature, ErrorCode Code), long> _denials = [];
 
-    private ServiceUsageLog(SignedLog log, string directory, string baseName, ILogger operational)
+    private ServiceUsageLog(SignedLog log, FileStream nodeLock, string directory, string baseName, ILogger operational)
     {
         _log = log;
+        _nodeLock = nodeLock;
         Directory = directory;
         BaseName = baseName;
         _operational = operational;
@@ -39,8 +41,11 @@ internal sealed class ServiceUsageLog : IDisposable
     public string BaseName { get; }
 
     /// <summary>
-    /// Opens this node's log in the folder, continuing its chain from the node's newest file.
+    /// Opens this node's log in the folder, continuing its chain from the node's newest file. The node holds
+    /// <c>usage-&lt;node&gt;.lock</c> in the folder, open for itself alone, while it writes (decision 0.95): two nodes of one
+    /// name would continue the same file and split the chain.
     /// </summary>
+    /// <exception cref="ServiceStartException">Another node of the same name writes in the folder.</exception>
     /// <exception cref="IOException">The folder or the new file cannot be written.</exception>
     public static ServiceUsageLog Open(
         string directory,
@@ -53,8 +58,28 @@ internal sealed class ServiceUsageLog : IDisposable
     {
         string full = Path.GetFullPath(directory);
         string baseName = $"{Stream}-{node}";
-        SignedLog log = SignedLog.Open(full, baseName, Stream, key, LogKeyMaterial.Certificates(certificates), time);
-        return new ServiceUsageLog(log, full, baseName, operational);
+        System.IO.Directory.CreateDirectory(full);
+        string lockPath = Path.Combine(full, baseName + ".lock");
+        FileStream nodeLock;
+        try
+        {
+            nodeLock = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException) when (File.Exists(lockPath))
+        {
+            throw new ServiceStartException($"Another node named '{node}' writes its usage log in '{full}'; give each node its own node.name.");
+        }
+
+        try
+        {
+            SignedLog log = SignedLog.Open(full, baseName, Stream, key, LogKeyMaterial.Certificates(certificates, node), time);
+            return new ServiceUsageLog(log, nodeLock, full, baseName, operational);
+        }
+        catch
+        {
+            nodeLock.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Returns the names of this node's files, oldest first.</summary>
@@ -156,6 +181,10 @@ internal sealed class ServiceUsageLog : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             ServiceLog.UsageLogFailed(_operational, e);
+        }
+        finally
+        {
+            _nodeLock.Dispose();
         }
     }
 }
