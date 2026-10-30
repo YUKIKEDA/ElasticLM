@@ -399,6 +399,18 @@ M4d3（Issue #90）の実測（PR の head `d69a3bd` のコード。Windows、1 
   - サービスの形とサーバーの形を同じ実行で比べた値（JIT の Release、`lease.acquired` の 7 つのメンバーの行、交互に 3 回）: サービスの形が 7.77〜8.65 µs、サーバーの形が 7.87〜10.25 µs。10.25 µs は最初の回の値で、JIT の温まりを含む（2 回目と 3 回目は 7.87〜8.51 µs）。2 つの形の差はない（違うのは最初の行だけ）。この値は測り方（JIT のビルド、7 つのメンバーの行）が M3c と違うので、M3c の値とは比べない。M3c と比べるのは上の同じ測り方の値である。
 - 取得と更新の往復（JIT の Release、ループバック、SQLite、100 台の端末で各 100 回の平均。利用ログを書くサービスと書かないサービスを交互に 3 回立てた。2 回目と 3 回目を書く）: 取得は書くとき 2.73〜3.14 ms、書かないとき 2.95〜3.00 ms。更新は書くとき 2.39〜2.69 ms、書かないとき 2.36〜2.56 ms。1 行の約 8 µs は、同じ側の回ごとの揺れ（0.05〜0.41 ms）に隠れて見えない。
 
+M5c（Issue #116）の実測（コミット `3d7c620` のコード。Windows、win-x64）:
+
+- `elm-service` の NativeAOT の実行ファイルは 28.9 MB（28,874,752 バイト。main（`6e0d5bf`）の 28,557,824 から +316,928 バイト、+1.1%）。警告は 0 件。目標の 40 MB 以下に収まる。マップのファイルで分けた内訳（マップの中は合わせて +297,012 バイト、残りの 19,916 バイトはセクションの詰め物）:
+  - `System.Private.CoreLib`、`Microsoft.Extensions`、ASP.NET Core のほかの部分（新しく使う汎用の型）: +104,490
+  - 型の記述・汎用の辞書などの実行時の表: +85,988
+  - 静的なファイルの配信（`UseStaticFiles`）: +29,061、埋め込みのファイルの置き場所（`ManifestEmbeddedFileProvider`）: +9,820
+  - 埋め込んだリソース（管理画面の `dist` と、その一覧）: +25,128
+  - サービスのコード（画面の配信、`/v1/admin/me`、ライセンスの検索）: +17,682
+  - メタデータ: +15,385、どのアセンブリにも分けられない生成コードと GC の情報: +9,458
+- 管理画面の `dist` は 3 つのファイルで 23,119 バイト（`index.html` 393、JS 22,130、CSS 596）、brotli で 8,395 バイト。上限の圧縮後 1 MB（§15.2）に収まる。
+- `elm` は 8,110,592 バイトで、main と同じ。
+
 M5b（Issue #109）の実測（コミット `99b9c6f` のコード。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 28.6 MB（28,557,824 バイト。main（`c9f95d6`）の 27,478,016 から +1,079,808 バイト、+3.9%）。警告は 0 件。目標の 40 MB 以下に収まる。マップのファイル（`-p:IlcGenerateMapFile=true`）で分けた内訳（マップの中は合わせて +1,011,804 バイト、残りの 68,004 バイトはセクションの詰め物）:
@@ -2729,7 +2741,7 @@ M4a1 の設定:
 - SPA は Preact 11 と TypeScript で書き、Vite 8 でビルドする（W0、0.96、ADR 0001）。
   - JSX は Vite 自身が `preact` の JSX ランタイムに変換する（`oxc.jsx.importSource: 'preact'`）。Preact 用の Vite のプリセット（`@preact/preset-vite`）は使わない。プリセットは Babel を連れて入るパッケージを 56 個から 124 個にし、得られるのは状態を保ったままのホットリロードだけである（W0 の計測）。
   - 画面の型は `tsc` で確かめる。部品のテストは Vitest と happy-dom で、ブラウザを入れずに行う。
-  - 実行時の依存は `preact` だけで、その先の依存はない。W0 の試作（一覧・検索・ページ・詳細・失効）の本番のビルドは、HTML・CSS・JS を合わせて 17,791 バイト、brotli で 6,771 バイトだった（上限は圧縮後 1 MB）。`elm-service` に埋め込んだときの実行ファイルの大きさの差は、M5c で測る。
+  - 実行時の依存は `preact` だけで、その先の依存はない。W0 の試作（一覧・検索・ページ・詳細・失効）の本番のビルドは、HTML・CSS・JS を合わせて 17,791 バイト、brotli で 6,771 バイトだった（上限は圧縮後 1 MB）。M5c の最初の画面（一覧・検索・詳細・失効）の `dist` は 3 つのファイルで 23,119 バイト、brotli で 8,395 バイトで、`elm-service` の実行ファイルは +316,928 バイトだった（§4.2）。
   - 文言は英語で、1 つのファイルにまとめる（日本語は v1 の後）。CSS は自前で書き、CSS のフレームワークも部品の集まりも入れない。
   - インラインのスクリプトとスタイルを使わない（§15.1）。W0 で、試作はヘッドレスの Chrome で `Content-Security-Policy: default-src 'self'` のもとで一覧から失効と `401` での `/auth/login` への移動まで動き、CSP の違反は 0 件だった。
   - フォームを送るときは、入力の値をフォームの要素から読む。W0 で、入力と送信を同じタスクで続けると、描き直しの前のフックの関数が古い入力の値で検索した。
@@ -3178,7 +3190,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | ASP.NET Core（共有フレームワーク） | `ElasticLM.Server`, `ElasticLM.Service` | HTTP サーバー | 対応（Slim ビルダー）。M3b の `elm-server` で警告 0 件、11.4 MB（win-x64）。ランタイムパックの IIS のモジュール（`aspnetcorev2_inprocess.dll`）は公開から外す |
 | `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.14 | `ElasticLM.Service` | 管理 API の OIDC のアクセストークンの検証（§14.6、M5a）。MIT。`Microsoft.IdentityModel.*` 8.x と `System.IdentityModel.Tokens.Jwt` を連れてくる | D0 と M5a で警告 0 件。`elm-service` が +5.3 MB（22,136,832 から 27,478,016 バイト、win-x64、内訳は §4.2） |
 | `Microsoft.AspNetCore.Authentication.OpenIdConnect` 10.0.14 | `ElasticLM.Service` | 管理画面の BFF（§15.3、M5b）。MIT。`Microsoft.IdentityModel.Protocols.OpenIdConnect` を連れてくる（JwtBearer がすでに連れてくる） | D0 と M5b で警告 0 件。`elm-service` が +1.1 MB（27,478,016 から 28,557,824 バイト、win-x64、内訳は §4.2） |
-| `Microsoft.Extensions.FileProviders.Embedded` | `ElasticLM.Service` | 管理画面の配信 | D0 で警告 0 件 |
+| `Microsoft.Extensions.FileProviders.Embedded` 10.0.14 | `ElasticLM.Service` | 管理画面の配信（§15.2、M5c）。MIT | D0 と M5c で警告 0 件。`UseStaticFiles` と合わせて `elm-service` が +0.3 MB（28,557,824 から 28,874,752 バイト、win-x64、内訳は §4.2） |
 | `Npgsql` 10.0.3 | `ElasticLM.Service` | PostgreSQL。`NpgsqlSlimDataSourceBuilder` を使う。PostgreSQL License | D0 と M4a1 で警告 0 件 |
 | `Microsoft.Data.Sqlite.Core` 10.0.14, `SQLitePCLRaw.provider.e_sqlite3` 2.1.13, `SQLitePCLRaw.core` 2.1.13 | `ElasticLM.Service` | SQLite の ADO.NET。`Microsoft.Data.Sqlite.Core` が `SQLitePCLRaw.core` 2.1.13 に依存するので、提供者も 2.1 系にそろえる。MIT と Apache-2.0。提供者は名前 `e_sqlite3` で SQLite を呼び、NativeAOT ではその名前を `DirectPInvoke` で実行ファイルの中の SQLite に結ぶ | M4a1 で警告 0 件 |
 | SQLite 3.54.1（アマルガム、`vendor/sqlite/`） | `ElasticLM.Service` | 静的リンク。パブリックドメイン（https://sqlite.org/copyright.html ）。zip の SHA3-256 を sqlite.org の公開値と照らし、取り込んだファイルの SHA-256 を `vendor/sqlite/SHA256SUMS` に固定する | M4a1 で `elm-service` 全体が 19.8 MB（win-x64） |
