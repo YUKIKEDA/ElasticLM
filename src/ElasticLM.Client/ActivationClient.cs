@@ -54,7 +54,14 @@ public abstract record ActivationResult
 
     /// <summary>The service issued a license file, which was checked and kept.</summary>
     /// <param name="License">The verified license.</param>
-    public sealed record Activated(VerifiedLicense License) : ActivationResult;
+    public sealed record Activated(VerifiedLicense License) : ActivationResult
+    {
+        /// <summary>
+        /// Gets a value indicating whether the license is past its expiry but inside its grace period when it was checked. An
+        /// offline answer can be days old (design §12.8.5, §17.5).
+        /// </summary>
+        public bool InGracePeriod { get; init; }
+    }
 
     /// <summary>Nothing new was kept.</summary>
     /// <param name="Error">Why.</param>
@@ -221,6 +228,7 @@ public sealed class ActivationClient : IAsyncDisposable
         }
 
         client = new ActivationClient(options, keys, key, MachineFingerprint.Compute(options.ProductId));
+        client.StateChanged += options.StateChangedFromStart;
         client.Start();
         return true;
     }
@@ -682,19 +690,21 @@ public sealed class ActivationClient : IAsyncDisposable
             return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing, null);
         }
 
-        return Accept(valid.License, id, license, events, serverTime: true);
+        return Accept(valid, id, license, events, serverTime: true);
     }
 
     // After a new file was kept: the guard takes the service's time when the file comes straight from the service (an offline
     // answer may be days old, design §12.8.5), the state is Active, and the next refresh is scheduled.
     private ActivationResult.Activated Accept(
-        VerifiedLicense license,
+        LicenseVerificationResult.Valid valid,
         string id,
         byte[] file,
         List<ActivationStateChangedEventArgs> events,
         bool serverTime
     )
     {
+        VerifiedLicense license = valid.License;
+
         // The service's time goes to the guard first: elm-server's callback reloads through the same guard, which a clock set
         // forward and back would otherwise still refuse (PR #79's review).
         if (serverTime)
@@ -719,7 +729,7 @@ public sealed class ActivationClient : IAsyncDisposable
         // refresh waits at least the retry interval, or a refresh already due would be sent again at once (design §12.6.2).
         TimeSpan? due = DueIn(license);
         Schedule(due < RetryInterval ? RetryInterval : due);
-        return new ActivationResult.Activated(license);
+        return new ActivationResult.Activated(license) { InGracePeriod = valid.InGracePeriod };
     }
 
     // A successful answer whose file is not kept: the retry list still names the request, the answer's hash is kept so the
@@ -1172,7 +1182,7 @@ public sealed class ActivationClient : IAsyncDisposable
         {
             // The kept answer again: nothing changes (design §12.8.1).
             return checkedFile is LicenseVerificationResult.Valid same
-                ? new ActivationResult.Activated(same.License)
+                ? new ActivationResult.Activated(same.License) { InGracePeriod = same.InGracePeriod }
                 : new ActivationResult.Failed(((LicenseVerificationResult.Invalid)checkedFile).Error, null);
         }
 
@@ -1202,7 +1212,7 @@ public sealed class ActivationClient : IAsyncDisposable
             return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
         }
 
-        return Accept(valid.License, id, license, events, serverTime: false);
+        return Accept(valid, id, license, events, serverTime: false);
     }
 
     // design §12.8.2, §12.8.5: the proof names the activation, its sequence number, and the requests that got no answer. The

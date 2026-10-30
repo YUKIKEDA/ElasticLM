@@ -66,4 +66,10 @@ public sealed class ActivationClientOptions
     /// and reloads (design §13.7). An exception it throws is ignored.
     /// </summary>
     internal Action<byte[]>? LicenseKept { get; init; }
+
+    /// <summary>
+    /// Gets a handler attached to <see cref="ActivationClient.StateChanged"/> before the client starts, so the change of a
+    /// refresh that is already due at the start is not missed. libelasticlm passes its callback here (design §17.5).
+    /// </summary>
+    internal EventHandler<ActivationStateChangedEventArgs>? StateChangedFromStart { get; init; }
 }

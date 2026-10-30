@@ -232,6 +232,36 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// An answer imported after its token's expiry but inside the grace period is kept and reported as in its grace period;
+    /// an online activation of a fresh token is not (design §12.8.5, §17.5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A policy with a token lifetime of 1 day, a refresh window of 1 hour, and a grace period of 2 days; clients A without
+    ///   a service URL and B with it.
+    ///
+    /// Steps:
+    /// - A makes a request, it is processed, the clock moves 1 day and 1 hour, and A imports the answer; then B activates
+    ///   online.
+    ///
+    /// Expected:
+    /// - A's result is in its grace period; B's is not.
+    /// </remarks>
+    [Fact]
+    public async Task Offline_ImportInsideGrace_ReportsTheGracePeriod()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"maxActivations\":3,\"tokenLifetime\":86400,\"refreshWindow\":3600,\"gracePeriod\":172800");
+        await using ActivationClient a = vendor.Client("a", offline: true);
+        await using ActivationClient b = vendor.Client("b");
+
+        string answer = await ProcessedAsync(vendor, Created(await a.CreateActivationRequestAsync(key, cancellationToken: Cancel)).File);
+        vendor.Test.Time.Advance(TimeSpan.FromHours(25));
+        Assert.True(Assert.IsType<ActivationResult.Activated>(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
+        Assert.False(Assert.IsType<ActivationResult.Activated>(await b.ActivateAsync(key, Cancel)).InGracePeriod);
+    }
+
+    /// <summary>
     /// Another license key makes another request; an imported refresh keeps the activation requests that got no answer; a
     /// kept proof stops online activations and trials too, and forgetting it keeps those requests recorded.
     /// </summary>

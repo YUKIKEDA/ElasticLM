@@ -6,7 +6,9 @@
  *   test_elasticlm thumbprint <library> <key folder>
  *     Creates this installation's key in the folder and prints its thumbprint.
  *   test_elasticlm verify <library> <key folder> <root.pub.pem> <signing key ID> <unbound.elmlic> <bound.elmlic>
- *     Runs the tests below and prints "ok" or "not ok" for each; exits 1 when one fails.
+ *     Runs the verification tests and prints "ok" or "not ok" for each; exits 1 when one fails.
+ *   test_elasticlm activation <library> <key folder> <root.pub.pem> <service URL> <license key>
+ *     Runs the activation tests against the elm-service at the URL (design §17.5).
  */
 /* With -std=c11, glibc declares POSIX functions such as sysconf only when asked to. */
 #if defined(__linux__)
@@ -58,6 +60,21 @@ static struct {
     elm_license_free_fn license_free;
     elm_last_error_message_fn last_error_message;
     elm_version_fn version;
+    elm_activation_create_fn activation_create;
+    elm_activation_activate_fn activation_activate;
+    elm_activation_start_trial_fn activation_start_trial;
+    elm_activation_refresh_fn activation_refresh;
+    elm_activation_deactivate_fn activation_deactivate;
+    elm_activation_check_fn activation_check;
+    elm_activation_create_activation_request_fn activation_create_activation_request;
+    elm_activation_create_refresh_request_fn activation_create_refresh_request;
+    elm_activation_import_response_fn activation_import_response;
+    elm_activation_create_deactivation_proof_fn activation_create_deactivation_proof;
+    elm_activation_forget_deactivation_proof_fn activation_forget_deactivation_proof;
+    elm_activation_id_fn activation_id;
+    elm_activation_state_fn activation_state;
+    elm_activation_destroy_fn activation_destroy;
+    elm_string_free_fn string_free;
 } elm;
 
 static int failures;
@@ -113,6 +130,21 @@ static int load(const char* path)
     LOAD(license_free, "elm_license_free");
     LOAD(last_error_message, "elm_last_error_message");
     LOAD(version, "elm_version");
+    LOAD(activation_create, "elm_activation_create");
+    LOAD(activation_activate, "elm_activation_activate");
+    LOAD(activation_start_trial, "elm_activation_start_trial");
+    LOAD(activation_refresh, "elm_activation_refresh");
+    LOAD(activation_deactivate, "elm_activation_deactivate");
+    LOAD(activation_check, "elm_activation_check");
+    LOAD(activation_create_activation_request, "elm_activation_create_activation_request");
+    LOAD(activation_create_refresh_request, "elm_activation_create_refresh_request");
+    LOAD(activation_import_response, "elm_activation_import_response");
+    LOAD(activation_create_deactivation_proof, "elm_activation_create_deactivation_proof");
+    LOAD(activation_forget_deactivation_proof, "elm_activation_forget_deactivation_proof");
+    LOAD(activation_id, "elm_activation_id");
+    LOAD(activation_state, "elm_activation_state");
+    LOAD(activation_destroy, "elm_activation_destroy");
+    LOAD(string_free, "elm_string_free");
     return 1;
 }
 
@@ -370,8 +402,107 @@ static void test_null_handles(void)
     check(elm.version() != NULL && strlen(elm.version()) > 0, "version");
 }
 
+/* The state callback of the activation test: counts the changes and keeps the last one. */
+static int state_changes;
+static int32_t last_previous = -1;
+static int32_t last_current = -1;
+
+static void on_state(void* user, int32_t previous, int32_t current, int32_t error, const char* message)
+{
+    (void)error;
+    (void)message;
+    if (user == (void*)&state_changes) {
+        state_changes++;
+        last_previous = previous;
+        last_current = current;
+    }
+}
+
+/*
+ * An activation with the hosted service, from C (design §17.5).
+ * Preconditions: elm-service on loopback, started by run.ps1 with product acme-cad, feature pro, and a license of 3
+ *   activations whose key is passed in.
+ * Steps: create the activation with the state callback; activate; check feature pro; read the state and the ID; make a
+ *   refresh request and free it; deactivate; read the state; call the remaining functions with a NULL activation.
+ * Expected: ELM_OK for each; the callback saw NONE->ACTIVE before activate returned and ACTIVE->NONE before deactivate
+ *   returned; the state is ACTIVE then NONE; the ID is not empty while active; the request is text; each remaining
+ *   function returns ELM_INVALID_ARGUMENT for the NULL activation.
+ */
+static void test_activation(const char* folder, const char* root_pem, const char* url, const char* key)
+{
+    elm_activation_options options;
+    memset(&options, 0, sizeof options);
+    options.struct_size = sizeof options;
+    options.product_id = "acme-cad";
+    options.service_url = url;
+    options.root_keys_pem = &root_pem;
+    options.root_key_count = 1;
+    options.directory = folder;
+    options.on_state = on_state;
+    options.user = &state_changes;
+    elm_activation* activation = NULL;
+    check(elm.activation_create(&options, &activation) == ELM_OK && activation != NULL, "activation created");
+    if (activation == NULL) {
+        return;
+    }
+
+    elm_license* license = NULL;
+    int64_t retry = -1;
+    check(elm.activation_activate(activation, key, &license, &retry) == ELM_OK && license != NULL && retry == 0, "activate");
+    check(state_changes == 1 && last_previous == ELM_STATE_NONE && last_current == ELM_STATE_ACTIVE, "callback before activate returned");
+    elm.license_free(license);
+
+    license = NULL;
+    check(elm.activation_check(activation, "pro", NULL, ELM_KIND_STANDARD, &license) == ELM_OK, "check");
+    elm.license_free(license);
+    check(elm.activation_state(activation) == ELM_STATE_ACTIVE, "state active");
+
+    char id[128];
+    size_t needed = 0;
+    check(elm.activation_id(activation, id, sizeof id, &needed) == ELM_OK && needed > 1 && strlen(id) == needed - 1, "activation id");
+
+    char* request = NULL;
+    int32_t replaced = -1;
+    check(elm.activation_create_refresh_request(activation, 0, &request, &replaced) == ELM_OK && request != NULL && replaced == 0, "refresh request");
+    elm.string_free(request);
+
+    check(elm.activation_deactivate(activation) == ELM_OK, "deactivate");
+    check(state_changes == 2 && last_current == ELM_STATE_NONE && elm.activation_state(activation) == ELM_STATE_NONE, "callback before deactivate returned");
+    elm.activation_destroy(activation);
+
+    license = NULL;
+    check(elm.activation_start_trial(NULL, &license, NULL) == ELM_INVALID_ARGUMENT, "start_trial with NULL");
+    check(elm.activation_refresh(NULL, &license, NULL) == ELM_INVALID_ARGUMENT, "refresh with NULL");
+    check(elm.activation_create_activation_request(NULL, key, 0, &request, &replaced) == ELM_INVALID_ARGUMENT, "activation request with NULL");
+    uint8_t byte = '{';
+    check(elm.activation_import_response(NULL, &byte, 1, &license) == ELM_INVALID_ARGUMENT, "import with NULL");
+    check(elm.activation_create_deactivation_proof(NULL, &request, &replaced) == ELM_INVALID_ARGUMENT, "proof with NULL");
+    check(elm.activation_forget_deactivation_proof(NULL) == ELM_INVALID_ARGUMENT, "forget with NULL");
+    check(elm.activation_state(NULL) == -1, "state of NULL");
+    elm.string_free(NULL);
+    elm.activation_destroy(NULL);
+}
+
 int main(int argc, char** argv)
 {
+    if (argc == 7 && strcmp(argv[1], "activation") == 0) {
+        if (!load(argv[2])) {
+            return 2;
+        }
+
+        size_t root_length = 0;
+        char* root = read_file(argv[4], &root_length);
+        if (root == NULL) {
+            fprintf(stderr, "cannot read %s\n", argv[4]);
+            return 1;
+        }
+
+        test_activation(argv[3], root, argv[5], argv[6]);
+        free(root);
+        printf("1..%d\n", number);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc >= 4 && strcmp(argv[1], "thumbprint") == 0) {
         if (!load(argv[2])) {
             return 2;
@@ -389,7 +520,7 @@ int main(int argc, char** argv)
     }
 
     if (argc != 8 || strcmp(argv[1], "verify") != 0) {
-        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound>\n");
+        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound> | activation <library> <folder> <root.pub.pem> <url> <key>\n");
         return 2;
     }
 

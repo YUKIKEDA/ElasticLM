@@ -32,6 +32,8 @@
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+    <!-- The C ABI tests start the service on loopback with the same helper (design §17.5). -->
+    <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
     <EmbeddedResource Include="Migrations\**\*.sql" LogicalName="migrations/%(RecursiveDir)%(Filename)%(Extension)" ExcludeFromManifest="true" />
   </ItemGroup>
 

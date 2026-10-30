@@ -20,5 +20,9 @@
     <InternalsVisibleTo Include="elm-server" />
     <!-- elm server reads the server's administrator token with the same protection. -->
     <InternalsVisibleTo Include="elm" />
+    <!-- libelasticlm attaches its state callback before the activation client starts (design §17.5); its assembly name
+         differs by OS (design §17.4). -->
+    <InternalsVisibleTo Include="elasticlm" />
+    <InternalsVisibleTo Include="libelasticlm" />
   </ItemGroup>
 </Project>

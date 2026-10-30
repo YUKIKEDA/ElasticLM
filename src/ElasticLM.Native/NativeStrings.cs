@@ -56,6 +56,22 @@ internal static unsafe class NativeStrings
     }
 
     /// <summary>
+    /// Reads a number of bytes from C as strict UTF-8 (design §17.5), for a text that comes with its length.
+    /// </summary>
+    /// <exception cref="NativeException">The bytes are not valid UTF-8 (<c>ELM_INVALID_ARGUMENT</c>).</exception>
+    public static string ReadBytes(byte* bytes, int length, string name)
+    {
+        try
+        {
+            return Strict.GetString(bytes, length);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw NativeException.Invalid($"{name} is not valid UTF-8.");
+        }
+    }
+
+    /// <summary>
     /// Copies a string into native memory as UTF-8 with a NUL after it, and returns the pointer and the length in bytes
     /// before the NUL. The caller frees it with <see cref="Free"/>.
     /// </summary>

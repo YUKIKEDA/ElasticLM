@@ -42,6 +42,25 @@ internal static unsafe class NativeErrors
         _message[0] = 0;
     }
 
+    /// <summary>Returns a copy of this thread's message, to put back with <see cref="Restore"/> (design §17.5).</summary>
+    public static byte[] Save()
+    {
+        _message ??= GC.AllocateArray<byte>(1, pinned: true);
+        int length = Array.IndexOf(_message, (byte)0);
+        return _message[..(length + 1)];
+    }
+
+    /// <summary>Puts back a message from <see cref="Save"/>, so a callback's calls do not change the caller's message.</summary>
+    public static void Restore(byte[] saved)
+    {
+        if (_message is null || _message.Length < saved.Length)
+        {
+            _message = GC.AllocateArray<byte>(saved.Length, pinned: true);
+        }
+
+        saved.CopyTo(_message, 0);
+    }
+
     /// <summary>Keeps a message and returns its number.</summary>
     public static int Fail(ErrorCode code, string message)
     {

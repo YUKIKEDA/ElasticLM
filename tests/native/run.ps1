@@ -6,7 +6,10 @@
     - Compares the names the library exports with the functions include/elasticlm.h declares (design §17.3).
     - Compiles tests/native/test_elasticlm.c with warnings as errors (MSVC /W4 /WX, gcc and clang -Wall -Wextra -Werror).
     - Makes keys and two licenses with elm in a temporary folder: one unbound, one bound to the key the test creates.
-    - Runs the test in its two steps and prints the library's runtime dependencies.
+    - Runs the verification test in its two steps.
+    - Starts elm-service on a free loopback port, makes a product, a feature, a policy, and a license with the setup key,
+      and runs the activation test against it (design §17.5).
+    - Prints the library's runtime dependencies.
     Everything it makes goes in a temporary folder that it removes at the end (.cursor/rules/scratch.mdc).
 
 .PARAMETER Library
@@ -15,13 +18,18 @@
 .PARAMETER Elm
     The elm executable used to make the keys and licenses.
 
+.PARAMETER Service
+    The elm-service executable the activation test runs against.
+
 .PARAMETER Publish
-    Publish both with NativeAOT for this machine first, into the temporary folder, instead of taking -Library and -Elm.
+    Publish the three with NativeAOT for this machine first, into the temporary folder, instead of taking -Library, -Elm,
+    and -Service. elm-service needs web/admin/dist (design §15.2).
 #>
 [CmdletBinding()]
 param(
     [string]$Library,
     [string]$Elm,
+    [string]$Service,
     [switch]$Publish
 )
 
@@ -64,14 +72,17 @@ try {
         $out = Join-Path $work 'publish'
         Invoke-Checked 'Publishing ElasticLM.Native' { dotnet publish (Join-Path $root 'src/ElasticLM.Native') -c Release -r $rid -o $out -nologo | Out-Host }
         Invoke-Checked 'Publishing elm' { dotnet publish (Join-Path $root 'src/ElasticLM.Cli') -c Release -r $rid -o $out -nologo | Out-Host }
+        Invoke-Checked 'Publishing elm-service' { dotnet publish (Join-Path $root 'src/ElasticLM.Service') -c Release -r $rid -o $out -nologo | Out-Host }
         $Library = Join-Path $out ($IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so'))
         $Elm = Join-Path $out ($IsWindows ? 'elm.exe' : 'elm')
+        $Service = Join-Path $out ($IsWindows ? 'elm-service.exe' : 'elm-service')
     }
 
-    if (-not $Library -or -not $Elm) { throw 'Pass -Library and -Elm, or -Publish.' }
+    if (-not $Library -or -not $Elm -or -not $Service) { throw 'Pass -Library, -Elm, and -Service, or -Publish.' }
     if ($IsWindows) { Import-MsvcEnvironment }
     $Library = (Resolve-Path $Library).Path
     $Elm = (Resolve-Path $Elm).Path
+    $Service = (Resolve-Path $Service).Path
     $header = Join-Path $root 'include/elasticlm.h'
 
     # design §17.3: the library's own exports must be the header's functions. The NativeAOT runtime also exports
@@ -123,6 +134,52 @@ try {
 
         & $test verify $Library $keyFolder (Join-Path $work 'root.pub.pem') $signingKid (Join-Path $work 'unbound.elmlic') (Join-Path $work 'bound.elmlic')
         if ($LASTEXITCODE -ne 0) { throw 'The C test failed.' }
+
+        # design §17.5: the activation test against elm-service with this run's keys, nonce secret, and SQLite database.
+        # The C test gets the listening URL itself: without publicUrls, a proof's htu is compared with it, so 127.0.0.1
+        # is not mixed with localhost.
+        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+        $listener.Start()
+        $port = $listener.LocalEndpoint.Port
+        $listener.Stop()
+        $url = "http://127.0.0.1:$port"
+        $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
+        $env:ELM_NONCE_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+        $env:ELM_SIGNING_KEY = Join-Path $work 'signing.key.pem'
+        $env:ELM_SIGNING_CERTIFICATES = Join-Path $work 'signing.cert'
+        $env:ELM_TRUST_ROOTKEYS = Join-Path $work 'root.pub.pem'
+        $env:ELM_DATABASE_CONNECTION = "Data Source=$(Join-Path $work 'service.db')"
+        $env:ELM_BOOTSTRAPOWNER_ISS = 'https://idp.example'
+        $env:ELM_BOOTSTRAPOWNER_SUB = 'native-test'
+        $env:ELM_LISTEN = $url
+        $apiKey = (& $Service setup).Trim()
+        if ($LASTEXITCODE -ne 0 -or -not $apiKey.StartsWith('elm_')) { throw 'elm-service setup did not print a key.' }
+        $process = Start-Process $Service -PassThru -NoNewWindow
+        try {
+            $ready = $false
+            for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
+                try { $ready = (Invoke-WebRequest "$url/health" -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
+                if (-not $ready) { Start-Sleep -Seconds 1 }
+            }
+            if (-not $ready) { throw 'elm-service did not answer /health.' }
+
+            $headers = @{ Authorization = "Bearer $apiKey" }
+            function Add-AdminRecord([string]$path, [string]$body) {
+                Invoke-RestMethod "$url/v1/admin/$path" -Method Post -Headers $headers -ContentType 'application/json' -Body $body
+            }
+            $product = (Add-AdminRecord 'products' '{"code":"acme-cad","name":"Acme CAD"}').id
+            Add-AdminRecord "products/$product/features" '{"code":"pro","name":"Pro"}' | Out-Null
+            $policy = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"native`",`"maxActivations`":3}").id
+            $licenseKey = (Add-AdminRecord 'licenses' "{`"policyId`":`"$policy`",`"name`":`"native`",`"features`":[{`"code`":`"pro`"}]}").key
+
+            & $test activation $Library (Join-Path $work 'activation') (Join-Path $work 'root.pub.pem') $url $licenseKey
+            if ($LASTEXITCODE -ne 0) { throw 'The C activation test failed.' }
+        }
+        finally {
+            # Windows keeps the SQLite file open until the process ends, so the folder is removed only after that.
+            Stop-Process -Id $process.Id -ErrorAction SilentlyContinue
+            $process.WaitForExit()
+        }
     }
     finally {
         Pop-Location
