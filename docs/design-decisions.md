@@ -528,3 +528,15 @@
 - **決定:** M6 の CI で `libelasticlm` を作って確かめるのは、今の NativeAOT のジョブのランナーの `win-x64`・`linux-x64`・`osx-arm64` だけにし、残りの 4 つの RID は 3 つの実行ファイルの分も合わせて F1 で扱う（[design.ja.md](./design.ja.md) 0.104、§17.3）。
 - **理由:** 残りの RID には、クロスコンパイルか別のランナーが要り、リリースの仕組み（F1）と一緒に作る方が二度手間にならない。M6 の確かめ（C のテストのプログラム、公開する関数の一覧）は、今の 3 つの OS で足りる。
 - **却下した案:** M6 の CI で、§4.1 の 7 つの RID をすべて作る。
+
+### 長すぎるライセンスファイルを C ABI だけ `ELM_PAYLOAD_TOO_LARGE` で断る（M6a の設計のレビュー、Issue #137）
+
+- **決定:** 65,536 バイトを超えるライセンスファイルは、読む前に、.NET の `LicenseVerifier` と同じ `ELM_MALFORMED` で断る（[design.ja.md](./design.ja.md) 0.105、§17.4）。
+- **理由:** 同じファイルに、C と .NET で違う番号を返さない。§19 の `ELM_PAYLOAD_TOO_LARGE` は HTTP の本文の上限（413）の番号で、`ELM_MALFORMED` は「形式・大きさの誤り」である。
+- **却下した案:** C ABI だけ `ELM_PAYLOAD_TOO_LARGE`（24）で断る（M6a の Grill の Q5 の案）。
+
+### `elm_license` の期限を 1 か 0 で返し、`elm_installation_open` に引数を並べる（M6a の設計のレビュー、Issue #137）
+
+- **決定:** 期限は §19 の番号を返し、値があるかと値を出力の引数で返す。`elm_installation_open` は `struct_size` つきのオプションの構造体を受け取る（[design.ja.md](./design.ja.md) 0.105、§17.4）。
+- **理由:** 失敗しうる取り出しは番号を返し、入力は `struct_size` つきの構造体にする §17.3 の共通の決まりに合わせる。引数を並べる形では、後からメンバーを足せない。
+- **却下した案:** 期限は「値があれば 1、なければ 0」を返し、`elm_installation_open(product, scope, folder, create, out)` と引数を並べる（M6a の Grill の Q2 と Q4 の案）。

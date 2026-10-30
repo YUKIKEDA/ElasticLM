@@ -124,8 +124,9 @@ jobs:
         run: ./build.ps1 -SkipWeb
 
   aot:
-    # design §20.3: each shipped executable is published with NativeAOT on every OS, with zero warnings.
-    name: NativeAOT elm-server, elm, and elm-service (${{ matrix.os }})
+    # design §20.3: each shipped executable and libelasticlm (§17.4) is published with NativeAOT on every OS, with zero
+    # warnings.
+    name: NativeAOT elm-server, elm, elm-service, and libelasticlm (${{ matrix.os }})
     needs: spa
     strategy:
       fail-fast: false
@@ -174,6 +175,25 @@ jobs:
             $exe = Get-Item (Join-Path publish ($IsWindows ? "$($target[1]).exe" : $target[1]))
             "$($target[1]) (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
           }
+
+      - name: Publish libelasticlm
+        # design §17.4: the C ABI as a NativeAOT shared library. NativeAOT names the file after the assembly.
+        run: |
+          $log = dotnet publish src/ElasticLM.Native -c Release -r ${{ matrix.rid }} -o native -nologo 2>&1
+          $log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
+          if ($warnings.Count -gt 0) { "::error::NativeAOT publish of libelasticlm reported $($warnings.Count) warnings"; exit 1 }
+          $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
+          $library = Get-Item (Join-Path native $name)
+          "libelasticlm (${{ matrix.rid }}): $name, $($library.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: C test of libelasticlm
+        # design §17.4: the exports against the header, then the C test compiled with warnings as errors and run against
+        # the published library with keys and licenses made by elm.
+        run: |
+          $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
+          ./tests/native/run.ps1 -Library (Join-Path native $name) -Elm (Join-Path publish ($IsWindows ? 'elm.exe' : 'elm'))
 
       - name: Smoke
         run: |

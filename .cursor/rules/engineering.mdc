@@ -10,7 +10,7 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 ## Layout
 
 - Solution: `ElasticLM.slnx` only. Do not commit a `.sln`.
-- Projects follow `docs/conventions.md`: `src/ElasticLM.*`, `tests/*.Tests`, and `samples/`, `benchmarks/`, `tools/` when a row needs them. Do not create a project, folder, script, or skill step before the Issue that needs it.
+- Projects follow `docs/conventions.md`: `src/ElasticLM.*`, `tests/*.Tests`, and `samples/`, `benchmarks/`, `tools/` when a row needs them. The C header of `libelasticlm` is `include/elasticlm.h`, and its C test is `tests/native/` (not a `*.Tests` project; design §17.4). Do not create a project, folder, script, or skill step before the Issue that needs it.
 - A project's line in `docs/conventions.md` is added in the PR that adds the project.
 - The admin UI is `web/admin/` (design §15.2): Preact and TypeScript, built by Vite with pnpm through Corepack, on the Node.js of `web/admin/.node-version`. Its `dist` is not committed; `ElasticLM.Service` embeds it and does not build without it.
 

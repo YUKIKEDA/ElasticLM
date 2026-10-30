@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ElasticLM.Native\ElasticLM.Native.csproj" />
+    <!-- The licenses are made with the Licensing tests' issuer: keys generated at run time (.cursor/rules/testing.mdc). -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\TestIssuer.cs" Link="TestIssuer.cs" />
+  </ItemGroup>
+</Project>
