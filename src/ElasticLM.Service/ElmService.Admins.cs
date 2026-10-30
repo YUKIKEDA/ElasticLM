@@ -22,6 +22,24 @@ internal sealed partial class ElmService
             (RequestDelegate)(c => AdminAsync(c, Permissions.AdminUpdate, AuditActions.AdminEnable, SetEnabled(true)))
         );
         MapSessions();
+        _app.MapGet("/v1/admin/me", (RequestDelegate)(c => AdminAsync(c, null, AuditActions.AdminMe, MeAsync)));
+    }
+
+    // design §14.5 (M5c): the caller's administrator and the permissions of this request. Its success writes no audit row.
+    private async Task<AdminOutcome> MeAsync(HttpContext context, Caller caller)
+    {
+        AdminRow admin =
+            await Database.FindAdminAsync(caller.AdminId, context.RequestAborted).ConfigureAwait(false)
+            ?? throw new InvalidOperationException("The caller's administrator is gone.");
+        var answer = new MeItem(
+            admin.Id.ToString("D"),
+            admin.Issuer,
+            admin.Subject,
+            admin.Role,
+            [.. Permissions.All.Where(caller.Permissions.Contains)]
+        );
+        await WriteJsonAsync(context, StatusCodes.Status200OK, answer, ServiceJsonContext.Default.MeItem).ConfigureAwait(false);
+        return new AdminOutcome("ELM_OK", Recorded: true);
     }
 
     // design §14.5: no authentication and no audit row; it returns no secret.

@@ -170,6 +170,9 @@ internal static class AuditActions
     public const string AdminList = "admin.list";
     public const string AdminDisable = "admin.disable";
     public const string AdminEnable = "admin.enable";
+
+    /// <summary>A refusal of <c>GET /v1/admin/me</c>; its success writes no row (design §14.5, M5c).</summary>
+    public const string AdminMe = "admin.me";
     public const string SessionCreate = "session.create";
     public const string SessionList = "session.list";
     public const string SessionRevoke = "session.revoke";

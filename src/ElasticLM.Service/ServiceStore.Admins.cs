@@ -17,6 +17,9 @@ internal sealed partial class ServiceStore<TDialect>
             .SingleOrDefaultAsync(cancellationToken);
     }
 
+    public override Task<AdminRow?> FindAdminAsync(Guid id, CancellationToken cancellationToken) =>
+        _db.From(AdminRow.Table).Where(a => Eq(a.Id, id)).Select(a => a).SingleOrDefaultAsync(cancellationToken);
+
     public override Task<AdminRow> SignInAdminAsync(
         AdminIdentity identity,
         string role,

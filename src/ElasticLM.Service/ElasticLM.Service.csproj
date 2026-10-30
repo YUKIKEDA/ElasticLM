@@ -19,6 +19,8 @@
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <!-- design §15.3, §21 (M5b): the admin UI's sign-in through the service. -->
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <!-- design §15.2, §21 (M5c): the admin UI's files, embedded with a manifest that keeps their paths. -->
+    <PackageReference Include="Microsoft.Extensions.FileProviders.Embedded" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
@@ -30,8 +32,32 @@
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
-    <EmbeddedResource Include="Migrations\**\*.sql" LogicalName="migrations/%(RecursiveDir)%(Filename)%(Extension)" />
+    <EmbeddedResource Include="Migrations\**\*.sql" LogicalName="migrations/%(RecursiveDir)%(Filename)%(Extension)" ExcludeFromManifest="true" />
   </ItemGroup>
+
+  <!--
+    The admin UI (design §15.2, decision 0.100): web/admin/dist, which build.ps1 (or pnpm build in web/admin) makes, is
+    embedded under admin/ with a manifest, and elm-service serves it. Without it the build stops, so that no elm-service
+    without its screens is made.
+  -->
+  <PropertyGroup>
+    <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <ElmSeparator>$([System.IO.Path]::DirectorySeparatorChar)</ElmSeparator>
+    <ElmAdminDist>$(MSBuildThisFileDirectory)..\..\web\admin\dist\</ElmAdminDist>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The manifest takes its folders from Link and splits them on the OS's own separator only: "\" made no folder on Linux
+      and macOS, and "/" none on Windows (PR #118).
+    -->
+    <EmbeddedResource Include="$(ElmAdminDist)index.html" Link="admin$(ElmSeparator)index.html" />
+    <EmbeddedResource Include="$(ElmAdminDist)assets/**/*" Link="admin$(ElmSeparator)assets$(ElmSeparator)%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <Target Name="ElmRequireAdminDist" BeforeTargets="PrepareForBuild" Condition="!Exists('$(ElmAdminDist)index.html')">
+    <Error Text="web/admin/dist is missing. Run ./build.ps1, or run 'corepack pnpm install --frozen-lockfile' and 'corepack pnpm build' in web/admin." />
+  </Target>
 
   <!--
     SQLite (design §14.2, decision 0.72): vendor/sqlite/build.ps1 builds the pinned amalgamation with the platform's C compiler.

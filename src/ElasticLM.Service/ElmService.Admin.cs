@@ -31,7 +31,8 @@ internal static class AdminApi
 /// <param name="Result">The result code.</param>
 /// <param name="Target">What it acted on, or <see langword="null"/>.</param>
 /// <param name="Detail">The audit detail, or <see langword="null"/>.</param>
-/// <param name="Recorded">Whether the operation already wrote its audit row in its own transaction.</param>
+/// <param name="Recorded">Whether the operation already wrote its audit row in its own transaction, or by design writes none
+/// (the success of <c>GET /v1/admin/me</c>, design §14.5); either way no row is added after it.</param>
 internal sealed record AdminOutcome(string Result, string? Target = null, string? Detail = null, bool Recorded = false);
 
 /// <content>
@@ -54,6 +55,7 @@ internal sealed partial class ElmService
         if (_settings.Web is not null)
         {
             MapWeb();
+            MapAdminUi();
         }
 
         _app.MapGet("/health", (RequestDelegate)HealthAsync);
@@ -86,6 +88,14 @@ internal sealed partial class ElmService
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         PathString path = context.Request.Path;
+
+        // design §14.5 (M5c): no answer of the administration API is kept by a cache, the rate limit's 429 included;
+        // cookie-authenticated answers exist since M5b.
+        if (path.StartsWithSegments("/v1/admin"))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+        }
+
         bool device =
             path.StartsWithSegments("/v1/activations")
             || path.StartsWithSegments("/v1/trials")
@@ -122,7 +132,8 @@ internal sealed partial class ElmService
         }
     }
 
-    private async Task AdminAsync(HttpContext context, string permission, string action, Func<HttpContext, Caller, Task<AdminOutcome>> operation)
+    // A null permission lets every authenticated caller in (GET /v1/admin/me, M5c).
+    private async Task AdminAsync(HttpContext context, string? permission, string action, Func<HttpContext, Caller, Task<AdminOutcome>> operation)
     {
         string? ip = context.Connection.RemoteIpAddress?.ToString();
         try
@@ -204,7 +215,7 @@ internal sealed partial class ElmService
             }
 
             AdminOutcome outcome;
-            if (!caller.Permissions.Contains(permission))
+            if (permission is not null && !caller.Permissions.Contains(permission))
             {
                 outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: AuditLog.Detail(w => w.WriteString("permission", permission)));
                 string who = token || session ? "The administrator's role" : "The API key";

@@ -266,6 +266,15 @@ internal sealed record AdminItem(
     [property: JsonPropertyName("lastLoginAt"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] string? LastLoginAt
 );
 
+/// <summary>The caller of <c>GET /v1/admin/me</c> (design §14.5, M5c): its administrator and this request's permissions.</summary>
+internal sealed record MeItem(
+    [property: JsonPropertyName("id")] string Id,
+    [property: JsonPropertyName("issuer")] string Issuer,
+    [property: JsonPropertyName("subject")] string Subject,
+    [property: JsonPropertyName("role")] string Role,
+    [property: JsonPropertyName("permissions")] string[] Permissions
+);
+
 /// <summary>A page of administrators.</summary>
 internal sealed record AdminPage([property: JsonPropertyName("items")] AdminItem[] Items, [property: JsonPropertyName("next")] string? Next);
 
@@ -521,6 +530,7 @@ internal sealed record Problem(
 [JsonSerializable(typeof(ApiKeyPage))]
 [JsonSerializable(typeof(AdminPage))]
 [JsonSerializable(typeof(OidcInfo))]
+[JsonSerializable(typeof(MeItem))]
 [JsonSerializable(typeof(SessionPage))]
 [JsonSerializable(typeof(LogoutAnswer))]
 [JsonSerializable(typeof(AuditPage))]

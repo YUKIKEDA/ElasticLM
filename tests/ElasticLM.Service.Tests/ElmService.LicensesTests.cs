@@ -566,6 +566,84 @@ public sealed class ElmServiceLicensesTests
         }
     }
 
+    /// <summary>
+    /// The license list searches a name with ?q= and a key with ?keyHash= (design §14.5, M5c): ASCII letters only are folded
+    /// on both engines, `\`, `%`, and `_` are plain characters, the key itself never travels, and bad values are 400.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A product and policy; licenses "Acme Café", "ACME CAFÉ", "Sale 50%_\ off", "Sale 50ab\ off"; an owner key; each
+    ///   engine.
+    ///
+    /// Steps:
+    /// - List with q "acme café", "ACME", "50%_\"; with the keyHash of the first license's key (its normal form's SHA-256,
+    ///   from the key typed in lower case with its dashes); with q "acme" and state revoked; then with q empty, 101
+    ///   characters, a control character, twice; keyHash "x" and one of 44 characters.
+    ///
+    /// Expected:
+    /// - "Acme Café" only (É is not folded); both Acme licenses; "Sale 50%_\ off" only; the first license only; none;
+    ///   400 ELM_INVALID_ARGUMENT with the q message four times and the keyHash message twice.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Licenses_Search_ByNameAndKeyHash(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        HttpClient admin = test.Http(service, owner);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        (_, string policy) = await ModelAsync(admin, "a", string.Empty, "core");
+        var keys = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (string name in new[] { "Acme Café", "ACME CAFÉ", "Sale 50%_\\ off", "Sale 50ab\\ off" })
+        {
+            string body = $$"""{"policyId":"{{policy}}","name":{{JsonSerializer.Serialize(name)}},"features":[{"code":"core"}]}""";
+            keys[name] = (await TestService.CreatedAsync(admin, Licenses, body)).GetProperty("key").GetString()!;
+
+            // IDs made in one millisecond of the fake clock are not in creation order; a second apart, they are.
+            test.Time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        async Task<string[]> NamesAsync(string query) =>
+            [
+                .. (await TestService.GetAsync(admin, $"{Licenses}?{query}"))
+                    .GetProperty("items")
+                    .EnumerateArray()
+                    .Select(l => l.GetProperty("name").GetString()!),
+            ];
+        string Q(string text) => "q=" + Uri.EscapeDataString(text);
+
+        Assert.Equal(["Acme Café"], await NamesAsync(Q("acme café")));
+        Assert.Equal(["Acme Café", "ACME CAFÉ"], await NamesAsync(Q("ACME")));
+        Assert.Equal(["Sale 50%_\\ off"], await NamesAsync(Q("50%_\\")));
+        string typed = keys["Acme Café"].ToLowerInvariant();
+        string hash = System.Buffers.Text.Base64Url.EncodeToString(LicenseKeys.HashOf(typed));
+        Assert.Equal(["Acme Café"], await NamesAsync("keyHash=" + hash));
+        Assert.Empty(await NamesAsync(Q("acme") + "&state=revoked"));
+
+        const string QRefused = "q must be 1 to 100 characters without control characters.";
+        foreach (string query in new[] { "q=", Q(new string('a', 101)), Q("a\u0001b"), "q=a&q=b" })
+        {
+            await TestService.AssertProblemAsync(
+                await admin.GetAsync($"{Licenses}?{query}", cancel),
+                HttpStatusCode.BadRequest,
+                "ELM_INVALID_ARGUMENT",
+                QRefused
+            );
+        }
+
+        const string HashRefused = "keyHash must be the SHA-256 of a license key in base64url (43 characters).";
+        foreach (string query in new[] { "keyHash=x", "keyHash=" + hash + "A" })
+        {
+            await TestService.AssertProblemAsync(
+                await admin.GetAsync($"{Licenses}?{query}", cancel),
+                HttpStatusCode.BadRequest,
+                "ELM_INVALID_ARGUMENT",
+                HashRefused
+            );
+        }
+    }
+
     // A product with features and one policy of it (members as JSON, or empty); returns their IDs.
     private static async Task<(string Product, string Policy)> ModelAsync(
         HttpClient admin,

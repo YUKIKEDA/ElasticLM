@@ -783,7 +783,7 @@ public sealed class ElmServiceWebTests
     ///   /signout-callback-oidc, GET /.
     ///
     /// Expected:
-    /// - 404 with the text page for every one but the last; 200 with the placeholder text for GET /.
+    /// - 404 with the text page for every one but the last; 200 with the admin UI's index.html (text/html) for GET / (M5c).
     /// </remarks>
     [Fact]
     public async Task WebPaths_AnswerOnlyAsDesigned()
@@ -833,7 +833,8 @@ public sealed class ElmServiceWebTests
             Assert.Equal(HttpStatusCode.NotFound, (await browser.SendAsync(HttpMethod.Get, new Uri(on.Url, path))).StatusCode);
         }
 
-        await AssertPageAsync(await browser.SendAsync(HttpMethod.Get, on.Url), HttpStatusCode.OK, "The admin UI is not built yet.\n");
+        using HttpResponseMessage index = await browser.SendAsync(HttpMethod.Get, on.Url);
+        Assert.Equal((HttpStatusCode.OK, "text/html"), (index.StatusCode, index.Content.Headers.ContentType!.MediaType));
     }
 
     /// <summary>

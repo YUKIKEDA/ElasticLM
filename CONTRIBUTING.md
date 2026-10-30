@@ -7,7 +7,7 @@ ElasticLM is being redesigned from its requirements. The design is `docs/design.
 1. If the design still branches, it is settled first (a Grill, then a `design` Issue that updates `docs/design.ja.md`).
 2. Every change starts from an Issue opened with a template in `.github/ISSUE_TEMPLATE/`. Blank issues are disabled.
 3. Branch from `main` as `type/<issue-number>-<slug>`.
-4. Run `./build.ps1` (PowerShell 7) before opening a pull request. It checks formatting (CSharpier), builds with warnings as errors in Release and Debug, and runs every test project.
+4. Run `./build.ps1` (PowerShell 7) before opening a pull request. It builds the admin UI (`web/admin/`: type check, Vitest, Vite), checks formatting (CSharpier), builds with warnings as errors in Release and Debug, and runs every test project. `elm-service` embeds `web/admin/dist`; without it the .NET build stops.
 5. Open the pull request with the template. Put `Closes #N` alone on a line under `## Related`.
 6. A maintainer reviews and squash-merges.
 
@@ -25,6 +25,7 @@ Never commit a private key, a secret, or a real license token, test data include
 
 - .NET 10 SDK (`global.json`).
 - PowerShell 7 for `./build.ps1`.
+- Node.js of `web/admin/.node-version` (24), which includes Corepack. pnpm needs no install: `corepack pnpm` takes the version and hash in `web/admin/package.json`, downloading it on first use. `./build.ps1 -SkipWeb` skips the admin UI and uses the `web/admin/dist` that is there.
 - `dotnet tool restore` once after cloning (CSharpier).
 - For a NativeAOT publish on Windows: Visual Studio's "Desktop development with C++" workload (the MSVC linker).
 

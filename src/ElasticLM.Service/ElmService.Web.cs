@@ -169,11 +169,11 @@ internal sealed partial class ElmService
     {
         _app.MapGet(LoginPath, (RequestDelegate)LoginAsync);
         _app.MapPost(LogoutPath, (RequestDelegate)LogoutAsync);
-        _app.MapGet("/", (RequestDelegate)(c => PageAsync(c, StatusCodes.Status200OK, "The admin UI is not built yet.")));
     }
 
-    // design §15.3: the sign-in's paths answer only their method, and nothing at all while the web sign-in is off; this runs
-    // before the OpenIdConnect handler, which would read a POST body at the callback path.
+    // design §15.3, §15.2: the sign-in's paths and the admin UI's files answer only their method, and nothing at all while
+    // the web sign-in is off; this runs before the OpenIdConnect handler, which would read a POST body at the callback path,
+    // and before the static files, which would answer HEAD.
     private bool RefuseWebPath(HttpContext context)
     {
         string path = context.Request.Path.Value ?? string.Empty;
@@ -181,6 +181,7 @@ internal sealed partial class ElmService
         {
             LoginPath or CallbackPath or "/" => HttpMethods.Get,
             LogoutPath => HttpMethods.Post,
+            _ when context.Request.Path.StartsWithSegments(AssetsPath) => HttpMethods.Get,
             _ => null,
         };
         return method is not null && (_settings.Web is null || !string.Equals(context.Request.Method, method, StringComparison.Ordinal));

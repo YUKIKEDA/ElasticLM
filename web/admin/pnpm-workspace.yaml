@@ -1,0 +1,5 @@
+# design §15.2 (T21): stated here, not left to pnpm's defaults, so the guards stay if a default changes.
+# Dependencies' build scripts never run; a dependency that has one fails the install.
+strictDepBuilds: true
+# A version published less than a day ago is refused, strictly (stating the value makes minimumReleaseAgeStrict true).
+minimumReleaseAge: 1440
