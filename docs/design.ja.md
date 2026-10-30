@@ -175,6 +175,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.104 | M6 の分け方と C ABI の共通の決まり | M6 を M6a（土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS のビルドとテストの仕組み、ライセンスの検証・結果・誤りの関数）、M6b（有効化: `ActivationClient` に当たるハンドル。オンラインの操作、オフラインのファイル、自動の更新）、M6c（リース: `LicenseClient` に当たるハンドル。バックグラウンドの更新のスレッド、コールバック、借り出し）の 3 行に分け、この順に進める。有効化は `elm_activation`、リースは `elm_client` の別のハンドルにし、D0 の案の `elm_client_activate` は取り下げる（0.89 と同じ分け方）。検証と有効化の結果は、不透明なハンドル `elm_license` と取り出しの関数で返し、JSON の文字列では返さない。オプションと要件の構造体は先頭に `uint32_t struct_size` を置き、今より大きい値は `ELM_INVALID_ARGUMENT` にする。バックグラウンドのスレッドとコールバックの規則は `elm_activation` にも当てはめ、公開する関数は例外を外に出さない。テストは、.NET のテストで `[UnmanagedCallersOnly]` の関数を関数ポインターで呼ぶものと、CI の NativeAOT のジョブで 3 つの OS の C コンパイラーで C のテストのプログラムを発行したライブラリにつないで動かすものの 2 段。C ヘッダーは手で書いてリポジトリに入れ、公開する関数の一覧と比べる。M6 の CI が作る RID は `win-x64`・`linux-x64`・`osx-arm64` で、残りの 4 つは実行ファイルの分も合わせて F1（§17.3。M6 の Grill と設計のレビュー、Issue #133） |
 | 0.105 | `libelasticlm` の土台と検証 | M6a で、0.104 の共通の決まりの上に次を決めた。置き場所は `src/ElasticLM.Native`・`include/elasticlm.h`・`tests/ElasticLM.Native.Tests`・`tests/native/` で、ライブラリは `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib`。インストールの身元は `elm_installation`（`ElasticLM.Client` の鍵の保管と指紋）で、要件はそれを指す。時計の見張りは、身元があればその鍵で署名する見張り、なければ状態を持たない見張り。そのために、鍵の写しを持って破棄する `InstallationKey.CreateClockGuard` を公開する。`elm_license` は、ID・製品・種類・発行の時刻・期限・猶予期間・猶予期間の中か・機能・`meta` を出し、作ったときにすべての文字列を用意する。64 KiB を超えるファイルは、読む前に .NET と同じ `ELM_MALFORMED` で断る（設計のレビュー R2 で、Grill の `ELM_PAYLOAD_TOO_LARGE` から持ち主が改めた）。0 で埋めた構造体が .NET の既定と同じになるよう、試用の扱いは `reject_trial_as_standard` にする。誤りの文はスレッドごとのピン留めした配列、`elm_version` はビルドで書き出した定数、`ELM_ABI_VERSION` を置く。C のテストは、ライブラリを実行時に読み込み、`tests/native/run.ps1` で CI の NativeAOT のジョブと手元から動かす（§17.4。M6a の Grill と設計のレビュー、Issue #137） |
 | 0.106 | `libelasticlm` の有効化 | M6b で、0.104 と 0.105 の決まりの上に次を決めた。有効化のハンドル `elm_activation` は .NET の `ActivationClient` をそのまま使い、オプションは製品・サービスの URL・トラストストア・鍵の範囲と置き場所・端末の情報・アプリの版・時計のずれ・試用の扱い・状態のコールバックを持つ（時計の見張りは .NET の既定だけ）。オンラインの操作は終わるまで待つ関数で、C には取り消しの口を作らない。成功は `elm_license`（猶予期間の中かは、`ActivationResult.Activated` に足す `InGracePeriod` から取る）、失敗の `RetryAfter` は任意の出力の引数。状態は列挙、有効化の ID は呼び出し側のバッファーに写す。状態の変化は、作る前に .NET の内部の口でつなぐコールバックで、番号と文を知らせる。コールバックの中からは、待つ操作と `destroy` だけを断る。オフラインのファイルはライブラリが確保した文字列で返し、`elm_string_free` で解放する。C のテストは `run.ps1` が発行した `elm-service` を http のループバックで立てて通す（§17.5。M6b の Grill と設計のレビュー、Issue #141） |
+| 0.107 | `libelasticlm` のリース | M6c で、0.104〜0.106 の決まりの上に次を決めた。リースのハンドル `elm_client` は .NET の `LicenseClient` をそのまま使い、オプションは M6b と同じ並びに、ライセンスキー（`NULL` ならオンプレミス）と期待するサーバーライセンスの ID を足す。取得の結果は不透明なハンドル `elm_lease` で、呼び出し側が `elm_lease_free` で解放する（解放は返却しない）。取得・借り出し・返却・借りたリースの一覧は終わるまで待つ関数で、失敗の `RetryAfter` は任意の出力の引数。コールバックはリースを ID で渡し、中からの待つ操作と `destroy` だけを断る。借りたリースの一覧は、配列とハンドルをまとめて解放する。ピンの消去は消したかを返す。.NET の `LicenseClient` は、`DisposeAsync` のあとに更新の知らせを出さないよう直す。C のテストは `run.ps1` が `elm-server` を https のループバックで立てて通し、C のスレッドの記録が集められるかを .NET のテストで見分ける（§17.6。M6c の Grill、Issue #145） |
 
 ## 1. 目的と利用者
 
@@ -3437,6 +3438,111 @@ void elm_string_free(char* text);
   - `tests/native/test_elasticlm.c`: `run.ps1` が、発行した `elm-service` を http のループバックで立て、`setup` の API キーで製品・機能・ポリシー・ライセンスを作る。C のテストは、有効化・`Check`・ID・状態・更新の要求ファイルの作成・解除を通し、コールバックが呼ばれたことを確かめる。公開するすべての新しい関数をヘッダーの型の関数ポインターに入れ、残りの関数（`start_trial`、`refresh`、`create_activation_request`、`import_response`、`create_deactivation_proof`、`forget_deactivation_proof`、`elm_string_free`）は `NULL` のハンドルで呼ぶ。
   - `run.ps1`: 新しい引数 `-Service` で `elm-service` の場所を受け取る（CI の NativeAOT のジョブは `publish/` に発行している）。`-Publish` は `ElasticLM.Service` も発行する（`web/admin/dist` が要る）。この回のために作って消す物: ルート鍵と署名鍵と証明書（`ELM_KEY_PASSPHRASE`、`ELM_SIGNING_PASSPHRASE`、`ELM_SIGNING_KEY`、`ELM_SIGNING_CERTIFICATES`、`ELM_TRUST_ROOTKEYS`）、ノンスの秘密（`ELM_NONCE_SECRET`）、SQLite のデータベース（`ELM_DATABASE_CONNECTION`）、最初の `owner`（`ELM_BOOTSTRAPOWNER_ISS`・`SUB`）。待ち受け（`ELM_LISTEN`）は空いているポートの `http://127.0.0.1:<ポート>` で、C のテストにも同じ URL を渡す（`publicUrls` がないとき、証明の `htu` は待ち受けの URL と比べられるため、`localhost` と混ぜない）。終わりに `Stop-Process` のあと `WaitForExit` で止まるのを待ってから一時フォルダーを消す（Windows は SQLite のファイルを開いたままにする）。環境は M6a と同じく元に戻す。
 - 測る値と §4.2: `libelasticlm` の大きさの M6a からの差（3 つの OS、CI の値）を §4.2 の「M6b の実測」に書く。内訳は、win-x64 で `-p:IlcGenerateMapFile=true` のマップのファイルを、M6a のコード（main の `3e1d79c`）と比べて分ける（`HttpClient` が入る）。実行時の依存（`ldd`、`otool -L`、`dumpbin /dependents`）も測り直す。Linux で OpenSSL が `DT_NEEDED` に入らず実行時に読み込まれるかは、`ldd` の結果で確かめる。どれかの OS で 8 MB を超えれば、PR を出す前に持ち主に知らせる。
+
+### 17.6 M6c の形（0.104、0.107）
+
+M6c の Grill（Issue #145）で決めた。§17.3 の共通の決まり、§17.4 の形（文字列、構造体、ハンドル、誤りの文、例外）、§17.5 の待つ関数とコールバックの決まりに従う。
+
+型と関数（C の表記）:
+
+```c
+enum { ELM_LEASE_HELD = 0, ELM_LEASE_RETRYING = 1, ELM_LEASE_RECLAIMING = 2,
+       ELM_LEASE_LOST = 3, ELM_LEASE_RELEASED = 4 };                         /* LeaseState */
+
+typedef struct elm_client elm_client;
+typedef struct elm_lease elm_lease;
+
+/* lease_id と message は、このコールバックの間だけ有効な UTF-8（誤りがなければ message は空文字列） */
+typedef void (*elm_lease_callback)(void* user, const char* lease_id, int32_t previous, int32_t current, int32_t error,
+                                   const char* message);
+
+typedef struct {
+    uint32_t struct_size;
+    const char* product_id;               /* 必須 */
+    const char* server_url;               /* 必須。オンプレミスは https、SaaS 型は https か http のループバック */
+    const char* license_key;              /* NULL ならオンプレミスのサーバー、あれば SaaS 型のリース（0.94） */
+    const char* const* root_keys_pem;     /* 1〜16 個 */
+    size_t root_key_count;
+    const char* const* revoked_key_ids;   /* 0〜1024 個 */
+    size_t revoked_key_count;
+    const char* expected_server_license_id; /* NULL でよい。§13.5。license_key と一緒には使えない */
+    int32_t scope;                        /* ELM_SCOPE_* */
+    const char* directory;                /* NULL なら §10.2 の既定 */
+    int32_t send_client_info;             /* 0 か 1 */
+    const char* app_version;              /* NULL でよい。64 バイトまで */
+    int32_t clock_skew_seconds;           /* 0 なら既定（300）。1〜3600 */
+    int32_t reject_trial_as_standard;     /* 0（既定）か 1 */
+    elm_lease_callback on_lease;          /* NULL でよい */
+    void* user;                           /* on_lease に渡す。elm_client_destroy が戻るまで有効にしておく */
+} elm_client_options;
+
+/* §19 の番号を返す関数 */
+int32_t elm_client_create(const elm_client_options* options, elm_client** out);
+int32_t elm_client_acquire_lease(elm_client* c, const char* feature_id, const char* feature_version, int32_t count,
+                                 elm_lease** out, int64_t* retry_after_seconds);
+int32_t elm_client_borrow_lease(elm_client* c, const char* feature_id, int64_t period_seconds,
+                                const char* feature_version, int32_t count, elm_lease** out,
+                                int64_t* retry_after_seconds);
+int32_t elm_client_release_lease(elm_client* c, elm_lease* lease);
+int32_t elm_client_get_borrowed_leases(elm_client* c, elm_lease*** out, size_t* count);
+int32_t elm_client_reset_server_pin(elm_client* c, const char* server_url, int32_t* deleted);
+int32_t elm_lease_id(const elm_lease* l, const char** out);          /* elm_lease_free まで有効 */
+int32_t elm_lease_feature_id(const elm_lease* l, const char** out);  /* 同上 */
+int32_t elm_lease_expires_at(const elm_lease* l, int64_t* out);      /* UNIX 秒 */
+
+/* 値を返す関数（NULL なら -1） */
+int32_t elm_lease_seats(const elm_lease* l);
+int32_t elm_lease_is_borrow(const elm_lease* l);                     /* 0 か 1 */
+int32_t elm_lease_state(const elm_lease* l);                         /* ELM_LEASE_* */
+int32_t elm_lease_last_error(const elm_lease* l);                    /* §19 の番号、なければ 0 */
+
+/* 解放（NULL なら何もしない） */
+void elm_lease_free(elm_lease* l);
+void elm_lease_list_free(elm_lease** leases, size_t count);
+void elm_client_destroy(elm_client* c);
+```
+
+決まり:
+
+- 作る: `elm_client_create` は、オプションから `LicenseClientOptions` を作って `LicenseClient.TryCreate` を呼ぶ。トラストストアの形と上限、`clock_skew_seconds`、`reject_trial_as_standard`、真偽と列挙の範囲、`app_version`、時計（`Exports.Time`）、時計の見張り（.NET の既定だけ）は `elm_activation_options`（§17.5）と同じ。`server_url` の形（ライセンスキーがなければ https だけ、あれば https か http のループバック）と、ライセンスキーと `expected_server_license_id` を一緒に渡すことは、`TryCreate` が `ArgumentException` で断るので `ELM_INVALID_ARGUMENT`。空のライセンスキーも同じ。`TryCreate` は通信しない。
+- リースのハンドル `elm_lease`:
+  - 取得と借り出しの成功で、新しい `elm_lease`（.NET の `Lease` を指す）を `*out` に返す。呼び出し側が `elm_lease_free` で解放する。解放はリースを返却しない（返却は `elm_client_release_lease`）。解放しても、`elm_client` は .NET の `Lease` を持ち続け、更新を続ける。
+  - ID と機能の文字列は、ハンドルを作るときにネイティブのメモリに用意し、`elm_lease_free` まで有効（§17.4 の `elm_license` と同じ）。席数、借り出しか、期限は変わらない値。状態と最後の誤りは、読むたびに .NET の `Lease` から取る（自動の更新で変わる）。期限は、借り出しでないリースでは更新のたびに延びるので、読むたびに取る。
+  - `elm_lease` は、その `elm_client` の `destroy` のあとも読める（状態は .NET の `Lease` の最後の値）。`elm_client_release_lease` に渡せるのは、同じ `elm_client` が返したハンドルだけで、ほかの `elm_client` のものは `ELM_INVALID_ARGUMENT`。
+- オンラインの操作（取得、借り出し、返却、借りたリースの一覧）は、§17.5 と同じく、呼んだスレッドで終わるまで待つ。C には取り消しの口を作らない。待つ時間の上限は、次の和である（ヘッダーにも書く）:
+  - 同じハンドルのほかの操作（自動の更新を含む）が終わるのを待つ時間（上限なし）。
+  - 送る回数 × 1 回の上限（`HttpClient.Timeout` の 30 秒）。取得と借り出しは最大 6 回（オンプレミスで初めて、または鍵が替わったときのサーバーライセンスの取得 1 回、ノンスと要求を `ELM_NONCE_REQUIRED` のあとの送り直しで最大 2 組、答えの鍵が替わったときの取り直し 1 回）。
+  - 借りたリースの一覧は送らない（ファイルを読むだけ）が、ほかの操作の終わりを待つ。
+- 結果と出力の引数:
+  - `LeaseResult.Acquired` は `ELM_OK` と新しい `elm_lease`。`Failed` は、その番号と文。`retry_after_seconds` は `NULL` でよく、決まりは §17.5 と同じ（成功では 0、失敗では `RetryAfter` の秒を切り上げ、なければ 0）。
+  - `count` は 1 以上、`period_seconds` は 1 以上（.NET の `ArgumentOutOfRangeException`）、`feature_id` は空でない（`ArgumentException`）。どれも `ELM_INVALID_ARGUMENT`。`feature_version` は `NULL` でよい。
+  - 返却は .NET の `ReleaseLeaseAsync` の結果（`null` なら `ELM_OK`、ほかはその番号と文）。返せなかったときも、.NET と同じく、リースは RELEASED になる。
+  - `elm_client_get_borrowed_leases` は、`GetBorrowedLeases` の各 `Lease` の新しいハンドルを並べた配列を、ライブラリが確保して `*out` に、個数を `*count` に返す（0 個なら `*out` は `NULL`）。`elm_lease_list_free(leases, count)` は、中のハンドルと配列をまとめて解放する。呼ぶたびに新しいハンドルになる。
+  - `elm_client_reset_server_pin` は `ResetServerPin` の結果を `*deleted`（0 か 1）に入れる。SaaS 型のクライアントでは、いつも 0。`server_url` は URL として読めなければ `ELM_INVALID_ARGUMENT`。
+  - `out`、`count`、`deleted` は必須（`NULL` なら `ELM_INVALID_ARGUMENT`）。失敗では `*out` は `NULL`、`*count` と `*deleted` は 0。
+- リースのコールバック（§17.2、§17.3、§17.5）:
+  - `on_lease` は、.NET の `LeaseStateChanged` のたびに、リースの ID、`previous`、`current`、`error`（`LicenseError` の番号、なければ 0）、`message`（`LicenseError` の文、なければ空文字列）で呼ぶ。リースはハンドルではなく ID で渡す。アプリが解放したハンドルや、一覧で別に作ったハンドルと、同じものかを問わないためである。アプリは `elm_lease_id` と照らす。
+  - 呼ぶスレッド: 返却を呼んだスレッド（RELEASED への変化）か、自動の更新を走らせる .NET のスレッド（タイマーのあとの `RenewOnTimerAsync`）。取得そのものは変化を知らせない（最初の状態は HELD）。
+  - 守ることは §17.5 と同じ: 操作が起こした変化のコールバックは、その関数が戻る前に戻っている。`elm_client_destroy` が戻ったあと、コールバックは呼ばれない（ライブラリ自身の印と、走っているコールバックの数を、1 つの排他の下で確かめる）。ハンドルの解放は、走っているコールバックが戻ったあとにする。
+  - コールバックの中から同じ `elm_client` の待つ操作（取得、借り出し、返却、借りたリースの一覧）を呼べば `ELM_INVALID_STATE` で何もしない。§17.2 の「コールバックの中の `lease_release` は `ELM_INVALID_STATE`」はこの一部である。`elm_client_destroy` は何もしない。リースの読み取り（`elm_lease_*`）と `elm_client_reset_server_pin`（ファイルの操作で、排他を取らない）は呼んでよい。見分けは §17.5 と同じ、ハンドルとスレッドごとの印。
+  - 誤りの文は、コールバックの前に写し、戻ったあとに戻す（§17.5）。
+  - `elm_client_destroy` は、走っているコールバックが戻るのを待ち（時間の上限はない）、そのあと .NET の `DisposeAsync`（持っているリースを最長 5 秒で返却する。借り出しは返さない）を終わるまで待つ。ヘッダーに書く注意は §17.5 と同じ。
+- .NET の `LicenseClient` の直し: 自動の更新の結果は、排他を外したあとで知らせる（`RenewOnTimerAsync` の `Raise`）。その間に `DisposeAsync` が排他を取って戻ると、戻ったあとに知らせが出る。XML ドキュメントの「No event is raised afterwards」と食い違うので、`Raise` は `ActivationClient` と同じく、知らせのたびに `_disposed` を確かめて止める。C の層は、上の自分の印で守るので、この直しには頼らない。
+- 解放と寿命: ほかのスレッドで `elm_client` の操作が進行中に `elm_client_destroy` を呼ぶのは、呼び出し側の誤り（未定義の動作）としてヘッダーに書く（§17.5 と同じ）。`elm_lease` を読んでいる間の `elm_lease_free` も同じ。
+- C のスレッドの記録（§17.3 の M6c の点）: `tests/ElasticLM.Native.Tests` で、OS の関数（Windows は `CreateThread`、ほかは `pthread_create`、P/Invoke で呼ぶ）で作ったスレッドから、失敗する関数を関数ポインターで呼ぶ。そのスレッドの誤りの文の配列を弱い参照で持ち（テストは `InternalsVisibleTo` で配列を読む）、スレッドが終わって `GC.Collect` と `WaitForPendingFinalizers` を回したあとに、配列が集められたかを見る。比べるために、.NET が作ったスレッドでも同じことをする。このテストは JIT の上で動くので、NativeAOT の動きを直接は示さない。その限界を §4.2 に書く。集められないと分かれば、持ち主に知らせ、決め直す。
+- テスト:
+  - `tests/ElasticLM.Native.Tests` は、`ElasticLM.Server.Tests` の同じプロセスの `elm-server`（偽の時計）と、§17.5 の `TestService`（`elm-service`）を立てる。確かめること:
+    - すべての関数を関数ポインターで呼ぶこと。オンプレミスと SaaS 型の、取得・返却・借り出し・借りたリースの一覧・ピンの消去（オンプレミスで 1、SaaS 型で 0）。
+    - リースの読み取り（ID、機能、席数、借り出しか、期限、状態、最後の誤り）と、更新で期限が延びること、返却のあとの RELEASED、`destroy` のあとも読めること。
+    - 出力の引数の失敗のときの値と、`retry_after_seconds` の切り上げと `NULL`。`count` 0、`period_seconds` 0、空の `feature_id`、ほかの `elm_client` のハンドルの返却。
+    - コールバックの引数（ID、番号、文）、自動の更新が起こすコールバックとそのスレッド（更新の失敗で HELD から RETRYING）、返却が起こすコールバック。
+    - コールバックの中からの待つ操作の `ELM_INVALID_STATE`、`destroy` が何もしないこと、リースの読み取りとピンの消去を呼べること、誤りの文が保たれること。
+    - `destroy` が走っているコールバックを待つこと（`DisposeAsync` の待ちに隠されないよう、偽の時計を 6 秒進めても待つこと）と、待つ間にコールバックがリースを読めること、`destroy` のあとにコールバックが呼ばれないこと、`destroy` が持っているリースを返すこと。
+    - オプションの確かめ: `struct_size`、`server_url`（オンプレミスの http、SaaS 型の http のループバックとそうでない http、URL として読めないもの、`NULL`）、ライセンスキーと期待するサーバーライセンスの ID を一緒に、空のライセンスキー、`app_version` の 64 と 65 バイト。
+    - .NET の `LicenseClient` の直し: 1 回の知らせに 2 つの変化があるとき、1 つ目のハンドラーを止めている間に `DisposeAsync` が戻れば、2 つ目は知らされないこと（`ElasticLM.Client.Tests`）。
+  - `tests/native/test_elasticlm.c`: `run.ps1` が、§17.5 の `elm-service` に加えて、発行した `elm-server` を https のループバック（自分の鍵で署名した証明書）で立てる。C のテストは、オンプレミスと SaaS 型の両方で、取得・リースの読み取り・返却とコールバック、借り出しと借りたリースの一覧、ピンの消去を通す。公開するすべての新しい関数をヘッダーの型の関数ポインターに入れ、残りの関数は `NULL` のハンドルで呼ぶ。これまでの C のテストは http だけだったので、`libelasticlm` の HTTPS（Linux では OpenSSL を実行時に読み込む）を 3 つの OS で初めて確かめる。
+  - `run.ps1`: 新しい引数 `-Server` で `elm-server` の場所を受け取る（`-Publish` は `ElasticLM.Server` も発行する）。`elm-server` は、空いているポートの `https://127.0.0.1:<ポート>`（`ELM_LISTEN`）と管理の待ち受け（`ELM_ADMIN_LISTEN`、空いているポートの http のループバック）、一時フォルダーのデータ（`ELM_DATADIRECTORY`）、製品（`ELM_PRODUCT`）、ルート鍵（`ELM_TRUST_ROOTKEYS`）、サーバーライセンス（`ELM_LICENSE`）で立てる。サーバーライセンスは、鍵の拇印を得るために一度ライセンスなしで立ち上げ（断る文に拇印が出る）、`elm license issue --kind server --bind-key` でその鍵に結びつけ、借り出しを許す日数（`--borrow-days`。サーバーの `borrow.maxDuration` は、それより短く絞るだけ）と席数をつけて発行する。SaaS 型のリースは、§17.5 の `elm-service` の管理の API で作ったライセンスで取る。終わりの止め方と片付けは §17.5 と同じ。
+- 測る値と §4.2: `libelasticlm` の大きさの M6b からの差（3 つの OS、CI の値）を §4.2 の「M6c の実測」に書く。内訳は、win-x64 で `-p:IlcGenerateMapFile=true` のマップのファイルを、M6b のコード（main の `622b57e`）と比べて分ける。実行時の依存も測り直す。どれかの OS で 8 MB を超えれば、PR を出す前に持ち主に知らせる。C のスレッドの記録の確かめの結果も「M6c の実測」に書く。
 
 ## 18. ログ
 
