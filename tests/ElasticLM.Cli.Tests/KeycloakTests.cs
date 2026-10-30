@@ -120,7 +120,7 @@ public sealed partial class KeycloakTests
     ///   the endSession URL with Keycloak's cookies; post the confirmation form.
     ///
     /// Expected:
-    /// - The callback leads to / (200, the placeholder) with __Host-elm-session; the list holds alice as owner of Keycloak's
+    /// - The callback leads to / (200, the admin UI's index.html) with __Host-elm-session; the list holds alice as owner of Keycloak's
     ///   issuer; logout answers 200 with endSession of the realm's logout endpoint with client_id elm-web and the
     ///   post_logout_redirect_uri http://127.0.0.1:18089/.
     /// - Without id_token_hint, Keycloak answers 200 with its logout confirmation (a form with confirmLogout); posting it
@@ -188,7 +188,7 @@ public sealed partial class KeycloakTests
         }
 
         Assert.True(status == HttpStatusCode.OK && page.AbsolutePath == "/", $"{(int)status} {page}: {Excerpt(html)}{Steps(trace)}");
-        Assert.Equal("The admin UI is not built yet.", html.Trim());
+        Assert.Contains("<div id=\"app\"></div>", html, StringComparison.Ordinal);
         string session = cookies[ElmService.SessionCookie];
 
         using var admins = new HttpRequestMessage(HttpMethod.Get, new Uri(service.Url, "v1/admin/admins"));

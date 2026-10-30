@@ -54,6 +54,7 @@ internal sealed partial class ElmService
         if (_settings.Web is not null)
         {
             MapWeb();
+            MapAdminUi();
         }
 
         _app.MapGet("/health", (RequestDelegate)HealthAsync);
@@ -105,6 +106,12 @@ internal sealed partial class ElmService
             return;
         }
 
+        // design §14.5 (M5c): no answer of the administration API is kept by a cache; cookie-authenticated ones exist since M5b.
+        if (path.StartsWithSegments("/v1/admin"))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+        }
+
         await next(context).ConfigureAwait(false);
     }
 
@@ -122,7 +129,8 @@ internal sealed partial class ElmService
         }
     }
 
-    private async Task AdminAsync(HttpContext context, string permission, string action, Func<HttpContext, Caller, Task<AdminOutcome>> operation)
+    // A null permission lets every authenticated caller in (GET /v1/admin/me, M5c).
+    private async Task AdminAsync(HttpContext context, string? permission, string action, Func<HttpContext, Caller, Task<AdminOutcome>> operation)
     {
         string? ip = context.Connection.RemoteIpAddress?.ToString();
         try
@@ -204,7 +212,7 @@ internal sealed partial class ElmService
             }
 
             AdminOutcome outcome;
-            if (!caller.Permissions.Contains(permission))
+            if (permission is not null && !caller.Permissions.Contains(permission))
             {
                 outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: AuditLog.Detail(w => w.WriteString("permission", permission)));
                 string who = token || session ? "The administrator's role" : "The API key";

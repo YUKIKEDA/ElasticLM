@@ -21,6 +21,7 @@ src/                         出荷するプロジェクト（ElasticLM.*）
 tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）
 samples/                     利用例と NativeAOT の確認用のアプリ
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト。elm-service が組み込む（design §14.2）
+web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
 .cursor/rules/               エージェント向けの規約
 .agents/skills/              スキル（.claude/skills/ にコピーを置く）
@@ -43,6 +44,7 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | `tests/ElasticLM.Server.Tests` | `elm-server` と `LicenseClient` の結合テスト。サーバーを同じプロセスのループバックの TLS で立て、本物のクライアントから呼ぶ。`elm server` と `elm log verify` も同じプロセスで `ElmApp.Run` から呼ぶ |
 | `tests/ElasticLM.Service.Tests` | `elm-service` のテスト。サービスを同じプロセスのループバックで立て、SQLite で流す。環境変数 `ELM_TEST_POSTGRES` に PostgreSQL の接続文字列があれば、同じテストをテストごとのスキーマで PostgreSQL でも流す（CI の Linux） |
 | `tests/ElasticLM.Cli.Tests` | `elm` のコマンドのテスト。一時フォルダのファイルで、鍵の作成から検証までを流す |
+| `web/admin` | 管理画面の SPA（design §15.2、0.96、0.100）。Preact 11 と TypeScript、Vite 8、テストは Vitest と happy-dom。Node.js は `.node-version`、pnpm は `package.json` の `packageManager`（Corepack が確かめる）、依存は `pnpm-lock.yaml`、pnpm の守りは `pnpm-workspace.yaml`。`build.ps1` がビルドし、`dist` を `ElasticLM.Service` が埋め込んで `/` と `/assets/` で配る。文言は `src/messages.ts` |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
 
 ## ビルドとゲート
@@ -50,7 +52,7 @@ docs/                        設計・却下した案・ADR・ロードマップ
 - 対象は `net10.0`、C# 14。Nullable と `InvariantGlobalization` は有効。
 - 警告はすべてエラー。`NoWarn` や `#pragma warning disable` でビルドを通さない。ルールがこのリポジトリに合わないときは、理由をコメントに書いて `.editorconfig` を変える。
 - `src/` のプロジェクトは `IsAotCompatible`。公開 API には XML ドキュメントが要る。
-- `./build.ps1` がゲート。CSharpier の検査、Release と Debug のビルド、全テストを実行する。CI は Windows・Linux・macOS で同じスクリプトを実行する。
+- `./build.ps1` がゲート。管理画面（`web/admin/`）の型の確かめ・Vitest・ビルド、CSharpier の検査、Release と Debug のビルド、全テストを実行する。CI は Windows・Linux・macOS で同じスクリプトを `-SkipWeb` で実行し、管理画面は秘密を持たない別のジョブで 1 回だけビルドして `dist` を渡す（design §15.2）。
 
 ## コード
 

@@ -28,18 +28,26 @@ internal sealed partial class ServiceStore<TDialect>
         Guid? productId,
         Guid? policyId,
         string? state,
+        string? namePattern,
+        byte[]? keyHash,
         long now,
         Guid? after,
         int limit,
         CancellationToken cancellationToken
     ) =>
-        // The state filter follows Licenses.State: revoked, then suspended, then expired, then active.
+        // The state filter follows Licenses.State: revoked, then suspended, then expired, then active. The name search lowers
+        // only ASCII letters on both engines (design §14.5, M5c): PostgreSQL's lower() follows the column's collation, so the
+        // C collation keeps it to A to Z, as SQLite's lower() is.
         await _db.From(LicenseRow.Table)
             .Where(l =>
                 And([
                     productId is Guid product ? Eq(l.ProductId, product) : null,
                     policyId is Guid policy ? Eq(l.PolicyId, policy) : null,
                     after is Guid id ? Gt(l.Id, id) : null,
+                    keyHash is byte[] hash ? Eq(l.KeyHash, hash) : null,
+                    namePattern is string pattern
+                        ? Like(Provider == DatabaseProvider.Postgres ? Raw<string>($"lower({l.Name} COLLATE \"C\")") : Lower(l.Name), pattern, '\\')
+                        : null,
                     state switch
                     {
                         Licenses.Revoked => IsNotNull(l.RevokedAt),

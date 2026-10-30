@@ -12,6 +12,7 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 - Solution: `ElasticLM.slnx` only. Do not commit a `.sln`.
 - Projects follow `docs/conventions.md`: `src/ElasticLM.*`, `tests/*.Tests`, and `samples/`, `benchmarks/`, `tools/` when a row needs them. Do not create a project, folder, script, or skill step before the Issue that needs it.
 - A project's line in `docs/conventions.md` is added in the PR that adds the project.
+- The admin UI is `web/admin/` (design §15.2): Preact and TypeScript, built by Vite with pnpm through Corepack, on the Node.js of `web/admin/.node-version`. Its `dist` is not committed; `ElasticLM.Service` embeds it and does not build without it.
 
 ## Targets and build
 
@@ -44,7 +45,7 @@ An operation that applies a request to a stored row (a `PATCH`, a state change) 
 
 ## Gate
 
-`./build.ps1` before a PR. It runs tool restore, the CSharpier check, restore, then for Release and for Debug a build and every test project. Release is what ships; Debug runs the checks that exist only there. Hosted CI runs the same script on Windows, Linux, and macOS.
+`./build.ps1` before a PR. It builds the admin UI first (`web/admin/`: the Node.js and Corepack check, `corepack pnpm install --frozen-lockfile`, on Windows the path length check, `tsc`, Vitest, and the Vite build), then runs tool restore, the CSharpier check, restore, then for Release and for Debug a build and every test project. Release is what ships; Debug runs the checks that exist only there. Hosted CI builds the admin UI once in a job without secrets and runs the same script with `-SkipWeb` on Windows, Linux, and macOS.
 
 A PR that makes a setting required for a server to start adds it, in the same PR, to every step of `.github/workflows/ci.yml` that starts that server (the NativeAOT smoke and measure steps). The gate starts the server from its tests and does not see the missing setting. In M4b1 the nonces' secret became required and the NativeAOT jobs failed on all three OS (PR #61).
 

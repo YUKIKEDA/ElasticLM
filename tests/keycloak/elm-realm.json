@@ -113,12 +113,13 @@
       "serviceAccountsEnabled": false,
       "consentRequired": false,
       "redirectUris": [
-        "http://127.0.0.1:18089/auth/callback"
+        "http://127.0.0.1:18089/auth/callback",
+        "https://127.0.0.1:18443/auth/callback"
       ],
       "webOrigins": [],
       "attributes": {
         "pkce.code.challenge.method": "S256",
-        "post.logout.redirect.uris": "http://127.0.0.1:18089/"
+        "post.logout.redirect.uris": "http://127.0.0.1:18089/##https://127.0.0.1:18443/"
       },
       "protocolMappers": [
         {

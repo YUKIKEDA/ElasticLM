@@ -186,9 +186,43 @@ internal sealed partial class ElmService
             state = stateText[0];
         }
 
+        // design §14.5 (M5c): a name search of 1 to 100 characters without control characters, and a key's hash, never the key.
+        string? namePattern = null;
+        if (context.Request.Query["q"] is { Count: > 0 } qText)
+        {
+            int length = qText.Count == 1 ? qText[0]!.EnumerateRunes().Count() : 0;
+            if (length is < 1 or > Licenses.MaxNameSearch || qText[0]!.EnumerateRunes().Any(System.Text.Rune.IsControl))
+            {
+                return await RefuseAsync(context, ErrorCode.InvalidArgument, "q must be 1 to 100 characters without control characters.")
+                    .ConfigureAwait(false);
+            }
+
+            namePattern = Licenses.NamePattern(qText[0]!);
+        }
+
+        byte[]? keyHash = null;
+        if (context.Request.Query["keyHash"] is { Count: > 0 } hashText)
+        {
+            keyHash = new byte[32];
+            if (
+                hashText.Count != 1
+                || hashText[0]!.Length != 43
+                || !System.Buffers.Text.Base64Url.TryDecodeFromChars(hashText[0], keyHash, out int written)
+                || written != 32
+            )
+            {
+                return await RefuseAsync(
+                        context,
+                        ErrorCode.InvalidArgument,
+                        "keyHash must be the SHA-256 of a license key in base64url (43 characters)."
+                    )
+                    .ConfigureAwait(false);
+            }
+        }
+
         long now = Time.GetUtcNow().ToUnixTimeSeconds();
         IReadOnlyList<LicenseRow> rows = await Database
-            .ListLicensesAsync(productId, policyId, state, now, after, limit + 1, context.RequestAborted)
+            .ListLicensesAsync(productId, policyId, state, namePattern, keyHash, now, after, limit + 1, context.RequestAborted)
             .ConfigureAwait(false);
         LicenseRow[] page = [.. rows.Take(limit)];
         var answer = new LicensePage([.. page.Select(r => ToItem(r, now))], rows.Count > limit ? page[^1].Id.ToString("D") : null);

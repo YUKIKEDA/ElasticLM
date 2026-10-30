@@ -19,8 +19,51 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
+  spa:
+    # design §15.2 (decisions 0.96 and 0.100, T21): the admin UI is built once, here, with no secret and no id-token; the
+    # .NET jobs take its dist from this run and run no Node.js tool. The actions of this job, and the download that takes
+    # its output, are pinned by commit, since what it builds goes into the shipped executable.
+    name: Admin UI (web/admin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: web/admin
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/admin/.node-version
+
+      - name: Install, check, test, and build
+        # Corepack checks pnpm's version and hash against packageManager; pnpm-workspace.yaml holds strictDepBuilds and
+        # minimumReleaseAge.
+        run: |
+          corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm run typecheck
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm test
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm run build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $files = @(Get-ChildItem dist -Recurse -File)
+          "web/admin/dist: $($files.Count) files, $(($files | Measure-Object Length -Sum).Sum) bytes" >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+          retention-days: 1
+          if-no-files-found: error
+
   gate:
     name: build.ps1 (${{ matrix.os }})
+    needs: spa
     strategy:
       fail-fast: false
       matrix:
@@ -33,6 +76,12 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v7
+
+      # The admin UI of this run's SPA job (design §15.2); build.ps1 -SkipWeb and the publish embed it.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -72,11 +121,12 @@ jobs:
           "ELM_TEST_KEYCLOAK=http://127.0.0.1:8180/realms/elm" >> $env:GITHUB_ENV
 
       - name: Gate
-        run: ./build.ps1
+        run: ./build.ps1 -SkipWeb
 
   aot:
     # design §20.3: each shipped executable is published with NativeAOT on every OS, with zero warnings.
     name: NativeAOT elm-server, elm, and elm-service (${{ matrix.os }})
+    needs: spa
     strategy:
       fail-fast: false
       matrix:
@@ -94,6 +144,12 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v7
+
+      # The admin UI of this run's SPA job (design §15.2); build.ps1 -SkipWeb and the publish embed it.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -167,6 +223,34 @@ jobs:
             if (-not $ok) { "::error::elm-service did not answer /health"; exit 1 }
             $audit = Invoke-RestMethod http://127.0.0.1:18080/v1/admin/audit -Headers @{ Authorization = "Bearer $key" }
             if ($audit.items.Count -lt 1) { "::error::the audit log is empty"; exit 1 }
+          }
+          finally {
+            Stop-Process -Id $process.Id
+            $process.WaitForExit()
+          }
+
+          # design §15.2 (M5c): with the web sign-in on, the executable alone serves the admin UI. The issuer is a stand-in:
+          # the service does not reach the identity provider to start or to serve the UI. The secret and the key encryption
+          # key are made for this run and not kept.
+          $env:ELM_OIDC_ISSUER = 'https://idp.example'
+          $env:ELM_OIDC_AUDIENCE = 'elm-service'
+          $env:ELM_OIDC_CLICLIENTID = 'elm-cli'
+          $env:ELM_OIDC_ROLEMAP = 'elm-owners=owner'
+          $env:ELM_OIDC_WEBCLIENTID = 'elm-web'
+          $env:ELM_OIDC_WEBCLIENTSECRET = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(16))
+          $env:ELM_DATAPROTECTION_KEK = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
+          $process = Start-Process $service -PassThru -NoNewWindow
+          try {
+            $index = $null
+            for ($i = 0; $i -lt 30 -and -not $index; $i++) {
+              try { $index = Invoke-WebRequest http://127.0.0.1:18080/ } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $index -or $index.StatusCode -ne 200) { "::error::elm-service did not serve the admin UI at /"; exit 1 }
+            if ([string]$index.Headers['Content-Security-Policy'] -notmatch "^default-src 'self';") { "::error::/ has no CSP"; exit 1 }
+            $asset = [regex]::Match($index.Content, '/assets/[A-Za-z0-9_.-]+\.js').Value
+            $script = Invoke-WebRequest "http://127.0.0.1:18080$asset"
+            if ($script.StatusCode -ne 200 -or [string]$script.Headers['Content-Type'] -ne 'text/javascript') { "::error::$asset was not served as text/javascript"; exit 1 }
+            "elm-service (${{ matrix.rid }}) served / and $asset" >> $env:GITHUB_STEP_SUMMARY
           }
           finally {
             Stop-Process -Id $process.Id

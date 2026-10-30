@@ -13,13 +13,17 @@ internal abstract partial class Database
     public abstract Task<LicenseRow?> FindLicenseAsync(Guid id, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Returns licenses after an ID, in ID order, of a product, of a policy, and in a state (design §14.5), each filter left
-    /// out when <see langword="null"/>. The state is computed at <paramref name="now"/> as <see cref="Licenses.State"/> does.
+    /// Returns licenses after an ID, in ID order, of a product, of a policy, in a state, whose name holds a text, and of a
+    /// key's hash (design §14.5), each filter left out when <see langword="null"/>. The state is computed at
+    /// <paramref name="now"/> as <see cref="Licenses.State"/> does. The name filter is the <c>LIKE</c> pattern that
+    /// <see cref="Licenses.NamePattern"/> makes, matched against the name with ASCII letters lowered.
     /// </summary>
     public abstract Task<IReadOnlyList<LicenseRow>> ListLicensesAsync(
         Guid? productId,
         Guid? policyId,
         string? state,
+        string? namePattern,
+        byte[]? keyHash,
         long now,
         Guid? after,
         int limit,

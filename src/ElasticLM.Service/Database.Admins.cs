@@ -29,6 +29,9 @@ internal abstract partial class Database
     /// <summary>Returns the administrator of an issuer and subject, or <see langword="null"/>.</summary>
     public abstract Task<AdminRow?> FindAdminAsync(AdminIdentity identity, CancellationToken cancellationToken);
 
+    /// <summary>Returns the administrator of an ID, or <see langword="null"/> (M5c).</summary>
+    public abstract Task<AdminRow?> FindAdminAsync(Guid id, CancellationToken cancellationToken);
+
     /// <summary>
     /// Signs in the administrator of an OIDC access token in one transaction (design §14.6, steps 8 and 9): adds the
     /// administrator when the issuer and subject are new (audit <c>admin.create</c>, written only by the request that added

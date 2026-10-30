@@ -15,6 +15,30 @@ internal sealed record LicenseFeature(string Code, string? Ver, long? Seats, lon
 /// </summary>
 internal static class Licenses
 {
+    /// <summary>The longest name search, in characters (design §14.5, M5c).</summary>
+    public const int MaxNameSearch = 100;
+
+    /// <summary>
+    /// Returns the <c>LIKE</c> pattern of a name search (design §14.5, M5c): ASCII letters lowered, <c>\</c>, <c>%</c>, and
+    /// <c>_</c> escaped with <c>\</c>, between two <c>%</c>.
+    /// </summary>
+    public static string NamePattern(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        var pattern = new System.Text.StringBuilder("%", text.Length + 2);
+        foreach (char c in text)
+        {
+            if (c is '\\' or '%' or '_')
+            {
+                pattern.Append('\\');
+            }
+
+            pattern.Append(c is >= 'A' and <= 'Z' ? (char)(c + ('a' - 'A')) : c);
+        }
+
+        return pattern.Append('%').ToString();
+    }
+
     public const string Active = "active";
     public const string Suspended = "suspended";
     public const string Expired = "expired";
