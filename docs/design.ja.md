@@ -3137,7 +3137,7 @@ M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に�
 - テスト:
   - .NET のテストで、`[UnmanagedCallersOnly]` の関数を関数ポインター（`delegate* unmanaged`）で直接呼び、JIT の上で引数の確かめ、メモリの解放、誤り、例外の受け止めを確かめる。
   - CI の NativeAOT のジョブで、3 つの OS の C コンパイラー（Windows は MSVC、Linux は gcc、macOS は clang）で、発行した共有ライブラリと手書きのヘッダーに C の小さなテストのプログラムをつないで動かす。手元の Windows でも同じものを動かす。関数の型（引数と戻り値）は、C のテストのプログラムが、公開するすべての関数をヘッダーの型の関数ポインターに入れて確かめる。
-- ヘッダー: `include/elasticlm.h` を手で書いてリポジトリに入れる。CI で、ライブラリが定義して公開する関数の名前の一覧を取り出し、ヘッダーの宣言と比べ、食い違えば失敗にする。取り出し方は、Windows が `dumpbin /exports`、Linux が `nm -D --defined-only`、macOS が `nm -gU`（先頭の `_` を除く）。NativeAOT のランタイムが自分で公開する名前（`DotNetRuntimeDebugHeader` など。最初の発行で一覧を確かめる）は、許す一覧に書いて除く。比べるのは名前だけで、型は上の C のテストのプログラムが確かめる。
+- ヘッダー: `include/elasticlm.h` を手で書いてリポジトリに入れる。CI で、ライブラリが定義して公開する関数の名前の一覧を取り出し、ヘッダーの宣言と比べ、食い違えば失敗にする。取り出し方は、Windows が `dumpbin /exports`、Linux が `nm -D --defined-only`（NativeAOT が付ける記号の版 `@@V1.0` を除く。M6a の CI で見た）、macOS が `nm -gU`（先頭の `_` を除く）。NativeAOT のランタイムが自分で公開する名前（`DotNetRuntimeDebugHeader` など。最初の発行で一覧を確かめる）は、許す一覧に書いて除く。比べるのは名前だけで、型は上の C のテストのプログラムが確かめる。
 - RID: M6 の CI で作って確かめるのは、今の NativeAOT のジョブの 3 つのランナーの RID（`win-x64`、`linux-x64`、`osx-arm64`）である。§4.1 の残りの 4 つ（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）のビルドと配布は、3 つの実行ファイルの分も合わせて F1 で扱う。
 
 各行の Grill で決める点:

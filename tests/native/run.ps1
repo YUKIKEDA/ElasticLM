@@ -78,7 +78,8 @@ try {
     } elseif ($IsMacOS) {
         @((& nm -gU $Library) | ForEach-Object { ($_ -split '\s+')[-1] -replace '^_', '' })
     } else {
-        @((& nm -D --defined-only $Library) | ForEach-Object { ($_ -split '\s+')[-1] })
+        # NativeAOT gives its Linux exports the symbol version V1.0, which nm prints as name@@V1.0.
+        @((& nm -D --defined-only $Library) | ForEach-Object { ($_ -split '\s+')[-1] -replace '@.*$', '' })
     }
     $exported = @($exported | Where-Object { $_ -match '^(elm_|DotNet)' -and $_ -ne 'DotNetRuntimeDebugHeader' } | Sort-Object -Unique)
     $difference = Compare-Object $declared $exported
