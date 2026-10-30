@@ -204,13 +204,13 @@ public sealed class ActivationTests : IAsyncLifetime
     ///
     /// Steps:
     /// - Make an activation request, make it again with renew 1, have the service process it, import the answer; make a
-    ///   deactivation proof and forget it; import 262,145 bytes, 262,144 bytes of spaces, and a null response; free a null
-    ///   string.
+    ///   deactivation proof and forget it; import 262,145 bytes, 262,144 bytes of spaces, 262,145 bytes at address 4096
+    ///   (never mapped on the three OSes), and a null response; free a null string.
     ///
     /// Expected:
     /// - A request with replaced 0, then another with replaced 1; the import gives a license and state 1; the proof is
-    ///   text; forget is 0; ELM_MALFORMED (2) for both sizes (the larger before reading); ELM_INVALID_ARGUMENT (1) for
-    ///   null with out null; no crash.
+    ///   text; forget is 0; ELM_MALFORMED (2) for the three (the larger ones before reading, so the unmapped address is
+    ///   not read); ELM_INVALID_ARGUMENT (1) for null with out null; no crash.
     /// </remarks>
     [Fact]
     public async Task OfflineFiles_RoundTrip_AndTheAnswersBounds()
@@ -233,6 +233,7 @@ public sealed class ActivationTests : IAsyncLifetime
 
         Assert.Equal(2, ActivationApi.Import(_api, activation, new byte[262_145], out _));
         Assert.Equal(2, ActivationApi.Import(_api, activation, Enumerable.Repeat((byte)' ', 262_144).ToArray(), out _));
+        Assert.Equal(2, ActivationApi.ImportAt(activation, 4096, 262_145));
         Assert.Equal((1, (nint)0), (ActivationApi.Import(_api, activation, null, out nint none), none));
         ActivationApi.FreeNullString();
         ActivationApi.Destroy(activation);
@@ -247,10 +248,10 @@ public sealed class ActivationTests : IAsyncLifetime
     ///   activation.
     ///
     /// Steps:
-    /// - Make a request, have it processed, move the clock 25 hours, import the answer.
+    /// - Make a request, have it processed, move the clock 25 hours, import the answer, then import it again.
     ///
     /// Expected:
-    /// - 0 and elm_license_in_grace_period 1.
+    /// - 0 and elm_license_in_grace_period 1, both times.
     /// </remarks>
     [Fact]
     public async Task Import_InsideGrace_IsInGrace()
@@ -263,6 +264,9 @@ public sealed class ActivationTests : IAsyncLifetime
         Assert.Equal(0, ActivationApi.Import(_api, activation, Encoding.UTF8.GetBytes(answer), out nint license));
         Assert.Equal(1, ActivationApi.InGrace(license));
         NativeApi.FreeLicense(license);
+        Assert.Equal(0, ActivationApi.Import(_api, activation, Encoding.UTF8.GetBytes(answer), out license));
+        Assert.Equal(1, ActivationApi.InGrace(license));
+        NativeApi.FreeLicense(license);
         ActivationApi.Destroy(activation);
     }
 
@@ -272,14 +276,16 @@ public sealed class ActivationTests : IAsyncLifetime
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - An activation whose callback calls, on the same handle: refresh, deactivate, destroy, state, ID, and check.
+    /// - An activation whose callback calls, on the same handle: refresh, deactivate, destroy, state, ID, check, and refresh
+    ///   again, so the callback ends with a failure's message.
     ///
     /// Steps:
-    /// - Activate.
+    /// - Activate. Then, with an offline-only activation and the same callback, import a processed answer.
     ///
     /// Expected:
     /// - Inside: refresh and deactivate ELM_INVALID_STATE (19); destroy does nothing (the handle works afterwards); state 1;
-    ///   the ID read; check 0. Outside: activate 0 with an empty message.
+    ///   the ID read; check 0; the last refresh 19. Outside: activate 0 with an empty message. The import's callback runs on
+    ///   the test's thread, and the import returns 0 with an empty message there.
     /// </remarks>
     [Fact]
     public async Task InsideTheCallback_BlockingCallsAreRefused()
@@ -290,10 +296,23 @@ public sealed class ActivationTests : IAsyncLifetime
         Assert.Equal(0, ActivationApi.Activate(_api, activation, key, out nint license, out _));
         Assert.Equal(string.Empty, NativeApi.LastError);
         StateCallbacks.Reenter = 0;
-        Assert.Equal(["refresh 19", "deactivate 19", "state 1", "id ok", "check 0"], StateCallbacks.Inside.ToArray());
+        Assert.Equal(["refresh 19", "deactivate 19", "state 1", "id ok", "check 0", "refresh 19"], StateCallbacks.Inside.ToArray());
         Assert.Equal(1, ActivationApi.State(activation));
         NativeApi.FreeLicense(license);
         ActivationApi.Destroy(activation);
+
+        // An import calls back on the caller's own thread, where the message the callback leaves would be seen.
+        nint offline = Create("o", null);
+        Assert.Equal(0, ActivationApi.Request(_api, offline, key, 0, out string request, out _));
+        string answer = await ProcessAsync(request);
+        StateCallbacks.Reset();
+        StateCallbacks.Reenter = offline;
+        int thread = Environment.CurrentManagedThreadId;
+        Assert.Equal(0, ActivationApi.Import(_api, offline, Encoding.UTF8.GetBytes(answer), out license));
+        StateCallbacks.Reenter = 0;
+        Assert.Equal((thread, string.Empty), (StateCallbacks.LastThread, NativeApi.LastError));
+        NativeApi.FreeLicense(license);
+        ActivationApi.Destroy(offline);
     }
 
     /// <summary>
@@ -307,8 +326,9 @@ public sealed class ActivationTests : IAsyncLifetime
     ///
     /// Steps:
     /// - Hold the callback; move the clock 23 hours and on in small steps until the callback is entered; destroy A on
-    ///   another thread and see it has not returned after 300 ms; release the callback; then move the clock a day. Make
-    ///   activation B on the same folder after another day (a refresh already due) and wait for its callback.
+    ///   another thread and see it has not returned after 300 ms, nor after the clock moves 6 seconds (past the 5 seconds
+    ///   DisposeAsync waits for the timer's work); release the callback; then move the clock a day. Make activation B on
+    ///   the same folder after another day (a refresh already due) and wait for its callback.
     ///
     /// Expected:
     /// - A's callback 1→3 (refused) with error 31 and a message, on a thread other than the test's; destroy returns only
@@ -329,6 +349,8 @@ public sealed class ActivationTests : IAsyncLifetime
         _test.Time.Advance(TimeSpan.FromHours(23));
         await _test.WaitWithClockAsync(() => Task.FromResult(StateCallbacks.Entered.IsSet));
         Task destroy = Task.Run(() => ActivationApi.Destroy(a), TestContext.Current.CancellationToken);
+        Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
+        _test.Time.Advance(TimeSpan.FromSeconds(6));
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         hold.Set();
         await destroy;

@@ -241,11 +241,11 @@ public sealed partial class ActivationClientTests
     ///   a service URL and B with it.
     ///
     /// Steps:
-    /// - A makes a request, it is processed, the clock moves 1 day and 1 hour, and A imports the answer; then B activates
+    /// - A makes a request, it is processed, the clock moves 1 day and 1 hour, and A imports the answer twice; then B activates
     ///   online.
     ///
     /// Expected:
-    /// - A's result is in its grace period; B's is not.
+    /// - A's two results are in their grace period; B's is not.
     /// </remarks>
     [Fact]
     public async Task Offline_ImportInsideGrace_ReportsTheGracePeriod()
@@ -257,6 +257,7 @@ public sealed partial class ActivationClientTests
 
         string answer = await ProcessedAsync(vendor, Created(await a.CreateActivationRequestAsync(key, cancellationToken: Cancel)).File);
         vendor.Test.Time.Advance(TimeSpan.FromHours(25));
+        Assert.True(Assert.IsType<ActivationResult.Activated>(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
         Assert.True(Assert.IsType<ActivationResult.Activated>(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
         Assert.False(Assert.IsType<ActivationResult.Activated>(await b.ActivateAsync(key, Cancel)).InGracePeriod);
     }

@@ -148,6 +148,17 @@ internal static unsafe class ActivationApi
         return code;
     }
 
+    public static int ImportAt(nint activation, nint address, int length)
+    {
+        nint result = -1;
+        return ((delegate* unmanaged<nint, byte*, nuint, nint*, int>)&Exports.ActivationImportResponse)(
+            activation,
+            (byte*)address,
+            (nuint)length,
+            &result
+        );
+    }
+
     public static void FreeNullString() => ((delegate* unmanaged<byte*, void>)&Exports.StringFree)(null);
 
     public static void Destroy(nint activation) => ((delegate* unmanaged<nint, void>)&Exports.ActivationDestroy)(activation);
@@ -207,6 +218,7 @@ internal static unsafe class StateCallbacks
                 "check " + ((delegate* unmanaged<nint, byte*, byte*, int, nint*, int>)&Exports.ActivationCheck)(a, null, null, 0, &checkedLicense)
             );
             ((delegate* unmanaged<nint, void>)&Exports.LicenseFree)(checkedLicense);
+            Inside.Enqueue("refresh " + ((delegate* unmanaged<nint, nint*, long*, int>)&Exports.ActivationRefresh)(a, &license, null));
         }
 
         Entered.Set();

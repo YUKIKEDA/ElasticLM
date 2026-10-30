@@ -40,7 +40,7 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | `src/ElasticLM.Cli` | CLI `elm`（design §16）。NativeAOT の単一バイナリ。`ElmApp.Run` に入出力・時刻・環境変数を渡せるので、テストは同じプロセスで動かす。`elm log verify` と `elm server`（管理 API を呼ぶ）は M3c で足した |
 | `src/ElasticLM.Native` | `libelasticlm`（design §17、0.105）。C ABI の関数を `[UnmanagedCallersOnly]` で出す NativeAOT の共有ライブラリ（`NativeLib=Shared`）。アセンブリ名は Windows で `elasticlm`、ほかで `libelasticlm`（ファイル名になる）。ハンドルは `GCHandle`、文字列はネイティブのメモリ、誤りの文はスレッドごと。宣言は `include/elasticlm.h` |
 | `tests/ElasticLM.Native.Tests` | `libelasticlm` の関数を、C と同じく関数ポインター（`delegate* unmanaged`）で呼ぶテスト（JIT）。ライセンスは `ElasticLM.Licensing.Tests` の `TestIssuer` で作り、時計は `Exports.Time` を偽の時計に替える |
-| `tests/native` | `libelasticlm` の C のテスト（`test_elasticlm.c`）と `run.ps1`。`run.ps1` は、公開する名前とヘッダーを比べ、警告を誤りにして C をコンパイルし、`elm` で作った鍵とライセンスで、発行したライブラリを実行時に読み込んで動かす。CI の NativeAOT のジョブが動かし、手元では `./tests/native/run.ps1 -Publish` |
+| `tests/native` | `libelasticlm` の C のテスト（`test_elasticlm.c`）と `run.ps1`。`run.ps1` は、公開する名前とヘッダーを比べ、警告を誤りにして C をコンパイルし、`elm` で作った鍵とライセンスで、発行したライブラリを実行時に読み込んで動かす。有効化の部分は、発行した `elm-service` をループバックで立てて動かす。CI の NativeAOT のジョブが動かし、手元では `./tests/native/run.ps1 -Publish` |
 | `tests/ElasticLM.Licensing.Tests` | `ElasticLM.Licensing` のテスト。鍵とトークンはテストの中で作る（`TestIssuer`） |
 | `tests/ElasticLM.Client.Tests` | `ElasticLM.Client` のテスト。作った証明をサーバー側の `ProofVerifier`（`ElasticLM.Issuing`）で確かめる |
 | `tests/ElasticLM.Issuing.Tests` | `ElasticLM.Issuing` のテスト。発行したライセンスとリースを `ElasticLM.Licensing` で検証する |

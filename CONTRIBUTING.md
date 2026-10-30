@@ -27,7 +27,7 @@ Never commit a private key, a secret, or a real license token, test data include
 - PowerShell 7 for `./build.ps1`.
 - Node.js of `web/admin/.node-version` (24), which includes Corepack. pnpm needs no install: `corepack pnpm` takes the version and hash in `web/admin/package.json`, downloading it on first use. `./build.ps1 -SkipWeb` skips the admin UI and uses the `web/admin/dist` that is there.
 - `dotnet tool restore` once after cloning (CSharpier).
-- For a NativeAOT publish on Windows: Visual Studio's "Desktop development with C++" workload (the MSVC linker). The same workload compiles the C test of `libelasticlm`: `./tests/native/run.ps1 -Publish` publishes the library and `elm`, compares the exports with `include/elasticlm.h`, and runs the C test (gcc on Linux, clang on macOS).
+- For a NativeAOT publish on Windows: Visual Studio's "Desktop development with C++" workload (the MSVC linker). The same workload compiles the C test of `libelasticlm`: `./tests/native/run.ps1 -Publish` publishes the library, `elm`, and `elm-service` (which needs `web/admin/dist`), compares the exports with `include/elasticlm.h`, and runs the C test (gcc on Linux, clang on macOS), the activation part against `elm-service` on loopback.
 
 ## Versioning
 
