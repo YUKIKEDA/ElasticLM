@@ -190,10 +190,11 @@ jobs:
 
       - name: C test of libelasticlm
         # design §17.4: the exports against the header, then the C test compiled with warnings as errors and run against
-        # the published library with keys and licenses made by elm.
+        # the published library with keys and licenses made by elm. design §17.5: the activation test runs against the
+        # published elm-service on loopback.
         run: |
           $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
-          ./tests/native/run.ps1 -Library (Join-Path native $name) -Elm (Join-Path publish ($IsWindows ? 'elm.exe' : 'elm'))
+          ./tests/native/run.ps1 -Library (Join-Path native $name) -Elm (Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')) -Service (Join-Path publish ($IsWindows ? 'elm-service.exe' : 'elm-service'))
 
       - name: Smoke
         run: |

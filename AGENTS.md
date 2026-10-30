@@ -65,5 +65,5 @@ Skills live in `.agents/skills/`. `skills-lock.json` pins the ones that come fro
 - Node.js of `web/admin/.node-version` (24) with its Corepack, for the admin UI (`web/admin/`). `./build.ps1` checks the version and runs pnpm through `corepack pnpm`, which checks pnpm's version and hash against `packageManager`. `./build.ps1 -SkipWeb` uses an existing `web/admin/dist` instead (design §15.2).
 - Windows is the primary host. CI runs the same gate on Windows, Linux, and macOS.
 - The agent shell is PowerShell (`.cursor/rules/powershell-shell.mdc`).
-- `libelasticlm` (`src/ElasticLM.Native`, `include/elasticlm.h`): `./build.ps1` runs its .NET tests; its C test runs with `./tests/native/run.ps1 -Publish` (MSVC from Visual Studio's C++ workload on Windows) and in the CI NativeAOT job.
+- `libelasticlm` (`src/ElasticLM.Native`, `include/elasticlm.h`): `./build.ps1` runs its .NET tests; its C test runs with `./tests/native/run.ps1 -Publish` (which also publishes `elm-service`, so `web/admin/dist` must be built; MSVC from Visual Studio's C++ workload on Windows) and in the CI NativeAOT job.
 - Linux containers run in WSL containers (`wslc`, WSL 3.0.1 or later), not Docker. The images of the CI steps (PostgreSQL, Keycloak) start the same way on Windows (`.cursor/rules/testing.mdc`).

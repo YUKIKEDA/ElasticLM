@@ -11,5 +11,9 @@
     <ProjectReference Include="..\..\src\ElasticLM.Native\ElasticLM.Native.csproj" />
     <!-- The licenses are made with the Licensing tests' issuer: keys generated at run time (.cursor/rules/testing.mdc). -->
     <Compile Include="..\ElasticLM.Licensing.Tests\TestIssuer.cs" Link="TestIssuer.cs" />
+    <!-- design §17.5: the activation tests run against a real elm-service on loopback, as ElasticLM.Client.Tests do. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
+    <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
   </ItemGroup>
 </Project>

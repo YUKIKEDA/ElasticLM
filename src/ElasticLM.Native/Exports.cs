@@ -15,7 +15,7 @@ namespace ElasticLM.Native;
     "CA1031:Do not catch general exception types",
     Justification = "design §17.3: no exception may leave an exported function; each becomes ELM_INTERNAL_ERROR."
 )]
-public static unsafe class Exports
+public static unsafe partial class Exports
 {
     private const int MaxRootKeys = 16;
     private const int MaxRevokedKeyIds = 1024;
@@ -47,12 +47,7 @@ public static unsafe class Exports
             var o = (InstallationOptions*)options;
             StructSizes.Check(o, "options");
             string product = NativeStrings.Read(o->ProductId, "product_id");
-            KeyScope scope = o->Scope switch
-            {
-                0 => KeyScope.User,
-                1 => KeyScope.Machine,
-                _ => throw NativeException.Invalid("scope must be ELM_SCOPE_USER or ELM_SCOPE_MACHINE."),
-            };
+            KeyScope scope = Scope(o->Scope);
             bool create = Flag(o->Create, "create");
             var store = new InstallationKeyStore(product, scope, NativeStrings.ReadOptional(o->Directory, "directory"));
             InstallationKey? key;
@@ -183,13 +178,7 @@ public static unsafe class Exports
             var r = (Requirement*)requirement;
             StructSizes.Check(r, "requirement");
             string product = NativeStrings.Read(r->ProductId, "product_id");
-            LicenseKind kind = r->Kind switch
-            {
-                0 => LicenseKind.Standard,
-                1 => LicenseKind.Trial,
-                2 => LicenseKind.Server,
-                _ => throw NativeException.Invalid("kind must be ELM_KIND_STANDARD, ELM_KIND_TRIAL, or ELM_KIND_SERVER."),
-            };
+            LicenseKind kind = Kind(r->Kind);
             string? feature = NativeStrings.ReadOptional(r->FeatureId, "feature_id");
             string? version = NativeStrings.ReadOptional(r->FeatureVersion, "feature_version");
             NativeInstallation? installation = r->Installation == 0 ? null : NativeHandles.Get<NativeInstallation>(r->Installation, "installation");

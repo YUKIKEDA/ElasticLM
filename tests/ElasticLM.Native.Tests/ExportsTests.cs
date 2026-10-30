@@ -11,6 +11,7 @@ namespace ElasticLM.Native.Tests;
 /// Tests of the functions libelasticlm exports (design §17.3, §17.4), called through unmanaged function pointers as C calls
 /// them. They share the verifiers' clock (<see cref="Exports.Time"/>), so they run one at a time in this class.
 /// </summary>
+[Collection(NativeClock.Name)]
 public sealed unsafe class ExportsTests : IDisposable
 {
     private readonly TestIssuer _issuer = new();
