@@ -226,7 +226,7 @@ public sealed class ElmServiceTests
 
         await service.StopAsync();
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
-        AuditRow row = Assert.Single(await database.ListAuditAsync(0, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
+        AuditRow row = Assert.Single(await database.ListAuditAsync(null, false, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
         Assert.Equal("{\"count\":2}", row.Entry.Detail);
     }
 
@@ -261,10 +261,10 @@ public sealed class ElmServiceTests
         await service.WaitForTimersAsync();
         await test.ExecuteAsync("ALTER TABLE audit_log_hidden RENAME TO audit_log");
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
-        Assert.DoesNotContain(await database.ListAuditAsync(0, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
+        Assert.DoesNotContain(await database.ListAuditAsync(null, false, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
 
         await service.StopAsync();
-        AuditRow row = Assert.Single(await database.ListAuditAsync(0, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
+        AuditRow row = Assert.Single(await database.ListAuditAsync(null, false, 10, cancel), r => r.Entry.Action == AuditActions.AuthFailed);
         Assert.Equal("{\"count\":2}", row.Entry.Detail);
     }
 
@@ -291,10 +291,10 @@ public sealed class ElmServiceTests
         await test.StartAsync(s => s with { AuditRetention = TimeSpan.FromDays(1) });
         await using Database database = Database.Create(test.Provider, test.ConnectionString);
         CancellationToken cancel = TestContext.Current.CancellationToken;
-        Assert.Single(await database.ListAuditAsync(0, 10, cancel));
+        Assert.Single(await database.ListAuditAsync(null, false, 10, cancel));
 
         test.Time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromHours(1));
-        await TestService.WaitForAsync(async () => (await database.ListAuditAsync(0, 10, cancel)).Count == 0);
+        await TestService.WaitForAsync(async () => (await database.ListAuditAsync(null, false, 10, cancel)).Count == 0);
         Assert.Equal(new AuditCheck(0, null), await database.VerifyAuditAsync(cancel));
     }
 }

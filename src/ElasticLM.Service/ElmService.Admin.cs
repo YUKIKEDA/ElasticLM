@@ -382,16 +382,30 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.InvalidArgument, "limit must be between 1 and 200.").ConfigureAwait(false);
         }
 
-        long after = 0;
+        long? after = null;
         if (context.Request.Query["after"] is { Count: > 0 } afterText)
         {
-            if (afterText.Count != 1 || !long.TryParse(afterText[0], NumberStyles.None, CultureInfo.InvariantCulture, out after))
+            if (afterText.Count != 1 || !long.TryParse(afterText[0], NumberStyles.None, CultureInfo.InvariantCulture, out long parsed))
             {
                 return await RefuseAsync(context, ErrorCode.InvalidArgument, "after must be a row number.").ConfigureAwait(false);
             }
+
+            after = parsed;
         }
 
-        IReadOnlyList<AuditRow> rows = await Database.ListAuditAsync(after, limit + 1, context.RequestAborted).ConfigureAwait(false);
+        // design §14.5 (M5d1): asc (the default) or desc; with desc, after gives the rows below it, newest first.
+        bool descending = false;
+        if (context.Request.Query["order"] is { Count: > 0 } orderText)
+        {
+            if (orderText.Count != 1 || orderText[0] is not ("asc" or "desc"))
+            {
+                return await RefuseAsync(context, ErrorCode.InvalidArgument, "order must be asc or desc.").ConfigureAwait(false);
+            }
+
+            descending = orderText[0] == "desc";
+        }
+
+        IReadOnlyList<AuditRow> rows = await Database.ListAuditAsync(after, descending, limit + 1, context.RequestAborted).ConfigureAwait(false);
         AuditRow[] page = [.. rows.Take(limit)];
         long? next = rows.Count > limit ? page[^1].N : null;
         var answer = new AuditPage([.. page.Select(ToItem)], next);
