@@ -1236,6 +1236,29 @@ describe('ApiKeys', () => {
   });
 
   /*
+   * Preconditions: an owner; the creation gets no answer (the connection drops).
+   * Steps: fill the name and one permission; press Create.
+   * Expected: one POST; the screen says to look at the list before sending again; no key is shown and the button works
+   * again.
+   */
+  it('does not send a key request again when no answer came', async () => {
+    answer('GET', '/v1/admin/me', 200, root);
+    answer('GET', adminsPath, 200, { items: people, next: null });
+    answer('GET', keysPath, 200, { items: [], next: null });
+    answer('POST', '/v1/admin/api-keys', 0, undefined, { lost: true });
+    location.hash = '#/api-keys';
+    const host = mount();
+    await settle();
+    field(host, 'name').value = 'ci';
+    (host.querySelector('input[value="license.read"]') as HTMLInputElement).checked = true;
+    submit(host.querySelector('form.api-key') as HTMLFormElement);
+    await settle();
+    expect(posts()).toHaveLength(1);
+    expect(host.textContent).toContain('Look at the list before you send again');
+    expect([host.querySelector('input.key'), button(host, 'Create the key')!.disabled]).toEqual([null, false]);
+  });
+
+  /*
    * Preconditions: an owner; one live key.
    * Steps: press Revoke; confirm.
    * Expected: the confirmation names the key and its prefix; one DELETE; the list is read again.
