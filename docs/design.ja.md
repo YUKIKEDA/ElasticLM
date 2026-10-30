@@ -170,6 +170,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.99 | 管理画面のログイン（BFF） | M5b で、`/auth/login` と `/auth/callback` を ASP.NET Core の OpenIdConnect のハンドラーに任せ（認可コードと PKCE、`query` で戻す、既定の値に頼らず明示する）、ID トークンを確かめた後に、データベースのセッションと Cookie `__Host-elm-session` を自分で作る（ASP.NET の Cookie 認証は使わない）。画面のログインは、秘密を持つクライアント `oidc.webClientId` とその秘密、鍵暗号化鍵がそろい、`publicUrls` の最初の URL（パスは `/`）が https か、ブラウザを使わない試験のためのループバックの http のときだけ有効にし、画面はその URL だけで配る。役割のクレームは ID トークンとアクセストークンの両方に求める。ログインの時間切れはサービスの `TimeProvider` で確かめる。戻り先は常に `/`。セッションは操作がなければ既定 30 分、最長既定 12 時間（`session.idleMinutes`、`session.maxHours`）。Cookie で認証する状態を変える要求は、`X-ELM-CSRF: 1` と、`Origin` があれば同じオリジンであることを求める。セッションの一覧と取り消しは `owner` だけ。管理者の無効化でその人のセッションを消す。Data Protection の鍵は、鍵暗号化鍵で AES-256-GCM で暗号化してデータベースに置き、サービスがデータベースのロックの下で作る（§5, §14.5, §14.6, §14.7, §14.8, §15.3, §18.2。M5b の Grill と設計のレビュー、Issue #109、#110） |
 | 0.100 | 管理画面の土台と最初の画面 | M5c で、画面のログインが有効なときだけ、`elm-service` が `/` で `index.html` を、`/assets/*` で Vite のハッシュつきのファイルを、埋め込みのリソースから配る。画面の中の行き先は `#` の後ろで表し、サーバーは知らないパスに `index.html` を返さない。画面の応答は CSP（`default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'`）、`nosniff`、`no-referrer` を持ち、`index.html` は `no-cache`、`/assets/*` は 1 年の `immutable`。`/` はセッションを求めず、画面が API の `401` を受けて `/auth/login` へ移る。`GET /v1/admin/me` で自分の役割と許可を返し（監査ログの例外）、許可のない操作を画面で出さない。ライセンスの一覧に、名前の部分一致 `?q=` と、画面がキーから作る SHA-256 の `?keyHash=` を足す（キーを URL に載せない。設計のレビューで持ち主が決めた）。最初の画面はライセンスの一覧・検索・詳細・失効。CI は秘密を持たない Linux のジョブで SPA を 1 回ビルドして `dist` を渡し（そのジョブの actions はコミットの SHA で固定する。設計のレビューで持ち主が決めた）、`dist` がなければ `ElasticLM.Service` のビルドが止まる。テストは Vitest と happy-dom と .NET の配信のテストで、CSP の違反は PR ごとに手元のヘッドレスの Chrome で確かめる（§5.3, §14.5, §14.6, §15.2, §15.3, §18.2, §21。M5c の Grill と設計のレビュー、Issue #116） |
 | 0.101 | M5d の分け方と画面の決まり | M5d を M5d1（日々の操作: 発行、ライセンスの一時停止・再開・期限の延長、有効化の一覧と解除、オフラインの処理、監査ログ）と M5d2（サポートと管理: リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション）の 2 行に分け、この順に進める。ライセンスの編集（`PATCH`）は、v1 では管理 API だけで行う。ヘッダーに各画面への切り替えを並べ、`GET /v1/admin/me` の許可で読めない画面は出さない。発行は、製品 → その製品のポリシー → 名前 → 機能（`ver` と機能の期限は任意。`seats` はポリシーが `server` か `floating: cloud` のときだけ入れて必須、`fromFirstActivation` のポリシーでは期限を入れない）→ 最大の有効化の数・期限・`meta`（任意）の順に入れ、送る前に中身の確認を示す。新しいライセンスキーと API キーは、作った直後に一度だけ、コピーのボタンと、再表示できないことを示す文とともに示す（ライセンスキーは、そのあと詳細へ移る）。ライセンスファイルは、`license.file` を持ち、ポリシーが `unbound` で状態が `Active` のときだけ、詳細の画面から保存する（名前は応答の `Content-Disposition` と同じ `<ライセンス ID>.elmlic`）。オフラインの処理は、画面で要求ファイル（`.elmreq`、または解除の証明 `.elmdeact`。64 KiB まで）を選んで送り、`.elmreq` の答え（`200` の本文）をそのまま `.elmresp` で保存する。`.elmdeact` は `204` なので、結果を示すだけである。ファイルの読み書きはブラウザで行い、画面とサーバーはファイルを保存しない（サービスが残すのは §12.8.4 の `offline_requests` だけ）。`GET /v1/admin/audit` に `?order=desc` を足し（新しい順では `after` より小さい `n` の行を返す。知らない値でも同じ。`order` の既定は今の古い順）、画面は新しい順に出して、連なりの確かめのボタンを置く。有効化とリースの一覧は独立した画面にせず、ライセンスの詳細に置き、解除と強制返却もそこから行う。確認を求める操作（戻せない操作: 解除、強制返却、試用の削除、API キーとセッションの取り消し。戻せるが端末や管理者にすぐ効く操作: 一時停止、管理者の無効化）は、対象の名前を示す確認のあとで送る。テストは M5c と同じ形（画面ごとの Vitest、API を足すときの .NET のテスト、PR ごとの手元のヘッドレスの Chrome での CSP の確かめ）。各行の細かい設計は、その行の Grill で決め（§14.6 の一覧）、PR の前に独立した設計のレビューを当てて、その行の実装と同じ PR に入れる（0.61、0.97、§12.8.4、§14.5、§14.6、§15.1、§22。M5d の Grill と設計のレビュー、Issue #121） |
+| 0.102 | 管理画面の日々の操作の画面 | M5d1 で、0.101 の画面の決まりの上に次を決めた。監査ログの `order` は `asc` と `desc` だけで既定は `asc`、ほかは `400`、新しい順の `next` はページの最後の行の `n`。自分の `audit.list` の行が先頭に来るのはそのまま示す。ライセンスファイルのボタンは、`policy.read` があればポリシーを読んで `unbound` かつ `Active` のときだけ出し、なければ `Active` のときに出して API の `409` を示す。オフラインの処理は `.elmreq` と `.elmdeact` を 64 KiB まで受け、`200` の答えを要求ファイルと同じ名前の `.elmresp` で保存し、`204` は受け付けたと示す。発行の画面は `license.create`・`product.read`・`policy.read` がそろうときだけ出し、ポリシーで `seats` と期限の欄を変える。一時停止（確認つき）・再開（確認なし）・延長（UTC の日時、画面でも確かめる）は、`license.update` と API が受ける状態のときだけ出す。新しいキーは画面のメモリだけに置く。有効化の一覧はライセンスの詳細に置き、解除はホスト名か鍵 ID を示す確認のあとで送る（§14.5、§15.2。M5d1 の Grill、Issue #125） |
 
 ## 1. 目的と利用者
 
@@ -2299,7 +2300,7 @@ M4a1 のエンドポイント（0.79）:
 | `POST /v1/admin/api-keys` | `apikey.create` | 本文 `{name, permissions, expiresInDays}`。`201` で、キー本体は一度だけ返す。期限は既定 90 日、上限 365 日。作る人の許可を超える許可は `403` と `ELM_FORBIDDEN` |
 | `GET /v1/admin/api-keys` | `apikey.read` | 一覧。キー本体は返さず、先頭 8 文字だけを返す |
 | `DELETE /v1/admin/api-keys/{id}` | `apikey.revoke` | キーを止める。行は消さずに止めた時刻を記録する |
-| `GET /v1/admin/audit` | `audit.read` | 監査ログの一覧 |
+| `GET /v1/admin/audit` | `audit.read` | 監査ログの一覧。M5d1 から `?order=`（`asc` か `desc`、既定は `asc`。ほかの値と 2 回以上の指定は `400` と `ELM_INVALID_ARGUMENT`）。`desc` では新しい順で、`after` より小さい `n` の行を返し（知らない値でも同じ）、`next` はそのページの最後の行の `n` |
 | `POST /v1/admin/audit/verify` | `audit.read` | 連なりを確かめ、`{intact, firstBroken}` を返す |
 | `GET /health` | なし | データベースに届けば `200`。秘密は返さない |
 
@@ -2807,6 +2808,33 @@ M5c の形（0.100）:
   - .NET（3 つの OS）: `/` と `/assets/*` の答えとヘッダー、`HEAD` とほかのメソッド、ないファイルと配らない拡張子の `404`、画面のログインがないときの `404`、`GET /v1/admin/me`、ライセンスの一覧の `q` と `keyHash`（SQLite と PostgreSQL で、`É` と `é`、`\`、`%`、`_` を含む）。
   - CSP の違反が 0 件であること: PR ごとに手元で、NativeAOT の `elm-service` を自己署名の証明書の https で待ち受けさせ、WSL コンテナの Keycloak（テストの realm）でログインして、ヘッドレスの Chrome で一覧から失効までを動かして確かめ、PR に書く（ブラウザは http のループバックで `__Host-` の Cookie を扱わないことがある、§15.3）。テストの realm の `elm-web` は、この確かめのために `https://127.0.0.1:18443/` の戻り先（`/auth/callback` とログアウトの後の `/`）も持つ。CI にはブラウザを入れない。
 - 文書: `AGENTS.md`・`CONTRIBUTING.md`・`docs/conventions.md`・`.cursor/rules/engineering.mdc` に、`web/admin/`、Node.js 24、Corepack の pnpm、`build.ps1 -SkipWeb` を書く。
+
+M5d1 の形（0.101、0.102）:
+
+- 画面の行き先と切り替え: `#/licenses`（一覧）、`#/licenses/{id}`（詳細）、`#/issue`（発行）、`#/offline`（オフラインの処理）、`#/audit`（監査ログ）。ヘッダーの切り替えには、その画面に要る許可がそろうものだけを出す（一覧は `license.read`、発行は `license.create`・`product.read`・`policy.read`、オフラインの処理は `activation.offline`、監査ログは `audit.read`）。許可のない行き先を開いたときは、API の `403` を受けて「許可がない」と示す。
+- 発行（`#/issue`）:
+  - 製品（`GET /v1/admin/products` のすべてのページ）を選び、その製品のポリシー（`GET /v1/admin/policies?productId=`）と機能（`GET /v1/admin/products/{id}/features`）を読む。
+  - 入力: ポリシー、名前（1〜256 文字）、機能（機能ごとのチェック。`ver` と機能の期限は任意）、最大の有効化の数（任意）、期限（任意）、`meta`（キーと値の組を足していく。任意）。
+  - ポリシーで欄を変える: `licenseKind` が `server` か `floating` が `cloud` なら、選んだ機能ごとに `seats`（1〜1,000,000）の欄を出して必須にする。`expirationBasis` が `fromFirstActivation` なら、ライセンスと機能の期限の欄を出さない。`fromIssue` で `duration` があれば、期限の既定（作った時刻 + `duration`）を欄の横に示す。
+  - 時刻の欄は UTC の日付と時刻で入れ、送るときは秒までの UTC の形（`2026-10-27T00:00:00Z`）にする。
+  - 送る前に、入れた中身（ポリシーの名前、名前、機能、期限、`meta`）を示して確かめを求め、確かめたら `POST /v1/admin/licenses` を送る。API の誤りは、その `detail` を示す。
+  - `201` の答えの `key` は、画面のメモリだけに置き、URL にもブラウザの保存（`sessionStorage`、`localStorage`）にも置かない。キー、コピーのボタン（`navigator.clipboard.writeText`）、再表示できないことを示す文を出し、「詳細へ」のボタンで詳細へ移る。画面を移るとキーは消える。
+- 詳細（`#/licenses/{id}`）の操作:
+  - 一時停止（`license.update`、`Active` か `Expired`）: 名前を示す確認のあとで `POST …/suspend`。
+  - 再開（`license.update`、`Suspended`）: 確認なしで `POST …/resume`（端末を止めない操作のため）。
+  - 期限の延長（`license.update`、期限があり `suspendedAt` も `revokedAt` もない）: UTC の日付と時刻を入れ、今の期限と今の時刻より後であることを画面でも確かめて、`POST …/extend` に `{expiresAt}` を送る。
+  - ライセンスファイル（`license.file`）: `policy.read` があればポリシーを読み、`binding` が `unbound` で状態が `Active` のときだけボタンを出す。`policy.read` がなければ `Active` のときに出し、`409` なら API の `detail` を示す。答え（`application/json`）を、`<ライセンス ID>.elmlic` の名前でブラウザに保存させる（`Blob` と `download` の属性つきのリンク）。
+  - 状態を変えた答え（`200` のライセンスの 1 件）で、画面のライセンスを置き換える。
+- 有効化の一覧（詳細の中、`activation.read`）: `GET /v1/admin/licenses/{id}/activations`（`limit=50`、`next` で次のページ）。列は、鍵 ID、ホストとユーザー（`client`、なければ空）、アプリ、`seq`、止めた時刻（`blockedAt`）、作った時刻と更新した時刻。解除（`activation.deactivate`）は、ホスト名（なければ鍵 ID）を示す確認のあとで `POST /v1/admin/activations/{id}/deactivate` を送り、`204` で一覧を読み直す。
+- オフラインの処理（`#/offline`、`activation.offline`）:
+  - ファイルの選択は `accept=".elmreq,.elmdeact"`。64 KiB を超えるファイルは送らずに誤りを示す。
+  - 中身を文字として読み、前後の空白を除いて `POST /v1/admin/offline` の本文にする（`Content-Type` は `text/plain`。§12.8.4 は問わない）。
+  - `200`: 答えの本文をそのまま、要求ファイルの名前の拡張子を `.elmresp` に変えた名前で保存させる（`acme.elmreq` → `acme.elmresp`。名前が `.elmreq` で終わらなければ、名前の後ろに `.elmresp` を足す）。
+  - `204`: 端末の解除を受け付けたと示す。
+  - ほかの答えは、API の `detail` を示す。ファイルは画面もサーバーも保存しない（サービスが残すのは §12.8.4 の `offline_requests` だけ）。
+- 監査ログ（`#/audit`、`audit.read`）: `GET /v1/admin/audit?order=desc&limit=50` で新しい順に出し、`next` で古い方へ読む。列は、番号、時刻、操作者の種類と ID、操作、対象、結果、IP、`detail`（文字として）。一覧を読むたびに自分の `audit.list` の行が先頭に来るのは、そのまま示す。「連なりを確かめる」のボタンで `POST /v1/admin/audit/verify` を送り、`intact`・`checked`・`firstBroken` を示す。
+- 時刻の示し方: API の時刻（ISO 8601 の UTC）は、そのまま UTC で示す（ブラウザの地域の時刻に変えない）。
+- テスト: 画面ごとの Vitest（許可と状態によるボタンの有無、ポリシーごとの欄、キーを保存しないこと、ファイルの名前と大きさの上限、監査ログの並びと確かめ）、`?order=desc` の .NET のテスト（SQLite と PostgreSQL）、手元のヘッドレスの Chrome での CSP の確かめ（発行からキーの表示、一時停止・再開・延長、ライセンスファイル、有効化の解除、オフラインの処理、監査ログ）。
 
 ### 15.3 ログイン（BFF）
 
