@@ -174,7 +174,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.103 | 管理画面のサポートと管理の画面 | M5d2 で、0.101 の画面の決まりの上に次を決めた。新しい画面は試用（`trial.read`）、管理者（`admin.read`）、API キー（`apikey.read`）で、セッションの一覧は管理者の画面の中に置く。API キーの一覧は §14.6 のとおり `support` と `viewer` も読み取りだけで見る（作成と取り消しは `owner` だけ）。リースの一覧はライセンスの詳細に置き、`lease.read` があってポリシーが `floating: cloud` のときだけ出す。強制返却は、ホスト名か鍵 ID と機能、借り出しも返ることを示す確認のあとで送る。試用は製品で絞り込み、削除は、その端末がもう一度試用できることと、試用のライセンスと有効化が残ることを示す確認のあとで送る。`support` の許可は変えず、試用の削除は `admin` 以上のままにする（§15.1 の文を直した）。API キーは作る人の許可から選び、キーは一度だけメモリだけで示す。API キーの取り消しは、名前と先頭 8 文字を示す確認のあとで送る。管理者の無効化は、セッションと API キーが使えなくなることを示す確認のあとで送り、自分の行には出さない。管理者の有効化も、その人の API キーがまた使えるようになることを示す確認のあとで送る。API キーの一覧は、作った人が無効のキーと期限の過ぎたキーに印を付ける。自分・最初の `owner`・有効な最後の `owner` の無効化は API の `409` を示す。セッションの取り消しは確認つきで、自分のセッションに印を付ける（§15.1、§15.2。M5d2 の Grill と設計のレビュー、Issue #129） |
 | 0.104 | M6 の分け方と C ABI の共通の決まり | M6 を M6a（土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS のビルドとテストの仕組み、ライセンスの検証・結果・誤りの関数）、M6b（有効化: `ActivationClient` に当たるハンドル。オンラインの操作、オフラインのファイル、自動の更新）、M6c（リース: `LicenseClient` に当たるハンドル。バックグラウンドの更新のスレッド、コールバック、借り出し）の 3 行に分け、この順に進める。有効化は `elm_activation`、リースは `elm_client` の別のハンドルにし、D0 の案の `elm_client_activate` は取り下げる（0.89 と同じ分け方）。検証と有効化の結果は、不透明なハンドル `elm_license` と取り出しの関数で返し、JSON の文字列では返さない。オプションと要件の構造体は先頭に `uint32_t struct_size` を置き、今より大きい値は `ELM_INVALID_ARGUMENT` にする。バックグラウンドのスレッドとコールバックの規則は `elm_activation` にも当てはめ、公開する関数は例外を外に出さない。テストは、.NET のテストで `[UnmanagedCallersOnly]` の関数を関数ポインターで呼ぶものと、CI の NativeAOT のジョブで 3 つの OS の C コンパイラーで C のテストのプログラムを発行したライブラリにつないで動かすものの 2 段。C ヘッダーは手で書いてリポジトリに入れ、公開する関数の一覧と比べる。M6 の CI が作る RID は `win-x64`・`linux-x64`・`osx-arm64` で、残りの 4 つは実行ファイルの分も合わせて F1（§17.3。M6 の Grill と設計のレビュー、Issue #133） |
 | 0.105 | `libelasticlm` の土台と検証 | M6a で、0.104 の共通の決まりの上に次を決めた。置き場所は `src/ElasticLM.Native`・`include/elasticlm.h`・`tests/ElasticLM.Native.Tests`・`tests/native/` で、ライブラリは `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib`。インストールの身元は `elm_installation`（`ElasticLM.Client` の鍵の保管と指紋）で、要件はそれを指す。時計の見張りは、身元があればその鍵で署名する見張り、なければ状態を持たない見張り。そのために、鍵の写しを持って破棄する `InstallationKey.CreateClockGuard` を公開する。`elm_license` は、ID・製品・種類・発行の時刻・期限・猶予期間・猶予期間の中か・機能・`meta` を出し、作ったときにすべての文字列を用意する。64 KiB を超えるファイルは、読む前に .NET と同じ `ELM_MALFORMED` で断る（設計のレビュー R2 で、Grill の `ELM_PAYLOAD_TOO_LARGE` から持ち主が改めた）。0 で埋めた構造体が .NET の既定と同じになるよう、試用の扱いは `reject_trial_as_standard` にする。誤りの文はスレッドごとのピン留めした配列、`elm_version` はビルドで書き出した定数、`ELM_ABI_VERSION` を置く。C のテストは、ライブラリを実行時に読み込み、`tests/native/run.ps1` で CI の NativeAOT のジョブと手元から動かす（§17.4。M6a の Grill と設計のレビュー、Issue #137） |
-| 0.106 | `libelasticlm` の有効化 | M6b で、0.104 と 0.105 の決まりの上に次を決めた。有効化のハンドル `elm_activation` は .NET の `ActivationClient` をそのまま使い、オプションは製品・サービスの URL・トラストストア・鍵の範囲と置き場所・端末の情報・アプリの版・時計のずれ・試用の扱い・状態のコールバックを持つ（時計の見張りは .NET の既定だけ）。オンラインの操作は終わるまで待つ関数で、C には取り消しの口を作らない。成功は `elm_license`、失敗の `RetryAfter` は任意の出力の引数。状態は列挙、有効化の ID は呼び出し側のバッファーに写す。状態の変化はオプションで登録したコールバックで知らせ、§17.3 の規則に従う。オフラインのファイルはライブラリが確保した文字列で返し、`elm_string_free` で解放する。C のテストは `run.ps1` が発行した `elm-service` を http のループバックで立てて通す（§17.5。M6b の Grill、Issue #141） |
+| 0.106 | `libelasticlm` の有効化 | M6b で、0.104 と 0.105 の決まりの上に次を決めた。有効化のハンドル `elm_activation` は .NET の `ActivationClient` をそのまま使い、オプションは製品・サービスの URL・トラストストア・鍵の範囲と置き場所・端末の情報・アプリの版・時計のずれ・試用の扱い・状態のコールバックを持つ（時計の見張りは .NET の既定だけ）。オンラインの操作は終わるまで待つ関数で、C には取り消しの口を作らない。成功は `elm_license`（猶予期間の中かは、`ActivationResult.Activated` に足す `InGracePeriod` から取る）、失敗の `RetryAfter` は任意の出力の引数。状態は列挙、有効化の ID は呼び出し側のバッファーに写す。状態の変化は、作る前に .NET の内部の口でつなぐコールバックで、番号と文を知らせる。コールバックの中からは、待つ操作と `destroy` だけを断る。オフラインのファイルはライブラリが確保した文字列で返し、`elm_string_free` で解放する。C のテストは `run.ps1` が発行した `elm-service` を http のループバックで立てて通す（§17.5。M6b の Grill と設計のレビュー、Issue #141） |
 
 ## 1. 目的と利用者
 
@@ -3328,7 +3328,7 @@ void elm_license_free(elm_license* license);
 
 ### 17.5 M6b の形（0.104、0.106）
 
-M6b の Grill（Issue #141）で決めた。§17.3 の共通の決まりと §17.4 の形（文字列、構造体、ハンドル、誤りの文、例外）に従う。
+M6b の Grill（Issue #141）で決め、設計の独立レビューで直した。§17.3 の共通の決まりと §17.4 の形（文字列、構造体、ハンドル、誤りの文、例外）に従う。
 
 型と関数（C の表記）:
 
@@ -3337,7 +3337,9 @@ enum { ELM_STATE_NONE = 0, ELM_STATE_ACTIVE = 1, ELM_STATE_REFRESH_FAILING = 2,
        ELM_STATE_REFUSED = 3, ELM_STATE_CLONE_DETECTED = 4 };                 /* ActivationState */
 
 typedef struct elm_activation elm_activation;
-typedef void (*elm_state_callback)(void* user, int32_t previous, int32_t current, int32_t error);
+
+/* message は、このコールバックの間だけ有効な UTF-8（誤りがなければ空文字列） */
+typedef void (*elm_state_callback)(void* user, int32_t previous, int32_t current, int32_t error, const char* message);
 
 typedef struct {
     uint32_t struct_size;
@@ -3350,11 +3352,11 @@ typedef struct {
     int32_t scope;                        /* ELM_SCOPE_* */
     const char* directory;                /* NULL なら §10.2 の既定 */
     int32_t send_client_info;             /* 0 か 1 */
-    const char* app_version;              /* NULL でよい */
+    const char* app_version;              /* NULL でよい。64 バイトまで */
     int32_t clock_skew_seconds;           /* 0 なら既定（300）。1〜3600 */
     int32_t reject_trial_as_standard;     /* 0（既定）か 1 */
     elm_state_callback on_state;          /* NULL でよい */
-    void* user;                           /* on_state に渡す */
+    void* user;                           /* on_state に渡す。elm_activation_destroy が戻るまで有効にしておく */
 } elm_activation_options;
 
 /* §19 の番号を返す関数 */
@@ -3368,7 +3370,7 @@ int32_t elm_activation_check(elm_activation* a, const char* feature_id, const ch
 int32_t elm_activation_create_activation_request(elm_activation* a, const char* license_key, int32_t renew,
                                                  char** out, int32_t* replaced);
 int32_t elm_activation_create_refresh_request(elm_activation* a, int32_t renew, char** out, int32_t* replaced);
-int32_t elm_activation_import_response(elm_activation* a, const char* response, size_t len, elm_license** out);
+int32_t elm_activation_import_response(elm_activation* a, const uint8_t* response, size_t len, elm_license** out);
 int32_t elm_activation_create_deactivation_proof(elm_activation* a, char** out, int32_t* replaced);
 int32_t elm_activation_forget_deactivation_proof(elm_activation* a);
 int32_t elm_activation_id(const elm_activation* a, char* buffer, size_t size, size_t* needed);
@@ -3383,23 +3385,45 @@ void elm_string_free(char* text);
 
 決まり:
 
-- 作る: `elm_activation_create` は、オプションから `ActivationClientOptions` を作って `ActivationClient.TryCreate` を呼ぶ。トラストストアの形と上限、`clock_skew_seconds`、`reject_trial_as_standard`、真偽と列挙の範囲は `elm_verifier_options`（§17.4）と同じ。`service_url` は .NET と同じく https、または http のループバックだけで、ほかと URL として読めない文字列は `ELM_INVALID_ARGUMENT`（`ActivationClient.TryCreate` は `ArgumentException` を投げる）。時計の見張りは .NET の既定（鍵の置き場所の `clock` に、その鍵で署名）で、C から差し替えない。`TryCreate` の誤りは、その番号と文を返す。
-- オンラインの操作（`activate`、`start_trial`、`refresh`、`deactivate`）は、.NET の非同期の操作を呼んだスレッドで終わるまで待つ。待つ時間は .NET の要求ごとの上限（30 秒）で決まる。C には取り消しの口を作らない。
-- 結果: `ActivationResult.Activated` は `ELM_OK` と新しい `elm_license`（§17.4 と同じハンドル。`Check` を含め、猶予期間の中かは .NET の結果から取る）。`Failed` は、その番号と文、`retry_after_seconds` が `NULL` でなければ `RetryAfter` の秒（切り上げ。なければ 0）。`deactivate` と `forget_deactivation_proof` は、`LicenseError` が `null` なら `ELM_OK`。
-- `elm_activation_check` は手元の有効化を確かめる（.NET の `Check`。サービスに届かない）。`feature_id` と `feature_version` は `NULL` でよい。
-- オフラインのファイル: `create_activation_request`・`create_refresh_request`・`create_deactivation_proof` は、.NET の `OfflineRequestResult.Created` の文字列を、ライブラリが確保した UTF-8 と NUL で `*out` に返し、`*replaced` に上書きしたか（0 か 1）を入れる。`*out` は `elm_string_free` で解放する。`renew` は 0 か 1。`import_response` は `response` の `len` バイトを UTF-8 として厳密に読む（262,144 バイトを超えれば読む前に `ELM_MALFORMED`。.NET の上限と同じ）。
+- 作る: `elm_activation_create` は、オプションから `ActivationClientOptions` を作って `ActivationClient.TryCreate` を呼ぶ。トラストストアの形と上限、`clock_skew_seconds`、`reject_trial_as_standard`、真偽と列挙の範囲は `elm_verifier_options`（§17.4）と同じ。`service_url` は .NET と同じく https、または http のループバックだけで、ほかと URL として読めない文字列は `ELM_INVALID_ARGUMENT`（`TryCreate` は `ArgumentException` を投げる）。`app_version` の 64 バイトを超えるものも同じ。時計の見張りは .NET の既定（鍵の置き場所の `clock` に、その鍵で署名）で、C から差し替えない。時計は `Exports.Time`（§17.4。本番は `TimeProvider.System`、テストだけが偽の時計に替える）を `ActivationClientOptions.TimeProvider` に渡す。`TryCreate` の誤り（`ELM_INSTALLATION_KEY_UNREADABLE` など）は、その番号と文を返す。
+- コールバックのつなぎ方: `TryCreate` は作るときに `Start` を呼び、期限を過ぎた更新はすぐ `Task.Run` で走る（`ActivationClient.cs`）。作ったあとに `StateChanged` に足すと、その最初の変化を落とす。そのため `ActivationClientOptions` に内部の口（`internal`、`StateChanged` と同じ引数の処理）を足し、`Start` の前につなぐ。`ElasticLM.Client` は `InternalsVisibleTo` を `elasticlm` と `libelasticlm`（`ElasticLM.Native` の OS ごとのアセンブリ名、§17.4）に開く。
+- オンラインの操作（`activate`、`start_trial`、`refresh`、`deactivate`）は、.NET の非同期の操作を呼んだスレッドで終わるまで待つ。C には取り消しの口を作らない。待つ時間の上限は、次の和である（ヘッダーにも書く）:
+  - 同じハンドルのほかの操作（自動の更新を含む）が終わるのを待つ時間（上限なし）。
+  - 同じ端末のほかのプロセスのロックのファイルを待つ時間（最長 10 秒、`ActivationStore.LockWait`）。
+  - 送る回数（ノンスの取得、要求、`ELM_NONCE_REQUIRED` のあとの送り直しで最大 3 回）× 1 回の上限（`HttpClient.Timeout` の 30 秒）。
+- 結果: `ActivationResult.Activated` は `ELM_OK` と新しい `elm_license`（§17.4 と同じハンドル）。猶予期間の中かは、`ActivationResult.Activated` に足す公開のプロパティ `InGracePeriod`（`init`、既定は `false`）から取る。.NET の `ActivationClient` は、受け取ったファイルを確かめた `LicenseVerificationResult.Valid` の `InGracePeriod` をそこに入れる（オフラインの答えは日が経っていて、猶予期間に入っていることがある）。`Check` は .NET の `LicenseVerificationResult` からそのまま取る。`Failed` は、その番号と文。
+- 出力の引数（§17.4 の決まりの例外）:
+  - `retry_after_seconds` は `NULL` でよい（受け取らない）。`NULL` でなければ、成功では 0、失敗では `RetryAfter` の秒（切り上げ。なければ 0）を入れる。
+  - `replaced` と `needed` は必須（`NULL` なら `ELM_INVALID_ARGUMENT`）。`*replaced` は、失敗では 0。`*needed` は、`size` が足りない失敗でも要る大きさを入れる（ほかの失敗では 0）。
+- `elm_activation_check` は手元の有効化を確かめる（.NET の `Check`。サービスに届かない）。`feature_id` と `feature_version` は `NULL` でよい。`kind` は `ELM_KIND_*`。
+- オフラインのファイル:
+  - `create_activation_request`・`create_refresh_request`・`create_deactivation_proof` は、.NET の `OfflineRequestResult.Created` の文字列を、ライブラリが確保した UTF-8 と NUL で `*out` に返し、`*replaced` に上書きしたか（0 か 1）を入れる。`*out` は `elm_string_free` で解放する。`renew` は 0 か 1。有効化の要求ファイルはライセンスキーを含む（`ActivationClient.cs`）ので、ヘッダーにその注意を書く。`elm_string_free` は、解放の前に中身をゼロで消す（.NET の文字列は消せないので、.NET より弱くはならない）。`elm_string_free` で解放してよいのは、ヘッダーがそう書く文字列だけである。
+  - `import_response` は `response` の `len` バイトを UTF-8 として厳密に読む。`response` が `NULL` なら `len` が 0 でも `ELM_INVALID_ARGUMENT`。`len` が 262,144 を超えれば読む前に `ELM_MALFORMED`（.NET は前後の空白を除いてから同じ上限を確かめるので、C ABI は空白を含めて数えるぶんだけ厳しい）。`len` が実際のバッファーより大きいときは、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。
 - 状態と有効化の ID: `elm_activation_state` は .NET の `State` の値。`elm_activation_id` は、その時の `ActivationId` を `buffer` に UTF-8 と NUL で写す。`*needed` に NUL を含めた要る大きさを入れ、`size` が足りなければ `ELM_INVALID_ARGUMENT`（`buffer` は書かない）。有効化がなければ空文字列（`*needed = 1`）。`buffer` は `size` が 0 なら `NULL` でよい。
 - 状態のコールバック（§17.2、§17.3）:
-  - `on_state` は、.NET の `StateChanged` のたびに、`previous`、`current`、`error`（`LicenseError` の番号、なければ 0）で呼ぶ。呼ぶのは、状態を変えた操作を終えたスレッド（呼んだ C のスレッドか、.NET のスレッドプールのスレッド）と、自動の更新のタイマーのスレッドである。
-  - コールバックの中から、同じ `elm_activation` の操作を呼べば `ELM_INVALID_STATE` を返して何もしない。`elm_activation_destroy` は何もしない（誤りの文に理由を残す）。ライブラリは、コールバックを呼んでいる間だけ立てるスレッドごとの印で見分ける。
-  - `elm_activation_destroy` は、呼んでいる途中のコールバックが戻るのを待ってから、.NET の `DisposeAsync`（タイマーを止め、更新の作業を最長 5 秒待つ）を終わるまで待つ。戻ったあと、そのハンドルでコールバックは呼ばれない。
-  - コールバックから例外は出ない（C の関数のため）。`.NET` の `StateChanged` の処理は、C のコールバックを呼ぶだけである。
+  - `on_state` は、.NET の状態の変化のたびに、`previous`、`current`、`error`（`LicenseError` の番号、なければ 0）、`message`（`LicenseError` の文、なければ空文字列。コールバックの間だけ有効）で呼ぶ。
+  - 呼ぶスレッド: 状態を変えた操作を終えたスレッド（呼んだ C のスレッドのこともある）か、自動の更新を走らせる .NET のスレッドプールのスレッド（`Task.Run`）。
+  - 守ること: ある操作が起こした変化のコールバックは、その操作の関数が戻る前に戻っている（.NET は、排他を外したあと、結果を返す前に変化を知らせる）。`elm_activation_destroy` が戻ったあと、そのハンドルでコールバックは呼ばれない（ライブラリ自身の印と、走っているコールバックの数を、1 つの排他の下で確かめる。.NET の `_disposed` の確かめだけでは、知らせと競る）。
+  - コールバックの中から同じ `elm_activation` の待つ操作（オンラインとオフラインの操作、`forget_deactivation_proof`）を呼べば、`ELM_INVALID_STATE` を返して何もしない。`elm_activation_destroy` は何もしない（解放の関数なので、誤りの文も変えない）。`elm_activation_state`、`elm_activation_id`、`elm_activation_check` は呼んでよい（.NET の `Check` と ID は排他を取らない）。見分けは、コールバックを呼んでいる間だけ立てる、ハンドルとスレッドごとの印で行う。コールバックが始めたほかのスレッドからの呼び出しは見分けられない。
+  - 誤りの文: コールバックを呼ぶ前にそのスレッドの誤りの文を写し、戻ったあとに戻す。コールバックの中のライブラリの呼び出しが、外側の呼び出しの文を上書きしないためである。
+  - `elm_activation_destroy` は、走っているコールバックが戻るのを待ち（§17.2 の 5 秒の例外。時間の上限はない）、そのあと .NET の `DisposeAsync`（タイマーを止め、更新の作業を最長 5 秒待つ）を終わるまで待つ。
+  - ヘッダーに書く注意: コールバックの中で、C の例外や `longjmp` で抜けない。操作を呼ぶスレッドが持つ排他を、コールバックの中で取らない（同じスレッドか、呼び出しが待っている間の別のスレッドで呼ばれるので、詰まる）。`elm_activation_destroy` を、コールバックが待っているものを持つスレッドから呼ばない。コールバックが始めたスレッドから `destroy` を呼んで、そのスレッドを待たない。コールバックを長く止めると、.NET のスレッドプールのスレッドを塞ぐ。
 - 解放と寿命: ほかのスレッドで `elm_activation` の操作が進行中に `elm_activation_destroy` を呼ぶのは、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。.NET の `DisposeAsync` は進行中の呼び出しを待たないためである。
+- ヘッダーの誤りの番号: M6b の関数は §19 のほかの番号（`ELM_INVALID_STATE`、通信と証明の番号、`ELM_LICENSE_NOT_FOUND` など）も返すので、ヘッダーに §19 の一覧をすべて書く。
 - テスト:
-  - `tests/ElasticLM.Native.Tests`: `ElasticLM.Client.Tests` と同じく、同じプロセスのループバックの `elm-service`（`TestService`）を立て、すべての関数を関数ポインターで呼ぶ。有効化・試用・更新・解除・`Check`・オフラインの要求ファイルと答えの取り込み・解除の証明と忘れること、`RetryAfter`、状態の列挙と ID のバッファー（足りないとき、ないとき）、コールバックの引数、コールバックの中からの操作と `destroy` の `ELM_INVALID_STATE`、`destroy` の後にコールバックが呼ばれないこと、オプションの確かめ。
-  - `tests/native/test_elasticlm.c`: `run.ps1` が、発行した `elm-service` を http のループバックで立て（鍵、署名鍵の証明書、ノンスの秘密、SQLite のデータベースはこの回のために作って消す）、`setup` の API キーで製品・機能・ポリシー・ライセンスを作る。C のテストは、有効化・`Check`・ID・状態・更新の要求ファイルの作成・解除を通し、コールバックが呼ばれたことを確かめる。
-  - CI の NativeAOT のジョブは、`elm-service` を発行しているので、`run.ps1` にその場所を渡す。
-- 測る値: `libelasticlm` の大きさの M6a からの差（3 つの OS、目標 8 MB 以下）と、その内訳（マップのファイル。`HttpClient` が入る）、警告の件数。
+  - `tests/ElasticLM.Native.Tests` は、`ElasticLM.Client.Tests` と同じく、`ElasticLM.Service` と `ElasticLM.Issuing` を参照し、`TestService.cs` を共有して、同じプロセスのループバックの `elm-service`（偽の時計）を立てる。`Exports.Time` に同じ偽の時計を渡し、自動の更新を待つテストは、待つ間に時計を小さく進める（`testing.mdc`）。確かめること:
+    - すべての関数を関数ポインターで呼ぶこと。有効化・試用・更新・解除・`Check`・オフラインの要求ファイルと答えの取り込み・解除の証明と忘れること。
+    - 猶予期間の中か（有効化の結果と取り込んだ答え、偽の時計で）。
+    - `RetryAfter` の切り上げ（`429` か `503` と `Retry-After` を返すサービス）と、出力の引数の失敗のときの値（`*out == NULL`、`*replaced == 0`、`retry_after` の 0 と `NULL`）。
+    - 状態の列挙、`elm_activation_state(NULL) == -1`、ID のバッファー（足りないとき、ないとき）。
+    - コールバックの引数（番号と文）、自動の更新が起こすコールバックとそのスレッド、作る前に期限を過ぎた更新の最初の変化を落とさないこと。
+    - コールバックの中からの待つ操作と `destroy` の `ELM_INVALID_STATE`（と何もしないこと）、`state`・`id`・`check` を呼べること、コールバックのあとの誤りの文が保たれること。
+    - `destroy` が走っているコールバックを待つこと（内部の印でコールバックの中を止め、`destroy` が戻らないことを確かめてから放す）、自動の更新の最中の `destroy`、`destroy` のあとにコールバックが呼ばれないこと。
+    - オプションの確かめ: `struct_size`、`service_url`（https、http のループバック、ループバックでない http、URL として読めないもの、`NULL` のオフラインだけの端末）、`app_version` の 64 と 65 バイト、オフラインだけの端末のオンラインの操作。
+    - `import_response` の 262,144 と 262,145 バイト、`response == NULL`。`renew` で `*replaced == 1`。`elm_string_free(NULL)`。
+  - `tests/native/test_elasticlm.c`: `run.ps1` が、発行した `elm-service` を http のループバックで立て、`setup` の API キーで製品・機能・ポリシー・ライセンスを作る。C のテストは、有効化・`Check`・ID・状態・更新の要求ファイルの作成・解除を通し、コールバックが呼ばれたことを確かめる。公開するすべての新しい関数をヘッダーの型の関数ポインターに入れ、残りの関数（`start_trial`、`refresh`、`create_activation_request`、`import_response`、`create_deactivation_proof`、`forget_deactivation_proof`、`elm_string_free`）は `NULL` のハンドルで呼ぶ。
+  - `run.ps1`: 新しい引数 `-Service` で `elm-service` の場所を受け取る（CI の NativeAOT のジョブは `publish/` に発行している）。`-Publish` は `ElasticLM.Service` も発行する（`web/admin/dist` が要る）。この回のために作って消す物: ルート鍵と署名鍵と証明書（`ELM_KEY_PASSPHRASE`、`ELM_SIGNING_PASSPHRASE`、`ELM_SIGNING_KEY`、`ELM_SIGNING_CERTIFICATES`、`ELM_TRUST_ROOTKEYS`）、ノンスの秘密（`ELM_NONCE_SECRET`）、SQLite のデータベース（`ELM_DATABASE_CONNECTION`）、最初の `owner`（`ELM_BOOTSTRAPOWNER_ISS`・`SUB`）。待ち受け（`ELM_LISTEN`）は空いているポートの `http://127.0.0.1:<ポート>` で、C のテストにも同じ URL を渡す（`publicUrls` がないとき、証明の `htu` は待ち受けの URL と比べられるため、`localhost` と混ぜない）。終わりに `Stop-Process` のあと `WaitForExit` で止まるのを待ってから一時フォルダーを消す（Windows は SQLite のファイルを開いたままにする）。環境は M6a と同じく元に戻す。
+- 測る値と §4.2: `libelasticlm` の大きさの M6a からの差（3 つの OS、CI の値）を §4.2 の「M6b の実測」に書く。内訳は、win-x64 で `-p:IlcGenerateMapFile=true` のマップのファイルを、M6a のコード（main の `3e1d79c`）と比べて分ける（`HttpClient` が入る）。実行時の依存（`ldd`、`otool -L`、`dumpbin /dependents`）も測り直す。Linux で OpenSSL が `DT_NEEDED` に入らず実行時に読み込まれるかは、`ldd` の結果で確かめる。どれかの OS で 8 MB を超えれば、PR を出す前に持ち主に知らせる。
 
 ## 18. ログ
 
