@@ -44,7 +44,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | W0  | 管理画面の技術の選定                                                                       | done        | [#94](https://github.com/YUKIKEDA/ElasticLM/issues/94) |
 | M5a | 管理者の土台と CLI のログイン（JwtBearer、`elm admin login`・`logout`・`request`、管理者の一覧と無効化の API、最後のログイン、90 日ログインのない管理者のキーを止める規則、偽の IdP と Keycloak のテスト、大きさの差。Grill で決める点は design.ja.md §14.6） | done        | [#102](https://github.com/YUKIKEDA/ElasticLM/issues/102) |
 | M5b | 管理画面のログイン（BFF。認可コードと PKCE、データベースのセッションとその一覧・取り消し、管理者の無効化でセッションを消す、最後のログインの更新、Data Protection の鍵の保存、`X-ELM-CSRF`、Keycloak のテストに認可コードのフロー、大きさの差。Grill で決める点は design.ja.md §14.6） | done        | [#109](https://github.com/YUKIKEDA/ElasticLM/issues/109) |
-| M5c | 管理画面の土台（`web/admin/`。`build.ps1` のビルドと `tsc`・Vitest のゲート、道具の版の確かめ、`dist` がないときの Service のビルドの誤り、秘密を持たない CI の SPA のジョブ、埋め込みと CSP つきの配信、`elm-service` の大きさの差と Windows のパスの長さの確かめ、AGENTS.md・CONTRIBUTING.md・規則・規約への Node.js と pnpm の追記、最初の画面: ライセンスの検索・詳細・失効） | not-started | —     |
+| M5c | 管理画面の土台（`web/admin/`。`build.ps1` のビルドと `tsc`・Vitest のゲート、道具の版の確かめ、`dist` がないときの Service のビルドの誤り、秘密を持たない CI の SPA のジョブ、埋め込みと CSP つきの配信、`elm-service` の大きさの差と Windows のパスの長さの確かめ、AGENTS.md・CONTRIBUTING.md・規則・規約への Node.js と pnpm の追記、最初の画面: ライセンスの検索・詳細・失効） | in-progress | [#116](https://github.com/YUKIKEDA/ElasticLM/issues/116) |
 | M5d | 管理画面の残りの画面（発行、有効化の解除、オフラインの処理、監査ログ、リースの閲覧と強制返却、試用の閲覧と削除、管理者と API キー、セッションの一覧と取り消し） | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
