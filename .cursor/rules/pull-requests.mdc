@@ -24,6 +24,7 @@ Follow `.github/pull_request_template.md` with the same headings in the same ord
 - Empty sections say `N/A`; do not delete them.
 - `## Related` has `Closes #N` alone on a line when the PR finishes the Issue, `Part of #N` when it does not (`.cursor/rules/github-closing.mdc`).
 - `## Verification` first lists every acceptance line of the Issue and how each was checked, then the commands that ran and their result: `./build.ps1`, the NativeAOT publish when the Issue names it, any search a "every X does Y" claim rests on (`.cursor/rules/spec-checks.mdc`). In M5d1 the body listed the checks but not the acceptance lines they covered, and the review asked for them (PR #126).
+- A check the design says the row makes ("M6a で確かめる") has its result under `## Verification`, or the design is changed to name the row that makes it. In M6a the design and the answer to the independent review promised a check of threads made by C, and the PR had no result until the owner's review asked (PR #138).
 - `## Measurements` carries the numbers for a change on a measured path, against a named baseline. `N/A` only when nothing on such a path changed.
 - Pass the body to `gh pr create` through a temporary UTF-8 file (`--body-file`), deleted after the call (`.cursor/rules/scratch.mdc`).
 - A PR body, a reply, or a summary comment states as checked only what ran before it was written. In M3b a summary comment said the `--config` branch had been checked by hand; it was run only after the comment was posted (the result matched, PR #22). What was not run is written as not checked.
