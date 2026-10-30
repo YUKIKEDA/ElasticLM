@@ -3292,7 +3292,7 @@ void elm_license_free(elm_license* license);
   - `elm_license_feature` と `elm_license_meta_at` の範囲外の番号、出力の引数が `NULL`、`elm_feature.struct_size` が最初の版より小さいか今の版より大きいときは `ELM_INVALID_ARGUMENT`。
 - ハンドル: 不透明なポインターは、.NET のオブジェクトを指す `GCHandle` の値である。違う型のハンドル（たとえば `elm_verifier*` を `elm_installation*` として渡す）は、見分けられるときは `ELM_INVALID_ARGUMENT`。二度の解放と解放した後の使用は、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。`elm_verifier` と `elm_installation` は、複数のスレッドから同時に使ってよい（`LicenseVerifier` は変わらない状態、確かめた鍵の証明書の `ConcurrentDictionary`、排他つきの `VerificationKey` だけを持ち、`FileClockGuard` は排他を持つ）。
 - 誤りの文: 番号を返す関数は、呼ばれるたびに同じスレッドの文を空にし、失敗なら文を書く。`elm_last_error_message` と `elm_version` と値を返す関数は、文を変えない。文は、スレッドごとのピン留めした配列（`[ThreadStatic]` の `GC.AllocateArray<byte>(n, pinned: true)`）に UTF-8 と NUL で持ち、同じスレッドの次の番号を返す関数の呼び出しまで有効。配列はスレッドの静的な値とともに集められる。C が作ったスレッドが終わったときに NativeAOT がそのスレッドを切り離し、配列を集めることは、M6a の .NET のテストと手元の確かめで確かめる。
-- `elm_version`: ライブラリの版を、ビルドで書き出した定数（`$(InformationalVersion)` から MSBuild が作るソースの定数。リフレクションを使わない）から作り、プロセスの終わりまで有効な文字列で返す。
+- `elm_version`: ライブラリの版を、ビルドで書き出した定数（`$(Version)` から MSBuild が作るソースの定数。リフレクションを使わない）から作り、プロセスの終わりまで有効な文字列で返す。
 - 時刻: ライブラリは `TimeProvider.System` を使う。`elm_verifier_create` が使う時計は内部の差し替え口（`internal`）を持ち、`ElasticLM.Native.Tests` だけが `InternalsVisibleTo` で偽の時計に替える（`testing.mdc`）。
 - テスト:
   - `tests/ElasticLM.Native.Tests`（公開するすべての関数を `&Method` の関数ポインターで呼ぶ。偽の時計。鍵とライセンスはテストの中で作る）:
