@@ -3122,14 +3122,14 @@ M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に�
 
 - 行: M6a（土台と検証）、M6b（有効化、`elm_activation`）、M6c（リース、`elm_client`）。この順に進める。
 - バックグラウンドのスレッドとコールバック: §17.2 のスレッドとコールバックの規則（作る時と止める時、`destroy` の最長 5 秒、コールバックの中からの `destroy` と操作は `ELM_INVALID_STATE`、`destroy` の後に呼ばない）は、`elm_client` だけでなく `elm_activation` にも当てはまる。.NET の `ActivationClient` も、タイマーで自動の更新をし、そのスレッドから `StateChanged` を出し、`DisposeAsync` で最長 5 秒待つ（`ActivationClient.cs`）。
-- 例外: 公開するどの関数も、すべての例外を関数の中で受け止める（`[UnmanagedCallersOnly]` の関数から例外が出ると、プロセスが終わる）。引数の例外（`ArgumentException` とその派生）は `ELM_INVALID_ARGUMENT`、ほかは `ELM_INTERNAL_ERROR`（99）にし、`elm_last_error_message` に文を残す。
+- 例外: 公開するどの関数も、すべての例外を関数の中で受け止める。.NET の NativeAOT の共有ライブラリの例は「公開する関数は普通の C# の例外の扱いを使えず、誤りのコードを返す」と書く（https://github.com/dotnet/samples/blob/main/core/nativeaot/NativeLibrary/README.md ）。関数の外に出た例外がどうなるかを書いた資料は見つからなかった（NativeAOT の相互運用のページ https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop と、例外の相互運用のページ https://learn.microsoft.com/en-us/dotnet/standard/native-interop/exceptions-interoperability は、Unix では予測できない動きか落ちる、とだけ書く）。M6a のテストで、受け止めることを確かめる。引数の例外（`ArgumentException` とその派生）は `ELM_INVALID_ARGUMENT`、ほかは `ELM_INTERNAL_ERROR`（99）にし、`elm_last_error_message` に文を残す。
 - 誤りの番号: 戻り値は `ElasticLM.Licensing.ErrorCode` の値をそのまま返す。この列挙の値は §19 の番号と同じである。
 - 結果の中身: 検証と有効化の結果は不透明なハンドル `elm_license` で返し、取り出しの関数（ID、製品、種類、期限、猶予期間の中か、機能の数と各機能（コード、版の範囲、席数、期限）、`meta`）で読む。猶予期間の中かは `VerifiedLicense` ではなく `LicenseVerificationResult.Valid` にあるので、`elm_license` が持つ。JSON の文字列では返さない（C の利用者に JSON の解析器を求めないため）。
 - 構造体の版:
   - オプションと要件の構造体は、先頭に `uint32_t struct_size` を置き、呼び出し側は `sizeof` を入れる。
-  - ライブラリは、最初の版の大きさより小さい値を `ELM_INVALID_ARGUMENT` で断る。それ以上の値では、`struct_size` の中に収まるメンバー（オフセットと大きさの和が `struct_size` 以下）だけを読み、ほかは既定の値にする。
+  - ライブラリが読むのは、最初の版の大きさ以上で今の版の大きさ以下の値だけで、それ以外（最初の版より小さい値と、今の版より大きい値）は `ELM_INVALID_ARGUMENT` で断る。読む値では、`struct_size` の中に収まるメンバー（オフセットと大きさの和が `struct_size` 以下）だけを読み、ほかは既定の値にする。
   - 後から足すメンバーは、前の版の `sizeof` の後ろに置く（前の版の末尾の詰め物に置くと、`sizeof` が変わらず見分けられない）。
-  - 今の版より大きい値は `ELM_INVALID_ARGUMENT` で断る。新しいヘッダーで作ったアプリは、古いライブラリでは動かない。ライブラリはアプリと一緒に配る（§3.6）ので、これを受け入れる。
+  - 今の版より大きい値を断るので、新しいヘッダーで作ったアプリは、古いライブラリでは動かない。ライブラリはアプリと一緒に配る（§3.6）ので、これを受け入れる。
   - 真偽のメンバーは `int32_t`（0 か 1）にし、C の `bool` を使わない（§17.1 の blittable）。
   - 構造体へのポインターが `NULL` なら `ELM_INVALID_ARGUMENT` にする。
 - 文字列はすべて UTF-8 で NUL 終端する。
@@ -3148,7 +3148,8 @@ M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に�
   - 検証の入力:
     - `elm_verifier_options`（ルート鍵の PEM、無効にした鍵 ID、`LicenseVerifierOptions` の `ClockSkew` と `AcceptTrialAsStandard`）。
     - 時計の巻き戻しの見張り（.NET の `LicenseVerifier` は `TimeProvider` と `IClockGuard` を受け取る。`FileClockGuard` はインストール鍵で状態に署名する）。C で見張りを選ぶ形と、見張らない形を許すか。
-    - `elm_requirement`（製品、種類、機能、版、インストールの身元）。インストールの身元（インストール鍵の拇印と指紋）を C のアプリがどう得るか: 鍵の置き場所（`InstallationKeyStore`、鍵の範囲、フォルダー、Windows の DPAPI）と指紋（`MachineFingerprint`）を C ABI で出すか、検証にフォルダーを渡すか。
+    - `elm_requirement`（製品、種類、機能、版、インストールの身元）。
+    - ライセンスファイルの入力: `len` が §8.6 の上限（64 KiB）を超えるときに読む前に断るか、`file` が `NULL` で `len` が 0 のときの扱い、`len` が実際のバッファーより大きいとき（ライブラリは確かめられないので、呼び出し側の誤りとしてヘッダーに書く）。取り出しの関数（`elm_license_meta` など）の `key` が `NULL` のときの扱い。インストールの身元（インストール鍵の拇印と指紋）を C のアプリがどう得るか: 鍵の置き場所（`InstallationKeyStore`、鍵の範囲、フォルダー、Windows の DPAPI）と指紋（`MachineFingerprint`）を C ABI で出すか、検証にフォルダーを渡すか。
   - 結果:
     - `elm_license` の取り出しの関数の一覧（`VerifiedLicense` のどのメンバーまで出すか）。
     - 時刻の型（UNIX 秒の `int64_t`）と、ない値（期限のないライセンス、席数のない機能）の表し方。
