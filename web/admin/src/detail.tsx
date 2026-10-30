@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'preact/hooks';
-import { api, Problem, type Activation, type License, type Me, type Page, type Policy } from './api';
+import { api, Problem, type Activation, type LeaseItem, type License, type Me, type Page, type Policy } from './api';
 import { Confirm, ErrorBanner, UtcField } from './common';
 import { save, utcOf } from './files';
 import { m } from './messages';
 
-// The license's screen (design §15.2 "M5c の形" and "M5d1 の形"): its fields, the operations the role and the license's
-// state allow, and its activations. The API refuses what the screen hides as well (design §15.1).
+// The license's screen (design §15.2 "M5c の形", "M5d1 の形", and "M5d2 の形"): its fields, the operations the role and the
+// license's state allow, its activations, and its cloud leases. The API refuses what the screen hides as well (design §15.1).
 
 export function Detail({ id, me }: { id: string; me: Me }) {
   const [license, setLicense] = useState<License | null>(null);
@@ -22,8 +22,9 @@ export function Detail({ id, me }: { id: string; me: Me }) {
       (l) => {
         if (!live) return;
         setLicense(l);
-        // design §15.2 (M5d1): the license file button needs the policy's binding; a role with license.file has policy.read.
-        if (may('license.file')) {
+        // design §15.2: the license file button needs the policy's binding (M5d1) and the lease list its floating (M5d2);
+        // a role with license.file or lease.read has policy.read. The policy is read once for both.
+        if (may('license.file') || may('lease.read')) {
           api.policy(l.policyId).then(
             (p) => live && setPolicy(p),
             (e: Error) => live && setError(e),
@@ -180,6 +181,7 @@ export function Detail({ id, me }: { id: string; me: Me }) {
             </form>
           )}
           {may('activation.read') && <Activations licenseId={id} mayDeactivate={may('activation.deactivate')} />}
+          {may('lease.read') && policy?.floating === 'cloud' && <Leases licenseId={id} mayRelease={may('lease.release')} />}
         </>
       )}
     </section>
@@ -262,6 +264,110 @@ function Activations({ licenseId, mayDeactivate }: { licenseId: string; mayDeact
                     <td>
                       <button type="button" onClick={() => setAsking(a)}>
                         {m.activations.deactivate}
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+      {page?.next && (
+        <button type="button" onClick={() => setAfter(page.next)}>
+          {m.next}
+        </button>
+      )}
+    </section>
+  );
+}
+
+// design §15.2 (M5d2): the cloud leases of the license that have not expired, stopped ones included.
+function Leases({ licenseId, mayRelease }: { licenseId: string; mayRelease: boolean }) {
+  const [after, setAfter] = useState<string | null>(null);
+  const [round, setRound] = useState(0);
+  const [page, setPage] = useState<Page<LeaseItem> | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [asking, setAsking] = useState<LeaseItem | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    setPage(null);
+    api.leases(licenseId, after).then(
+      (p) => live && setPage(p),
+      (e: Error) => live && setError(e),
+    );
+    return () => {
+      live = false;
+    };
+  }, [licenseId, after, round]);
+
+  const reload = () => {
+    setAfter(null);
+    setRound((r) => r + 1);
+  };
+
+  // A 404 means the lease was returned elsewhere or expired: the list is read again either way.
+  const release = async (lease: LeaseItem) => {
+    setAsking(null);
+    setError(null);
+    setStatus(null);
+    try {
+      await api.releaseLease(lease.id);
+      setStatus(m.leases.done);
+    } catch (e) {
+      setError(e as Error);
+    }
+    reload();
+  };
+
+  const who = (l: LeaseItem) => l.client?.host || l.keyId;
+  return (
+    <section>
+      <h2>{m.leases.title}</h2>
+      <ErrorBanner error={error} />
+      {status && <p role="status">{status}</p>}
+      {asking && (
+        <Confirm text={m.leases.confirm(who(asking), asking.feature)} yes={m.leases.release} onYes={() => release(asking)} onNo={() => setAsking(null)} />
+      )}
+      {!page && !error && <p>{m.loading}</p>}
+      {page &&
+        (page.items.length === 0 ? (
+          <p>{m.leases.none}</p>
+        ) : (
+          <table class="leases">
+            <thead>
+              <tr>
+                <th>{m.leases.feature}</th>
+                <th>{m.leases.seats}</th>
+                <th>{m.activations.keyId}</th>
+                <th>{m.activations.host}</th>
+                <th>{m.activations.app}</th>
+                <th>{m.activations.seq}</th>
+                <th>{m.expires}</th>
+                <th>{m.leases.borrow}</th>
+                <th>{m.leases.stopped}</th>
+                <th>{m.created}</th>
+                {mayRelease && <th />}
+              </tr>
+            </thead>
+            <tbody>
+              {page.items.map((l) => (
+                <tr key={l.id}>
+                  <td>{l.feature}</td>
+                  <td>{l.seats}</td>
+                  <td>{l.keyId}</td>
+                  <td>{l.client ? `${l.client.host} / ${l.client.user}` : ''}</td>
+                  <td>{l.app ?? ''}</td>
+                  <td>{l.seq}</td>
+                  <td>{l.expiresAt}</td>
+                  <td>{l.borrow ? m.yes : m.no}</td>
+                  <td>{l.stopped ? m.yes : m.no}</td>
+                  <td>{l.createdAt}</td>
+                  {mayRelease && (
+                    <td>
+                      <button type="button" onClick={() => setAsking(l)}>
+                        {m.leases.release}
                       </button>
                     </td>
                   )}

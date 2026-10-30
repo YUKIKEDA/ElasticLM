@@ -2,12 +2,14 @@ import { createHash } from 'node:crypto';
 import { render } from 'preact';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api, listQuery, SignInNeeded, type License, type Policy } from './api';
+import { apiKeyRequest, keyStatus } from './apikeys';
 import { App, route } from './app';
 import { answerName, save, scalars, utcOf } from './files';
 import { licenseRequest } from './issue';
 import { keyHash, normalizeKey } from './keys';
 
-// The admin UI's screens and calls (design §15.2 "M5c の形" and "M5d1 の形"), against a fetch that the test answers.
+// The admin UI's screens and calls (design §15.2 "M5c の形", "M5d1 の形", and "M5d2 の形"), against a fetch that the test
+// answers.
 
 // raw: an answer body sent as these bytes, not as JSON; lost: no answer at all (fetch rejects, as on a dropped connection).
 type Answer = { status: number; body?: unknown; raw?: string; lost?: boolean };
@@ -916,5 +918,466 @@ describe('Audit', () => {
       ['POST', '/v1/admin/audit/verify', '1'],
     ]);
     expect(host.textContent).toContain('The chain is broken at row 7 (120 rows checked).');
+  });
+});
+
+// The support and administration screens of M5d2 (design §15.2 "M5d2 の形").
+
+const allPermissions = [
+  'apikey.read',
+  'apikey.create',
+  'apikey.revoke',
+  'audit.read',
+  'product.read',
+  'product.write',
+  'policy.read',
+  'policy.write',
+  'license.read',
+  'license.create',
+  'license.update',
+  'license.revoke',
+  'license.file',
+  'signingkey.read',
+  'activation.read',
+  'activation.deactivate',
+  'activation.offline',
+  'trial.read',
+  'trial.delete',
+  'lease.read',
+  'lease.release',
+  'usagelog.read',
+  'usagelog.seal',
+  'admin.read',
+  'admin.update',
+  'session.read',
+  'session.revoke',
+];
+const root = { id: 'a1', issuer: 'https://idp.example', subject: 'olive', role: 'owner', permissions: allPermissions };
+// support and viewer hold every *.read but admin.* and session.* (design §14.6), so apikey.read too.
+const reader = { ...root, id: 'a3', subject: 'vic', role: 'viewer', permissions: allPermissions.filter((p) => p.endsWith('.read') && !p.startsWith('admin.') && !p.startsWith('session.')) };
+const adminRole = { ...root, id: 'a4', subject: 'adam', role: 'admin', permissions: allPermissions.filter((p) => !/^(apikey|admin|session)\./.test(p)) };
+const xss = '<img src=x onerror=alert(1)>';
+const deletes = () => sent.filter((s) => s.method === 'DELETE');
+const adminsPath = '/v1/admin/admins?limit=200';
+const people = [
+  { id: 'a1', issuer: 'https://idp.example', subject: 'olive', role: 'owner', enabled: true, createdAt: '2026-10-01T00:00:00Z', lastLoginAt: null },
+  { id: 'a2', issuer: 'https://idp.example', subject: xss, role: 'support', enabled: false, createdAt: '2026-10-02T00:00:00Z', lastLoginAt: '2026-10-03T00:00:00Z' },
+];
+
+describe('M5d2 routes', () => {
+  /*
+   * Preconditions: none.
+   * Steps: read "#/trials", "#/admins", "#/api-keys", "#/apikeys".
+   * Expected: the trials, admins, and API keys routes; unknown for the last.
+   */
+  it('reads the support and administration routes', () => {
+    expect([route('#/trials'), route('#/admins'), route('#/api-keys')]).toEqual([{ kind: 'trials' }, { kind: 'admins' }, { kind: 'apiKeys' }]);
+    expect(route('#/apikeys')).toEqual({ kind: 'unknown' });
+  });
+
+  /*
+   * Preconditions: an owner, a viewer, and an admin (the roles of design §14.6).
+   * Steps: open the list as each and read the header's links.
+   * Expected: the owner links trials, API keys, and administrators; the viewer links trials and API keys but not
+   * administrators; the admin links trials but neither API keys nor administrators.
+   */
+  it('links each screen to the roles that may read it', async () => {
+    const links = async (me: typeof root) => {
+      answer('GET', '/v1/admin/me', 200, me);
+      answer('GET', '/v1/admin/products?limit=200', 200, { items: [], next: null });
+      answer('GET', firstPage, 200, { items: [], next: null });
+      const host = mount();
+      await settle();
+      const found = [...host.querySelectorAll('nav a')].map((a) => a.getAttribute('href')).filter((h) => ['#/trials', '#/api-keys', '#/admins'].includes(h!));
+      render(null, host);
+      return found;
+    };
+    expect(await links(root)).toEqual(['#/trials', '#/api-keys', '#/admins']);
+    expect(await links(reader)).toEqual(['#/trials', '#/api-keys']);
+    expect(await links(adminRole)).toEqual(['#/trials']);
+  });
+});
+
+describe('Leases', () => {
+  const cloud: Policy = { ...standard, floating: 'cloud' };
+  const lease = {
+    id: 'le1',
+    feature: 'core',
+    seats: 2,
+    keyId: 'k1',
+    seq: 1,
+    expiresAt: '2026-10-30T01:00:00Z',
+    borrow: true,
+    stopped: false,
+    client: { host: xss, user: '<script>alert(2)</script>' },
+    app: '<img src=y onerror=alert(3)>',
+    createdAt: '2026-10-30T00:00:00Z',
+  };
+
+  async function openLicense(policy: Policy, me: typeof root = root) {
+    answer('GET', '/v1/admin/me', 200, me);
+    answer('GET', '/v1/admin/licenses/l1', 200, { ...license, name: 'Contoso' });
+    answer('GET', '/v1/admin/policies/y1', 200, policy);
+    answer('GET', '/v1/admin/licenses/l1/activations?limit=50', 200, { items: [], next: null });
+    answer('GET', '/v1/admin/licenses/l1/leases?limit=50', 200, { items: [lease], next: null });
+    location.hash = '#/licenses/l1';
+    const host = mount();
+    await settle();
+    return host;
+  }
+
+  /*
+   * Preconditions: an owner; a license of a policy without floating, then of a cloud-floating one; a viewer (lease.read
+   * without license.file).
+   * Steps: open the license each way.
+   * Expected: no lease list and no lease read for the first; the list for the cloud policy; the viewer reads the policy
+   * once and sees the list without a Release button.
+   */
+  it('shows the leases of a cloud-floating policy only', async () => {
+    let host = await openLicense(standard);
+    expect(host.querySelector('table.leases')).toBeNull();
+    expect(sent.some((s) => s.url.includes('/leases'))).toBe(false);
+    render(null, host);
+    sent = [];
+    host = await openLicense(cloud);
+    expect(host.querySelectorAll('table.leases tbody tr')).toHaveLength(1);
+    render(null, host);
+    sent = [];
+    host = await openLicense(cloud, reader);
+    expect(sent.filter((s) => s.url === '/v1/admin/policies/y1')).toHaveLength(1);
+    expect(host.querySelectorAll('table.leases tbody tr')).toHaveLength(1);
+    expect(button(host, 'Release')).toBeUndefined();
+  });
+
+  /*
+   * Preconditions: an owner; a cloud-floating license with one borrowed lease whose host, user, and app hold markup; the
+   * service answers the release with 404 (it expired meanwhile) and then lists no lease.
+   * Steps: press Release; confirm.
+   * Expected: the values are text and no img or script element is made; the confirmation names the host and the feature
+   * and says a borrowed lease is returned too; one DELETE; the 404's detail is shown and the list is read again.
+   */
+  it('releases after a confirmation and reads the list again on 404', async () => {
+    const host = await openLicense(cloud);
+    expect(host.querySelector('table.leases')?.textContent).toContain(`${xss} / <script>alert(2)</script>`);
+    expect(host.querySelectorAll('img, script')).toHaveLength(0);
+    answer('DELETE', '/v1/admin/leases/le1', 404, { code: 'ELM_UNKNOWN_LEASE', detail: 'No lease has this ID.' });
+    answer('GET', '/v1/admin/licenses/l1/leases?limit=50', 200, { items: [], next: null });
+    button(host, 'Release')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain(`Release the lease of "core" held by "${xss}"? A borrowed lease is returned too`);
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(deletes().map((s) => s.url)).toEqual(['/v1/admin/leases/le1']);
+    expect(host.textContent).toContain('No lease has this ID.');
+    expect(sent.filter((s) => s.url === '/v1/admin/licenses/l1/leases?limit=50')).toHaveLength(2);
+    expect(host.textContent).toContain('No lease is held.');
+  });
+});
+
+describe('Trials', () => {
+  const trial = { id: 't1', productId: 'p2', fingerprints: ['fp-a', xss], createdAt: '2026-10-29T00:00:00Z' };
+
+  async function openTrials(me: typeof root = root) {
+    answer('GET', '/v1/admin/me', 200, me);
+    answer('GET', '/v1/admin/products?limit=200', 200, { items: [{ id: 'p1', code: 'a', name: 'First' }], next: 'p1' });
+    answer('GET', '/v1/admin/products?limit=200&after=p1', 200, { items: [{ id: 'p2', code: 'b', name: 'Second' }], next: null });
+    answer('GET', '/v1/admin/trials?limit=50', 200, { items: [trial], next: null });
+    location.hash = '#/trials';
+    const host = mount();
+    await settle();
+    return host;
+  }
+
+  /*
+   * Preconditions: an owner; products on two pages; one trial of the product on the second page, a fingerprint holding
+   * markup.
+   * Steps: open the trials; choose Second and show.
+   * Expected: the row names Second and draws the fingerprints as text; the filter sends productId=p2.
+   */
+  it('names products from every page and filters by product', async () => {
+    const host = await openTrials();
+    expect(host.querySelector('table.trials tbody td')?.textContent).toBe('Second');
+    expect(host.querySelector('table.trials')?.textContent).toContain(`fp-a, ${xss}`);
+    expect(host.querySelectorAll('img')).toHaveLength(0);
+    answer('GET', '/v1/admin/trials?limit=50&productId=p2', 200, { items: [trial], next: null });
+    (host.querySelector('select[name=product]') as HTMLSelectElement).value = 'p2';
+    submit(host.querySelector('form')!);
+    await settle();
+    expect(sent.some((s) => s.url === '/v1/admin/trials?limit=50&productId=p2')).toBe(true);
+  });
+
+  /*
+   * Preconditions: an owner; one trial; the service answers its deletion with 404 (deleted elsewhere); then a viewer.
+   * Steps: press Delete and confirm; open the trials as the viewer.
+   * Expected: the confirmation names the product and the time and says the device can try again and the license stays;
+   * one DELETE; the detail is shown and the list read again; the viewer has no Delete button.
+   */
+  it('deletes after a confirmation and offers no delete without trial.delete', async () => {
+    let host = await openTrials();
+    answer('DELETE', '/v1/admin/trials/t1', 404, { code: 'ELM_NOT_FOUND', detail: 'No trial has this ID.' });
+    button(host, 'Delete')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain(
+      'Delete the trial of "Second" made at 2026-10-29T00:00:00Z? Its device can start a trial again. The trial license and its activations stay.',
+    );
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(deletes().map((s) => s.url)).toEqual(['/v1/admin/trials/t1']);
+    expect(host.textContent).toContain('No trial has this ID.');
+    expect(sent.filter((s) => s.url === '/v1/admin/trials?limit=50')).toHaveLength(2);
+    render(null, host);
+    host = await openTrials(reader);
+    expect(button(host, 'Delete')).toBeUndefined();
+  });
+});
+
+describe('apiKeyRequest and keyStatus', () => {
+  /*
+   * Preconditions: none.
+   * Steps: read forms with a name of 64 emoji and one permission and no days; 65 emoji; no permission; days 1.5, 0, 366,
+   * and 365.
+   * Expected: the request without expiresInDays; the name, permission, and days refusals; then expiresInDays 365.
+   */
+  it('reads the create form and checks the name, the permissions, and the days', () => {
+    const name = '😀'.repeat(64);
+    expect(apiKeyRequest(form([['name', name], ['permission', 'license.read'], ['days', '']]))).toEqual({ name, permissions: ['license.read'] });
+    expect(apiKeyRequest(form([['name', '😀'.repeat(65)], ['permission', 'license.read']]))).toBe('The name must be 1 to 64 characters.');
+    expect(apiKeyRequest(form([['name', 'ci']]))).toBe('Choose at least one permission.');
+    for (const days of ['1.5', '0', '366']) {
+      expect(apiKeyRequest(form([['name', 'ci'], ['permission', 'license.read'], ['days', days]]))).toBe('The days must be a whole number from 1 to 365.');
+    }
+    expect(apiKeyRequest(form([['name', 'ci'], ['permission', 'a'], ['permission', 'b'], ['days', '365']]))).toEqual({
+      name: 'ci',
+      permissions: ['a', 'b'],
+      expiresInDays: 365,
+    });
+  });
+
+  /*
+   * Preconditions: the time is 2026-10-30T00:00:00Z; a key made by a disabled administrator.
+   * Steps: read the status of the key revoked, past its expiry, within it, and with no administrators known.
+   * Expected: revoked; expired (an expiry equal to now has passed); creator disabled; and empty when the creator is unknown.
+   */
+  it('marks keys that no longer work', () => {
+    const now = Date.parse('2026-10-30T00:00:00Z');
+    const key = { id: 'k', name: 'n', prefix: 'elm_abcd', permissions: [], createdBy: 'a2', createdAt: '2026-10-01T00:00:00Z', expiresAt: '2027-01-01T00:00:00Z', revokedAt: null };
+    const admins = new Map(people.map((a) => [a.id, a]));
+    expect(keyStatus({ ...key, revokedAt: '2026-10-20T00:00:00Z' }, admins, now)).toBe('revoked');
+    expect(keyStatus({ ...key, expiresAt: '2026-10-30T00:00:00Z' }, admins, now)).toBe('expired');
+    expect(keyStatus(key, admins, now)).toBe('creator disabled');
+    expect(keyStatus(key, null, now)).toBe('');
+  });
+});
+
+describe('ApiKeys', () => {
+  const live = { id: 'k1', name: xss, prefix: 'elm_abcd', permissions: ['license.read'], createdBy: 'a1', createdAt: '2026-10-01T00:00:00Z', expiresAt: '2099-01-01T00:00:00Z', revokedAt: null };
+  const keysPath = '/v1/admin/api-keys?limit=50';
+
+  /*
+   * Preconditions: a viewer (apikey.read, no admin.read); one key whose name holds markup.
+   * Steps: open the API keys.
+   * Expected: the name is text and no img is made; the creator is shown as its ID; no create form and no Revoke button;
+   * the administrators are not read.
+   */
+  it('shows the list read-only to a viewer', async () => {
+    answer('GET', '/v1/admin/me', 200, reader);
+    answer('GET', keysPath, 200, { items: [live], next: null });
+    location.hash = '#/api-keys';
+    const host = mount();
+    await settle();
+    expect(host.querySelector('table.api-keys tbody td')?.textContent).toBe(xss);
+    expect(host.querySelectorAll('img')).toHaveLength(0);
+    expect(host.querySelector('table.api-keys tbody td:nth-child(4)')?.textContent).toBe('a1');
+    expect([host.querySelector('form.api-key'), button(host, 'Revoke')]).toEqual([null, undefined]);
+    expect(sent.some((s) => s.url.startsWith('/v1/admin/admins'))).toBe(false);
+  });
+
+  /*
+   * Preconditions: an owner; one live key and one revoked key; the creator a1 is named by the administrators' list; the
+   * service answers the creation with the key; the clipboard refuses.
+   * Steps: open the API keys; fill the name, two permissions, and no days; press Create twice in one task; press Copy;
+   * press Back to the list.
+   * Expected: the creator is shown as olive; the revoked key has no Revoke button and says revoked; the permissions offered
+   * are the owner's 27; one POST without expiresInDays; the key in a read-only field and in neither storage nor the URL;
+   * the copy failure; the list read again and the key gone.
+   */
+  it('creates a key once, shows it once, and keeps it in memory only', async () => {
+    const key = 'elm_' + 'Q'.repeat(43);
+    answer('GET', '/v1/admin/me', 200, root);
+    answer('GET', adminsPath, 200, { items: people, next: null });
+    answer('GET', keysPath, 200, { items: [live, { ...live, id: 'k2', name: 'old', revokedAt: '2026-10-02T00:00:00Z' }], next: null });
+    answer('POST', '/v1/admin/api-keys', 201, { ...live, id: 'k3', name: 'ci', key });
+    location.hash = '#/api-keys';
+    const host = mount();
+    await settle();
+    const rows = [...host.querySelectorAll('table.api-keys tbody tr')];
+    expect(rows[0].querySelector('td:nth-child(4)')?.textContent).toBe('olive');
+    expect([rows[1].querySelector('button'), rows[1].querySelector('td:nth-child(8)')?.textContent]).toEqual([null, 'revoked']);
+    expect(host.querySelectorAll('input[name=permission]')).toHaveLength(27);
+    field(host, 'name').value = 'ci';
+    (host.querySelector('input[value="license.read"]') as HTMLInputElement).checked = true;
+    (host.querySelector('input[value="license.create"]') as HTMLInputElement).checked = true;
+    const create = host.querySelector('form.api-key') as HTMLFormElement;
+    submit(create);
+    submit(create);
+    await settle();
+    expect(posts().map((s) => s.body)).toEqual([JSON.stringify({ name: 'ci', permissions: ['license.read', 'license.create'] })]);
+    const shown = host.querySelector('input.key') as HTMLInputElement;
+    expect([shown.value, shown.readOnly]).toEqual([key, true]);
+    expect(JSON.stringify({ ...sessionStorage }) + JSON.stringify({ ...localStorage }) + location.href).not.toContain('QQQQ');
+    vi.stubGlobal('navigator', { clipboard: { writeText: () => Promise.reject(new Error('denied')) } });
+    button(host, 'Copy the key')!.click();
+    await settle();
+    expect(host.textContent).toContain('The browser did not copy the key. Select it and copy it.');
+    button(host, 'Back to the list')!.click();
+    await settle();
+    expect(sent.filter((s) => s.url === keysPath)).toHaveLength(2);
+    expect(host.querySelector('input.key')).toBeNull();
+  });
+
+  /*
+   * Preconditions: an owner; the creation gets no answer (the connection drops).
+   * Steps: fill the name and one permission; press Create.
+   * Expected: one POST; the screen says to look at the list before sending again; no key is shown and the button works
+   * again.
+   */
+  it('does not send a key request again when no answer came', async () => {
+    answer('GET', '/v1/admin/me', 200, root);
+    answer('GET', adminsPath, 200, { items: people, next: null });
+    answer('GET', keysPath, 200, { items: [], next: null });
+    answer('POST', '/v1/admin/api-keys', 0, undefined, { lost: true });
+    location.hash = '#/api-keys';
+    const host = mount();
+    await settle();
+    field(host, 'name').value = 'ci';
+    (host.querySelector('input[value="license.read"]') as HTMLInputElement).checked = true;
+    submit(host.querySelector('form.api-key') as HTMLFormElement);
+    await settle();
+    expect(posts()).toHaveLength(1);
+    expect(host.textContent).toContain('Look at the list before you send again');
+    expect([host.querySelector('input.key'), button(host, 'Create the key')!.disabled]).toEqual([null, false]);
+  });
+
+  /*
+   * Preconditions: an owner; one live key.
+   * Steps: press Revoke; confirm.
+   * Expected: the confirmation names the key and its prefix; one DELETE; the list is read again.
+   */
+  it('revokes a key after a confirmation', async () => {
+    answer('GET', '/v1/admin/me', 200, root);
+    answer('GET', adminsPath, 200, { items: people, next: null });
+    answer('GET', keysPath, 200, { items: [{ ...live, name: 'ci' }], next: null });
+    answer('DELETE', '/v1/admin/api-keys/k1', 204);
+    location.hash = '#/api-keys';
+    const host = mount();
+    await settle();
+    button(host, 'Revoke')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain('Revoke the API key "ci" (elm_abcd…)?');
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(deletes().map((s) => s.url)).toEqual(['/v1/admin/api-keys/k1']);
+    expect(sent.filter((s) => s.url === keysPath)).toHaveLength(2);
+    expect(host.textContent).toContain('The API key is revoked.');
+  });
+});
+
+describe('Admins and sessions', () => {
+  const third = { ...people[0], id: 'a9', subject: 'zed', role: 'admin' };
+  const sessionsPath = '/v1/admin/sessions?limit=50';
+  const sessions = [
+    { id: 's1', adminId: 'a1', createdAt: '2026-10-30T00:00:00Z', lastSeenAt: '2026-10-30T00:05:00Z', expiresAt: '2026-10-30T12:00:00Z', ip: '127.0.0.1' },
+    { id: 's2', adminId: 'a9', createdAt: '2026-10-30T01:00:00Z', lastSeenAt: '2026-10-30T01:05:00Z', expiresAt: '2026-10-30T13:00:00Z', ip: null },
+  ];
+
+  async function openAdmins() {
+    answer('GET', '/v1/admin/me', 200, root);
+    answer('GET', adminsPath, 200, { items: people, next: 'a2' });
+    answer('GET', `${adminsPath}&after=a2`, 200, { items: [third], next: null });
+    answer('GET', sessionsPath, 200, { items: sessions, next: null });
+    location.hash = '#/admins';
+    const host = mount();
+    await settle();
+    return host;
+  }
+
+  /*
+   * Preconditions: an owner (a1); administrators on two pages, a2 (disabled, subject holding markup) and a9 on the second;
+   * sessions of a1 and a9.
+   * Steps: open the administrators.
+   * Expected: three rows, the own row marked and without Disable, a2 offering Enable and a9 Disable; the subject is text;
+   * the sessions name zed from the second page and mark the own session.
+   */
+  it('lists every administrator and names the sessions', async () => {
+    const host = await openAdmins();
+    const rows = [...host.querySelectorAll('table.admins tbody tr')];
+    expect(rows.map((r) => r.querySelector('td')?.textContent)).toEqual(['olive (you)', xss, 'zed']);
+    expect(rows.map((r) => r.querySelector('button')?.textContent ?? null)).toEqual([null, 'Enable', 'Disable']);
+    expect(host.querySelectorAll('img')).toHaveLength(0);
+    expect([...host.querySelectorAll('table.sessions tbody tr td:first-child')].map((t) => t.textContent)).toEqual(['olive (you)', 'zed']);
+  });
+
+  /*
+   * Preconditions: as above; the service refuses the first disable with 409 and takes the second; it takes the enable.
+   * Steps: disable zed and confirm (409); disable zed and confirm again; enable a2 and confirm.
+   * Expected: the disable confirmation says the sessions end and the API keys stop; the 409's detail is shown; after the
+   * taken disable the sessions are read again; the enable confirmation says the API keys work again, and the enable is
+   * one POST.
+   */
+  it('confirms disabling and enabling and reads the sessions again after a disable', async () => {
+    const host = await openAdmins();
+    answer('POST', '/v1/admin/admins/a9/disable', 409, { code: 'ELM_CONFLICT', detail: 'The last enabled owner cannot be disabled.' });
+    button(host, 'Disable')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain('Disable the administrator "zed"? Their sessions in this screen end, and their API keys stop working.');
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(host.textContent).toContain('The last enabled owner cannot be disabled.');
+    const sessionReads = sent.filter((s) => s.url === sessionsPath).length;
+    answer('POST', '/v1/admin/admins/a9/disable', 204);
+    button(host, 'Disable')!.click();
+    await settle();
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(sent.filter((s) => s.url === sessionsPath).length).toBe(sessionReads + 1);
+    answer('POST', '/v1/admin/admins/a2/enable', 204);
+    button(host, 'Enable')!.click();
+    await settle();
+    expect(posts().filter((s) => s.url.endsWith('/enable'))).toHaveLength(0);
+    expect(host.querySelector('.confirm')?.textContent).toContain(`Enable the administrator "${xss}"? Their API keys that are not revoked or expired work again at once.`);
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(posts().filter((s) => s.url.endsWith('/enable')).map((s) => s.url)).toEqual(['/v1/admin/admins/a2/enable']);
+  });
+
+  /*
+   * Preconditions: as above; the service answers ending zed's session with 404 (it idled out).
+   * Steps: filter by zed; press End on the own session and cancel; press End on zed's session and confirm.
+   * Expected: the filter sends adminId=a9; the own confirmation warns of signing in again; one DELETE; the 404's detail is
+   * shown and the sessions read again.
+   */
+  it('filters, warns on the own session, and reads again on 404', async () => {
+    const host = await openAdmins();
+    answer('GET', `${sessionsPath}&adminId=a9`, 200, { items: [sessions[1]], next: null });
+    const filter = host.querySelector('select[name=admin]')!.closest('form') as HTMLFormElement;
+    (filter.querySelector('select') as HTMLSelectElement).value = '';
+    button(host, 'End')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain('End your session made at 2026-10-30T00:00:00Z? If it is the one you are using');
+    button(host, 'Cancel')!.click();
+    await settle();
+    (filter.querySelector('select') as HTMLSelectElement).value = 'a9';
+    submit(filter);
+    await settle();
+    expect(sent.some((s) => s.url === `${sessionsPath}&adminId=a9`)).toBe(true);
+    answer('DELETE', '/v1/admin/sessions/s2', 404, { code: 'ELM_NOT_FOUND', detail: 'No session has this ID.' });
+    button(host, 'End')!.click();
+    await settle();
+    expect(host.querySelector('.confirm')?.textContent).toContain('End the session of "zed" made at 2026-10-30T01:00:00Z?');
+    host.querySelector('.confirm button')!.dispatchEvent(new Event('click'));
+    await settle();
+    expect(deletes().map((s) => s.url)).toEqual(['/v1/admin/sessions/s2']);
+    expect(host.textContent).toContain('No session has this ID.');
+    expect(sent.filter((s) => s.url === `${sessionsPath}&adminId=a9`)).toHaveLength(2);
   });
 });

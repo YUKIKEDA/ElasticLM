@@ -101,7 +101,14 @@ fieldset.meta {
 
 input.key {
   font-family: ui-monospace, monospace;
-  width: 32ch;
+  width: 56ch;
+  max-width: 100%;
+}
+
+fieldset.permissions {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  width: 100%;
 }
 
 /* design §15.2 (M5d1): an audit detail can pass 30 KiB, so it wraps instead of widening the table. */

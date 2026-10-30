@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'preact/hooks';
 import { api, signIn, SignInNeeded, type Filter, type License, type Me, type Page, type Product } from './api';
+import { Admins } from './admins';
+import { ApiKeys } from './apikeys';
 import { Audit } from './audit';
 import { ErrorBanner } from './common';
 import { Detail } from './detail';
@@ -7,16 +9,20 @@ import { Issue } from './issue';
 import { keyHash } from './keys';
 import { m } from './messages';
 import { Offline } from './offline';
+import { Trials } from './trials';
 
 // design §15.2 (0.100): every value from the API is drawn as text only; nothing builds markup, href, or src from it.
 
-/** The routes of the screen, after "#" (design §15.2 "M5c の形" and "M5d1 の形"). */
+/** The routes of the screen, after "#" (design §15.2 "M5c の形", "M5d1 の形", and "M5d2 の形"). */
 export type Route =
   | { kind: 'list' }
   | { kind: 'license'; id: string }
   | { kind: 'issue' }
   | { kind: 'offline' }
   | { kind: 'audit' }
+  | { kind: 'trials' }
+  | { kind: 'admins' }
+  | { kind: 'apiKeys' }
   | { kind: 'unknown' };
 
 /** Reads a location hash as a route; an empty hash or "#/" is the list. */
@@ -25,8 +31,16 @@ export function route(hash: string): Route {
     return { kind: 'list' };
   }
 
-  if (hash === '#/issue' || hash === '#/offline' || hash === '#/audit') {
-    return { kind: hash.slice(2) as 'issue' | 'offline' | 'audit' };
+  const screens: Record<string, Route> = {
+    '#/issue': { kind: 'issue' },
+    '#/offline': { kind: 'offline' },
+    '#/audit': { kind: 'audit' },
+    '#/trials': { kind: 'trials' },
+    '#/admins': { kind: 'admins' },
+    '#/api-keys': { kind: 'apiKeys' },
+  };
+  if (Object.hasOwn(screens, hash)) {
+    return screens[hash];
   }
 
   const license = /^#\/licenses\/([^/]+)$/.exec(hash);
@@ -43,7 +57,7 @@ export function route(hash: string): Route {
 }
 
 /**
- * The permissions each screen needs (design §15.2, M5d1). The header shows a screen only when the role has all of them, and a
+ * The permissions each screen needs (design §15.2, M5d1 and M5d2). The header shows a screen only when the role has all of them, and a
  * route opened without them says so before any call; the API refuses as well (design §15.1).
  */
 export const needs: Record<Exclude<Route['kind'], 'unknown'>, string[]> = {
@@ -52,6 +66,9 @@ export const needs: Record<Exclude<Route['kind'], 'unknown'>, string[]> = {
   issue: ['license.create', 'product.read', 'policy.read'],
   offline: ['activation.offline'],
   audit: ['audit.read'],
+  trials: ['trial.read'],
+  admins: ['admin.read'],
+  apiKeys: ['apikey.read'],
 };
 
 /** Returns whether a role's permissions open a route; an unknown route is open, to say it does not exist. */
@@ -115,6 +132,9 @@ function Nav({ me }: { me: Me }) {
     ['list', '#/licenses', m.nav.licenses],
     ['issue', '#/issue', m.nav.issue],
     ['offline', '#/offline', m.nav.offline],
+    ['trials', '#/trials', m.nav.trials],
+    ['apiKeys', '#/api-keys', m.nav.apiKeys],
+    ['admins', '#/admins', m.nav.admins],
     ['audit', '#/audit', m.nav.audit],
   ];
   return (
@@ -148,6 +168,12 @@ function Screen({ me, to }: { me: Me; to: Route }) {
       return <Offline />;
     case 'audit':
       return <Audit />;
+    case 'trials':
+      return <Trials mayDelete={me.permissions.includes('trial.delete')} />;
+    case 'apiKeys':
+      return <ApiKeys me={me} />;
+    case 'admins':
+      return <Admins me={me} />;
     default:
       return <p>{m.notFound}</p>;
   }
