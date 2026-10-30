@@ -15,7 +15,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M5d（残りの画面）
+- **フェーズ:** M5d1（管理画面の日々の操作）
 - **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）、M4b2（[#66](https://github.com/YUKIKEDA/ElasticLM/issues/66)）、M4c1（[#70](https://github.com/YUKIKEDA/ElasticLM/issues/70)）、M4c2（[#74](https://github.com/YUKIKEDA/ElasticLM/issues/74)）、M4c3（[#78](https://github.com/YUKIKEDA/ElasticLM/issues/78)）、M4d1（[#82](https://github.com/YUKIKEDA/ElasticLM/issues/82)）、M4d2（[#86](https://github.com/YUKIKEDA/ElasticLM/issues/86)）、M4d3（[#90](https://github.com/YUKIKEDA/ElasticLM/issues/90)）、W0（[#94](https://github.com/YUKIKEDA/ElasticLM/issues/94)）、M5a（[#102](https://github.com/YUKIKEDA/ElasticLM/issues/102)）、M5b（[#109](https://github.com/YUKIKEDA/ElasticLM/issues/109)）、M5c（[#116](https://github.com/YUKIKEDA/ElasticLM/issues/116)）
 
 ## v1 まで
@@ -45,7 +45,8 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M5a | 管理者の土台と CLI のログイン（JwtBearer、`elm admin login`・`logout`・`request`、管理者の一覧と無効化の API、最後のログイン、90 日ログインのない管理者のキーを止める規則、偽の IdP と Keycloak のテスト、大きさの差。Grill で決める点は design.ja.md §14.6） | done        | [#102](https://github.com/YUKIKEDA/ElasticLM/issues/102) |
 | M5b | 管理画面のログイン（BFF。認可コードと PKCE、データベースのセッションとその一覧・取り消し、管理者の無効化でセッションを消す、最後のログインの更新、Data Protection の鍵の保存、`X-ELM-CSRF`、Keycloak のテストに認可コードのフロー、大きさの差。Grill で決める点は design.ja.md §14.6） | done        | [#109](https://github.com/YUKIKEDA/ElasticLM/issues/109) |
 | M5c | 管理画面の土台（`web/admin/`。`build.ps1` のビルドと `tsc`・Vitest のゲート、道具の版の確かめ、`dist` がないときの Service のビルドの誤り、秘密を持たない CI の SPA のジョブ、埋め込みと CSP つきの配信、`elm-service` の大きさの差と Windows のパスの長さの確かめ、AGENTS.md・CONTRIBUTING.md・規則・規約への Node.js と pnpm の追記、最初の画面: ライセンスの検索・詳細・失効） | done        | [#116](https://github.com/YUKIKEDA/ElasticLM/issues/116) |
-| M5d | 管理画面の残りの画面（発行、有効化の解除、オフラインの処理、監査ログ、リースの閲覧と強制返却、試用の閲覧と削除、管理者と API キー、セッションの一覧と取り消し） | not-started | —     |
+| M5d1 | 管理画面の日々の操作（発行とキーの一度だけの表示・ライセンスファイル、有効化の一覧と解除、オフラインの処理、監査ログ） | not-started | —     |
+| M5d2 | 管理画面のサポートと管理（リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション） | not-started | —     |
 | M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
 | V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
