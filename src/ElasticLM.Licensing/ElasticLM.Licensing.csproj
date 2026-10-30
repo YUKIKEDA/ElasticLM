@@ -13,5 +13,7 @@
     <!-- The lease engine reads feature version ranges and encodes IDs with the same code as the verifier. -->
     <InternalsVisibleTo Include="ElasticLM.Leasing" />
     <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
+    <!-- The C ABI tests make licenses with the same test issuer (tests/ElasticLM.Licensing.Tests/TestIssuer.cs). -->
+    <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
   </ItemGroup>
 </Project>

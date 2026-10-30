@@ -8,6 +8,7 @@
     <Project Path="src/ElasticLM.Issuing/ElasticLM.Issuing.csproj" />
     <Project Path="src/ElasticLM.Leasing/ElasticLM.Leasing.csproj" />
     <Project Path="src/ElasticLM.Licensing/ElasticLM.Licensing.csproj" />
+    <Project Path="src/ElasticLM.Native/ElasticLM.Native.csproj" />
     <Project Path="src/ElasticLM.Server/ElasticLM.Server.csproj" />
     <Project Path="src/ElasticLM.Service/ElasticLM.Service.csproj" />
   </Folder>
@@ -17,6 +18,7 @@
     <Project Path="tests/ElasticLM.Issuing.Tests/ElasticLM.Issuing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Leasing.Tests/ElasticLM.Leasing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Licensing.Tests/ElasticLM.Licensing.Tests.csproj" />
+    <Project Path="tests/ElasticLM.Native.Tests/ElasticLM.Native.Tests.csproj" />
     <Project Path="tests/ElasticLM.Server.Tests/ElasticLM.Server.Tests.csproj" />
     <Project Path="tests/ElasticLM.Service.Tests/ElasticLM.Service.Tests.csproj" />
   </Folder>
