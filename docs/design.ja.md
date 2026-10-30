@@ -157,7 +157,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.86 | `Unbound` のライセンスファイルの期限 | トークンの `exp` はライセンスの期限と同じにし、期限なしなら省く（期限なしのトークンを出す場所に足し、0.17 と §5.4 を改めた。PR #51 のレビュー）。`Unbound` には期限の起点になる有効化がないので、`Unbound` と `FromFirstActivation` の組は拒む（§9.3, §14.5） |
 | 0.87 | 管理の実体の削除と同時の変更 | 製品・機能・ポリシーは消さない（発行済みのトークンが参照する）。`PATCH` は送ったメンバーだけを置き換え、版の検査（`If-Match`）は付けない（§14.5） |
 | 0.88 | M4b の分け方とオンラインの有効化 | M4b を M4b1（`elm-service` のオンラインの有効化・更新・解除・試用、複製の検出、その管理 API）と M4b2（`ElasticLM.Client` の対応。始めに別の Grill）に分ける。有効化 ID は応答の本文で渡し、トークンの形式は変えない。`Unbound` のライセンスはオンラインで有効化しない（`409` と `ELM_CONFLICT`）。試用はキーのないライセンスとその有効化で表し、製品の機能をすべて持つ。管理者の解除は `DeactivationLimit` に数えない。`Deny` で止めた有効化は、最後の `seq` を持つ写しか管理者だけが解除できる。解除も `retry` を読む。1 つのインストール鍵はライセンスごとに 1 つの有効化を持つ（試用の後に買ったライセンスを同じ鍵で有効化できる）。この 3 点は Grill の答えを PR #61 の設計のレビューと実装で改め、持ち主が受けた。知らない有効化は `ELM_ACTIVATION_NOT_FOUND`（56）（§5.4, §10.4, §12.4〜§12.6, §12.6.1, §12.9, §14.5〜§14.8, §18.2, §19） |
-| 0.89 | `ElasticLM.Client` の有効化 | M4b2 で、`elm-service` 向けの新しいクラス `ActivationClient` を置く（オンプレミスの `LicenseClient` とは相手と TLS の確かめ方が違うので分け、インストール鍵の保管は共有する。C ABI の対応は M6）。有効化は鍵のフォルダーの `activation.json` に持ち、`activation.lock` で同じ端末のプロセスの要求を 1 つずつにする。トークンの `refresh` から自動で更新し、送る前に `jti` を記録して、応答をなくした要求を送り直せるようにする。受け取ったファイルは確かめてから保存する（§12.6.2）。M4b2 の設計のレビューで、有効化の本文に `product` を足してサービスが製品の違うキーを断り、試用でない有効化があるときの別の有効化を手元で断り、解除でインストール鍵を消さないことにした（持ち主が受けた。§5.4, §12.6, §12.6.1）。受け取ったファイルは時計の守りを使わずに確かめ、その `iat` で守りを上書きする（§11.4） |
+| 0.89 | `ElasticLM.Client` の有効化 | M4b2 で、`elm-service` 向けの新しいクラス `ActivationClient` を置く（オンプレミスの `LicenseClient` とは相手と TLS の確かめ方が違うので分け、インストール鍵の保管は共有する。C ABI の対応は M6b（0.104 で別のハンドル `elm_activation` にした））。有効化は鍵のフォルダーの `activation.json` に持ち、`activation.lock` で同じ端末のプロセスの要求を 1 つずつにする。トークンの `refresh` から自動で更新し、送る前に `jti` を記録して、応答をなくした要求を送り直せるようにする。受け取ったファイルは確かめてから保存する（§12.6.2）。M4b2 の設計のレビューで、有効化の本文に `product` を足してサービスが製品の違うキーを断り、試用でない有効化があるときの別の有効化を手元で断り、解除でインストール鍵を消さないことにした（持ち主が受けた。§5.4, §12.6, §12.6.1）。受け取ったファイルは時計の守りを使わずに確かめ、その `iat` で守りを上書きする（§11.4） |
 | 0.90 | M4c の分け方とオフラインの要求 | M4c を M4c1（`elm-service` のオフラインの要求と `elm offline process`）、M4c2（`ElasticLM.Client` のオフラインのファイル）、M4c3（`elm-server` のサーバーライセンスの有効化と更新。`ActivationClient` を使う）に分ける。要求ファイルは公開の `POST /v1/offline` と管理の `POST /v1/admin/offline`（`activation.offline`）で受け、中身は同じ処理にする。同じ要求には残した同じ応答を返し（ライセンスと有効化の状態が通るときだけ）、`nonce` が同じで中身の違う要求は断る（`offline_requests` の表、有効化ごとに 1 行）。期限の切れた要求は、前の要求の `nonce` を `retry` に入れた新しい要求で取り直す。管理の入口は 1 回ごとに監査ログに書く。応答はオンラインと同じ発行の応答で、拡張子は `.elmresp`。要求に `prd` と `retry` を足し、オフラインの解除でもインストール鍵を残す（§8.4.4, §8.4.5, §12.8, §12.8.4。M4c の Grill と設計のレビュー、持ち主が受けた） |
 | 0.91 | `ElasticLM.Client` のオフライン | M4c2 で、`ActivationClient` に、オフラインの要求の作成（有効化・更新）、応答の取り込み、解除の証明の作成と破棄を足す。中身は文字列でやり取りし、見せ方（ファイル、QR コード）はアプリが決める（Cryptlex はファイルのパスを受け取る）。`ServiceUrl` を任意にし、ないクライアントはオンラインの操作を手元で断る。待っている要求（ライセンスキーを除いた中身と、キーの SHA-256）と渡していない解除の証明を `activation.json` に持ち、書き出すたびに同じ中身から組み立て直す。置き換えた要求の `nonce` は、その種類の答えのない要求の一覧に入れる。期限の前でも `renew` で作り直せる。オフラインの取り込みは時計の守りを上書きしない。オンラインで新しいファイルを保存したら待っている要求を捨て、解除の証明が残るうちは有効化を断る。更新の時期は `Check` の `ExpiresAt` と `RefreshWindow` でアプリが判断する（§12.8.5。M4c2 の Grill と設計のレビュー、持ち主が受けた） |
 | 0.92 | `elm-server` のサーバーライセンス | M4c3 で、`elm-server` のサーバーライセンスを `elm-service` で有効化・更新・解除する。有効化と手動の操作（オンラインの有効化・更新・解除、オフラインの要求・取り込み・解除の証明）は `elm server` のコマンドがサーバーのデータのフォルダーで `ActivationClient` を直接使って行い、ライセンスファイル（設定 `license`）を書いて、動いているサーバーに再読み込みを頼む。ライセンスがなければ起動しない決まり（§13.1）を変えずに最初の有効化ができるためである。自動の更新は、`service.url` を持つサーバーの中の `ActivationClient` が行い、成功のたびにファイルを書いて再読み込みする。ファイルが正本で、有効化を持つ間は有効化のライセンスが優先する。`kind: server` でないファイルは保存しない。動いているサーバーでの解除と、自動の更新をするサーバーでのオフラインの要求は断る（§13.7、M4c3 の Grill と設計のレビュー、持ち主が受けた） |
@@ -172,6 +172,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.101 | M5d の分け方と画面の決まり | M5d を M5d1（日々の操作: 発行、ライセンスの一時停止・再開・期限の延長、有効化の一覧と解除、オフラインの処理、監査ログ）と M5d2（サポートと管理: リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション）の 2 行に分け、この順に進める。ライセンスの編集（`PATCH`）は、v1 では管理 API だけで行う。ヘッダーに各画面への切り替えを並べ、`GET /v1/admin/me` の許可で読めない画面は出さない。発行は、製品 → その製品のポリシー → 名前 → 機能（`ver` と機能の期限は任意。`seats` はポリシーが `server` か `floating: cloud` のときだけ入れて必須、`fromFirstActivation` のポリシーでは期限を入れない）→ 最大の有効化の数・期限・`meta`（任意）の順に入れ、送る前に中身の確認を示す。新しいライセンスキーと API キーは、作った直後に一度だけ、コピーのボタンと、再表示できないことを示す文とともに示す（ライセンスキーは、そのあと詳細へ移る）。ライセンスファイルは、`license.file` を持ち、ポリシーが `unbound` で状態が `Active` のときだけ、詳細の画面から保存する（名前は応答の `Content-Disposition` と同じ `<ライセンス ID>.elmlic`）。オフラインの処理は、画面で要求ファイル（`.elmreq`、または解除の証明 `.elmdeact`。64 KiB まで）を選んで送り、`.elmreq` の答え（`200` の本文）をそのまま `.elmresp` で保存する。`.elmdeact` は `204` なので、結果を示すだけである。ファイルの読み書きはブラウザで行い、画面とサーバーはファイルを保存しない（サービスが残すのは §12.8.4 の `offline_requests` だけ）。`GET /v1/admin/audit` に `?order=desc` を足し（新しい順では `after` より小さい `n` の行を返す。知らない値でも同じ。`order` の既定は今の古い順）、画面は新しい順に出して、連なりの確かめのボタンを置く。有効化とリースの一覧は独立した画面にせず、ライセンスの詳細に置き、解除と強制返却もそこから行う。確認を求める操作（戻せない操作: 解除、強制返却、試用の削除、API キーとセッションの取り消し。戻せるが端末や管理者にすぐ効く操作: 一時停止、管理者の無効化。管理者の有効化は 0.103 で足した）は、対象の名前を示す確認のあとで送る。テストは M5c と同じ形（画面ごとの Vitest、API を足すときの .NET のテスト、PR ごとの手元のヘッドレスの Chrome での CSP の確かめ）。各行の細かい設計は、その行の Grill で決め（§14.6 の一覧）、PR の前に独立した設計のレビューを当てて、その行の実装と同じ PR に入れる（0.61、0.97、§12.8.4、§14.5、§14.6、§15.1、§22。M5d の Grill と設計のレビュー、Issue #121） |
 | 0.102 | 管理画面の日々の操作の画面 | M5d1 で、0.101 の画面の決まりの上に次を決めた。監査ログの `order` は `asc` と `desc` だけで既定は `asc`、ほかは `400`、新しい順は `after` がなければ最新の行から読み、`next` はページの最後の行の `n`。読んだことの `audit.list` の行は答えの後に書かれ、次に読んだときに先頭に来るのを、そのまま示す。ライセンスファイルのボタンは、ポリシーを読んで `unbound` かつ `Active` のときだけ出す（`license.file` を持つ役割は `policy.read` も持つので、`policy.read` のない分かれは作らない）。オフラインの処理は `.elmreq` と `.elmdeact` を 64 KiB まで受け、`200` の答えを要求ファイルと同じ名前の `.elmresp` で保存し、`204` は受け付けたと示す。発行の画面は `license.create`・`product.read`・`policy.read` がそろうときだけ出し、試用のポリシーは選ばせず（試用は §12.9 の流れで作る）、ポリシーで `seats` と期限の欄を変える。一時停止（確認つき）・再開（確認なし）・延長（UTC の日時、画面でも確かめる）は、`license.update` と API が受ける状態のときだけ出す。新しいキーは画面のメモリだけに置く。有効化の一覧はライセンスの詳細に置き、解除はホスト名か鍵 ID を示す確認のあとで送る（§14.5、§15.2。M5d1 の Grill と設計のレビュー、Issue #125） |
 | 0.103 | 管理画面のサポートと管理の画面 | M5d2 で、0.101 の画面の決まりの上に次を決めた。新しい画面は試用（`trial.read`）、管理者（`admin.read`）、API キー（`apikey.read`）で、セッションの一覧は管理者の画面の中に置く。API キーの一覧は §14.6 のとおり `support` と `viewer` も読み取りだけで見る（作成と取り消しは `owner` だけ）。リースの一覧はライセンスの詳細に置き、`lease.read` があってポリシーが `floating: cloud` のときだけ出す。強制返却は、ホスト名か鍵 ID と機能、借り出しも返ることを示す確認のあとで送る。試用は製品で絞り込み、削除は、その端末がもう一度試用できることと、試用のライセンスと有効化が残ることを示す確認のあとで送る。`support` の許可は変えず、試用の削除は `admin` 以上のままにする（§15.1 の文を直した）。API キーは作る人の許可から選び、キーは一度だけメモリだけで示す。API キーの取り消しは、名前と先頭 8 文字を示す確認のあとで送る。管理者の無効化は、セッションと API キーが使えなくなることを示す確認のあとで送り、自分の行には出さない。管理者の有効化も、その人の API キーがまた使えるようになることを示す確認のあとで送る。API キーの一覧は、作った人が無効のキーと期限の過ぎたキーに印を付ける。自分・最初の `owner`・有効な最後の `owner` の無効化は API の `409` を示す。セッションの取り消しは確認つきで、自分のセッションに印を付ける（§15.1、§15.2。M5d2 の Grill と設計のレビュー、Issue #129） |
+| 0.104 | M6 の分け方と C ABI の共通の決まり | M6 を M6a（土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS のビルドとテストの仕組み、ライセンスの検証・結果・誤りの関数）、M6b（有効化: `ActivationClient` に当たるハンドル。オンラインの操作とオフラインのファイル）、M6c（リース: `LicenseClient` に当たるハンドル。バックグラウンドの更新のスレッド、コールバック、借り出し）の 3 行に分け、この順に進める。有効化は `elm_activation`、リースは `elm_client` の別のハンドルにし、D0 の案の `elm_client_activate` は取り下げる（0.89 と同じ分け方）。検証と有効化の結果は、不透明なハンドル `elm_license` と取り出しの関数で返し、JSON の文字列では返さない。オプションと要件の構造体は先頭に `uint32_t struct_size` を置き、今より大きい値は `ELM_INVALID_ARGUMENT` にする。テストは、.NET のテストで `[UnmanagedCallersOnly]` の関数を関数ポインターで呼ぶものと、CI の NativeAOT のジョブで 3 つの OS の C コンパイラーで C のテストのプログラムを発行したライブラリにつないで動かすものの 2 段。C ヘッダーは手で書いてリポジトリに入れ、公開する関数の一覧と比べる。M6 の CI が作る RID は `win-x64`・`linux-x64`・`osx-arm64` で、残りの 4 つは F1（§17.3。M6 の Grill、Issue #133） |
 
 ## 1. 目的と利用者
 
@@ -3066,31 +3067,38 @@ M5b の形（0.99）:
 ### 17.2 関数の形
 
 ```c
-typedef struct elm_verifier elm_verifier;   /* 不透明なハンドル */
-typedef struct elm_client elm_client;
+/* 0.104 の形の概略。正確な関数・構造体・メンバーは、各行（M6a〜M6c）の Grill で決めて本節を直す。 */
+typedef struct elm_verifier elm_verifier;     /* 不透明なハンドル */
+typedef struct elm_license elm_license;       /* 検証と有効化の結果 */
+typedef struct elm_activation elm_activation; /* ActivationClient に当たる（M6b） */
+typedef struct elm_client elm_client;         /* LicenseClient に当たる（M6c） */
 
-int32_t elm_verifier_create(const char* root_keys_pem,
-                            const char* const* revoked_key_ids, size_t revoked_count,
-                            elm_verifier** out);
+int32_t elm_verifier_create(const elm_verifier_options* options, elm_verifier** out);
 int32_t elm_verifier_verify(elm_verifier* v, const uint8_t* file, size_t len,
-                            const elm_requirement* req, elm_result** out);
+                            const elm_requirement* req, elm_license** out);
 void    elm_verifier_destroy(elm_verifier* v);
 
+const char* elm_license_id(const elm_license* l);
+size_t      elm_license_feature_count(const elm_license* l);
+const char* elm_license_meta(const elm_license* l, const char* key);
+void        elm_license_free(elm_license* l);
+
+int32_t elm_activation_create(const elm_activation_options* options, elm_activation** out);
+int32_t elm_activation_activate(elm_activation* a, const char* license_key, elm_license** out);
+void    elm_activation_destroy(elm_activation* a);
+
 int32_t elm_client_create(const elm_client_options* options, elm_client** out);
-int32_t elm_client_activate(elm_client* c, const char* license_key, elm_result** out);
 int32_t elm_client_lease_acquire(elm_client* c, const char* feature, const char* version,
                                  int32_t count, elm_lease** out);
 int32_t elm_client_lease_release(elm_client* c, elm_lease* lease);
 int32_t elm_client_reset_server_pin(elm_client* c, const char* server_url);
 void    elm_client_destroy(elm_client* c);
 
-const char* elm_result_error_code(const elm_result* r);
-void        elm_result_free(elm_result* r);
 const char* elm_last_error_message(void);
 ```
 
 - 戻り値の `int32_t` は §19 のエラーコードの番号で、0 が成功である。
-- `elm_verifier_create` は、.NET の `TrustStore.Create` と同じく、ルート鍵と無効にした鍵 ID の両方を受け取る（§7.5）。C ABI だけ鍵の無効化が効かない、ということがないようにする。
+- `elm_verifier_create` は、.NET の `TrustStore.Create` と同じく、ルート鍵と無効にした鍵 ID の両方を受け取る（§7.5。オプションの構造体のメンバー）。C ABI だけ鍵の無効化が効かない、ということがないようにする。
 - ライブラリが返したメモリは、対応する `_free` / `_destroy` で解放する。呼び出し側のメモリをライブラリが保持し続けることはない。
 - 文字列は UTF-8 で NUL 終端する。前身は NUL 終端しない文字列を返し、呼び出し側の解放も未定義動作だった。
 - `elm_last_error_message` はスレッドごとに持ち、次の呼び出しまで有効である。
@@ -3102,9 +3110,40 @@ const char* elm_last_error_message(void);
   - コールバックはライブラリのスレッドから呼ばれる。コールバックの中から、同じ `elm_client` の `destroy` と `lease_release` を呼んではいけない。呼べば `ELM_INVALID_STATE` を返し、何もしない。
   - `destroy` の後に、そのハンドルでコールバックは呼ばれない。
   - プロセスの終了時に `destroy` を呼ばなかった場合、リースは返却されず、サーバーの期限で消える。
-- 正確な関数の一覧と構造体は M6 の行で決め、本節を直す。上の `elm_client_activate` は D0 の案で、.NET では有効化をリースの `LicenseClient` と分けて `ActivationClient` に置いた（0.89、§12.6.2）。C ABI での形（別のハンドルにするか）も M6 で決める。
+- 正確な関数の一覧と構造体は、M6a〜M6c の各行で決め、本節を直す（§17.3）。D0 の案は有効化とリースを 1 つの `elm_client` に置いた（`elm_client_activate`）が、.NET と同じく別のハンドルにした（0.89、§12.6.2、0.104）。
 
 .NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。返却は合わせて最長 5 秒で打ち切り、返却できなかったリースはサーバーの期限で消える。違いは 1 つだけで、.NET はイベントをクライアントの排他の外で呼ぶので、ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい（C ABI のコールバックの中の `lease_release` は `ELM_INVALID_STATE`）。リースごとのタイマーは、そのリースが `Lost` か `Released` になったときに破棄する。
+
+### 17.3 M6 の分け方と共通の決まり（0.104）
+
+M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に共通する決まりを決めた。
+
+- 行: M6a（土台と検証）、M6b（有効化、`elm_activation`）、M6c（リース、`elm_client`）。この順に進める。
+- 結果の中身: 検証と有効化の結果は不透明なハンドル `elm_license` で返し、取り出しの関数（ID、製品、種類、期限、機能の数と各機能（コード、版の範囲、席数、期限）、`meta` のキーでの引き当て）で読む。JSON の文字列では返さない（C の利用者に JSON の解析器を求めないため）。
+- 構造体の版: オプションと要件の構造体は、先頭に `uint32_t struct_size` を置き、呼び出し側は `sizeof` を入れる。ライブラリは、知っている大きさより小さい値を古い呼び出し側として読み（後から足したメンバーは既定の値）、今より大きい値は `ELM_INVALID_ARGUMENT` で断る。文字列はすべて UTF-8 で NUL 終端する。
+- テスト:
+  - .NET のテストで、`[UnmanagedCallersOnly]` の関数を関数ポインター（`delegate* unmanaged`）で直接呼び、JIT の上で引数の確かめ、メモリの解放、誤りを確かめる。
+  - CI の NativeAOT のジョブで、3 つの OS の C コンパイラー（Windows は MSVC、Linux は gcc、macOS は clang）で、発行した共有ライブラリと手書きのヘッダーに C の小さなテストのプログラムをつないで動かす。手元の Windows でも同じものを動かす。
+- ヘッダー: `include/elasticlm.h` を手で書いてリポジトリに入れる。CI で、ライブラリが公開する関数の一覧（Windows は `dumpbin /exports`、Linux は `nm -D`、macOS は `nm -gU`）を取り出してヘッダーの宣言と比べ、食い違えば失敗にする。
+- RID: M6 の CI で作って確かめるのは、今の NativeAOT のジョブの 3 つのランナーの RID（`win-x64`、`linux-x64`、`osx-arm64`）である。§4.1 の残りの 4 つ（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）のビルドと配布は F1 で扱う。
+
+各行の Grill で決める点:
+
+- M6a（土台と検証）:
+  - プロジェクトと配置: `ElasticLM.Native` の置き場所、共有ライブラリの名前（`elasticlm.dll`、`libelasticlm.so`、`libelasticlm.dylib`）、ヘッダーと C のテストのプログラムの置き場所、`build.ps1` と CI のジョブへの組み込み（MSVC の環境の用意を含む）。
+  - 検証の入力: `elm_verifier_options`（ルート鍵の PEM、無効にした鍵 ID）。時計の巻き戻しの見張り（.NET の `LicenseVerifier` は `TimeProvider` と `IClockGuard` を受け取る。C で見張りのファイルの置き場所を渡すか、見張らない形も選べるか）と、`LicenseVerifierOptions` の扱い。`elm_requirement`（製品、種類、機能、版、インストール鍵と指紋）。
+  - 結果: `elm_license` の取り出しの関数の一覧（`VerifiedLicense` のどのメンバーまで出すか）、時刻の型（UNIX 秒の `int64_t`）、取り出した文字列の寿命（`elm_license_free` まで）、検証の失敗のときに `out` に何を入れるか。
+  - 誤り: `elm_last_error_message` のスレッドごとの持ち方、§19 の番号と `ElasticLM.Licensing.ErrorCode` の対応、版を返す関数（`elm_version`）の有無。
+  - 測る値: `libelasticlm` の大きさ（目標 8 MB 以下、§4.2）と、警告 0 件。
+- M6b（有効化）:
+  - `elm_activation_options`（製品、サービスの URL、トラストストア、鍵の範囲、置き場所、端末の情報を送るか、アプリの版）。
+  - オンラインの操作（有効化、試用、更新、解除）の呼び出しの形: 終わるまで待つか、時間の上限と取り消し。
+  - オフラインのファイル（要求ファイル、答えの取り込み、解除の証明）の受け渡し: ライブラリが確保したバッファーと、その解放。
+  - 機能の確かめ（`Check`）と、状態の変化の知らせ（コールバックにするか、問い合わせだけにするか）。
+- M6c（リース）:
+  - `elm_client_options`、リースのハンドル（`elm_lease`）の中身と寿命。
+  - バックグラウンドの更新のスレッドとコールバックの形（§17.2 の規則、`destroy` の 5 秒）、コールバックの中からの呼び出しの `ELM_INVALID_STATE`。
+  - 借り出しと、サーバーの記録した鍵の消去（`reset_server_pin`）。
 
 ## 18. ログ
 
@@ -3277,7 +3316,7 @@ CI で、各 OS（Windows・Linux・macOS）で 3 つの実行ファイルと `l
 | C エクスポートの共有ライブラリ | 4.7 MB。2 つを 1 プロセスに読み込み、両方で HTTPS と ECDSA が動く | win-x64 |
 | Blazor | Blazor Server はサーバー側の NativeAOT で公式に非対応。静的 SSR は公式の表に載っていない | https://learn.microsoft.com/en-us/aspnet/core/fundamentals/native-aot?view=aspnetcore-10.0 |
 
-Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件に入れる。
+Linux と macOS での同じ確認は、各行（M3〜M6c）の受け入れ条件に入れる。
 
 ## 21. 依存
 
@@ -3329,7 +3368,9 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M5c | 管理画面の土台: `web/admin/` のビルドとゲート、`dist` がないときの誤り、秘密を持たない CI の SPA のジョブ（0.96、T21）、埋め込みと CSP つきの配信、大きさの計測、最初の画面（ライセンスの検索・詳細・失効）（決めた形は 0.100） | §4.2, §5.3, §14.5, §15.1, §15.2, §15.3, §21 |
 | M5d1 | 日々の操作の画面: 発行（キーの一度だけの表示とライセンスファイル）、ライセンスの一時停止・再開・期限の延長、有効化の一覧と解除、オフラインの処理、監査ログ（`?order=desc`）（決めた形は 0.102） | §4.2, §5.3, §12.8.4, §14.5, §14.6, §15.1, §15.2 |
 | M5d2 | サポートと管理の画面: リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション（決めた形は 0.103） | §4.2, §5.3, §14.6, §15.1, §15.2 |
-| M6 | `libelasticlm` | §17 |
+| M6a | `libelasticlm` の土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダーと公開する関数の一覧の確かめ、3 つの OS の C のテストのプログラム、ライセンスの検証・結果（`elm_license`）・誤りの関数、大きさ（0.104） | §4.2, §17 |
+| M6b | `libelasticlm` の有効化: `elm_activation`（オンラインの操作とオフラインのファイル）（0.104） | §12.6.2, §12.8, §17 |
+| M6c | `libelasticlm` のリース: `elm_client`（更新のスレッド、コールバック、借り出し、サーバーの記録した鍵の消去）（0.104） | §12.7, §13, §17 |
 | F1 | リリース基盤 | — |
 | V1 | 端から端までのテスト、§4.2 の目標の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | §4.2, §20 |
 

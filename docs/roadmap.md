@@ -15,7 +15,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** M6（`libelasticlm`、C ABI）
+- **フェーズ:** M6a（`libelasticlm` の土台と検証）
 - **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）、M4b2（[#66](https://github.com/YUKIKEDA/ElasticLM/issues/66)）、M4c1（[#70](https://github.com/YUKIKEDA/ElasticLM/issues/70)）、M4c2（[#74](https://github.com/YUKIKEDA/ElasticLM/issues/74)）、M4c3（[#78](https://github.com/YUKIKEDA/ElasticLM/issues/78)）、M4d1（[#82](https://github.com/YUKIKEDA/ElasticLM/issues/82)）、M4d2（[#86](https://github.com/YUKIKEDA/ElasticLM/issues/86)）、M4d3（[#90](https://github.com/YUKIKEDA/ElasticLM/issues/90)）、W0（[#94](https://github.com/YUKIKEDA/ElasticLM/issues/94)）、M5a（[#102](https://github.com/YUKIKEDA/ElasticLM/issues/102)）、M5b（[#109](https://github.com/YUKIKEDA/ElasticLM/issues/109)）、M5c（[#116](https://github.com/YUKIKEDA/ElasticLM/issues/116)）、M5d1（[#125](https://github.com/YUKIKEDA/ElasticLM/issues/125)）、M5d2（[#129](https://github.com/YUKIKEDA/ElasticLM/issues/129)）
 
 ## v1 まで
@@ -47,8 +47,10 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M5c | 管理画面の土台（`web/admin/`。`build.ps1` のビルドと `tsc`・Vitest のゲート、道具の版の確かめ、`dist` がないときの Service のビルドの誤り、秘密を持たない CI の SPA のジョブ、埋め込みと CSP つきの配信、`elm-service` の大きさの差と Windows のパスの長さの確かめ、AGENTS.md・CONTRIBUTING.md・規則・規約への Node.js と pnpm の追記、最初の画面: ライセンスの検索・詳細・失効） | done        | [#116](https://github.com/YUKIKEDA/ElasticLM/issues/116) |
 | M5d1 | 管理画面の日々の操作（発行（キーの一度だけの表示とライセンスファイル）、ライセンスの一時停止・再開・延長、有効化の一覧と解除、オフラインの処理、監査ログ。決めた形は design.ja.md 0.102） | done        | [#125](https://github.com/YUKIKEDA/ElasticLM/issues/125) |
 | M5d2 | 管理画面のサポートと管理（リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション。決めた形は design.ja.md 0.103） | done        | [#129](https://github.com/YUKIKEDA/ElasticLM/issues/129) |
-| M6  | `libelasticlm`（C ABI）                                                                    | not-started | —     |
-| F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing）   | not-started | —     |
+| M6a | `libelasticlm` の土台と検証（`ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS の C のテスト、ライセンスの検証・結果・誤りの関数、大きさ。Grill で決める点は design.ja.md §17.3） | not-started | —     |
+| M6b | `libelasticlm` の有効化（`elm_activation`。Grill で決める点は design.ja.md §17.3） | not-started | —     |
+| M6c | `libelasticlm` のリース（`elm_client`。Grill で決める点は design.ja.md §17.3） | not-started | —     |
+| F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、M6 の CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の `libelasticlm`。design.ja.md 0.104） | not-started | —     |
 | V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
 
 ## v1 の後
