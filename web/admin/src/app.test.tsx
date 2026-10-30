@@ -79,13 +79,15 @@ function mount() {
 describe('route', () => {
   /*
    * Preconditions: none.
-   * Steps: read "", "#/", "#/licenses", "#/licenses/l%201", "#/other".
-   * Expected: the list three times, the license "l 1", unknown.
+   * Steps: read "", "#/", "#/licenses", "#/licenses/l%201", "#/other", "#/licenses/%", "#/licenses/%E0".
+   * Expected: the list three times, the license "l 1", unknown three times (a broken encoding is unknown, not an error).
    */
   it('reads the hash as the list, a license, or unknown', () => {
     expect([route(''), route('#/'), route('#/licenses')]).toEqual([{ kind: 'list' }, { kind: 'list' }, { kind: 'list' }]);
     expect(route('#/licenses/l%201')).toEqual({ kind: 'license', id: 'l 1' });
     expect(route('#/other')).toEqual({ kind: 'unknown' });
+    expect(route('#/licenses/%')).toEqual({ kind: 'unknown' });
+    expect(route('#/licenses/%E0')).toEqual({ kind: 'unknown' });
   });
 });
 

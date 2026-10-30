@@ -31,7 +31,8 @@ internal static class AdminApi
 /// <param name="Result">The result code.</param>
 /// <param name="Target">What it acted on, or <see langword="null"/>.</param>
 /// <param name="Detail">The audit detail, or <see langword="null"/>.</param>
-/// <param name="Recorded">Whether the operation already wrote its audit row in its own transaction.</param>
+/// <param name="Recorded">Whether the operation already wrote its audit row in its own transaction, or by design writes none
+/// (the success of <c>GET /v1/admin/me</c>, design §14.5); either way no row is added after it.</param>
 internal sealed record AdminOutcome(string Result, string? Target = null, string? Detail = null, bool Recorded = false);
 
 /// <content>
@@ -87,6 +88,14 @@ internal sealed partial class ElmService
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         PathString path = context.Request.Path;
+
+        // design §14.5 (M5c): no answer of the administration API is kept by a cache, the rate limit's 429 included;
+        // cookie-authenticated answers exist since M5b.
+        if (path.StartsWithSegments("/v1/admin"))
+        {
+            context.Response.Headers.CacheControl = "no-store";
+        }
+
         bool device =
             path.StartsWithSegments("/v1/activations")
             || path.StartsWithSegments("/v1/trials")
@@ -104,12 +113,6 @@ internal sealed partial class ElmService
         {
             await PageAsync(context, StatusCodes.Status404NotFound, "Not found.").ConfigureAwait(false);
             return;
-        }
-
-        // design §14.5 (M5c): no answer of the administration API is kept by a cache; cookie-authenticated ones exist since M5b.
-        if (path.StartsWithSegments("/v1/admin"))
-        {
-            context.Response.Headers.CacheControl = "no-store";
         }
 
         await next(context).ConfigureAwait(false);

@@ -125,12 +125,13 @@ public sealed partial class ElmServiceAdminUiTests
     ///
     /// Steps:
     /// - GET /v1/admin/me with the owner key, with a token of carol in elm-viewers, and with a token of dave of no mapped
-    ///   group; GET it without credentials; read the audit log.
+    ///   group; GET it without credentials; read the audit log; then, on a service that allows one request a second from a
+    ///   source, GET it twice.
     ///
     /// Expected:
     /// - 200 for the owner with role owner and every permission in the design's order; 200 for carol with role viewer and the
     ///   read permissions other than admin.read and session.read; 403 for dave; 401 without credentials; every answer with
-    ///   Cache-Control no-store; no admin.me row with ELM_OK, one with ELM_FORBIDDEN.
+    ///   Cache-Control no-store; no admin.me row with ELM_OK, one with ELM_FORBIDDEN; the second request 429, also no-store.
     /// </remarks>
     [Fact]
     public async Task Me_AnswersTheCaller()
@@ -170,6 +171,14 @@ public sealed partial class ElmServiceAdminUiTests
             .. (await TestService.AuditRowsAsync(test, service, owner)).Where(r => r.GetProperty("action").GetString() == "admin.me"),
         ];
         Assert.Equal(["ELM_FORBIDDEN"], rows.Select(r => r.GetProperty("result").GetString()));
+
+        // The per-source limit answers before authentication; its 429 is no-store as well.
+        ElmService limited = await test.StartAsync(s => s with { Oidc = idp.Settings(), RateLimitPerIp = 1 });
+        HttpClient http = test.Http(limited, owner);
+        using HttpResponseMessage first = await http.GetAsync("v1/admin/me", cancel);
+        using HttpResponseMessage second = await http.GetAsync("v1/admin/me", cancel);
+        Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
+        Assert.Equal("no-store", second.Headers.CacheControl!.ToString());
     }
 
     private static Task<ElmService> StartAsync(TestService test, FakeIdp idp) =>

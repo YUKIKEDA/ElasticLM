@@ -15,7 +15,16 @@ export function route(hash: string): Route {
   }
 
   const license = /^#\/licenses\/([^/]+)$/.exec(hash);
-  return license ? { kind: 'license', id: decodeURIComponent(license[1]) } : { kind: 'unknown' };
+  if (!license) {
+    return { kind: 'unknown' };
+  }
+
+  // A hash typed by hand may hold a broken percent-encoding; it is a route that does not exist, not a failed screen.
+  try {
+    return { kind: 'license', id: decodeURIComponent(license[1]) };
+  } catch {
+    return { kind: 'unknown' };
+  }
 }
 
 function useHash(): string {

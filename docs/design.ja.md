@@ -2752,7 +2752,7 @@ M4a1 の設定:
   - pnpm 12 は、`allowBuilds` に載せていない依存のビルドスクリプトを走らせず、`strictDepBuilds: true` ではそのような依存があればインストールを失敗させる（https://pnpm.io/settings/build 。既定も `true`）。`strictDepBuilds: true` も `web/admin/pnpm-workspace.yaml` に明示する。pnpm の既定が版で変わっても守りが残り、T21 が頼る設定を lock の横の 1 つのファイルで読めるようにするためである。W0 で、ビルドスクリプトを持つパッケージ（`pnpm@12.16.1`）の追加は `ERR_PNPM_IGNORED_BUILDS` で失敗した。
   - `minimumReleaseAge` は `web/admin/pnpm-workspace.yaml` に 1440（分）と明示する。既定値も 1440 だが、既定のままでは条件を満たす版がないときに新しすぎる版を入れる。明示すると `minimumReleaseAgeStrict` が `true` になり、解決が失敗する（https://pnpm.io/settings/dependency-resolution ）。
   - W0 で、Node.js 22 に同梱の npm 10.9.9 と npm 11.0.0 は依存の解決の途中で止まり、pnpm 9.12.1 は Rolldown のネイティブの部品を入れずにビルドが止まった。同梱の道具に任せず版を固定するのはこのためである。
-- `build.ps1` は、`web/admin/` があれば、.NET のビルドの前に SPA をビルドし、`tsc` と Vitest を通す。Node.js か pnpm がない、または `.node-version` と `packageManager` の版と違えば、誤りで止める。
+- `build.ps1` は、`web/admin/` があれば、.NET のビルドの前に SPA をビルドし、`tsc` と Vitest を通す。Node.js の版が `.node-version` と違うか、Corepack がなければ誤りで止め、pnpm の版とハッシュは Corepack が `packageManager` で確かめる（M5c の形の `build.ps1`、設計のレビュー R12）。
 - `web/admin/` があって `dist` がなければ、`ElasticLM.Service` のビルドは誤りで止まる（`build.ps1` を通さない `dotnet build`、`dotnet test`、`dotnet publish` でも、画面のない `elm-service` を作らない）。
 - ビルドの結果はリポジトリに入れない。W0 で、同じ lock から `node_modules` と `dist` を消して入れ直し、ビルドする回を 3 回行い、3 回とも同じバイト列の `dist` になった（Windows、Node.js 22.23.4 と 24.22.2 で同じハッシュ）。lock には OS ごとのネイティブの部品が入るので、CI は `dist` を 1 つのジョブで 1 回だけビルドし、3 つの OS のジョブに同じ `dist` を渡す。
 - CI の SPA のジョブは、秘密も `id-token` も持たない（T21）。.NET のジョブは `dist` だけを受け取り、Node.js の道具を動かさない。
@@ -2783,7 +2783,7 @@ M5c の形（0.100）:
   - ヘッダー: 自分の subject と役割、ログアウトのボタン。
   - 知らない行き先は「見つからない」の画面。
 - 文言は英語で、1 つのファイルにまとめる（§15.2）。
-- `build.ps1`: `web/admin/` があれば、.NET のビルドの前に、`node --version` が `web/admin/.node-version` と同じであることと、`corepack` のコマンドがあることを確かめ（どちらかが違えば止まる）、`corepack pnpm install --frozen-lockfile`、型の確かめ（`tsc --noEmit`）、Vitest、本番のビルドを走らせる。pnpm は `corepack pnpm` で呼び、Corepack に `packageManager` の版とハッシュを確かめさせる（`corepack enable` は要らず、明示して呼べば確認の問いを出さない。最初の 1 回は registry.npmjs.org から pnpm を取るので、ネットワークが要る。https://github.com/nodejs/corepack ）。CI の .NET のジョブは `-SkipWeb` で SPA の段を飛ばし、受け取った `dist` を使う。
+- `build.ps1`: `web/admin/` があれば、.NET のビルドの前に、`node --version` が `web/admin/.node-version` と同じであることと、`corepack` のコマンドがあることを確かめ（どちらかが違えば止まる）、`corepack pnpm install --frozen-lockfile`、型の確かめ（`tsc -b`。各 tsconfig が `noEmit` を持つ）、Vitest、本番のビルドを走らせる。pnpm は `corepack pnpm` で呼び、Corepack に `packageManager` の版とハッシュを確かめさせる（`corepack enable` は要らず、明示して呼べば確認の問いを出さない。最初の 1 回は registry.npmjs.org から pnpm を取るので、ネットワークが要る。https://github.com/nodejs/corepack ）。CI の .NET のジョブは `-SkipWeb` で SPA の段を飛ばし、受け取った `dist` を使う。
 - `ElasticLM.Service` のビルド: `web/admin/dist/index.html` がなければ、誤り「`web/admin/dist is missing. Run ./build.ps1, or run 'corepack pnpm install --frozen-lockfile' and 'corepack pnpm build' in web/admin.`」（`dist` がないことと、`./build.ps1` か `web/admin` での `corepack pnpm install --frozen-lockfile` と `corepack pnpm build` の 2 つの手）で止まる（.NET だけを触る人にも次の手を示す。§15.2）。`dist` は `GenerateEmbeddedFilesManifest` で埋め込む（`Microsoft.Extensions.FileProviders.Embedded`、§21）。
 - CI の SPA のジョブ: Linux で、`permissions: contents: read` だけを持ち（秘密も `id-token` も持たない）、Node.js を `.node-version` の版で入れ、Corepack で pnpm を入れ、`--frozen-lockfile` で入れて、型の確かめ、Vitest、本番のビルドを走らせる。`dist` を成果物（`retention-days: 1`）として上げる。3 つの OS の .NET のジョブと NativeAOT のジョブは `needs` でこのジョブを待ち、同じ実行の成果物だけを受け取る（ほかの実行の成果物は使わない）。このジョブで使う `actions/setup-node` と `actions/upload-artifact`、受け取る側の `actions/download-artifact` は、コミットの SHA で固定し、版をコメントに書く（出力が配る実行ファイルに入るため。ほかのジョブの actions はタグのまま）。
 - CI の NativeAOT のジョブの `elm-service` の動作の確かめ（3 つの OS）に、画面のログインの設定（仮の発行者。起動は IdP に問い合わせない）で起動し、`GET /` が `200` で CSP のヘッダーを持ち、`/assets/` の 1 つのファイルが `200` で正しい `Content-Type` を持つことを足す（実行ファイルだけで画面を配ることを確かめる）。
@@ -2791,7 +2791,7 @@ M5c の形（0.100）:
 - テスト:
   - Vitest と happy-dom（3 つの OS の `build.ps1` と CI の SPA のジョブ）: API の呼び方（`X-ELM-CSRF`、`fetch` の既定の形、`401` での 1 回だけの移動）、一覧と絞り込み（`keyHash` の作り方を含む）、詳細、失効の確認と許可によるボタンの有無、`#` の行き先、名前に `<script>` や `<img onerror>` を持つライセンスを文字として描くこと。
   - .NET（3 つの OS）: `/` と `/assets/*` の答えとヘッダー、`HEAD` とほかのメソッド、ないファイルと配らない拡張子の `404`、画面のログインがないときの `404`、`GET /v1/admin/me`、ライセンスの一覧の `q` と `keyHash`（SQLite と PostgreSQL で、`É` と `é`、`\`、`%`、`_` を含む）。
-  - CSP の違反が 0 件であること: PR ごとに手元で、NativeAOT の `elm-service` を自己署名の証明書の https で待ち受けさせ、WSL コンテナの Keycloak（テストの realm）でログインして、ヘッドレスの Chrome で一覧から失効までを動かして確かめ、PR に書く（ブラウザは http のループバックで `__Host-` の Cookie を扱わないことがある、§15.3）。CI にはブラウザを入れない。
+  - CSP の違反が 0 件であること: PR ごとに手元で、NativeAOT の `elm-service` を自己署名の証明書の https で待ち受けさせ、WSL コンテナの Keycloak（テストの realm）でログインして、ヘッドレスの Chrome で一覧から失効までを動かして確かめ、PR に書く（ブラウザは http のループバックで `__Host-` の Cookie を扱わないことがある、§15.3）。テストの realm の `elm-web` は、この確かめのために `https://127.0.0.1:18443/` の戻り先（`/auth/callback` とログアウトの後の `/`）も持つ。CI にはブラウザを入れない。
 - 文書: `AGENTS.md`・`CONTRIBUTING.md`・`docs/conventions.md`・`.cursor/rules/engineering.mdc` に、`web/admin/`、Node.js 24、Corepack の pnpm、`build.ps1 -SkipWeb` を書く。
 
 ### 15.3 ログイン（BFF）
