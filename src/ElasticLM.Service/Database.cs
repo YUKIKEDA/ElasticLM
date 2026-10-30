@@ -145,8 +145,11 @@ internal abstract partial class Database : IAsyncDisposable
     /// <returns>The row's number.</returns>
     public abstract Task<long> AppendAuditAsync(AuditEntry entry, DateTimeOffset now, CancellationToken cancellationToken);
 
-    /// <summary>Returns audit rows after a row number, oldest first.</summary>
-    public abstract Task<IReadOnlyList<AuditRow>> ListAuditAsync(long after, int limit, CancellationToken cancellationToken);
+    /// <summary>
+    /// Returns audit rows oldest first after a row number, or newest first below it (design §14.5, M5d1); with no number,
+    /// from the oldest or the newest row.
+    /// </summary>
+    public abstract Task<IReadOnlyList<AuditRow>> ListAuditAsync(long? after, bool descending, int limit, CancellationToken cancellationToken);
 
     /// <summary>Checks the audit chain from the anchor to the head, in one snapshot of the database (design §18.2).</summary>
     public abstract Task<AuditCheck> VerifyAuditAsync(CancellationToken cancellationToken);

@@ -170,12 +170,12 @@ internal sealed partial class ServiceStore<TDialect> : Database
     public override Task<long> AppendAuditAsync(AuditEntry entry, DateTimeOffset now, CancellationToken cancellationToken) =>
         _db.InTransactionAsync(tx => AppendAsync(tx, entry, now, cancellationToken), cancellationToken);
 
-    public override async Task<IReadOnlyList<AuditRow>> ListAuditAsync(long after, int limit, CancellationToken cancellationToken)
+    public override async Task<IReadOnlyList<AuditRow>> ListAuditAsync(long? after, bool descending, int limit, CancellationToken cancellationToken)
     {
         List<AuditLogRow> rows = await _db.From(AuditLogRow.Table)
-            .Where(r => Gt(r.N, after))
+            .Where(r => And([after is long n ? (descending ? Lt(r.N, n) : Gt(r.N, n)) : null]))
             .Select(r => r)
-            .OrderBy(r => [Asc(r.N)])
+            .OrderBy(r => [descending ? Desc(r.N) : Asc(r.N)])
             .Limit(limit)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);

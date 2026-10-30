@@ -442,6 +442,71 @@ public sealed class ElmServiceAdminTests
     }
 
     /// <summary>
+    /// The audit list reads newest first with ?order=desc (design §14.5, M5d1): after gives the rows below it, an unknown
+    /// after above the head reads from the newest, after 0 gives no row, and order takes only asc or desc, once.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with an owner key from setup and five audit rows written by reading the key list; each engine.
+    ///
+    /// Steps:
+    /// - List with order desc and limit 2; then with its next; then with after 1000; then with after 0; then with order asc
+    ///   and limit 1; then with order up, and with order given twice.
+    ///
+    /// Expected:
+    /// - Two rows in falling n, the first the newest row, next the second's n; then two rows below that n; then the newest
+    ///   row first again; then no row and no next; then row 1; 400 ELM_INVALID_ARGUMENT "order must be asc or desc." twice.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Audit_OrderDesc_ReadsNewestFirst(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        HttpClient admin = test.Http(service, owner);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 5; i++)
+        {
+            Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("v1/admin/api-keys", cancel)).StatusCode);
+        }
+
+        long newest = (await service.Database.ListAuditAsync(null, true, 1, cancel))[0].N;
+        async Task<(long[] Rows, long? Next)> PageAsync(string query)
+        {
+            using JsonDocument page = JsonDocument.Parse(await admin.GetStringAsync("v1/admin/audit?" + query, cancel));
+            long[] rows = [.. page.RootElement.GetProperty("items").EnumerateArray().Select(r => r.GetProperty("n").GetInt64())];
+            return (
+                rows,
+                page.RootElement.TryGetProperty("next", out JsonElement next) && next.ValueKind == JsonValueKind.Number ? next.GetInt64() : null
+            );
+        }
+
+        (long[] first, long? cursor) = await PageAsync("order=desc&limit=2");
+        Assert.Equal([newest, newest - 1], first);
+        Assert.Equal(newest - 1, cursor);
+        (long[] second, _) = await PageAsync($"order=desc&limit=2&after={cursor}");
+        Assert.Equal([newest - 2, newest - 3], second);
+        (long[] unknown, _) = await PageAsync("order=desc&limit=1&after=1000");
+        Assert.True(unknown[0] >= newest);
+        (long[] none, long? noNext) = await PageAsync("order=desc&after=0");
+        Assert.Empty(none);
+        Assert.Null(noNext);
+        (long[] ascending, _) = await PageAsync("order=asc&limit=1");
+        Assert.Equal([1L], ascending);
+
+        foreach (string query in new[] { "order=up", "order=asc&order=desc" })
+        {
+            await TestService.AssertProblemAsync(
+                await admin.GetAsync("v1/admin/audit?" + query, cancel),
+                HttpStatusCode.BadRequest,
+                "ELM_INVALID_ARGUMENT",
+                "order must be asc or desc."
+            );
+        }
+    }
+
+    /// <summary>
     /// Requests are limited per source before authentication and per API key after it (design §14.7), and /health answers
     /// without a key.
     /// </summary>
