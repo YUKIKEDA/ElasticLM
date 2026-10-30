@@ -173,6 +173,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.102 | 管理画面の日々の操作の画面 | M5d1 で、0.101 の画面の決まりの上に次を決めた。監査ログの `order` は `asc` と `desc` だけで既定は `asc`、ほかは `400`、新しい順は `after` がなければ最新の行から読み、`next` はページの最後の行の `n`。読んだことの `audit.list` の行は答えの後に書かれ、次に読んだときに先頭に来るのを、そのまま示す。ライセンスファイルのボタンは、ポリシーを読んで `unbound` かつ `Active` のときだけ出す（`license.file` を持つ役割は `policy.read` も持つので、`policy.read` のない分かれは作らない）。オフラインの処理は `.elmreq` と `.elmdeact` を 64 KiB まで受け、`200` の答えを要求ファイルと同じ名前の `.elmresp` で保存し、`204` は受け付けたと示す。発行の画面は `license.create`・`product.read`・`policy.read` がそろうときだけ出し、試用のポリシーは選ばせず（試用は §12.9 の流れで作る）、ポリシーで `seats` と期限の欄を変える。一時停止（確認つき）・再開（確認なし）・延長（UTC の日時、画面でも確かめる）は、`license.update` と API が受ける状態のときだけ出す。新しいキーは画面のメモリだけに置く。有効化の一覧はライセンスの詳細に置き、解除はホスト名か鍵 ID を示す確認のあとで送る（§14.5、§15.2。M5d1 の Grill と設計のレビュー、Issue #125） |
 | 0.103 | 管理画面のサポートと管理の画面 | M5d2 で、0.101 の画面の決まりの上に次を決めた。新しい画面は試用（`trial.read`）、管理者（`admin.read`）、API キー（`apikey.read`）で、セッションの一覧は管理者の画面の中に置く。API キーの一覧は §14.6 のとおり `support` と `viewer` も読み取りだけで見る（作成と取り消しは `owner` だけ）。リースの一覧はライセンスの詳細に置き、`lease.read` があってポリシーが `floating: cloud` のときだけ出す。強制返却は、ホスト名か鍵 ID と機能、借り出しも返ることを示す確認のあとで送る。試用は製品で絞り込み、削除は、その端末がもう一度試用できることと、試用のライセンスと有効化が残ることを示す確認のあとで送る。`support` の許可は変えず、試用の削除は `admin` 以上のままにする（§15.1 の文を直した）。API キーは作る人の許可から選び、キーは一度だけメモリだけで示す。API キーの取り消しは、名前と先頭 8 文字を示す確認のあとで送る。管理者の無効化は、セッションと API キーが使えなくなることを示す確認のあとで送り、自分の行には出さない。管理者の有効化も、その人の API キーがまた使えるようになることを示す確認のあとで送る。API キーの一覧は、作った人が無効のキーと期限の過ぎたキーに印を付ける。自分・最初の `owner`・有効な最後の `owner` の無効化は API の `409` を示す。セッションの取り消しは確認つきで、自分のセッションに印を付ける（§15.1、§15.2。M5d2 の Grill と設計のレビュー、Issue #129） |
 | 0.104 | M6 の分け方と C ABI の共通の決まり | M6 を M6a（土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS のビルドとテストの仕組み、ライセンスの検証・結果・誤りの関数）、M6b（有効化: `ActivationClient` に当たるハンドル。オンラインの操作、オフラインのファイル、自動の更新）、M6c（リース: `LicenseClient` に当たるハンドル。バックグラウンドの更新のスレッド、コールバック、借り出し）の 3 行に分け、この順に進める。有効化は `elm_activation`、リースは `elm_client` の別のハンドルにし、D0 の案の `elm_client_activate` は取り下げる（0.89 と同じ分け方）。検証と有効化の結果は、不透明なハンドル `elm_license` と取り出しの関数で返し、JSON の文字列では返さない。オプションと要件の構造体は先頭に `uint32_t struct_size` を置き、今より大きい値は `ELM_INVALID_ARGUMENT` にする。バックグラウンドのスレッドとコールバックの規則は `elm_activation` にも当てはめ、公開する関数は例外を外に出さない。テストは、.NET のテストで `[UnmanagedCallersOnly]` の関数を関数ポインターで呼ぶものと、CI の NativeAOT のジョブで 3 つの OS の C コンパイラーで C のテストのプログラムを発行したライブラリにつないで動かすものの 2 段。C ヘッダーは手で書いてリポジトリに入れ、公開する関数の一覧と比べる。M6 の CI が作る RID は `win-x64`・`linux-x64`・`osx-arm64` で、残りの 4 つは実行ファイルの分も合わせて F1（§17.3。M6 の Grill と設計のレビュー、Issue #133） |
+| 0.105 | `libelasticlm` の土台と検証 | M6a で、0.104 の共通の決まりの上に次を決めた。置き場所は `src/ElasticLM.Native`・`include/elasticlm.h`・`tests/ElasticLM.Native.Tests`・`tests/native/` で、ライブラリは `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib`。インストールの身元は `elm_installation`（`ElasticLM.Client` の鍵の保管と指紋）で、要件はそれを指す。時計の見張りは、身元があればその鍵で署名する `FileClockGuard`、なければ状態を持たない見張り。そのために `InstallationKey.CreateClockGuard` を公開する。`elm_license` は、ID・製品・種類・発行の時刻・期限・猶予期間・猶予期間の中か・機能・`meta` を出す。64 KiB を超えるファイルは読む前に `ELM_PAYLOAD_TOO_LARGE`。誤りの文はスレッドごと、`elm_version` と `ELM_ABI_VERSION` を置く。C のテストは `tests/native/run.ps1` で CI の NativeAOT のジョブと手元から動かす（§17.4。M6a の Grill、Issue #137） |
 
 ## 1. 目的と利用者
 
@@ -3172,6 +3173,122 @@ M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に�
   - バックグラウンドの更新のスレッドとコールバックの形（上の共通の決まり）、失敗の `RetryAfter` の渡し方。
   - 借り出しと、サーバーのピンの消去（`reset_server_pin`、§13.5）。
   - 大きさ: M6 を終えたときの `libelasticlm` の大きさ（目標 8 MB 以下）。
+
+### 17.4 M6a の形（0.104、0.105）
+
+M6a の Grill（Issue #137）で決めた。§17.3 の共通の決まりに従う。
+
+置き場所と名前:
+
+- `src/ElasticLM.Native`: C ABI の .NET のコード。`ElasticLM.Licensing` と `ElasticLM.Client` を参照する（鍵の保管と指紋のため）。NativeAOT の共有ライブラリとして発行する（`NativeLib=Shared`）。アセンブリ名は Windows で `elasticlm`、ほかで `libelasticlm` にし、ファイル名を `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib` にする（NativeAOT はアセンブリ名をそのままファイル名にする。M6a の最初の発行で 3 つの OS で確かめる）。
+- `include/elasticlm.h`: 手で書くヘッダー。`ELM_ABI_VERSION`（この版は 1）、型、関数の宣言、所有と寿命の決まりを持つ。
+- `tests/ElasticLM.Native.Tests`: 公開する関数を関数ポインターで呼ぶ .NET のテスト（JIT）。`build.ps1` が走らせる。
+- `tests/native/`: C のテストのプログラム（`test_elasticlm.c`）と、それをビルドして動かす `run.ps1`。
+
+型と関数（C の表記。`int32_t` の戻り値は §19 の番号で、0 が成功）:
+
+```c
+#define ELM_ABI_VERSION 1
+
+enum { ELM_KIND_STANDARD = 0, ELM_KIND_TRIAL = 1, ELM_KIND_SERVER = 2 };   /* LicenseKind */
+enum { ELM_SCOPE_USER = 0, ELM_SCOPE_MACHINE = 1 };                        /* KeyScope */
+
+typedef struct elm_installation elm_installation;
+typedef struct elm_verifier elm_verifier;
+typedef struct elm_license elm_license;
+
+typedef struct {
+    uint32_t struct_size;
+    const char* product_id;     /* 必須 */
+    int32_t scope;              /* ELM_SCOPE_* */
+    const char* directory;      /* NULL なら §10.2 の既定 */
+    int32_t create;             /* 1 なら、なければ作る。0 なら、なければ ELM_INSTALLATION_KEY_UNREADABLE */
+} elm_installation_options;
+
+typedef struct {
+    uint32_t struct_size;
+    const char* const* root_keys_pem;   /* ルート鍵の PEM。1 個以上 */
+    size_t root_key_count;
+    const char* const* revoked_key_ids; /* 無効にした鍵 ID。0 個でよい */
+    size_t revoked_key_count;
+    const elm_installation* installation; /* NULL でよい */
+    const char* clock_guard_path;       /* NULL でよい */
+    int32_t clock_skew_seconds;         /* 0 なら既定（300）。1〜3600 */
+    int32_t accept_trial_as_standard;   /* 0 か 1 */
+} elm_verifier_options;
+
+typedef struct {
+    uint32_t struct_size;
+    const char* product_id;               /* 必須 */
+    int32_t kind;                         /* ELM_KIND_* */
+    const char* feature_id;               /* NULL でよい */
+    const char* feature_version;          /* NULL でよい。major.minor[.patch] */
+    const elm_installation* installation; /* 端末に結びつかないライセンスなら NULL */
+} elm_requirement;
+
+typedef struct {
+    uint32_t struct_size;       /* 呼び出し側が入れる。ライブラリはこの大きさの中だけを書く */
+    const char* id;
+    const char* version_range;  /* なければ NULL */
+    int32_t has_seats;
+    int32_t seats;
+    int32_t has_expires_at;
+    int64_t expires_at;         /* UNIX 秒 */
+} elm_feature;
+
+int32_t     elm_installation_open(const elm_installation_options* options, elm_installation** out);
+const char* elm_installation_thumbprint(const elm_installation* installation);
+void        elm_installation_free(elm_installation* installation);
+
+int32_t elm_verifier_create(const elm_verifier_options* options, elm_verifier** out);
+int32_t elm_verifier_verify(elm_verifier* verifier, const uint8_t* file, size_t len,
+                            const elm_requirement* requirement, elm_license** out);
+void    elm_verifier_destroy(elm_verifier* verifier);
+
+const char* elm_license_id(const elm_license* license);
+const char* elm_license_product(const elm_license* license);
+int32_t     elm_license_kind(const elm_license* license);
+int64_t     elm_license_issued_at(const elm_license* license);
+int32_t     elm_license_expires_at(const elm_license* license, int32_t* has_value, int64_t* value);
+int64_t     elm_license_grace_period_seconds(const elm_license* license);
+int32_t     elm_license_in_grace_period(const elm_license* license);
+size_t      elm_license_feature_count(const elm_license* license);
+int32_t     elm_license_feature(const elm_license* license, size_t index, elm_feature* out);
+size_t      elm_license_meta_count(const elm_license* license);
+int32_t     elm_license_meta_at(const elm_license* license, size_t index,
+                                const char** key, size_t* key_len, const char** value, size_t* value_len);
+int32_t     elm_license_meta_get(const elm_license* license, const char* key,
+                                 const char** value, size_t* value_len);
+void        elm_license_free(elm_license* license);
+
+const char* elm_last_error_message(void);
+const char* elm_version(void);
+```
+
+決まり:
+
+- インストールの身元: `elm_installation_open` は `InstallationKeyStore` で鍵を読むか作り（`create`）、そのときに `MachineFingerprint.Compute` で指紋を作って持つ。`elm_requirement.installation` に渡すと、`InstallationIdentity`（拇印と指紋）として検証に使う。拇印の文字列は `elm_installation_free` まで有効。
+- 時計の見張り（§11.4）: `elm_verifier_options.installation` があれば、`clock_guard_path`（なければ鍵の置き場所の `clock`。`ActivationClient`・`LicenseClient`・`elm-server` と同じ）に、その鍵で状態に署名する `FileClockGuard` を作る。`installation` がなく `clock_guard_path` だけなら、署名しない `FileClockGuard`。どちらもなければ `StatelessClockGuard`（`iat` の確かめだけ）。署名つきの見張りを公開 API で作れるよう、`ElasticLM.Client` に `InstallationKey.CreateClockGuard(string path)` を足す（.NET のアプリも、これまで公開 API だけでは作れなかった）。
+- `clock_skew_seconds`: 0 を既定の 300 秒とする（0 で埋めた構造体が既定になるように）。1〜3600 のほかは `ELM_INVALID_ARGUMENT`。.NET の 0 秒（ずれを許さない）は C ABI では選べない。
+- 検証の入力: `file` が `NULL` なら、`len` が 0 でも `ELM_INVALID_ARGUMENT`。`len` が 65,536（§8.6）を超えれば、読む前に `ELM_PAYLOAD_TOO_LARGE`。`len` が実際のバッファーより大きいときは、ライブラリには分からないので、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。ライブラリは `file` をコピーせずに読み、関数から戻った後は持たない。
+- 検証の結果: 通れば `ELM_OK` と `*out` の新しい `elm_license`。通らなければ `*out` を `NULL` にし、`LicenseError` の番号を返し、その文を `elm_last_error_message` に残す。要件の `product_id` が `NULL` か空、`feature_version` が版の形でないときは `ELM_INVALID_ARGUMENT`。
+- `elm_license` の取り出し:
+  - 文字列（ID、製品、機能のコードと版の範囲、`meta` のキーと値）は、`elm_license_free` まで有効な UTF-8 で、NUL で終わる。`meta` のキーと値は NUL を含みうる（§8.6 は禁じていない）ので、`elm_license_meta_at` と `elm_license_meta_get` は長さも返す。
+  - 時刻は UNIX 秒の `int64_t`。期限のないライセンスは `elm_license_expires_at` が `*has_value = 0`。席数と期限のない機能も `has_seats`・`has_expires_at` が 0。
+  - `elm_license_feature` と `elm_license_meta_at` の範囲外の番号、出力の引数が `NULL`、`elm_feature.struct_size` が最初の版より小さいときは `ELM_INVALID_ARGUMENT`。
+  - `elm_license_meta_get` は、キーがなければ `ELM_OK` で `*value = NULL`。`key` が `NULL` なら `ELM_INVALID_ARGUMENT`。NUL を含むキーは並べて読む（`elm_license_meta_at`）。
+  - `int32_t` を返さない取り出し（ID、製品、種類、発行の時刻、猶予期間、数）は、ハンドルが `NULL` なら `NULL` か 0 を返す。
+  - `elm_license` は変わらない値で、複数のスレッドから同時に読んでよい。読んでいる間に `elm_license_free` を呼ぶのは呼び出し側の誤り。
+- ハンドルの寿命: `elm_verifier` と `elm_installation` は、複数のスレッドから同時に使ってよい（`LicenseVerifier` は変わらない状態と、確かめた鍵の証明書の `ConcurrentDictionary` だけを持ち、`FileClockGuard` は排他を持つ）。`elm_verifier_create` に渡した `elm_installation` は、`elm_verifier_destroy` まで解放しない。`_free` と `_destroy` は `NULL` を受け取って何もしない。
+- 誤りの文: `elm_last_error_message` は、同じスレッドでその前に呼んだ公開する関数の文を返す（成功なら空文字列）。同じスレッドの次の呼び出しまで有効。スレッドごとの UTF-8 のバッファー（`[ThreadStatic]`）に持つ。
+- `elm_version`: ライブラリの版（アセンブリの `InformationalVersion`）を、プロセスの終わりまで有効な文字列で返す。
+- ハンドルの実装: 不透明なポインターは、.NET のオブジェクトを指す `GCHandle` の値である。取り出した文字列は、ライブラリが確保したネイティブのメモリ（`NativeMemory`）に置き、`_free` で解放する。
+- テスト:
+  - `tests/ElasticLM.Native.Tests`: 公開するすべての関数を関数ポインターで呼ぶ。`NULL` と範囲外の入力、`struct_size` の範囲、例外を外に出さないこと（例外を投げる入力で番号が返ること）、`meta` の NUL、時計の見張りの 3 つの形、誤りの文がスレッドごとであること。鍵とライセンスはテストの中で作る（`testing.mdc`）。
+  - `tests/native/test_elasticlm.c`: 発行したライブラリにつないで、テストの中で作ったライセンスファイル（`run.ps1` が `elm` で作る）を検証して中身を読み、公開するすべての関数をヘッダーの型の関数ポインターに入れる。警告は誤りにする（MSVC は `/W4 /WX`、gcc と clang は `-Wall -Wextra -Werror -std=c11`）。各テストの関数に Preconditions / Steps / Expected の説明を付ける。変異の確かめは .NET のテストで行う。
+  - `run.ps1` は、CI の NativeAOT のジョブ（3 つの OS）と手元から動かす。Windows では `vswhere` で MSVC の環境を用意する。発行したライブラリの公開する名前とヘッダーの宣言を §17.3 の方法で比べる。
+- 測る値: `libelasticlm` の大きさ（3 つの OS、目標 8 MB 以下）、警告の件数、実行時の依存（`ldd`、`otool -L`、Windows は `dumpbin /dependents`）。
+- 文書: `AGENTS.md`・`CONTRIBUTING.md`・`docs/conventions.md` に、`ElasticLM.Native`・`include/`・`tests/native/` と、C のテストの動かし方を書く。
 
 ## 18. ログ
 

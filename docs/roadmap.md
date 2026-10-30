@@ -47,7 +47,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M5c | 管理画面の土台（`web/admin/`。`build.ps1` のビルドと `tsc`・Vitest のゲート、道具の版の確かめ、`dist` がないときの Service のビルドの誤り、秘密を持たない CI の SPA のジョブ、埋め込みと CSP つきの配信、`elm-service` の大きさの差と Windows のパスの長さの確かめ、AGENTS.md・CONTRIBUTING.md・規則・規約への Node.js と pnpm の追記、最初の画面: ライセンスの検索・詳細・失効） | done        | [#116](https://github.com/YUKIKEDA/ElasticLM/issues/116) |
 | M5d1 | 管理画面の日々の操作（発行（キーの一度だけの表示とライセンスファイル）、ライセンスの一時停止・再開・延長、有効化の一覧と解除、オフラインの処理、監査ログ。決めた形は design.ja.md 0.102） | done        | [#125](https://github.com/YUKIKEDA/ElasticLM/issues/125) |
 | M5d2 | 管理画面のサポートと管理（リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション。決めた形は design.ja.md 0.103） | done        | [#129](https://github.com/YUKIKEDA/ElasticLM/issues/129) |
-| M6a | `libelasticlm` の土台と検証（`ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS の C のテスト、ライセンスの検証・結果・誤りの関数、大きさ。Grill で決める点は design.ja.md §17.3） | not-started | —     |
+| M6a | `libelasticlm` の土台と検証（`ElasticLM.Native` の共有ライブラリ、C ヘッダー、3 つの OS の C のテスト、ライセンスの検証・結果・誤りの関数、大きさ。Grill で決める点は design.ja.md §17.3） | in-progress | [#137](https://github.com/YUKIKEDA/ElasticLM/issues/137) |
 | M6b | `libelasticlm` の有効化（`elm_activation`。オンラインの操作、試用、オフラインのファイル、自動の更新とコールバック。Grill で決める点は design.ja.md §17.3） | not-started | —     |
 | M6c | `libelasticlm` のリース（`elm_client`。オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去。Grill で決める点は design.ja.md §17.3） | not-started | —     |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`。design.ja.md 0.104） | not-started | —     |
