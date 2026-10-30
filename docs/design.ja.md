@@ -404,6 +404,12 @@ M4d3（Issue #90）の実測（PR の head `d69a3bd` のコード。Windows、1 
   - サービスの形とサーバーの形を同じ実行で比べた値（JIT の Release、`lease.acquired` の 7 つのメンバーの行、交互に 3 回）: サービスの形が 7.77〜8.65 µs、サーバーの形が 7.87〜10.25 µs。10.25 µs は最初の回の値で、JIT の温まりを含む（2 回目と 3 回目は 7.87〜8.51 µs）。2 つの形の差はない（違うのは最初の行だけ）。この値は測り方（JIT のビルド、7 つのメンバーの行）が M3c と違うので、M3c の値とは比べない。M3c と比べるのは上の同じ測り方の値である。
 - 取得と更新の往復（JIT の Release、ループバック、SQLite、100 台の端末で各 100 回の平均。利用ログを書くサービスと書かないサービスを交互に 3 回立てた。2 回目と 3 回目を書く）: 取得は書くとき 2.73〜3.14 ms、書かないとき 2.95〜3.00 ms。更新は書くとき 2.39〜2.69 ms、書かないとき 2.36〜2.56 ms。1 行の約 8 µs は、同じ側の回ごとの揺れ（0.05〜0.41 ms）に隠れて見えない。
 
+M6a（Issue #137）の実測（コミット `149c4bc` のコード。CI の 3 つのランナー）:
+
+- `libelasticlm` の NativeAOT の共有ライブラリは、`win-x64` で 3,543,040 バイト（`elasticlm.dll`）、`linux-x64` で 3,273,552 バイト（`libelasticlm.so`）、`osx-arm64` で 3,151,936 バイト（`libelasticlm.dylib`）。警告は 3 つとも 0 件。目標の 8 MB 以下に収まる。まだ `HttpClient` を持たない（有効化の M6b で入る）。
+- 公開する名前は 3 つの OS で 21 個、ヘッダーの宣言と一致した。C のテストのプログラム（23 件）は 3 つの OS で通った。
+- 実行時の依存: Windows はシステムの DLL（`ADVAPI32`、`bcrypt`、`CRYPT32`、`KERNEL32`、`ncrypt`、`ole32`、`api-ms-win-crt-*`）だけ。Linux の `ldd` に出るのは `libm` と `libc` だけ。macOS はシステムのライブラリとフレームワーク（`libSystem`、`libobjc`、Swift の `libswiftCore`・`libswiftFoundation`、`libicucore`、CoreFoundation、CryptoKit、Foundation、Network、Security、GSS）だけ。横に置くファイルはない（§4.1）。
+
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 28.9 MB（28,909,568 バイト。main（`a189949`）の 28,895,232 から +14,336 バイト、+0.05%）。警告は 0 件。マップのファイルで分けると、埋め込んだリソース（管理画面の `dist`）が +14,765 バイト、ほかが -1 バイトで、合わせて +14,764 バイトになる。セクションの詰め物は 428 バイト減った。サービスのコードは変わっていない。
@@ -3180,7 +3186,7 @@ M6a の Grill（Issue #137）で決め、設計の独立レビューで直した
 
 置き場所と名前:
 
-- `src/ElasticLM.Native`: C ABI の .NET のコード。`ElasticLM.Licensing` と `ElasticLM.Client` を参照する（鍵の保管と指紋のため）。NativeAOT の共有ライブラリとして発行する（`NativeLib=Shared`）。アセンブリ名は Windows で `elasticlm`、ほかで `libelasticlm` にし、ファイル名を `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib` にする。NativeAOT はアセンブリ名をそのままファイル名にする（M6a の試作で、Windows で `elasticlm.dll` になり、公開する名前に `DotNetRuntimeDebugHeader` も入ることを確かめた。Linux と macOS は M6a の CI で確かめる）。
+- `src/ElasticLM.Native`: C ABI の .NET のコード。`ElasticLM.Licensing` と `ElasticLM.Client` を参照する（鍵の保管と指紋のため）。NativeAOT の共有ライブラリとして発行する（`NativeLib=Shared`）。アセンブリ名は Windows で `elasticlm`、ほかで `libelasticlm` にし、ファイル名を `elasticlm.dll`・`libelasticlm.so`・`libelasticlm.dylib` にする。NativeAOT はアセンブリ名をそのままファイル名にする（M6a の試作で、Windows で `elasticlm.dll` になり、公開する名前に `DotNetRuntimeDebugHeader` も入ることを確かめた。Linux と macOS も、M6a の CI で `libelasticlm.so` と `libelasticlm.dylib` になることを確かめた）。
 - `include/elasticlm.h`: 手で書くヘッダー。`ELM_ABI_VERSION`（この版は 1）、型、関数の宣言、所有と寿命の決まりを持つ。
 - `tests/ElasticLM.Native.Tests`: 公開する関数を関数ポインターで呼ぶ .NET のテスト（JIT）。`build.ps1` が走らせる。
 - `tests/native/`: C のテストのプログラム（`test_elasticlm.c`）と、それをビルドして動かす `run.ps1`。
@@ -3314,7 +3320,7 @@ void elm_license_free(elm_license* license);
     - 警告は誤りにする（MSVC は `/W4 /WX`、gcc と clang は `-Wall -Wextra -Werror -std=c11`）。各テストの関数に Preconditions / Steps / Expected の説明を付ける。変異の確かめは .NET のテストで行う。
   - `run.ps1` は、発行したライブラリと `elm` の場所を引数で受け取る（`-Publish` で自分で発行もする）。Windows では `vswhere` で MSVC の環境を用意する。発行したライブラリの公開する名前とヘッダーの宣言を §17.3 の方法で比べる（許す一覧は `DotNetRuntimeDebugHeader`）。
 - CI（`.github/workflows/ci.yml` の NativeAOT のジョブ）: `ElasticLM.Native` を共有ライブラリとして発行する手順を足し、警告の件数と大きさを手順の要約に書き、`run.ps1` を動かす。ジョブの名前に `libelasticlm` を足す。`ElasticLM.slnx` に 2 つのプロジェクトを足す。
-- 測る値: `libelasticlm` の大きさ（3 つの OS、目標 8 MB 以下）、警告の件数、実行時の依存（`ldd`、`otool -L`、Windows は `dumpbin /dependents`）。
+- 測る値: `libelasticlm` の大きさ（3 つの OS、目標 8 MB 以下）、警告の件数、実行時の依存（`ldd`、`otool -L`、Windows は `dumpbin /dependents`）。結果は §4.2 の「M6a の実測」。
 - 文書と規則: `AGENTS.md`・`CONTRIBUTING.md`・`docs/conventions.md` に、`ElasticLM.Native`・`include/`・`tests/native/` と C のテストの動かし方を書く。`engineering.mdc` の置き場所に `include/` と `tests/native/`（`*.Tests` でない）を、`testing.mdc` の対象に `tests/native/**/*.c` を、`aot.mdc` の確かめに共有ライブラリを足す。
 
 ## 18. ログ
@@ -3540,7 +3546,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M5c | 管理画面の土台: `web/admin/` のビルドとゲート、`dist` がないときの誤り、秘密を持たない CI の SPA のジョブ（0.96、T21）、埋め込みと CSP つきの配信、大きさの計測、最初の画面（ライセンスの検索・詳細・失効）（決めた形は 0.100） | §4.2, §5.3, §14.5, §15.1, §15.2, §15.3, §21 |
 | M5d1 | 日々の操作の画面: 発行（キーの一度だけの表示とライセンスファイル）、ライセンスの一時停止・再開・期限の延長、有効化の一覧と解除、オフラインの処理、監査ログ（`?order=desc`）（決めた形は 0.102） | §4.2, §5.3, §12.8.4, §14.5, §14.6, §15.1, §15.2 |
 | M5d2 | サポートと管理の画面: リースの一覧と強制返却、試用の一覧と削除、管理者、API キー、セッション（決めた形は 0.103） | §4.2, §5.3, §14.6, §15.1, §15.2 |
-| M6a | `libelasticlm` の土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダーと公開する関数の一覧の確かめ、3 つの OS の C のテストのプログラム、ライセンスの検証・結果（`elm_license`）・誤りの関数、大きさ（0.104） | §4.2, §17 |
+| M6a | `libelasticlm` の土台と検証: `ElasticLM.Native` の共有ライブラリ、C ヘッダーと公開する関数の一覧の確かめ、3 つの OS の C のテストのプログラム、ライセンスの検証・結果（`elm_license`）・誤りの関数、大きさ（決めた形は 0.105） | §4.2, §17 |
 | M6b | `libelasticlm` の有効化: `elm_activation`（オンラインの操作、試用、オフラインのファイル、自動の更新とコールバック）（0.104） | §12.6.2, §12.8, §12.9, §17 |
 | M6c | `libelasticlm` のリース: `elm_client`（オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去）（0.104） | §12.7, §13, §13.5, §17 |
 | F1 | リリース基盤: CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`（0.104） | §4.1 |
