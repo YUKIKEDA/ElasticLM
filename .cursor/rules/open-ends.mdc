@@ -27,7 +27,7 @@ A commit, a PR, an Issue number, or a figure named in a report to the owner is c
 
 Figures that are compared or added up come from the same run. In M4c3 the machine's load changed between two runs and every figure of the second was about 1.8 times the first; parts taken from both did not add up to the total (PR #79).
 
-A figure kept in the design is measured on the code of the PR's head. A change to the code after the measurement means measuring again, and the heading names the commit of the code measured. In M4d2 two fixes went in after the measurement and the PR said the figures were not taken again; the review asked for them (PR #87).
+A figure kept in the design is measured on the code of the PR's head. A change to the code after the measurement means measuring again, and the heading names the commit of the code measured. In M4d2 two fixes went in after the measurement and the PR said the figures were not taken again; the review asked for them (PR #87). A fix for a review counts: in M6b the fix of `elm_activation_destroy` made `elasticlm.dll` 1,024 bytes larger, the PR body said so, and the design kept the figures of the head before it until the lessons PR (PR #142).
 
 A measurement is compared with the baseline the Issue names. Another baseline is used only after the owner changes the Issue; otherwise the PR says `Part of #N`, not `Closes #N`. In M4d1 the Issue named `elm-server`, the PR compared with the service's own activation and closed the Issue, and the review caught it (PR #83).
 
