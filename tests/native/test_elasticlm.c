@@ -8,6 +8,11 @@
  *   test_elasticlm verify <library> <key folder> <root.pub.pem> <signing key ID> <unbound.elmlic> <bound.elmlic>
  *     Runs the tests below and prints "ok" or "not ok" for each; exits 1 when one fails.
  */
+/* With -std=c11, glibc declares POSIX functions such as sysconf only when asked to. */
+#if defined(__linux__)
+#define _POSIX_C_SOURCE 200809L
+#endif
+
 #include "elasticlm.h"
 
 #include <stdio.h>
@@ -22,6 +27,7 @@ static void* find_function(void* library, const char* name) { return (void*)GetP
 #else
 #include <dlfcn.h>
 #include <pthread.h>
+#include <unistd.h>
 static void* open_library(const char* path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 static void* find_function(void* library, const char* name) { return dlsym(library, name); }
 #endif
@@ -273,7 +279,7 @@ static long resident_kib(void)
         }
         fclose(statm);
     }
-    return resident * 4;
+    return resident * (sysconf(_SC_PAGESIZE) / 1024);
 #endif
 }
 
