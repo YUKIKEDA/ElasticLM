@@ -102,6 +102,13 @@ extern "C" {
 #define ELM_STATE_REFUSED 3
 #define ELM_STATE_CLONE_DETECTED 4
 
+/* The state of a lease (design §12.7.3). */
+#define ELM_LEASE_HELD 0
+#define ELM_LEASE_RETRYING 1
+#define ELM_LEASE_RECLAIMING 2
+#define ELM_LEASE_LOST 3
+#define ELM_LEASE_RELEASED 4
+
 #if defined(_WIN32)
 #define ELM_API __declspec(dllimport)
 #else
@@ -136,6 +143,28 @@ typedef struct elm_activation elm_activation;
  * thread. A thread the callback starts is not told apart from other threads.
  */
 typedef void (*elm_state_callback)(void* user, int32_t previous, int32_t current, int32_t error, const char* message);
+
+/* A client of an on-premises license server or of the hosted service's leases (design §12.7, §17.6). */
+typedef struct elm_client elm_client;
+
+/*
+ * A lease. Its ID and feature are valid until elm_lease_free; its state, expiry, and last error are read each time, since
+ * renewals change them. Freeing it does not return the lease. It can still be read after elm_client_destroy.
+ */
+typedef struct elm_lease elm_lease;
+
+/*
+ * Called when a lease changes state, with the lease's ID (compare it with elm_lease_id), the error number (0 when none),
+ * and its message (empty when none); the strings are valid during the call only. A renewal that keeps failing reports
+ * RETRYING to RETRYING again with its error; an acquire and a renewal without an error report nothing. It runs on a
+ * library thread: the one that ended a release's request (the thread that called elm_client_release_lease waits inside
+ * it) or the one of the automatic renewal. The callbacks an operation causes have returned before the operation's
+ * function returns; none starts after elm_client_destroy returns. Inside it, the same client's blocking functions
+ * return ELM_INVALID_STATE and elm_client_destroy does nothing; the elm_lease functions, elm_lease_free,
+ * elm_lease_list_free, and elm_client_reset_server_pin may be called. The rules of elm_state_callback on leaving it,
+ * locks, and threads apply too.
+ */
+typedef void (*elm_lease_callback)(void* user, const char* lease_id, int32_t previous, int32_t current, int32_t error, const char* message);
 
 typedef struct {
     uint32_t struct_size;
@@ -198,6 +227,27 @@ typedef struct {
                                              elm_activation_create returns (a refresh already due), when the caller has
                                              no handle yet. */
 } elm_activation_options;
+
+typedef struct {
+    uint32_t struct_size;
+    const char* product_id;               /* required */
+    const char* server_url;               /* required: https for a server; https, or http on a loopback address, with a
+                                             license key */
+    const char* license_key;              /* NULL: an on-premises server; otherwise leases of the hosted service */
+    const char* const* root_keys_pem;     /* the vendor's root public keys in PEM: 1 to 16 */
+    size_t root_key_count;
+    const char* const* revoked_key_ids;   /* key IDs revoked by the vendor: 0 to 1024 */
+    size_t revoked_key_count;
+    const char* expected_server_license_id; /* NULL, or the server license to pin (design §13.5); not with license_key */
+    int32_t scope;                        /* ELM_SCOPE_* */
+    const char* directory;                /* NULL for the default folder of design §10.2 */
+    int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
+    const char* app_version;              /* NULL, or at most 64 bytes */
+    int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
+    int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
+    elm_lease_callback on_lease;          /* NULL, or the lease callback */
+    void* user;                           /* passed to on_lease; keep it valid until elm_client_destroy returns */
+} elm_client_options;
 
 /* ---- Functions that return a number ---- */
 
@@ -262,6 +312,43 @@ ELM_FUNCTION(int32_t, elm_activation_import_response, (elm_activation* activatio
  * too small (ELM_INVALID_ARGUMENT, buffer untouched). buffer may be NULL when size is 0. */
 ELM_FUNCTION(int32_t, elm_activation_id, (const elm_activation* activation, char* buffer, size_t size, size_t* needed))
 
+/* Makes a lease client. It does not contact the server. Destroy with elm_client_destroy. */
+ELM_FUNCTION(int32_t, elm_client_create, (const elm_client_options* options, elm_client** out))
+
+/*
+ * Acquiring, borrowing, releasing, and listing the borrows wait until they end, with no way to cancel them. The longest
+ * wait is the sum of: another operation of the same client, the automatic renewal and reclaim included (no bound); and
+ * the sends, at most 30 s each: up to 6 to acquire or borrow, up to 5 to release from a server (4 from the hosted
+ * service); listing sends nothing. retry_after_seconds may be NULL; otherwise it gets 0, or when to try again after a
+ * refusal (seconds, rounded up), such as ELM_SERVER_RECOVERING after a server starts. On success *out is a new lease;
+ * free it with elm_lease_free. count is at least 1; the server refuses more seats than it has.
+ */
+ELM_FUNCTION(int32_t, elm_client_acquire_lease, (elm_client* client, const char* feature_id, const char* feature_version, int32_t count, elm_lease** out, int64_t* retry_after_seconds))
+
+/* A borrow is not renewed and stays HELD after its expiry: check elm_lease_expires_at. period_seconds is 1 to
+ * 3162240000. */
+ELM_FUNCTION(int32_t, elm_client_borrow_lease, (elm_client* client, const char* feature_id, int64_t period_seconds, const char* feature_version, int32_t count, elm_lease** out, int64_t* retry_after_seconds))
+
+/* Returns a lease this client made (another client's is ELM_INVALID_ARGUMENT). A lease that is not a borrow is RELEASED
+ * afterwards even when the return failed. A borrow the server does not take back keeps its state and its file. A lease
+ * already LOST or RELEASED is not sent again (ELM_OK). */
+ELM_FUNCTION(int32_t, elm_client_release_lease, (elm_client* client, elm_lease* lease))
+
+/* The saved borrows that are still valid, as an array of new handles (NULL when *count is 0). Free the array and its
+ * handles together with elm_lease_list_free, with the same count; freeing an element first is undefined behavior. */
+ELM_FUNCTION(int32_t, elm_client_get_borrowed_leases, (elm_client* client, elm_lease*** out, size_t* count))
+
+/* Deletes the pin of a server (design §13.5): *deleted is 1 when a pin was deleted. A client with a license key has no
+ * pin (always 0). server_url is an absolute http or https URL. */
+ELM_FUNCTION(int32_t, elm_client_reset_server_pin, (elm_client* client, const char* server_url, int32_t* deleted))
+
+/* The lease's ID and feature, valid until elm_lease_free. */
+ELM_FUNCTION(int32_t, elm_lease_id, (const elm_lease* lease, const char** out))
+ELM_FUNCTION(int32_t, elm_lease_feature_id, (const elm_lease* lease, const char** out))
+
+/* The expiry of the current token in UNIX seconds; a renewal moves it. */
+ELM_FUNCTION(int32_t, elm_lease_expires_at, (const elm_lease* lease, int64_t* out))
+
 /* ---- Functions that return a value ---- */
 
 ELM_FUNCTION(const char*, elm_installation_thumbprint, (const elm_installation* installation)) /* NULL for NULL */
@@ -274,6 +361,12 @@ ELM_FUNCTION(int32_t, elm_license_in_grace_period, (const elm_license* license))
 ELM_FUNCTION(size_t, elm_license_feature_count, (const elm_license* license)) /* 0 for NULL */
 ELM_FUNCTION(size_t, elm_license_meta_count, (const elm_license* license)) /* 0 for NULL */
 ELM_FUNCTION(int32_t, elm_activation_state, (const elm_activation* activation)) /* ELM_STATE_*, -1 for NULL */
+ELM_FUNCTION(int32_t, elm_lease_seats, (const elm_lease* lease)) /* -1 for NULL */
+ELM_FUNCTION(int32_t, elm_lease_is_borrow, (const elm_lease* lease)) /* 1 or 0, -1 for NULL */
+ELM_FUNCTION(int32_t, elm_lease_state, (const elm_lease* lease)) /* ELM_LEASE_*, -1 for NULL */
+
+/* The number of the last failed renewal, reclaim, or release (0 when none, -1 for NULL); it stays after a recovery. */
+ELM_FUNCTION(int32_t, elm_lease_last_error, (const elm_lease* lease))
 
 /* The message of the last function on this thread that returns a number: empty after a success, and valid until the next
  * such call on this thread. */
@@ -291,6 +384,17 @@ ELM_FUNCTION(void, elm_license_free, (elm_license* license))
 /* Waits for running callbacks (no time bound), then stops the automatic refresh, waiting up to 5 s for it. Calling it
  * while another thread is inside a function of the same activation is undefined behavior. */
 ELM_FUNCTION(void, elm_activation_destroy, (elm_activation* activation))
+
+/* Frees a lease handle without returning the lease. */
+ELM_FUNCTION(void, elm_lease_free, (elm_lease* lease))
+
+/* Frees the array of elm_client_get_borrowed_leases and its handles. */
+ELM_FUNCTION(void, elm_lease_list_free, (elm_lease** leases, size_t count))
+
+/* Waits for running callbacks (no time bound) and for an operation of the same client in progress, the automatic
+ * renewal included (no bound), then returns the leases that are not borrows within 5 s. Calling it while another
+ * thread is inside a function of the same client is undefined behavior. */
+ELM_FUNCTION(void, elm_client_destroy, (elm_client* client))
 
 /* Clears and frees a string that a function above says to free with it. */
 ELM_FUNCTION(void, elm_string_free, (char* text))

@@ -16,6 +16,8 @@
   </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+    <!-- The lease tests of libelasticlm start elm-server in process with Deployment.cs (design §17.6). -->
+    <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
   </ItemGroup>
   <!-- The runtime pack carries the IIS in-process module; elm-server is not hosted in IIS and ships as one file. -->
   <Target Name="ElmDropIisModule" AfterTargets="ComputeResolvedFilesToPublishList">

@@ -1687,7 +1687,7 @@ public sealed class LeaseStateChangedEventArgs : EventArgs  // Lease, Previous, 
 ```
 
 - `TryCreate` はインストール鍵を読み込むか作り、マシン指紋を計算する。サーバーにはつながない。
-- 要求は 1 つずつ送る（クライアントの中の排他）。イベントはタイマーのスレッドから、排他の外で呼ぶ。ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい。タイマーのスレッドで投げられた例外は無視する（プロセスを落とさないため）。
+- 要求は 1 つずつ送る（クライアントの中の排他）。イベントはタイマーのスレッドから、排他の外で呼ぶ。ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい。タイマーのスレッドで投げられた例外は無視する（プロセスを落とさないため）。`DisposeAsync` が始まったあと、新しいイベントは始まらない（渡し始めた 1 件は、戻る前後に走りうる。§17.6）。`ReleaseLeaseAsync` は、ほかのクライアントが作ったリースを `ArgumentException` で断る（§17.6）。
 - `DisposeAsync` の後にイベントは呼ばれない。
 
 SaaS 型のモード（M4d2、0.94）: `LicenseKey` があれば、`ServerUrl` は `elm-service` の URL で、次のように動く。ほかの API と振る舞い（更新の間隔、再試行、イベント、`DisposeAsync` での返却）はオンプレミスと同じである。

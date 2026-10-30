@@ -15,5 +15,8 @@
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <!-- design §17.6: the lease tests run against a real elm-server on loopback TLS, as ElasticLM.Server.Tests do. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Server\ElasticLM.Server.csproj" />
+    <Compile Include="..\ElasticLM.Server.Tests\Deployment.cs" Link="Deployment.cs" />
   </ItemGroup>
 </Project>
