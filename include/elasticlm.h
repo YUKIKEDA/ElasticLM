@@ -193,7 +193,10 @@ typedef struct {
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
     int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
     elm_state_callback on_state;          /* NULL, or the state callback */
-    void* user;                           /* passed to on_state; keep it valid until elm_activation_destroy returns */
+    void* user;                           /* passed to on_state; make it ready before elm_activation_create and keep it
+                                             valid until elm_activation_destroy returns. on_state can come before
+                                             elm_activation_create returns (a refresh already due), when the caller has
+                                             no handle yet. */
 } elm_activation_options;
 
 /* ---- Functions that return a number ---- */

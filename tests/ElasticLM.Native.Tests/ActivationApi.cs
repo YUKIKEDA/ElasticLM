@@ -181,6 +181,8 @@ internal static unsafe class StateCallbacks
 
     public static nint Reenter { get; set; }
 
+    public static nint AfterHold { get; set; }
+
     public static int LastThread { get; private set; }
 
     public static (int Previous, int Current, int Error, string Message, nint User)[] Changes() => [.. Seen];
@@ -192,6 +194,7 @@ internal static unsafe class StateCallbacks
         Entered = new(false);
         Hold = null;
         Reenter = 0;
+        AfterHold = 0;
     }
 
     [UnmanagedCallersOnly]
@@ -223,5 +226,15 @@ internal static unsafe class StateCallbacks
 
         Entered.Set();
         Hold?.Wait();
+        if (AfterHold != 0)
+        {
+            nint a = AfterHold;
+            Inside.Enqueue("state " + ((delegate* unmanaged<nint, int>)&Exports.ActivationState)(a));
+            nint checkedLicense;
+            Inside.Enqueue(
+                "check " + ((delegate* unmanaged<nint, byte*, byte*, int, nint*, int>)&Exports.ActivationCheck)(a, null, null, 0, &checkedLicense)
+            );
+            ((delegate* unmanaged<nint, void>)&Exports.LicenseFree)(checkedLicense);
+        }
     }
 }

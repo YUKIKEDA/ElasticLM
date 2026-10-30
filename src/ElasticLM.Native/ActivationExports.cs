@@ -267,12 +267,14 @@ public static unsafe partial class Exports
         Guard(() =>
         {
             // design §17.5: from inside its own callback, destroy does nothing; the message stays as it is.
-            if (NativeHandles.Find<NativeActivation>(activation) is { InOwnCallback: true })
+            if (NativeHandles.Find<NativeActivation>(activation) is not NativeActivation handle || handle.InOwnCallback)
             {
                 return;
             }
 
-            NativeHandles.Free<NativeActivation>(activation)?.Close();
+            // The handle is freed only after the running callbacks have returned: they may still call check, ID, and state.
+            handle.Close();
+            NativeHandles.Free<NativeActivation>(activation);
         });
 
     /// <summary><c>elm_string_free</c>: zeroes and frees a string the library returned for this function. Null is ignored.</summary>
@@ -287,7 +289,9 @@ public static unsafe partial class Exports
             }
 
             // design §17.5: a request file holds the license key; the copy is cleared before it is freed.
-            new Span<byte>(text, new ReadOnlySpan<byte>(text, int.MaxValue).IndexOf((byte)0)).Clear();
+            // The length comes from the runtime's strlen, which does not read past the NUL into an unmapped page.
+            int length = MemoryMarshal.CreateReadOnlySpanFromNullTerminated(text).Length;
+            new Span<byte>(text, length).Clear();
             NativeStrings.Free((nint)text);
         });
 

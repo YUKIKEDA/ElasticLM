@@ -327,12 +327,14 @@ public sealed class ActivationTests : IAsyncLifetime
     /// Steps:
     /// - Hold the callback; move the clock 23 hours and on in small steps until the callback is entered; destroy A on
     ///   another thread and see it has not returned after 300 ms, nor after the clock moves 6 seconds (past the 5 seconds
-    ///   DisposeAsync waits for the timer's work); release the callback; then move the clock a day. Make activation B on
-    ///   the same folder after another day (a refresh already due) and wait for its callback.
+    ///   DisposeAsync waits for the timer's work); release the callback, which then calls state and check on A while
+    ///   destroy waits; then move the clock a day. Make activation B on the same folder after another day (a refresh
+    ///   already due) and wait for its callback.
     ///
     /// Expected:
     /// - A's callback 1→3 (refused) with error 31 and a message, on a thread other than the test's; destroy returns only
-    ///   after the release; no callback after destroy. B's first callback is seen.
+    ///   after the release; inside, state 3 and check 0 (the handle is freed only after the callback); no callback after
+    ///   destroy. B's first callback is seen.
     /// </remarks>
     [Fact]
     public async Task TimerCallbacks_Destroy_AndTheRefreshDueAtTheStart()
@@ -352,9 +354,11 @@ public sealed class ActivationTests : IAsyncLifetime
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         _test.Time.Advance(TimeSpan.FromSeconds(6));
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
+        StateCallbacks.AfterHold = a;
         hold.Set();
         await destroy;
         StateCallbacks.Hold = null;
+        Assert.Equal(["state 3", "check 0"], StateCallbacks.Inside.ToArray());
 
         (int previous, int current, int error, string message, _) = Assert.Single(StateCallbacks.Changes());
         Assert.Equal((1, 3, 31), (previous, current, error));
