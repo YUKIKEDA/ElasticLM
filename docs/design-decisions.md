@@ -564,3 +564,15 @@
 - **決定:** `elm_lease` は `elm_lease_free` で解放し、解放は返却しない。返却のあとも、解放まで読める（[design.ja.md](./design.ja.md) 0.107、§17.6）。
 - **理由:** 返却と解放を 1 つにすると、別のスレッドが同じリースを読んでいる間にハンドルが消える。失ったリース（LOST）や借り出しは返却しないこともあり、そのときの解放の口が別に要る。
 - **却下した案:** `elm_client_release_lease` がハンドルも解放する。
+
+### `LicenseClient.DisposeAsync` が走っている知らせを待つ（M6c の設計のレビュー、Issue #145）
+
+- **決定:** `Raise` は知らせのたびに `_disposed` を確かめ、XML ドキュメントは「`DisposeAsync` が始まったあと、新しい知らせは始まらない。渡し始めた 1 件は戻る前後に走りうる」と書く（[design.ja.md](./design.ja.md) 0.107、§17.6）。
+- **理由:** `ActivationClient` と同じ水準で足りる。C の層は自分の印と走っているコールバックの数で守る。`DisposeAsync` がハンドラーを待つと、ハンドラーが `DisposeAsync` を呼んだ側の持ち物を待つときに詰まる。
+- **却下した案:** 走っているハンドラーを数え、`DisposeAsync` がそれを待つ（設計のレビュー R5 の案 ii）。
+
+### ほかのクライアントのリースの返却を C の層だけで断る（M6c の設計のレビュー、Issue #145）
+
+- **決定:** .NET の `Lease` に持ち主の `LicenseClient` を持たせ、`ReleaseLeaseAsync` はほかのクライアントの `Lease` を `ArgumentException` で断る。C はそれを `ELM_INVALID_ARGUMENT` にする（[design.ja.md](./design.ja.md) 0.107、§17.6）。
+- **理由:** ほかのクライアントのリースを返すと、持ち主のクライアントの更新が止まり、サーバーがまだ持つリースを失う。C だけで塞ぐと、.NET の公開の API に同じ穴が残る。
+- **却下した案:** C の層だけで持ち主を比べ、.NET の穴は既知の問題として残す（設計のレビュー R7 の案 b）。
