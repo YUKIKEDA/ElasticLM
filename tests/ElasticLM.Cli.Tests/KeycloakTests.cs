@@ -117,12 +117,14 @@ public sealed partial class KeycloakTests
     /// Steps:
     /// - GET /auth/login and follow it to Keycloak's login page; post the login form as alice and follow the redirects back
     ///   through the callback to /; list administrators with the session cookie; POST /auth/logout with X-ELM-CSRF; follow
-    ///   the endSession URL.
+    ///   the endSession URL with Keycloak's cookies; post the confirmation form.
     ///
     /// Expected:
     /// - The callback leads to / (200, the placeholder) with __Host-elm-session; the list holds alice as owner of Keycloak's
     ///   issuer; logout answers 200 with endSession of the realm's logout endpoint with client_id elm-web and the
-    ///   post_logout_redirect_uri http://127.0.0.1:18089/; following it answers 200.
+    ///   post_logout_redirect_uri http://127.0.0.1:18089/.
+    /// - Without id_token_hint, Keycloak answers 200 with its logout confirmation (a form with confirmLogout); posting it
+    ///   leads back to http://127.0.0.1:18089/ (200).
     /// </remarks>
     [Fact]
     public async Task CodeFlow_SignsInToTheAdminUi()
@@ -211,8 +213,32 @@ public sealed partial class KeycloakTests
             realm + "/protocol/openid-connect/logout?client_id=elm-web&post_logout_redirect_uri=" + Uri.EscapeDataString("http://127.0.0.1:18089/"),
             endSession
         );
-        (_, status, html) = await BrowseAsync(http, cookies, trace, HttpMethod.Get, new Uri(endSession), null);
-        Assert.True(status == HttpStatusCode.OK, $"{(int)status}: {Excerpt(html)}{Steps(trace)}");
+
+        // Without id_token_hint (the service keeps no ID token), Keycloak asks the person to confirm before it ends its session.
+        (page, status, html) = await BrowseAsync(http, cookies, trace, HttpMethod.Get, new Uri(endSession), null);
+        Match confirm = FormAction().Match(html);
+        Assert.True(
+            status == HttpStatusCode.OK && confirm.Success && html.Contains("confirmLogout", StringComparison.Ordinal),
+            $"Not Keycloak's logout confirmation: {(int)status} {page}: {Excerpt(html)}{Steps(trace)}"
+        );
+        var confirmFields = new Dictionary<string, string>(StringComparer.Ordinal) { ["confirmLogout"] = "Logout" };
+        foreach (Match input in HiddenInput().Matches(html))
+        {
+            confirmFields[WebUtility.HtmlDecode(input.Groups["name"].Value)] = WebUtility.HtmlDecode(input.Groups["value"].Value);
+        }
+
+        (page, status, html) = await BrowseAsync(
+            http,
+            cookies,
+            trace,
+            HttpMethod.Post,
+            new Uri(page, WebUtility.HtmlDecode(confirm.Groups["action"].Value)),
+            confirmFields
+        );
+        Assert.True(
+            status == HttpStatusCode.OK && page == new Uri("http://127.0.0.1:18089/"),
+            $"The confirmation did not lead back to the service: {(int)status} {page}: {Excerpt(html)}{Steps(trace)}"
+        );
     }
 
     private static string Realm()
