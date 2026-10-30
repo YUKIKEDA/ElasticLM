@@ -47,6 +47,10 @@ Make an invalid state unrepresentable; do not document it away or catch it at ru
 - A key that verifies many tokens is created once and kept by its owner. The documentation does not promise that one `ECDsa` may be used on several threads at once, so a shared key takes a lock. A key that one call creates is disposed by that call; a shared key is not disposed while another call may hold it.
 - A cache lives in an owner that outlives the calls that use it, never in a local that one call creates. A test counts the objects created and checks that a second call creates none. In M3a, `VerifyHosted` made a new `CertificateSet` on each call, so its cache never hit and the keys it created were never disposed; the owner's review found it (PR #16).
 
+## Native memory
+
+- The length of a C string comes from `MemoryMarshal.CreateReadOnlySpanFromNullTerminated`, not from a search in a span of a made-up length. A span of `int.MaxValue` bytes lets the vectorized search read past the NUL into a page that may not be mapped; the owner's review of M6b found it in `elm_string_free` (PR #142).
+
 ## XML docs
 
 - Public members under `src/` have `summary`, and `param` / `returns` / `exception` when a caller might be unsure. Sentences end with a period. Properties start with "Gets" / "Gets or sets"; constructors with "Initializes a new instance of the <see cref="T"/> class".
