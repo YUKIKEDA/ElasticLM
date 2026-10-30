@@ -28,7 +28,7 @@ body
   `git commit -F -` with a here-string does not work: PowerShell passes the text as an argument and git reads it as a pathspec. Use `-m` as above, or commit from Bash with a heredoc.
 - Long text for `gh`: write a temporary UTF-8 file and pass `--body-file`, then delete it (`.cursor/rules/scratch.mdc`).
 - Do not put `Remove-Item` in the same command as a path under `C:\Program Files ...`: the agent's PowerShell tool reads `C:\Program` as the item to remove and refuses the whole command. Remove files in a separate call, or from Bash.
-- A helper script (Python, a patch): write it to a file in the scratchpad first, then run it. Do not build it from a here-string piped to `Set-Content` in the same command that removes files.
+- A helper script (Python, a patch): write it to a file in the scratchpad first, then run it. An edit whose text holds backslashes (a C macro's line ends, `\0` in a string, a regular expression) is always made this way, never through a heredoc or a command argument: in M6a a heredoc passed to Python lost the `\` of a C macro and broke the match of a `\0` string (PR #138). Do not build it from a here-string piped to `Set-Content` in the same command that removes files.
 - Native commands set `$LASTEXITCODE`. Check it before the next step: `dotnet test ...; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`.
 - Variable names are not case-sensitive. A local `$low` is the parameter `$Low`. Give locals names that differ from every parameter in more than case.
 - Splatting one string (`& $app @args` where `$args` is `'--text'`) passes its characters one by one. Build arguments as an array: `[string[]]$arguments = @(...)`.
