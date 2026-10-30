@@ -32,6 +32,7 @@ body
 - Native commands set `$LASTEXITCODE`. Check it before the next step: `dotnet test ...; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`.
 - Variable names are not case-sensitive. A local `$low` is the parameter `$Low`. Give locals names that differ from every parameter in more than case.
 - Splatting one string (`& $app @args` where `$args` is `'--text'`) passes its characters one by one. Build arguments as an array: `[string[]]$arguments = @(...)`.
+- Run the admin UI's Node.js tools (`corepack pnpm install`, `vitest`, `tsc`) from PowerShell with the Node.js of `web/admin/.node-version` first in `PATH`. In Git Bash, `$LOCALAPPDATA` is a Windows path whose `C:` breaks `PATH`, another Node.js runs, and pnpm installs a `node_modules` without the platform's native packages; in M5d2 Vitest then stopped with "Cannot find native binding".
 - Run `./build.ps1` in PowerShell 7 (`pwsh`, the agent's PowerShell tool), not Windows PowerShell 5.1 (`powershell.exe`).
 - A run that reads an environment variable is run from Bash, with `VAR=value cmd` and `env -u VAR cmd`.
 - Quote paths with spaces. Prefer repository-relative paths, except for .NET methods: `[IO.File]::ReadAllText` and the like read a relative path from the process's working directory, not from `Set-Location`. Pass them an absolute path.
