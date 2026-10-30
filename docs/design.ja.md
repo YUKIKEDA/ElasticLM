@@ -407,7 +407,8 @@ M4d3（Issue #90）の実測（PR の head `d69a3bd` のコード。Windows、1 
 M6a（Issue #137）の実測（コミット `149c4bc` のコード。CI の 3 つのランナー）:
 
 - `libelasticlm` の NativeAOT の共有ライブラリは、`win-x64` で 3,543,040 バイト（`elasticlm.dll`）、`linux-x64` で 3,273,552 バイト（`libelasticlm.so`）、`osx-arm64` で 3,151,936 バイト（`libelasticlm.dylib`）。警告は 3 つとも 0 件。目標の 8 MB 以下に収まる。まだ `HttpClient` を持たない（有効化の M6b で入る）。
-- 公開する名前は 3 つの OS で 21 個、ヘッダーの宣言と一致した。C のテストのプログラム（23 件）は 3 つの OS で通った。
+- 公開する名前は 3 つの OS で 21 個、ヘッダーの宣言と一致した。C のテストのプログラム（PR #138 のレビューの後は 25 件）は 3 つの OS で通った。
+- C が作ったスレッドを 4,000 回作っては終わらせたときの常駐のメモリ（コミット `c3d552c`、KiB。前、2,000 回の後、4,000 回の後）: `win-x64` は 10,888、27,072、27,516。`linux-x64` は 10,976、27,732、28,140。`osx-arm64` は 12,064、14,464、14,624。後の 2,000 回で増えたのは 160〜444 KiB（1 スレッドあたり 80〜222 バイト）で、最初の 2,000 回の増え方（ランタイムの立ち上がりを含む）の 3% 以下だった。スレッドごとの誤りの文の配列は、スレッドの終わりで集められている。
 - 実行時の依存: Windows はシステムの DLL（`ADVAPI32`、`bcrypt`、`CRYPT32`、`KERNEL32`、`ncrypt`、`ole32`、`api-ms-win-crt-*`）だけ。Linux の `ldd` に出るのは `libm` と `libc` だけ。macOS はシステムのライブラリとフレームワーク（`libSystem`、`libobjc`、Swift の `libswiftCore`・`libswiftFoundation`、`libicucore`、CoreFoundation、CryptoKit、Foundation、Network、Security、GSS）だけ。横に置くファイルはない（§4.1）。
 
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
