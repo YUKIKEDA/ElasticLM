@@ -42,12 +42,17 @@
   -->
   <PropertyGroup>
     <GenerateEmbeddedFilesManifest>true</GenerateEmbeddedFilesManifest>
+    <ElmSeparator>$([System.IO.Path]::DirectorySeparatorChar)</ElmSeparator>
     <ElmAdminDist>$(MSBuildThisFileDirectory)..\..\web\admin\dist\</ElmAdminDist>
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="$(ElmAdminDist)index.html" Link="admin\index.html" />
-    <EmbeddedResource Include="$(ElmAdminDist)assets\**\*" Link="admin\assets\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!--
+      The manifest takes its folders from Link and splits them on the OS's own separator only: "\" made no folder on Linux
+      and macOS, and "/" none on Windows (PR #118).
+    -->
+    <EmbeddedResource Include="$(ElmAdminDist)index.html" Link="admin$(ElmSeparator)index.html" />
+    <EmbeddedResource Include="$(ElmAdminDist)assets/**/*" Link="admin$(ElmSeparator)assets$(ElmSeparator)%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
   <Target Name="ElmRequireAdminDist" BeforeTargets="PrepareForBuild" Condition="!Exists('$(ElmAdminDist)index.html')">
