@@ -40,6 +40,42 @@ export type Activation = {
   createdAt: string;
   updatedAt: string;
 };
+export type LeaseItem = {
+  id: string;
+  feature: string;
+  seats: number;
+  keyId: string;
+  seq: number;
+  expiresAt: string;
+  borrow: boolean;
+  stopped: boolean;
+  client: { host: string; user: string } | null;
+  app: string | null;
+  createdAt: string;
+};
+export type Trial = { id: string; productId: string; fingerprints: string[]; createdAt: string };
+export type ApiKey = {
+  id: string;
+  name: string;
+  prefix: string;
+  permissions: string[];
+  createdBy: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+};
+export type NewApiKey = ApiKey & { key: string };
+export type ApiKeyRequest = { name: string; permissions: string[]; expiresInDays?: number };
+export type Admin = {
+  id: string;
+  issuer: string;
+  subject: string;
+  role: string;
+  enabled: boolean;
+  createdAt: string;
+  lastLoginAt: string | null;
+};
+export type Session = { id: string; adminId: string; createdAt: string; lastSeenAt: string; expiresAt: string; ip: string | null };
 export type AuditRow = {
   n: number;
   ts: string;
@@ -196,6 +232,21 @@ export const api = {
   policies: (productId: string) => all<Policy>(`/v1/admin/policies?productId=${e(productId)}`),
   policy: (id: string) => call<Policy>(`/v1/admin/policies/${e(id)}`),
   features: (productId: string) => all<ProductFeature>(`/v1/admin/products/${e(productId)}/features`),
+  leases: (licenseId: string, after: string | null) =>
+    call<Page<LeaseItem>>(`/v1/admin/licenses/${e(licenseId)}/leases?limit=50${after ? `&after=${e(after)}` : ''}`),
+  releaseLease: (id: string) => call<void>(`/v1/admin/leases/${e(id)}`, 'DELETE'),
+  trials: (productId: string, after: string | null) =>
+    call<Page<Trial>>(`/v1/admin/trials?limit=50${productId ? `&productId=${e(productId)}` : ''}${after ? `&after=${e(after)}` : ''}`),
+  deleteTrial: (id: string) => call<void>(`/v1/admin/trials/${e(id)}`, 'DELETE'),
+  apiKeys: (after: string | null) => call<Page<ApiKey>>(`/v1/admin/api-keys?limit=50${after ? `&after=${e(after)}` : ''}`),
+  createApiKey: (request: ApiKeyRequest) => call<NewApiKey>('/v1/admin/api-keys', 'POST', { json: request }),
+  revokeApiKey: (id: string) => call<void>(`/v1/admin/api-keys/${e(id)}`, 'DELETE'),
+  admins: () => all<Admin>('/v1/admin/admins'),
+  disableAdmin: (id: string) => call<void>(`/v1/admin/admins/${e(id)}/disable`, 'POST'),
+  enableAdmin: (id: string) => call<void>(`/v1/admin/admins/${e(id)}/enable`, 'POST'),
+  sessions: (adminId: string, after: string | null) =>
+    call<Page<Session>>(`/v1/admin/sessions?limit=50${adminId ? `&adminId=${e(adminId)}` : ''}${after ? `&after=${e(after)}` : ''}`),
+  revokeSession: (id: string) => call<void>(`/v1/admin/sessions/${e(id)}`, 'DELETE'),
   activations: (licenseId: string, after: string | null) =>
     call<Page<Activation>>(`/v1/admin/licenses/${e(licenseId)}/activations?limit=50${after ? `&after=${e(after)}` : ''}`),
   deactivate: (id: string) => call<void>(`/v1/admin/activations/${e(id)}/deactivate`, 'POST'),
