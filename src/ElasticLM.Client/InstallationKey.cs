@@ -40,6 +40,20 @@ public sealed class InstallationKey : IDisposable
     /// <returns>The identity.</returns>
     public InstallationIdentity Identity(IReadOnlyList<string> fingerprints) => new(Thumbprint, fingerprints);
 
+    /// <summary>
+    /// Returns a clock guard that keeps its state in a file and signs it with a copy of this key (design §11.4 step 3), as the
+    /// clients and <c>elm-server</c> do. The guard owns the copy; dispose the guard to destroy it.
+    /// </summary>
+    /// <param name="path">The state file path, usually <c>clock</c> in the key's folder. The directory must exist.</param>
+    /// <returns>The guard.</returns>
+    /// <exception cref="ArgumentException"><paramref name="path"/> is empty.</exception>
+    /// <exception cref="ObjectDisposedException">The key is disposed.</exception>
+    public InstallationClockGuard CreateClockGuard(string path)
+    {
+        ArgumentException.ThrowIfNullOrEmpty(path);
+        return new InstallationClockGuard(path, CopyForClockGuard());
+    }
+
     /// <inheritdoc />
     public void Dispose()
     {
@@ -55,7 +69,20 @@ public sealed class InstallationKey : IDisposable
     /// Returns a copy of the key for the clock guard to sign its state with (design §11.4 step 3). The guard keeps its key, so
     /// it gets its own; the caller disposes it.
     /// </summary>
-    internal ECDsa CopyForClockGuard() => WithPrivateKey(k => ECDsa.Create(k.ExportParameters(true)));
+    internal ECDsa CopyForClockGuard() =>
+        WithPrivateKey(k =>
+        {
+            ECParameters parameters = k.ExportParameters(true);
+            try
+            {
+                return ECDsa.Create(parameters);
+            }
+            finally
+            {
+                // .cursor/rules/security.mdc: the exported private value does not stay in memory.
+                CryptographicOperations.ZeroMemory(parameters.D);
+            }
+        });
 
     /// <summary>
     /// Runs an operation with the private key under the key's lock. The operation must not keep the key.
