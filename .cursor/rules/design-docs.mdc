@@ -22,6 +22,7 @@ alwaysApply: true
 - Requirement, contract, public API, wire or file format, threat model, or phase: open a `design` Issue, update `docs/design.ja.md` (and `docs/design-decisions.md` for what was rejected) in its PR, and merge it before implementation Issues.
 - Exception for a row split by a Grill: the detail of one row that its own Grill decided (endpoints, formats, the order of checks, the client API of that row) may ship in that row's implementation PR, after an independent design review of the diff before the PR is opened. Requirements, the threat model, and phases still go first through a design PR. The owner decided this for M4 (decision 0.61, Issue #38) after M3 had worked that way.
 - A threat-model PR that goes ahead of its row may name settings, defaults, and endpoints that the row's design has not written yet. The row's implementation PR then checks, under Verification, that every name and default §5 uses matches §14 and §15 as merged. In M5b the threat model named `session.idleMinutes`, its 30 minutes, and `POST /auth/logout` before §15.3 had them (PR #111's review).
+- A Grill answer that the owner overturns after the design review goes into `docs/design-decisions.md` (Decision / Reason / Rejected) in the row's PR, with the rest of that row's design. M5d1 and M5d2 left four such answers out, and the review of PR #130 asked for them.
 - Wording, typos, and examples: may ship in the same PR as code.
 - Do not implement first and update the design later. If code and design conflict, stop and fix the design through the process above.
 
