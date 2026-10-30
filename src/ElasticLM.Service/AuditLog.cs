@@ -153,8 +153,8 @@ internal static class AuditActors
     public const string ApiKey = "apikey";
 
     /// <summary>
-    /// An OIDC access token (M5a); the actor is the administrator's ID, and the token's <c>iss</c> and <c>sub</c> are in the
-    /// <c>admin.create</c> row's detail.
+    /// An OIDC access token (M5a) or a session of the admin UI (M5b); the actor is the administrator's ID, and the token's
+    /// <c>iss</c> and <c>sub</c> are in the <c>admin.create</c> row's detail.
     /// </summary>
     public const string Oidc = "oidc";
 }
@@ -170,6 +170,10 @@ internal static class AuditActions
     public const string AdminList = "admin.list";
     public const string AdminDisable = "admin.disable";
     public const string AdminEnable = "admin.enable";
+    public const string SessionCreate = "session.create";
+    public const string SessionList = "session.list";
+    public const string SessionRevoke = "session.revoke";
+    public const string SessionLogout = "session.logout";
     public const string ApiKeyCreate = "apikey.create";
     public const string ApiKeyList = "apikey.list";
     public const string ApiKeyRevoke = "apikey.revoke";

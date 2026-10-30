@@ -115,6 +115,9 @@ internal sealed record ServiceSettings
     /// </summary>
     public int InactiveAdminDays { get; init; } = 90;
 
+    /// <summary>Gets the admin UI's sign-in through the service, or <see langword="null"/> when it is off (design §15.3, M5b).</summary>
+    public WebLoginSettings? Web { get; init; }
+
     /// <summary>
     /// Reads the settings file (if any) and the environment.
     /// </summary>
@@ -234,6 +237,8 @@ internal sealed record ServiceSettings
             throw new ServiceStartException("bootstrapOwner.iss must equal oidc.issuer.");
         }
 
+        WebLoginSettings? web = WebLoginSettings.Load(file, Env, ReadSecret, oidc, listen, publicUrls);
+
         return new ServiceSettings
         {
             Listen = listen,
@@ -257,6 +262,7 @@ internal sealed record ServiceSettings
             NodeName = nodeName,
             Oidc = oidc,
             InactiveAdminDays = inactiveDays,
+            Web = web,
         };
     }
 
@@ -350,6 +356,9 @@ internal sealed record ServiceSettings
         Text(file.Oidc?.CliClientId, "oidc.cliClientId");
         List(file.Oidc?.CliScopes, "oidc.cliScopes");
         Text(file.Oidc?.RoleClaim, "oidc.roleClaim");
+        Text(file.Oidc?.WebClientId, "oidc.webClientId");
+        Text(file.Oidc?.WebClientSecretFile, "oidc.webClientSecretFile");
+        Text(file.DataProtection?.KekFile, "dataProtection.kekFile");
         return file;
     }
 

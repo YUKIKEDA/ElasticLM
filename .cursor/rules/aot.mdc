@@ -25,6 +25,8 @@ dotnet publish <project> -c Release -r win-x64 -o <scratch>
 
 The PR's `## Verification` states the warning count (zero), the size of the executable, and that the published executable ran its smoke scenario.
 
+One kind of warning is not counted: on macOS, dsymutil's `…/clang/ModuleCache/….pcm: No such file or directory`. The Swift parts of .NET's Apple crypto (CryptoKit, which carries AES-GCM) hold debug references to the clang module cache of the machine that built them, and dsymutil, which writes the debug symbols beside the executable, does not find it on the runner. The smoke step still runs the macOS executable. It first showed when M5b used `AesGcm` (PR #114), and the owner decided to leave it out of the count in CI. The trim, AOT, and compiler warnings stay at zero. Reports of the same warning in other projects: https://forums.swift.org/t/swift-behavior-of-gmodules-and-dsyms/23211 , https://help.codemagic.io/articles/8012313508-why-do-i-see-no-such-file-or-directory-pcm-warnings-when-using-xcode-26-caching-on-codemagic .
+
 A size that grew is split by what added it before the PR says so: publish with `-p:IlcGenerateMapFile=true` and compare the map files.
 
 `HttpClient` in an executable that had none adds about 0.76 MB on win-x64: `System.Net.Http` 420,419 bytes, the name resolution, socket, and primitives parts 61,766 bytes, and their type descriptors 275,180 bytes (M4c3, `elm-server`, PR #79). A design that gives an executable an HTTP client shows this size in its Grill.

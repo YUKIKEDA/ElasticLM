@@ -64,4 +64,23 @@ internal static partial class ServiceLog
 
     [LoggerMessage(EventId = 13, Level = LogLevel.Warning, Message = "The identity provider's keys cannot be read: {Reason}")]
     public static partial void IdentityProviderUnavailable(ILogger log, string reason);
+
+    [LoggerMessage(
+        EventId = 14,
+        Level = LogLevel.Warning,
+        Message = "The Data Protection key {Name} does not decrypt with the key encryption key; it is skipped."
+    )]
+    public static partial void DataProtectionKeySkipped(ILogger log, string name);
+
+    [LoggerMessage(EventId = 15, Level = LogLevel.Information, Message = "A Data Protection key was made: {Count}.")]
+    public static partial void DataProtectionKeyMade(ILogger log, int count);
+
+    [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "An admin UI sign-in was refused: {Reason}")]
+    public static partial void SignInRefused(ILogger log, string reason);
+
+    [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "The identity provider cannot be reached for the admin UI's sign-in: {Reason}")]
+    public static partial void SignInUnavailable(ILogger log, string reason);
+
+    [LoggerMessage(EventId = 18, Level = LogLevel.Information, Message = "session.removed: {Count} sessions past their end or idle time")]
+    public static partial void SessionsRemoved(ILogger log, long count);
 }

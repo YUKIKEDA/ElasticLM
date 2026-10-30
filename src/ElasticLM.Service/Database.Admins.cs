@@ -63,12 +63,13 @@ internal abstract partial class Database
     /// Enables or disables an administrator with its audit row, in one transaction that first holds the audit chain's lock,
     /// so two requests that each disable one of the last two owners cannot both pass (design §14.5). Disabling the caller,
     /// the bootstrap owner, or the last enabled owner is refused. An administrator already in the asked state is not changed.
+    /// Disabling also removes the administrator's sessions of the admin UI in the same transaction (design §14.5, M5b).
     /// </summary>
     /// <param name="id">The administrator.</param>
     /// <param name="enabled">The state to set.</param>
     /// <param name="callerId">The administrator the caller acts for.</param>
     /// <param name="bootstrap">The bootstrap owner, or <see langword="null"/>.</param>
-    /// <param name="audit">Makes the audit row; its argument tells whether the state was already the asked one.</param>
+    /// <param name="audit">Makes the audit row from whether the state was already the asked one and the sessions removed.</param>
     /// <param name="now">The time.</param>
     /// <param name="cancellationToken">Cancels the work.</param>
     public abstract Task<AdminChange> SetAdminEnabledAsync(
@@ -76,7 +77,7 @@ internal abstract partial class Database
         bool enabled,
         Guid callerId,
         AdminIdentity? bootstrap,
-        Func<bool, AuditEntry> audit,
+        Func<bool, long, AuditEntry> audit,
         DateTimeOffset now,
         CancellationToken cancellationToken
     );

@@ -31,6 +31,8 @@ internal static class Permissions
     public const string UsageLogSeal = "usagelog.seal";
     public const string AdminRead = "admin.read";
     public const string AdminUpdate = "admin.update";
+    public const string SessionRead = "session.read";
+    public const string SessionRevoke = "session.revoke";
 
     public const string RoleOwner = "owner";
     public const string RoleAdmin = "admin";
@@ -68,12 +70,14 @@ internal static class Permissions
         UsageLogSeal,
         AdminRead,
         AdminUpdate,
+        SessionRead,
+        SessionRevoke,
     ];
 
     /// <summary>
-    /// Returns the permissions of a role: <c>owner</c> all, <c>admin</c> all but <c>apikey.*</c> and <c>admin.*</c>, <c>viewer</c>
-    /// the <c>*.read</c> ones but <c>admin.read</c>, <c>support</c> those, <c>activation.deactivate</c>, <c>activation.offline</c>,
-    /// and <c>lease.release</c> (design §14.6, M5a); an unknown role none.
+    /// Returns the permissions of a role: <c>owner</c> all, <c>admin</c> all but <c>apikey.*</c>, <c>admin.*</c>, and
+    /// <c>session.*</c>, <c>viewer</c> the <c>*.read</c> ones but <c>admin.read</c> and <c>session.read</c>, <c>support</c> those, <c>activation.deactivate</c>, <c>activation.offline</c>,
+    /// and <c>lease.release</c> (design §14.6, M5a, M5b); an unknown role none.
     /// </summary>
     public static IReadOnlySet<string> OfRole(string role) =>
         role switch
@@ -101,6 +105,7 @@ internal static class Permissions
 
     private static bool IsRead(string permission) => permission.EndsWith(".read", StringComparison.Ordinal);
 
-    // design §14.6 (M5a): only owners see and disable administrators.
-    private static bool OwnerOnly(string permission) => permission.StartsWith("admin.", StringComparison.Ordinal);
+    // design §14.6: only owners see and disable administrators (M5a), and see and end the admin UI's sessions (M5b).
+    private static bool OwnerOnly(string permission) =>
+        permission.StartsWith("admin.", StringComparison.Ordinal) || permission.StartsWith("session.", StringComparison.Ordinal);
 }

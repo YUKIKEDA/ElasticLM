@@ -44,25 +44,34 @@ internal sealed partial class ElmService
     // Discovery 1.0 §4).
     internal static string DiscoveryUrl(string issuer) => issuer.TrimEnd('/') + "/.well-known/openid-configuration";
 
-    private static void AddOidc(WebApplicationBuilder builder, OidcSettings oidc, TimeProvider time)
+    private static void AddOidc(
+        WebApplicationBuilder builder,
+        OidcSettings oidc,
+        WebLoginSettings? web,
+        Database database,
+        TimeProvider time,
+        WebHooks hooks
+    )
     {
         bool https = new Uri(oidc.Issuer).Scheme == Uri.UriSchemeHttps;
 
-        // The identity provider's documents are input from outside: no redirects, 30 seconds, 256 KiB.
-        var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+        // The identity provider's answers are input from outside: no redirects, 30 seconds, 256 KiB. The web sign-in's token
+        // requests use the same client (design §15.3), where a 5xx answer counts as an identity provider out of reach.
+        var http = new HttpClient(new ServerErrorHandler(new SocketsHttpHandler { AllowAutoRedirect = false }))
         {
             Timeout = OidcFetchTimeout,
             MaxResponseContentBufferSize = MaxDiscoveryLength,
         };
         var manager = new ConfigurationManager<OpenIdConnectConfiguration>(
             DiscoveryUrl(oidc.Issuer),
-            new CheckedDiscovery(oidc.Issuer),
+            new CheckedDiscovery(oidc.Issuer, web is not null),
             new HttpDocumentRetriever(http) { RequireHttps = https }
         )
         {
             AutomaticRefreshInterval = OidcRefresh,
             RefreshInterval = OidcKeyRetry,
         };
+        builder.Services.AddSingleton<IConfigurationManager<OpenIdConnectConfiguration>>(manager);
 
         builder
             .Services.AddAuthentication()
@@ -99,6 +108,11 @@ internal sealed partial class ElmService
                     };
                 }
             );
+        if (web is not null)
+        {
+            hooks.KeyStore = new DataProtectionKeyStore(database, web.Kek, time);
+            AddWebLogin(builder, oidc, web, manager, http, hooks.KeyStore, hooks, time);
+        }
     }
 
     // design §14.6: exp is required; exp and nbf are read against the service's clock with 60 seconds of skew.
@@ -185,9 +199,11 @@ internal sealed partial class ElmService
 
     /// <summary>
     /// Reads the discovery document and checks it (design §14.6): its <c>issuer</c> equals the configured issuer as text, and
-    /// its <c>jwks_uri</c> is https (http only on a loopback host). A document that fails is treated as one that cannot be read.
+    /// its <c>jwks_uri</c> is https (http only on a loopback host). With the web sign-in (design §15.3, M5b), the
+    /// <c>authorization_endpoint</c>, the <c>token_endpoint</c> where the client's secret goes, and an
+    /// <c>end_session_endpoint</c> must be so too. A document that fails is treated as one that cannot be read.
     /// </summary>
-    private sealed class CheckedDiscovery(string issuer) : IConfigurationRetriever<OpenIdConnectConfiguration>
+    private sealed class CheckedDiscovery(string issuer, bool web) : IConfigurationRetriever<OpenIdConnectConfiguration>
     {
         public async Task<OpenIdConnectConfiguration> GetConfigurationAsync(string address, IDocumentRetriever retriever, CancellationToken cancel)
         {
@@ -204,7 +220,27 @@ internal sealed partial class ElmService
                 throw new InvalidOperationException("The discovery document's jwks_uri is not an https URL.");
             }
 
+            if (
+                web
+                && (
+                    !IsEndpoint(configuration.AuthorizationEndpoint)
+                    || !IsEndpoint(configuration.TokenEndpoint)
+                    || (!string.IsNullOrEmpty(configuration.EndSessionEndpoint) && !IsEndpoint(configuration.EndSessionEndpoint))
+                )
+            )
+            {
+                throw new InvalidOperationException(
+                    "The discovery document's authorization_endpoint, token_endpoint, or end_session_endpoint is not an https URL."
+                );
+            }
+
             return configuration;
         }
+
+        private static bool IsEndpoint(string? text) =>
+            Uri.TryCreate(text, UriKind.Absolute, out Uri? uri)
+            && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
+            && uri.Fragment.Length == 0
+            && uri.UserInfo.Length == 0;
     }
 }

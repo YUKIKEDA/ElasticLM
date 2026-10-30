@@ -1,3 +1,4 @@
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace ElasticLM.Service.Tests;
@@ -435,6 +436,114 @@ public sealed class ServiceSettingsTests : IDisposable
         Assert.Equal(
             "apiKeys.inactiveAdminDays must be between 0 and 3650; 0 turns the rule off.",
             Refused(",\"apiKeys\":{\"inactiveAdminDays\":3651}")
+        );
+    }
+
+    /// <summary>
+    /// The admin UI's sign-in settings are read from the file and the environment and checked (design §14.8, §15.3, M5b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A settings file with OIDC; a key encryption key of 32 random bytes made by the test; a secret file.
+    ///
+    /// Steps:
+    /// - Load with the web client, its secret file, the key encryption key file, and the session settings; load them from the
+    ///   environment; load without them; then load each setting the design refuses.
+    ///
+    /// Expected:
+    /// - The values read, with 30 minutes and 12 hours by default; null without them; each refusal a ServiceStartException
+    ///   with its message: a key encryption key or session.* without the web client, the client without its secret, the web
+    ///   client without oidc.issuer, the web client equal to the CLI client or the audience, a secret with a space, a key
+    ///   encryption key of 31 bytes or not base64, no key encryption key, session.idleMinutes 4 and 121, session.maxHours 0
+    ///   and 25, and a first public URL with a path; a first public URL of "/" is taken.
+    /// </remarks>
+    [Fact]
+    public void Load_WebLogin_IsReadAndChecked()
+    {
+        byte[] kek = RandomNumberGenerator.GetBytes(WebLoginSettings.KekLength);
+        string kekFile = Path.Combine(_folder, "kek");
+        File.WriteAllText(kekFile, Convert.ToBase64String(kek) + "\n");
+        string secretFile = Path.Combine(_folder, "web-secret");
+        File.WriteAllText(secretFile, "s3cret-test-only\n");
+        const string Oidc =
+            "\"issuer\":\"https://idp.example\",\"audience\":\"elm-service\",\"cliClientId\":\"elm-cli\",\"roleMap\":{\"admins\":\"owner\"}";
+        string Web(string oidcMore = "", string more = "") =>
+            ",\"oidc\":{"
+            + Oidc
+            + ",\"webClientId\":\"elm-web\",\"webClientSecretFile\":"
+            + JsonSerializer.Serialize(secretFile)
+            + oidcMore
+            + "}"
+            + ",\"dataProtection\":{\"kekFile\":"
+            + JsonSerializer.Serialize(kekFile)
+            + "}"
+            + more;
+
+        WebLoginSettings read = ServiceSettings.Load(Write(Base(Web(more: ",\"session\":{\"idleMinutes\":5,\"maxHours\":24}"))), _ => null).Web!;
+        Assert.Equal(
+            ("elm-web", "s3cret-test-only", TimeSpan.FromMinutes(5), TimeSpan.FromHours(24)),
+            (read.ClientId, read.ClientSecret, read.Idle, read.Lifetime)
+        );
+        Assert.Equal(kek, read.Kek);
+        WebLoginSettings defaults = ServiceSettings.Load(Write(Base(Web())), _ => null).Web!;
+        Assert.Equal((TimeSpan.FromMinutes(30), TimeSpan.FromHours(12)), (defaults.Idle, defaults.Lifetime));
+
+        var environment = new Dictionary<string, string>
+        {
+            ["ELM_OIDC_WEBCLIENTID"] = "web-env",
+            [WebLoginSettings.ClientSecretVariable] = "env-secret",
+            [WebLoginSettings.KekVariable] = Convert.ToBase64String(kek),
+            ["ELM_SESSION_IDLEMINUTES"] = "120",
+            ["ELM_SESSION_MAXHOURS"] = "1",
+        };
+        WebLoginSettings env = ServiceSettings.Load(Write(Base(",\"oidc\":{" + Oidc + "}")), name => environment.GetValueOrDefault(name)).Web!;
+        Assert.Equal(
+            ("web-env", "env-secret", TimeSpan.FromMinutes(120), TimeSpan.FromHours(1)),
+            (env.ClientId, env.ClientSecret, env.Idle, env.Lifetime)
+        );
+        Assert.Null(ServiceSettings.Load(Write(Base(",\"oidc\":{" + Oidc + "}")), _ => null).Web);
+
+        string Refused(string json) => Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(json)), _ => null)).Message;
+        const string OffOnly =
+            "dataProtection.kekFile and session.* are for the admin UI's sign-in; set oidc.webClientId and its secret, or leave them out.";
+        Assert.Equal(OffOnly, Refused(",\"oidc\":{" + Oidc + "},\"dataProtection\":{\"kekFile\":" + JsonSerializer.Serialize(kekFile) + "}"));
+        Assert.Equal(OffOnly, Refused(",\"oidc\":{" + Oidc + "},\"session\":{\"idleMinutes\":30}"));
+        Assert.Equal(
+            "The admin UI's sign-in needs both oidc.webClientId and its secret (ELM_OIDC_WEBCLIENTSECRET or oidc.webClientSecretFile).",
+            Refused(",\"oidc\":{" + Oidc + ",\"webClientId\":\"elm-web\"}")
+        );
+        Assert.Equal(
+            "oidc.webClientId needs oidc.issuer.",
+            Refused(",\"oidc\":{\"webClientId\":\"elm-web\",\"webClientSecretFile\":" + JsonSerializer.Serialize(secretFile) + "}")
+        );
+        const string Differ = "oidc.webClientId must differ from oidc.cliClientId and from oidc.audience.";
+        Assert.Equal(Differ, Refused(Web().Replace("\"webClientId\":\"elm-web\"", "\"webClientId\":\"elm-cli\"", StringComparison.Ordinal)));
+        Assert.Equal(Differ, Refused(Web().Replace("\"webClientId\":\"elm-web\"", "\"webClientId\":\"elm-service\"", StringComparison.Ordinal)));
+        File.WriteAllText(secretFile, "has space");
+        Assert.Equal("The web client's secret must be 1 to 1024 printable ASCII characters without spaces.", Refused(Web()));
+        File.WriteAllText(secretFile, "s3cret-test-only");
+        const string KekForm = "The key encryption key must be 32 bytes in base64.";
+        File.WriteAllText(kekFile, Convert.ToBase64String(kek[..31]));
+        Assert.Equal(KekForm, Refused(Web()));
+        File.WriteAllText(kekFile, "not base64!");
+        Assert.Equal(KekForm, Refused(Web()));
+        File.WriteAllText(kekFile, Convert.ToBase64String(kek));
+        Assert.Equal(
+            "The admin UI's sign-in needs the key encryption key: set ELM_DATAPROTECTION_KEK or dataProtection.kekFile.",
+            Refused(",\"oidc\":{" + Oidc + ",\"webClientId\":\"elm-web\",\"webClientSecretFile\":" + JsonSerializer.Serialize(secretFile) + "}")
+        );
+        Assert.Equal("session.idleMinutes must be between 5 and 120.", Refused(Web(more: ",\"session\":{\"idleMinutes\":4}")));
+        Assert.Equal("session.idleMinutes must be between 5 and 120.", Refused(Web(more: ",\"session\":{\"idleMinutes\":121}")));
+        Assert.Equal("session.maxHours must be between 1 and 24.", Refused(Web(more: ",\"session\":{\"maxHours\":0}")));
+        Assert.Equal("session.maxHours must be between 1 and 24.", Refused(Web(more: ",\"session\":{\"maxHours\":25}")));
+        Assert.StartsWith(
+            "The admin UI's sign-in needs the first public URL to be https with the path /",
+            Refused(Web(more: ",\"publicUrls\":[\"https://elm.example/admin/\",\"https://elm.example/\"]")),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(
+            "https://elm.example/",
+            ServiceSettings.Load(Write(Base(Web(more: ",\"publicUrls\":[\"https://elm.example/\"]"))), _ => null).PublicUrls[0].ToString()
         );
     }
 

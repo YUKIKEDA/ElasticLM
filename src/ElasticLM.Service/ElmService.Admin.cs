@@ -45,6 +45,17 @@ internal sealed partial class ElmService
     private void MapAdmin()
     {
         _app.Use(GuardAsync);
+        if (_settings.Oidc is not null)
+        {
+            // After the guard, so the sign-in's callback is limited per source and by method before the handler reads it.
+            _app.UseAuthentication();
+        }
+
+        if (_settings.Web is not null)
+        {
+            MapWeb();
+        }
+
         _app.MapGet("/health", (RequestDelegate)HealthAsync);
         _app.MapPost(
             "/v1/admin/api-keys",
@@ -88,6 +99,12 @@ internal sealed partial class ElmService
             return;
         }
 
+        if (RefuseWebPath(context))
+        {
+            await PageAsync(context, StatusCodes.Status404NotFound, "Not found.").ConfigureAwait(false);
+            return;
+        }
+
         await next(context).ConfigureAwait(false);
     }
 
@@ -115,6 +132,9 @@ internal sealed partial class ElmService
             Caller? caller;
             bool token = presented is not null && !presented.StartsWith(ApiKeys.Prefix, StringComparison.Ordinal) && _settings.Oidc is not null;
 
+            // design §15.3: without an Authorization header, a session cookie of the admin UI, when the web sign-in is on.
+            bool session = header.Length == 0 && _settings.Web is not null && SessionValue(context.Request, out _) != SessionCookieState.None;
+
             // design §14.6: a value that starts with elm_ is an API key; any other is an OIDC access token when OIDC is set.
             if (token)
             {
@@ -135,6 +155,21 @@ internal sealed partial class ElmService
 
                 caller = result.Caller;
             }
+            else if (session)
+            {
+                (Caller? found, bool csrf) = await AuthenticateSessionAsync(context).ConfigureAwait(false);
+                if (csrf)
+                {
+                    await ProblemAsync(context, ErrorCode.Forbidden, "The request lacks the CSRF header or comes from another site.")
+                        .ConfigureAwait(false);
+                    string detail = AuditLog.Detail(w => w.WriteString("reason", "csrf"));
+                    var refused = new AuditEntry(found!.ActorType, found.ActorId, action, null, "ELM_FORBIDDEN", ip, detail);
+                    await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                    return;
+                }
+
+                caller = found;
+            }
             else
             {
                 // design §14.6: the 90-day rule holds only when administrators can sign in with OIDC.
@@ -153,8 +188,9 @@ internal sealed partial class ElmService
             if (caller is null)
             {
                 CountDenial();
-                string why = token
-                    ? "The access token is not valid, or its administrator is disabled."
+                string why =
+                    token ? "The access token is not valid, or its administrator is disabled."
+                    : session ? "The session is missing, ended, or its administrator is disabled."
                     : "The API key is missing, unknown, stopped, or expired.";
                 await ProblemAsync(context, ErrorCode.Unauthorized, why).ConfigureAwait(false);
                 return;
@@ -162,7 +198,7 @@ internal sealed partial class ElmService
 
             if (!_perKey.TryAcquire(caller.RateKey))
             {
-                string why = token ? "Too many requests from this administrator." : "Too many requests with this API key.";
+                string why = token || session ? "Too many requests from this administrator." : "Too many requests with this API key.";
                 await ProblemAsync(context, ErrorCode.RateLimited, why).ConfigureAwait(false);
                 return;
             }
@@ -171,7 +207,7 @@ internal sealed partial class ElmService
             if (!caller.Permissions.Contains(permission))
             {
                 outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: AuditLog.Detail(w => w.WriteString("permission", permission)));
-                string who = token ? "The administrator's role" : "The API key";
+                string who = token || session ? "The administrator's role" : "The API key";
                 await ProblemAsync(context, ErrorCode.Forbidden, $"{who} does not have the permission {permission}.").ConfigureAwait(false);
             }
             else

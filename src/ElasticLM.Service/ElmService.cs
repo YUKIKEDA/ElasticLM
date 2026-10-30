@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.DependencyInjection;
@@ -61,6 +62,7 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly PeriodicWork _proofWork;
     private readonly PeriodicWork _retentionWork;
     private readonly PeriodicWork _usageWork;
+    private readonly PeriodicWork _sessionWork;
     private readonly ServiceUsageLog? _usage;
     private long _denials;
     private ITimer? _usageTimer;
@@ -68,6 +70,8 @@ internal sealed partial class ElmService : IAsyncDisposable
     private ITimer? _denialTimer;
     private ITimer? _retention;
     private ITimer? _proofPurge;
+    private ITimer? _sessionTimer;
+    private DataProtectionKeyStore? _keyStore;
     private IReadOnlyList<Uri> _publicUrls = [];
     private bool _stopped;
     private bool _disposed;
@@ -112,6 +116,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         _proofWork = new PeriodicWork(RemoveOldProofsAsync);
         _retentionWork = new PeriodicWork(RemoveOldAuditAsync);
         _usageWork = new PeriodicWork(SealUsageAsync);
+        _sessionWork = new PeriodicWork(SweepSessionsAsync);
     }
 
     /// <summary>Gets the URL the service answers on.</summary>
@@ -169,7 +174,8 @@ internal sealed partial class ElmService : IAsyncDisposable
                     : throw new ServiceStartException(problem!);
             }
 
-            WebApplication app = Build(settings, tls, host);
+            var hooks = new WebHooks();
+            WebApplication app = Build(settings, tls, host, database, hooks);
             disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
 
@@ -195,8 +201,13 @@ internal sealed partial class ElmService : IAsyncDisposable
                 }
             }
 
-            var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log, usage);
+            var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log, usage)
+            {
+                _keyStore = hooks.KeyStore,
+            };
+            hooks.Service = service;
             service.MapAdmin();
+            await service.EnsureDataProtectionKeyAsync(cancellationToken).ConfigureAwait(false);
 
             // design §18.1: the start is the first line after the chain line, before any request can write one.
             usage?.Write("service.started", w => w.WriteString("node", settings.NodeName));
@@ -241,7 +252,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         _stopped = true;
-        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention, _proofPurge, _usageTimer })
+        foreach (ITimer? timer in new[] { _purge, _denialTimer, _retention, _proofPurge, _usageTimer, _sessionTimer })
         {
             if (timer is not null)
             {
@@ -267,7 +278,13 @@ internal sealed partial class ElmService : IAsyncDisposable
     /// <summary>Waits for the timers' work that has started (the denial count, the jti records, retention) to end.</summary>
     internal async Task WaitForTimersAsync()
     {
-        await Task.WhenAll(_denialWork.WhenIdleAsync(), _proofWork.WhenIdleAsync(), _retentionWork.WhenIdleAsync(), _usageWork.WhenIdleAsync())
+        await Task.WhenAll(
+                _denialWork.WhenIdleAsync(),
+                _proofWork.WhenIdleAsync(),
+                _retentionWork.WhenIdleAsync(),
+                _usageWork.WhenIdleAsync(),
+                _sessionWork.WhenIdleAsync()
+            )
             .ConfigureAwait(false);
     }
 
@@ -381,7 +398,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         return (key!, certificates, status!);
     }
 
-    private static WebApplication Build(ServiceSettings settings, X509Certificate2? tls, ServiceHostOptions host)
+    private static WebApplication Build(ServiceSettings settings, X509Certificate2? tls, ServiceHostOptions host, Database database, WebHooks hooks)
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
@@ -410,7 +427,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         });
         if (settings.Oidc is OidcSettings oidc)
         {
-            AddOidc(builder, oidc, host.Time);
+            AddOidc(builder, oidc, settings.Web, database, host.Time, hooks);
         }
 
         return builder.Build();
@@ -431,6 +448,11 @@ internal sealed partial class ElmService : IAsyncDisposable
         if (_settings.AuditRetention is not null)
         {
             _retention = Time.CreateTimer(_ => _retentionWork.TryStart(), null, RetentionInterval, RetentionInterval);
+        }
+
+        if (_settings.Web is not null)
+        {
+            _sessionTimer = Time.CreateTimer(_ => _sessionWork.TryStart(), null, SessionSweepInterval, SessionSweepInterval);
         }
 
         if (applied.Count > 0 && _log.IsEnabled(LogLevel.Information))
@@ -456,6 +478,32 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
 
         ServiceLog.Started(_log, Url, _settings.Database, Signing.KeyId, Signing.ExpiresAt, (long)startup.TotalMilliseconds);
+    }
+
+    // design §15.3: before the service listens, the Data Protection key is made when none is in force, under the database lock;
+    // rows that all fail to decrypt mean another key encryption key, and the service does not start.
+    private async Task EnsureDataProtectionKeyAsync(CancellationToken cancellationToken)
+    {
+        if (_keyStore is null)
+        {
+            return;
+        }
+
+        _keyStore.Log = _log;
+        try
+        {
+            int made = await _keyStore
+                .EnsureKeyAsync(_app.Services.GetRequiredService<IKeyManager>(), atStart: true, cancellationToken)
+                .ConfigureAwait(false);
+            if (made > 0)
+            {
+                ServiceLog.DataProtectionKeyMade(_log, made);
+            }
+        }
+        catch (System.Data.Common.DbException e)
+        {
+            throw new ServiceStartException("The Data Protection keys cannot be read or written: " + e.Message);
+        }
     }
 
     private void Purge()

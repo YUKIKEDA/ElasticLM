@@ -295,7 +295,7 @@ public sealed class ElmServiceOidcTests
     ///
     /// Expected:
     /// - Pages of one with next until the last; 409 twice; 204 twice; 404 twice; the enable row has {"unchanged": true}, the
-    ///   disable row a null detail, both with carol's ID as the target.
+    ///   disable row the detail {"sessions":0} (no session was removed), both with carol's ID as the target.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -362,7 +362,7 @@ public sealed class ElmServiceOidcTests
         JsonElement disabled = rows.Single(r =>
             r.GetProperty("action").GetString() == "admin.disable" && r.GetProperty("result").GetString() == "ELM_OK"
         );
-        Assert.Equal(JsonValueKind.Null, disabled.GetProperty("detail").ValueKind);
+        Assert.Equal("{\"sessions\":0}", disabled.GetProperty("detail").GetString());
         Assert.Equal(carolId, disabled.GetProperty("target").GetString());
     }
 
@@ -392,7 +392,7 @@ public sealed class ElmServiceOidcTests
         Guid aliceId = Guid.Parse(Admin(admins, "alice").GetProperty("id").GetString()!);
         Guid bobId = Guid.Parse(Admin(admins, "bob").GetProperty("id").GetString()!);
         Guid stranger = Guid.CreateVersion7();
-        AuditEntry Entry(bool unchanged) => new("system", "test", "admin.disable", null, "ELM_OK", null, null);
+        AuditEntry Entry(bool unchanged, long sessions) => new("system", "test", "admin.disable", null, "ELM_OK", null, null);
         CancellationToken cancel = TestContext.Current.CancellationToken;
 
         Assert.Equal(

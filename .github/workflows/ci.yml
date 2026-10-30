@@ -111,7 +111,9 @@ jobs:
             $log = dotnet publish $target[0] -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
             $log
             if ($LASTEXITCODE -ne 0) { exit 1 }
-            $warnings = @($log | Select-String -Pattern ': warning ')
+            # dsymutil's missing clang module caches on macOS are not counted: the Swift parts of .NET's Apple crypto (CryptoKit,
+            # AES-GCM, M5b) carry debug references to the module cache of the machine that built them (.cursor/rules/aot.mdc).
+            $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
             if ($warnings.Count -gt 0) { "::error::NativeAOT publish of $($target[1]) reported $($warnings.Count) warnings"; exit 1 }
             $exe = Get-Item (Join-Path publish ($IsWindows ? "$($target[1]).exe" : $target[1]))
             "$($target[1]) (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY

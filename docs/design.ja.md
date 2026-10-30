@@ -167,6 +167,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.96 | 管理画面の技術 | W0 で、管理画面の SPA を Preact 11 と TypeScript で書き、Vite 8 でビルドする（Preact 用の Vite のプリセットは使わない）。テストは Vitest と happy-dom。ビルドの道具は Node.js 24 と pnpm 12 に版を固定し（pnpm は Corepack がハッシュで確かめる）、`pnpm-lock.yaml` から `pnpm install --frozen-lockfile` で入れ、公開から 1 日たたない版を入れない。ビルドの結果はリポジトリに入れず、`build.ps1` と CI がビルドする。CI は秘密を持たない別のジョブで 1 回ビルドし、`dist` を 3 つの OS のジョブに渡す（M5c、0.97）。Preact、Svelte 5、Vue 3、SolidJS、フレームワークなしの 5 つを同じ試作で比べ、持ち主の希望（依存が少なく、小さく、書きやすい）で選んだ。pnpm は持ち主の問いから npm と比べて選んだ。設計の独立レビューを受けて、Node.js を 22 から 24 にし（22 は 2027-04-30 にサポートが終わる）、依存の乗っ取り（T21）の守りと受け入れる残り（§5.4）を書いた（§5.2, §5.3, §5.4, §15.2, §21、ADR 0001。W0 の Grill と Issue #94 の結果、持ち主が受けた） |
 | 0.97 | M5 の分け方 | M5 を M5a（管理者の土台と CLI のログイン: JwtBearer、`elm admin`、管理者の一覧と無効化の API、最後のログイン、90 日ルール）、M5b（管理画面のログイン: BFF、データベースのセッション、Data Protection の鍵の保存、`X-ELM-CSRF`、Keycloak のテスト）、M5c（管理画面の土台: `web/admin/` のビルドとゲート、CI の SPA のジョブ、埋め込みと配信、大きさの計測、最初の画面）、M5d（残りの画面）の 4 行に分け、この順に進める。各行の細かい設計は、その行の始まりの Grill で決め、PR の前に独立した設計のレビューを当てて、その行の実装と同じ PR に入れる（0.61 と同じ）。`elm admin` は `login`・`logout` と汎用の `request` だけにする（§16）。OIDC のテストは、テストの中の偽の IdP（3 つの OS）と、CI の Linux の Keycloak の 2 段にする（§15.3）。M5b の画面のログインも、M5a と同じ「最後のログイン」を更新する。各行の Grill で決める点は §14.6 に挙げる（M5 の Grill、持ち主が受けた）。設計の独立レビューを受けて、Keycloak のテストを M5a から始め（デバイス認可フローと JwtBearer、M5b で認可コードのフローを足す）、画面を §15.1 の日々の操作と `support` の操作、管理者・API キー・セッションまでにした（持ち主が受けた） |
 | 0.98 | 管理者の土台と CLI のログイン | M5a で、管理 API が `elm_` で始まらない Bearer を OIDC のアクセストークンとして JwtBearer で確かめる（署名は RS256・PS256・ES256、`typ`、発行者、`audience`、サービスの時計での期限。ライブラリーの既定に頼らない）。`iss` と `sub` で管理者を探すか作り、役割を `oidc.roleClaim` と `oidc.roleMap` から決め、対応がなければ役割を `none` にする（`bootstrapOwner` は `owner`）。監査ログの `actorId` は管理者の ID。最後のログインは、認証された要求で 1 時間に 1 回まで書く。90 日の規則は、OIDC があるときだけ、キーを使うたびに「最後のログイン・管理者を作った時刻・キーを作った時刻」の最も遅い時刻と比べる（`apiKeys.inactiveAdminDays`、既定 90、0 で切る）。管理者の一覧・無効化・有効化の API は `admin.read`・`admin.update` で `owner` だけが持ち、自分・`bootstrapOwner`・最後の `owner` は無効にできない。`elm admin login` はデバイス認可フロー（RFC 8628）でトークンを得て、インストール鍵と同じ守り方のユーザーの範囲のファイルに置く。`request` は保存したログインを、その URL と同じオリジンにだけ使い、応答の本文をそのまま書き、転送を追わない。`elm offline process` は、資格がなければ今までどおり公開の入口に送る（§5.3 T13, §5.4, §14.5, §14.6, §14.8, §16, §18.2。M5a の Grill と設計の独立レビュー、持ち主が受けた、Issue #102） |
+| 0.99 | 管理画面のログイン（BFF） | M5b で、`/auth/login` と `/auth/callback` を ASP.NET Core の OpenIdConnect のハンドラーに任せ（認可コードと PKCE、`query` で戻す、既定の値に頼らず明示する）、ID トークンを確かめた後に、データベースのセッションと Cookie `__Host-elm-session` を自分で作る（ASP.NET の Cookie 認証は使わない）。画面のログインは、秘密を持つクライアント `oidc.webClientId` とその秘密、鍵暗号化鍵がそろい、`publicUrls` の最初の URL（パスは `/`）が https か、ブラウザを使わない試験のためのループバックの http のときだけ有効にし、画面はその URL だけで配る。役割のクレームは ID トークンとアクセストークンの両方に求める。ログインの時間切れはサービスの `TimeProvider` で確かめる。戻り先は常に `/`。セッションは操作がなければ既定 30 分、最長既定 12 時間（`session.idleMinutes`、`session.maxHours`）。Cookie で認証する状態を変える要求は、`X-ELM-CSRF: 1` と、`Origin` があれば同じオリジンであることを求める。セッションの一覧と取り消しは `owner` だけ。管理者の無効化でその人のセッションを消す。Data Protection の鍵は、鍵暗号化鍵で AES-256-GCM で暗号化してデータベースに置き、サービスがデータベースのロックの下で作る（§5, §14.5, §14.6, §14.7, §14.8, §15.3, §18.2。M5b の Grill と設計のレビュー、Issue #109、#110） |
 
 ## 1. 目的と利用者
 
@@ -397,6 +398,18 @@ M4d3（Issue #90）の実測（PR の head `d69a3bd` のコード。Windows、1 
   - サービスの形とサーバーの形を同じ実行で比べた値（JIT の Release、`lease.acquired` の 7 つのメンバーの行、交互に 3 回）: サービスの形が 7.77〜8.65 µs、サーバーの形が 7.87〜10.25 µs。10.25 µs は最初の回の値で、JIT の温まりを含む（2 回目と 3 回目は 7.87〜8.51 µs）。2 つの形の差はない（違うのは最初の行だけ）。この値は測り方（JIT のビルド、7 つのメンバーの行）が M3c と違うので、M3c の値とは比べない。M3c と比べるのは上の同じ測り方の値である。
 - 取得と更新の往復（JIT の Release、ループバック、SQLite、100 台の端末で各 100 回の平均。利用ログを書くサービスと書かないサービスを交互に 3 回立てた。2 回目と 3 回目を書く）: 取得は書くとき 2.73〜3.14 ms、書かないとき 2.95〜3.00 ms。更新は書くとき 2.39〜2.69 ms、書かないとき 2.36〜2.56 ms。1 行の約 8 µs は、同じ側の回ごとの揺れ（0.05〜0.41 ms）に隠れて見えない。
 
+M5b（Issue #109）の実測（コミット `99b9c6f` のコード。Windows、win-x64）:
+
+- `elm-service` の NativeAOT の実行ファイルは 28.6 MB（28,557,824 バイト。main（`c9f95d6`）の 27,478,016 から +1,079,808 バイト、+3.9%）。警告は 0 件。目標の 40 MB 以下に収まる。マップのファイル（`-p:IlcGenerateMapFile=true`）で分けた内訳（マップの中は合わせて +1,011,804 バイト、残りの 68,004 バイトはセクションの詰め物）:
+  - `System.Private.CoreLib`、`Microsoft.Extensions`、ASP.NET Core のほかの部分（新しく使う汎用の型）: +341,345
+  - 型の記述・汎用の辞書・静的なデータなど、アセンブリに分けられない実行時の表: +314,054
+  - サービスのコード（画面のログイン、セッション、Data Protection の鍵の置き場所、設定）: +113,237
+  - OpenIdConnect のハンドラー: +84,502、ASP.NET Core の認証のほかの部分（リモートの認証、Cookie の組み立て）: +41,551
+  - メタデータ: +40,503
+  - Data Protection（M5a で既に入っていた分に足す鍵の管理）: +23,148
+  - `Microsoft.IdentityModel.*`（OpenID Connect のプロトコルの確かめ）: +21,703、暗号（AES-GCM）: +11,284、`System.Net`: +3,409
+  - どのアセンブリにも分けられない生成コードと GC の情報: +17,068
+
 M5a（Issue #102）の実測（PR の head `b022680` のコード。その後のコミットはテストだけ。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 27.5 MB（27,478,016 バイト。main（`806fec1`）の 22,136,832 から +5,341,184 バイト、+24.1%）。警告は 0 件。目標の 40 MB 以下に収まる。マップのファイル（`-p:IlcGenerateMapFile=true`）で分けた内訳（マップの中は合わせて +4,838,932 バイト、残りの 502,252 バイトはセクションの詰め物）:
@@ -524,7 +537,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | Cookie はポートを区別しない（M5b、A10） | 同じホスト名の別のポートで、ブラウザが安全とみなすサービス（https かループバック）を動かす者は、`__Host-elm-session` とログインの途中の Cookie を受け取り、上書きもできる（RFC 6265 §8.5: https://www.rfc-editor.org/rfc/rfc6265#section-8.5 ）。`__Host-` は `Secure`・`Path=/`・`Domain` なしを求め、別のサブドメインからの設定を防ぐが、ポートは分けない（draft-ietf-httpbis-rfc6265bis-22 §4.1.3.2: https://datatracker.ietf.org/doc/html/draft-ietf-httpbis-rfc6265bis-22#section-4.1.3.2 ）。この者は、管理者のセッションの値を読めるほか、自分の正しいセッションの Cookie か、自分のログインの途中の Cookie を管理者のブラウザに置ける。管理者は気づかずに攻撃者の管理者として操作する。サービスでは防げない。運用者は、管理画面に、信頼しないサービスと共有しないホスト名を与える（M5b の設計のレビュー、持ち主が受けた。Issue #110） |
 | IdP で止めた、またはグループから外した管理者のセッションが、期限まで残る（M5b） | サービスは IdP から変更を知らされず、セッションの要求では IdP に問い合わせない。セッションが使う役割は管理者の行の今の役割で、次の画面のログインか、CLI のアクセストークンでの次の要求で書き直す（上の「IdP のグループから外された管理者の役割が残る」と同じ行の役割である）。それまでは前の役割で、最長 `session.maxHours`（既定 12 時間）残る。すぐに止めるには、`owner` がサービスで管理者を無効にする（その人のセッションも消える）か、セッションを取り消す（Issue #110） |
 | データベースと鍵暗号化鍵を持つ者が、ログインの途中の `state` を読み、偽る（M5b） | Data Protection の鍵を復号できるので、見た `state` から `code_verifier` を読め、`state` を偽れる。ただし、ログイン CSRF には、それと合う相関と `nonce` の Cookie を管理者のブラウザに置くことが要り、それは `__Host-` で別のサブドメインからは防ぐ（T14。同じホスト名の別のポートからは、鍵がなくても押し込める、上の行）。`code_verifier` だけでは、コードと Web のクライアントの秘密がなければトークンを得られない。データベースに書ける者は、値を知るセッションの行を足せば管理 API を使えるので、「データベースに書ける者が監査ログを書き直す」の行と同じく、ログインの途中の状態だけを守る手段はない。鍵暗号化鍵はデータベースの外に置く（§14.8、Issue #110） |
-| 画面のログアウトの後も IdP のセッションが残る（M5b） | `POST /auth/logout` はサービスのセッションを消し、IdP の `end_session_endpoint` への移動を画面に渡す。IdP がそれを示さないか、画面が移らなければ、IdP のセッションは残り、共用のブラウザでは次の人が資格情報なしでログインできる。IdP のセッションは IdP のもので、サービスは消せない。ログインのたびに資格情報を求める（`prompt=login`）と SSO の便利さを失う。運用者は、共用の端末ではブラウザを閉じるか IdP でもログアウトするよう、利用者に勧める（M5b の設計のレビュー、持ち主が受けた。Issue #110） |
+| 画面のログアウトの後も IdP のセッションが残る（M5b） | `POST /auth/logout` はサービスのセッションを消し、IdP の `end_session_endpoint` への移動を画面に渡す。IdP がそれを示さないか、画面が移らないか、IdP が求める確認を利用者が押さなければ（`id_token_hint` を付けないので、Keycloak は確認の画面を出す、§15.3）、IdP のセッションは残り、共用のブラウザでは次の人が資格情報なしでログインできる。IdP のセッションは IdP のもので、サービスは消せない。ログインのたびに資格情報を求める（`prompt=login`）と SSO の便利さを失う。運用者は、共用の端末ではブラウザを閉じるか IdP でもログアウトするよう、利用者に勧める（M5b の設計のレビュー、持ち主が受けた。Issue #110） |
 
 ## 6. 全体構成
 
@@ -2466,7 +2479,7 @@ M5a のエンドポイント（0.98）:
 | --- | --- | --- |
 | `GET /v1/admin/oidc` | なし（認証しない） | `elm admin login` のための OIDC の設定（§16）。`oidc.issuer` がなければ `404` と `ELM_NOT_FOUND`。送信元ごとの頻度の制限（`rateLimit.perIp`）だけを受ける。秘密を返さないので監査ログには書かない（下の「すべての操作」の例外）。`Cache-Control: no-store` |
 | `GET /v1/admin/admins` | `admin.read` | 管理者の一覧（`after` は管理者の ID（UUID 第 7 版）、`limit`、ID の順） |
-| `POST /v1/admin/admins/{id}/disable` | `admin.update` | 管理者を無効にする。本文なし。`204`。無効の管理者は OIDC でも API キーでも認証できない（§14.6） |
+| `POST /v1/admin/admins/{id}/disable` | `admin.update` | 管理者を無効にする。本文なし。`204`。無効の管理者は OIDC でも API キーでも認証できない（§14.6）。M5b から、その管理者の画面のセッションも消す |
 | `POST /v1/admin/admins/{id}/enable` | `admin.update` | 管理者を有効にする。本文なし。`204` |
 
 | 応答 | 形 |
@@ -2477,8 +2490,30 @@ M5a のエンドポイント（0.98）:
 - 知らない管理者と形の違う ID は `404` と `ELM_NOT_FOUND`。
 - 次の無効化は `409` と `ELM_CONFLICT` で断る: 自分（呼び出し元の API キーかアクセストークンの管理者）、`bootstrapOwner`（`setup` が最初の `owner` を作り直す道を残すため）、有効な最後の `owner`。
 - すでにその状態の管理者への操作は、何も変えずに `204` を返し、監査ログの `detail` を `{"unchanged": true}` にする（M4a3 の状態の操作と同じ）。
-- 監査ログ: `admin.list`、`admin.disable`、`admin.enable`（`target` は管理者の ID、`detail` は変えたときは `null`）。無効化と有効化は、管理者の行と同じトランザクションで書く（§18.2）。
+- 監査ログ: `admin.list`、`admin.disable`、`admin.enable`（`target` は管理者の ID、`detail` は変えたときは `null`。M5b から、無効化で変えたときは `{"sessions": <消したセッションの数>}`）。無効化と有効化は、管理者の行と同じトランザクションで書く（§18.2）。
 - 管理者の表に、最後のログインの列 `last_login_at`（UNIX 秒、なければ `NULL`）を足す（移行 `0007`）。
+
+M5b のエンドポイント（0.99）:
+
+| メソッドとパス | 許可 | 中身 |
+| --- | --- | --- |
+| `GET /v1/admin/sessions` | `session.read` | 有効なセッションの一覧（`after` はセッションの ID（UUID 第 7 版）、`limit`、ID の順）。期限か操作のない時間を過ぎて、まだ掃除していない行は含めない。`?adminId=<管理者の ID>` で絞り込める。形の違う `adminId` は `400` と `ELM_INVALID_ARGUMENT`、知らない管理者は空の一覧 |
+| `DELETE /v1/admin/sessions/{id}` | `session.revoke` | セッションを消す。本文なし。`204`。知らない ID、形の違う ID、期限か操作のない時間を過ぎた行は `404` と `ELM_NOT_FOUND` |
+
+| 応答 | 形 |
+| --- | --- |
+| セッションの 1 件 | `{"id", "adminId", "createdAt", "lastSeenAt", "expiresAt", "ip": <取れなかったときは null>}`。時刻は ISO 8601 の UTC。Cookie の値もハッシュも返さない |
+| セッションの一覧 | 上の一覧の形（`{"items", "next"}`） |
+
+- 画面の受け口（`/auth/login`、`/auth/callback`、`/auth/logout`）は管理 API の外にあり、§15.3 に書く。
+- 頻度の制限は、ほかの管理 API と同じく、送信元ごとと呼び出し元ごとである（§14.7）。
+- 監査ログ（セッションを作る・消す操作は、その行と同じトランザクションで書く、§18.2）:
+  - `session.create`（`/auth/callback`）: `actorType` は `oidc`、`actorId` は管理者の ID、`target` はセッションの ID、`detail` は `{"replaced": <ブラウザが送った前のセッションを消したらその ID、なければ null>, "evicted": <管理者ごとの上限 50 で消したセッションの ID か null>}`。
+  - `session.list`: `target` は `null`、`detail` は `{"adminId": <絞り込みの値か null>}`。
+  - `session.revoke`: `target` はセッションの ID、`detail` は `{"adminId"}`。
+  - `session.logout`（`/auth/logout`）: `actorType` は `oidc`、`actorId` は管理者の ID、`target` はセッションの ID、`detail` は `null`。
+- 許可 `session.read`・`session.revoke` は `owner` だけが持つ（`admin.*` と同じ）。
+- 管理者の無効化は、その管理者のセッションの行を同じトランザクションで消す（上の M5a の表）。
 
 ### 14.6 管理の認証と認可
 
@@ -2515,8 +2550,9 @@ API キー:
 | `usagelog.read`、`usagelog.seal` | 利用ログのファイルの閲覧と、区切りの署名（§18.1） | M4d3 |
 | `trial.read`、`trial.delete` | 試用の記録の閲覧と削除 | M4b1 |
 | `admin.read`、`admin.update` | 管理者の一覧と、無効化・有効化（`owner` だけ） | M5a |
+| `session.read`、`session.revoke` | 画面のログインのセッションの一覧と取り消し（`owner` だけ） | M5b |
 
-  `owner` はすべて、`admin` は `apikey.*` と `admin.*` を除くすべて、`viewer` は `admin.read` を除く `*.read`、`support` は `admin.read` を除く `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ（`admin.*` は M5a）。
+  `owner` はすべて、`admin` は `apikey.*` と `admin.*` と `session.*` を除くすべて、`viewer` は `admin.read` と `session.read` を除く `*.read`、`support` は `admin.read` と `session.read` を除く `*.read` と `activation.deactivate` と `activation.offline` と `lease.release` を持つ（`admin.*` は M5a、`session.*` は M5b）。
 - API キーの許可は、作った人の許可を超えられない。
 - OIDC の利用者の役割は、IdP のクレーム（設定で指定。例: `groups`）から設定の対応表で決める。対応しない利用者は拒否する。
 - サービスは、ログインした管理者の一覧（OIDC の `iss` と `sub`、役割、最後のログイン、有効か無効か）を持つ。無効の管理者は、IdP で認証できてもログインできない。
@@ -2589,7 +2625,7 @@ M5 の各行の Grill で決める点（0.97）:
   - JwtBearer のために認証を足すと、Data Protection が鍵を作る（§14.8 の D0 の確かめ）。M5a で鍵を書かないことを確かめるか、鍵暗号化鍵を M5a に移すかを決める。
   - JwtBearer を足した `elm-service` の大きさの差と、NativeAOT の警告（§21）。
   - 偽の IdP（discovery、JWKS、トークン、デバイス認可）と、CI の Linux の Keycloak（イメージをダイジェストで固定する）で、デバイス認可フローと JwtBearer を確かめる（§15.3）。
-- M5b:
+- M5b（決めた形は 0.99、§15.3 の「M5b の形」）:
   - 管理者を無効にしたら、その人のセッションをすべて消す（§15.3）。セッションの一覧と取り消しの許可は `owner` だけにする。
   - 画面のログインも、M5a と同じ「最後のログイン」を更新する。
   - OIDC のクライアントの秘密（§14.8。BFF は秘密を持つクライアント）と、セッションごとの頻度の制限。
@@ -2599,7 +2635,7 @@ M5 の各行の Grill で決める点（0.97）:
 ### 14.7 入力の上限と頻度の制限
 
 - 本文は 64 KiB まで（§12.1）。一覧の 1 ページは 200 件まで。
-- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`、`/v1/leases`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、管理 API は送信元 IP と、認証された API キー（OIDC のアクセストークンでは管理者、M5a）ごとに制限する（§14.5）。端末と管理 API の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。
+- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`、`/v1/leases`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、管理 API は送信元 IP と、認証された API キー（OIDC のアクセストークンと画面のセッションでは管理者、M5a・M5b）ごとに制限する（§14.5）。端末と管理 API の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。
 - `rateLimit.clientPerKey` の既定は 2 である。正しい端末の要求は、有効化 1 回と数日おきの更新なので、鍵ごとの器は小さくて足りる。1 つの有効化は GET のノンスと POST の 2 つの要求なので、送信元ごとの既定 20 は、1 秒に 10 台の有効化にあたる。クラウドのリース（§12.7.6）も同じ器を使う。更新も 2 つの要求で、端末ごとに期間の 1/3（既定 10 分なら約 200 秒）に 1 回なので、既定 20 で 1 つの送信元（NAT の後ろの事業所）から約 2,000 台が更新できる。それより多い送信元は `rateLimit.clientPerIp` を上げる。鍵ごとの既定 2 は、1 台が取得・更新・返却を順に送る限り足りる。
 - 制限器は `elm-server` と同じ、`TimeProvider` で動くトークンバケット（0.46、`ElasticLM.Issuing` の `RateLimiter<TKey>`）である。ASP.NET Core の RateLimiting は `TimeProvider` を受け取らず、偽の時計でテストできない（[design-decisions.md](./design-decisions.md) の「BCL と ASP.NET Core の頻度の制限器」）。送信元は IPv4 のアドレスか IPv6 の /64、覚える送信元とキーは各 100,000 まで（§13.8 と同じ）。30 秒ごとの掃除で、1 秒以上要求のない送信元とキーを忘れる。
 - `rateLimit.perKey` の既定（10）は `rateLimit.perIp` の既定（20）以下にする。管理 API の要求はまず送信元ごとの制限を受けるので、キーごとの制限が送信元ごとより大きいと、1 台から使うキーには効かない。
@@ -2610,9 +2646,9 @@ M5 の各行の Grill で決める点（0.97）:
 | --- | --- |
 | 署名鍵 | ファイル（PKCS#8 PEM。パスフレーズは環境変数）と、その鍵の証明書のファイル |
 | ノンスの HMAC の秘密 | 環境変数かファイル。未設定なら起動しない（複数ノードで食い違わないため、黙って作らない） |
-| OIDC のクライアントの秘密 | 環境変数かファイル |
+| OIDC のクライアントの秘密 | 環境変数かファイル（画面のログインの Web のクライアントの秘密、M5b。CLI のクライアントは秘密を持たない） |
 | データベースの接続文字列 | 環境変数かファイル |
-| Data Protection の鍵（Cookie と OIDC の状態の保護） | データベースに保存する。保存する鍵は、運用者が環境変数かファイルで渡す鍵暗号化鍵（256 ビット、`ELM_DATAPROTECTION_KEK`）で AES-256-GCM により暗号化する。未設定なら起動しない。D0 で、認証を足すと Data Protection が `%LOCALAPPDATA%` に鍵を作ることを確かめたため、置き場所を明示する |
+| Data Protection の鍵（画面のログインの途中の状態の保護） | データベースの表 `dataprotection_keys` に保存する（§15.3）。保存する鍵は、運用者が環境変数かファイルで渡す鍵暗号化鍵（256 ビット、`ELM_DATAPROTECTION_KEK`）で AES-256-GCM により暗号化する。鍵暗号化鍵は画面のログインを有効にするときだけ要り、画面のログインを使わないのに渡せば起動しない（M5b）。守るのはログインの途中の `state` と `nonce` の Cookie で、セッションの Cookie は守らない。D0 で、認証を足すと Data Protection が `%LOCALAPPDATA%` に鍵を作ることを確かめたため、置き場所を明示する |
 | 公開 URL（`publicUrls`） | 設定。証明の `htu` と、OIDC のリダイレクト URI に使う（§12.1） |
 
 鍵管理サービス（クラウドの KMS）からの署名鍵の利用は、ロードマップ A-4 とする。
@@ -2633,7 +2669,7 @@ M4a1 の設定:
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS`（`;` 区切り） | なし | 無効にした鍵の ID（§13.8 と同じ） |
 | `bootstrapOwner.iss`, `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_ISS`, `ELM_BOOTSTRAPOWNER_SUB` | なし | 最初の `owner`（各 1〜255 文字、両方そろえる） |
 | `rateLimit.perIp` | `ELM_RATELIMIT_PERIP` | 20 | 送信元ごとの毎秒の要求（1〜10,000） |
-| `rateLimit.perKey` | `ELM_RATELIMIT_PERKEY` | 10 | API キーごと（OIDC のアクセストークンでは管理者ごと、M5a）の毎秒の要求（1〜10,000） |
+| `rateLimit.perKey` | `ELM_RATELIMIT_PERKEY` | 10 | API キーごと（OIDC のアクセストークンと画面のセッションでは管理者ごと、M5a・M5b）の毎秒の要求（1〜10,000） |
 | `rateLimit.clientPerIp` | `ELM_RATELIMIT_CLIENTPERIP` | 20 | 端末の要求の、送信元ごとの毎秒の要求（1〜10,000、M4b1） |
 | `rateLimit.clientPerKey` | `ELM_RATELIMIT_CLIENTPERKEY` | 2 | インストール鍵ごとの毎秒の要求（1〜10,000、M4b1） |
 | `publicUrls` | `ELM_PUBLICURLS`（`;` 区切り） | `listen` がループバックのときだけ、待ち受けた `listen` の URL（http でもよい。手元の試験のため） | 端末が使う公開 URL。各要素は https でクエリと断片のない URL で、数の上限は設定ファイルの 64 KiB だけ。証明の `htu` をこれと比べる（§12.1）。`listen` がループバックでなければ必須で、ないか形が違えば起動しない（終了コード 2）。TLS を終端するプロキシの後ろでは、`listen` が http でも公開 URL は https である（M4b1） |
@@ -2648,11 +2684,16 @@ M4a1 の設定:
 | `oidc.roleClaim` | `ELM_OIDC_ROLECLAIM` | `groups` | 役割を読むトップレベルのクレームの名前（1〜255 文字） |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP`（`値=役割` を `;` 区切り。`;` と `=` を含む値は設定ファイルで書く） | なし | クレームの値と役割の対応（1〜100 組。値は 1〜255 文字、役割は `owner`・`admin`・`support`・`viewer`） |
 | `apiKeys.inactiveAdminDays` | `ELM_APIKEYS_INACTIVEADMINDAYS` | 90 | ログインのない管理者のキーを止めるまでの日数（0〜3,650。0 で切る。`oidc.issuer` があるときだけ効く、M5a） |
+| `oidc.webClientId` | `ELM_OIDC_WEBCLIENTID` | なし（画面のログインを使わない） | 画面のログイン（BFF）の、秘密を持つクライアントの ID（1〜255 文字、M5b）。`oidc.issuer` が要る。`oidc.cliClientId` とも `oidc.audience` とも同じにはできない |
+| `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET`（秘密そのもの） | なし | その秘密のファイル（16 KiB まで、末尾の改行は除く。1〜1,024 文字の空白のない印字可能な ASCII） |
+| `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK`（base64 の鍵そのもの） | なし | Data Protection の鍵暗号化鍵（base64 で 32 バイト）のファイル（16 KiB まで、末尾の改行は除く）。画面のログインを有効にするときだけ渡す（§15.3）。形が違えば終了コード 2 |
+| `session.idleMinutes` | `ELM_SESSION_IDLEMINUTES` | 30 | 操作がなければセッションが切れるまでの分（5〜120） |
+| `session.maxHours` | `ELM_SESSION_MAXHOURS` | 12 | セッションの最長の時間（1〜24） |
 
 - 設定ファイルの値は、省けるが空にはできない。空の文字列と、リストの空か `null` の要素は誤りである（既定の値とはみなさない）。
 - 終了コードは、正常な停止と `setup` の成功が 0、引数の誤りと設定の形の誤り（設定ファイルが読めないか形が違う、知らないキー、範囲の外の値、必須の値がない）が 2、それ以外で起動できないとき（設定が指すファイルが読めない、署名鍵や証明書が合わない、待ち受けられない、データベースの誤り）が 1 である。`setup` は署名の設定を読まない。
 - 起動後の時計の仕事は、それぞれ前の実行が終わっていなければ、その回を飛ばす（M4b1）。時計が飛んだとき（停止から戻った端末など）に溜まった回がまとめて来ても、仕事は 1 つずつで、データベースの接続を回の数だけ取らない（PR #61 のレビュー）。
-- 起動後の時計の仕事: 30 秒ごとに頻度の制限器の掃除（§14.7）、1 分ごとに認証の失敗の件数の書き込み（§14.5）と、ノンスの有効期間を過ぎた `jti` の記録の削除（§14.4、M4b1）、`audit.retentionDays` があれば 1 時間ごとに保管期間を過ぎた監査ログの削除（最初は起動の 1 時間後）。件数の書き込みが失敗したら件数を戻し、次の 1 分の行に足す。削除の失敗はサービスのログに書き、次の 1 時間に回す。停止では、走っている仕事の終わりを待ってから、残った件数を書く。
+- 起動後の時計の仕事: 30 秒ごとに頻度の制限器の掃除（§14.7）、1 分ごとに認証の失敗の件数の書き込み（§14.5）と、ノンスの有効期間を過ぎた `jti` の記録の削除（§14.4、M4b1）、`audit.retentionDays` があれば 1 時間ごとに保管期間を過ぎた監査ログの削除（最初は起動の 1 時間後）、画面のログインが有効なら 1 時間ごとに期限か操作のない時間を過ぎたセッションの行の削除と、Data Protection の次の鍵の確かめ（§15.3、最初は起動の 1 時間後、M5b）。件数の書き込みが失敗したら件数を戻し、次の 1 分の行に足す。削除と鍵の確かめの失敗はサービスのログに書き、次の 1 時間に回す。停止では、走っている仕事の終わりを待ってから、残った件数を書く。
 - ノンスの HMAC の秘密は M4b1 で足した。OIDC は M5a（CLI のアクセストークン）と M5b（BFF）で、Data Protection の鍵暗号化鍵は M5b で足す（0.97）。
 - `jti` の記録（M4b1）: 証明の検証器（§12.2 の `ProofVerifier`）の記録は使わず、ほかの検査が通った後に表 `proof_jtis` に一意で書く。残す期間は「書いた時刻 + 300 秒 + 60 秒」で、ノンスの期限（ノンスを出した時刻 + 300 秒）より後になる。60 秒は、ノンスを出したノードと `jti` を書いたノードの時計の差の幅で、複数ノードの時計は NTP で 60 秒以内にそろえる前提である。複数ノードは同じ表を見る。`jti` の削除が失敗したらサービスのログに書き、次の 1 分に回す（表が大きくなるだけで、検査は変わらない）。
 - 署名鍵（0.75）: 起動時に 1 本を読む（暗号化した PKCS#8 と、その鍵の証明書のファイル）。証明書が今の時刻を含まないか、ライセンスとリースの用途を持たなければ、起動しない。入れ替えは、ファイルを替えて再起動する（§7.5）。署名鍵の状態の API（M4a2）は、鍵 ID、証明書の期限、用途を返し、期限まで 30 日を切ったら警告を返す。期限が過ぎた後の発行（端末の要求と `Unbound` のファイル）は `500` と `ELM_INTERNAL_ERROR` になり、理由をサービスのログに書く（§12.6.1、M4b1）。
@@ -2696,20 +2737,93 @@ RFC 10017（OAuth 2.0 for Browser-Based Applications、BCP 212）は、業務ア
 1. ブラウザが `/auth/login` を開くと、サービスが IdP へ認可コードフロー（PKCE、S256）で転送する。
 2. IdP からの戻りを `/auth/callback` で受け、サービスがコードをトークンに交換し、ID トークンを検証して、役割を決める（§14.6）。
 3. サービスはセッションを作り、Cookie `__Host-elm-session`（`HttpOnly`, `Secure`, `SameSite=Lax`, `Path=/`）だけをブラウザに渡す。アクセストークンはブラウザに渡さない。
-4. セッションは、操作がなければ 30 分、最長 12 時間で切れる。
+4. セッションは、操作がなければ 30 分、最長 12 時間で切れる（既定。`session.idleMinutes` と `session.maxHours`）。
 5. 状態を変える API の呼び出しは、ヘッダー `X-ELM-CSRF: 1` を要求する。独自ヘッダーは別のサイトのフォームやリンクからは付けられないため、`SameSite=Lax` と合わせて CSRF を防ぐ。GET の API は状態を変えない。
 
 `SameSite=Strict` にしないのは、IdP からの戻り（別のサイトからの最上位の移動）の後の最初の画面で Cookie が送られず、ログインしていないように見えるためである。
 
 セッションはデータベースに置く（複数ノードで共有するため）。Cookie の値は 256 ビットの乱数で、データベースには SHA-256 のハッシュだけを置く。`owner` は管理者のセッションを一覧して取り消せる。管理者を無効にすると、その人のセッションをすべて消す。
 
-実装には ASP.NET Core の OpenIdConnect と Cookie の認証ハンドラーを使う。公式の表は「その他の認証」を NativeAOT 非対応としている（https://learn.microsoft.com/en-us/aspnet/core/fundamentals/native-aot?view=aspnetcore-10.0 ）が、D0 で次を確かめた（.NET 10.0.13、win-x64）。
+実装には ASP.NET Core の OpenIdConnect の認証ハンドラーを使う（D0 では Cookie の認証ハンドラーも確かめたが、M5b はセッションを自分で持ち、Cookie の認証ハンドラーは使わない。0.99）。公式の表は「その他の認証」を NativeAOT 非対応としている（https://learn.microsoft.com/en-us/aspnet/core/fundamentals/native-aot?view=aspnetcore-10.0 ）が、D0 で次を確かめた（.NET 10.0.13、win-x64）。
 
 - `Microsoft.AspNetCore.Authentication.OpenIdConnect` 10.0.0 と Cookie 認証を持つ Slim ビルダーの公開で、トリムと AOT の警告が 0 件、実行ファイルは 17.6 MB。
 - 未認証の要求が IdP へ `code_challenge_method=S256` つきで `302` 転送される。
 - Cookie でのサインインと、その Cookie での認証が動く。
 
 IdP からの戻りでのコードの交換と ID トークンの検証は、IdP がないため D0 では確かめていない。Keycloak を相手にした端から端までのテストを、M5a（デバイス認可フローと JwtBearer）と M5b（認可コードのフロー）の受け入れ条件に入れる。テストは 2 段にする（0.97）。普段のテストは、テストの中に立てる最小の偽の IdP（鍵はテストで作る）で 3 つの OS で回す。偽の IdP は、M5a で discovery、JWKS、トークン、デバイス認可のエンドポイントを持ち、M5b で認可のエンドポイントを足す。Keycloak は CI の Linux だけで、イメージをダイジェストで固定したコンテナに立て、ほかの OS では飛ばす（PostgreSQL のテストと同じ）。M5a の Keycloak のテストは、`start-dev` のコンテナにテストの realm を読ませ、デバイスのコードの承認を、Keycloak のログインの画面のフォームを HTTP で送って行う（ブラウザを使わない）。そこで動かなければ、コードの交換とセッションを BCL と `Microsoft.IdentityModel`（NativeAOT 対応）で書く案に切り替え、本節を直す。
+
+M5b の形（0.99）:
+
+- 有効にする条件: `oidc.issuer` に加えて、秘密を持つ Web のクライアント `oidc.webClientId` とその秘密（`ELM_OIDC_WEBCLIENTSECRET` か `oidc.webClientSecretFile`）、鍵暗号化鍵（`ELM_DATAPROTECTION_KEK` か `dataProtection.kekFile`）がそろうときだけ、画面のログインを有効にする。次のときは起動しない（終了コード 2）: Web のクライアントの ID か秘密の一方だけがある、`oidc.issuer` がないのに Web のクライアントがある、Web のクライアントがあるのに鍵暗号化鍵がない、画面のログインを使わないのに鍵暗号化鍵か `session.idleMinutes`・`session.maxHours` がある、`oidc.audience` が `oidc.webClientId` と同じ（ID トークンをアクセストークンとして使い回せないため。M5a の `oidc.cliClientId` と同じ確かめ）。
+- 公開 URL: 画面は `publicUrls` の最初の URL だけで配る。その URL のパスは `/` に限る（`__Host-` の Cookie は `Path=/` を求め、ハンドラーの `CallbackPath` は要求のパスと比べるため）。戻りの URL（`redirect_uri`）は、その URL に `/auth/callback` を足したもの（`publicUrls` がなくループバックで待ち受けるときは、待ち受けた URL）。画面のログインが有効なとき、その URL が https でもループバックの http でもなければ、またはパスが `/` でなければ起動しない（終了コード 2）。画面のログインを使わないときは確かめない（パスを持つ `publicUrls` の M4 の設定はそのまま動く）。
+- ループバックの http: ブラウザが http のループバックに `Secure` や `__Host-` の Cookie を送るかは、ブラウザで違う（Chrome は `Secure` の Cookie を受けるが `__Host-` と `__Secure-` の Cookie を断り、Firefox はどれも受け、Safari は `Secure` の Cookie を断る。https://github.com/httpwg/http-extensions/issues/2605 ）。そこで http のループバックは、ブラウザを使わない試験（テストの HTTP のクライアント）のためだけに受け、ブラウザで使うには https の公開 URL を求める。手元でブラウザで試すときも、自己署名の証明書で https にする。
+- OpenIdConnect のハンドラーの設定（既定の値に頼らない。https://learn.microsoft.com/en-us/dotnet/api/microsoft.aspnetcore.authentication.openidconnect.openidconnectoptions?view=aspnetcore-10.0 ）:
+  - `ResponseType` は `code`（既定は `id_token`）、`ResponseMode` は `query`（既定は `form_post` で、IdP が `/auth/callback` へ POST する。`code` と `query` の組では `query` が既定なので、ハンドラーは認可の要求に `response_mode` を入れない）、`UsePkce` は `true`（S256）、スコープは `openid` だけ（既定の `profile` を外す）。
+  - `MapInboundClaims` は `false`、`ClaimActions` は空（既定の動きは、トークンを確かめた後に `iss`・`aud`・`azp`・`nonce` などのクレームを消すので、戻りで `iss` を読めない。M5b の実装で見つけた）、`SaveTokens` は `false`、`GetClaimsFromUserInfoEndpoint` は `false`、`UseTokenLifetime` は `false`、`DisableTelemetry` は `true`（既定では IdentityModel の版を IdP に送る）、`PushedAuthorizationBehavior` は `Disable`、`SkipUnrecognizedRequests` は `false`、`TimeProvider` はサービスの `TimeProvider`。
+  - `CallbackPath` は `/auth/callback`、`RemoteAuthenticationTimeout` は 15 分（ログインを始めてから戻るまで）。
+  - `RemoteSignOutPath` と `SignedOutCallbackPath` は空にして受けない（既定の `/signout-oidc` と `/signout-callback-oidc` は、サービスにない仕組みの受け口である）。どちらのパスも `404` になることをテストで確かめる。
+  - `SignInScheme` は使わない。ハンドラーの仕事は ID トークンの確かめまでで、`OnTicketReceived` でセッションを作って応答を書き、`HandleResponse()` で Cookie の認証へのサインインに進ませない（下の「戻り」）。
+  - 相関の Cookie（`CorrelationCookie`）と `nonce` の Cookie（`NonceCookie`）は、名前を `__Host-elm-correlation.` と `__Host-elm-nonce.`（ハンドラーが後ろに値を足す）、`HttpOnly`、`Secure`（常に）、`SameSite=Lax`（既定は `None`。`query` で戻るので、最上位の GET の移動には `Lax` で届く）、`Path=/`、寿命は `RemoteAuthenticationTimeout` と同じにする。どちらの Cookie も値は `N` である。守るのは、`state`（相関の ID、PKCE の `code_verifier`、`IssuedUtc`、`redirect_uri` を持つ）と、`nonce` の Cookie の名前に入る `nonce` で、どちらもハンドラーが Data Protection で守る（下）。相関の Cookie は `state` の中の相関の ID を通して結びつく。
+  - `ProtocolValidator`: `RequireNonce` と `RequireTimeStampInNonce` は `true`、`NonceLifetime` は 15 分、`RequireStateValidation` は `false`（ハンドラーは `state` を自分で Data Protection で開いて相関の Cookie と照らし、検証器には `state` を渡さない。`true` にすると、検証器がすべての戻りを `state` がないとして断る。ハンドラーの既定も `false`。M5b の実装で見つけた）。`nonce` の時刻は IdentityModel が壁時計で比べる。時間切れの確かめは、下の「戻り」がサービスの `TimeProvider` で行い、`nonce` の時刻は余分の守りとして残す。
+  - `ConfigurationManager` は M5a の JwtBearer と同じもの（§14.6 の discovery と鍵、`CheckedDiscovery`）を明示して渡し、`RequireHttpsMetadata` も M5a と同じにする（`Backchannel` だけを渡すと、ハンドラーは確かめのない自分の取り出し口を作る）。下の discovery の追加の確かめは、画面のログインが有効なときだけ同じ取り出し口に足す。そのため画面のログインが有効なら、追加の確かめに外れた discovery では、CLI のアクセストークンも `401` になる。
+  - IdP とのやりとり（discovery、鍵、トークンのエンドポイント）は、M5a の取り出し口と同じ `HttpClient`（転送を追わない、30 秒、応答は 256 KiB まで、§14.6）を使う（`Backchannel`。既定の待ちは 60 秒）。IdP の 5xx の答えは、この `HttpClient` が `HttpRequestException` にし、IdP に届かないものとして扱う（下の「戻りの失敗」）。
+  - クライアントの認証は `client_secret_post`（ハンドラーは秘密を要求の本文で送る）。
+  - discovery は、M5a の確かめ（`issuer` と `jwks_uri`）に加えて、`authorization_endpoint` と `token_endpoint`、あれば `end_session_endpoint` が https（ループバックの http は可）であることを求める（秘密を送る先のため）。違えば IdP に届かないものとして扱う。
+  - ID トークンは、署名（RS256・PS256・ES256）、`iss` が `oidc.issuer`、`aud` が `oidc.webClientId` を含む、`nonce`、`exp` と `iat` があること、サービスの `TimeProvider` での期限（時計の差 60 秒）で確かめる。`azp` があればそれが `oidc.webClientId` であることを、`aud` が複数なら `azp` があることを求める（OpenID Connect Core 1.0 §3.1.3.7: https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation ）。ハンドラーの確かめは、`aud` が複数で `azp` がないときに警告を書くだけなので、`azp` は `OnTokenValidated` でサービスが確かめる。`iss` と `sub` は、M5a と同じく 1〜255 文字で制御文字を含まない。
+- メソッド: `/auth/login` と `/auth/callback` は `GET` だけ、`/auth/logout` は `POST` だけを受け、ほかのメソッドはハンドラーに渡す前に `404` にする（ハンドラーはメソッドを問わずパスで受け、POST の本文を、サービスの上限 64 KiB（§12.1）でなく Kestrel の 1 MiB まで読むため）。
+- ログインの開始 `GET /auth/login`: 送信元ごとの頻度の制限（`rateLimit.perIp`）だけを受ける。`OnRedirectToIdentityProvider` で、`redirect_uri` を上の戻りの URL に置き（ハンドラーの既定は要求のスキーム・`Host`・`PathBase` から作る）、認証のプロパティの `IssuedUtc` にサービスの `TimeProvider` の今の時刻を書く（`state` に入る）。IdP の認可のエンドポイントへ `302` で送る。discovery が取れないときは `503` の画面を返し、理由はサービスのログに書く。
+- 戻り `GET /auth/callback`: 送信元ごとの頻度の制限だけを受ける。順に:
+  1. ハンドラーが `state` を Data Protection で開き、相関の Cookie と照らす。`state` と相関の Cookie の一致が、ログイン CSRF（攻撃者のコードを管理者のブラウザに押し込む）への守りである（T14）。ほかのブラウザで始めた `state` の戻りは、相関の Cookie がないので断る。これをテストで確かめる。
+  2. `OnAuthorizationCodeReceived` で、`IssuedUtc` がないか、`IssuedUtc` から 15 分を過ぎたか、今より 60 秒を超えて先なら、`context.Fail` で断る（コードを交換する前。`OnRemoteFailure` に進み `400`）。トークンのエンドポイントへの要求の `redirect_uri` は、ハンドラーが `state` から写すので、上の戻りの URL と同じになる。
+  3. ハンドラーがコードをトークンに交換し（PKCE の `code_verifier` つき）、ID トークンを確かめる（上）。
+  4. `OnTicketReceived` で、§14.6 の確かめる順の 5〜9 を、ID トークンの `iss`・`sub`・`oidc.roleClaim` で行う。役割のクレームの値は、アクセストークンと同じく 100 個まで（§14.6）で、超えれば `400`。役割の書き直しと最後のログインは M5a と同じである。
+  5. ブラウザが形の正しい `__Host-elm-session` を送っていれば、その行を消す（前のセッションを残さない。セッションの固定への守り、T14）。その管理者の有効なセッションが 50 あれば、いちばん古い行（作った時刻の順）を消す（1 つの IdP のアカウントが行を増やし続けないため）。新しいセッションの行を作り、監査ログの `session.create` を同じトランザクションで書く。
+  6. Cookie を渡し、`/` へ `302` で送り、`HandleResponse()` で終える。
+- 戻りの失敗（どれもセッションを作らない。画面の形は下）:
+  - 無効の管理者: `403`。M5a の 6 と同じく、1 分ごとの認証の失敗の件数（§14.5）に数え、監査ログには書かない。
+  - 役割の対応のない利用者: `403`。M5a の 7 と同じく、管理者がいれば役割を `none` に書き直し（`admin.role`）、拒否の行（`session.create`、結果 `403`、`actorId` は管理者の ID かなければ `null`、`detail` は `{"issuer", "subject"}`）を応答の後に書く。
+  - ハンドラーの失敗は、どれも `OnRemoteFailure` に `context.Failure` として来る（`access_denied` は `OnAccessDenied`）。どちらも `HandleResponse()` して画面を返す（しなければ例外が `500` になる）。例外の型で分ける:
+    - IdP に届かない: `HttpRequestException`、時間切れの `TaskCanceledException`（要求の中止 `RequestAborted` でないもの）、discovery の取り出しの `InvalidOperationException`、トークンのエンドポイントの 5xx の `OpenIdConnectProtocolException`。`503`。件数には数えない。
+    - それ以外（IdP の誤り `error`、`access_denied`、`state` か相関の Cookie の食い違い、時間切れ、確かめられないトークン、トークンのエンドポイントの 4xx）: `400`。1 分ごとの認証の失敗の件数に数える。
+    - どちらも理由はサービスのログに書く。ブラウザが要求を中止したとき（`RequestAborted`）は、IdP の失敗として書かない。
+- 画面（`400`、`403`、`503`）: `text/plain; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`。本文は状態ごとに決めた短い英語の文で、IdP の `error_description` などの入力を映さない。
+- IdP の設定（運用者が行う。テストの realm も同じにする）: Web のクライアントは秘密を持つクライアントで、認可コードのフロー（PKCE）だけを許す（Keycloak はサービスアカウントと Direct access grants を切る。Entra ID はアプリ自身にアプリのロールを与えない。T13）。戻りの URL（`publicUrls` の最初の URL + `/auth/callback`）を、ワイルドカードなしでそのまま登録し、ログアウトの後の戻り先（`publicUrls` の最初の URL）も登録する。クライアントの認証に `client_secret_post` を許す。
+- 役割のクレーム: 役割は、画面のログインでは ID トークンから、CLI ではアクセストークンから決まり、同じ管理者の行を書き換える。片方にだけクレームがあると役割が行き来するので、`oidc.roleClaim` のクレームを ID トークンとアクセストークンの両方に入れるよう IdP を設定する（Keycloak はマッパーの「ID トークンに入れる」と「アクセストークンに入れる」。テストの realm も両方に入れる、T13）。アクセストークンとリフレッシュトークンは使わず（`SaveTokens` は `false`）、ブラウザにも渡さない。
+- セッション:
+  - Cookie は `__Host-elm-session=<256 ビットの乱数の base64url、パディングなしの 43 文字>`。`HttpOnly`、`Secure`、`SameSite=Lax`、`Path=/`、`Max-Age` と `Expires` なし。ブラウザを閉じても、ブラウザが前のセッションを戻すと Cookie は残る。セッションを区切るのは、サービスの操作のない時間と最長の時間である。
+  - 表 `admin_sessions`（移行 `0008`）: ID（UUID 第 7 版）、管理者の ID、Cookie の値の SHA-256（32 バイト、一意の索引）、作った時刻、最後の操作の時刻、期限（作った時刻 + `session.maxHours`）、送信元の IP（作ったときのもの。取れなければ `NULL`）。時刻は UNIX 秒。
+  - 確かめる順（Cookie の要求ごと）:
+    1. 送信元ごとの頻度の制限（§14.7）。
+    2. `Authorization` があれば Cookie は見ず、§14.6 の確かめに進む。
+    3. 画面のログインが有効でなければ、Cookie は見ない（資格のない要求として `401`）。
+    4. `__Host-elm-session` がちょうど 1 つで、値が 43 文字の base64url であること。2 つ以上か形が違えば、データベースを引かずに `401`。数えるには `Cookie` ヘッダーを自分で読む（`HttpRequest.Cookies` は同じ名前をまとめる。A10 は別の `Path` で同じ名前の Cookie を足せる）。
+    5. 値の SHA-256 で行を引く（一意の索引で引くので、引く時間は保存した値を明かさない）。なければ `401`。
+    6. 期限を過ぎたか、最後の操作から `session.idleMinutes` を過ぎたか、管理者が無効なら、その行を消して `401`。
+    7. `GET` と `HEAD` でない要求は CSRF の確かめ（下）。
+    8. 最後の操作の時刻を書く（書いた値が 60 秒以上前のときだけ。そのため、操作のない時間は最長 60 秒遅れて切れる）。
+    9. 管理者の ID ごとの頻度の制限（`rateLimit.perKey`、M5a のアクセストークンと同じ器）。
+    10. 操作の許可（管理者の今の役割の許可。役割 `none` は何も許されない）。
+  - 3〜6 の失敗は、API キーと同じ 1 つの答え `401` と `ELM_UNAUTHORIZED` にし、1 分ごとの認証の失敗の件数に数える。
+  - 監査ログの `actorType` は `oidc`、`actorId` は管理者の ID（M5a のアクセストークンと同じ）。
+  - 期限を過ぎた行と、操作のない時間を過ぎた行は、1 時間ごとの掃除で消す（最初は起動の 1 時間後、§14.8 の時計の仕事）。
+- CSRF: Cookie で認証する要求のうち、`GET` と `HEAD` でないものは、ヘッダー `X-ELM-CSRF: 1` を求め、`Origin` があれば、それが `publicUrls` の最初の URL（なければ待ち受けた URL）と同じオリジン（スキーム・ホスト・ポート）であることを求める。`Origin: null` は合わないものとする。どちらかが合わなければ `403` と `ELM_FORBIDDEN`。拒否の行（その操作の名前、結果 `403`、`detail` は `{"reason": "csrf"}`）を応答の後に書く。API キーとアクセストークンの要求には求めない（ブラウザが自動で付ける資格ではないため）。
+- ログアウト `POST /auth/logout`: 送信元ごとの頻度の制限を受け、`X-ELM-CSRF` と `Origin` の確かめ（上）を、セッションがなくても受ける（合わなければ `403`、件数にも監査ログにも書かない）。
+  - 形の正しい Cookie で行があれば、それを消し、監査ログの `session.logout`（`target` はセッションの ID、`detail` は `null`）を同じトランザクションで書く。Cookie がない、形が違う、行がない、期限を過ぎた、のどれでも断らない。
+  - 応答はいつも `200` で、Cookie を消し（同じ名前と属性で `Max-Age=0`）、本文は `{"endSession": <URL か null>}`。URL は、IdP の `end_session_endpoint` に `client_id`（`oidc.webClientId`）と `post_logout_redirect_uri`（公開 URL の `/`）を付けたもの。`end_session_endpoint` がなければ `null`。画面がその URL へ移る。`post_logout_redirect_uri` は IdP のクライアントに登録しておく（Keycloak は登録のない値を断る）。サービスは ID トークンを残さない（`SaveTokens` は `false`）ので、`id_token_hint` は付けない。そのため IdP は、利用者に確認を求めてからセッションを終えることがある。Keycloak 26.8 は、セッションがあれば確認の画面（`confirmLogout` のフォーム）を `200` で返し、利用者が確かめると `post_logout_redirect_uri` へ戻し、セッションがなければすぐにそこへ `302` で戻す（Keycloak のテスト `CodeFlow_SignsInToTheAdminUi` と、手元の WSL コンテナで確かめた。PR #114 のレビュー）。
+- `/`（M5c まで）: セッションを求めず、`200` で、画面がまだないことを短い文で返す（`text/plain`、上の画面と同じヘッダー）。
+- 画面のログインが有効でないとき、`/auth/login`、`/auth/callback`、`/auth/logout`、`/` は `404` で、上の画面の形（`text/plain`）を返す（管理 API の外の受け口なので、`application/problem+json` にしない）。上のメソッドの `404` も同じ形である。
+- Data Protection（`state` と `nonce` の Cookie を守る。相関の Cookie は `state` を通して結びつく。セッションの Cookie は守らない）:
+  - 鍵の置き場所は表 `dataprotection_keys`（移行 `0008`）: 鍵の名前（文字列、一意）、12 バイトの乱数の nonce、暗号文、16 バイトのタグ、作った時刻（UNIX 秒）。暗号文は、鍵の XML（UTF-8）を鍵暗号化鍵で AES-256-GCM で暗号化したもので、鍵の名前の UTF-8 を付加データにする（行の間で暗号文を入れ替えられない）。行は消さない（鍵の寿命 90 日で、1 年に 5 行ほど）。
+  - 鍵暗号化鍵は、base64 で 32 バイト。
+  - アプリの名前は `ElasticLM.Service`、鍵の寿命は 90 日、Data Protection 自身の鍵の暗号化（`IXmlEncryptor`）は使わない（表に置く前に上の AES-256-GCM で暗号化する）。どれも既定に頼らず明示する。
+  - 自動の鍵の生成は切り（`DisableAutomaticKeyGeneration`）、サービスが鍵を作る。Data Protection は、鍵を作ると 2 日後に使い始め、手元の鍵の一覧を約 24 時間ごとに読み直す（https://learn.microsoft.com/en-us/aspnet/core/security/data-protection/implementation/key-management?view=aspnetcore-10.0 ）。知らない鍵に出会ったときの読み直しは、手元の一覧を作ってから 2 分の間だけである（release/10.0 の `KeyRingBasedDataProtector.UnprotectCore` と `KeyRingProvider.InAutoRefreshWindow`: https://github.com/dotnet/aspnetcore/tree/release/10.0/src/DataProtection/DataProtection/src/KeyManagement ）。自動の生成を切って鍵がなければ、Data Protection は例外を投げる。複数のノードが同時に鍵を作ると、ほかのノードが知らない鍵で `state` を守り、ログインが別のノードに戻ると読み直すまで失敗する。そこで鍵を作るのは、データベースのロックの下で 1 つのノードだけにする（PostgreSQL はトランザクションの中の助言ロック `pg_advisory_xact_lock`、SQLite は `BEGIN IMMEDIATE`）。鍵を作るときの `IXmlRepository.StoreElement` は、ロックを持つ接続とトランザクションで書く（SQLite で別の接続から書くと、5 秒待って `SQLITE_BUSY` になる）。起動時の鍵の確かめが終わるまで、Data Protection に鍵の一覧を読ませない。
+  - 起動時: ロックの下で表を読み直し、使える鍵（期限が今より後）がなければ、すぐに使い始める鍵（今から 90 日）を作る。ほかのノードはロックを待ち、作られた鍵を読む。
+  - 1 時間ごと（§14.8 の時計の仕事）: ロックの下で、いちばん後に期限の来る鍵の期限が 7 日以内なら、その期限から使い始める鍵（期限はその 90 日後）を作る。ほかのノードは、使い始める前の 24 時間ごとの読み直しで知る。
+  - 読めない（復号できない）鍵の行は飛ばし、サービスのログに書く。行があるのに 1 つも読めなければ、鍵暗号化鍵の取り違えとして起動しない（終了コード 1）。
+  - 鍵暗号化鍵の入れ替え: すべてのノードを止め、表 `dataprotection_keys` の行を消し、すべてのノードに新しい鍵暗号化鍵を渡して起動する。途中のログインは `400` で失敗し、やり直せば通る。セッションは Data Protection を使わないので残る。
+- 管理者の無効化（§14.5）は、その管理者のセッションの行を同じトランザクションで消す。
+
+`/auth/*` は管理 API（`/v1/admin/`）の外の画面のための受け口なので、ここに書く。セッションの一覧と取り消しの API は §14.5 の「M5b のエンドポイント」に書く。
 
 ## 16. CLI
 
@@ -2893,7 +3007,7 @@ M3c で作った形:
 - `elm-service` の管理操作と、端末からの有効化・解除・複製の検出・試用（§12.6.1。更新と、断った端末の要求は書かない）を、データベースの追記だけの表に記録する。行は、下の連なりの形の 10 列（行の番号、時刻、操作者の種類と ID、操作、対象、結果、送信元 IP、詳細、前の行のハッシュ）と、その行のハッシュを持つ。
 - `actorType` は `apikey`（`actorId` は API キーの ID）、`oidc`（`actorId` は管理者の ID。`iss` と `sub` は `admin.create` の行の `detail` にある、M5a）、`system`（`actorId` は `setup` などの操作の名前、または認証の失敗の件数の行では `auth`）、`installation`（`actorId` はインストール鍵の拇印、端末からの操作、§12.6.1、M4b1）のどれか。`detail` は操作ごとの JSON のオブジェクトで、例えば API キーの作成では `{"name": "ci", "permissions": ["license.read"], "expiresAt": "2027-01-25T00:00:00Z"}`、認証の失敗の件数の行では `{"count": 12}` である。秘密（キー本体など）は入れない。
 - 各行は、前の行のハッシュを含めた SHA-256 を持ち、連なりで改ざんを検出できる。データベースに書ける者による書き直しは検出できず、§5.4 で受け入れる。
-- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は、ほかの列と同じく 4 バイトの長さ（`0x00000020`）の後に、32 バイトをそのまま（16 進にせず）入れる。最初の行の `prev`（32 バイトの 0）と、保管期間で古い行を消した後の起点も同じ形である。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする。連なりの先頭（最後の行の番号とハッシュ）と起点（保管期間で消した最後の行の番号とハッシュ）を 1 行の表 `audit_state` に持ち、追記はその行を固定してから行を足し、先頭を進める（PostgreSQL は列を自分自身に更新する `UPDATE ... RETURNING` で行のロックを取る。`SELECT ... FOR UPDATE` と同じロックを、クエリビルダーの中で取れる。SQLite は `BEGIN IMMEDIATE`）。最後の行そのものを固定する形では、表が空のときに固定する行がないためである（M4a1）。状態を変える操作（API キーの作成と停止、`setup`、管理者の作成・役割の書き直し・無効化・有効化）は、その監査ログの行と同じトランザクションで書く。読み取り、拒否（`400`、`403`、`404`）、連なりの確認の行は、応答の後に別のトランザクションで書き、書けなければサービスのログに書く。連なりの確認は、1 つの読み取りのスナップショットで、起点の次の行から順に、番号が続き、`prev` が前の行のハッシュで、ハッシュが行から計算した値と合い、最後の行が先頭と合うことを確かめる。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、保管期間の内にある最初の行より前の行を消し、消した最後の行のハッシュを起点として残す。時計が戻って、後の行の時刻が前の行より古くても、途中に穴を開けない。
+- 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は、ほかの列と同じく 4 バイトの長さ（`0x00000020`）の後に、32 バイトをそのまま（16 進にせず）入れる。最初の行の `prev`（32 バイトの 0）と、保管期間で古い行を消した後の起点も同じ形である。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする。連なりの先頭（最後の行の番号とハッシュ）と起点（保管期間で消した最後の行の番号とハッシュ）を 1 行の表 `audit_state` に持ち、追記はその行を固定してから行を足し、先頭を進める（PostgreSQL は列を自分自身に更新する `UPDATE ... RETURNING` で行のロックを取る。`SELECT ... FOR UPDATE` と同じロックを、クエリビルダーの中で取れる。SQLite は `BEGIN IMMEDIATE`）。最後の行そのものを固定する形では、表が空のときに固定する行がないためである（M4a1）。状態を変える操作（API キーの作成と停止、`setup`、管理者の作成・役割の書き直し・無効化・有効化、画面のセッションの作成と削除（`session.create`・`session.revoke`・`session.logout`、M5b））は、その監査ログの行と同じトランザクションで書く。読み取り、拒否（`400`、`403`、`404`）、連なりの確認の行は、応答の後に別のトランザクションで書き、書けなければサービスのログに書く。連なりの確認は、1 つの読み取りのスナップショットで、起点の次の行から順に、番号が続き、`prev` が前の行のハッシュで、ハッシュが行から計算した値と合い、最後の行が先頭と合うことを確かめる。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、保管期間の内にある最初の行より前の行を消し、消した最後の行のハッシュを起点として残す。時計が戻って、後の行の時刻が前の行より古くても、途中に穴を開けない。
 - 行のハッシュと `prev` は、SQLite では `BLOB`、PostgreSQL では `bytea` の 32 バイトとして保存し、16 進の文字列にしない。管理 API では base64url で返す（§14.5）。
 - 管理画面と管理 API で読める。保管期間は設定で決め、既定は無期限とする。
 
@@ -3011,7 +3125,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6）の受け入れ条件
 | （BCL のみ） | `ElasticLM.Licensing`, `ElasticLM.Client`, `ElasticLM.Native` | アプリに入る部品は外部の依存を持たない | — |
 | ASP.NET Core（共有フレームワーク） | `ElasticLM.Server`, `ElasticLM.Service` | HTTP サーバー | 対応（Slim ビルダー）。M3b の `elm-server` で警告 0 件、11.4 MB（win-x64）。ランタイムパックの IIS のモジュール（`aspnetcorev2_inprocess.dll`）は公開から外す |
 | `Microsoft.AspNetCore.Authentication.JwtBearer` 10.0.14 | `ElasticLM.Service` | 管理 API の OIDC のアクセストークンの検証（§14.6、M5a）。MIT。`Microsoft.IdentityModel.*` 8.x と `System.IdentityModel.Tokens.Jwt` を連れてくる | D0 と M5a で警告 0 件。`elm-service` が +5.3 MB（22,136,832 から 27,478,016 バイト、win-x64、内訳は §4.2） |
-| `Microsoft.AspNetCore.Authentication.OpenIdConnect` | `ElasticLM.Service` | 管理画面の BFF | D0 で警告 0 件（§15.3） |
+| `Microsoft.AspNetCore.Authentication.OpenIdConnect` 10.0.14 | `ElasticLM.Service` | 管理画面の BFF（§15.3、M5b）。MIT。`Microsoft.IdentityModel.Protocols.OpenIdConnect` を連れてくる（JwtBearer がすでに連れてくる） | D0 と M5b で警告 0 件。`elm-service` が +1.1 MB（27,478,016 から 28,557,824 バイト、win-x64、内訳は §4.2） |
 | `Microsoft.Extensions.FileProviders.Embedded` | `ElasticLM.Service` | 管理画面の配信 | D0 で警告 0 件 |
 | `Npgsql` 10.0.3 | `ElasticLM.Service` | PostgreSQL。`NpgsqlSlimDataSourceBuilder` を使う。PostgreSQL License | D0 と M4a1 で警告 0 件 |
 | `Microsoft.Data.Sqlite.Core` 10.0.14, `SQLitePCLRaw.provider.e_sqlite3` 2.1.13, `SQLitePCLRaw.core` 2.1.13 | `ElasticLM.Service` | SQLite の ADO.NET。`Microsoft.Data.Sqlite.Core` が `SQLitePCLRaw.core` 2.1.13 に依存するので、提供者も 2.1 系にそろえる。MIT と Apache-2.0。提供者は名前 `e_sqlite3` で SQLite を呼び、NativeAOT ではその名前を `DirectPInvoke` で実行ファイルの中の SQLite に結ぶ | M4a1 で警告 0 件 |
@@ -3048,7 +3162,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M4d3 | `elm-service` の利用ログ（`use: log` の鍵で署名）と、その管理 API（0.93） | §18.1, §14.5 |
 | W0 | 管理画面の技術の選定 | §15.2 |
 | M5a | 管理者の土台と CLI のログイン: JwtBearer、`elm admin login`・`logout`・`request`、管理者の一覧と無効化の API、最後のログイン、90 日ログインのない管理者のキーを止める規則（0.66、0.97）、偽の IdP と Keycloak のテスト（デバイス認可フロー）。決める点は §14.6 | §14.5, §14.6, §14.7, §14.8, §15.3, §16, §18.2, §21 |
-| M5b | 管理画面のログイン（BFF）: 認可コードと PKCE、データベースのセッションとその一覧・取り消し、管理者の無効化でセッションを消す、最後のログインの更新、Data Protection の鍵の保存、`X-ELM-CSRF`、偽の IdP と Keycloak のテスト（認可コードのフロー）（0.97）。決める点は §14.6 | §5.3, §14.5, §14.6, §14.8, §15.3, §21 |
+| M5b | 管理画面のログイン（BFF）: 認可コードと PKCE、データベースのセッションとその一覧・取り消し、管理者の無効化でセッションを消す、最後のログインの更新、Data Protection の鍵の保存、`X-ELM-CSRF`、偽の IdP と Keycloak のテスト（認可コードのフロー）（0.97）。決める点は §14.6 | §5, §14.5, §14.6, §14.7, §14.8, §15.3, §18.2, §21 |
 | M5c | 管理画面の土台: `web/admin/` のビルドとゲート、`dist` がないときの誤り、秘密を持たない CI の SPA のジョブ（0.96、T21）、埋め込みと CSP つきの配信、大きさの計測、最初の画面（ライセンスの検索・詳細・失効） | §4.2, §5.3, §15.1, §15.2, §21 |
 | M5d | 残りの画面: 発行、有効化の解除、オフラインの処理、監査ログ、リースの閲覧と強制返却、試用の閲覧と削除、管理者と API キー、セッションの一覧と取り消し | §15.1 |
 | M6 | `libelasticlm` | §17 |
