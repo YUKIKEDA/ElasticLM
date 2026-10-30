@@ -1,17 +1,32 @@
 import { useEffect, useState } from 'preact/hooks';
-import { api, Problem, signIn, SignInNeeded, type Filter, type License, type Me, type Page, type Product } from './api';
+import { api, signIn, SignInNeeded, type Filter, type License, type Me, type Page, type Product } from './api';
+import { Audit } from './audit';
+import { ErrorBanner } from './common';
+import { Detail } from './detail';
+import { Issue } from './issue';
 import { keyHash } from './keys';
 import { m } from './messages';
+import { Offline } from './offline';
 
 // design §15.2 (0.100): every value from the API is drawn as text only; nothing builds markup, href, or src from it.
 
-/** The routes of the screen, after "#" (design §15.2): the list, a license, or nothing known. */
-export type Route = { kind: 'list' } | { kind: 'license'; id: string } | { kind: 'unknown' };
+/** The routes of the screen, after "#" (design §15.2 "M5c の形" and "M5d1 の形"). */
+export type Route =
+  | { kind: 'list' }
+  | { kind: 'license'; id: string }
+  | { kind: 'issue' }
+  | { kind: 'offline' }
+  | { kind: 'audit' }
+  | { kind: 'unknown' };
 
 /** Reads a location hash as a route; an empty hash or "#/" is the list. */
 export function route(hash: string): Route {
   if (hash === '' || hash === '#' || hash === '#/' || hash === '#/licenses') {
     return { kind: 'list' };
+  }
+
+  if (hash === '#/issue' || hash === '#/offline' || hash === '#/audit') {
+    return { kind: hash.slice(2) as 'issue' | 'offline' | 'audit' };
   }
 
   const license = /^#\/licenses\/([^/]+)$/.exec(hash);
@@ -25,6 +40,23 @@ export function route(hash: string): Route {
   } catch {
     return { kind: 'unknown' };
   }
+}
+
+/**
+ * The permissions each screen needs (design §15.2, M5d1). The header shows a screen only when the role has all of them, and a
+ * route opened without them says so before any call; the API refuses as well (design §15.1).
+ */
+export const needs: Record<Exclude<Route['kind'], 'unknown'>, string[]> = {
+  list: ['license.read'],
+  license: ['license.read'],
+  issue: ['license.create', 'product.read', 'policy.read'],
+  offline: ['activation.offline'],
+  audit: ['audit.read'],
+};
+
+/** Returns whether a role's permissions open a route; an unknown route is open, to say it does not exist. */
+export function allowed(me: Me, to: Route): boolean {
+  return to.kind === 'unknown' || needs[to.kind].every((p) => me.permissions.includes(p));
 }
 
 function useHash(): string {
@@ -60,6 +92,7 @@ export function App() {
     <>
       <header>
         <strong>{m.product}</strong>
+        {me && <Nav me={me} />}
         {me && (
           <span class="who">
             {me.subject} ({me.role}){' '}
@@ -71,30 +104,53 @@ export function App() {
       </header>
       <main>
         <ErrorBanner error={error} />
-        {me &&
-          (current.kind === 'list' ? (
-            <List />
-          ) : current.kind === 'license' ? (
-            <Detail key={current.id} id={current.id} me={me} />
-          ) : (
-            <p>{m.notFound}</p>
-          ))}
+        {me && <Screen me={me} to={current} />}
       </main>
     </>
   );
 }
 
-function ErrorBanner({ error }: { error: Error | null }) {
-  if (!error || error instanceof SignInNeeded) {
-    return null;
+function Nav({ me }: { me: Me }) {
+  const links: [Exclude<Route['kind'], 'unknown' | 'license'>, string, string][] = [
+    ['list', '#/licenses', m.nav.licenses],
+    ['issue', '#/issue', m.nav.issue],
+    ['offline', '#/offline', m.nav.offline],
+    ['audit', '#/audit', m.nav.audit],
+  ];
+  return (
+    <nav>
+      {links
+        .filter(([kind]) => allowed(me, { kind }))
+        .map(([, href, text]) => (
+          <a href={href}>{text}</a>
+        ))}
+    </nav>
+  );
+}
+
+function Screen({ me, to }: { me: Me; to: Route }) {
+  if (!allowed(me, to)) {
+    return (
+      <p class="error" role="alert">
+        {m.forbidden}
+      </p>
+    );
   }
 
-  const text = error instanceof Problem && error.status === 403 ? m.forbidden : error.message;
-  return (
-    <p class="error" role="alert">
-      {text}
-    </p>
-  );
+  switch (to.kind) {
+    case 'list':
+      return <List />;
+    case 'license':
+      return <Detail key={to.id} id={to.id} me={me} />;
+    case 'issue':
+      return <Issue />;
+    case 'offline':
+      return <Offline />;
+    case 'audit':
+      return <Audit />;
+    default:
+      return <p>{m.notFound}</p>;
+  }
 }
 
 function List() {
@@ -198,120 +254,6 @@ function List() {
         <button type="button" onClick={() => setAfter(page.next)}>
           {m.next}
         </button>
-      )}
-    </section>
-  );
-}
-
-function Detail({ id, me }: { id: string; me: Me }) {
-  const [license, setLicense] = useState<License | null>(null);
-  const [error, setError] = useState<Error | null>(null);
-  const [asking, setAsking] = useState(false);
-  const [done, setDone] = useState(false);
-
-  useEffect(() => {
-    let live = true;
-    api.license(id).then(
-      (l) => live && setLicense(l),
-      (e: Error) => live && setError(e),
-    );
-    return () => {
-      live = false;
-    };
-  }, [id]);
-
-  const revoke = async () => {
-    setAsking(false);
-    try {
-      setLicense(await api.revoke(id));
-      setDone(true);
-    } catch (e) {
-      setError(e as Error);
-    }
-  };
-
-  // design §15.2: no button for an operation the role does not allow; the API refuses it as well (design §15.1).
-  const mayRevoke = me.permissions.includes('license.revoke');
-  return (
-    <section>
-      <a href="#/licenses">{m.back}</a>
-      <ErrorBanner error={error} />
-      {!license && !error && <p>{m.loading}</p>}
-      {license && (
-        <>
-          <h1>{license.name}</h1>
-          {done && <p role="status">{m.revoked}</p>}
-          <dl>
-            <dt>{m.fields.id}</dt>
-            <dd>{license.id}</dd>
-            <dt>{m.state}</dt>
-            <dd>{m.states[license.state] ?? license.state}</dd>
-            <dt>{m.fields.product}</dt>
-            <dd>{license.productId}</dd>
-            <dt>{m.fields.policy}</dt>
-            <dd>{license.policyId}</dd>
-            <dt>{m.fields.maxActivations}</dt>
-            <dd>{license.maxActivations ?? m.fields.policyDefault}</dd>
-            <dt>{m.created}</dt>
-            <dd>{license.createdAt}</dd>
-            <dt>{m.expires}</dt>
-            <dd>{license.expiresAt ?? m.never}</dd>
-            {license.suspendedAt && (
-              <>
-                <dt>{m.fields.suspended}</dt>
-                <dd>{license.suspendedAt}</dd>
-              </>
-            )}
-            {license.revokedAt && (
-              <>
-                <dt>{m.fields.revokedAt}</dt>
-                <dd>{license.revokedAt}</dd>
-              </>
-            )}
-            <dt>{m.fields.deactivations}</dt>
-            <dd>{license.deactivations}</dd>
-          </dl>
-          <h2>{m.fields.features}</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>{m.feature.code}</th>
-                <th>{m.feature.version}</th>
-                <th>{m.feature.seats}</th>
-                <th>{m.feature.expires}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {license.features.map((f) => (
-                <tr key={f.code}>
-                  <td>{f.code}</td>
-                  <td>{f.ver ?? ''}</td>
-                  <td>{f.seats ?? ''}</td>
-                  <td>{f.expiresAt ?? ''}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <h2>{m.fields.meta}</h2>
-          <pre>{JSON.stringify(license.meta, null, 2)}</pre>
-          {mayRevoke &&
-            license.state !== 'revoked' &&
-            (asking ? (
-              <p>
-                {m.confirmRevoke(license.name)}{' '}
-                <button type="button" onClick={revoke}>
-                  {m.revoke}
-                </button>{' '}
-                <button type="button" onClick={() => setAsking(false)}>
-                  {m.cancel}
-                </button>
-              </p>
-            ) : (
-              <button type="button" onClick={() => setAsking(true)}>
-                {m.revoke}
-              </button>
-            ))}
-        </>
       )}
     </section>
   );
