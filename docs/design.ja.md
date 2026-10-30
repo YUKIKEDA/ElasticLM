@@ -168,7 +168,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.97 | M5 の分け方 | M5 を M5a（管理者の土台と CLI のログイン: JwtBearer、`elm admin`、管理者の一覧と無効化の API、最後のログイン、90 日ルール）、M5b（管理画面のログイン: BFF、データベースのセッション、Data Protection の鍵の保存、`X-ELM-CSRF`、Keycloak のテスト）、M5c（管理画面の土台: `web/admin/` のビルドとゲート、CI の SPA のジョブ、埋め込みと配信、大きさの計測、最初の画面）、M5d（残りの画面）の 4 行に分け、この順に進める。各行の細かい設計は、その行の始まりの Grill で決め、PR の前に独立した設計のレビューを当てて、その行の実装と同じ PR に入れる（0.61 と同じ）。`elm admin` は `login`・`logout` と汎用の `request` だけにする（§16）。OIDC のテストは、テストの中の偽の IdP（3 つの OS）と、CI の Linux の Keycloak の 2 段にする（§15.3）。M5b の画面のログインも、M5a と同じ「最後のログイン」を更新する。各行の Grill で決める点は §14.6 に挙げる（M5 の Grill、持ち主が受けた）。設計の独立レビューを受けて、Keycloak のテストを M5a から始め（デバイス認可フローと JwtBearer、M5b で認可コードのフローを足す）、画面を §15.1 の日々の操作と `support` の操作、管理者・API キー・セッションまでにした（持ち主が受けた） |
 | 0.98 | 管理者の土台と CLI のログイン | M5a で、管理 API が `elm_` で始まらない Bearer を OIDC のアクセストークンとして JwtBearer で確かめる（署名は RS256・PS256・ES256、`typ`、発行者、`audience`、サービスの時計での期限。ライブラリーの既定に頼らない）。`iss` と `sub` で管理者を探すか作り、役割を `oidc.roleClaim` と `oidc.roleMap` から決め、対応がなければ役割を `none` にする（`bootstrapOwner` は `owner`）。監査ログの `actorId` は管理者の ID。最後のログインは、認証された要求で 1 時間に 1 回まで書く。90 日の規則は、OIDC があるときだけ、キーを使うたびに「最後のログイン・管理者を作った時刻・キーを作った時刻」の最も遅い時刻と比べる（`apiKeys.inactiveAdminDays`、既定 90、0 で切る）。管理者の一覧・無効化・有効化の API は `admin.read`・`admin.update` で `owner` だけが持ち、自分・`bootstrapOwner`・最後の `owner` は無効にできない。`elm admin login` はデバイス認可フロー（RFC 8628）でトークンを得て、インストール鍵と同じ守り方のユーザーの範囲のファイルに置く。`request` は保存したログインを、その URL と同じオリジンにだけ使い、応答の本文をそのまま書き、転送を追わない。`elm offline process` は、資格がなければ今までどおり公開の入口に送る（§5.3 T13, §5.4, §14.5, §14.6, §14.8, §16, §18.2。M5a の Grill と設計の独立レビュー、持ち主が受けた、Issue #102） |
 | 0.99 | 管理画面のログイン（BFF） | M5b で、`/auth/login` と `/auth/callback` を ASP.NET Core の OpenIdConnect のハンドラーに任せ（認可コードと PKCE、`query` で戻す、既定の値に頼らず明示する）、ID トークンを確かめた後に、データベースのセッションと Cookie `__Host-elm-session` を自分で作る（ASP.NET の Cookie 認証は使わない）。画面のログインは、秘密を持つクライアント `oidc.webClientId` とその秘密、鍵暗号化鍵がそろい、`publicUrls` の最初の URL（パスは `/`）が https か、ブラウザを使わない試験のためのループバックの http のときだけ有効にし、画面はその URL だけで配る。役割のクレームは ID トークンとアクセストークンの両方に求める。ログインの時間切れはサービスの `TimeProvider` で確かめる。戻り先は常に `/`。セッションは操作がなければ既定 30 分、最長既定 12 時間（`session.idleMinutes`、`session.maxHours`）。Cookie で認証する状態を変える要求は、`X-ELM-CSRF: 1` と、`Origin` があれば同じオリジンであることを求める。セッションの一覧と取り消しは `owner` だけ。管理者の無効化でその人のセッションを消す。Data Protection の鍵は、鍵暗号化鍵で AES-256-GCM で暗号化してデータベースに置き、サービスがデータベースのロックの下で作る（§5, §14.5, §14.6, §14.7, §14.8, §15.3, §18.2。M5b の Grill と設計のレビュー、Issue #109、#110） |
-| 0.100 | 管理画面の土台と最初の画面 | M5c で、画面のログインが有効なときだけ、`elm-service` が `/` で `index.html` を、`/assets/*` で Vite のハッシュつきのファイルを、埋め込みのリソースから配る。画面の中の行き先は `#` の後ろで表し、サーバーは知らないパスに `index.html` を返さない。画面の応答は CSP（`default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'`）、`nosniff`、`no-referrer` を持ち、`index.html` は `no-cache`、`/assets/*` は 1 年の `immutable`。`/` はセッションを求めず、画面が API の `401` を受けて `/auth/login` へ移る。`GET /v1/admin/me` で自分の役割と許可を返し（監査ログの例外）、許可のない操作を画面で出さない。ライセンスの一覧に、名前の部分一致 `?q=` とキーの完全一致 `?key=` を足す。最初の画面はライセンスの一覧・検索・詳細・失効。CI は秘密を持たない Linux のジョブで SPA を 1 回ビルドして `dist` を渡し、`dist` がなければ `ElasticLM.Service` のビルドが止まる。テストは Vitest と happy-dom と .NET の配信のテストで、CSP の違反は PR ごとに手元のヘッドレスの Chrome で確かめる（§14.5, §15.2, §15.3, §21。M5c の Grill、Issue #116） |
+| 0.100 | 管理画面の土台と最初の画面 | M5c で、画面のログインが有効なときだけ、`elm-service` が `/` で `index.html` を、`/assets/*` で Vite のハッシュつきのファイルを、埋め込みのリソースから配る。画面の中の行き先は `#` の後ろで表し、サーバーは知らないパスに `index.html` を返さない。画面の応答は CSP（`default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'`）、`nosniff`、`no-referrer` を持ち、`index.html` は `no-cache`、`/assets/*` は 1 年の `immutable`。`/` はセッションを求めず、画面が API の `401` を受けて `/auth/login` へ移る。`GET /v1/admin/me` で自分の役割と許可を返し（監査ログの例外）、許可のない操作を画面で出さない。ライセンスの一覧に、名前の部分一致 `?q=` と、画面がキーから作る SHA-256 の `?keyHash=` を足す（キーを URL に載せない。設計のレビューで持ち主が決めた）。最初の画面はライセンスの一覧・検索・詳細・失効。CI は秘密を持たない Linux のジョブで SPA を 1 回ビルドして `dist` を渡し（そのジョブの actions はコミットの SHA で固定する。設計のレビューで持ち主が決めた）、`dist` がなければ `ElasticLM.Service` のビルドが止まる。テストは Vitest と happy-dom と .NET の配信のテストで、CSP の違反は PR ごとに手元のヘッドレスの Chrome で確かめる（§5.3, §14.5, §14.6, §15.2, §15.3, §18.2, §21。M5c の Grill と設計のレビュー、Issue #116） |
 
 ## 1. 目的と利用者
 
@@ -496,7 +496,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | T10 | オフライン有効化の応答の使い回し | A1 | 応答は要求のインストール鍵に紐づく。同じ要求には残した同じ応答を返し、ノンスが同じで中身の違う要求は断る（§12.8, §12.8.4） |
 | T11 | 試用の繰り返し | A1 | 製品とマシン指紋の組で 1 回に限る（§12.9） |
 | T12 | 署名鍵の漏えい | — | 漏れた鍵の ID をトラストストアの無効の一覧に入れたアプリの版を配り、正当なライセンスをオンラインの更新で新しい鍵に移す（§7.5）。ルート鍵はオフラインに置く（§7.2）。証明書の期限は新しい署名を止めるだけで、漏れた鍵が `iat` を偽ったトークンは止めない（0.39） |
-| T13 | 管理 API の不正利用 | A2, A4, A5, A8, A9 | API キーは範囲と期限を持ちハッシュだけを保存する。全操作を監査ログに残す（§14.6, §18.2）。IdP で止めれば、次のトークンは出ない（出したアクセストークンは期限まで、その管理者の API キーはサービスでの無効化か 90 日の規則まで残る、§5.4）。OIDC のアクセストークン（M5a）は、署名・発行者・期限を確かめ、`aud` に `oidc.audience` を求める。ヘッダーの `typ` は `at+jwt`、`application/at+jwt`、`JWT` のどれかだけを受ける。RFC 9068 §4 は、受け取る側に `at+jwt` か `application/at+jwt` だけを受け、ほかの値のトークンを断るよう求めるが、Entra ID のアクセストークンの `typ` は常に `JWT` なので（https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference ）、`JWT` も受ける。これは §4 からの意図した逸脱で、ID トークンを受けない守りは `aud`（下の起動の確かめ）が受け持つ。`oidc.audience` が CLI のクライアント ID と同じなら起動しない。これで、別のアプリ向けのトークンと ID トークンを使い回せない（A9）。無効の管理者と、役割の対応のない利用者を断る。`elm admin login` のトークンは、インストール鍵と同じ仕組み（§10.2。DPAPI の付加エントロピーは別）で管理者の端末のユーザーの範囲に置く（A8）。保存したときのサービスと同じオリジンにだけ送り、転送を追わない（A2）。細かい形は M5a が §14.6 と §16 に書く（Issue #103）。画面のログイン（M5b）は、認可コードを PKCE で守り（途中でコードを奪っても使えない、A2）、ID トークンの署名・発行者・期限・`nonce` を確かめ、`aud` に `oidc.webClientId` を求める。`oidc.audience` が `oidc.webClientId` と同じなら起動しない（1 つのアプリの登録を Web のクライアントと管理 API の両方にする設定の誤りでは、ID トークンとアクセストークンの `aud` が同じになり、ID トークンを管理 API に使える）。役割のクレームは、ID トークンとアクセストークンの両方に入れるよう IdP を設定する（片方にないと、ログインのたびに役割が `none` と元の役割を行き来する）。Web のクライアントの秘密は環境変数かファイルで渡す（§14.8）。IdP では、Web のクライアントに認可コードのフローだけを許す（Keycloak はサービスアカウントと Direct access grants を切る: https://www.keycloak.org/docs/latest/server_admin/index.html#con-basic-settings_server_administration_guide 。Entra ID はアプリ自身にアプリのロールを与えない: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow ）。秘密が漏れても、ほかの発行の形でトークンを得られないためである。IdP で止めても、出したセッションは期限まで残る（§5.4）。サービスで管理者を無効にすれば、その人のセッションも消える。細かい形は M5b が §15.3 に書く（Issue #110） |
+| T13 | 管理 API の不正利用 | A2, A4, A5, A8, A9 | API キーは範囲と期限を持ちハッシュだけを保存する。全操作を監査ログに残す（§14.6, §18.2。例外は §14.5）。IdP で止めれば、次のトークンは出ない（出したアクセストークンは期限まで、その管理者の API キーはサービスでの無効化か 90 日の規則まで残る、§5.4）。OIDC のアクセストークン（M5a）は、署名・発行者・期限を確かめ、`aud` に `oidc.audience` を求める。ヘッダーの `typ` は `at+jwt`、`application/at+jwt`、`JWT` のどれかだけを受ける。RFC 9068 §4 は、受け取る側に `at+jwt` か `application/at+jwt` だけを受け、ほかの値のトークンを断るよう求めるが、Entra ID のアクセストークンの `typ` は常に `JWT` なので（https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference ）、`JWT` も受ける。これは §4 からの意図した逸脱で、ID トークンを受けない守りは `aud`（下の起動の確かめ）が受け持つ。`oidc.audience` が CLI のクライアント ID と同じなら起動しない。これで、別のアプリ向けのトークンと ID トークンを使い回せない（A9）。無効の管理者と、役割の対応のない利用者を断る。`elm admin login` のトークンは、インストール鍵と同じ仕組み（§10.2。DPAPI の付加エントロピーは別）で管理者の端末のユーザーの範囲に置く（A8）。保存したときのサービスと同じオリジンにだけ送り、転送を追わない（A2）。細かい形は M5a が §14.6 と §16 に書く（Issue #103）。画面のログイン（M5b）は、認可コードを PKCE で守り（途中でコードを奪っても使えない、A2）、ID トークンの署名・発行者・期限・`nonce` を確かめ、`aud` に `oidc.webClientId` を求める。`oidc.audience` が `oidc.webClientId` と同じなら起動しない（1 つのアプリの登録を Web のクライアントと管理 API の両方にする設定の誤りでは、ID トークンとアクセストークンの `aud` が同じになり、ID トークンを管理 API に使える）。役割のクレームは、ID トークンとアクセストークンの両方に入れるよう IdP を設定する（片方にないと、ログインのたびに役割が `none` と元の役割を行き来する）。Web のクライアントの秘密は環境変数かファイルで渡す（§14.8）。IdP では、Web のクライアントに認可コードのフローだけを許す（Keycloak はサービスアカウントと Direct access grants を切る: https://www.keycloak.org/docs/latest/server_admin/index.html#con-basic-settings_server_administration_guide 。Entra ID はアプリ自身にアプリのロールを与えない: https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow ）。秘密が漏れても、ほかの発行の形でトークンを得られないためである。IdP で止めても、出したセッションは期限まで残る（§5.4）。サービスで管理者を無効にすれば、その人のセッションも消える。細かい形は M5b が §15.3 に書く（Issue #110） |
 | T14 | 管理画面への CSRF・XSS | A4, A10 | BFF でブラウザにトークンを渡さない。Cookie は `__Host-`・`HttpOnly`・`Secure`・`SameSite=Lax`。状態を変える API は独自ヘッダーを要求し、`Origin` があればそれが `publicUrls` の最初の URL と同じオリジンであることを求め、GET は状態を変えない。CSP を厳しくする（§15）。画面のログイン（M5b）では、画面は `publicUrls` の最初の URL だけで配り、`redirect_uri` は要求のホストではなくその URL から作り、ログイン後の戻り先は常に `/` にする（開いた転送をしない）。ログイン CSRF（攻撃者のログインを管理者のブラウザに押し込む）は、相関の Cookie と `state` の一致、PKCE、`nonce` で防ぐ。ログインの途中の Cookie（相関と `nonce`）にも `__Host-` と `Path=/` を付け、別のサブドメイン（A10）からは置けないようにする。ログインのたびに新しい乱数のセッションを作り、ブラウザが送った前のセッションの行は消す（前に置かれた値が、ログインの後に管理者のセッションにならない）。同じホスト名の別のポートからの押し込みは防げない（§5.4）。細かい形は M5b が §15.3 に書く（Issue #110） |
 | T15 | 利用ログの改ざん | A3 | 区切りごとの署名と、ファイルをまたぐ連なり（§18.1）。サーバーの鍵を持つ利用者の管理者（A1）による書き直しは防げない（§5.4）。`elm-service` のログは、署名鍵の証明書（`use: log`）で確かめ、各ファイルの署名された最初の行が書いたノードを名指す。署名鍵とそのパスフレーズを持つ者による書き直しは防げない（§5.4、0.95） |
 | T16 | 大きな入力やトークンでの資源の枯渇 | A2, A3, A4 | 入力の大きさ・深さ・数に上限を置く（§8.6, §14.7）。リクエストの頻度を制限する（§13.8） |
@@ -2277,7 +2277,7 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 - 対象: 製品、機能、ポリシー、ライセンス（発行・停止・再開・失効・延長）、有効化（一覧・解除）、リース（一覧・強制返却）、試用（一覧・消去）、オフライン有効化の処理、署名鍵の状態、API キー、監査ログ、利用ログ。
 - 正確なエンドポイントの一覧は、その実体を作る行（M4a1〜M4d、0.65。管理者の一覧と無効化は M5a、セッションの一覧と取り消しは M5b、0.97）で決め、本節に表で書く。
 - 形（0.73）: `elm-server` と同じ素の JSON。名前は camelCase、誤りは `application/problem+json` と `ELM_` のコード、一覧は `?after=<ID>&limit=<件数>`（200 件まで、既定 50）。JSON:API の形は、包みが深く、ソース生成の JSON の型が増えるので採らない。
-- 認証は `Authorization: Bearer elm_...`（API キー、§14.6）。M5a から、OIDC のアクセストークンも同じヘッダーで受ける（JwtBearer）。M5b から、管理画面のセッションの Cookie と `X-ELM-CSRF` も受ける（§15.3）。管理 API のすべての操作を監査ログ（§18.2）に書く（例外は、秘密を返さない `GET /v1/admin/oidc`（M5a）と、呼び出し元自身の `GET /v1/admin/me`（M5c））。認証の失敗は、1 分ごとに件数を 1 行で書く（M3c の利用ログの `admin.denied` と同じ考え方）。
+- 認証は `Authorization: Bearer elm_...`（API キー、§14.6）。M5a から、OIDC のアクセストークンも同じヘッダーで受ける（JwtBearer）。M5b から、管理画面のセッションの Cookie と `X-ELM-CSRF` も受ける（§15.3）。管理 API のすべての操作を監査ログ（§18.2）に書く（例外は、秘密を返さない `GET /v1/admin/oidc`（M5a）と、呼び出し元自身の `GET /v1/admin/me`（M5c））。管理 API のすべての答えは `Cache-Control: no-store` を持つ（M5c。M5b から Cookie で認証する答えがあり、共有のキャッシュは `Authorization` のない要求の答えを残しうるため）。認証の失敗は、1 分ごとに件数を 1 行で書く（M3c の利用ログの `admin.denied` と同じ考え方）。
 
 M4a1 のエンドポイント（0.79）:
 
@@ -2399,7 +2399,7 @@ M4a3 のエンドポイント（0.85, 0.86）:
 | メソッドとパス | 許可 | 中身 |
 | --- | --- | --- |
 | `POST /v1/admin/licenses` | `license.create` | 本文は下の表。`201` でライセンスの 1 件に `"key": "ELM-..."`（§9.5）を足したもの。キーはこの応答だけに入る |
-| `GET /v1/admin/licenses` | `license.read` | 一覧。`?productId=`、`?policyId=`、`?state=`（`active`・`suspended`・`expired`・`revoked`）で絞り込める。M5c から、`?q=`（名前の部分一致。1〜100 文字、ASCII の文字だけ大文字と小文字を区別しない、`%` と `_` は文字として比べる）と `?key=`（ライセンスキーの完全一致。§9.5 の形でなければ `400` と `ELM_INVALID_ARGUMENT`。保存したハッシュで引く）でも絞り込め、どの絞り込みも重ねられる |
+| `GET /v1/admin/licenses` | `license.read` | 一覧。`?productId=`、`?policyId=`、`?state=`（`active`・`suspended`・`expired`・`revoked`）で絞り込める。M5c から、`?q=`（名前の部分一致。1〜100 文字、ASCII の文字だけ大文字と小文字を区別しない、`%` と `_` は文字として比べる）と `?keyHash=`（ライセンスキーの §9.5 の正規形の SHA-256 を base64url で 43 文字。保存したハッシュと比べる。キーそのものは URL に載せない: 要求の URL はサービスのログとプロキシのログに残るため）でも絞り込め、どの絞り込みも重ねられる。`q` は、C# で ASCII の大文字だけを小文字にし、`\`・`%`・`_` を `\` で逃がして、`lower(name) LIKE '%' \|\| q \|\| '%' ESCAPE '\'` で比べる（PostgreSQL では `lower(name COLLATE "C")` にして、ASCII の文字だけを小文字にする。SQLite の `lower` は初めから ASCII だけ）。`q` の長さは文字（Rune）で数え、制御文字を含むもの、空、2 回以上の指定は、`keyHash` の形の誤りと同じく `400` と `ELM_INVALID_ARGUMENT`。`q` には索引がなく、表をライセンスの ID の順に読んで合う行を集める（ライセンスの数だけ読むことがあるが、管理 API の 1 回の要求として受け入れる） |
 | `GET /v1/admin/licenses/{id}` | `license.read` | 1 件 |
 | `PATCH /v1/admin/licenses/{id}` | `license.update` | 本文 `{name, meta, maxActivations, features}` のうち送ったもの。`maxActivations` に `null` を送ればポリシーの値に戻す |
 | `POST /v1/admin/licenses/{id}/suspend` | `license.update` | `Active` → `Suspended`。本文なし（`suspend`・`resume`・`revoke` は本文を読まないので、送られても無視する） |
@@ -2520,13 +2520,15 @@ M5c のエンドポイント（0.100）:
 
 | メソッドとパス | 許可 | 中身 |
 | --- | --- | --- |
-| `GET /v1/admin/me` | なし（認証された呼び出し元なら誰でも） | 呼び出し元の管理者と、今の要求に効く許可。`Cache-Control: no-store`。監査ログには書かない（ほかの人の情報も秘密も返さず、画面が開くたびに呼ぶため。上の「すべての操作」の例外） |
+| `GET /v1/admin/me` | なし（認証された呼び出し元なら誰でも） | 呼び出し元の管理者と、今の要求に効く許可。`Cache-Control: no-store`。成功は監査ログに書かない（ほかの人の情報も秘密も返さず、画面を開くたびに呼ぶため。上の「すべての操作」の例外） |
 
 | 応答 | 形 |
 | --- | --- |
 | 自分 | `{"id": <管理者の ID>, "issuer", "subject", "role": <"owner"・"admin"・"support"・"viewer"・"none">, "permissions": <文字列の配列、§14.6 の順>}`。API キーの呼び出しでは、`role` は管理者の役割、`permissions` はそのキーの許可（管理者の役割で絞った後のもの、§14.6） |
 
-- 頻度の制限と認証の失敗の数え方は、ほかの管理 API と同じである。
+- 頻度の制限と認証の失敗の数え方は、ほかの管理 API と同じで、答えも同じ（`401` と `ELM_UNAUTHORIZED`、`403` と `ELM_FORBIDDEN`、`429` と `ELM_RATE_LIMITED`）。
+- 監査ログに書かないのは `/me` の成功の行だけである。認証の途中で書く行（OIDC のアクセストークンの `admin.create`・`admin.role`・最後のログイン、§14.6 の 7 の役割の対応のない拒否）は、ほかの管理 API と同じく書き、拒否の行の操作の名前は `admin.me` である。
+- 役割が後から `none` に書き直されたセッションや API キーでは、`200` で `"role": "none"`、`"permissions": []` を返す（役割の対応のないアクセストークンは、§14.6 の 7 のとおり `403`）。
 
 ### 14.6 管理の認証と認可
 
@@ -2638,6 +2640,7 @@ M5 の各行の Grill で決める点（0.97）:
   - JwtBearer のために認証を足すと、Data Protection が鍵を作る（§14.8 の D0 の確かめ）。M5a で鍵を書かないことを確かめるか、鍵暗号化鍵を M5a に移すかを決める。
   - JwtBearer を足した `elm-service` の大きさの差と、NativeAOT の警告（§21）。
   - 偽の IdP（discovery、JWKS、トークン、デバイス認可）と、CI の Linux の Keycloak（イメージをダイジェストで固定する）で、デバイス認可フローと JwtBearer を確かめる（§15.3）。
+- M5c（決めた形は 0.100、§14.5 の「M5c のエンドポイント」、§15.2 の「M5c の形」）。
 - M5b（決めた形は 0.99、§15.3 の「M5b の形」）:
   - 管理者を無効にしたら、その人のセッションをすべて消す（§15.3）。セッションの一覧と取り消しの許可は `owner` だけにする。
   - 画面のログインも、M5a と同じ「最後のログイン」を更新する。
@@ -2745,33 +2748,38 @@ M4a1 の設定:
 
 M5c の形（0.100）:
 
-- 配る条件: 画面のログインが有効なとき（§15.3）だけ、`GET /` と `GET /assets/{ファイル}` で画面を配る。有効でなければ、どちらも今の `404` の画面（`text/plain`）である。`HEAD` とほかのメソッドも `404` である（`/` は §15.3 の `RefuseWebPath` と同じ扱い）。
+- 配る条件: 画面のログインが有効なとき（§15.3）だけ、`GET /` と `GET /assets/{ファイル}` で画面を配る。有効でないとき、ほかのメソッド（`HEAD` を含む）、`/assets/` の下のないファイルと配らない拡張子は、どれも `404` の画面である（§15.3 の画面の形: `text/plain`、`no-store`、`nosniff`、CSP `default-src 'none'; frame-ancestors 'none'`）。
+- 順: 送信元ごとの頻度の制限（`rateLimit.perIp`、`/` と `/assets/*` も受ける）と、パスとメソッドの確かめ（§15.3 の `RefuseWebPath` に `/assets` の下を足す）、認証の仕組み（`UseAuthentication`）、`UseStaticFiles`、ルーティングの順に通す。`/assets/` の下で `UseStaticFiles` が答えなかった要求は、最後に `404` の画面を返す。
 - `GET /`: 埋め込んだ `index.html`。セッションを求めない。M5b の仮の文を置き換える。
-- `GET /assets/{ファイル}`: 埋め込んだ `dist/assets/` のファイル（ASP.NET Core の `UseStaticFiles`、`RequestPath` は `/assets`、ファイルの置き場所は `ManifestEmbeddedFileProvider` の `dist/assets`）。ほかのパスと、ないファイルは `404`。`Content-Type` は拡張子で決め（`.js` は `text/javascript`、`.css` は `text/css`、`.svg` は `image/svg+xml`、`.woff2` は `font/woff2`、`.png` は `image/png`）、ほかの拡張子のファイルは配らない（`404`）。
+- `GET /assets/{ファイル}`: 埋め込んだ `dist/assets/` のファイル（ASP.NET Core の `UseStaticFiles`、`RequestPath` は `/assets`、ファイルの置き場所は `ManifestEmbeddedFileProvider` の `dist/assets`）。`Content-Type` は、対応を 5 つだけにした `FileExtensionContentTypeProvider`（`.js` は `text/javascript`、`.css` は `text/css`、`.svg` は `image/svg+xml`、`.woff2` は `font/woff2`、`.png` は `image/png`）で決め、`ServeUnknownFileTypes` は `false` にする（ほかの拡張子は配らない）。
 - 画面の中の行き先は `#` の後ろで表す（`/#/licenses`、`/#/licenses/{id}`）。サーバーは知らないパスに `index.html` を返さない（返すと `/v1/`・`/auth/`・`/health` と取り合い、誤った URL も `200` になるため）。
 - 画面の応答（`/` と `/assets/*`）のヘッダー:
   - `Content-Security-Policy: default-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'`
   - `X-Content-Type-Options: nosniff`、`Referrer-Policy: no-referrer`
-  - `Cache-Control`: `index.html` は `no-cache`、`/assets/*` は `public, max-age=31536000, immutable`（Vite がファイルの名前に中身のハッシュを入れるため）。
-- ビルドの形: Vite の `base` は `/`、`assetsDir` は `assets`。インラインのスクリプトとスタイルを作らない（W0 で、CSP `default-src 'self'` のもとで違反 0 件を確かめた形、§15.2）。
-- ログインしていないとき: 画面は、API の `401` を受けて `/auth/login` へ移る。ログアウトのボタンは `POST /auth/logout`（`X-ELM-CSRF: 1`）を送り、答えの `endSession` があればその URL へ、なければ `/` へ移る。
-- API の呼び方: 同じオリジンへ Cookie つきで送り、`GET` でない要求には `X-ELM-CSRF: 1` を付ける。`403` は「許可がない」、ほかの誤りは答えの `detail` を示す。
+  - `Cache-Control`: `index.html` は `no-cache`、`/assets/*` は 1 年の `public, max-age=31536000, immutable`（Vite がファイルの名前に中身のハッシュを入れるため）。
+- ビルドの形: Vite の `base` は `/`、`build.assetsDir` は `assets`、`build.assetsInlineLimit` は `0`（既定の 4,096 バイトでは、小さな画像やフォントが `data:` の URL になり、CSP `default-src 'self'` が断る）。`public/` の置き場所は使わない。`dist` には `index.html` と `assets/` だけがあり、埋め込むのもその 2 つだけである。インラインのスクリプトとスタイルを作らない（W0 で、CSP `default-src 'self'` のもとで違反 0 件を確かめた形、§15.2）。
+- ログインしていないとき: 画面は、API の `401` を受けて `/auth/login` へ移る。自動で移るのは 1 回だけで（`sessionStorage` に印を置き、`GET /v1/admin/me` が通れば消す）、続けて `401` なら、理由と「Sign in」のボタンを示して止まる（ログインが通っても Cookie が戻らないとき、たとえば http のループバックで `__Host-` の Cookie を断るブラウザで、IdP と行き来を繰り返さないため）。戻り先は常に `/` なので、`#` の行き先は失われる（§15.3）。
+- ログアウトのボタンは `POST /auth/logout`（`X-ELM-CSRF: 1`）を送り、答えの `endSession` があればその URL へ、なければ `/` へ移る。
+- API の呼び方: 同じオリジンへ `fetch` の既定の形（`mode` は `cors`、`credentials` は `same-origin`）で送り、`GET` でない要求には `X-ELM-CSRF: 1` を付ける（`mode` を `same-origin` や `no-cors` にすると、`Referrer-Policy: no-referrer` のもとで `Origin` が `null` になり、§15.3 が `403` で断る）。`403` は「許可がない」、ほかの誤りは答えの `detail` を示す。
+- XSS への守り（T14）: ライセンスの名前・`meta`・機能などの API の値は、文字として描くだけにする。`dangerouslySetInnerHTML` を使わず、API の値から `href` や `src` を作らない。`meta` は `JSON.stringify` した文字を `<pre>` に入れる。
 - 許可: 画面は最初に `GET /v1/admin/me` を読み、許可のない操作（M5c では失効）のボタンを出さない。API も断る（§15.1）。
 - 最初の画面:
-  - 一覧（`/#/licenses`）: 名前、製品の名前（`GET /v1/admin/products` で引く）、状態、期限、作った日。状態、名前の部分一致（`q`）、キー（`key`）で絞り込み、`next` で次のページを読む。
+  - 一覧（`/#/licenses`）: 名前、製品の名前、状態、期限、作った日。状態と名前の部分一致（`q`）とキーで絞り込み、`next` で次のページを読む。キーは、画面が §9.5 の正規形（大文字にして `-` を除いた形）にして SHA-256 を取り（`crypto.subtle.digest`）、`keyHash` で送る。キーの形でなければ、送らずに誤りを示す。
+  - 製品の名前: 一覧を開いたときに `GET /v1/admin/products` のすべてのページ（`limit=200`）を読み、その画面の間だけ覚える。`403`（`product.read` のない呼び出し元）か、製品が見つからないときは、製品の ID を示す。一覧を開くたびに、監査ログに `product.list` の行が書かれる。
   - 詳細（`/#/licenses/{id}`）: ライセンスのすべての項目と機能。
   - 失効: ライセンスの名前を示す確認のあとで `POST /v1/admin/licenses/{id}/revoke` を送る。`license.revoke` の許可がなければボタンを出さない。
   - ヘッダー: 自分の subject と役割、ログアウトのボタン。
   - 知らない行き先は「見つからない」の画面。
 - 文言は英語で、1 つのファイルにまとめる（§15.2）。
-- `build.ps1`: `web/admin/` があれば、.NET のビルドの前に、`node --version` が `.node-version` と同じか、`corepack pnpm --version` が `package.json` の `packageManager` の版と同じかを確かめ（違えば止まる）、`corepack pnpm install --frozen-lockfile`、型の確かめ（`tsc --noEmit`）、Vitest、本番のビルドを走らせる。pnpm は `corepack pnpm` で呼び、Corepack に版とハッシュを確かめさせる。CI の .NET のジョブは `-SkipWeb` で SPA の段を飛ばし、受け取った `dist` を使う。
+- `build.ps1`: `web/admin/` があれば、.NET のビルドの前に、`node --version` が `web/admin/.node-version` と同じであることと、`corepack` のコマンドがあることを確かめ（どちらかが違えば止まる）、`corepack pnpm install --frozen-lockfile`、型の確かめ（`tsc --noEmit`）、Vitest、本番のビルドを走らせる。pnpm は `corepack pnpm` で呼び、Corepack に `packageManager` の版とハッシュを確かめさせる（`corepack enable` は要らず、明示して呼べば確認の問いを出さない。最初の 1 回は registry.npmjs.org から pnpm を取るので、ネットワークが要る。https://github.com/nodejs/corepack ）。CI の .NET のジョブは `-SkipWeb` で SPA の段を飛ばし、受け取った `dist` を使う。
 - `ElasticLM.Service` のビルド: `web/admin/dist/index.html` がなければ、「`web/admin/dist` がありません。`./build.ps1` を走らせるか、`web/admin` で `pnpm install --frozen-lockfile` と `pnpm build` を走らせてください」の誤りで止まる（.NET だけを触る人にも次の手を示す。§15.2）。`dist` は `GenerateEmbeddedFilesManifest` で埋め込む（`Microsoft.Extensions.FileProviders.Embedded`、§21）。
-- CI の SPA のジョブ: Linux で、`permissions: contents: read` だけを持ち（秘密も `id-token` も持たない）、Node.js を `.node-version` の版で入れ、Corepack で pnpm を入れ、`--frozen-lockfile` で入れて、型の確かめ、Vitest、本番のビルドを走らせる。`dist` を成果物（1 日で消える）として上げ、3 つの OS の .NET のジョブと NativeAOT のジョブがそれを受け取る。
-- Windows のパスの長さ: pnpm の `node_modules/.pnpm` は長いパスを作る。手元の Windows で `web/admin/` の下の最も長いパスを測り、CI の SPA のジョブは、`web/admin/` の下の最も長い相対パスに Windows の CI のチェックアウトの長さを足して、260 文字を超えれば止まる。
+- CI の SPA のジョブ: Linux で、`permissions: contents: read` だけを持ち（秘密も `id-token` も持たない）、Node.js を `.node-version` の版で入れ、Corepack で pnpm を入れ、`--frozen-lockfile` で入れて、型の確かめ、Vitest、本番のビルドを走らせる。`dist` を成果物（`retention-days: 1`）として上げる。3 つの OS の .NET のジョブと NativeAOT のジョブは `needs` でこのジョブを待ち、同じ実行の成果物だけを受け取る（ほかの実行の成果物は使わない）。このジョブで使う `actions/setup-node` と `actions/upload-artifact`、受け取る側の `actions/download-artifact` は、コミットの SHA で固定し、版をコメントに書く（出力が配る実行ファイルに入るため。ほかのジョブの actions はタグのまま）。
+- CI の NativeAOT のジョブの `elm-service` の動作の確かめ（3 つの OS）に、画面のログインの設定（仮の発行者。起動は IdP に問い合わせない）で起動し、`GET /` が `200` で CSP のヘッダーを持ち、`/assets/` の 1 つのファイルが `200` で正しい `Content-Type` を持つことを足す（実行ファイルだけで画面を配ることを確かめる）。
+- Windows のパスの長さ: pnpm は `node_modules/.pnpm` の下の名前を、Windows で 60 文字（`virtualStoreDirMaxLength` の Windows の既定、Linux と macOS は 120、https://pnpm.io/settings ）に切る。Windows の `build.ps1` は、入れた後に `web/admin/` の下の最も長い相対パスを測り、160 文字（260 文字から、チェックアウトの場所に 100 文字を残した値）を超えれば止まる。PR には、手元の Windows で測った最も長い相対パスとその長さを書く。CI の Linux の SPA のジョブは、Windows と違う形で入れるので測らない。
 - テスト:
-  - Vitest と happy-dom（3 つの OS の `build.ps1` と CI の SPA のジョブ）: API の呼び方（`X-ELM-CSRF`、`401` での移動）、一覧と絞り込み、詳細、失効の確認と許可によるボタンの有無、`#` の行き先。
-  - .NET（3 つの OS）: `/` と `/assets/*` の答えとヘッダー、ないファイルと配らない拡張子の `404`、画面のログインがないときの `404`、`GET /v1/admin/me`、ライセンスの一覧の `q` と `key`。
-  - CSP の違反が 0 件であること: PR ごとに手元のヘッドレスの Chrome で、NativeAOT の `elm-service` が配る画面を開き、一覧から失効までを動かして確かめ、PR に書く。CI にはブラウザを入れない。
+  - Vitest と happy-dom（3 つの OS の `build.ps1` と CI の SPA のジョブ）: API の呼び方（`X-ELM-CSRF`、`fetch` の既定の形、`401` での 1 回だけの移動）、一覧と絞り込み（`keyHash` の作り方を含む）、詳細、失効の確認と許可によるボタンの有無、`#` の行き先、名前に `<script>` や `<img onerror>` を持つライセンスを文字として描くこと。
+  - .NET（3 つの OS）: `/` と `/assets/*` の答えとヘッダー、`HEAD` とほかのメソッド、ないファイルと配らない拡張子の `404`、画面のログインがないときの `404`、`GET /v1/admin/me`、ライセンスの一覧の `q` と `keyHash`（SQLite と PostgreSQL で、`É` と `é`、`\`、`%`、`_` を含む）。
+  - CSP の違反が 0 件であること: PR ごとに手元で、NativeAOT の `elm-service` を自己署名の証明書の https で待ち受けさせ、WSL コンテナの Keycloak（テストの realm）でログインして、ヘッドレスの Chrome で一覧から失効までを動かして確かめ、PR に書く（ブラウザは http のループバックで `__Host-` の Cookie を扱わないことがある、§15.3）。CI にはブラウザを入れない。
 - 文書: `AGENTS.md`・`CONTRIBUTING.md`・`docs/conventions.md`・`.cursor/rules/engineering.mdc` に、`web/admin/`、Node.js 24、Corepack の pnpm、`build.ps1 -SkipWeb` を書く。
 
 ### 15.3 ログイン（BFF）
