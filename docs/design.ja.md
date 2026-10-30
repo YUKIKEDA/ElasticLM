@@ -2762,6 +2762,7 @@ M4a1 の設定:
   - 文言は英語で、1 つのファイルにまとめる（日本語は v1 の後）。CSS は自前で書き、CSS のフレームワークも部品の集まりも入れない。
   - インラインのスクリプトとスタイルを使わない（§15.1）。W0 で、試作はヘッドレスの Chrome で `Content-Security-Policy: default-src 'self'` のもとで一覧から失効と `401` での `/auth/login` への移動まで動き、CSP の違反は 0 件だった。
   - フォームを送るときは、入力の値をフォームの要素から読む。W0 で、入力と送信を同じタスクで続けると、描き直しの前のフックの関数が古い入力の値で検索した。
+  - 送るたびに新しいものを作る要求（ライセンスの発行）は、状態とは別の印（`useRef`）で、送っている間を止める。M5d1 で、同じタスクの 2 回の押下はどちらも描き直しの前の状態を見て、POST を 2 回出した（Vitest で見つけた、PR #126）。
 - ビルドの道具は版を固定する。
   - Node.js は 24 系（LTS、サポートは 2028-04-30 まで、https://github.com/nodejs/Release ）の 1 つの版にし、`web/admin/.node-version` に書く。Vite 8.3.5 の `engines` は `node: ^20.19.0 || >=22.12.0` である（`npm view vite@8.3.5 engines`）。22 系は 2027-04-30 にサポートが終わるので使わない。
   - パッケージマネージャーは pnpm 12 で、`web/admin/package.json` の `packageManager` に `pnpm@<版>+sha512.<ハッシュ>` の形で版とハッシュを書く。pnpm は Node.js に同梱の Corepack で入れ、Corepack がその版とハッシュを確かめる（Corepack は Node.js 14.19.0 から 25.0.0 の前まで同梱され、ハッシュは「検証のため」に書く、https://github.com/nodejs/corepack ）。Node.js を 25 以降に上げるときは、pnpm の入れ方を決め直す。

@@ -1,6 +1,6 @@
 ---
 description: Test framework, layers, structure, and documentation of tests
-globs: "tests/**/*.cs"
+globs: "tests/**/*.cs, web/admin/src/**/*.test.tsx"
 alwaysApply: false
 ---
 
@@ -83,4 +83,5 @@ public void Verify_PayloadFieldChanged_ReturnsInvalidSignature()
 - Each error case asserts its own message, not only the exit code or the exception type. In M2 the error cases ran as a batch after the test had changed the passphrase, and the case for a server option on a standard license exited with 2 because of the passphrase, not the option; a mutant found it (PR #12).
 - Before running a mutant, name an input for which it returns something else than the original. A mutant that cannot differ looks survived and proves nothing: in M1, `if (!true || !guard.Observe(...))` is the original condition, and `Equals(a, a) && !x` is `!x` (PR #8). In M4d1 `0 * await Delete(...)` still ran the delete (PR #83). Name also the test input that reaches the mutated branch: in M4d1 a mutant of the arm for a license and a feature that both expire survived, because no test license had both (PR #83).
 - A script that runs mutants decides from the exit code of `dotnet test`, not from its text: Microsoft.Testing.Platform exits with 2 when a test failed, and its messages follow the OS language.
+- A Vitest test of the admin UI unmounts every component it rendered (`render(null, host)`) after the test. Emptying `document.body` is not enough: a mounted `App` still follows the location hash and calls `fetch` in the next test. In M5d1 the audit test saw ten reads of its first page from the Apps of earlier tests (PR #126).
 - Read the state you assert before a shared helper's cleanup runs. An assertion after a helper that resets state checks the helper, not the code.

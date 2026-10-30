@@ -47,7 +47,7 @@ Read the rules that match the work before changing anything. `alwaysApply` rules
 | `dependencies` | A dependency must keep NativeAOT, the single binary, size, and a trusted supply chain |
 | `aot` | No reflection or dynamic code; source-generated JSON; the NativeAOT publish check |
 | `csharp` | Style, naming, types, errors, XML docs (`*.cs`) |
-| `testing` | xUnit v3, fake time, generated keys, test docs, mutation checks (`tests/**`) |
+| `testing` | xUnit v3, fake time, generated keys, test docs, mutation checks (`tests/**`, the admin UI's Vitest tests) |
 | `dev-docs` | Mermaid, math, and pseudo-code in `docs/` |
 
 ## Skills
