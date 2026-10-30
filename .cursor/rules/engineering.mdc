@@ -36,6 +36,7 @@ A Python script on Windows that opens a file in text mode writes CRLF line ends.
 ## Data access (AuraORM)
 
 - A string primary key column has `[MaxLength(n)]`. Without it the generator makes no `Table` for the record and reports nothing. In M4d1 `LeaseReturnRow` had no table until its `Counter` key had a length (PR #83).
+- `SingleOrDefaultAsync` of a value-type column (`Guid`, `long`) gives the type's default, not `null`, when no row matches: `Guid?` receives `Guid.Empty`. To learn whether a row was there, read with `ToListAsync` and look at the count, or select the whole row (a record, which is `null` when missing). In M5b revoking an unknown session answered `204` and wrote an audit row, until a test caught it (PR #114).
 - A sum or a count is an aggregate in SQL (`Sum`, `Count`), not rows read and added in C#: the rows bring every column, a token included, and the read grows with the rows (PR #83).
 
 ## Changing a stored row
