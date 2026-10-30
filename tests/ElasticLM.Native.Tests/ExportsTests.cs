@@ -610,12 +610,13 @@ public sealed unsafe class ExportsTests : IDisposable
     /// - A license with meta {"a\0b": "x\0y", "c": "d"} and one feature, and no expiry.
     ///
     /// Steps:
-    /// - Read both pairs by index; look up "c" and "zz"; look up a null key; read index 2; read feature 1; read feature 0
-    ///   with struct_size one more; read the expiry with a null output.
+    /// - Read both pairs by index; look up "c" and "zz"; look up a null key; read index 2; read feature 1 into the struct
+    ///   that holds feature 0; read feature 0 with struct_size one more; read the expiry with a null output.
     ///
     /// Expected:
     /// - "a\0b" = "x\0y" with lengths 3 and 3, then "c" = "d"; "d"; null with 0; then ELM_INVALID_ARGUMENT (1) for the
-    ///   rest with the outputs null and 0; the expiry absent.
+    ///   rest with the outputs null and 0 (the feature struct's members too, once its struct_size is right); the expiry
+    ///   absent.
     /// </remarks>
     [Fact]
     public void Meta_WithNul_AndBadIndexes()
@@ -652,9 +653,13 @@ public sealed unsafe class ExportsTests : IDisposable
         );
         Assert.Equal((0, (nuint)0, "index must be less than 2."), (key, keyLength, NativeApi.LastError));
 
-        Feature feature = new() { StructSize = (uint)sizeof(Feature) };
+        Feature feature = ReadFeature(license, 0);
         Assert.Equal(1, ((delegate* unmanaged<nint, nuint, nint, int>)&Exports.LicenseFeature)(license, 1, (nint)(&feature)));
         Assert.Equal("index must be less than 1.", NativeApi.LastError);
+        Assert.Equal(
+            ((nint)0, (nint)0, 0, 0, 0, 0L),
+            ((nint)feature.Id, (nint)feature.VersionRange, feature.HasSeats, feature.Seats, feature.HasExpiresAt, feature.ExpiresAt)
+        );
         feature.StructSize++;
         Assert.Equal(1, ((delegate* unmanaged<nint, nuint, nint, int>)&Exports.LicenseFeature)(license, 0, (nint)(&feature)));
 

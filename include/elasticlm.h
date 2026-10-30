@@ -9,7 +9,8 @@
  *   16 KiB and any other string at most 1 KiB before its NUL.
  * - Functions that return int32_t under "functions that return a number" return an ElasticLM error number (design §19):
  *   0 (ELM_OK) is success. They empty this thread's error message when they start and write it when they fail. On every
- *   failure they set their outputs to NULL and 0. A NULL output argument is ELM_INVALID_ARGUMENT (1).
+ *   failure they set their outputs to NULL and 0; an elm_feature with a right struct_size gets its other members set to
+ *   NULL and 0. A NULL output argument is ELM_INVALID_ARGUMENT (1).
  * - Functions that return a value never fail. With a NULL handle they return NULL, 0, or -1 as each one says, and they do
  *   not change the error message.
  * - Every struct you pass starts with struct_size; set it to sizeof the struct. Any other value is ELM_INVALID_ARGUMENT.
@@ -39,12 +40,15 @@ extern "C" {
 #define ELM_MALFORMED 2
 #define ELM_UNTRUSTED_KEY 3
 #define ELM_BAD_SIGNATURE 4
+#define ELM_CERTIFICATE_EXPIRED 5
 #define ELM_CLOCK_TAMPERED 6
-#define ELM_EXPIRED 10
 #define ELM_WRONG_PRODUCT 7
 #define ELM_WRONG_INSTALLATION 8
 #define ELM_FINGERPRINT_MISMATCH 9
+#define ELM_EXPIRED 10
 #define ELM_FEATURE_NOT_LICENSED 11
+#define ELM_FEATURE_VERSION_NOT_LICENSED 12
+#define ELM_FEATURE_EXPIRED 13
 #define ELM_FINGERPRINT_UNAVAILABLE 14
 #define ELM_INSTALLATION_KEY_UNREADABLE 15
 #define ELM_WRONG_KIND 16
@@ -95,7 +99,9 @@ typedef struct {
     const char* const* revoked_key_ids;   /* key IDs revoked by the vendor: 0 to 1024 */
     size_t revoked_key_count;
     const elm_installation* installation; /* NULL, or the key that signs the clock guard's state; copied */
-    const char* clock_guard_path;         /* NULL: "clock" in the installation's folder, or no state without one */
+    const char* clock_guard_path;         /* NULL: "clock" in the installation's folder, or no state without one.
+                                           * Without an installation the state file is not signed: whoever can write
+                                           * it can reset the guard. */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
     int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
 } elm_verifier_options;

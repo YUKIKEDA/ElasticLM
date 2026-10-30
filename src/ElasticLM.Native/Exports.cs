@@ -320,6 +320,9 @@ public static unsafe class Exports
         {
             var f = (Feature*)feature;
             StructSizes.Check(f, "out");
+
+            // design §17.4: once struct_size is known, a failure leaves the members null and 0 like every other output.
+            *f = new Feature { StructSize = f->StructSize };
             NativeLicense l = NativeHandles.Get<NativeLicense>(license, "license");
             if (index >= (nuint)l.Features.Count)
             {

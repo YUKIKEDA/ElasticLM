@@ -16,12 +16,17 @@
 
 #if defined(_WIN32)
 #include <windows.h>
+#include <psapi.h>
 static void* open_library(const char* path) { return (void*)LoadLibraryA(path); }
 static void* find_function(void* library, const char* name) { return (void*)GetProcAddress((HMODULE)library, name); }
 #else
 #include <dlfcn.h>
+#include <pthread.h>
 static void* open_library(const char* path) { return dlopen(path, RTLD_NOW | RTLD_LOCAL); }
 static void* find_function(void* library, const char* name) { return dlsym(library, name); }
+#endif
+#if defined(__APPLE__)
+#include <mach/mach.h>
 #endif
 
 /* Every exported function, as a pointer of the header's type. */
@@ -248,6 +253,101 @@ static void test_refusals(elm_verifier* verifier, elm_verifier* revoked, const c
     free(large);
 }
 
+/* The process's resident memory in KiB, to print around the thread test; 0 when it cannot be read. */
+static long resident_kib(void)
+{
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters;
+    return K32GetProcessMemoryInfo(GetCurrentProcess(), &counters, sizeof counters) ? (long)(counters.WorkingSetSize / 1024) : 0;
+#elif defined(__APPLE__)
+    mach_task_basic_info_data_t info;
+    mach_msg_type_number_t count = MACH_TASK_BASIC_INFO_COUNT;
+    return task_info(mach_task_self(), MACH_TASK_BASIC_INFO, (task_info_t)&info, &count) == KERN_SUCCESS ? (long)(info.resident_size / 1024) : 0;
+#else
+    long pages = 0;
+    long resident = 0;
+    FILE* statm = fopen("/proc/self/statm", "r");
+    if (statm != NULL) {
+        if (fscanf(statm, "%ld %ld", &pages, &resident) != 2) {
+            resident = 0;
+        }
+        fclose(statm);
+    }
+    return resident * 4;
+#endif
+}
+
+/* One C thread: a failing call, then this thread's message, then the thread ends. */
+static int thread_saw_its_message;
+
+#if defined(_WIN32)
+static DWORD WINAPI failing_call(LPVOID verifier)
+#else
+static void* failing_call(void* verifier)
+#endif
+{
+    elm_requirement req = requirement(NULL);
+    uint8_t byte = 0;
+    int32_t code = elm.verifier_verify((elm_verifier*)verifier, &byte, 1, &req, NULL);
+    thread_saw_its_message = code == ELM_INVALID_ARGUMENT && strcmp(elm.last_error_message(), "out is required.") == 0;
+#if defined(_WIN32)
+    return 0;
+#else
+    return NULL;
+#endif
+}
+
+static int run_thread(elm_verifier* verifier)
+{
+    thread_saw_its_message = 0;
+#if defined(_WIN32)
+    HANDLE thread = CreateThread(NULL, 0, failing_call, verifier, 0, NULL);
+    if (thread == NULL) {
+        return 0;
+    }
+    WaitForSingleObject(thread, INFINITE);
+    CloseHandle(thread);
+#else
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, failing_call, verifier) != 0) {
+        return 0;
+    }
+    pthread_join(thread, NULL);
+#endif
+    return thread_saw_its_message;
+}
+
+/*
+ * Threads made by C enter the library, fail, read their own message, and end (design §17.4).
+ * Preconditions: a verifier; a message left on this thread by a failed call.
+ * Steps: 4,000 times, start a C thread that verifies with a null out, reads its message, and ends; read this thread's
+ *   message; print the resident memory before, after 2,000 threads, and after 4,000 threads.
+ * Expected: every thread sees ELM_INVALID_ARGUMENT and its own message; this thread's message is unchanged; no crash.
+ *   The memory figures are printed for the PR (the 2,000 threads after the first 2,000 should not add much).
+ */
+static void test_c_threads(elm_verifier* verifier)
+{
+    elm_requirement req = requirement(NULL);
+    elm_license* license = NULL;
+    elm.verifier_verify(verifier, (const uint8_t*)"x", 1, &req, &license);
+    char before[256];
+    snprintf(before, sizeof before, "%s", elm.last_error_message());
+
+    long start = resident_kib();
+    long middle = 0;
+    int all = 1;
+    for (int i = 0; i < 4000; i++) {
+        all = run_thread(verifier) && all;
+        if (i == 1999) {
+            middle = resident_kib();
+        }
+    }
+
+    check(all, "4,000 C threads each see their own message");
+    check(strlen(before) > 0 && strcmp(before, elm.last_error_message()) == 0, "this thread's message is unchanged");
+    printf("# resident memory (KiB): %ld before, %ld after 2,000 threads, %ld after 4,000 threads\n", start, middle, resident_kib());
+}
+
 /*
  * Value functions take NULL handles, and the library reports a version.
  * Preconditions: none.
@@ -309,6 +409,7 @@ int main(int argc, char** argv)
     test_bound(verifier, installation, bound, bound_length);
     test_refusals(verifier, revoked, unbound, unbound_length);
     test_null_handles();
+    test_c_threads(verifier);
 
     elm.verifier_destroy(revoked);
     elm.verifier_destroy(verifier);

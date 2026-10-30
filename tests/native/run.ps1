@@ -26,6 +26,10 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+# The script changes the environment (the passphrase of this run's keys, the MSVC variables); it puts it back at the end so
+# the calling shell keeps its own (.cursor/rules/scratch.mdc).
+$savedEnvironment = [Environment]::GetEnvironmentVariables()
 $root = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
 $work = Join-Path ([IO.Path]::GetTempPath()) ('elm-native-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6)))
 New-Item -ItemType Directory $work | Out-Null
@@ -95,9 +99,9 @@ try {
     if ($IsWindows) {
         Invoke-Checked 'Compiling the C test' { cl /nologo /W4 /WX /std:c11 /I $include $source /Fo"$(Join-Path $work 'test_elasticlm.obj')" /Fe"$test" | Out-Host }
     } elseif ($IsMacOS) {
-        Invoke-Checked 'Compiling the C test' { clang -std=c11 -Wall -Wextra -Werror -I $include $source -o $test }
+        Invoke-Checked 'Compiling the C test' { clang -std=c11 -Wall -Wextra -Werror -I $include $source -o $test -lpthread }
     } else {
-        Invoke-Checked 'Compiling the C test' { gcc -std=c11 -Wall -Wextra -Werror -I $include $source -o $test -ldl }
+        Invoke-Checked 'Compiling the C test' { gcc -std=c11 -Wall -Wextra -Werror -pthread -I $include $source -o $test -ldl }
     }
 
     # Keys and licenses made for this run only.
@@ -133,4 +137,8 @@ try {
 }
 finally {
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    foreach ($name in @([Environment]::GetEnvironmentVariables().Keys)) {
+        if (-not $savedEnvironment.Contains($name)) { [Environment]::SetEnvironmentVariable($name, $null) }
+    }
+    foreach ($entry in $savedEnvironment.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value) }
 }

@@ -3277,7 +3277,7 @@ void elm_license_free(elm_license* license);
 
 - 名前: 鍵の置き場所を開く（あれば読み、なければ作る）ので `elm_installation_open`、ライブラリが作る物は `_create` と `_destroy`、値の集まりは `_free` にする。
 - 戻り値: 上の「§19 の番号を返す関数」だけが §19 の番号（0 が成功）を返す。値を返す関数の `int32_t` は番号ではない。値を返す関数は、ハンドルが `NULL` のときの値（`NULL`、0、-1）を返し、誤りの文を変えない。
-- 失敗のときの出力: 番号を返す関数は、出力の引数が `NULL` でなければ、失敗のどの場合も（引数の誤りを含む）`*out` を `NULL` にする。`const char**` と `size_t*` の出力も、失敗では `NULL` と 0 にする。出力の引数そのものが `NULL` なら `ELM_INVALID_ARGUMENT`。
+- 失敗のときの出力: 番号を返す関数は、出力の引数が `NULL` でなければ、失敗のどの場合も（引数の誤りを含む）`*out` を `NULL` にする。`const char**` と `size_t*` の出力も、失敗では `NULL` と 0 にする。`elm_feature` は、`struct_size` が正しければ、ほかのメンバーを `NULL` と 0 にしてから書く（`struct_size` が正しくなければ、大きさが分からないので何も書かない）。出力の引数そのものが `NULL` なら `ELM_INVALID_ARGUMENT`。
 - 入力の値: 真偽のメンバー（`create`、`reject_trial_as_standard`）は 0 か 1、`kind` と `scope` は列挙の値だけを受け、ほかは `ELM_INVALID_ARGUMENT`。`.NET` の `LicenseVerifier` は種類を確かめないので、知らない種類を `ELM_WRONG_KIND` にしないよう、ライブラリが先に断る。
 - C からの文字列: UTF-8 として厳密に読み（`UTF8Encoding(throwOnInvalidBytes: true)`）、正しくない並びは `ELM_INVALID_ARGUMENT`。NUL を探す長さに上限を置く（PEM は 16 KiB、ほかの文字列は 1 KiB）。上限までに NUL がなければ `ELM_INVALID_ARGUMENT`。`root_key_count` は 1〜16、`revoked_key_count` は 0〜1,024 で、外れれば配列を読む前に `ELM_INVALID_ARGUMENT`。
 - インストールの身元: `elm_installation_open` は `InstallationKeyStore` で鍵を読むか作り（`create`）、そのときに `MachineFingerprint.Compute(product_id)` で指紋を作って持つ。OS の ID が読めなければ指紋は空で、指紋を持つライセンスの検証は `ELM_FINGERPRINT_UNAVAILABLE` になる（`LicenseVerifier`）。拇印の文字列は `elm_installation_free` まで有効。指紋は製品ごとなので、`elm_requirement.installation` の製品と `elm_requirement.product_id` が違えば `ELM_INVALID_ARGUMENT`（指紋の食い違いと取り違えないため）。
@@ -3297,7 +3297,7 @@ void elm_license_free(elm_license* license);
   - ID、製品、機能のコードと版の範囲も、ライセンスの規則（`LicensePayloadRules`）は NUL を禁じていない。これらは長さを返さないので、NUL を含めば C ではそこで切れて見える。ElasticLM の発行は、これらに NUL を入れない（`elm license issue` は値をコマンドの引数から読み、引数は NUL を含められない。`elm-service` は、製品と機能のコードを英小文字・数字・`-` に、ライセンス ID を UUID に、版の範囲を `LicenseRules.IsVersionRange` に限る）。
   - `elm_license_feature` と `elm_license_meta_at` の範囲外の番号、出力の引数が `NULL`、`elm_feature.struct_size` が最初の版より小さいか今の版より大きいときは `ELM_INVALID_ARGUMENT`。
 - ハンドル: 不透明なポインターは、.NET のオブジェクトを指す `GCHandle` の値である。違う型のハンドル（たとえば `elm_verifier*` を `elm_installation*` として渡す）は、見分けられるときは `ELM_INVALID_ARGUMENT`。二度の解放と解放した後の使用は、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。`elm_verifier` と `elm_installation` は、複数のスレッドから同時に使ってよい（`LicenseVerifier` は変わらない状態、確かめた鍵の証明書の `ConcurrentDictionary`、排他つきの `VerificationKey` だけを持ち、`FileClockGuard` は排他を持つ）。
-- 誤りの文: 番号を返す関数は、呼ばれるたびに同じスレッドの文を空にし、失敗なら文を書く。`elm_last_error_message` と `elm_version` と値を返す関数は、文を変えない。文は、スレッドごとのピン留めした配列（`[ThreadStatic]` の `GC.AllocateArray<byte>(n, pinned: true)`）に UTF-8 と NUL で持ち、同じスレッドの次の番号を返す関数の呼び出しまで有効。配列はスレッドの静的な値とともに集められる。C が作ったスレッドが終わったときに NativeAOT がそのスレッドを切り離し、配列を集めることは、M6a の .NET のテストと手元の確かめで確かめる。
+- 誤りの文: 番号を返す関数は、呼ばれるたびに同じスレッドの文を空にし、失敗なら文を書く。`elm_last_error_message` と `elm_version` と値を返す関数は、文を変えない。文は、スレッドごとのピン留めした配列（`[ThreadStatic]` の `GC.AllocateArray<byte>(n, pinned: true)`）に UTF-8 と NUL で持ち、同じスレッドの次の番号を返す関数の呼び出しまで有効。配列はスレッドの静的な値とともに集められる。C が作ったスレッドについては、C のテストのプログラムが 3 つの OS で、スレッドを 4,000 回作ってライブラリを呼ばせては終わらせ、各スレッドが自分の文を読み、メインのスレッドの文が変わらないことを確かめ、前後の常駐のメモリを出す（M6a の PR #138 で、3 つの OS の値を記録した）。
 - `elm_version`: ライブラリの版を、ビルドで書き出した定数（`$(Version)` から MSBuild が作るソースの定数。リフレクションを使わない）から作り、プロセスの終わりまで有効な文字列で返す。
 - 時刻: ライブラリは `TimeProvider.System` を使う。`elm_verifier_create` が使う時計は内部の差し替え口（`internal`）を持ち、`ElasticLM.Native.Tests` だけが `InternalsVisibleTo` で偽の時計に替える（`testing.mdc`）。
 - テスト:
