@@ -4,7 +4,7 @@ import { ErrorBanner } from './common';
 import { m } from './messages';
 
 // The audit log screen (design §14.5, §15.2 "M5d1 の形"): newest first, older pages on demand, and the chain check. Every
-// read writes its own audit.list row (§14.5), which is shown at the top as it is.
+// read writes its audit.list row after the answer (§14.5), so it heads the next read; the screen shows it as it is.
 
 export function Audit() {
   const [after, setAfter] = useState<number | null>(null);
