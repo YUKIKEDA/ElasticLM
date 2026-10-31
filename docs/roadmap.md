@@ -51,7 +51,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M6b | `libelasticlm` の有効化（`elm_activation`。オンラインの操作、試用、オフラインのファイル、自動の更新とコールバック。決めた形は design.ja.md 0.106） | done        | [#141](https://github.com/YUKIKEDA/ElasticLM/issues/141) |
 | M6c | `libelasticlm` のリース（`elm_client`。オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去、C のスレッドが終わったときのスレッドごとの記録の確かめ。決めた形は design.ja.md 0.107） | done        | [#145](https://github.com/YUKIKEDA/ElasticLM/issues/145) |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`。design.ja.md 0.104） | not-started | —     |
-| F2  | `elm-service` のコンテナイメージ（ベースの選び方、マシン指紋、レジストリへの公開の経路。design.ja.md 0.108） | not-started | —     |
+| F2  | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明。design.ja.md 0.108） | not-started | —     |
 | V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
 
 ## v1 の後
