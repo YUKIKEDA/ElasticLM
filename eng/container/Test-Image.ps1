@@ -178,7 +178,8 @@ try {
         if (-not $ok) { Start-Sleep -Seconds 1 }
     }
     if (-not $ok) { $failures.Add('The service did not answer /health with 200.') }
-    $uid = @(Invoke-Native 'docker top' { docker top $container -eo uid,comm } | Select-Object -Skip 1 | ForEach-Object { ($_.Trim() -split '\s+')[0] })
+    # docker top needs the PID column in the ps options it passes on.
+    $uid = @(Invoke-Native 'docker top' { docker top $container -eo pid,uid,comm } | Select-Object -Skip 1 | ForEach-Object { ($_.Trim() -split '\s+')[1] })
     if ($uid.Count -eq 0 -or @($uid | Where-Object { $_ -ne '1654' }).Count -gt 0) { $failures.Add("The service runs as UID $($uid -join ', '), not 1654.") }
     Invoke-Native 'docker stop' { docker stop $container } | Out-Null
     $exit = (Invoke-Native 'docker inspect' { docker inspect --format '{{.State.ExitCode}}' $container }).Trim()
