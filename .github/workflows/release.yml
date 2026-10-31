@@ -168,7 +168,10 @@ jobs:
             "$ALMALINUX_IMAGE" bash -c '
               status=0
               echo "dnf install started at $(date -u +%H:%M:%S)"
-              dnf install -y clang zlib-devel binutils libicu && rpm -q clang zlib-devel binutils libicu glibc || status=1
+              # Issue #160: a slow mirror once took 36 minutes. dnf measures the mirrors and takes the fastest, fetches in
+              # parallel, and leaves out weak dependencies, which the build does not need.
+              options="--setopt=fastestmirror=True --setopt=max_parallel_downloads=10 --setopt=install_weak_deps=False"
+              dnf install -y $options clang zlib-devel binutils libicu && rpm -q clang zlib-devel binutils libicu glibc || status=1
               echo "dnf install ended at $(date -u +%H:%M:%S)"
               if [ $status -eq 0 ]; then
                 sh eng/release/publish-rid.sh "$RID" "$SUFFIX" artifacts/release/publish artifacts/release/logs || status=1
