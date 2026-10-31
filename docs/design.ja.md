@@ -442,6 +442,31 @@ M6c（Issue #145）の実測（PR #146 の head `8b5e5ae` のコード。大き�
 - C のスレッドの記録（§17.3、§17.6）: OS が作ったスレッド（Windows は `CreateThread`、ほかは `pthread_create`）で誤りの文を書かせ、その配列を弱い参照で持つと、スレッドが待っている間は生きていて、スレッドが終わったあとの GC で集められた。.NET が作ったスレッドでも同じだった（`ThreadRecordTests`。3 つの OS の CI で通った）。この確かめは JIT のテストのプロセスで動くので、NativeAOT のランタイムを直接は示さない。
 - 実行時の依存: 3 つの OS とも M6b の一覧と同じ。HTTPS を C のテストで初めて通したが、Linux の `ldd` に出るのは `libm` と `libc` だけで、OpenSSL は `DT_NEEDED` に入らない。どの OS も横に置くファイルはない（§4.1）。
 
+F1（Issue #149）の実測（PR #154 の head `d2479c1` のコード。`release.yml` の PR の試し（run 41178264054）の `build` のジョブ、.NET SDK 10.0.403）:
+
+- 7 つの RID の NativeAOT の大きさ（バイト）。警告はどれも 0 件で、§4.2 の目標（`elm-service` 40,000,000、`elm-server` 30,000,000、`libelasticlm` 8,000,000）の内に収まる。`elm` には目標がない。
+
+| RID | `elm` | `elm-server` | `elm-service` | `libelasticlm` |
+| --- | ---: | ---: | ---: | ---: |
+| `win-x64` | 8,114,688 | 13,649,920 | 28,909,056 | 6,690,816 |
+| `win-arm64` | 8,344,064 | 14,025,216 | 29,669,376 | 6,889,472 |
+| `linux-x64` | 8,353,288 | 13,163,776 | 26,657,896 | 7,155,080 |
+| `linux-arm64` | 8,673,000 | 13,676,048 | 27,387,552 | 7,478,872 |
+| `linux-musl-x64` | 8,356,488 | 13,166,976 | 26,697,800 | 7,158,528 |
+| `osx-arm64` | 7,761,216 | 12,522,792 | 25,683,576 | 6,553,616 |
+| `osx-x64` | 7,951,128 | 12,876,080 | 26,463,376 | 6,731,200 |
+
+- 目標にいちばん近いのは `linux-arm64` の `libelasticlm` で、8,000,000 の 93.5%（残り 521,128 バイト）。`linux-x64` の `libelasticlm` は M6c の CI（`ubuntu-latest` で作った 7,158,608）と比べて 3,528 バイト小さい（glibc 2.28 の `almalinux:8` で作ったため。差の内訳は測っていない）。
+- 実行時の依存:
+  - `linux-x64` と `linux-arm64`（`almalinux:8`、glibc 2.28）: `NEEDED` は glibc の `libc.so.6`、`libm.so.6`、`libpthread.so.0`、`libdl.so.2`、`librt.so.1`、動的リンカーだけ。`objdump -T` の `GLIBC_` の最も新しい版は、`elm-service` が 2.28、ほかの 3 つが 2.17。
+  - `linux-musl-x64`: `NEEDED` は `libc.musl-x86_64.so.1` だけ。
+  - macOS（2 つの RID）: M6b と同じシステムのライブラリとフレームワークだけ。`osx-arm64` の 4 つはリンカーの ad-hoc の署名を持ち、クロスコンパイルした `osx-x64` は署名を持たない。
+  - Windows（2 つの RID）: M6b と同じシステムの DLL だけ。
+  - どの RID も、発行したフォルダーは実行ファイル（ライブラリ）とデバッグシンボルだけで、横に置くファイルはない（§4.1）。
+- スモークテストと `libelasticlm` の C のテスト（公開する名前 52 個とヘッダーの比べ合わせ、検証の 25 件、有効化の 16 件、リースの 24 件）は、7 つの RID で通った。`osx-x64` は arm64 のランナーの Rosetta で、`linux-musl-x64` は Alpine のコンテナで動かした。
+- 2 つの NuGet パッケージの検査が通り、パッケージだけを参照するアプリが 3 つの OS（`win-x64`、`linux-x64`、`osx-arm64`）で NativeAOT で警告 0 件で発行され、動いた。
+- SBOM（自前のスクリプト）は、NuGet の 21 個、npm の 115 個、SQLite の 3.54.1 を載せた（手元の数え）。
+
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 28.9 MB（28,909,568 バイト。main（`a189949`）の 28,895,232 から +14,336 バイト、+0.05%）。警告は 0 件。マップのファイルで分けると、埋め込んだリソース（管理画面の `dist`）が +14,765 バイト、ほかが -1 バイトで、合わせて +14,764 バイトになる。セクションの詰め物は 428 バイト減った。サービスのコードは変わっていない。
@@ -3816,7 +3841,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 検査（Q12、Q13。CI の `aot` のジョブと `release.yml` の `build` の両方）:
 
 - 単一バイナリ: 発行したフォルダーには、実行ファイルとそのデバッグシンボル（Windows は `.pdb`、Linux は `.dbg`、macOS は `.dSYM` のフォルダー）しかない。`libelasticlm` のフォルダーには、ライブラリとそのデバッグシンボルしかない（Q14 のとおり、Windows のリンク用の `elasticlm.lib` は配らない。§17.4 は実行時に読み込む形を前提にしている）。ほかのファイルがあれば失敗にし、その名前を出す。
-- 実行時の依存: `dumpbin /dependents`（Windows）、`readelf -d` の `NEEDED`（Linux）、`otool -L`（macOS）の結果をジョブの要約に書く。Linux の glibc の RID では、`NEEDED` に glibc の一部（`libc.so.6`、`libm.so.6`、glibc 2.28 では `libc` と別の `libpthread.so.0`、`libdl.so.2`、`librt.so.1`、動的リンカー）のほかがあれば失敗にする。`linux-musl-x64` では musl の `libc` のほかがあれば失敗にする（名前は最初の実行で確かめて書く）。macOS では `/usr/lib/` と `/System/Library/` の外のものがあれば失敗にする。Windows は記録だけにする。
+- 実行時の依存: `dumpbin /dependents`（Windows）、`readelf -d` の `NEEDED`（Linux）、`otool -L`（macOS）の結果をジョブの要約に書く。Linux の glibc の RID では、`NEEDED` に glibc の一部（`libc.so.6`、`libm.so.6`、glibc 2.28 では `libc` と別の `libpthread.so.0`、`libdl.so.2`、`librt.so.1`、動的リンカー）のほかがあれば失敗にする。`linux-musl-x64` では musl の `libc`（F1 の試しで `libc.musl-x86_64.so.1`）のほかがあれば失敗にする。macOS では `/usr/lib/` と `/System/Library/` の外のものがあれば失敗にする。Windows は記録だけにする。
 - glibc の版: Linux の glibc の RID では、`objdump -T` が示す `GLIBC_` の最も新しい版をジョブの要約に書き、`release.yml` では 2.28 を超えれば失敗にする。CI は Linux をランナーの新しい glibc で作るので、記録だけにする（`-RecordGlibcOnly`）。
 - macOS の署名: `codesign -dv` の結果をジョブの要約に書き、`osx-arm64` で ad-hoc の署名（`Signature=adhoc`）がなければ失敗にする。`osx-x64` は書くだけにする（§5.4）。
 - 大きさ: §4.2 の目標を 10 進のバイトで当てはめ、`elm-service` が 40,000,000 バイト、`elm-server` が 30,000,000 バイト、`libelasticlm` が 8,000,000 バイトを超えれば失敗にする。`elm` には目標がないので記録だけにする。デバッグシンボルは数えない。
