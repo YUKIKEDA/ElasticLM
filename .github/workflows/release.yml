@@ -387,6 +387,19 @@ jobs:
         id: build
         run: ./eng/container/Build-Image.ps1 -Version $env:VERSION -Revision $env:GITHUB_SHA -ArchiveDir archives -OutFile elm-service-image.tar
 
+      - name: Copy with skopeo as the publish job does
+        # design §20.6: the publish job pushes with skopeo; copying to a local layout here checks, before V1, that the
+        # runner has skopeo, that oci-archive: reads this tar, and that the index digest is kept.
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          skopeo --version | tee -a "$GITHUB_STEP_SUMMARY"
+          skopeo copy --all --preserve-digests --digestfile probe oci-archive:elm-service-image.tar oci:probe-layout
+          [ "$(cat probe)" = "$DIGEST" ] || { echo "::error::skopeo copied $(cat probe), not $DIGEST."; exit 1; }
+          rm -rf probe probe-layout
+
       - name: Build again and compare
         # design §20.6: the same commit and base give the same index digest.
         env:
@@ -608,6 +621,11 @@ jobs:
           subject-digest: ${{ needs.image.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+      # The token docker login wrote is not left in ~/.docker/config.json for the steps after this one.
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Publish the release
         env:
