@@ -58,4 +58,6 @@ Before `git worktree remove` on Windows, run `dotnet build-server shutdown`. A b
 
 A process that does not end by itself (a dev server, a watcher) is started as a background run of the agent's tool and stopped through that run, not started with `&` inside a Bash call. A `&` process outlives the call and holds its files. In W0 a Vite dev server started that way kept listening on `localhost` (IPv6) while a check on `127.0.0.1` saw nothing, and a later removal of `node_modules` failed with `EPERM` until the process was found and stopped (PR #95).
 
+A helper function in a PowerShell script does not take a name that a built-in alias already has. One-letter names are the trap: `r` is `Invoke-History`, `h` is `Get-History`. In PR #179 a script defined `R` for its replacements, every call ran `Invoke-History` and failed, and the script wrote the file back unchanged. Give helpers a verb-noun name (`Set-Text`).
+
 `Copy-Item` keeps the file's last write time, so an incremental build does not see a file put back from a copy. After copying a source file into place, set its time to now (`(Get-Item <file>).LastWriteTime = Get-Date`). In PR #175 a test file put back from a copy kept an older time than the build, MSBuild ran the old test, and the new test looked as if it failed under a forced race.
