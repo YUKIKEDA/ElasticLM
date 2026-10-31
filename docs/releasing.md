@@ -52,15 +52,20 @@ Settings → Environments → New environment `release`:
 1. Open a pull request that sets `VersionPrefix` in `Directory.Build.props` and adds a `CHANGELOG.md` section for the
    version, `## [<version>] - <date>`. A prerelease tag (`v0.1.0-rc.1`) needs its own section (`## [0.1.0-rc.1]`).
    Merge it.
-2. Release a candidate first: tag the merge commit on `main` with `v<version>-rc.1` and push the tag.
-3. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
+2. Check the two container images pinned in `release.yml` (`ALMALINUX_IMAGE`, `ALPINE_SDK_IMAGE`): Dependabot does not
+   update a digest in a workflow's `env`. Take the current digest of `almalinux:8` and of
+   `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot` (for example with
+   `docker buildx imagetools inspect <image>`), and update them in a pull request if they changed. Raising
+   `DOTNET_SDK_VERSION` always changes the Alpine image's tag and digest.
+3. Release a candidate first: tag the merge commit on `main` with `v<version>-rc.1` and push the tag.
+4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release.
-4. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version).
-5. Approve the `release` environment in the run. The `publish` job pushes the `.nupkg` and `.snupkg` from the draft to
+5. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version).
+6. Approve the `release` environment in the run. The `publish` job pushes the `.nupkg` and `.snupkg` from the draft to
    nuget.org after checking them against `SHA256SUMS`, and then publishes the release.
-6. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
-7. When the candidate is good, tag `v<version>` the same way.
+7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
+8. When the candidate is good, tag `v<version>` the same way.
 
 A run that fails before the draft leaves nothing behind. Fix the cause on `main` and release the next version: a tag is
 never moved.

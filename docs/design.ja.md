@@ -3802,7 +3802,7 @@ F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち�
 | `consume` | いつも（3 つの OS の matrix） | `contents: read` | パッケージだけを参照するアプリを NativeAOT で発行して動かす |
 | `sbom` | いつも | `contents: read` | その実行のコミットの SBOM を書く（下の「配布物」） |
 | `checksums` | いつも | `contents: read` | 圧縮ファイル、パッケージ、SBOM の `SHA256SUMS` を作る |
-| `attest` | タグの push と `workflow_dispatch` | `contents: read`、`id-token: write`、`attestations: write` | `SHA256SUMS` を `subject-checksums` に渡し、そこに並ぶすべてのファイルに来歴の証明を付ける（`actions/attest`。`subject-checksums` は `sha256sum` の形のファイルを受け、1 回に 1024 件まで。https://github.com/actions/attest ）。`SHA256SUMS` そのものにも付ける。`create-storage-record: false` にして、記録の口の権限（`artifact-metadata: write`）を持たない。ビルドのコードを動かさない |
+| `attest` | タグの push と `workflow_dispatch` | `contents: read`、`id-token: write`、`attestations: write` | `SHA256SUMS` を `subject-checksums` に渡し、そこに並ぶすべてのファイルに来歴の証明を付ける（`actions/attest`。`subject-checksums` は `sha256sum` の形のファイルを受け、1 回に 1024 件まで。https://github.com/actions/attest ）。`SHA256SUMS` そのものにも付ける。記録の口の権限（`artifact-metadata: write`）は持たない。ビルドのコードを動かさない |
 | `draft` | タグの push だけ | `contents: write` | 渡されたファイルと本文で、下書きの GitHub Release を作る。ビルドのコードを動かさない |
 | `publish` | タグの push だけ、environment `release` | `contents: write`、`id-token: write` | 持ち主の承認のあと、NuGet に Trusted Publishing で push し、下書きの Release を公開する |
 
@@ -3835,7 +3835,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 - 直すもの:
   - `vendor/sqlite/build.ps1` は、Unix で `bash -c` ではなく `sh -c` を使う（Alpine のイメージに `bash` がない）。`osx-*` では RID から `--target=x86_64-apple-macos12.0` か `--target=arm64-apple-macos12.0` を渡す（NativeAOT は macOS の最低の版の既定を 12.0 にしてリンクする。https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/nativeaot/BuildIntegration/Microsoft.NETCore.Native.Unix.targets ）。`win-arm64` では MSVC の ARM64 の部品（`Microsoft.VisualStudio.Component.VC.Tools.ARM64`）を求める。部品の ID が `windows-11-arm` のイメージにあることは、試しで `vswhere` を動かして確かめる。
   - `ElasticLM.Native` のアセンブリ名は、RID があれば RID で（`win-` で始まれば `elasticlm`）、なければビルドする機械の OS で決める（今は機械の OS が先に効く）。
-  - 実行ファイルと `libelasticlm` のプロジェクトに、`PublishDocumentationFiles=false` と `AllowedReferenceRelatedFileExtensions=none` を足す。今の発行のフォルダーには、参照するプロジェクトの `.xml` と管理コードの `.pdb` が入るため（手元の `win-x64` で確かめた。2 つを足すと、`elm` のフォルダーは `elm.exe` と `elm.pdb` だけになり、`elm.exe` の大きさは 8,114,688 バイトで変わらなかった）。
+  - 実行ファイルと `libelasticlm` のプロジェクトに、`PublishDocumentationFiles=false` と `AllowedReferenceRelatedFileExtensions=none` を足す。今の発行のフォルダーには、参照するプロジェクトの `.xml` と管理コードの `.pdb` が入るため。後者は `dotnet publish` のときだけ（`_IsPublishing`）にし、テストの出力には `src` の `.pdb` を残す（手元の `win-x64` で確かめた。2 つを足すと、`elm` のフォルダーは `elm.exe` と `elm.pdb` だけになり、`elm.exe` の大きさは 8,114,688 バイトで変わらなかった）。
 - スモークテスト（CI の `Smoke` と同じ、`elm --help`、`elm-server --help`、トラストのない `elm-server` が断ること、`elm-service` の `setup` と `/health`）と、`tests/native/run.ps1`（公開する名前とヘッダーの比べ合わせ、C のテスト）を、7 つの RID で行う。`osx-x64` は `arch -x86_64` で動かし、動かなければ失敗にする（arm64 の macOS のランナーのイメージは Rosetta を入れて確かめている。https://github.com/actions/runner-images ）。Linux の glibc の RID はランナー（新しい glibc）で、`linux-musl-x64` は Alpine のコンテナの中で動かす。`win-arm64` のために、`run.ps1` の `vcvarsall` の引数を機械のアーキテクチャから決める。
 
 検査（Q12、Q13。CI の `aot` のジョブと `release.yml` の `build` の両方）:

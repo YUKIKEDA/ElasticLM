@@ -45,9 +45,10 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!-- design §4.1, §20.5: a NativeAOT publish folder holds the executable and its native symbols only. Without these,
-         the XML docs and the managed .pdb of the referenced projects are copied beside it. -->
+         the XML docs and the managed .pdb of the referenced projects are copied beside it. The second applies to a publish
+         only, so a test's output keeps the .pdb of the src projects and its stack traces keep their line numbers. -->
     <PublishDocumentationFiles>false</PublishDocumentationFiles>
-    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
+    <AllowedReferenceRelatedFileExtensions Condition="'$(_IsPublishing)' == 'true'">none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(ElmIsTestProject)' == 'true'">

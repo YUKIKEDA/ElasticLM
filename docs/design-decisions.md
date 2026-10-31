@@ -594,3 +594,21 @@
 - **決定:** コンテナイメージは新しい行 F2 にし、F1 のあとに置く（[design.ja.md](./design.ja.md) 0.108、§22）。
 - **理由:** イメージには、ベースの選び方、データと鍵の渡し方（§14.8）、レジストリへの公開の経路とその脅威と、別に決めることが多い。F1 に混ぜると、リリースの仕組みのレビューが大きくなりすぎる。レジストリへの公開の経路の脅威は T22〜T25 の範囲の外で、F2 で脅威の行を足す。
 - **却下した案:** F1 の `release.yml` でイメージも作って公開する。
+
+### SBOM を GitHub の依存グラフから書き出す（F1 の Grill の Q15 を持ち主が覆した、Issue #149）
+
+- **決定:** SBOM は、その実行のコミットで `eng/release/New-Sbom.ps1` が書く SPDX 2.3 の JSON にする。中身は、配るプロジェクトが復元した NuGet のパッケージ（推移を含む解決した版）、管理画面の npm の lockfile、SQLite（[design.ja.md](./design.ja.md) 0.109、§20.5）。
+- **理由:** F1 の試しで、依存グラフはまず有効でなく（404）、持ち主が有効にしたあとも NuGet の 10 個の版がすべて `>= 0` になった。中央のパッケージ管理の `Directory.Packages.props` を読めないためである。推移の依存と、実行ファイルに入る SQLite も載らず、書き出すのは既定のブランチの依存で、タグのコミットのものではなかった。自前のスクリプトなら、新しい道具を足さずに、そのコミットの解決した版をそのまま載せられる。
+- **却下した案:** GitHub の依存グラフの非同期の書き出し（Grill の Q15 の答え）。外の道具（Microsoft の `sbom-tool`、CycloneDX の .NET のツール）を足す。
+
+### Linux の glibc の配布物を `ubuntu-latest` で作る（F1 の設計のレビュー、Issue #149）
+
+- **決定:** `linux-x64` と `linux-arm64` は glibc 2.28 の `almalinux:8` のコンテナで作り、glibc 2.28 以降で動くようにする（持ち主の決定。[design.ja.md](./design.ja.md) 0.109、§4.1、§20.5）。
+- **理由:** NativeAOT の実行ファイルは、作った機械と同じか新しい glibc でしか動かない。`ubuntu-latest`（glibc 2.39）で作ると、RHEL 8 と 9、Debian 11 と 12、Ubuntu 22.04 では `elm-server` も `libelasticlm` も動かない。オンプレミスのサーバーは、企業の古めの Linux で動かされる。
+- **却下した案:** `ubuntu-latest` のまま作る（glibc 2.39 以降）。`ubuntu-22.04` のランナーで作る（glibc 2.35 以降。RHEL 8 と 9、Debian 11 と 12 で動かない）。
+
+### `almalinux:8` の中でランナーの PowerShell を使う（F1 の試し、Issue #149）
+
+- **決定:** `almalinux:8` の中では PowerShell を使わない。SQLite の Linux と macOS のビルドは POSIX の `vendor/sqlite/build.sh` にし、コンテナの中の発行は `eng/release/publish-rid.sh` で行い、警告はランナーでログから数える（持ち主の決定。[design.ja.md](./design.ja.md) §20.5）。
+- **理由:** arm64 のランナーの PowerShell は glibc 2.33 を要り、glibc 2.28 の中では起動しなかった（x64 は動いた）。SQLite のビルドは MSBuild から PowerShell で呼ばれていたので、PowerShell がないとビルドできない。
+- **却下した案:** ランナーの PowerShell を読み取りだけでつなぐ（F1 の設計のレビューのあとの §20.5 の形）。`linux-arm64` だけ `ubuntu-22.04-arm` で作り、glibc の下限を 2.35 に上げる。

@@ -50,7 +50,12 @@ jobs:
 
       - name: Decide the version
         id: version
-        run: ./eng/release/Get-ReleaseVersion.ps1 -Ref '${{ github.ref }}' -EventName '${{ github.event_name }}' -RunNumber '${{ github.run_number }}' -NotesPath release-notes.md
+        # Contexts reach the script through the environment, not its text (T22, T25).
+        env:
+          REF: ${{ github.ref }}
+          EVENT: ${{ github.event_name }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: ./eng/release/Get-ReleaseVersion.ps1 -Ref $env:REF -EventName $env:EVENT -RunNumber $env:RUN_NUMBER -NotesPath release-notes.md
 
       - name: The tag is on main
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
@@ -162,7 +167,9 @@ jobs:
             -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
             "$ALMALINUX_IMAGE" bash -c '
               status=0
-              dnf install -y -q clang zlib-devel binutils libicu && rpm -q clang zlib-devel binutils libicu glibc || status=1
+              echo "dnf install started at $(date -u +%H:%M:%S)"
+              dnf install -y clang zlib-devel binutils libicu && rpm -q clang zlib-devel binutils libicu glibc || status=1
+              echo "dnf install ended at $(date -u +%H:%M:%S)"
               if [ $status -eq 0 ]; then
                 sh eng/release/publish-rid.sh "$RID" "$SUFFIX" artifacts/release/publish artifacts/release/logs || status=1
               fi
@@ -291,9 +298,12 @@ jobs:
           cache: false
 
       - name: Publish and run
+        env:
+          RID: ${{ matrix.rid }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           if ($IsWindows) { $env:PATH = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer') + ';' + $env:PATH }
-          $log = dotnet publish samples/PackageConsumer -c Release -r ${{ matrix.rid }} -o consumer -nologo -p:ElmPackageVersion=${{ needs.version.outputs.version }} 2>&1
+          $log = dotnet publish samples/PackageConsumer -c Release -r $env:RID -o consumer -nologo "-p:ElmPackageVersion=$env:VERSION" 2>&1
           $log
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
@@ -322,9 +332,11 @@ jobs:
       - name: Write the SBOM
         # design §20.5: the resolved NuGet packages of the shipped projects, the admin UI's npm lockfile, and SQLite, at this
         # run's commit.
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           New-Item -ItemType Directory -Force sbom | Out-Null
-          ./eng/release/New-Sbom.ps1 -Version '${{ needs.version.outputs.version }}' -Commit $env:GITHUB_SHA -OutFile 'sbom/elasticlm-${{ needs.version.outputs.version }}.spdx.json'
+          ./eng/release/New-Sbom.ps1 -Version $env:VERSION -Commit $env:GITHUB_SHA -OutFile "sbom/elasticlm-$env:VERSION.spdx.json"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -387,12 +399,10 @@ jobs:
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: assets/SHA256SUMS
-          create-storage-record: false
 
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: assets/SHA256SUMS
-          create-storage-record: false
 
   draft:
     # Q16: a draft release with every file; the owner looks at it before approving the environment. No build code runs here.
