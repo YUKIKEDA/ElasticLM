@@ -766,7 +766,7 @@ public sealed class ElmServiceWebTests
         await SignInAsync(browser, service);
 
         test.Time.Advance(TimeSpan.FromHours(1));
-        await TestService.WaitForAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions") == 0);
+        await test.WaitWithClockAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions") == 0);
     }
 
     /// <summary>

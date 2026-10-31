@@ -295,13 +295,18 @@ internal sealed class TestService : IAsyncDisposable
     }
 
     /// <summary>
-    /// Waits for a condition that the service's minute timers bring about, moving the fake clock a minute every 10 polls.
-    /// A periodic task runs one run at a time and skips the ticks that come while it runs: a run that read the clock
-    /// before one long move ended sees nothing to do, and no later tick comes unless the clock moves again. In M4d3 the
-    /// expiry lines did not come on PostgreSQL this way (PR #91).
+    /// Waits for a condition that timers on the fake clock bring about, moving the clock by <paramref name="step"/> (a minute
+    /// by default) every 10 polls. A periodic task runs one run at a time and skips the ticks that come while it runs: a run
+    /// that read the clock before one long move ended sees nothing to do, and no later tick comes unless the clock moves
+    /// again. In M4d3 the expiry lines did not come on PostgreSQL this way (PR #91). A one-shot timer set by work that read
+    /// the clock before the move waits from the old time in the same way: in Issue #106 the client's next refresh was due an
+    /// hour after a move that came while the refresh that set it was still ending.
     /// </summary>
-    public async Task WaitWithClockAsync(Func<Task<bool>> condition)
+    /// <param name="condition">The condition to wait for.</param>
+    /// <param name="step">How far to move the clock every 10 polls; a minute when <see langword="null"/>.</param>
+    public async Task WaitWithClockAsync(Func<Task<bool>> condition, TimeSpan? step = null)
     {
+        TimeSpan by = step ?? TimeSpan.FromMinutes(1);
         for (int i = 0; i < 500; i++)
         {
             if (await condition())
@@ -311,7 +316,7 @@ internal sealed class TestService : IAsyncDisposable
 
             if (i % 10 == 9)
             {
-                Time.Advance(TimeSpan.FromMinutes(1));
+                Time.Advance(by);
             }
 
             await Task.Delay(20, TestContext.Current.CancellationToken);

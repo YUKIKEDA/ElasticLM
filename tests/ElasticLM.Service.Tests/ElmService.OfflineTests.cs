@@ -470,7 +470,7 @@ public sealed class ElmServiceOfflineTests
 
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"));
         test.Time.Advance(TimeSpan.FromDays(7) + TimeSpan.FromMinutes(1));
-        await TestService.WaitForAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests") == 0);
+        await test.WaitWithClockAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests") == 0);
     }
 
     /// <summary>

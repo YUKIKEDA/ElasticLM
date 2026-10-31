@@ -68,9 +68,9 @@ public sealed partial class ActivationClientTests
     /// - A policy with tokens of a day and a refresh window of 12 hours; an activated client with a state handler.
     ///
     /// Steps:
-    /// - Advance 12 hours and wait for the refresh; suspend the license; advance 12 hours and wait for the state; check;
-    ///   resume the license; advance an hour and wait for the state; add a handler that disposes the client, revoke, advance a
-    ///   day.
+    /// - Advance 12 hours and wait for the refresh; suspend the license; advance 12 hours and wait for the refusal's event;
+    ///   check; resume the license; advance an hour and wait for the state; add a handler that disposes the client, revoke,
+    ///   advance a day. From the refusal on, each wait moves the clock 10 minutes every 10 polls (Issue #106).
     ///
     /// Expected:
     /// - The service's activation reaches sequence 2; the state becomes Refused with ELM_LICENSE_SUSPENDED in the event; the
@@ -96,19 +96,20 @@ public sealed partial class ActivationClientTests
         vendor.Test.Time.Advance(TimeSpan.FromHours(12));
         await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64() == 2);
 
+        // Each wait below moves the clock: the move above may come while the client's last refresh is still ending, and the
+        // timer it then sets waits from the time it read (Issue #106).
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/suspend", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromHours(12));
-        await TestService.WaitForAsync(() => Task.FromResult(client.State == ActivationState.Refused));
-        lock (changes)
-        {
-            Assert.Equal(ErrorCode.LicenseSuspended, changes.Last().Error!.Code);
-        }
+        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(Refusal(changes) is not null), Step);
+
+        // The state is set before the event is raised: read the refusal from the event, not after the state.
+        Assert.Equal(ErrorCode.LicenseSuspended, Refusal(changes)!.Error!.Code);
 
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
 
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/resume", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromHours(1));
-        await TestService.WaitForAsync(() => Task.FromResult(client.State == ActivationState.Active));
+        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(client.State == ActivationState.Active), Step);
 
         // A handler on the timer's thread may dispose the client and wait for it: the disposal does not wait for the refresh
         // that raised the event (design §12.6.2).
@@ -122,7 +123,7 @@ public sealed partial class ActivationClientTests
         };
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/revoke", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromDays(1));
-        await TestService.WaitForAsync(() => Task.FromResult(disposed is not null));
+        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(disposed is not null), Step);
         Assert.True(disposed);
     }
 
@@ -561,7 +562,8 @@ public sealed partial class ActivationClientTests
     ///
     /// Steps:
     /// - B refreshes; let B's own first timer end; count B's POSTs, advance 2 hours, count again. Arm the 429 on A; advance 12 hours and wait for A's
-    ///   refresh to fail; advance an hour; advance another hour and wait for the refresh.
+    ///   refresh to fail; advance an hour; advance another hour and wait for the refresh, moving the clock 10 minutes every 10
+    ///   polls (Issue #106).
     ///
     /// Expected:
     /// - B Failed ELM_PROOF_INVALID, state RefreshFailing, no POST in the 2 hours. A: state RefreshFailing after the 429;
@@ -602,7 +604,9 @@ public sealed partial class ActivationClientTests
         await vendor.AdvanceForAsync(TimeSpan.FromSeconds(2));
         Assert.Equal(posts, countA.Posts);
         vendor.Test.Time.Advance(TimeSpan.FromHours(1));
-        await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(a.ActivationId!)).GetProperty("seq").GetInt64() == 2);
+
+        // The retry's timer may have been set after the first hour's move, from the time before it (Issue #106).
+        await vendor.Test.WaitWithClockAsync(async () => (await vendor.ActivationAsync(a.ActivationId!)).GetProperty("seq").GetInt64() == 2, Step);
     }
 
     /// <summary>
@@ -655,6 +659,18 @@ public sealed partial class ActivationClientTests
     }
 
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
+
+    // How far a wait moves the clock every 10 polls: a timer set an hour late (the retry interval) comes within 6 steps,
+    // and 50 steps stay short of the tokens' day.
+    private static TimeSpan Step => TimeSpan.FromMinutes(10);
+
+    private static ActivationStateChangedEventArgs? Refusal(List<ActivationStateChangedEventArgs> changes)
+    {
+        lock (changes)
+        {
+            return changes.LastOrDefault(e => e.Current == ActivationState.Refused);
+        }
+    }
 
     private static VerifiedLicense Activated(ActivationResult result) =>
         result is ActivationResult.Activated activated ? activated.License : throw new InvalidOperationException(result.ToString());

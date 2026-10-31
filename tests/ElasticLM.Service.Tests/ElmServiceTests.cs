@@ -359,7 +359,7 @@ public sealed class ElmServiceTests
         Assert.Single(await database.ListAuditAsync(null, false, 10, cancel));
 
         test.Time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromHours(1));
-        await TestService.WaitForAsync(async () => (await database.ListAuditAsync(null, false, 10, cancel)).Count == 0);
+        await test.WaitWithClockAsync(async () => (await database.ListAuditAsync(null, false, 10, cancel)).Count == 0);
         Assert.Equal(new AuditCheck(0, null), await database.VerifyAuditAsync(cancel));
     }
 }
