@@ -35,6 +35,10 @@ ElasticLM decides whether software may run. The threat model and the properties 
 - An identifier from a token, a request, or an answer is checked against its form (its characters and length) before it becomes part of a file name or a path, even when the token's signature verified. In M4d2 a borrow's file was named after the lease ID as it came: an on-premises server admin holding the server key could sign `..\x` or a rooted path and make every client that borrowed overwrite or delete that file (PR #87).
 - A client that sends a secret (a license key, a token) in a request body does not follow redirects (`AllowAutoRedirect = false`). .NET follows them by default, and a `307` or `308` sends the same body on to the place it names. In M4d2 `LicenseClient`, `ActivationClient`, and `elm offline process` followed them (PR #87).
 
+## Workflows
+
+- A workflow passes a context (`${{ github.ref }}`, a matrix value, a job's output) to a `run:` script through `env:` and reads the variable there; it does not write `${{ }}` into the script's text, where the value becomes code (https://docs.github.com/en/actions/reference/security/secure-use). The review of PR #154 found three such lines in `release.yml`.
+
 ## Time
 
 - Every time decision (expiry, not-before, grace, lease length) reads a `TimeProvider`. The wall clock is banned in `src/` (`BannedSymbols.txt`).
