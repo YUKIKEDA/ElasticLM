@@ -15,6 +15,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/ElasticLM.Cli.Tests/ElasticLM.Cli.Tests.csproj" />
     <Project Path="tests/ElasticLM.Client.Tests/ElasticLM.Client.Tests.csproj" />
+    <Project Path="tests/ElasticLM.E2E/ElasticLM.E2E.csproj" />
     <Project Path="tests/ElasticLM.Issuing.Tests/ElasticLM.Issuing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Leasing.Tests/ElasticLM.Leasing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Licensing.Tests/ElasticLM.Licensing.Tests.csproj" />

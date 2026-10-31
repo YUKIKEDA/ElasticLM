@@ -181,6 +181,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.110 | コンテナのレジストリの経路の脅威 | F2 の Grill（Issue #157）で、`elm-service` のコンテナイメージを GHCR に公開する経路を作る前に、その脅威を脅威モデルに足した（0.108 で F2 に送ったもの）。守るものの「配布物と公開の権限」にイメージと GHCR に push する権限を足し、攻撃者に、ベースのイメージを乗っ取った者（A13 を広げた）と、イメージを取る経路でイメージをすり替える者（A14 を広げた）を入れた。脅威 T26（GHCR のタグの付け替えとイメージのすり替え）と T27（ベースのイメージの乗っ取り）を足し、受け入れる脅威（GHCR のタグは書き換えられること、ベースのイメージの脆弱性は次の版まで直らないこと）を足した。イメージは `contents: read` のジョブで OCI layout として作り、試し、承認のあとの公開のジョブはそれをダイジェストを変えずに push して証明を付けるだけにする（T22 も直した）。ベースは Dockerfile にダイジェストで固定して Dependabot が上げ、署名は確かめずに Microsoft の配布を信じる。（§5、F2 の Grill の Q1〜Q7・Q12 と、設計のレビューの 3 つの持ち主の決定、Issue #166） |
 | 0.111 | `elm-service` のコンテナイメージ | F2 で、0.108〜0.110 の上に次を決めた。イメージは `ghcr.io/yukikeda/elm-service` で、`linux/amd64` と `linux/arm64` の OCI の index。`runtime-deps:10.0-noble-chiseled` をダイジェストで固定したベースに、同じ実行の F1 の配布物の `elm-service`、`LICENSE`、空の `/data` だけを `COPY` し、UID 1654 で動かす。イメージが足す環境変数は `ELM_LISTEN=http://0.0.0.0:8080` で、ベースの `ASPNETCORE_HTTP_PORTS` は空にし、`HEALTHCHECK` は書かない。`contents: read` のジョブで OCI layout を作り、2 つのアーキテクチャのランナーで起動、`/health`、UID、実行ファイルの SHA-256、足したファイルを確かめ、承認のあとの公開のジョブがそれをダイジェストを変えずに push して来歴の証明を付ける。タグは版と、正式版の `latest`。設定ファイルに `signing.passphraseFile` を足し、すべての秘密をファイルで渡せるようにする。ベースのダイジェストは Dependabot が上げる。GHCR へのログインは `docker login` の run の段で行い、第三者のアクションを足さない（§20.6。F2 の Grill の Q1〜Q12、PR #167 と PR #170 の持ち主の決定、Issue #157） |
 | 0.112 | V1 の分け方と最初の版 | V1 の Grill（Issue #173、Q1〜Q3）で決めた。V1 を、V1a 端から端までのテスト、V1b 参照機での計測、V1c 文書とサンプル、V1d 安全性の見直し、V1e v1 の公開の 5 行に分け、この順に進める。安全性の見直しを公開の直前に置き、V1a〜V1c のコード・テスト・計測・文書を見直す。V1d の見つけたものがすべて直るか §5.4 に受け入れた脅威として書かれるまで、V1e は公開しない。各行の Grill で決める点と行をまたぐ決まりは §20.7。V1a の前に、時々落ちるテスト（Issue #106）を独立したバグの PR で直す。最初の正式版は `1.0.0` で、先に `1.0.0-rc.1` を出して公開の経路を確かめる（§20.5）。V1e で `VersionPrefix` を `1.0.0` にし、`1.0` より前の決まりを `CHANGELOG.md` と `CONTRIBUTING.md` から外す。退けた案は design-decisions.md |
+| 0.113 | 端から端までのテスト（V1a） | V1a の Grill（Issue #178、Q1〜Q8）とその設計のレビューで決めた。`tests/ElasticLM.E2E` が、公開した `elm`・`elm-server`・`elm-service` を別のプロセスとして起動し、`ElasticLM.Client` から発行者と利用者の主な流れを通す。`libelasticlm` は C のテストに流れを足す。公開するバイナリに時計の入口は作らず、時間の経過は短い期間と本当の時計で待ち、合計は 1 つの OS で 2 分以下。PR ごとに CI の `aot` ジョブの 3 つの OS で動かし、Linux では PostgreSQL でも通す。`./build.ps1` には入れない。退けた案は design-decisions.md、形は §20.7 |
 
 ## 1. 目的と利用者
 
@@ -3762,7 +3763,7 @@ M3c で作った形:
 | 単体 | 形式・検証・規則。偽の `TimeProvider`、テストで作る鍵 | `tests/<Project>.Tests` |
 | 結合 | サーバーとサービスを同じプロセスでループバックの OS が選ぶポートに立て、クライアントから呼ぶ | 同上 |
 | データベース | SQLite と PostgreSQL の両方で、空のデータベースからの移行と、排他（同時の有効化・リース）を確かめる。PostgreSQL は CI のサービスコンテナで動かす | `tests/ElasticLM.Service.Tests` |
-| 端から端まで | NativeAOT で公開した `elm-server`・`elm-service`・`elm`・`libelasticlm` を、各 OS で動かす | `tests/ElasticLM.E2E`（V1a の行で作る） |
+| 端から端まで | NativeAOT で公開した `elm-server`・`elm-service`・`elm` を別のプロセスとして動かし、`ElasticLM.Client` から使う。CI の `aot` ジョブの 3 つの OS で動かす（§20.7 の V1a の形） | `tests/ElasticLM.E2E`。`libelasticlm` は `tests/native` |
 
 ### 20.2 安全性のテスト
 
@@ -3988,6 +3989,52 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。各行�
 - V1b のあとの修正（V1d の見つけたものを含む）が §4.2 の目標に関わるなら、その PR で測り直す（§4.2 の「各行の PR で測る」）。
 - V1e は、版を `1.0.0` にする PR で、`Directory.Build.props` の `VersionPrefix` を `1.0.0` にし、`CHANGELOG.md` と `CONTRIBUTING.md` の `1.0` より前の決まり（0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい）を外す。
 
+#### V1a の形（0.113）
+
+V1a の Grill（Issue #178、Q1〜Q8）と、その設計のレビュー（R1〜R13）で決めた。
+
+- 形:
+  - `tests/ElasticLM.E2E`（xUnit）が、NativeAOT で公開した `elm`・`elm-server`・`elm-service` を別のプロセスとして起動する。
+  - 公開したものは、環境変数 `ELM_E2E_BIN` が指すフォルダーの下にある。これは `eng/release/Publish-Rid.ps1` の `-OutDir` で、`elm/`・`elm-server/`・`elm-service/` のフォルダーに分かれ、Windows では `.exe` が付く。
+  - 利用者のアプリの役は、テストのプロセスの中の `ElasticLM.Client` が務める。`libelasticlm` は C のテストのプログラム（`tests/native`、§17.4）が受け持つ。
+  - プロジェクトは流れごとに分け、`src` の写しにはしない。名前は `.Tests` で終えないので、`./build.ps1` はビルドするが流さない。手元では `tests/ElasticLM.E2E/run.ps1 -Publish` で、公開から流す。
+- .NET の E2E が通す流れ:
+  - 発行者: `elm key` での鍵の作成と証明書、`elm license issue`・`inspect`・`verify`、`LicenseVerifier` での検証。
+  - `elm-service`:
+    - `setup`、管理 API での製品・機能・ポリシー・ライセンスの作成。
+    - `ActivationClient` でのオンラインの有効化・更新・解除・試用。
+    - ファイルでのオフラインの有効化（`ActivationClient` の要求のファイル → `elm offline process` → 応答の取り込み）。
+    - 管理 API での失効のあとの更新が `ELM_LICENSE_REVOKED` で断られること。
+    - `LicenseClient` での SaaS 型のリースの取得と返却（自動の更新は待たない。ポリシーのリースは 120 秒以上で、更新は 40 秒後になるため）。
+    - 監査ログの連なり: `POST /v1/admin/audit/verify` が、確かめた行が 1 行以上で、切れ目がないと答えること。
+    - 利用ログ: `POST /v1/admin/usage-log/seal` で閉じたあと、`elm log verify` が終了コード 0 で通ること。
+  - `elm-server`（`elm license issue --kind server --bind-key … --lease-minutes 0.25` で手元で発行した、リース 15 秒のサーバーライセンス。§17.6 と同じ）:
+    - `LicenseClient` でのリースの取得・自動の更新・返却。
+    - 借り出しと返却。
+    - `elm server status`・`leases`・`release`。
+    - 再起動のあとの回収。
+    - `elm server seal` のあとの `elm log verify --product` が、終了コード 0 で通ること。
+  - `elm server activate`（別のデータのフォルダーの、別の `elm-server`）: `elm-service` のサーバーのポリシーのライセンスキーで有効にし、起動したサーバーの `elm server status` が、サービスが発行したサーバーライセンスを示すこと。サービスが発行するサーバーライセンスのリースは 120 秒以上で（§9.3 の `leaseDuration`）、起動のあとの回収の間（§13.4）はリースを取れないので、この流れではリースを取らない。
+  - OIDC のログインと管理画面は通さない（Keycloak のテスト、§14.6）。
+- データベース: `elm-service` の流れは、SQLite と、PostgreSQL が使える所（環境変数 `ELM_E2E_POSTGRES` が接続文字列を指す所）では PostgreSQL でも、同じ 1 回の実行の中で通す。PostgreSQL では、`elm-service` のプロセスごとにデータベースを作り、テストの終わりに消す。
+- C のテストに足す流れ（公開した `elm-service` を相手に）: 実際に送る更新、試用の開始、オフラインの有効化、失効のあとの更新が `ELM_LICENSE_REVOKED` で断られること。C のプログラムは HTTP の手段も `elm` も持たないので、`tests/native/run.ps1` が段に分けて動かす。試用のポリシーとライセンスを作り、段の間で `elm offline process` を呼び、管理 API で失効させる。
+- 時間:
+  - 公開するバイナリに、時計を差し替える入口を作らない。
+  - 時間の経過が要る流れは短い期間で、本当の時計で待つ。日の単位の流れ（借り出しの期限、ライセンスの期限、更新の窓）は、偽の時計を使うプロセスの中のテストに任せる。
+  - 本当の時計で起きることは、上限を決めて、その出来事か状態を待って確かめる（`ELM_SERVER_RECOVERING` のあとに取れる、リースの期限が延びる、回収のあとに持ち直す）。決まった時刻や長さは確かめない。上限は遅いランナーを見込む。
+  - `tests/ElasticLM.E2E` の本当の時計の待ち（起動の待ち、`Retry-After` の待ち、製品のタイマーの待ち）は、すべて 1 つの部品を通す。1 回の `dotnet test`（1 つの OS、SQLite と PostgreSQL の両方を含む）で、並んで動くテストの待ちも足し合わせて 2 分を超えたら、そのテストを失敗にする。C のテストの待ちはこれに数えず、`run.ps1` の時間の上限で抑える。
+  - 見込み: リース 15 秒のサーバーは、起動のたびに回収の間が 15 秒ある。最初の起動の 15 秒、自動の更新（リースの 1/3）の 5 秒、再起動のあとの回収の 15 秒以下（取られていた席がすべて戻れば早く終わる）、各プロセスの起動の待ちが 1 つ 1 秒前後で 8 つほど。合わせて約 45 秒で、2 分に収まる。これを守るため、リース 15 秒のサーバーは 1 つのテストのクラスで 1 つを共有する。
+- 動かす所:
+  - PR ごとに CI の `aot` ジョブの 3 つの OS（`win-x64`・`linux-x64`・`osx-arm64`）で、そのジョブが公開したバイナリを相手にする。
+  - Linux では、ゲートと同じダイジェストで固定した PostgreSQL のイメージを、E2E の段が自分の名前のコンテナーで起動し、終わりに消す。
+  - `release.yml` の 7 つの RID では動かさない。RID に固有の問題（ローダー、glibc、ICU、マシン ID）は、いまのスモークと C のテストが受け持つ。
+  - E2E の時間と、本当の時計で待った合計を、ジョブの要約に書く。
+- 停止と後片付け:
+  - 起動したプロセスは、テストの終わりに止める（`Process.Kill`）。Windows には SIGTERM がないので、再起動の流れも、止めて起動し直す形（§13.4 が見込む、落ちたあとの起動）で通す。
+  - 鍵、ライセンス、データベース、設定は実行ごとの一時のフォルダーに作り、終わりに消す。ポートは OS が選ぶ空きのループバックのポート。
+  - テストの出力とジョブの要約に、`setup` が出す API キーとライセンスキーを書かない。失敗したときに出すのは、製品が秘密を書かないと決めているプロセスのログだけにする。
+
+## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
 
@@ -4046,7 +4093,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M6c | `libelasticlm` のリース: `elm_client`（オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去）（決めた形は 0.107） | §12.7, §13, §13.5, §17 |
 | F1 | リリース基盤: `release.yml`、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`（決めた形は 0.109） | §4.1, §20.5 |
 | F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（決めた形は 0.111） | §1.3, §5, §14.8, §20.6 |
-| V1a | 端から端までのテスト: `tests/ElasticLM.E2E` で、NativeAOT で公開した `elm-server`・`elm-service`・`elm`・`libelasticlm` を動かす（Grill で決める点は §20.7） | §20.1, §20.7 |
+| V1a | 端から端までのテスト: `tests/ElasticLM.E2E` で NativeAOT で公開した `elm-server`・`elm-service`・`elm` を、`tests/native` で `libelasticlm` を動かす（決めた形は §20.7 の V1a の形、0.113） | §17.4, §17.6, §20.1, §20.7 |
 | V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（Grill で決める点は §20.7） | §4.2, §20.7 |
 | V1c | 文書とサンプル（書く文書と作るサンプルは、Grill で決める点として §20.7） | §20.7 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |

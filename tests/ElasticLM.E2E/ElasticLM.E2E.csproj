@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      design §20.7: the published elm, elm-server, and elm-service run as processes (ELM_E2E_BIN); the app in the middle is
+      the real ElasticLM.Client in this process. No product project is referenced for its internals.
+    -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+</Project>

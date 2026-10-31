@@ -52,7 +52,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M6c | `libelasticlm` のリース（`elm_client`。オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去、C のスレッドが終わったときのスレッドごとの記録の確かめ。決めた形は design.ja.md 0.107） | done        | [#145](https://github.com/YUKIKEDA/ElasticLM/issues/145) |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`。決めた形は design.ja.md 0.109） | done        | [#149](https://github.com/YUKIKEDA/ElasticLM/issues/149) |
 | F2  | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明。決めた形は design.ja.md 0.111） | done        | [#157](https://github.com/YUKIKEDA/ElasticLM/issues/157) |
-| V1a | 端から端までのテスト（`tests/ElasticLM.E2E`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1a | 端から端までのテスト（`tests/ElasticLM.E2E`。決めた形は design.ja.md 0.113） | in-progress | [#178](https://github.com/YUKIKEDA/ElasticLM/issues/178) |
 | V1b | §4.2 の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1c | 文書とサンプル（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
