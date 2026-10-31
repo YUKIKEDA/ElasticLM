@@ -335,7 +335,7 @@ public sealed class LeaseTests : IAsyncLifetime
     /// Steps:
     /// - Hold the callback; move the clock 200 s and wait until A's failed renewal enters it; destroy on another thread and
     ///   see it has not returned after 300 ms, nor after the clock moves 6 s (past the 5 s DisposeAsync gives the returns);
-    ///   move the clock 60 s more, wait until B is RETRYING, and give its change 200 ms to reach the callback; let the
+    ///   wait until destroy has stopped new callbacks (it may start late on a busy thread pool); move the clock 60 s more, wait until B is RETRYING, and give its change 200 ms to reach the callback; let the
     ///   callback go, which then reads A and deletes a pin through the client while destroy waits; then move the clock a day.
     ///
     /// Expected:
@@ -358,10 +358,12 @@ public sealed class LeaseTests : IAsyncLifetime
         LeaseCallbacks.Hold = hold;
         _deployment.Time.Advance(TimeSpan.FromSeconds(200));
         await Deployment.WaitUntilAsync(() => LeaseCallbacks.Entered.IsSet);
+        NativeClient handle = NativeHandles.Find<NativeClient>(client)!;
         Task destroy = Task.Run(() => LeaseApi.Destroy(client), TestContext.Current.CancellationToken);
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         _deployment.Time.Advance(TimeSpan.FromSeconds(6));
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
+        await Deployment.WaitUntilAsync(() => handle.IsClosing);
         _deployment.Time.Advance(TimeSpan.FromSeconds(60));
         await Deployment.WaitUntilAsync(() => LeaseApi.State(later) == 1);
         await Task.Delay(200, TestContext.Current.CancellationToken);

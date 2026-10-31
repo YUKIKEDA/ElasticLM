@@ -21,6 +21,19 @@ internal abstract class NativeCallbackHandle
     /// <summary>Gets a value indicating whether this thread runs a callback of this handle.</summary>
     public bool InOwnCallback => ReferenceEquals(_inCallback, this);
 
+    /// <summary>Gets a value indicating whether <see cref="Close"/> has started, so no new callback runs.</summary>
+    /// <remarks>The tests read it to know that destroy waits before they cause a change.</remarks>
+    internal bool IsClosing
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _closed;
+            }
+        }
+    }
+
     /// <summary>
     /// Stops new callbacks, waits for the running ones, then runs <paramref name="dispose"/>, which disposes the client.
     /// </summary>
