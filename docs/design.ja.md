@@ -3799,14 +3799,14 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | --- | --- | --- |
 | `win-x64` | `windows-latest` | そのまま |
 | `win-arm64` | `windows-11-arm` | そのまま。SQLite は `vcvarsall arm64` |
-| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具は `dnf install clang zlib-devel binutils`（AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
+| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具と ICU は `dnf install clang zlib-devel binutils libicu`（ICU がないと SDK がカルチャ名を認識できず、地域化した資源を持つパッケージで NETSDK1188 の警告を出す。AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
 | `linux-arm64` | `ubuntu-24.04-arm` | `linux-x64` と同じく `almalinux:8` の arm64 のコンテナで作る |
 | `linux-musl-x64` | `ubuntu-latest` | ダイジェストで固定した `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot` のコンテナ（NativeAOT の道具 `build-base clang zlib-dev` が入っている。Alpine 3.24 のサポートは 2028-06-01 まで。https://github.com/dotnet/dotnet-docker/blob/main/src/sdk/10.0/alpine3.24-aot/amd64/Dockerfile 、https://alpinelinux.org/releases/ ）を `docker run` で動かし、`apk add` はしない |
 | `osx-arm64` | `macos-latest` | そのまま |
 | `osx-x64` | `macos-latest` | クロスコンパイル（`dotnet publish -r osx-x64`）。Intel の macOS のランナー（`macos-15-intel`）は 2027 年秋に打ち切られるので使わない（https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/ ） |
 
 - コンテナは、ステップの中の `docker run` で動かす（artifact の取得と送出、要約への書き出しをランナーで行うため）。root で動かし（`almalinux:8` の `dnf` に root が要る）、終わりに出力の持ち主をランナーの利用者に `chown` で戻す。`HOME` は `/tmp` にする。
-- 発行は `eng/release/Publish-Rid.ps1 -Rid <RID> -VersionSuffix <後ろ>`、検査は `eng/release/Test-Publish.ps1`、スモークテストは `eng/release/Test-Smoke.ps1`、圧縮は `eng/release/Pack-Rid.ps1` にし、どのランナーでも同じものを走らせる。コンテナの中で動かすのは発行（`dotnet publish` と、そこから呼ばれる SQLite の C のビルド）だけで、検査、スモークテスト、圧縮はランナーで行う（Alpine の RID のスモークテストと C のテストだけはコンテナの中）。SQLite のビルドは MSBuild から `pwsh` で呼ばれる。SDK の Alpine のイメージには `pwsh` がある。`almalinux:8` には、ランナーの PowerShell（`/opt/microsoft/powershell/7`、RHEL 8 で動く自己完結の配布）を読み取りだけでつなぐ。つないだ PowerShell が動くことは試しで確かめ、動かなければ持ち主に知らせて決め直す。CI の `aot` のジョブも、検査は同じ `Test-Publish.ps1` で行う。
+- 発行は `eng/release/Publish-Rid.ps1 -Rid <RID> -VersionSuffix <後ろ>`（`almalinux:8` の中では、同じことをする POSIX の `eng/release/publish-rid.sh`）、検査は `eng/release/Test-Publish.ps1`、スモークテストは `eng/release/Test-Smoke.ps1`、圧縮は `eng/release/Pack-Rid.ps1` にし、どのランナーでも同じものを走らせる。コンテナの中で動かすのは発行（`dotnet publish` と、そこから呼ばれる SQLite の C のビルド）だけで、検査、スモークテスト、圧縮はランナーで行う（Alpine の RID のスモークテストと C のテストだけはコンテナの中）。発行はどれも、プロジェクトごとの出力をログのファイルに書き、警告の数え上げは `Test-Publish.ps1` がそのログで行う。`almalinux:8` の中では PowerShell を使わない。F1 の試しで、arm64 のランナーの PowerShell は glibc 2.33 を要り、glibc 2.28 の中では起動できなかったため（持ち主の決定）。そのため SQLite の Linux と macOS のビルドは POSIX の `vendor/sqlite/build.sh` にし、Windows は `vendor/sqlite/build.ps1` のまま、オプションは両方が読む `vendor/sqlite/defines.txt` に置く。SDK の Alpine のイメージには `pwsh` があるので、Alpine の中は `Publish-Rid.ps1` を使う。CI の `aot` のジョブも、発行と検査は同じスクリプトで行う。
 - 直すもの:
   - `vendor/sqlite/build.ps1` は、Unix で `bash -c` ではなく `sh -c` を使う（Alpine のイメージに `bash` がない）。`osx-*` では RID から `--target=x86_64-apple-macos12.0` か `--target=arm64-apple-macos12.0` を渡す（NativeAOT は macOS の最低の版の既定を 12.0 にしてリンクする。https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/nativeaot/BuildIntegration/Microsoft.NETCore.Native.Unix.targets ）。`win-arm64` では MSVC の ARM64 の部品（`Microsoft.VisualStudio.Component.VC.Tools.ARM64`）を求める。部品の ID が `windows-11-arm` のイメージにあることは、試しで `vswhere` を動かして確かめる。
   - `ElasticLM.Native` のアセンブリ名は、RID があれば RID で（`win-` で始まれば `elasticlm`）、なければビルドする機械の OS で決める（今は機械の OS が先に効く）。
@@ -3820,7 +3820,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 - glibc の版: Linux の glibc の RID では、`objdump -T` が示す `GLIBC_` の最も新しい版をジョブの要約に書き、`release.yml` では 2.28 を超えれば失敗にする。CI は Linux をランナーの新しい glibc で作るので、記録だけにする（`-RecordGlibcOnly`）。
 - macOS の署名: `codesign -dv` の結果をジョブの要約に書き、`osx-arm64` で ad-hoc の署名（`Signature=adhoc`）がなければ失敗にする。`osx-x64` は書くだけにする（§5.4）。
 - 大きさ: §4.2 の目標を 10 進のバイトで当てはめ、`elm-service` が 40,000,000 バイト、`elm-server` が 30,000,000 バイト、`libelasticlm` が 8,000,000 バイトを超えれば失敗にする。`elm` には目標がないので記録だけにする。デバッグシンボルは数えない。
-- 警告: 今の CI と同じく、`: warning ` の行が 1 つでもあれば失敗にする（macOS の `dsymutil` の `ModuleCache/*.pcm` を除く。`.cursor/rules/aot.mdc`）。
+- 警告: 今の CI と同じく、発行のログに `: warning ` の行が 1 つでもあれば失敗にする（macOS の `dsymutil` の `ModuleCache/*.pcm` を除く。`.cursor/rules/aot.mdc`）。
 
 配布物（Q14、Q15）:
 
@@ -3878,7 +3878,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | `preact` 11（W0 で 11.1.0） | `web/admin/`（管理画面の SPA。ビルド結果が `ElasticLM.Service` に埋め込まれる） | 画面の部品と状態（§15.2、0.96）。MIT。実行時の依存はこれだけで、その先の依存はない | 対象外（ブラウザで動く）。W0 の試作の `dist` は 17,791 バイト（brotli で 6,771）。`elm-service` の大きさの差は M5c で測る |
 | `vite` 8.3.5, `vitest` 4.1.12, `happy-dom` 21.0.4, `@types/node`（MIT）、`typescript` 7.0.2（Apache-2.0） | `web/admin/` のビルドとテストだけ | ビルド、型の確かめ、ブラウザのないテスト。ビルド結果には入らない。推移的な依存は `pnpm-lock.yaml` にある。W0 の試作で、`preact` と合わせて入るパッケージは 56 個（Windows） | 対象外 |
 | Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
-| `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
+| `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils、libicu を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
 
 ## 22. 段階

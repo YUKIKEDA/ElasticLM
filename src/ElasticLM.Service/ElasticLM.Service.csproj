@@ -62,7 +62,8 @@
   </Target>
 
   <!--
-    SQLite (design §14.2, decision 0.72): vendor/sqlite/build.ps1 builds the pinned amalgamation with the platform's C compiler.
+    SQLite (design §14.2, decision 0.72): vendor/sqlite/build.ps1 (Windows) or build.sh (Linux and macOS, POSIX sh, so the
+    release build runs it where PowerShell does not, design §20.5) builds the pinned amalgamation with the platform's C compiler.
     JIT runs (tests, dotnet run) load the shared library from the output folder; NativeAOT links the static one into the
     executable, so nothing is published beside it.
   -->
@@ -81,11 +82,18 @@
   <Target
     Name="ElmBuildSqlite"
     BeforeTargets="AssignTargetPaths"
-    Inputs="$(ElmSqliteDir)sqlite3.c;$(ElmSqliteDir)sqlite3.h;$(ElmSqliteDir)SHA256SUMS;$(ElmSqliteDir)build.ps1"
+    Inputs="$(ElmSqliteDir)sqlite3.c;$(ElmSqliteDir)sqlite3.h;$(ElmSqliteDir)SHA256SUMS;$(ElmSqliteDir)defines.txt;$(ElmSqliteDir)build.ps1;$(ElmSqliteDir)build.sh"
     Outputs="$(ElmSqliteOut)shared\$(ElmSqliteShared);$(ElmSqliteOut)static\$(ElmSqliteStatic)"
   >
     <!-- The folder is passed without its trailing separator: a backslash before the closing quote escapes it on Windows. -->
-    <Exec Command="pwsh -NoProfile -NonInteractive -File &quot;$(ElmSqliteDir)build.ps1&quot; -Rid $(ElmSqliteRid) -OutDir &quot;$(ElmSqliteOut.TrimEnd('\'))&quot;" />
+    <Exec
+      Condition="$([MSBuild]::IsOSPlatform('Windows'))"
+      Command="pwsh -NoProfile -NonInteractive -File &quot;$(ElmSqliteDir)build.ps1&quot; -Rid $(ElmSqliteRid) -OutDir &quot;$(ElmSqliteOut.TrimEnd('\'))&quot;"
+    />
+    <Exec
+      Condition="!$([MSBuild]::IsOSPlatform('Windows'))"
+      Command="sh &quot;$(ElmSqliteDir)build.sh&quot; $(ElmSqliteRid) &quot;$(ElmSqliteOut.TrimEnd('\'))&quot;"
+    />
   </Target>
 
   <ItemGroup>

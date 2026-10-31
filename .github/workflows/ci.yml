@@ -164,12 +164,12 @@ jobs:
 
       - name: Publish
         # design §20.5: the same publish as release.yml, one folder for each of the four, with zero warnings.
-        run: ./eng/release/Publish-Rid.ps1 -Rid ${{ matrix.rid }} -OutDir publish
+        run: ./eng/release/Publish-Rid.ps1 -Rid ${{ matrix.rid }} -OutDir publish -LogDir publish-logs
 
       - name: Check the publish folders
         # design §4.1, §4.2, §20.5: single binary, runtime dependencies, macOS signature, and sizes. CI builds Linux on the
         # runner's glibc, so the glibc version is recorded only; release.yml builds against glibc 2.28 and applies the limit.
-        run: ./eng/release/Test-Publish.ps1 -Rid ${{ matrix.rid }} -PublishDir publish -RecordGlibcOnly
+        run: ./eng/release/Test-Publish.ps1 -Rid ${{ matrix.rid }} -PublishDir publish -LogDir publish-logs -RecordGlibcOnly
 
       - name: C test of libelasticlm
         # design §17.4: the exports against the header, then the C test compiled with warnings as errors and run against

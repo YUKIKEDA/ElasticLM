@@ -22,7 +22,7 @@ include/                     libelasticlm の C ヘッダー（elasticlm.h。手
 tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）と、libelasticlm の C のテスト（tests/native/）
 samples/                     利用例と NativeAOT の確認用のアプリ
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
-vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト。elm-service が組み込む（design §14.2）
+vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
 web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
 .cursor/rules/               エージェント向けの規約
@@ -52,7 +52,7 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | `web/admin` | 管理画面の SPA（design §15.2、0.96、0.100）。Preact 11 と TypeScript、Vite 8、テストは Vitest と happy-dom。Node.js は `.node-version`、pnpm は `package.json` の `packageManager`（Corepack が確かめる）、依存は `pnpm-lock.yaml`、pnpm の守りは `pnpm-workspace.yaml`。`build.ps1` がビルドし、`dist` を `ElasticLM.Service` が埋め込んで `/` と `/assets/` で配る。文言は `src/messages.ts` |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
 | `samples/PackageConsumer` | 2 つの NuGet パッケージだけを版で参照するアプリ（design §20.5）。ルートの設定を読み込まず、`nuget.config` は `ElasticLM.*` を `artifacts/packages` だけから取る。ソリューションと `build.ps1` には入れず、`release.yml` がパッケージを作ったあとに NativeAOT で発行して動かす |
-| `eng/release` | リリースと CI のスクリプト（design §20.5）。`Get-ReleaseVersion.ps1`（版、タグ、`CHANGELOG.md`）と `Test-ReleaseVersion.ps1`、`Publish-Rid.ps1`（RID ごとの発行）、`Test-Publish.ps1`（単一バイナリ、依存、glibc、署名、大きさ）、`Test-Smoke.ps1`、`Pack-Rid.ps1`（圧縮ファイル）、`Test-Package.ps1`（パッケージの中身）、`New-Sbom.ps1`（その実行のコミットの SPDX の SBOM）。持ち主の手順は `docs/releasing.md` |
+| `eng/release` | リリースと CI のスクリプト（design §20.5）。`Get-ReleaseVersion.ps1`（版、タグ、`CHANGELOG.md`）と `Test-ReleaseVersion.ps1`、`Publish-Rid.ps1`（RID ごとの発行。`almalinux:8` の中では POSIX の `publish-rid.sh`）、`Test-Publish.ps1`（単一バイナリ、依存、glibc、署名、大きさ）、`Test-Smoke.ps1`、`Pack-Rid.ps1`（圧縮ファイル）、`Test-Package.ps1`（パッケージの中身）、`New-Sbom.ps1`（その実行のコミットの SPDX の SBOM）。持ち主の手順は `docs/releasing.md` |
 
 ## ビルドとゲート
 

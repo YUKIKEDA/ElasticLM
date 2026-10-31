@@ -3,9 +3,9 @@
     Publishes the three executables and libelasticlm for one runtime identifier with NativeAOT (design §20.5).
 
 .DESCRIPTION
-    Publishes elm, elm-server, elm-service, and libelasticlm, each into its own folder under -OutDir, and fails when a
-    publish fails or reports a warning. dsymutil's missing clang module caches on macOS are not counted: the Swift parts of
-    .NET's Apple crypto carry debug references to the module cache of the machine that built them (.cursor/rules/aot.mdc).
+    Publishes elm, elm-server, elm-service, and libelasticlm, each into its own folder under -OutDir, writes each publish's
+    output to <name>.log in -LogDir, and fails when a publish fails. Test-Publish.ps1 counts the warnings in the logs, so
+    the almalinux:8 container, which has no PowerShell, can publish with publish-rid.sh and be checked the same way.
     When DOTNET_SDK_VERSION is set, the SDK in use must be that version, so every runtime identifier of a release is built
     with the same ILCompiler and runtime. elm-service needs web/admin/dist (design §15.2).
 
@@ -17,6 +17,9 @@
 
 .PARAMETER OutDir
     The folder that gets elm, elm-server, elm-service, and libelasticlm subfolders.
+
+.PARAMETER LogDir
+    The folder that gets the publish logs.
 #>
 [CmdletBinding()]
 param(
@@ -24,7 +27,8 @@ param(
     [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64', 'linux-musl-x64', 'osx-arm64', 'osx-x64')]
     [string]$Rid,
     [string]$VersionSuffix = '',
-    [Parameter(Mandatory = $true)][string]$OutDir
+    [Parameter(Mandatory = $true)][string]$OutDir,
+    [Parameter(Mandatory = $true)][string]$LogDir
 )
 
 $ErrorActionPreference = 'Stop'
@@ -47,6 +51,7 @@ $targets = @(
     @{ Project = 'src/ElasticLM.Native'; Name = 'libelasticlm' }
 )
 
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 foreach ($target in $targets) {
     $folder = Join-Path $OutDir $target.Name
     $arguments = @('publish', (Join-Path $root $target.Project), '-c', 'Release', '-r', $Rid, '-o', $folder, '-nologo')
@@ -54,9 +59,8 @@ foreach ($target in $targets) {
     $log = & dotnet @arguments 2>&1
     $code = $LASTEXITCODE
     $log | Out-Host
+    $log | Set-Content -Path (Join-Path $LogDir "$($target.Name).log") -Encoding utf8NoBOM
     if ($code -ne 0) { throw "The NativeAOT publish of $($target.Name) for $Rid failed." }
-    $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
-    if ($warnings.Count -gt 0) { throw "The NativeAOT publish of $($target.Name) for $Rid reported $($warnings.Count) warnings." }
 }
 
 "Published elm, elm-server, elm-service, and libelasticlm for $Rid with SDK $sdk into $OutDir."

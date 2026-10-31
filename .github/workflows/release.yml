@@ -145,26 +145,26 @@ jobs:
 
       - name: Publish
         if: ${{ !matrix.container }}
-        run: ./eng/release/Publish-Rid.ps1 -Rid $env:RID -VersionSuffix $env:SUFFIX -OutDir artifacts/release/publish
+        run: ./eng/release/Publish-Rid.ps1 -Rid $env:RID -VersionSuffix $env:SUFFIX -OutDir artifacts/release/publish -LogDir artifacts/release/logs
 
       - name: Publish in AlmaLinux 8 (glibc 2.28)
         # design §4.1, §20.5: built against glibc 2.28 so the binaries run on RHEL 8, Debian 10, Ubuntu 20.04 and later.
-        # The SDK and PowerShell are the runner's, mounted read-only. libicu is installed because the SDK without ICU does not
-        # recognize culture names and warns (NETSDK1188) for packages with localized resources. dnf needs root, so the
-        # outputs are handed back to the runner's user at the end.
+        # The SDK is the runner's, mounted read-only. PowerShell is not used: the arm64 runner's needs glibc 2.33. libicu is
+        # installed because the SDK without ICU does not recognize culture names and warns (NETSDK1188). dnf needs root, so
+        # the outputs are handed back to the runner's user at the end.
         if: matrix.container == 'almalinux'
         shell: bash
         run: |
           docker run --rm \
-            -v "$GITHUB_WORKSPACE:/src" -v "$DOTNET_ROOT:/opt/dotnet:ro" -v /opt/microsoft/powershell/7:/opt/pwsh:ro \
-            -w /src -e HOME=/tmp -e DOTNET_ROOT=/opt/dotnet -e PATH=/opt/dotnet:/opt/pwsh:/usr/bin:/bin \
+            -v "$GITHUB_WORKSPACE:/src" -v "$DOTNET_ROOT:/opt/dotnet:ro" \
+            -w /src -e HOME=/tmp -e DOTNET_ROOT=/opt/dotnet -e PATH=/opt/dotnet:/usr/bin:/bin \
             -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
             -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
             "$ALMALINUX_IMAGE" bash -c '
               status=0
               dnf install -y -q clang zlib-devel binutils libicu && rpm -q clang zlib-devel binutils libicu glibc || status=1
               if [ $status -eq 0 ]; then
-                pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish || status=1
+                sh eng/release/publish-rid.sh "$RID" "$SUFFIX" artifacts/release/publish artifacts/release/logs || status=1
               fi
               chown -R "$OWNER" /src
               exit $status'
@@ -180,7 +180,7 @@ jobs:
             -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
             "$ALPINE_SDK_IMAGE" sh -c '
               status=0
-              pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish || status=1
+              pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish -LogDir artifacts/release/logs || status=1
               if [ $status -eq 0 ]; then pwsh -NoProfile -File eng/release/Test-Smoke.ps1 -PublishDir artifacts/release/publish || status=1; fi
               if [ $status -eq 0 ]; then
                 p=artifacts/release/publish
@@ -192,7 +192,7 @@ jobs:
 
       - name: Check the publish folders
         # design §20.5: single binary, runtime dependencies, glibc version, macOS signature, and the sizes of design §4.2.
-        run: ./eng/release/Test-Publish.ps1 -Rid $env:RID -PublishDir artifacts/release/publish
+        run: ./eng/release/Test-Publish.ps1 -Rid $env:RID -PublishDir artifacts/release/publish -LogDir artifacts/release/logs
 
       - name: Smoke test
         if: ${{ matrix.container != 'alpine' }}

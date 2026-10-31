@@ -4,6 +4,9 @@
 
 .DESCRIPTION
     For elm, elm-server, elm-service, and libelasticlm under -PublishDir:
+    - Warnings: the publish log <name>.log in -LogDir has no ": warning " line. dsymutil's missing clang module caches on
+      macOS are not counted: the Swift parts of .NET's Apple crypto carry debug references to the module cache of the
+      machine that built them (.cursor/rules/aot.mdc).
     - Single binary: the folder holds the binary and its debug symbols only (.pdb on Windows, .dbg on Linux, a .dSYM folder
       on macOS). Any other file fails the check and is named.
     - Runtime dependencies: dumpbin /dependents (Windows, recorded only), the NEEDED entries of readelf -d (Linux), or
@@ -23,6 +26,9 @@
 .PARAMETER PublishDir
     The folder with the elm, elm-server, elm-service, and libelasticlm subfolders (Publish-Rid.ps1).
 
+.PARAMETER LogDir
+    The folder with the publish logs (Publish-Rid.ps1 or publish-rid.sh).
+
 .PARAMETER RecordGlibcOnly
     Record the newest glibc symbol version without applying the 2.28 limit.
 
@@ -35,6 +41,7 @@ param(
     [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64', 'linux-musl-x64', 'osx-arm64', 'osx-x64')]
     [string]$Rid,
     [Parameter(Mandatory = $true)][string]$PublishDir,
+    [Parameter(Mandatory = $true)][string]$LogDir,
     [string]$Summary = $env:GITHUB_STEP_SUMMARY,
     [switch]$RecordGlibcOnly
 )
@@ -79,6 +86,13 @@ function Get-Dumpbin {
 foreach ($name in @('elm', 'elm-server', 'elm-service', 'libelasticlm')) {
     $folder = Join-Path $PublishDir $name
     $binary = Get-BinaryName $name
+
+    $logFile = Join-Path $LogDir "$name.log"
+    if (-not (Test-Path $logFile)) { $failures.Add("$name has no publish log $logFile.") }
+    else {
+        $warnings = @(Select-String -Path $logFile -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
+        if ($warnings.Count -gt 0) { $failures.Add("The publish of $name reported $($warnings.Count) warnings, the first: $($warnings[0].Line.Trim())") }
+    }
     $path = Join-Path $folder $binary
     if (-not (Test-Path $path -PathType Leaf)) {
         $failures.Add("$name has no $binary in $folder.")
