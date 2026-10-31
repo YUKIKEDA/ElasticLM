@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- design §20.5: references the two NuGet packages by version, as an app outside the repository does, and is published
+       with NativeAOT to show zero warnings (design §4.1). It is not in the solution: release.yml builds it after packing,
+       with -p:ElmPackageVersion=<version>. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ElasticLM.Licensing" Version="$(ElmPackageVersion)" />
+    <PackageReference Include="ElasticLM.Client" Version="$(ElmPackageVersion)" />
+  </ItemGroup>
+</Project>

@@ -31,4 +31,4 @@ Never commit a private key, a secret, or a real license token, test data include
 
 ## Versioning
 
-Packages and binaries are versioned with SemVer from `VersionPrefix` in `Directory.Build.props`. Before 1.0, a minor version may break the public API, the license token format, or the wire protocol; `CHANGELOG.md` says so when it does. Nothing is published yet.
+Packages and binaries are versioned with SemVer from `VersionPrefix` in `Directory.Build.props`. Before 1.0, a minor version may break the public API, the license token format, or the wire protocol; `CHANGELOG.md` says so when it does. Nothing is published yet. How a release is cut and published is in `docs/releasing.md`.

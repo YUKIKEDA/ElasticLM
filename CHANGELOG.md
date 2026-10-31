@@ -9,3 +9,8 @@ protocol; an entry says so when it does.
 ## [Unreleased]
 
 Nothing is released yet.
+
+### Added
+
+- The release workflow: the three executables and `libelasticlm` for seven runtime identifiers, the two NuGet packages,
+  `SHA256SUMS`, build provenance attestations, and an SBOM.

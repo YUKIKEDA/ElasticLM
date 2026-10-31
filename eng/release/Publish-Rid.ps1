@@ -1,0 +1,69 @@
+<#
+.SYNOPSIS
+    Publishes the three executables and libelasticlm for one runtime identifier with NativeAOT (design §20.5).
+
+.DESCRIPTION
+    Publishes elm, elm-server, elm-service, and libelasticlm, each into its own folder under -OutDir, writes each publish's
+    output to <name>.log in -LogDir, and fails when a publish fails. Test-Publish.ps1 counts the warnings in the logs, so
+    the almalinux:8 container, which has no PowerShell, can publish with publish-rid.sh and be checked the same way.
+    When DOTNET_SDK_VERSION is set, the SDK in use must be that version, so every runtime identifier of a release is built
+    with the same ILCompiler and runtime. elm-service needs web/admin/dist (design §15.2).
+
+.PARAMETER Rid
+    The runtime identifier, one of the seven of design §4.1.
+
+.PARAMETER VersionSuffix
+    The version suffix (rc.1, ci.42), or empty for a release of VersionPrefix itself.
+
+.PARAMETER OutDir
+    The folder that gets elm, elm-server, elm-service, and libelasticlm subfolders.
+
+.PARAMETER LogDir
+    The folder that gets the publish logs.
+#>
+[CmdletBinding()]
+param(
+    [Parameter(Mandatory = $true)]
+    [ValidateSet('win-x64', 'win-arm64', 'linux-x64', 'linux-arm64', 'linux-musl-x64', 'osx-arm64', 'osx-x64')]
+    [string]$Rid,
+    [string]$VersionSuffix = '',
+    [Parameter(Mandatory = $true)][string]$OutDir,
+    [Parameter(Mandatory = $true)][string]$LogDir
+)
+
+$ErrorActionPreference = 'Stop'
+$root = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
+
+$sdk = (& dotnet --version).Trim()
+if ($env:DOTNET_SDK_VERSION -and $sdk -ne $env:DOTNET_SDK_VERSION) {
+    throw "The .NET SDK is $sdk, not DOTNET_SDK_VERSION $($env:DOTNET_SDK_VERSION)."
+}
+
+if ($IsWindows) {
+    # The NativeAOT linker step and the SQLite build find Visual Studio with vswhere, which is not on PATH by default.
+    $env:PATH = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer') + [IO.Path]::PathSeparator + $env:PATH
+}
+
+$targets = @(
+    @{ Project = 'src/ElasticLM.Cli'; Name = 'elm' },
+    @{ Project = 'src/ElasticLM.Server'; Name = 'elm-server' },
+    @{ Project = 'src/ElasticLM.Service'; Name = 'elm-service' },
+    @{ Project = 'src/ElasticLM.Native'; Name = 'libelasticlm' }
+)
+
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+foreach ($target in $targets) {
+    $folder = Join-Path $OutDir $target.Name
+    $arguments = @('publish', (Join-Path $root $target.Project), '-c', 'Release', '-r', $Rid, '-o', $folder, '-nologo')
+    if ($VersionSuffix) { $arguments += "-p:VersionSuffix=$VersionSuffix" }
+    $log = & dotnet @arguments 2>&1
+    $code = $LASTEXITCODE
+    $log | Out-Host
+    $log | Set-Content -Path (Join-Path $LogDir "$($target.Name).log") -Encoding utf8NoBOM
+    if ($code -ne 0) { throw "The NativeAOT publish of $($target.Name) for $Rid failed." }
+}
+
+"Published elm, elm-server, elm-service, and libelasticlm for $Rid with SDK $sdk into $OutDir."
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0

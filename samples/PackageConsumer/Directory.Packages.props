@@ -1,0 +1,6 @@
+<Project>
+  <!-- design §20.5: the repository's central package versions do not apply to this app; it names its versions itself. -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>false</ManagePackageVersionsCentrally>
+  </PropertyGroup>
+</Project>

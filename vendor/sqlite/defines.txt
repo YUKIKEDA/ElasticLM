@@ -1,0 +1,7 @@
+# The compile-time options of SQLite, one per line, read by build.ps1 (Windows) and build.sh (Linux and macOS).
+# Read from https://sqlite.org/compile.html: double-quoted strings are identifiers only, memory statistics are off, and
+# column metadata is on because Microsoft.Data.Sqlite asks for it.
+SQLITE_THREADSAFE=1
+SQLITE_DQS=0
+SQLITE_DEFAULT_MEMSTATUS=0
+SQLITE_ENABLE_COLUMN_METADATA=1
