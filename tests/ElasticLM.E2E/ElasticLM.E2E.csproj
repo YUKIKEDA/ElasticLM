@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <!-- design §20.7: each elm-service process on PostgreSQL gets a database of its own, made and dropped here. -->
+    <PackageReference Include="Npgsql" />
+  </ItemGroup>
+  <ItemGroup>
+    <!--
+      design §20.7: the published elm, elm-server, and elm-service run as processes (ELM_E2E_BIN); the app in the middle is
+      the real ElasticLM.Client in this process. No product project is referenced for its internals.
+    -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+</Project>

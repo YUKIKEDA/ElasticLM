@@ -181,6 +181,28 @@ jobs:
           $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
           ./tests/native/run.ps1 -Library (Join-Path publish/libelasticlm $name) -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')) -Service (Join-Path publish/elm-service ($IsWindows ? 'elm-service.exe' : 'elm-service')) -Server (Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server'))
 
+      - name: End-to-end tests
+        # design §20.7 (V1a): tests/ElasticLM.E2E runs the published elm, elm-server, and elm-service as processes with
+        # ElasticLM.Client as the app. On Linux the service's flows also run on PostgreSQL, in a container of this step's own
+        # with the gate's image; the run's real-clock waits stay within 2 minutes and go to the job summary.
+        run: |
+          if ($IsLinux) {
+            docker run -d --name elm-e2e-postgres -e POSTGRES_PASSWORD=elm-e2e -p 5433:5432 postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+            for ($i = 0; $i -lt 60; $i++) {
+              docker exec elm-e2e-postgres pg_isready -U postgres | Out-Null
+              if ($LASTEXITCODE -eq 0) { break }
+              Start-Sleep -Seconds 1
+            }
+            if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
+            $env:ELM_E2E_POSTGRES = 'Host=127.0.0.1;Port=5433;Username=postgres;Password=elm-e2e'
+          }
+          try {
+            ./tests/ElasticLM.E2E/run.ps1 -Bin publish
+          }
+          finally {
+            if ($IsLinux) { docker rm -f elm-e2e-postgres | Out-Null }
+          }
+
       - name: Smoke
         run: |
           $elm = Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')

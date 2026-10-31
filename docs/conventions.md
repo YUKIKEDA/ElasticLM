@@ -19,7 +19,7 @@ stylecop.json                StyleCop の設定
 build.ps1                    ローカルのゲート（CI も同じスクリプトを実行する）
 src/                         出荷するプロジェクト（ElasticLM.*）
 include/                     libelasticlm の C ヘッダー（elasticlm.h。手で書く。design §17.4）
-tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）と、libelasticlm の C のテスト（tests/native/）
+tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）、端から端までのテスト（tests/ElasticLM.E2E/）、libelasticlm の C のテスト（tests/native/）
 samples/                     利用例と NativeAOT の確認用のアプリ
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
 eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
@@ -42,7 +42,8 @@ docs/                        設計・却下した案・ADR・ロードマップ
 | `src/ElasticLM.Cli` | CLI `elm`（design §16）。NativeAOT の単一バイナリ。`ElmApp.Run` に入出力・時刻・環境変数を渡せるので、テストは同じプロセスで動かす。`elm log verify` と `elm server`（管理 API を呼ぶ）は M3c で足した |
 | `src/ElasticLM.Native` | `libelasticlm`（design §17、0.105）。C ABI の関数を `[UnmanagedCallersOnly]` で出す NativeAOT の共有ライブラリ（`NativeLib=Shared`）。アセンブリ名は Windows で `elasticlm`、ほかで `libelasticlm`（ファイル名になる）。ハンドルは `GCHandle`、文字列はネイティブのメモリ、誤りの文はスレッドごと。宣言は `include/elasticlm.h` |
 | `tests/ElasticLM.Native.Tests` | `libelasticlm` の関数を、C と同じく関数ポインター（`delegate* unmanaged`）で呼ぶテスト（JIT）。ライセンスは `ElasticLM.Licensing.Tests` の `TestIssuer` で作り、時計は `Exports.Time` を偽の時計に替える |
-| `tests/native` | `libelasticlm` の C のテスト（`test_elasticlm.c`）と `run.ps1`。`run.ps1` は、公開する名前とヘッダーを比べ、警告を誤りにして C をコンパイルし、`elm` で作った鍵とライセンスで、発行したライブラリを実行時に読み込んで動かす。有効化の部分は、発行した `elm-service` をループバックで立てて動かす。リースの部分は、それに加えて発行した `elm-server` を https のループバックで立てて動かす。CI の NativeAOT のジョブが動かし、手元では `./tests/native/run.ps1 -Publish` |
+| `tests/native` | `libelasticlm` の C のテスト（`test_elasticlm.c`）と `run.ps1`。`run.ps1` は、公開する名前とヘッダーを比べ、警告を誤りにして C をコンパイルし、`elm` で作った鍵とライセンスで、発行したライブラリを実行時に読み込んで動かす。有効化の部分は、発行した `elm-service` をループバックで立てて動かす。オフラインの有効化と失効のあとの更新は、C のテストを段に分け、段の間で `run.ps1` が `elm offline process` と管理 API の失効を呼ぶ。リースの部分は、それに加えて発行した `elm-server` を https のループバックで立てて動かす。CI の NativeAOT のジョブが動かし、手元では `./tests/native/run.ps1 -Publish` |
+| `tests/ElasticLM.E2E` | 端から端までのテスト（design §20.7）。NativeAOT で公開した `elm`・`elm-server`・`elm-service` を別のプロセスとして起動し、`ElasticLM.Client` から使う。流れごとのクラスで、`src` の写しではない。`./build.ps1` はビルドだけで流さず、CI の NativeAOT のジョブが流す。手元では `./tests/ElasticLM.E2E/run.ps1 -Publish` |
 | `tests/ElasticLM.Licensing.Tests` | `ElasticLM.Licensing` のテスト。鍵とトークンはテストの中で作る（`TestIssuer`） |
 | `tests/ElasticLM.Client.Tests` | `ElasticLM.Client` のテスト。作った証明をサーバー側の `ProofVerifier`（`ElasticLM.Issuing`）で確かめる |
 | `tests/ElasticLM.Issuing.Tests` | `ElasticLM.Issuing` のテスト。発行したライセンスとリースを `ElasticLM.Licensing` で検証する |

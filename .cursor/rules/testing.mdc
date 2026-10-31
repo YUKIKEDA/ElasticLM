@@ -13,14 +13,18 @@ The test layers are in `docs/design.ja.md`. This rule is how a test is written.
 - xUnit v3 with its built-in `Assert`. No assertion library, no mocking library: hand-written fakes behind the interfaces the design names.
 - Tests run on Microsoft.Testing.Platform (`global.json` `test.runner`). There is no `Microsoft.NET.Test.Sdk` or `xunit.runner.visualstudio`. Run one project with `dotnet test --project <path>`, and some of its tests with `dotnet test --project <path> -- --filter-method <pattern>`. Read the exit code and the count of tests run: a run that ran no test is not a pass.
 - Time comes from a fake `TimeProvider` (`Microsoft.Extensions.TimeProvider.Testing`). A test never sleeps, never waits on the wall clock, and never asserts what the clock decides.
+  - The exception is the end-to-end layer (`tests/ElasticLM.E2E`, `tests/native`, design §20.7). A published binary has no clock to replace, and none is added for tests. These tests use short periods (15-second leases) and wait on the real clock. A flow that needs days (borrow expiry, license expiry, the refresh window) stays in the in-process tests on the fake clock.
+  - An end-to-end test asserts what the real clock brings about only by waiting, with a bound that covers slow runners, for the event or the state (a lease taken after `ELM_SERVER_RECOVERING`, a later expiry after a renewal). It never asserts an exact time or length.
+  - In `tests/ElasticLM.E2E` every real-clock wait (a process starting, a `Retry-After`, a product timer) goes through `RealClock`. The waits of one `dotnet test` run are added up, those of tests running side by side included, and a wait fails its test once the sum passes 2 minutes. The C test's waits are bounded by its `run.ps1` instead.
 - Keys are generated in the test or in a fixture shared by one test class, at run time. A test never reads a key or a token from the repository.
 - A file a test writes for the product to read has the form the product's own tools write: the same line ends and the trailing line break. In M4d3 the test helper wrote certificate files without the line break that `elm key certify` adds, and the cloud leases, which failed on real files since M4d1, passed every test (PR #91, design review R1).
-- A server test runs the server in process on a loopback port the OS picks, and stops it in the test's cleanup.
+- A server test runs the server in process on a loopback port the OS picks, and stops it in the test's cleanup. An end-to-end test starts the published binary as a process on such a port, and stops the process in its cleanup.
 - Every run of `./build.ps1` writes its output to a file in the scratchpad, so that a failure seen once can be named.
 
 ## Structure
 
 - `tests/<Project>.Tests` mirrors `src/<Project>`. `Foo.cs` → `FooTests.cs`, in the same folder.
+- `tests/ElasticLM.E2E` is organized by flow, not by source file. Its name does not end in `.Tests`, so `./build.ps1` builds it and does not run it; `tests/ElasticLM.E2E/run.ps1` and the CI's `aot` job run it against published binaries (design §20.7).
 - Method names: `{Target}_{Scenario}_{Expected}` in PascalCase, English.
 - Each test owns its state. Tests run in parallel; a test that cannot says why in its collection definition.
 
