@@ -74,7 +74,9 @@ internal sealed class Vendor : IAsyncDisposable
     public async Task<string> ElmOkAsync(params string[] arguments)
     {
         (int code, string output, string error) = await ElmAsync(arguments);
-        Assert.True(code == 0, $"elm {string.Join(' ', arguments)} exited with {code}: {error}");
+
+        // The command's name only: its arguments may hold a license key (security.mdc).
+        Assert.True(code == 0, $"elm {string.Join(' ', arguments.Take(2))} exited with {code}: {error}");
         return output;
     }
 

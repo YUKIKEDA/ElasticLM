@@ -38,6 +38,23 @@ internal static class RealClock
         }
     }
 
+    /// <summary>Waits for <paramref name="delay"/>, as a server's <c>Retry-After</c> asks, and counts the time.</summary>
+    /// <param name="what">What the wait is for, for the failure message.</param>
+    /// <param name="delay">How long to wait.</param>
+    public static async Task DelayAsync(string what, TimeSpan delay)
+    {
+        Assert.True(Waited + delay < Budget, $"{what}: the run's real-clock waits would pass {Budget.TotalSeconds} seconds.");
+        long start = TimeProvider.System.GetTimestamp();
+        try
+        {
+            await Task.Delay(delay, TimeProvider.System, TestContext.Current.CancellationToken);
+        }
+        finally
+        {
+            Interlocked.Add(ref _waitedTicks, TimeProvider.System.GetElapsedTime(start).Ticks);
+        }
+    }
+
     /// <summary>Waits until <paramref name="condition"/> holds, at most <paramref name="timeout"/>, and counts the time.</summary>
     /// <param name="what">What the wait is for, for the failure message.</param>
     /// <param name="condition">The condition to wait for.</param>
