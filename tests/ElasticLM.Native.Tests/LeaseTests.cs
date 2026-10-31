@@ -324,20 +324,24 @@ public sealed class LeaseTests : IAsyncLifetime
     }
 
     /// <summary>
-    /// destroy waits for a running callback, which can read the lease meanwhile; no callback comes after destroy.
+    /// destroy waits for a running callback, which can use the client and read the lease meanwhile; a change while destroy
+    /// waits and any change after destroy call nothing.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A lease of pro from a server; the server stopped.
+    /// - Lease A of pro from a server, and lease B of pro 60 s later, so B's renewal comes 60 s after A's; the server
+    ///   stopped.
     ///
     /// Steps:
-    /// - Hold the callback; move the clock 200 s and wait until the renewal's failure enters it; destroy on another thread and
+    /// - Hold the callback; move the clock 200 s and wait until A's failed renewal enters it; destroy on another thread and
     ///   see it has not returned after 300 ms, nor after the clock moves 6 s (past the 5 s DisposeAsync gives the returns);
-    ///   let the callback go, which then reads the lease while destroy waits; then move the clock a day.
+    ///   move the clock 60 s more, wait until B is RETRYING, and give its change 200 ms to reach the callback; let the
+    ///   callback go, which then reads A and deletes a pin through the client while destroy waits; then move the clock a day.
     ///
     /// Expected:
-    /// - The callback HELD→RETRYING on a thread other than the test's; destroy returns only after the release; inside,
-    ///   state 1 and the lease's ID; no callback after destroy.
+    /// - One callback only, A's HELD→RETRYING, on a thread other than the test's (B's change, made while destroy waits, calls
+    ///   nothing); destroy returns only after the release; inside, state 1, A's ID, and the pin call 0 (the client handle is
+    ///   freed only after the callback); no callback after destroy.
     /// </remarks>
     [Fact]
     public async Task Destroy_WaitsForTheCallback_AndNoneComesAfter()
@@ -346,6 +350,8 @@ public sealed class LeaseTests : IAsyncLifetime
         nint client = Create(server.PublicUrls[0].AbsoluteUri);
         Assert.Equal(0, LeaseApi.Acquire(_api, client, "pro", 1, out nint lease, out _));
         string id = LeaseApi.Id(lease);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(60));
+        Assert.Equal(0, LeaseApi.Acquire(_api, client, "pro", 1, out nint later, out _));
         await server.DisposeAsync();
 
         using var hold = new ManualResetEventSlim(false);
@@ -356,6 +362,9 @@ public sealed class LeaseTests : IAsyncLifetime
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         _deployment.Time.Advance(TimeSpan.FromSeconds(6));
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(60));
+        await Deployment.WaitUntilAsync(() => LeaseApi.State(later) == 1);
+        await Task.Delay(200, TestContext.Current.CancellationToken);
         LeaseCallbacks.AfterHold = (client, lease);
         hold.Set();
         await destroy;
@@ -364,11 +373,12 @@ public sealed class LeaseTests : IAsyncLifetime
         (string seenId, int previous, int current, _, _, _) = Assert.Single(LeaseCallbacks.Changes());
         Assert.Equal((id, 0, 1), (seenId, previous, current));
         Assert.NotEqual(Environment.CurrentManagedThreadId, LeaseCallbacks.LastThread);
-        Assert.Equal([$"after state 1 id {id}"], LeaseCallbacks.Inside.ToArray());
+        Assert.Equal([$"after state 1 id {id} pin 0"], LeaseCallbacks.Inside.ToArray());
         _deployment.Time.Advance(TimeSpan.FromDays(1));
         await Task.Delay(100, TestContext.Current.CancellationToken);
         Assert.Single(LeaseCallbacks.Changes());
         LeaseApi.Free(lease);
+        LeaseApi.Free(later);
     }
 
     /// <summary>

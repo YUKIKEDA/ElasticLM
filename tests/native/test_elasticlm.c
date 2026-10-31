@@ -9,6 +9,8 @@
  *     Runs the verification tests and prints "ok" or "not ok" for each; exits 1 when one fails.
  *   test_elasticlm activation <library> <key folder> <root.pub.pem> <service URL> <license key>
  *     Runs the activation tests against the elm-service at the URL (design §17.5).
+ *   test_elasticlm lease <library> <key folder> <root.pub.pem> <server URL> <service URL> <license key>
+ *     Runs the lease tests against the elm-server (https) and the elm-service at the URLs (design §17.6).
  */
 /* With -std=c11, glibc declares POSIX functions such as sysconf only when asked to. */
 #if defined(__linux__)
@@ -75,6 +77,22 @@ static struct {
     elm_activation_state_fn activation_state;
     elm_activation_destroy_fn activation_destroy;
     elm_string_free_fn string_free;
+    elm_client_create_fn client_create;
+    elm_client_acquire_lease_fn client_acquire_lease;
+    elm_client_borrow_lease_fn client_borrow_lease;
+    elm_client_release_lease_fn client_release_lease;
+    elm_client_get_borrowed_leases_fn client_get_borrowed_leases;
+    elm_client_reset_server_pin_fn client_reset_server_pin;
+    elm_lease_id_fn lease_id;
+    elm_lease_feature_id_fn lease_feature_id;
+    elm_lease_expires_at_fn lease_expires_at;
+    elm_lease_seats_fn lease_seats;
+    elm_lease_is_borrow_fn lease_is_borrow;
+    elm_lease_state_fn lease_state;
+    elm_lease_last_error_fn lease_last_error;
+    elm_lease_free_fn lease_free;
+    elm_lease_list_free_fn lease_list_free;
+    elm_client_destroy_fn client_destroy;
 } elm;
 
 static int failures;
@@ -145,6 +163,22 @@ static int load(const char* path)
     LOAD(activation_state, "elm_activation_state");
     LOAD(activation_destroy, "elm_activation_destroy");
     LOAD(string_free, "elm_string_free");
+    LOAD(client_create, "elm_client_create");
+    LOAD(client_acquire_lease, "elm_client_acquire_lease");
+    LOAD(client_borrow_lease, "elm_client_borrow_lease");
+    LOAD(client_release_lease, "elm_client_release_lease");
+    LOAD(client_get_borrowed_leases, "elm_client_get_borrowed_leases");
+    LOAD(client_reset_server_pin, "elm_client_reset_server_pin");
+    LOAD(lease_id, "elm_lease_id");
+    LOAD(lease_feature_id, "elm_lease_feature_id");
+    LOAD(lease_expires_at, "elm_lease_expires_at");
+    LOAD(lease_seats, "elm_lease_seats");
+    LOAD(lease_is_borrow, "elm_lease_is_borrow");
+    LOAD(lease_state, "elm_lease_state");
+    LOAD(lease_last_error, "elm_lease_last_error");
+    LOAD(lease_free, "elm_lease_free");
+    LOAD(lease_list_free, "elm_lease_list_free");
+    LOAD(client_destroy, "elm_client_destroy");
     return 1;
 }
 
@@ -483,8 +517,170 @@ static void test_activation(const char* folder, const char* root_pem, const char
     elm.activation_destroy(NULL);
 }
 
+/* The lease callback of the lease test: counts the changes and keeps the last one. */
+static volatile int lease_changes;
+static volatile int32_t lease_last_current = -1;
+
+static void on_lease(void* user, const char* lease_id, int32_t previous, int32_t current, int32_t error, const char* message)
+{
+    (void)lease_id;
+    (void)previous;
+    (void)error;
+    (void)message;
+    if (user == (void*)&lease_changes) {
+        lease_changes++;
+        lease_last_current = current;
+    }
+}
+
+static void wait_seconds(int64_t seconds)
+{
+#if defined(_WIN32)
+    Sleep((DWORD)(seconds * 1000));
+#else
+    sleep((unsigned int)seconds);
+#endif
+}
+
+static elm_client* make_client(const char* folder, const char* root_pem, const char* url, const char* key)
+{
+    elm_client_options options;
+    memset(&options, 0, sizeof options);
+    options.struct_size = sizeof options;
+    options.product_id = "acme-cad";
+    options.server_url = url;
+    options.license_key = key;
+    options.root_keys_pem = &root_pem;
+    options.root_key_count = 1;
+    options.directory = folder;
+    options.on_lease = on_lease;
+    options.user = (void*)&lease_changes;
+    elm_client* client = NULL;
+    if (elm.client_create(&options, &client) != ELM_OK) {
+        fprintf(stderr, "elm_client_create: %s\n", elm.last_error_message());
+    }
+
+    return client;
+}
+
+/*
+ * Leases from an on-premises server over https and from the hosted service, from C (design §17.6).
+ * Preconditions: elm-server on https loopback, started by run.ps1 a moment ago with a server license of 15-second leases,
+ *   seats of pro, and borrows allowed; elm-service with a cloud-floating policy and a license whose key is passed in.
+ * Steps: on the server, acquire pro (refused while the server reclaims), wait retry_after_seconds, acquire again; read the
+ *   lease; release it; borrow pro for an hour and list the borrows; delete the server's pin; destroy. On the service,
+ *   acquire pro and release it; delete the pin. Call the remaining functions with NULL.
+ * Expected: ELM_SERVER_RECOVERING with retry_after_seconds > 0, then ELM_OK; feature pro, 1 seat, not a borrow, HELD, no
+ *   error, an expiry in the future; the release ELM_OK, RELEASED, and its callback before it returned; the borrow listed
+ *   with its ID; deleted 1 on the server and 0 on the service; ELM_INVALID_ARGUMENT or -1 for NULL handles.
+ */
+static void test_lease(const char* folder, const char* root_pem, const char* server_url, const char* service_url, const char* key)
+{
+    char server_folder[1024];
+    char service_folder[1024];
+    snprintf(server_folder, sizeof server_folder, "%s-server", folder);
+    snprintf(service_folder, sizeof service_folder, "%s-service", folder);
+
+    elm_client* client = make_client(server_folder, root_pem, server_url, NULL);
+    check(client != NULL, "client of the server created");
+    if (client == NULL) {
+        return;
+    }
+
+    elm_lease* lease = NULL;
+    int64_t retry = -1;
+    int32_t code = elm.client_acquire_lease(client, "pro", NULL, 1, &lease, &retry);
+    check(code == ELM_SERVER_RECOVERING && lease == NULL && retry > 0, "refused while the server reclaims, with retry_after");
+    if (retry > 0) {
+        wait_seconds(retry + 1);
+    }
+
+    code = elm.client_acquire_lease(client, "pro", NULL, 1, &lease, &retry);
+    check(code == ELM_OK && lease != NULL && retry == 0, "acquire over https");
+    if (lease == NULL) {
+        fprintf(stderr, "acquire: %s\n", elm.last_error_message());
+        elm.client_destroy(client);
+        return;
+    }
+
+    const char* id = NULL;
+    const char* feature = NULL;
+    int64_t expires = 0;
+    check(elm.lease_id(lease, &id) == ELM_OK && id != NULL && id[0] != '\0', "lease id");
+    check(elm.lease_feature_id(lease, &feature) == ELM_OK && strcmp(feature, "pro") == 0, "lease feature");
+    check(elm.lease_expires_at(lease, &expires) == ELM_OK && expires > 0, "lease expiry");
+    check(elm.lease_seats(lease) == 1 && elm.lease_is_borrow(lease) == 0, "lease seats and not a borrow");
+    check(elm.lease_state(lease) == ELM_LEASE_HELD && elm.lease_last_error(lease) == 0, "lease held");
+
+    int before = lease_changes;
+    check(elm.client_release_lease(client, lease) == ELM_OK && elm.lease_state(lease) == ELM_LEASE_RELEASED, "release");
+    check(lease_changes == before + 1 && lease_last_current == ELM_LEASE_RELEASED, "callback before release returned");
+    elm.lease_free(lease);
+
+    elm_lease* borrow = NULL;
+    check(elm.client_borrow_lease(client, "pro", 3600, NULL, 1, &borrow, NULL) == ELM_OK && elm.lease_is_borrow(borrow) == 1, "borrow");
+    elm_lease** borrowed = NULL;
+    size_t count = 0;
+    const char* borrow_id = NULL;
+    const char* listed_id = NULL;
+    check(elm.client_get_borrowed_leases(client, &borrowed, &count) == ELM_OK && count == 1 && elm.lease_id(borrow, &borrow_id) == ELM_OK
+              && elm.lease_id(borrowed[0], &listed_id) == ELM_OK && strcmp(borrow_id, listed_id) == 0,
+          "borrow listed");
+    elm.lease_list_free(borrowed, count);
+    elm.lease_free(borrow);
+
+    int32_t deleted = -1;
+    check(elm.client_reset_server_pin(client, server_url, &deleted) == ELM_OK && deleted == 1, "server pin deleted");
+    elm.client_destroy(client);
+
+    elm_client* hosted = make_client(service_folder, root_pem, service_url, key);
+    check(hosted != NULL, "client of the service created");
+    if (hosted != NULL) {
+        elm_lease* cloud = NULL;
+        check(elm.client_acquire_lease(hosted, "pro", NULL, 1, &cloud, NULL) == ELM_OK, "acquire from the service");
+        check(elm.client_release_lease(hosted, cloud) == ELM_OK, "release to the service");
+        elm.lease_free(cloud);
+        deleted = -1;
+        check(elm.client_reset_server_pin(hosted, service_url, &deleted) == ELM_OK && deleted == 0, "no pin for the service");
+        elm.client_destroy(hosted);
+    }
+
+    elm_lease* none = NULL;
+    check(elm.client_acquire_lease(NULL, "pro", NULL, 1, &none, NULL) == ELM_INVALID_ARGUMENT, "acquire with NULL");
+    check(elm.client_borrow_lease(NULL, "pro", 60, NULL, 1, &none, NULL) == ELM_INVALID_ARGUMENT, "borrow with NULL");
+    check(elm.client_release_lease(NULL, NULL) == ELM_INVALID_ARGUMENT, "release with NULL");
+    check(elm.client_get_borrowed_leases(NULL, &borrowed, &count) == ELM_INVALID_ARGUMENT, "borrow list with NULL");
+    check(elm.client_reset_server_pin(NULL, server_url, &deleted) == ELM_INVALID_ARGUMENT, "pin with NULL");
+    check(elm.lease_id(NULL, &id) == ELM_INVALID_ARGUMENT && elm.lease_feature_id(NULL, &feature) == ELM_INVALID_ARGUMENT
+              && elm.lease_expires_at(NULL, &expires) == ELM_INVALID_ARGUMENT,
+          "lease reads with NULL");
+    check(elm.lease_seats(NULL) == -1 && elm.lease_is_borrow(NULL) == -1 && elm.lease_state(NULL) == -1 && elm.lease_last_error(NULL) == -1,
+          "lease values of NULL");
+    elm.lease_free(NULL);
+    elm.lease_list_free(NULL, 0);
+    elm.client_destroy(NULL);
+}
+
 int main(int argc, char** argv)
 {
+    if (argc == 8 && strcmp(argv[1], "lease") == 0) {
+        if (!load(argv[2])) {
+            return 2;
+        }
+
+        size_t root_length = 0;
+        char* root = read_file(argv[4], &root_length);
+        if (root == NULL) {
+            fprintf(stderr, "cannot read %s\n", argv[4]);
+            return 1;
+        }
+
+        test_lease(argv[3], root, argv[5], argv[6], argv[7]);
+        free(root);
+        printf("1..%d\n", number);
+        return failures == 0 ? 0 : 1;
+    }
+
     if (argc == 7 && strcmp(argv[1], "activation") == 0) {
         if (!load(argv[2])) {
             return 2;
@@ -520,7 +716,7 @@ int main(int argc, char** argv)
     }
 
     if (argc != 8 || strcmp(argv[1], "verify") != 0) {
-        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound> | activation <library> <folder> <root.pub.pem> <url> <key>\n");
+        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound> | activation <library> <folder> <root.pub.pem> <url> <key> | lease <library> <folder> <root.pub.pem> <server url> <service url> <key>\n");
         return 2;
     }
 

@@ -216,22 +216,7 @@ internal static unsafe class LeaseCallbacks
             Inside.Enqueue("borrowed " + ((delegate* unmanaged<nint, nint*, nuint*, int>)&Exports.ClientGetBorrowedLeases)(c, &list, &count));
             ((delegate* unmanaged<nint, void>)&Exports.ClientDestroy)(c);
             Inside.Enqueue("state " + LeaseApi.State(l));
-            int deleted;
-            byte* url = stackalloc byte[]
-            {
-                (byte)'h',
-                (byte)'t',
-                (byte)'t',
-                (byte)'p',
-                (byte)'s',
-                (byte)':',
-                (byte)'/',
-                (byte)'/',
-                (byte)'x',
-                (byte)'/',
-                0,
-            };
-            Inside.Enqueue("pin " + ((delegate* unmanaged<nint, byte*, int*, int>)&Exports.ClientResetServerPin)(c, url, &deleted));
+            Inside.Enqueue("pin " + Pin(c));
 
             // The callback ends with a failure, so the caller's message must be put back.
             Inside.Enqueue(
@@ -244,7 +229,30 @@ internal static unsafe class LeaseCallbacks
         Hold?.Wait();
         if (AfterHold.Client != 0)
         {
-            Inside.Enqueue("after state " + LeaseApi.State(AfterHold.Lease) + " id " + LeaseApi.Id(AfterHold.Lease));
+            Inside.Enqueue(
+                "after state " + LeaseApi.State(AfterHold.Lease) + " id " + LeaseApi.Id(AfterHold.Lease) + " pin " + Pin(AfterHold.Client)
+            );
         }
+    }
+
+    // Deletes the pin of https://x/, which has none: 0 while the client handle is alive, 1 once it is freed.
+    private static int Pin(nint client)
+    {
+        int deleted;
+        byte* url = stackalloc byte[]
+        {
+            (byte)'h',
+            (byte)'t',
+            (byte)'t',
+            (byte)'p',
+            (byte)'s',
+            (byte)':',
+            (byte)'/',
+            (byte)'/',
+            (byte)'x',
+            (byte)'/',
+            0,
+        };
+        return ((delegate* unmanaged<nint, byte*, int*, int>)&Exports.ClientResetServerPin)(client, url, &deleted);
     }
 }

@@ -9,6 +9,8 @@
     - Runs the verification test in its two steps.
     - Starts elm-service on a free loopback port, makes a product, a feature, a policy, and a license with the setup key,
       and runs the activation test against it (design §17.5).
+    - Starts elm-server on a free https loopback port with a server license of 15-second leases bound to its key, makes a
+      cloud-floating license on elm-service, and runs the lease test against both (design §17.6).
     - Prints the library's runtime dependencies.
     Everything it makes goes in a temporary folder that it removes at the end (.cursor/rules/scratch.mdc).
 
@@ -21,15 +23,19 @@
 .PARAMETER Service
     The elm-service executable the activation test runs against.
 
+.PARAMETER Server
+    The elm-server executable the lease test runs against.
+
 .PARAMETER Publish
-    Publish the three with NativeAOT for this machine first, into the temporary folder, instead of taking -Library, -Elm,
-    and -Service. elm-service needs web/admin/dist (design §15.2).
+    Publish the four with NativeAOT for this machine first, into the temporary folder, instead of taking -Library, -Elm,
+    -Service, and -Server. elm-service needs web/admin/dist (design §15.2).
 #>
 [CmdletBinding()]
 param(
     [string]$Library,
     [string]$Elm,
     [string]$Service,
+    [string]$Server,
     [switch]$Publish
 )
 
@@ -75,14 +81,17 @@ try {
         Invoke-Checked 'Publishing elm-service' { dotnet publish (Join-Path $root 'src/ElasticLM.Service') -c Release -r $rid -o $out -nologo | Out-Host }
         $Library = Join-Path $out ($IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so'))
         $Elm = Join-Path $out ($IsWindows ? 'elm.exe' : 'elm')
+        Invoke-Checked 'Publishing elm-server' { dotnet publish (Join-Path $root 'src/ElasticLM.Server') -c Release -r $rid -o $out -nologo | Out-Host }
         $Service = Join-Path $out ($IsWindows ? 'elm-service.exe' : 'elm-service')
+        $Server = Join-Path $out ($IsWindows ? 'elm-server.exe' : 'elm-server')
     }
 
-    if (-not $Library -or -not $Elm -or -not $Service) { throw 'Pass -Library, -Elm, and -Service, or -Publish.' }
+    if (-not $Library -or -not $Elm -or -not $Service -or -not $Server) { throw 'Pass -Library, -Elm, -Service, and -Server, or -Publish.' }
     if ($IsWindows) { Import-MsvcEnvironment }
     $Library = (Resolve-Path $Library).Path
     $Elm = (Resolve-Path $Elm).Path
     $Service = (Resolve-Path $Service).Path
+    $Server = (Resolve-Path $Server).Path
     $header = Join-Path $root 'include/elasticlm.h'
 
     # design §17.3: the library's own exports must be the header's functions. The NativeAOT runtime also exports
@@ -138,11 +147,14 @@ try {
         # design §17.5: the activation test against elm-service with this run's keys, nonce secret, and SQLite database.
         # The C test gets the listening URL itself: without publicUrls, a proof's htu is compared with it, so 127.0.0.1
         # is not mixed with localhost.
-        $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-        $listener.Start()
-        $port = $listener.LocalEndpoint.Port
-        $listener.Stop()
-        $url = "http://127.0.0.1:$port"
+        function Get-FreePort {
+            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
+            $listener.Start()
+            $free = $listener.LocalEndpoint.Port
+            $listener.Stop()
+            $free
+        }
+        $url = "http://127.0.0.1:$(Get-FreePort)"
         $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
         $env:ELM_NONCE_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
         $env:ELM_SIGNING_KEY = Join-Path $work 'signing.key.pem'
@@ -174,6 +186,46 @@ try {
 
             & $test activation $Library (Join-Path $work 'activation') (Join-Path $work 'root.pub.pem') $url $licenseKey
             if ($LASTEXITCODE -ne 0) { throw 'The C activation test failed.' }
+
+            # design §17.6: a cloud-floating license on the service, and elm-server on https with its own self-signed
+            # certificate. The server's data folder is not made here: the server makes it 0700, and ProtectedFiles refuses
+            # a folder that group or other can write.
+            $cloud = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"cloud`",`"floating`":`"cloud`"}").id
+            $leaseKey = (Add-AdminRecord 'licenses' "{`"policyId`":`"$cloud`",`"name`":`"lease`",`"features`":[{`"code`":`"pro`",`"seats`":2}]}").key
+            $serverUrl = "https://127.0.0.1:$(Get-FreePort)"
+            $env:ELM_LISTEN = $serverUrl
+            $env:ELM_ADMIN_LISTEN = "http://127.0.0.1:$(Get-FreePort)"
+            $env:ELM_DATADIRECTORY = Join-Path $work 'server-data'
+            $env:ELM_PRODUCT = 'acme-cad'
+            $env:ELM_LICENSE = Join-Path $work 'server.elmlic'
+
+            # Without its license the server stops at once and names its installation key, which it has just made.
+            $refusal = (& $Server 2>&1 | Out-String)
+            if ($refusal -notmatch 'installation key ([A-Za-z0-9_-]{43})') { $refusal; throw 'elm-server did not name its installation key.' }
+            $serverKey = $Matches[1]
+            Invoke-Checked 'elm license issue (server)' {
+                & $Elm license issue --signing-key signing.key.pem --certificate signing.cert --product acme-cad --license-id c-server --kind server `
+                    --feature 'pro;seats=3' --expires $expires --bind-key $serverKey --lease-minutes 0.25 --borrow-days 1 --trust root.pub.pem `
+                    --out server.elmlic | Out-Null
+            }
+
+            $serverProcess = Start-Process $Server -PassThru -NoNewWindow
+            try {
+                # elm-server has no /health; its license endpoint answers once it listens.
+                $ready = $false
+                for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
+                    try { $ready = (Invoke-WebRequest "$serverUrl/v1/server/license" -SkipCertificateCheck -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
+                    if (-not $ready) { Start-Sleep -Seconds 1 }
+                }
+                if (-not $ready) { throw 'elm-server did not answer /v1/server/license.' }
+
+                & $test lease $Library (Join-Path $work 'lease') (Join-Path $work 'root.pub.pem') $serverUrl $url $leaseKey
+                if ($LASTEXITCODE -ne 0) { throw 'The C lease test failed.' }
+            }
+            finally {
+                Stop-Process -Id $serverProcess.Id -ErrorAction SilentlyContinue
+                $serverProcess.WaitForExit()
+            }
         }
         finally {
             # Windows keeps the SQLite file open until the process ends, so the folder is removed only after that.
