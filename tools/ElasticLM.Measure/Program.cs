@@ -242,8 +242,39 @@ internal sealed class LeaseChecker : IDisposable
 /// </summary>
 internal static class Activations
 {
+    // The requests and the flushes listed one by one: those slower than these.
+    private const double SlowMilliseconds = 50;
+    private const double SlowFlushMilliseconds = 20;
+
     // design §12.2: a nonce lives 300 seconds; every one must still be alive when it is used.
     private static readonly TimeSpan NonceLifetime = TimeSpan.FromSeconds(300);
+
+    // Writes 4 KiB and flushes it to the disk every 50 ms until stopped, and returns when each flush began and how long it took.
+    private static async Task<List<(double At, double Milliseconds)>> SampleFlushes(string path, long start, CancellationToken stop)
+    {
+        var times = new List<(double, double)>();
+        byte[] block = new byte[4096];
+        await using var file = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None, 1, FileOptions.None);
+        while (!stop.IsCancellationRequested)
+        {
+            double at = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
+            long begin = TimeProvider.System.GetTimestamp();
+            file.Position = 0;
+            file.Write(block);
+            file.Flush(flushToDisk: true);
+            times.Add((at, TimeProvider.System.GetElapsedTime(begin).TotalMilliseconds));
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(50), TimeProvider.System, stop);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+        }
+
+        return times;
+    }
 
     public static async Task<int> RunAsync(HttpClient http, Dictionary<string, string> options, Utf8JsonWriter writer)
     {
@@ -265,7 +296,16 @@ internal static class Activations
 
             var activated = new Latencies();
             var lag = new Lag();
+            var slow = new List<(double At, double Milliseconds, int InFlight)>();
+            int inFlight = 0;
+            using var stop = new CancellationTokenSource();
             long start = TimeProvider.System.GetTimestamp();
+
+            // Issue #182 (the p99 that missed its target): a disk-flush sampler beside the load, on the same disk as the
+            // service's database, to tell a slow flush from a wait for SQLite's write lock.
+            Task<List<(double At, double Milliseconds)>> flushes = Task.Run(() =>
+                SampleFlushes(Path.Combine(work, "flush.probe"), start, stop.Token)
+            );
 
             // Request k is sent at k / rate seconds, whether or not the ones before it have been answered.
             await Task.WhenAll(
@@ -273,13 +313,24 @@ internal static class Activations
                     (device, k) =>
                         Task.Run(async () =>
                         {
-                            await lag.UntilAsync(start, TimeSpan.FromSeconds(k / rate));
+                            var at = TimeSpan.FromSeconds(k / rate);
+                            await lag.UntilAsync(start, at);
                             string fingerprint = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
+                            Interlocked.Increment(ref inFlight);
                             Answer answer = await device.PostAsync(
                                 "v1/activations",
                                 $$"""{"licenseKey":"{{key}}","product":"acme-cad","fingerprints":["{{fingerprint}}"]}""",
                                 includeKey: true
                             );
+                            int others = Interlocked.Decrement(ref inFlight);
+                            if (answer.Milliseconds > SlowMilliseconds)
+                            {
+                                lock (slow)
+                                {
+                                    slow.Add((at.TotalSeconds, answer.Milliseconds, others));
+                                }
+                            }
+
                             if (answer.Code is string refused)
                             {
                                 activated.Failed(refused);
@@ -291,6 +342,8 @@ internal static class Activations
                         })
                 )
             );
+            await stop.CancelAsync();
+            List<(double At, double Milliseconds)> flushTimes = await flushes;
 
             TimeSpan nonceWindow = TimeProvider.System.GetElapsedTime(noncesStart);
             writer.WriteNumber("keysSeconds", Math.Round(keysSeconds, 1));
@@ -298,6 +351,40 @@ internal static class Activations
             writer.WriteNumber("runSeconds", Math.Round(TimeProvider.System.GetElapsedTime(start).TotalSeconds, 1));
             writer.WriteNumber("maxSendLagMs", Math.Round(lag.Max.TotalMilliseconds, 1));
             activated.Write(writer, "activate");
+
+            // The slow requests: when each was sent, how long it took, and how many others were in flight as it ended.
+            writer.WriteStartArray("slow");
+            foreach ((double sentAt, double milliseconds, int others) in slow.OrderBy(s => s.At))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("atS", Math.Round(sentAt, 2));
+                writer.WriteNumber("ms", Math.Round(milliseconds, 1));
+                writer.WriteNumber("inFlight", others);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            double[] sortedFlushes = [.. flushTimes.Select(f => f.Milliseconds).Order()];
+            writer.WriteStartObject("flush");
+            writer.WriteNumber("count", sortedFlushes.Length);
+            if (sortedFlushes.Length > 0)
+            {
+                writer.WriteNumber("p50Ms", Math.Round(Latencies.Percentile(sortedFlushes, 0.50), 2));
+                writer.WriteNumber("p99Ms", Math.Round(Latencies.Percentile(sortedFlushes, 0.99), 2));
+                writer.WriteNumber("maxMs", Math.Round(sortedFlushes[^1], 2));
+            }
+
+            writer.WriteStartArray("slow");
+            foreach ((double flushedAt, double milliseconds) in flushTimes.Where(f => f.Milliseconds > SlowFlushMilliseconds))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("atS", Math.Round(flushedAt, 2));
+                writer.WriteNumber("ms", Math.Round(milliseconds, 1));
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+            writer.WriteEndObject();
             return nonceWindow < NonceLifetime ? 0 : 1;
         }
         finally

@@ -70,6 +70,10 @@ if ($runs.Count -gt 0) {
     Add-Record 'activation max, 50/s for 60 s' 'ms' @($runs | ForEach-Object { $_.activations.activate.maxMs }) 'N2'
     Add-Target 'activations: failed' '' @($runs | ForEach-Object { $_.activations.activate.failed }) 0 'N0'
     Add-Target 'activations: send lag' 'ms' @($runs | ForEach-Object { $_.activations.maxSendLagMs }) 1000
+    # Issue #182: what the slow activations coincide with.
+    Add-Record 'activations slower than 50 ms' '' @($runs | ForEach-Object { @($_.activations.slow).Count }) 'N0'
+    Add-Record 'disk flush p99 during the activations' 'ms' @($runs | ForEach-Object { $_.activations.flush.p99Ms }) 'N2'
+    Add-Record 'disk flush max during the activations' 'ms' @($runs | ForEach-Object { $_.activations.flush.maxMs }) 'N2'
     Add-Record 'activation p50, JIT (M4b1)' 'ms' @($runs | ForEach-Object { $_.jit.activations.activate.p50Ms }) 'N2'
     Add-Record 'activation p99, JIT (M4b1)' 'ms' @($runs | ForEach-Object { $_.jit.activations.activate.p99Ms }) 'N2'
     Add-Record 'activation max, JIT (M4b1)' 'ms' @($runs | ForEach-Object { $_.jit.activations.activate.maxMs }) 'N2'

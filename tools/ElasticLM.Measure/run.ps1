@@ -84,7 +84,7 @@ function Write-Settings([string]$name, $settings) {
 $measureCpus = '0,1'
 $loadCpus = '2,3'
 if ($IsLinux) {
-    $siblings = @(Get-ChildItem /sys/devices/system/cpu -Directory -Filter 'cpu[0-9]*' | ForEach-Object { (Get-Content (Join-Path $_.FullName 'topology/thread_siblings_list')).Trim() } | Sort-Object -Unique)
+    $siblings = @(Get-ChildItem /sys/devices/system/cpu -Directory | Where-Object Name -Match '^cpu\d+$' | ForEach-Object { (Get-Content (Join-Path $_.FullName 'topology/thread_siblings_list')).Trim() } | Sort-Object -Unique)
     $results.topology = [ordered]@{ cpus = [Environment]::ProcessorCount; threadSiblings = $siblings }
     $expand = { param($list) @($list -split ',' | ForEach-Object { if ($_ -match '^(\d+)-(\d+)$') { [int]$Matches[1]..[int]$Matches[2] } else { [int]$_ } }) }
     if ($siblings.Count -ge 2 -and (& $expand $siblings[0]).Count -eq 2) {
