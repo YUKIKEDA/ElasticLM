@@ -15,7 +15,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** V1（端から端までのテスト、計測、文書、安全性の見直し、v1 の公開）
+- **フェーズ:** V1a（端から端までのテスト。その前に Issue #106 を直す。V1 の分け方は design.ja.md 0.112）
 - **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）、M4b2（[#66](https://github.com/YUKIKEDA/ElasticLM/issues/66)）、M4c1（[#70](https://github.com/YUKIKEDA/ElasticLM/issues/70)）、M4c2（[#74](https://github.com/YUKIKEDA/ElasticLM/issues/74)）、M4c3（[#78](https://github.com/YUKIKEDA/ElasticLM/issues/78)）、M4d1（[#82](https://github.com/YUKIKEDA/ElasticLM/issues/82)）、M4d2（[#86](https://github.com/YUKIKEDA/ElasticLM/issues/86)）、M4d3（[#90](https://github.com/YUKIKEDA/ElasticLM/issues/90)）、W0（[#94](https://github.com/YUKIKEDA/ElasticLM/issues/94)）、M5a（[#102](https://github.com/YUKIKEDA/ElasticLM/issues/102)）、M5b（[#109](https://github.com/YUKIKEDA/ElasticLM/issues/109)）、M5c（[#116](https://github.com/YUKIKEDA/ElasticLM/issues/116)）、M5d1（[#125](https://github.com/YUKIKEDA/ElasticLM/issues/125)）、M5d2（[#129](https://github.com/YUKIKEDA/ElasticLM/issues/129)）、M6a（[#137](https://github.com/YUKIKEDA/ElasticLM/issues/137)）、M6b（[#141](https://github.com/YUKIKEDA/ElasticLM/issues/141)）、M6c（[#145](https://github.com/YUKIKEDA/ElasticLM/issues/145)）、F1（[#149](https://github.com/YUKIKEDA/ElasticLM/issues/149)）、F2（[#157](https://github.com/YUKIKEDA/ElasticLM/issues/157)）
 
 ## v1 まで
@@ -52,7 +52,11 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | M6c | `libelasticlm` のリース（`elm_client`。オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去、C のスレッドが終わったときのスレッドごとの記録の確かめ。決めた形は design.ja.md 0.107） | done        | [#145](https://github.com/YUKIKEDA/ElasticLM/issues/145) |
 | F1  | リリース基盤（release.yml、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`。決めた形は design.ja.md 0.109） | done        | [#149](https://github.com/YUKIKEDA/ElasticLM/issues/149) |
 | F2  | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明。決めた形は design.ja.md 0.111） | done        | [#157](https://github.com/YUKIKEDA/ElasticLM/issues/157) |
-| V1  | 端から端までのテスト、§4.2 の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | not-started | —     |
+| V1a | 端から端までのテスト（`tests/ElasticLM.E2E`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1b | §4.2 の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c | 文書とサンプル（Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1e | v1 の公開（`1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 
 ## v1 の後
 

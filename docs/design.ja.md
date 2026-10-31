@@ -180,6 +180,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.109 | リリースの経路 | F1 で、0.104 と 0.108 の上に次を決めた。リリースは `release.yml` の 1 つのワークフローで、`v*` のタグの push、`workflow_dispatch`、すべての PR（公開しない試し）で動く。版は `VersionPrefix` を正とし、タグと `CHANGELOG.md` の節を確かめる。.NET SDK の版はワークフローの 1 つの値で固定する。7 つの RID は、`win-arm64` を arm64 の Windows のランナーで、`linux-x64` と `linux-arm64` を `almalinux:8` のコンテナ（glibc 2.28 から動く。持ち主の決定）で、`linux-musl-x64` を SDK の Alpine の AOT のイメージで、`osx-x64` を arm64 の macOS からのクロスコンパイルで作る。CI と同じ検査（単一バイナリ、実行時の依存、glibc の版、macOS の署名、§4.2 の大きさ、警告）を 1 つのスクリプトで両方に当て、スモークテストと C のテストを 7 つの RID で動かす。配布物は実行ファイルと RID ごとの圧縮ファイル、`-symbols` の圧縮ファイル、その実行のコミットの SBOM（自前のスクリプト。依存グラフは NuGet の版を読めなかったので、持ち主の決定で替えた）、`SHA256SUMS`、来歴の証明（`actions/attest`）。NuGet は 2 つのパッケージを検査し、パッケージだけを参照するアプリを 3 つの OS で NativeAOT で発行する。公開は、下書きの Release のあと、environment `release` の承認で、下書きのファイルを NuGet に push して Release を公開する。持ち主の設定の手順は `docs/releasing.md`、利用者の確かめ方は `SECURITY.md`（§4.1、§20.5。F1 の Grill の Q1〜Q16、PR #151 の R1・R11、PR #154 の glibc の下限、Issue #149） |
 | 0.110 | コンテナのレジストリの経路の脅威 | F2 の Grill（Issue #157）で、`elm-service` のコンテナイメージを GHCR に公開する経路を作る前に、その脅威を脅威モデルに足した（0.108 で F2 に送ったもの）。守るものの「配布物と公開の権限」にイメージと GHCR に push する権限を足し、攻撃者に、ベースのイメージを乗っ取った者（A13 を広げた）と、イメージを取る経路でイメージをすり替える者（A14 を広げた）を入れた。脅威 T26（GHCR のタグの付け替えとイメージのすり替え）と T27（ベースのイメージの乗っ取り）を足し、受け入れる脅威（GHCR のタグは書き換えられること、ベースのイメージの脆弱性は次の版まで直らないこと）を足した。イメージは `contents: read` のジョブで OCI layout として作り、試し、承認のあとの公開のジョブはそれをダイジェストを変えずに push して証明を付けるだけにする（T22 も直した）。ベースは Dockerfile にダイジェストで固定して Dependabot が上げ、署名は確かめずに Microsoft の配布を信じる。（§5、F2 の Grill の Q1〜Q7・Q12 と、設計のレビューの 3 つの持ち主の決定、Issue #166） |
 | 0.111 | `elm-service` のコンテナイメージ | F2 で、0.108〜0.110 の上に次を決めた。イメージは `ghcr.io/yukikeda/elm-service` で、`linux/amd64` と `linux/arm64` の OCI の index。`runtime-deps:10.0-noble-chiseled` をダイジェストで固定したベースに、同じ実行の F1 の配布物の `elm-service`、`LICENSE`、空の `/data` だけを `COPY` し、UID 1654 で動かす。イメージが足す環境変数は `ELM_LISTEN=http://0.0.0.0:8080` で、ベースの `ASPNETCORE_HTTP_PORTS` は空にし、`HEALTHCHECK` は書かない。`contents: read` のジョブで OCI layout を作り、2 つのアーキテクチャのランナーで起動、`/health`、UID、実行ファイルの SHA-256、足したファイルを確かめ、承認のあとの公開のジョブがそれをダイジェストを変えずに push して来歴の証明を付ける。タグは版と、正式版の `latest`。設定ファイルに `signing.passphraseFile` を足し、すべての秘密をファイルで渡せるようにする。ベースのダイジェストは Dependabot が上げる。GHCR へのログインは `docker login` の run の段で行い、第三者のアクションを足さない（§20.6。F2 の Grill の Q1〜Q12、PR #167 と PR #170 の持ち主の決定、Issue #157） |
+| 0.112 | V1 の分け方と最初の版 | V1 の Grill（Issue #173、Q1〜Q3）で決めた。V1 を、V1a 端から端までのテスト、V1b 参照機での計測、V1c 文書とサンプル、V1d 安全性の見直し、V1e v1 の公開の 5 行に分け、この順に進める。安全性の見直しを公開の直前に置き、V1a〜V1c のコード・テスト・計測・文書を見直す。V1d の見つけたものがすべて直るか §5.4 に受け入れた脅威として書かれるまで、V1e は公開しない。各行の Grill で決める点と行をまたぐ決まりは §20.7。V1a の前に、時々落ちるテスト（Issue #106）を独立したバグの PR で直す。最初の正式版は `1.0.0` で、先に `1.0.0-rc.1` を出して公開の経路を確かめる（§20.5）。V1e で `VersionPrefix` を `1.0.0` にし、`1.0` より前の決まりを `CHANGELOG.md` と `CONTRIBUTING.md` から外す。退けた案は design-decisions.md |
 
 ## 1. 目的と利用者
 
@@ -315,17 +316,17 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 
 10,000 件のリースを既定のリース期間 10 分・更新間隔 1/3 で持つと、更新は $10000 / 200\,\mathrm{s} = 50$ 件/秒になる。
 
-M3b（Issue #21）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1 の行）:
+M3b（Issue #21）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1b の行）:
 
 - `elm-server` の大きさは 11.4 MB（11,430,912 バイト）。
 - 起動から待ち受けまで、サーバーの記録では 51 ms。プロセスの起動から最初の HTTPS の応答までを外から測ると、5 回で 524〜639 ms だった（PowerShell の `Invoke-WebRequest` の待ちを含む）。
-- 更新 1 件のサーバー側の処理は、証明の検証が約 120 µs、リースの規則と新しいトークンの署名が 322〜415 µs（4 回の実行、各 1,000 回の平均）で、合わせて約 0.45〜0.54 ms（`samples/VerifyLicense --self-test`）。50 件/秒なら 1 コアの約 2.7 % 以下である（$50 \times 0.54\,\mathrm{ms} = 27\,\mathrm{ms/s}$）。10,000 件を同時に持つときの p99 とメモリは V1 で測る。
+- 更新 1 件のサーバー側の処理は、証明の検証が約 120 µs、リースの規則と新しいトークンの署名が 322〜415 µs（4 回の実行、各 1,000 回の平均）で、合わせて約 0.45〜0.54 ms（`samples/VerifyLicense --self-test`）。50 件/秒なら 1 コアの約 2.7 % 以下である（$50 \times 0.54\,\mathrm{ms} = 27\,\mathrm{ms/s}$）。10,000 件を同時に持つときの p99 とメモリは V1b で測る。
 
-M4a1（Issue #46）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1 の行）:
+M4a1（Issue #46）の実測（Windows、win-x64、NativeAOT。参照機での計測は V1b の行）:
 
 - `elm-service` は 19.8 MB（19,784,192 バイト。AuraORM を入れる前は 19,079,168 バイト）。§4.2 の目標 40 MB 以下に収まる。横に SQLite のライブラリは置かない。
 - 起動から待ち受けまで、サービスの記録で 185〜225 ms（SQLite、移行の済んだデータベース、3 回）。
-- PostgreSQL 18 では、起動から待ち受けまでサービスの記録で 270〜463 ms（GitHub Actions の `ubuntu-latest`、linux-x64、同じ端末のコンテナー、移行の済んだデータベース。CI の `aot` の「Measure elm-service on PostgreSQL」の 2 回の実行で、各 3 回の起動: 463 / 437 / 446 ms と 270 / 291 / 281 ms）。runner は実行ごとに違う端末なので幅が広い。参照機の値は V1 の行で測る。端末が違うので、上の SQLite の値とは比べない。
+- PostgreSQL 18 では、起動から待ち受けまでサービスの記録で 270〜463 ms（GitHub Actions の `ubuntu-latest`、linux-x64、同じ端末のコンテナー、移行の済んだデータベース。CI の `aot` の「Measure elm-service on PostgreSQL」の 2 回の実行で、各 3 回の起動: 463 / 437 / 446 ms と 270 / 291 / 281 ms）。runner は実行ごとに違う端末なので幅が広い。参照機の値は V1b の行で測る。端末が違うので、上の SQLite の値とは比べない。
 - 監査ログを書く管理 API の 1 件（API キーの作成。認証の検索、キーと監査ログの行の追記、1 つのトランザクション）は 1.05〜1.11 ms（SQLite、JIT の Release、ループバックの HTTP を含む、3 回の実行で各 200 件の平均）。同じビルドで SQLite を先行書き込みログ（WAL）にしないと 3.7〜5.0 ms になる。WAL ではコミットごとのディスクへの書き出しが 1 つのファイルで済むためで、WAL にする前の手書きの SQL の版は 3.1〜3.5 ms だった。
 
 M4a2（Issue #54）の実測（同じ条件）:
@@ -342,7 +343,7 @@ M4a3（Issue #58）の実測（同じ条件）:
 M4b1（Issue #60）の実測（同じ条件）:
 
 - `elm-service` は 21.6 MB（21,575,680 バイト）。M4a3 の最終版（main の `8b482ea`、20,912,640 バイト）より 663,040 バイト大きい。ILC のマップで分けると、端末の要求と管理 API の処理、保存先のコード（GC の情報を含む）が約 157 KB、新しい型（行、要求と応答の型、非同期の状態機械）の型の情報と AuraORM のジェネリックのインスタンスが約 190 KB、新しく使う BCL の部分（LINQ など）が約 50 KB、メタデータが約 24 KB で、残りはハッシュ表と凍結したオブジェクトの領域、セクションの詰め物である。§4.2 の目標 40 MB 以下に収まる。
-- 有効化（§12.6.1）を 50 件/秒で 60 秒（3,000 件、各件は新しいインストール鍵、1 つのライセンス）、3 回: p50 は 4.28〜4.35 ms、p99 は 8.66〜10.39 ms、最大は 27.5〜46.7 ms（SQLite、JIT の Release、ループバックの HTTP を含む）。端末は前もってノンスを得ておき、証明を作るところから応答までを測った。1 件は、証明の検証、`jti` の記録、キーとポリシーと製品の読み取り、ライセンスの行のロックと数え上げ、ファイルの署名と、トラストストアでの確かめ、有効化と監査ログの行の追記である。§4.2 の目標（p99 200 ms 以下）に収まる。参照機での計測は V1 の行で行う。
+- 有効化（§12.6.1）を 50 件/秒で 60 秒（3,000 件、各件は新しいインストール鍵、1 つのライセンス）、3 回: p50 は 4.28〜4.35 ms、p99 は 8.66〜10.39 ms、最大は 27.5〜46.7 ms（SQLite、JIT の Release、ループバックの HTTP を含む）。端末は前もってノンスを得ておき、証明を作るところから応答までを測った。1 件は、証明の検証、`jti` の記録、キーとポリシーと製品の読み取り、ライセンスの行のロックと数え上げ、ファイルの署名と、トラストストアでの確かめ、有効化と監査ログの行の追記である。§4.2 の目標（p99 200 ms 以下）に収まる。参照機での計測は V1b の行で行う。
 
 M4b2（Issue #66）の実測（Windows、win-x64、JIT の Release、ループバックの `elm-service`（SQLite）を相手に、各 200 件の平均、3 回の実行で各 3 回）:
 
@@ -624,7 +625,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | T23 | 公開の資格情報の盗用 | A12 | NuGet への公開は Trusted Publishing（GitHub の OIDC のトークンを、そのたびに 1 時間有効の一時の API キーに換える）にし、長く使える API キーを GitHub にも手元にも置かず、盗む資格情報を残さない。nuget.org のポリシーは、このリポジトリ・`release.yml`・environment `release` に限り、範囲を `ElasticLM.*` のパッケージに絞る（ポリシーは ref に縛れないので、ref は T22 の environment で絞る）。GitHub と nuget.org のアカウントには二要素認証（パスキー）を使う。公開の前に、持ち主が下書きの Release を見て environment を承認する（F1、https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing ） |
 | T24 | 配布物のすり替え | A14（A12 によるものは T23、持ち主のアカウントそのものの奪取は §5.4） | GitHub Release の配布物ごとの SHA-256 を `SHA256SUMS` に載せ、配布物と `SHA256SUMS` に GitHub の artifact attestation（Sigstore の来歴の証明）を付ける。利用者は `gh attestation verify <ファイル> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で、このリポジトリのリリースのワークフローがそのタグから作ったことを確かめられる（`--repo` だけでは署名したワークフローを確かめないので、コマンドは文書に書く）。公開した Release は immutable にし、タグとファイルを持ち主にも変えられなくする。下書きにすべてのファイルを付けてから公開する。NuGet パッケージは nuget.org のリポジトリの署名を持つ（nuget.org から取ったことを示し、作り手は示さない）。nuget.org は push したパッケージすべてに署名を足すので、CI で付けた証明とは照らせない。配布物はリリースのワークフローだけが作り、手元で作った物は置かない（F1、https://docs.github.com/en/actions/concepts/security/artifact-attestations 、https://cli.github.com/manual/gh_attestation_verify 、https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases 、https://learn.microsoft.com/en-us/nuget/reference/signed-packages-reference ） |
 | T25 | ビルドとリリースの道具の乗っ取り | A13 | アクションは SHA で固定し、固定する SHA はそのアクションのリポジトリのタグを指すことを確かめ（フォークにだけあるコミットも `uses:` で解決されるため）、版をコメントで添える。公開の資格情報に触るアクション（NuGet の Trusted Publishing のログイン、`actions/attest`）は名指しで確かめる。GHCR へのログインはアクションを使わず、`docker login` の run の段で行う（§20.6）。Dependabot の更新は PR でレビューし、`cooldown` で出たばかりの版を待つ（T21 の `minimumReleaseAge` と同じ考え）。NuGet の依存は `Directory.Packages.props` で版を固定し、nuget.org は同じ版の上書きを許さない（中身のハッシュは固定しない）。`linux-musl-x64` を作る Alpine のイメージはダイジェストで固定する。SQLite はリポジトリに入れたアマルガメーションから毎回作る（0.72）。SDK とランナーのイメージは、Microsoft と GitHub の配布をそのまま信じる（§5.4 の GitHub の侵害の行）。管理画面の依存は T21（F1、https://docs.github.com/en/actions/reference/security/secure-use ） |
-| T26 | GHCR のタグの付け替えとイメージのすり替え | A12, A14 | イメージは `contents: read` のビルドのジョブで OCI layout として作り、同じ実行の artifact で渡し、試しのジョブが 2 つのアーキテクチャで起動して確かめる。公開のジョブはその layout を、ダイジェストを変えずに push し、証明を付けるだけで、BuildKit もベースのイメージの取得も行わない（T22、持ち主の決定）。イメージを GHCR に push するのは environment `release` の承認のあとの公開のジョブだけで、`packages: write` もそのジョブだけが持つ。PR と `workflow_dispatch` の試しはイメージを作って確かめるだけで、push しない（証明もレジストリのイメージに付けるので、試しでは作らない）。ワークフローが公開した package ではリポジトリが admin の役割になるので、`packages: write` を公開のジョブのほかに与えないことが、削除と付け替えの守りになる（https://docs.github.com/en/packages/learn-github-packages/deleting-and-restoring-a-package ）。package はリポジトリからアクセスを引き継ぎ（書き込みの権限は持ち主だけ）、Actions のアクセスはこのリポジトリだけに与える（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）。GitHub Packages の認証は classic の PAT だけで、`write:packages` を持つ PAT を盗んだ者はワークフローを通さずに push し、タグを付け替えられる（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。持ち主は `write:packages` と `delete:packages` の classic の PAT を作らない。証明の subject は、2 つのアーキテクチャをまとめた index のダイジェストである。利用者は `gh attestation verify oci://ghcr.io/yukikeda/elm-service:<版> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で確かめ、確かめた index のダイジェスト（`@sha256:`）で固定する。gh は証明を既定で GitHub の API から取り、OCI の URL ではそのレジストリへの認証を求める（https://cli.github.com/manual/gh_attestation_verify ）。`--bundle-from-oci` を付ければ、`push-to-registry` で置いた証明をレジストリから取る。このコマンドは V1 の初めての公開で、public にする前と後に試し、`SECURITY.md` に書く。正しく証明された古い版に `latest` を付け替えることもできるので、`--source-ref` には期待する版のタグを渡す。`latest` で取ったイメージは、どの版かを照らせない。似た名前のイメージや、ラベル（`org.opencontainers.image.source`）でこのリポジトリを名乗るイメージは、`--repo` と `--signer-workflow` の確かめで断られる。文書はイメージの名前を `ghcr.io/yukikeda/elm-service` だけと書き、ラベルを信じない。最初に公開した package は private で、public にする操作は取り消せないので、持ち主が V1 の命令を受けてから手で行う（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）（F2） |
+| T26 | GHCR のタグの付け替えとイメージのすり替え | A12, A14 | イメージは `contents: read` のビルドのジョブで OCI layout として作り、同じ実行の artifact で渡し、試しのジョブが 2 つのアーキテクチャで起動して確かめる。公開のジョブはその layout を、ダイジェストを変えずに push し、証明を付けるだけで、BuildKit もベースのイメージの取得も行わない（T22、持ち主の決定）。イメージを GHCR に push するのは environment `release` の承認のあとの公開のジョブだけで、`packages: write` もそのジョブだけが持つ。PR と `workflow_dispatch` の試しはイメージを作って確かめるだけで、push しない（証明もレジストリのイメージに付けるので、試しでは作らない）。ワークフローが公開した package ではリポジトリが admin の役割になるので、`packages: write` を公開のジョブのほかに与えないことが、削除と付け替えの守りになる（https://docs.github.com/en/packages/learn-github-packages/deleting-and-restoring-a-package ）。package はリポジトリからアクセスを引き継ぎ（書き込みの権限は持ち主だけ）、Actions のアクセスはこのリポジトリだけに与える（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）。GitHub Packages の認証は classic の PAT だけで、`write:packages` を持つ PAT を盗んだ者はワークフローを通さずに push し、タグを付け替えられる（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。持ち主は `write:packages` と `delete:packages` の classic の PAT を作らない。証明の subject は、2 つのアーキテクチャをまとめた index のダイジェストである。利用者は `gh attestation verify oci://ghcr.io/yukikeda/elm-service:<版> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で確かめ、確かめた index のダイジェスト（`@sha256:`）で固定する。gh は証明を既定で GitHub の API から取り、OCI の URL ではそのレジストリへの認証を求める（https://cli.github.com/manual/gh_attestation_verify ）。`--bundle-from-oci` を付ければ、`push-to-registry` で置いた証明をレジストリから取る。このコマンドは V1e の初めての公開で、public にする前と後に試し、`SECURITY.md` に書く。正しく証明された古い版に `latest` を付け替えることもできるので、`--source-ref` には期待する版のタグを渡す。`latest` で取ったイメージは、どの版かを照らせない。似た名前のイメージや、ラベル（`org.opencontainers.image.source`）でこのリポジトリを名乗るイメージは、`--repo` と `--signer-workflow` の確かめで断られる。文書はイメージの名前を `ghcr.io/yukikeda/elm-service` だけと書き、ラベルを信じない。最初に公開した package は private で、public にする操作は取り消せないので、持ち主が V1e の命令を受けてから手で行う（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）（F2） |
 | T27 | ベースのイメージの乗っ取り | A13 | ベースのイメージ（`mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`）は Dockerfile の `FROM` にダイジェストつきで書き、イメージはそのベースに F1 の配布物（同じ実行で作り、検査し、`SHA256SUMS` と証明に載せた `elm-service`）を `COPY` するだけで作る。ビルドの文脈には同じ実行の配布物と `LICENSE` だけを置き、秘密も `ARG` の秘密も渡さない。イメージに入るのは `elm-service`、`LICENSE`、空の `/data` だけで、F2 の試しで層の中身と、イメージの中の `elm-service` の SHA-256 が配布物と同じことを確かめる。そのため、ベースのイメージは実行ファイルのバイト列を変えられない。ただし、ベースの glibc と libssl は `elm-service` のプロセスに読み込まれ（.NET の Linux の暗号は OpenSSL を実行の時に読み込む）、CA の束は外への TLS の信頼を決めるので、ベースを乗っ取った者はベンダーの署名鍵と鍵暗号化鍵を読める（§5.1）。守りはダイジェストでの固定と、固定を上げるときの確かめに頼る。ダイジェストは Dependabot の `docker` が PR で上げ（タグが同じでもダイジェストだけを上げる。https://github.com/dependabot/dependabot-core/blob/main/docker/lib/dependabot/docker/update_checker.rb ）、持ち主が PR で確かめる（持ち主の決定）。MCR では Dependabot が公開の日を取れないので、`cooldown` は効かず、警告を残して提案される（https://github.com/dependabot/dependabot-core/blob/main/docker/README.md ）。ベースのイメージの署名は確かめず、T25 の SDK のイメージと同じく Microsoft の配布を信じる（持ち主の決定）。Microsoft のイメージは、ベースの更新から 12 時間以内と毎月作り直される（https://github.com/dotnet/dotnet-docker/blob/main/README.runtime-deps.md ）（F2） |
 
 ### 5.4 受け入れる脅威
@@ -3761,7 +3762,7 @@ M3c で作った形:
 | 単体 | 形式・検証・規則。偽の `TimeProvider`、テストで作る鍵 | `tests/<Project>.Tests` |
 | 結合 | サーバーとサービスを同じプロセスでループバックの OS が選ぶポートに立て、クライアントから呼ぶ | 同上 |
 | データベース | SQLite と PostgreSQL の両方で、空のデータベースからの移行と、排他（同時の有効化・リース）を確かめる。PostgreSQL は CI のサービスコンテナで動かす | `tests/ElasticLM.Service.Tests` |
-| 端から端まで | NativeAOT で公開した `elm-server`・`elm-service`・`elm`・`libelasticlm` を、各 OS で動かす | `tests/ElasticLM.E2E`（V1 の行で作る） |
+| 端から端まで | NativeAOT で公開した `elm-server`・`elm-service`・`elm`・`libelasticlm` を、各 OS で動かす | `tests/ElasticLM.E2E`（V1a の行で作る） |
 
 ### 20.2 安全性のテスト
 
@@ -3803,7 +3804,7 @@ Linux と macOS での同じ確認は、各行（M3〜M6c）の受け入れ条�
 
 ### 20.5 リリースの経路（F1、0.109）
 
-F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち主の決定（PR #151 の R1、R11）、F1 の設計のレビューの持ち主の決定（PR #154 の glibc の下限）で決めた。守りは §5.3 の T22〜T25 に対応する。F1 は仕組みを作って公開しない試しで確かめ、初めての公開（タグの push、NuGet への push、Release の公開）は V1 で持ち主の命令を受けてから行う。
+F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち主の決定（PR #151 の R1、R11）、F1 の設計のレビューの持ち主の決定（PR #154 の glibc の下限）で決めた。守りは §5.3 の T22〜T25 に対応する。F1 は仕組みを作って公開しない試しで確かめ、初めての公開（タグの push、NuGet への push、Release の公開）は V1e で持ち主の命令を受けてから行う。
 
 ワークフロー `.github/workflows/release.yml`:
 
@@ -3833,7 +3834,7 @@ F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち�
 
 - 版の正は `Directory.Build.props` の `VersionPrefix`。タグの push では、タグから `v` を除いた文字列が `<VersionPrefix>` か `<VersionPrefix>-<後ろ>` でなければ止まり、`<後ろ>`（`rc.1` など）を `VersionSuffix` として全部のビルドに渡す。試しでは `VersionSuffix` を `ci.<実行の番号>` にする。
 - タグの push では、タグのコミットが `origin/main` からたどれなければ止まる。
-- タグの push では、`CHANGELOG.md` に、タグの版そのもの（プレリリースなら `0.1.0-rc.1` のまま）の節がなければ止まる。節は `## [<版>]` で始まる行（Keep a Changelog の `## [0.1.0] - <日付>` の形）から、次の `## ` の行の前まで。その本文に、`vendor/sqlite/sqlite3.h` の `SQLITE_VERSION` から書いた SQLite の版の 1 行を足したものが Release の本文になる。`version` のジョブが作って artifact で渡し、`draft` は読むだけにする。
+- タグの push では、`CHANGELOG.md` に、タグの版そのもの（プレリリースなら `1.0.0-rc.1` のまま）の節がなければ止まる。節は `## [<版>]` で始まる行（Keep a Changelog の `## [1.0.0] - <日付>` の形）から、次の `## ` の行の前まで。その本文に、`vendor/sqlite/sqlite3.h` の `SQLITE_VERSION` から書いた SQLite の版の 1 行を足したものが Release の本文になる。`version` のジョブが作って artifact で渡し、`draft` は読むだけにする。
 - この確かめは 1 つのスクリプト（`eng/release/Get-ReleaseVersion.ps1`）で行う。試しでは、`version` のジョブが、`VersionPrefix` と違う版のタグと、節のない `CHANGELOG.md` を渡して止まること、合うものを渡して通ることも確かめる（Issue #149 の受け入れ条件）。
 - タグは消せない（ルールセットで更新と削除を禁じる）ので、タグの実行が失敗したら次の版にする。`docs/releasing.md` は、最初は rc のタグで通すことを勧める。
 - `elm_version`（§17.4）とアセンブリの版は、この版になる。
@@ -3876,7 +3877,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 
 パッケージ（Q4、Q11）:
 
-- `dotnet pack` で `ElasticLM.Licensing` と `ElasticLM.Client` を作る。2 つの `.csproj` に `EnablePackageValidation` と `PackageReadmeFile`（各プロジェクトに新しく足す `README.md`。使い方の最小の例とリポジトリへのリンク）を足す。初めての版には比べる基準がないので、`PackageValidationBaselineVersion` は V1 で公開したあとに足す。
+- `dotnet pack` で `ElasticLM.Licensing` と `ElasticLM.Client` を作る。2 つの `.csproj` に `EnablePackageValidation` と `PackageReadmeFile`（各プロジェクトに新しく足す `README.md`。使い方の最小の例とリポジトリへのリンク）を足す。初めての版には比べる基準がないので、`PackageValidationBaselineVersion` は V1e で公開したあとに足す。
 - スクリプト（`eng/release/Test-Package.ps1`）で `.nupkg` と `.snupkg` の中身を確かめる: `.nuspec` の `license` が `expression` の `MIT`、`readme` があり中身が入っていること、`repository` に `commit` があること（Source Link が効いた印）、`lib/net10.0/` に `.dll` と `.xml` があること、`.snupkg` に `.pdb` があり、その中のソースのパスが `/_/` で始まること（`ContinuousIntegrationBuild` が効いた、決定的なビルドの印）、パッケージの版が「版」と同じこと。
 - `consume`: `samples/PackageConsumer`（ソリューションと `build.ps1` には入れない）は、ルートの設定を読み込まない自前の `Directory.Build.props`（`TreatWarningsAsErrors` を明示）、`Directory.Packages.props`（`ManagePackageVersionsCentrally` は `false`）、`nuget.config` を持つ。`nuget.config` は `<clear/>` のあと、`pack` の出力のフォルダーと nuget.org を並べ、`packageSourceMapping` で `ElasticLM.*` を前者だけに、ほかを後者に割り当てる（同じ名前の物を nuget.org から取らないため）。参照は `Version` で書く。外のアプリと同じ条件で、3 つの OS（`win-x64`、`linux-x64`、`osx-arm64`）で NativeAOT で発行して警告 0 件を確かめ（§4.1）、動かす。アプリは、`LicenseVerifier` で形の壊れたライセンスファイルを検証して `Malformed` が返ること、`InstallationKey` を一時フォルダーに作って開き直せることを確かめ、0 で終わる。
 
@@ -3888,7 +3889,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
   - リポジトリの書き込みの権限は持ち主だけにし、共同作業者を置かない。Actions の `GITHUB_TOKEN` の既定の権限を読み取りだけにする（T22）。
   - environment `release`: 必須の承認者を持ち主にし、「Prevent self-review」は無効にする（承認できるのは持ち主 1 人で、有効にするとタグを押した持ち主が承認できない。https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments ）。配備できる ref を `v*` のタグに限り、管理者の迂回を許さない。
   - `v*` のタグのルールセット（作成は持ち主だけ、更新と削除は禁止）と、immutable releases の有効化。
-  - nuget.org: Trusted Publishing のポリシー（リポジトリ、`release.yml`、environment `release`、パッケージ `ElasticLM.*`）。初めての公開には新しいパッケージを作るスコープが要り、公開のあとは新しい版だけのスコープに絞る（https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing ）。API キーは作らず、あれば消す。GitHub に NuGet の秘密を置かない。ID の接頭辞 `ElasticLM` の予約を申し込むかは、V1 の公開の前に持ち主が決める（https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation ）。
+  - nuget.org: Trusted Publishing のポリシー（リポジトリ、`release.yml`、environment `release`、パッケージ `ElasticLM.*`）。初めての公開には新しいパッケージを作るスコープが要り、公開のあとは新しい版だけのスコープに絞る（https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing ）。API キーは作らず、あれば消す。GitHub に NuGet の秘密を置かない。ID の接頭辞 `ElasticLM` の予約を申し込むかは、V1e の公開の前に持ち主が決める（https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation ）。
   - GitHub と nuget.org のアカウントの二要素認証（パスキー）。
   - リリースの出し方: `VersionPrefix` と `CHANGELOG.md` を直す PR、マージ、タグの push、下書きの確認、承認。最初は rc のタグで通す。
 - 利用者向けの確かめ方（T24 の `gh attestation verify` のコマンド、`SHA256SUMS` の照らし方、macOS の Gatekeeper の扱い）は、英語の `SECURITY.md` に書く。`docs/releasing.md` は `.cursor/rules/language.mdc` の英語の一覧に足す。
@@ -3905,7 +3906,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 
 ### 20.6 `elm-service` のコンテナイメージ（F2、0.111）
 
-F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビューの持ち主の決定（PR #167 の 3 件）、F2 の設計のレビューの持ち主の決定（PR #170 の 2 件）で決めた。守りは §5.3 の T22、T25、T26、T27 に対応する。F2 は仕組みを作って公開しない試しで確かめ、初めての GHCR への push と package の public 化は V1 で持ち主の命令を受けてから行う。
+F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビューの持ち主の決定（PR #167 の 3 件）、F2 の設計のレビューの持ち主の決定（PR #170 の 2 件）で決めた。守りは §5.3 の T22、T25、T26、T27 に対応する。F2 は仕組みを作って公開しない試しで確かめ、初めての GHCR への push と package の public 化は V1e で持ち主の命令を受けてから行う。
 
 イメージの形:
 
@@ -3927,7 +3928,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
   - `docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false --output type=oci,dest=<tar>,rewrite-timestamp=true` で、OCI layout の tar を作る（Q7）。`SOURCE_DATE_EPOCH` はコミットの時刻にする（https://github.com/moby/buildkit/blob/master/docs/build-repro.md ）。目的は、同じコミットとベースから同じ index のダイジェストを得て、作り直して照らせるようにすること。F2 の PR で 2 回作り、ダイジェストが同じことを一度確かめて記録する。
   - `RUN` を持たないので、エミュレーション（QEMU）を入れない。`docker/setup-qemu-action` を使わない `ubuntu-latest` で 2 つのプラットフォームが作れることを、F2 の試しで確かめる。
   - index のダイジェストは、OCI layout の `index.json` のただ 1 つの記述子（`application/vnd.oci.image.index.v1+json`）の `digest` で、ジョブの出力 `digest` にする。
-  - 公開のジョブが使う skopeo を、push の代わりに `oci:` のフォルダーへ写して試す（`skopeo copy --all --preserve-digests --digestfile <ファイル> oci-archive:<tar> oci:<フォルダー>`）。ランナーに skopeo があること、`oci-archive:` がこの tar を読めること、ダイジェストが保たれ `--digestfile` の値が出力 `digest` と同じことを、V1 の前に確かめ、skopeo の版を記録する（PR #170 のレビュー）。tar を artifact `image-oci`（`retention-days: 90`。`upload-artifact` の上限で、承認を待つ間に消えないようにする）にする。
+  - 公開のジョブが使う skopeo を、push の代わりに `oci:` のフォルダーへ写して試す（`skopeo copy --all --preserve-digests --digestfile <ファイル> oci-archive:<tar> oci:<フォルダー>`）。ランナーに skopeo があること、`oci-archive:` がこの tar を読めること、ダイジェストが保たれ `--digestfile` の値が出力 `digest` と同じことを、V1e の前に確かめ、skopeo の版を記録する（PR #170 のレビュー。F2 で確かめた）。tar を artifact `image-oci`（`retention-days: 90`。`upload-artifact` の上限で、承認を待つ間に消えないようにする）にする。
 - ジョブ `image-test`（`contents: read`、`ubuntu-latest` と `ubuntu-24.04-arm` の matrix、`needs: image`）は、次を確かめる（Q12）。push しない。
   - tar の index のダイジェストが `needs.image.outputs.digest` と同じ。
   - 各プラットフォームのマニフェストで、先頭の層がベースの同じプラットフォームのマニフェストの層とダイジェストまで同じで、残りの層の中身が `app/`、`app/elm-service`、`app/LICENSE`、`data/` だけ（ベースを 1 バイトも変えず、ほかに何も足していない）。`app/elm-service` と `app/LICENSE` の SHA-256 が、同じ実行の圧縮ファイルの中のものと同じ。
@@ -3945,7 +3946,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
   - プレリリースでない版（`needs.version.outputs.prerelease` が `false`）は、`skopeo copy --all --preserve-digests docker://ghcr.io/yukikeda/elm-service:<版> docker://ghcr.io/yukikeda/elm-service:latest` で `latest` も付け、同じく確かめる。
   - `actions/attest` で、`subject-name: ghcr.io/yukikeda/elm-service`、`subject-digest: <index のダイジェスト>`、`push-to-registry: true`、`create-storage-record: false` の証明を付ける（T22）。`artifact-metadata: write` は与えない。
   - 証明のあとに `docker logout ghcr.io` を行い、`~/.docker/config.json` のトークンを残さない（失敗した場合も行う）。
-- 持ち主の作業として `docs/releasing.md` に足す: V1 の初めての push のあと、package を public にする（取り消せない）。package の設定で Actions のアクセスをこのリポジトリだけにする。`write:packages` と `delete:packages` の classic の PAT を作らない（T26）。リリースの前の固定したイメージの確かめ（手順 2）に、Dockerfile のベース（Dependabot が上げる）と BuildKit のイメージ（Dependabot は `driver-opts` の中を上げない）を足す。
+- 持ち主の作業として `docs/releasing.md` に足す: V1e の初めての push のあと、package を public にする（取り消せない）。package の設定で Actions のアクセスをこのリポジトリだけにする。`write:packages` と `delete:packages` の classic の PAT を作らない（T26）。リリースの前の固定したイメージの確かめ（手順 2）に、Dockerfile のベース（Dependabot が上げる）と BuildKit のイメージ（Dependabot は `driver-opts` の中を上げない）を足す。
 
 設定の変更（Q8）:
 
@@ -3961,7 +3962,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
   - `ELM_PUBLICURLS` と `ELM_NODE_NAME`。
   - ヘルスチェック: `/health` はデータベースに届かないと 503 を返すので、Kubernetes では `readinessProbe` の `httpGet: /health` に使い、`livenessProbe` には使わない（データベースが止まると再起動を繰り返すため）。Docker では `/health` を外から確かめる。
   - ルートのファイルシステムを読み取りだけにするなら、`/tmp` に書けるボリュームをつなぐ。
-  - ダイジェストでの固定と、証明の確かめ方（`gh attestation verify oci://` は V1 で試してから書く。それまでは「V1 で確かめる」と書く）。
+  - ダイジェストでの固定と、証明の確かめ方（`gh attestation verify oci://` は V1e で試してから書く。それまでは「V1e で確かめる」と書く）。
   - `.cursor/rules/language.mdc` の英語の一覧に足す。
 - §21 に次を足す（`.cursor/rules/dependencies.mdc`）: `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定、イメージのベース。.NET 10 のサポートは 2028-11-14 まで、https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core 。Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで、https://ubuntu.com/about/release-cycle ）と、`moby/buildkit`（ダイジェストで固定、ビルドの道具。イメージには入らない）。
 - §5.3 の T25 の名指しのアクションから `docker/login-action` を外す（使わないため）。
@@ -3969,7 +3970,24 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 
 測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。
 
-## 21. 依存
+### 20.7 V1 の行（0.112）
+
+V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。各行の中身は、その行の Grill で決める。
+
+| 行 | その行の Grill で決める点 |
+| --- | --- |
+| V1a | 通す流れ（発行、オンラインとオフラインの有効化、オンプレミスと SaaS 型のリース、借り出し、利用ログの確かめ、失効）、動かす OS と RID、PostgreSQL も通すか、`libelasticlm` を C のテストのプログラムで通すか、CI のどのジョブで動かすか |
+| V1b | 測る §4.2 の目標と、測り直す前の行の値、10,000 件のリースの負荷の作り方、2 vCPU での p99 とメモリの測り方、計測を動かすワークフローとその記録の残し方 |
+| V1c | 書く文書（README、利用者の手引き、API の参照、運用の文書）と、作るサンプル（言語、場面） |
+| V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
+| V1e | `-rc.1` で確かめることと正式版に進む条件、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
+
+行をまたいで決めてあること:
+
+- V1d は、V1a〜V1c のコード、テスト、計測、文書を見直す。見つかったものはそれぞれ Issue にし、V1e は、そのすべてが直されるか（それぞれのバグの PR）、§5.4 の受け入れた脅威に書かれるまで公開しない。V1e で足す文書と変更は、V1e の設計のレビューで見る。
+- V1b のあとの修正（V1d の見つけたものを含む）が §4.2 の目標に関わるなら、その PR で測り直す（§4.2 の「各行の PR で測る」）。
+- V1e は、版を `1.0.0` にする PR で、`Directory.Build.props` の `VersionPrefix` を `1.0.0` にし、`CHANGELOG.md` と `CONTRIBUTING.md` の `1.0` より前の決まり（0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい）を外す。
+
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
 
@@ -4028,7 +4046,11 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M6c | `libelasticlm` のリース: `elm_client`（オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去）（決めた形は 0.107） | §12.7, §13, §13.5, §17 |
 | F1 | リリース基盤: `release.yml`、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`（決めた形は 0.109） | §4.1, §20.5 |
 | F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（決めた形は 0.111） | §1.3, §5, §14.8, §20.6 |
-| V1 | 端から端までのテスト、§4.2 の目標の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | §4.2, §20 |
+| V1a | 端から端までのテスト: `tests/ElasticLM.E2E` で、NativeAOT で公開した `elm-server`・`elm-service`・`elm`・`libelasticlm` を動かす（Grill で決める点は §20.7） | §20.1, §20.7 |
+| V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（Grill で決める点は §20.7） | §4.2, §20.7 |
+| V1c | 文書とサンプル（書く文書と作るサンプルは、Grill で決める点として §20.7） | §20.7 |
+| V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
+| V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 
 ## 23. v1 の範囲外
 

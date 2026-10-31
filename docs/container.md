@@ -1,7 +1,7 @@
 # Running elm-service in a container
 
 `ghcr.io/yukikeda/elm-service` is the hosted activation service as a container image (design §20.6). Nothing has been
-published yet: the first image comes with the first release (roadmap row V1).
+published yet: the first image comes with the first release (roadmap row V1e).
 
 ## What the image holds
 
@@ -76,4 +76,4 @@ the image (it has no shell or `curl`).
 ## Checking the image
 
 The release workflow attests the image's index digest. The command to check it from the registry is tried with the first
-release (V1) and then written here and in `SECURITY.md`.
+release (V1e) and then written here and in `SECURITY.md`.
