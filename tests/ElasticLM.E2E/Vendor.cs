@@ -80,17 +80,21 @@ internal sealed class Vendor : IAsyncDisposable
         return output;
     }
 
-    public ValueTask DisposeAsync()
+    public async ValueTask DisposeAsync()
     {
-        try
+        // On Windows a process the test has just ended may hold a file for a moment; the keys must not stay behind
+        // (scratch.mdc), so the removal is tried again for up to 5 seconds and then fails the test.
+        for (int attempt = 1; ; attempt++)
         {
-            Directory.Delete(Folder, recursive: true);
+            try
+            {
+                Directory.Delete(Folder, recursive: true);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException && attempt < 50)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(100), TimeProvider.System, CancellationToken.None);
+            }
         }
-        catch (IOException)
-        {
-            // A process the test started may still hold a file on Windows for a moment; the folder is in the temp folder.
-        }
-
-        return ValueTask.CompletedTask;
     }
 }
