@@ -612,3 +612,9 @@
 - **決定:** `almalinux:8` の中では PowerShell を使わない。SQLite の Linux と macOS のビルドは POSIX の `vendor/sqlite/build.sh` にし、コンテナの中の発行は `eng/release/publish-rid.sh` で行い、警告はランナーでログから数える（持ち主の決定。[design.ja.md](./design.ja.md) §20.5）。
 - **理由:** arm64 のランナーの PowerShell は glibc 2.33 を要り、glibc 2.28 の中では起動しなかった（x64 は動いた）。SQLite のビルドは MSBuild から PowerShell で呼ばれていたので、PowerShell がないとビルドできない。
 - **却下した案:** ランナーの PowerShell を読み取りだけでつなぐ（F1 の設計のレビューのあとの §20.5 の形）。`linux-arm64` だけ `ubuntu-22.04-arm` で作り、glibc の下限を 2.35 に上げる。
+
+### レジストリの経路の脅威を F2 の PR で一緒に書く（F2 の Grill、Issue #157）
+
+- **決定:** コンテナのレジストリの経路の脅威（T26、T27 と受け入れる脅威）は、F2 の前に別の設計の PR で脅威モデルに足す（[design.ja.md](./design.ja.md) 0.110、§5）。
+- **理由:** 脅威モデルの変更は、それを守る実装より先に入れる。0.108 で、この脅威は F2 で足すと決めてあった。
+- **却下した案:** F2 の PR で、脅威とイメージの仕組みを一緒に書く。
