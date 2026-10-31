@@ -3917,7 +3917,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 - ジョブ `image-test`（`contents: read`、`ubuntu-latest` と `ubuntu-24.04-arm` の matrix、`needs: image`）は、次を確かめる（Q12）。push しない。
   - tar の index のダイジェストが `needs.image.outputs.digest` と同じ。
   - 各プラットフォームのマニフェストで、先頭の層がベースの同じプラットフォームのマニフェストの層とダイジェストまで同じで、残りの層の中身が `app/`、`app/elm-service`、`app/LICENSE`、`data/` だけ（ベースを 1 バイトも変えず、ほかに何も足していない）。`app/elm-service` と `app/LICENSE` の SHA-256 が、同じ実行の圧縮ファイルの中のものと同じ。
-  - `docker load --platform linux/<自分のアーキテクチャ>`（Docker の API 1.48 以降。https://docs.docker.com/reference/cli/docker/image/load/ ）で読み込み、読み込んだイメージの config のダイジェストが、tar のそのプラットフォームのマニフェストの config と同じ。ランナーの Docker の版を記録する。
+  - 自分のアーキテクチャのマニフェストが指す config と層から docker の `manifest.json` を書き、同じ blob を `docker load` で読み込み、読み込んだイメージの ID（従来のイメージの置き場所では config のダイジェスト）が、tar のそのプラットフォームのマニフェストの config と同じ。ランナーの Docker の版を記録する。F2 の試しで、Docker 28.0.4 の従来の置き場所は OCI layout を `docker load --platform` で読めなかった（docker の `manifest.json` を探す）。この形は、手元の `wslc load` でも確かめた。
   - その回のために作った鍵、証明書、ルート鍵、ノンスの秘密、パスフレーズを、設定ファイル（`signing.passphraseFile` を含む）と秘密のファイルとして、UID 1654 が読めるようにマウントし、`/data` に名前つきのボリュームをつなぎ、`ELM_PUBLICURLS`（その回の `https://` の URL）を渡して、`setup` が通り、起動して `/health` に 200 で答える。起動のログに、ASP.NET Core の待ち受けの上書きの知らせがない。
   - 動いているプロセスの UID が 1654。
   - `docker stop` で、既定の猶予のうちに終了コード 0 で止まる（PID 1 で SIGTERM を受ける）。

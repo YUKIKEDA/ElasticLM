@@ -7,7 +7,8 @@
     - In this architecture's manifest, the first layers are the base image's layers of the same platform, digest for
       digest, and the layers after them hold only app/, app/elm-service, app/LICENSE, and data/. The elm-service and
       LICENSE in them have the SHA-256 of the same run's release archive.
-    - docker load --platform reads this architecture, and the image it loads has the config of the manifest.
+    - docker load reads this architecture through a docker manifest.json written for its manifest (Docker 28's classic image
+      store does not read an OCI layout), and the image it loads has the config of the manifest.
     - With keys, certificates, a root key, a nonce secret, and a passphrase made for this run and mounted as a settings file
       and secret files readable by UID 1654, a named volume on /data, and ELM_PUBLICURLS: setup prints a key; the service
       starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID 1654; docker stop ends
@@ -106,20 +107,27 @@ try {
         }
     }
 
-    # Load this platform and check that the loaded image is the manifest's.
+    # Load this platform and check that the loaded image is the manifest's. Docker 28's classic image store does not read an
+    # OCI layout (it looks for docker's manifest.json), so the layout gets a manifest.json that names this platform's config
+    # and layers: the same blobs, nothing rebuilt.
     "Docker: $((Invoke-Native 'docker version' { docker version --format '{{.Server.Version}} (API {{.Server.APIVersion}})' }) -join '')"
-    $loadOutput = (Invoke-Native 'docker load' { docker load --platform "linux/$Arch" --input $ImageTar }) -join "`n"
-    $loadOutput | Out-Host
-    # The layout has no image name, so docker load names the image by its ID: the config digest with the classic image
-    # store, the manifest's or the index's digest with the containerd image store.
-    if ($loadOutput -notmatch 'Loaded image ID: (sha256:[0-9a-f]{64})') { throw 'docker load did not name the image it loaded.' }
-    $id = $Matches[1]
-    if (@($manifest.config.digest, $descriptor[0].digest, $digest) -notcontains $id) {
+    $dockerManifest = @(
+        [ordered]@{
+            Config = 'blobs/' + $manifest.config.digest.Replace(':', '/')
+            RepoTags = @($tag)
+            Layers = @($manifest.layers | ForEach-Object { 'blobs/' + $_.digest.Replace(':', '/') })
+        }
+    )
+    ConvertTo-Json -InputObject $dockerManifest -Depth 4 | Set-Content (Join-Path $layout 'manifest.json') -Encoding utf8NoBOM
+    $dockerArchive = Join-Path $work 'docker-archive.tar'
+    Invoke-Native 'tar' { tar -cf $dockerArchive -C $layout . } | Out-Null
+    Invoke-Native 'docker load' { docker load --input $dockerArchive } | Out-Host
+    $id = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Id}}' $tag }).Trim()
+    # The classic image store names an image by its config digest; the containerd image store by its manifest's digest.
+    if (@($manifest.config.digest, $descriptor[0].digest) -notcontains $id) {
         $failures.Add("The loaded image $id is neither the config $($manifest.config.digest) nor the manifest of linux/$Arch.")
     }
-    Invoke-Native 'docker tag' { docker tag $id $tag } | Out-Null
-    $loadedConfig = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Id}}' $tag }).Trim()
-    "Loaded linux/$Arch as $id (image ID $loadedConfig)."
+    "Loaded linux/$Arch as $tag ($id)."
 
     # Run it with secrets as files readable by UID 1654.
     $elmArchive = Join-Path $work 'elm'
