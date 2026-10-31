@@ -469,6 +469,19 @@ F1（Issue #149）の実測（PR #154 の head `d2479c1` のコード。`release
 - 2 つの NuGet パッケージの検査が通り、パッケージだけを参照するアプリが 3 つの OS（`win-x64`、`linux-x64`、`osx-arm64`）で NativeAOT で警告 0 件で発行され、動いた。
 - SBOM（自前のスクリプト）は、NuGet の 21 個、npm の 115 個、SQLite の 3.54.1 を載せた（手元の数え）。
 
+F2（Issue #157）の実測（PR #170 の head `2442fdf` のコード。`release.yml` の PR の試し（run 41198999116）の `image` と `image-test` のジョブ）:
+
+- `elm-service` のコンテナイメージ（`linux/amd64` と `linux/arm64` の OCI の index、`sha256:02a1370d6aadfcd7c30e6fb90cb804028bb8dda7fba3107b697040780a1fe3dc`）。同じ実行の中で 2 回作り、index のダイジェストは同じだった。QEMU を入れない `ubuntu-latest` で、2 つのプラットフォームを作れた。
+
+| プラットフォーム | 圧縮後（層の `size` の和） | 展開後（`docker image inspect` の `Size`） |
+| --- | ---: | ---: |
+| `linux/amd64` | 18,268,377 | 40,816,014 |
+| `linux/arm64` | 16,483,738 | 39,941,112 |
+
+- 各プラットフォームの先頭の 2 層は、ベースの同じプラットフォームの層とダイジェストまで同じで、足した層は `app/`（`elm-service` と `LICENSE`）、`data/`、`WORKDIR` の空の層だけだった。`elm-service` と `LICENSE` の SHA-256 は、同じ実行の圧縮ファイルの中のものと同じだった。
+- 2 つのランナー（どちらも Docker 28.0.4、API 1.48）で、`setup` が名前つきのボリュームの SQLite に書け、起動して `/health` が 200、プロセスの UID は 1654、ASP.NET Core の待ち受けの上書きの知らせはなく、`docker stop` で終了コード 0 で止まった。Docker 28.0.4 の従来のイメージの置き場所は OCI layout を `docker load --platform` で読めなかったので、そのプラットフォームの docker の `manifest.json` を書いて読み込んだ（§20.6）。
+- 手元では、同じ実行の `linux-x64` の配布物で `wslc build` したイメージを `wslc` で動かし、名前つきのボリュームがイメージの `/data` の持ち主（UID 1654）を引き継ぐこと、`setup`、起動、`/health`、止め方を確かめた。CI が作った OCI layout の tar も、docker の `manifest.json` を書いて `wslc load` で読み込めた。
+
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 28.9 MB（28,909,568 バイト。main（`a189949`）の 28,895,232 から +14,336 バイト、+0.05%）。警告は 0 件。マップのファイルで分けると、埋め込んだリソース（管理画面の `dist`）が +14,765 バイト、ほかが -1 バイトで、合わせて +14,764 バイトになる。セクションの詰め物は 428 バイト減った。サービスのコードは変わっていない。
