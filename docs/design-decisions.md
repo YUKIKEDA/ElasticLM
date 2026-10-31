@@ -618,3 +618,15 @@
 - **決定:** コンテナのレジストリの経路の脅威（T26、T27 と受け入れる脅威）は、F2 の前に別の設計の PR で脅威モデルに足す（[design.ja.md](./design.ja.md) 0.110、§5）。
 - **理由:** 脅威モデルの変更は、それを守る実装より先に入れる。0.108 で、この脅威は F2 で足すと決めてあった。
 - **却下した案:** F2 の PR で、脅威とイメージの仕組みを一緒に書く。
+
+### `elm-service` のイメージでベースの `ASPNETCORE_HTTP_PORTS` を引き継ぐ（F2 の設計のレビュー、Issue #157）
+
+- **決定:** Dockerfile でベースの `ASPNETCORE_HTTP_PORTS` を空にする（持ち主の決定。[design.ja.md](./design.ja.md) 0.111、§20.6）。ほかのベースの環境変数はそのままにする。
+- **理由:** `elm-service` は `listen` だけで待ち受けるので、ASP.NET Core に別の待ち受けを知らせない。引き継いだままだと、起動のログに待ち受けの上書きの知らせが出るおそれがあった。F2 の試しと手元の `wslc` で、知らせが出ないことを確かめた。
+- **却下した案:** ベースの環境変数を引き継いだままにし、設計の文だけを「イメージが足すのは `ELM_LISTEN` だけ」に直す。
+
+### GHCR へのログインに `docker/login-action` を使う（F2 の設計のレビュー、Issue #157）
+
+- **決定:** 公開のジョブは `docker login` の run の段で GHCR にログインし、第三者のアクションを足さない（持ち主の決定。[design.ja.md](./design.ja.md) 0.111、§20.6、§5.3 の T25）。
+- **理由:** 公開のジョブは、いちばん強い権限（`contents: write`、`id-token: write`、`packages: write`、`attestations: write`）を持つ。skopeo と `actions/attest` の `push-to-registry` は、どちらも `docker login` が書く `~/.docker/config.json` を読むので、アクションは要らない。0.110 の T25 が名指ししていた `docker/login-action` は外した。
+- **却下した案:** `docker/login-action` を SHA で固定して使う。

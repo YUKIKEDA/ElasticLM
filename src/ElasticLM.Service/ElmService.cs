@@ -371,9 +371,16 @@ internal sealed partial class ElmService : IAsyncDisposable
             throw new ServiceStartException("signing.certificates must name one to four certificate files, none empty.");
         }
 
+        // design §14.8 (F2): the variable, or else the file, so that every secret can be given as a file.
         string passphrase =
             host.Environment(ServiceSettings.SigningPassphraseVariable)
-            ?? throw new ServiceStartException($"Set {ServiceSettings.SigningPassphraseVariable} to the signing key's passphrase.");
+            ?? (
+                settings.SigningPassphraseFile is string passphraseFile
+                    ? ServiceSettings.ReadSecret(passphraseFile, "signing.passphraseFile")
+                    : throw new ServiceStartException(
+                        $"Set {ServiceSettings.SigningPassphraseVariable} or signing.passphraseFile to the signing key's passphrase."
+                    )
+            );
         if (!KeyFiles.TryImportEncrypted(pem, passphrase, out ECDsa? key))
         {
             throw new ServiceStartException("The signing key cannot be read: it is not an encrypted PKCS#8 P-256 key, or the passphrase is wrong.");

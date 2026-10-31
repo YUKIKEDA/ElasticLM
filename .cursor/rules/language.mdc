@@ -13,7 +13,7 @@ Reports and replies to the owner in chat are in Japanese: the end-of-turn report
 - Wire formats and file formats: field names, error codes, media types.
 - Tests: method names, `summary` and `remarks`, assertion and skip messages.
 - Commit subjects, PR titles, the `type` and `scope` of both, and the PR template headings.
-- `.cursor/rules/`, `.agents/skills/` written in this repository, `.github/` templates, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `docs/releasing.md` (the owner's release steps, design §20.5).
+- `.cursor/rules/`, `.agents/skills/` written in this repository, `.github/` templates, `AGENTS.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md`, `docs/releasing.md` (the owner's release steps, design §20.5), `docs/container.md` (running the elm-service image, design §20.6).
 - `README.md` (the source of truth for readers) and package descriptions.
 
 Before writing XML docs or comments, read `.agents/skills/english-writing/SKILL.md`. When a review corrects wording, add the general rule there in the same change.

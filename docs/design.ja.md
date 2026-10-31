@@ -179,6 +179,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.108 | リリースの経路の脅威とコンテナイメージの行 | F1 の Grill（Issue #149）で、リリースの経路を作る前にその脅威を脅威モデルに足した。攻撃者に、PR を送れる外部の者（A11）、持ち主の資格情報の 1 つを盗んだ者（A12）、ビルドとリリースの道具を乗っ取った者（A13）、配布の経路で配布物をすり替える者（A14）を足し、脅威 T22〜T25 と、受け入れる脅威（持ち主のアカウントそのものの奪取、実行ファイルにコードの署名がないこと、GitHub とそのランナーの侵害、来歴の証明が示す範囲）を足した。権限はジョブごとに分ける。下書きの Release はタグの push のときだけ、来歴の証明はタグの push と持ち主の手動の実行（`workflow_dispatch`）のときだけ作り、NuGet への push と Release の公開は持ち主が承認する environment `release` のジョブだけが行う。リリースのワークフローはキャッシュを戻さない。書き込みの権限は持ち主だけに与え、`v*` のタグはルールセットで守り、公開した Release は immutable にする。NuGet への公開は API キーを持たない Trusted Publishing にする。配布物には `SHA256SUMS` と GitHub の artifact attestation を付ける。v1 ではコードの署名をしない。`elm-service` のコンテナイメージは F1 に入れず、新しい行 F2 にする（§5、§22。F1 の Grill の Q2・Q5〜Q8 と、設計のレビューの R1・R11 の持ち主の決定、Issue #150） |
 | 0.109 | リリースの経路 | F1 で、0.104 と 0.108 の上に次を決めた。リリースは `release.yml` の 1 つのワークフローで、`v*` のタグの push、`workflow_dispatch`、すべての PR（公開しない試し）で動く。版は `VersionPrefix` を正とし、タグと `CHANGELOG.md` の節を確かめる。.NET SDK の版はワークフローの 1 つの値で固定する。7 つの RID は、`win-arm64` を arm64 の Windows のランナーで、`linux-x64` と `linux-arm64` を `almalinux:8` のコンテナ（glibc 2.28 から動く。持ち主の決定）で、`linux-musl-x64` を SDK の Alpine の AOT のイメージで、`osx-x64` を arm64 の macOS からのクロスコンパイルで作る。CI と同じ検査（単一バイナリ、実行時の依存、glibc の版、macOS の署名、§4.2 の大きさ、警告）を 1 つのスクリプトで両方に当て、スモークテストと C のテストを 7 つの RID で動かす。配布物は実行ファイルと RID ごとの圧縮ファイル、`-symbols` の圧縮ファイル、その実行のコミットの SBOM（自前のスクリプト。依存グラフは NuGet の版を読めなかったので、持ち主の決定で替えた）、`SHA256SUMS`、来歴の証明（`actions/attest`）。NuGet は 2 つのパッケージを検査し、パッケージだけを参照するアプリを 3 つの OS で NativeAOT で発行する。公開は、下書きの Release のあと、environment `release` の承認で、下書きのファイルを NuGet に push して Release を公開する。持ち主の設定の手順は `docs/releasing.md`、利用者の確かめ方は `SECURITY.md`（§4.1、§20.5。F1 の Grill の Q1〜Q16、PR #151 の R1・R11、PR #154 の glibc の下限、Issue #149） |
 | 0.110 | コンテナのレジストリの経路の脅威 | F2 の Grill（Issue #157）で、`elm-service` のコンテナイメージを GHCR に公開する経路を作る前に、その脅威を脅威モデルに足した（0.108 で F2 に送ったもの）。守るものの「配布物と公開の権限」にイメージと GHCR に push する権限を足し、攻撃者に、ベースのイメージを乗っ取った者（A13 を広げた）と、イメージを取る経路でイメージをすり替える者（A14 を広げた）を入れた。脅威 T26（GHCR のタグの付け替えとイメージのすり替え）と T27（ベースのイメージの乗っ取り）を足し、受け入れる脅威（GHCR のタグは書き換えられること、ベースのイメージの脆弱性は次の版まで直らないこと）を足した。イメージは `contents: read` のジョブで OCI layout として作り、試し、承認のあとの公開のジョブはそれをダイジェストを変えずに push して証明を付けるだけにする（T22 も直した）。ベースは Dockerfile にダイジェストで固定して Dependabot が上げ、署名は確かめずに Microsoft の配布を信じる。（§5、F2 の Grill の Q1〜Q7・Q12 と、設計のレビューの 3 つの持ち主の決定、Issue #166） |
+| 0.111 | `elm-service` のコンテナイメージ | F2 で、0.108〜0.110 の上に次を決めた。イメージは `ghcr.io/yukikeda/elm-service` で、`linux/amd64` と `linux/arm64` の OCI の index。`runtime-deps:10.0-noble-chiseled` をダイジェストで固定したベースに、同じ実行の F1 の配布物の `elm-service`、`LICENSE`、空の `/data` だけを `COPY` し、UID 1654 で動かす。イメージが足す環境変数は `ELM_LISTEN=http://0.0.0.0:8080` で、ベースの `ASPNETCORE_HTTP_PORTS` は空にし、`HEALTHCHECK` は書かない。`contents: read` のジョブで OCI layout を作り、2 つのアーキテクチャのランナーで起動、`/health`、UID、実行ファイルの SHA-256、足したファイルを確かめ、承認のあとの公開のジョブがそれをダイジェストを変えずに push して来歴の証明を付ける。タグは版と、正式版の `latest`。設定ファイルに `signing.passphraseFile` を足し、すべての秘密をファイルで渡せるようにする。ベースのダイジェストは Dependabot が上げる。GHCR へのログインは `docker login` の run の段で行い、第三者のアクションを足さない（§20.6。F2 の Grill の Q1〜Q12、PR #167 と PR #170 の持ち主の決定、Issue #157） |
 
 ## 1. 目的と利用者
 
@@ -468,6 +469,19 @@ F1（Issue #149）の実測（PR #154 の head `d2479c1` のコード。`release
 - 2 つの NuGet パッケージの検査が通り、パッケージだけを参照するアプリが 3 つの OS（`win-x64`、`linux-x64`、`osx-arm64`）で NativeAOT で警告 0 件で発行され、動いた。
 - SBOM（自前のスクリプト）は、NuGet の 21 個、npm の 115 個、SQLite の 3.54.1 を載せた（手元の数え）。
 
+F2（Issue #157）の実測（PR #170 の head `2442fdf` のコード。`release.yml` の PR の試し（run 41198999116）の `image` と `image-test` のジョブ）:
+
+- `elm-service` のコンテナイメージ（`linux/amd64` と `linux/arm64` の OCI の index、`sha256:02a1370d6aadfcd7c30e6fb90cb804028bb8dda7fba3107b697040780a1fe3dc`）。同じ実行の中で 2 回作り、index のダイジェストは同じだった。QEMU を入れない `ubuntu-latest` で、2 つのプラットフォームを作れた。
+
+| プラットフォーム | 圧縮後（層の `size` の和） | 展開後（`docker image inspect` の `Size`） |
+| --- | ---: | ---: |
+| `linux/amd64` | 18,268,377 | 40,816,014 |
+| `linux/arm64` | 16,483,738 | 39,941,112 |
+
+- 各プラットフォームの先頭の 2 層は、ベースの同じプラットフォームの層とダイジェストまで同じで、足した層は `app/`（`elm-service` と `LICENSE`）、`data/`、`WORKDIR` の空の層だけだった。`elm-service` と `LICENSE` の SHA-256 は、同じ実行の圧縮ファイルの中のものと同じだった。
+- 2 つのランナー（どちらも Docker 28.0.4、API 1.48）で、`setup` が名前つきのボリュームの SQLite に書け、起動して `/health` が 200、プロセスの UID は 1654、ASP.NET Core の待ち受けの上書きの知らせはなく、`docker stop` で終了コード 0 で止まった。Docker 28.0.4 の従来のイメージの置き場所は OCI layout を `docker load --platform` で読めなかったので、そのプラットフォームの docker の `manifest.json` を書いて読み込んだ（§20.6）。
+- 手元では、同じ実行の `linux-x64` の配布物で `wslc build` したイメージを `wslc` で動かし、名前つきのボリュームがイメージの `/data` の持ち主（UID 1654）を引き継ぐこと、`setup`、起動、`/health`、止め方を確かめた。CI が作った OCI layout の tar も、docker の `manifest.json` を書いて `wslc load` で読み込めた。
+
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
 
 - `elm-service` の NativeAOT の実行ファイルは 28.9 MB（28,909,568 バイト。main（`a189949`）の 28,895,232 から +14,336 バイト、+0.05%）。警告は 0 件。マップのファイルで分けると、埋め込んだリソース（管理画面の `dist`）が +14,765 バイト、ほかが -1 バイトで、合わせて +14,764 バイトになる。セクションの詰め物は 428 バイト減った。サービスのコードは変わっていない。
@@ -609,7 +623,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | T22 | リリースのワークフローの乗っ取り | A11, A13 | 権限はジョブごとに分ける。ビルドのジョブ（依存とビルドの道具を動かす）は `contents: read` だけを持つ。証明のジョブ（`id-token: write`、`attestations: write`）と下書きのジョブ（`contents: write`）は、同じ実行のビルドのジョブが渡した配布物を扱うだけで、ビルドのコードを動かさない。下書きはタグの push のときだけ、証明はタグの push と持ち主の手動の実行（`workflow_dispatch`。書き込みの権限が要る）のときだけ作る。NuGet への push、GHCR へのイメージの index の push とその来歴の証明（F2、T26。`push-to-registry` の証明はレジストリにあるイメージに付けるので、push のあとにしか作れない）、Release の公開は、持ち主が承認する environment `release` のジョブだけが行う。そのジョブは `packages: write` と `attestations: write` も持ち、GHCR には `GITHUB_TOKEN` でログインする。イメージの証明はタグの push の承認のあとにだけ作り、試しでは作らない。リポジトリの持ち主は個人のアカウントなので、証明の storage record は作られず、`artifact-metadata: write` は与えない（https://github.com/actions/attest ）。イメージの証明では `create-storage-record: false` を渡す（`push-to-registry: true` のときだけ効く入力で、既定の `true` のままでも、個人のアカウントでは記録を作らずに進み、失敗は警告で握られる。固定したコミットの `src/attest.ts` で読んだ。余計な問い合わせと警告を出さないため）。公開と下書きのジョブは、イベントが `push` で ref が `refs/tags/v` で始まるときだけ動く（`workflow_dispatch` はタグに対しても走らせられるため）。PR の試しは `contents: read` だけで、秘密を持たず、証明も下書きも作らない。`pull_request_target` と `workflow_run` は使わない。書き込みの権限は持ち主だけに与え、リポジトリのルールセットで `v*` のタグの作成を持ち主だけに許し、更新と削除は持ち主にも許さない。environment `release` は、必須の承認者を持ち主にし、配備できる ref を `v*` のタグに限り、管理者による迂回を許さない。リリースのワークフローはキャッシュを戻さない（`actions/cache` も setup 系のアクションのキャッシュも使わない）。タグの実行は既定のブランチのキャッシュを戻せ、`main` で動いたコードはそのキャッシュに書けるため（https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching ）。ジョブの間の配布物は同じ実行の artifact だけで渡し、ほかの実行の artifact は取らない。管理画面の `dist` も同じ実行の SPA のジョブから取る（T21）。リリースのワークフローのアクションは、すべてコミットの SHA で固定する（F1、https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows ） |
 | T23 | 公開の資格情報の盗用 | A12 | NuGet への公開は Trusted Publishing（GitHub の OIDC のトークンを、そのたびに 1 時間有効の一時の API キーに換える）にし、長く使える API キーを GitHub にも手元にも置かず、盗む資格情報を残さない。nuget.org のポリシーは、このリポジトリ・`release.yml`・environment `release` に限り、範囲を `ElasticLM.*` のパッケージに絞る（ポリシーは ref に縛れないので、ref は T22 の environment で絞る）。GitHub と nuget.org のアカウントには二要素認証（パスキー）を使う。公開の前に、持ち主が下書きの Release を見て environment を承認する（F1、https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing ） |
 | T24 | 配布物のすり替え | A14（A12 によるものは T23、持ち主のアカウントそのものの奪取は §5.4） | GitHub Release の配布物ごとの SHA-256 を `SHA256SUMS` に載せ、配布物と `SHA256SUMS` に GitHub の artifact attestation（Sigstore の来歴の証明）を付ける。利用者は `gh attestation verify <ファイル> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で、このリポジトリのリリースのワークフローがそのタグから作ったことを確かめられる（`--repo` だけでは署名したワークフローを確かめないので、コマンドは文書に書く）。公開した Release は immutable にし、タグとファイルを持ち主にも変えられなくする。下書きにすべてのファイルを付けてから公開する。NuGet パッケージは nuget.org のリポジトリの署名を持つ（nuget.org から取ったことを示し、作り手は示さない）。nuget.org は push したパッケージすべてに署名を足すので、CI で付けた証明とは照らせない。配布物はリリースのワークフローだけが作り、手元で作った物は置かない（F1、https://docs.github.com/en/actions/concepts/security/artifact-attestations 、https://cli.github.com/manual/gh_attestation_verify 、https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases 、https://learn.microsoft.com/en-us/nuget/reference/signed-packages-reference ） |
-| T25 | ビルドとリリースの道具の乗っ取り | A13 | アクションは SHA で固定し、固定する SHA はそのアクションのリポジトリのタグを指すことを確かめ（フォークにだけあるコミットも `uses:` で解決されるため）、版をコメントで添える。公開の資格情報に触るアクション（NuGet の Trusted Publishing のログイン、`actions/attest`、GHCR のログインの `docker/login-action`）は名指しで確かめる。Dependabot の更新は PR でレビューし、`cooldown` で出たばかりの版を待つ（T21 の `minimumReleaseAge` と同じ考え）。NuGet の依存は `Directory.Packages.props` で版を固定し、nuget.org は同じ版の上書きを許さない（中身のハッシュは固定しない）。`linux-musl-x64` を作る Alpine のイメージはダイジェストで固定する。SQLite はリポジトリに入れたアマルガメーションから毎回作る（0.72）。SDK とランナーのイメージは、Microsoft と GitHub の配布をそのまま信じる（§5.4 の GitHub の侵害の行）。管理画面の依存は T21（F1、https://docs.github.com/en/actions/reference/security/secure-use ） |
+| T25 | ビルドとリリースの道具の乗っ取り | A13 | アクションは SHA で固定し、固定する SHA はそのアクションのリポジトリのタグを指すことを確かめ（フォークにだけあるコミットも `uses:` で解決されるため）、版をコメントで添える。公開の資格情報に触るアクション（NuGet の Trusted Publishing のログイン、`actions/attest`）は名指しで確かめる。GHCR へのログインはアクションを使わず、`docker login` の run の段で行う（§20.6）。Dependabot の更新は PR でレビューし、`cooldown` で出たばかりの版を待つ（T21 の `minimumReleaseAge` と同じ考え）。NuGet の依存は `Directory.Packages.props` で版を固定し、nuget.org は同じ版の上書きを許さない（中身のハッシュは固定しない）。`linux-musl-x64` を作る Alpine のイメージはダイジェストで固定する。SQLite はリポジトリに入れたアマルガメーションから毎回作る（0.72）。SDK とランナーのイメージは、Microsoft と GitHub の配布をそのまま信じる（§5.4 の GitHub の侵害の行）。管理画面の依存は T21（F1、https://docs.github.com/en/actions/reference/security/secure-use ） |
 | T26 | GHCR のタグの付け替えとイメージのすり替え | A12, A14 | イメージは `contents: read` のビルドのジョブで OCI layout として作り、同じ実行の artifact で渡し、試しのジョブが 2 つのアーキテクチャで起動して確かめる。公開のジョブはその layout を、ダイジェストを変えずに push し、証明を付けるだけで、BuildKit もベースのイメージの取得も行わない（T22、持ち主の決定）。イメージを GHCR に push するのは environment `release` の承認のあとの公開のジョブだけで、`packages: write` もそのジョブだけが持つ。PR と `workflow_dispatch` の試しはイメージを作って確かめるだけで、push しない（証明もレジストリのイメージに付けるので、試しでは作らない）。ワークフローが公開した package ではリポジトリが admin の役割になるので、`packages: write` を公開のジョブのほかに与えないことが、削除と付け替えの守りになる（https://docs.github.com/en/packages/learn-github-packages/deleting-and-restoring-a-package ）。package はリポジトリからアクセスを引き継ぎ（書き込みの権限は持ち主だけ）、Actions のアクセスはこのリポジトリだけに与える（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）。GitHub Packages の認証は classic の PAT だけで、`write:packages` を持つ PAT を盗んだ者はワークフローを通さずに push し、タグを付け替えられる（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。持ち主は `write:packages` と `delete:packages` の classic の PAT を作らない。証明の subject は、2 つのアーキテクチャをまとめた index のダイジェストである。利用者は `gh attestation verify oci://ghcr.io/yukikeda/elm-service:<版> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で確かめ、確かめた index のダイジェスト（`@sha256:`）で固定する。gh は証明を既定で GitHub の API から取り、OCI の URL ではそのレジストリへの認証を求める（https://cli.github.com/manual/gh_attestation_verify ）。`--bundle-from-oci` を付ければ、`push-to-registry` で置いた証明をレジストリから取る。このコマンドは V1 の初めての公開で、public にする前と後に試し、`SECURITY.md` に書く。正しく証明された古い版に `latest` を付け替えることもできるので、`--source-ref` には期待する版のタグを渡す。`latest` で取ったイメージは、どの版かを照らせない。似た名前のイメージや、ラベル（`org.opencontainers.image.source`）でこのリポジトリを名乗るイメージは、`--repo` と `--signer-workflow` の確かめで断られる。文書はイメージの名前を `ghcr.io/yukikeda/elm-service` だけと書き、ラベルを信じない。最初に公開した package は private で、public にする操作は取り消せないので、持ち主が V1 の命令を受けてから手で行う（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）（F2） |
 | T27 | ベースのイメージの乗っ取り | A13 | ベースのイメージ（`mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`）は Dockerfile の `FROM` にダイジェストつきで書き、イメージはそのベースに F1 の配布物（同じ実行で作り、検査し、`SHA256SUMS` と証明に載せた `elm-service`）を `COPY` するだけで作る。ビルドの文脈には同じ実行の配布物と `LICENSE` だけを置き、秘密も `ARG` の秘密も渡さない。イメージに入るのは `elm-service`、`LICENSE`、空の `/data` だけで、F2 の試しで層の中身と、イメージの中の `elm-service` の SHA-256 が配布物と同じことを確かめる。そのため、ベースのイメージは実行ファイルのバイト列を変えられない。ただし、ベースの glibc と libssl は `elm-service` のプロセスに読み込まれ（.NET の Linux の暗号は OpenSSL を実行の時に読み込む）、CA の束は外への TLS の信頼を決めるので、ベースを乗っ取った者はベンダーの署名鍵と鍵暗号化鍵を読める（§5.1）。守りはダイジェストでの固定と、固定を上げるときの確かめに頼る。ダイジェストは Dependabot の `docker` が PR で上げ（タグが同じでもダイジェストだけを上げる。https://github.com/dependabot/dependabot-core/blob/main/docker/lib/dependabot/docker/update_checker.rb ）、持ち主が PR で確かめる（持ち主の決定）。MCR では Dependabot が公開の日を取れないので、`cooldown` は効かず、警告を残して提案される（https://github.com/dependabot/dependabot-core/blob/main/docker/README.md ）。ベースのイメージの署名は確かめず、T25 の SDK のイメージと同じく Microsoft の配布を信じる（持ち主の決定）。Microsoft のイメージは、ベースの更新から 12 時間以内と毎月作り直される（https://github.com/dotnet/dotnet-docker/blob/main/README.runtime-deps.md ）（F2） |
 
@@ -2775,7 +2789,7 @@ M5 の各行の Grill で決める点（0.97）:
 
 | 秘密 | 渡し方 |
 | --- | --- |
-| 署名鍵 | ファイル（PKCS#8 PEM。パスフレーズは環境変数）と、その鍵の証明書のファイル |
+| 署名鍵 | ファイル（PKCS#8 PEM。パスフレーズは環境変数かファイル）と、その鍵の証明書のファイル |
 | ノンスの HMAC の秘密 | 環境変数かファイル。未設定なら起動しない（複数ノードで食い違わないため、黙って作らない） |
 | OIDC のクライアントの秘密 | 環境変数かファイル（画面のログインの Web のクライアントの秘密、M5b。CLI のクライアントは秘密を持たない） |
 | データベースの接続文字列 | 環境変数かファイル |
@@ -2794,7 +2808,8 @@ M4a1 の設定:
 | `tls.certificate`, `tls.key` | `ELM_TLS_CERTIFICATE`, `ELM_TLS_KEY` | なし | https のときの PEM の証明書と鍵 |
 | `database.provider` | `ELM_DATABASE_PROVIDER` | `sqlite` | `sqlite` か `postgres` |
 | `database.connectionFile` | `ELM_DATABASE_CONNECTION`（接続文字列そのもの） | なし（必須） | 接続文字列のファイル（16 KiB まで、末尾の改行は除く） |
-| `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE` |
+| `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE`（値そのもの）か `signing.passphraseFile` |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE`（パスフレーズそのもの） | なし（`ELM_SIGNING_PASSPHRASE` がなければ必須。`setup` は読まない） | 署名鍵のパスフレーズのファイル（16 KiB まで、末尾の改行は除く。F2、0.111） |
 | `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` は読まない） | 署名鍵の証明書のファイル。1〜4 個（§8.6）で、空のファイルは誤り。各ファイルの前後の空白と改行は除いて読む（`elm key certify` は末尾に改行を書く。M4d3 の設計のレビュー R1） |
 | `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`（`;` 区切り）、またはそれがないとき PEM の本文を `ELM_TRUST_ROOT_KEYS` | なし（必須） | 証明書を確かめるルート鍵（§13.8 と同じ） |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS`（`;` 区切り） | なし | 無効にした鍵の ID（§13.8 と同じ） |
@@ -3888,6 +3903,72 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 
 測るもの: 7 つの RID の 3 つの実行ファイルと `libelasticlm` の大きさ（新しい 4 つの RID は初めての値）、実行時の依存、Linux の glibc の版を、§4.2 の「F1 の実測」に RID ごとに書く。
 
+### 20.6 `elm-service` のコンテナイメージ（F2、0.111）
+
+F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビューの持ち主の決定（PR #167 の 3 件）、F2 の設計のレビューの持ち主の決定（PR #170 の 2 件）で決めた。守りは §5.3 の T22、T25、T26、T27 に対応する。F2 は仕組みを作って公開しない試しで確かめ、初めての GHCR への push と package の public 化は V1 で持ち主の命令を受けてから行う。
+
+イメージの形:
+
+- 名前は `ghcr.io/yukikeda/elm-service`。`linux/amd64` と `linux/arm64` を 1 つの OCI の index にまとめる（Q4）。
+- `eng/container/Dockerfile` は、ベース（`mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`）を `FROM` にダイジェストつきで書き、`RUN` を持たない（Q2、T27）。中身は次の 3 つだけで、ほかに何も足さない（T27）。
+  - `/app/elm-service` と `/app/LICENSE`: 同じ実行の `release.yml` が作った `elm-service-<版>-linux-x64.tar.gz` と `-linux-arm64.tar.gz` から取り出したもの（Q3）。アーキテクチャは `TARGETARCH` で選ぶ。
+  - `/data`: 空のフォルダーで、持ち主は UID 1654（Q10）。`VOLUME` にする。
+- 実行の利用者はベースの UID 1654（`app`）のまま（Q2）。`ENTRYPOINT` は `/app/elm-service`。作業のフォルダーは `/data` にする（運用者が相対のパスで SQLite のファイルを指しても `/data` に置かれる）。
+- 環境変数: イメージが足すのは `ELM_LISTEN=http://0.0.0.0:8080` で、`EXPOSE 8080` を書く（Q9）。ベースが持つ `ASPNETCORE_HTTP_PORTS=8080` は空にする（`elm-service` は `listen` だけで待ち受けるので、ASP.NET Core に別の待ち受けを知らせない。PR #170 の持ち主の決定）。ベースのほかの環境変数（`APP_UID`、`DOTNET_RUNNING_IN_CONTAINER`、`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`）はそのままにする（https://github.com/dotnet/dotnet-docker/blob/main/src/runtime-deps/10.0/noble-chiseled/amd64/Dockerfile 。`elm-service` は `InvariantGlobalization` で作る）。`ELM_PUBLICURLS`（ループバックでない待ち受けでは `setup` と起動の両方で必須、§14.8）と `ELM_NODE_NAME`（決めないと、コンテナを作り直すたびに利用ログが別のノードのものになる）は、運用者が必ず決める値として文書に書き、イメージに入れない。
+- `HEALTHCHECK` は書かない（ベースにシェルも `curl` もない。Q11）。
+- ラベルと index の注記: `org.opencontainers.image.source`（このリポジトリ）、`.version`（版）、`.revision`（コミット）、`.licenses`（`MIT`）、`.title`、`.description` を、各プラットフォームの config のラベルと、index の注記（`annotation-index.`）の両方に付ける（GHCR はマルチアーキテクチャのイメージの説明を index の注記から読む。https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。リポジトリとのつながりは `GITHUB_TOKEN` での push で自動でできるので（同じページ）、ラベルにも注記にも守りを頼らない（T26）。
+- イメージの SBOM は作らない。`elm-service` の依存は Release の SBOM にあり、ベースの中身は T27 のとおり Microsoft の配布として信じる。イメージにコードの署名は付けず、来歴の証明で確かめる（0.108）。
+
+作り方（PR #167 の持ち主の決定 1）:
+
+- ジョブ `image`（`contents: read`、`ubuntu-latest`、`needs: [version, build]`）:
+  - 同じ実行の `archives-linux-x64` と `archives-linux-arm64` から `elm-service` と `LICENSE` を取り出し、ビルドの文脈（2 つのアーキテクチャのフォルダー、空の `data/`）を組む。
+  - `docker/setup-buildx-action` を `driver: docker-container` と `driver-opts: image=moby/buildkit:v<版>@sha256:<ダイジェスト>`（v0.13 以降。`rewrite-timestamp` に要る）で使う。`docker` のドライバーは OCI のエクスポーターを持たないため（https://docs.docker.com/build/exporters/oci-docker/ ）。`version` は渡さずランナーの buildx を使い、`cache-binary: false` を書く（固定したコミットの `src/main.ts` では、`version` を渡したときか buildx がないときだけ取りに行き、そのときに `cache-binary` で Actions のキャッシュを使う。T22 のキャッシュを戻さない決まり）。
+  - `docker buildx build --platform linux/amd64,linux/arm64 --provenance=false --sbom=false --output type=oci,dest=<tar>,rewrite-timestamp=true` で、OCI layout の tar を作る（Q7）。`SOURCE_DATE_EPOCH` はコミットの時刻にする（https://github.com/moby/buildkit/blob/master/docs/build-repro.md ）。目的は、同じコミットとベースから同じ index のダイジェストを得て、作り直して照らせるようにすること。F2 の PR で 2 回作り、ダイジェストが同じことを一度確かめて記録する。
+  - `RUN` を持たないので、エミュレーション（QEMU）を入れない。`docker/setup-qemu-action` を使わない `ubuntu-latest` で 2 つのプラットフォームが作れることを、F2 の試しで確かめる。
+  - index のダイジェストは、OCI layout の `index.json` のただ 1 つの記述子（`application/vnd.oci.image.index.v1+json`）の `digest` で、ジョブの出力 `digest` にする。
+  - 公開のジョブが使う skopeo を、push の代わりに `oci:` のフォルダーへ写して試す（`skopeo copy --all --preserve-digests --digestfile <ファイル> oci-archive:<tar> oci:<フォルダー>`）。ランナーに skopeo があること、`oci-archive:` がこの tar を読めること、ダイジェストが保たれ `--digestfile` の値が出力 `digest` と同じことを、V1 の前に確かめ、skopeo の版を記録する（PR #170 のレビュー）。tar を artifact `image-oci`（`retention-days: 90`。`upload-artifact` の上限で、承認を待つ間に消えないようにする）にする。
+- ジョブ `image-test`（`contents: read`、`ubuntu-latest` と `ubuntu-24.04-arm` の matrix、`needs: image`）は、次を確かめる（Q12）。push しない。
+  - tar の index のダイジェストが `needs.image.outputs.digest` と同じ。
+  - 各プラットフォームのマニフェストで、先頭の層がベースの同じプラットフォームのマニフェストの層とダイジェストまで同じで、残りの層の中身が `app/`、`app/elm-service`、`app/LICENSE`、`data/` だけ（ベースを 1 バイトも変えず、ほかに何も足していない）。`app/elm-service` と `app/LICENSE` の SHA-256 が、同じ実行の圧縮ファイルの中のものと同じ。
+  - 自分のアーキテクチャのマニフェストが指す config と層から docker の `manifest.json` を書き、同じ blob を `docker load` で読み込み、読み込んだイメージの ID（従来のイメージの置き場所では config のダイジェスト）が、tar のそのプラットフォームのマニフェストの config と同じ。ランナーの Docker の版を記録する。F2 の試しで、Docker 28.0.4 の従来の置き場所は OCI layout を `docker load --platform` で読めなかった（docker の `manifest.json` を探す）。この形は、手元の `wslc load` でも確かめた。
+  - その回のために作った鍵、証明書、ルート鍵、ノンスの秘密、パスフレーズを、設定ファイル（`signing.passphraseFile` を含む）と秘密のファイルとして、UID 1654 が読めるようにマウントし、`/data` に名前つきのボリュームをつなぎ、`ELM_PUBLICURLS`（その回の `https://` の URL）を渡して、`setup` が通り、起動して `/health` に 200 で答える。起動のログに、ASP.NET Core の待ち受けの上書きの知らせがない。
+  - 動いているプロセスの UID が 1654。
+  - `docker stop` で、既定の猶予のうちに終了コード 0 で止まる（PID 1 で SIGTERM を受ける）。
+- `checksums` の `needs` に `image-test` を足し、イメージの試しが通らなければ下書きを作らない。`SHA256SUMS` にはイメージの tar を入れない（イメージは index のダイジェストと証明で確かめる。T26）。
+
+公開（Q5、Q6、T22、T26）:
+
+- ジョブ `publish` の `needs` は `[version, image, draft]` にする。権限は `contents: write`、`id-token: write`（NuGet の Trusted Publishing と、証明の Sigstore の署名）、`packages: write`、`attestations: write` になる（T22）。NuGet への push のあと、Release を公開する前に、次を行う。
+  - `echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin` の run の段で GHCR にログインする。第三者のアクション（`docker/login-action`）は足さない（PR #170 の持ち主の決定）。skopeo（containers/image）と `actions/attest` の `push-to-registry`（sigstore-js）は、どちらも `~/.docker/config.json` の資格情報を読む（https://github.com/containers/image/blob/main/docs/containers-auth.json.5.md ）。
+  - `image-oci` の tar の index のダイジェストが `needs.image.outputs.digest` と同じことを確かめてから、`skopeo copy --all --preserve-digests --digestfile <ファイル> oci-archive:<tar> docker://ghcr.io/yukikeda/elm-service:<版>` で push し、`--digestfile` の値が期待するダイジェストと同じことを確かめる（`--preserve-digests` はダイジェストを保てなければ失敗する。https://github.com/containers/skopeo/blob/main/docs/skopeo-copy.1.md ）。skopeo はランナーにあるものを使い、版を記録する。
+  - プレリリースでない版（`needs.version.outputs.prerelease` が `false`）は、`skopeo copy --all --preserve-digests docker://ghcr.io/yukikeda/elm-service:<版> docker://ghcr.io/yukikeda/elm-service:latest` で `latest` も付け、同じく確かめる。
+  - `actions/attest` で、`subject-name: ghcr.io/yukikeda/elm-service`、`subject-digest: <index のダイジェスト>`、`push-to-registry: true`、`create-storage-record: false` の証明を付ける（T22）。`artifact-metadata: write` は与えない。
+  - 証明のあとに `docker logout ghcr.io` を行い、`~/.docker/config.json` のトークンを残さない（失敗した場合も行う）。
+- 持ち主の作業として `docs/releasing.md` に足す: V1 の初めての push のあと、package を public にする（取り消せない）。package の設定で Actions のアクセスをこのリポジトリだけにする。`write:packages` と `delete:packages` の classic の PAT を作らない（T26）。リリースの前の固定したイメージの確かめ（手順 2）に、Dockerfile のベース（Dependabot が上げる）と BuildKit のイメージ（Dependabot は `driver-opts` の中を上げない）を足す。
+
+設定の変更（Q8）:
+
+- 設定ファイルに `signing.passphraseFile` を足す。`ELM_SIGNING_PASSPHRASE` があればそれを使い、なければこのファイルを読む（ほかの秘密と同じく 16 KiB まで、末尾の改行は除く）。どちらもなければ起動しない。これで、すべての秘密をファイルで渡せる。`ELM_*_FILE` の決まりは足さない。
+
+ほかに変えるもの:
+
+- Dependabot に `docker`（`/eng/container`）を足す。`cooldown` は、MCR では公開の日を取れないので今は効かないが、MCR が出すようになれば効くので、ほかの ecosystem とそろえて 7 日を書く（T27）。
+- 運用の文書 `docs/container.md`（英語）:
+  - `docker run` と Kubernetes の例。`docker run … <イメージ> setup --config <ファイル>` の形（`setup` が先。`elm-service` の引数は `[setup] [--config <file>]`）と、`setup` にも `ELM_PUBLICURLS` が要ること。
+  - 設定ファイルと秘密のファイルのマウント。秘密のファイルは UID 1654 が読める必要がある（Kubernetes の Secret では `defaultMode` か `fsGroup`）。環境変数は `docker inspect` や Pod の定義に見えるので、ファイルを勧める。
+  - `/data`: 名前つきのボリュームをつなぐ（試しで確かめた形）。何もつながずに起動すると無名のボリュームになり、コンテナを作り直すとデータを失う。Kubernetes の PersistentVolumeClaim では `securityContext.fsGroup: 1654`、ホストのフォルダーをつなぐなら UID 1654 に持ち主を変える。
+  - `ELM_PUBLICURLS` と `ELM_NODE_NAME`。
+  - ヘルスチェック: `/health` はデータベースに届かないと 503 を返すので、Kubernetes では `readinessProbe` の `httpGet: /health` に使い、`livenessProbe` には使わない（データベースが止まると再起動を繰り返すため）。Docker では `/health` を外から確かめる。
+  - ルートのファイルシステムを読み取りだけにするなら、`/tmp` に書けるボリュームをつなぐ。
+  - ダイジェストでの固定と、証明の確かめ方（`gh attestation verify oci://` は V1 で試してから書く。それまでは「V1 で確かめる」と書く）。
+  - `.cursor/rules/language.mdc` の英語の一覧に足す。
+- §21 に次を足す（`.cursor/rules/dependencies.mdc`）: `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定、イメージのベース。.NET 10 のサポートは 2028-11-14 まで、https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core 。Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで、https://ubuntu.com/about/release-cycle ）と、`moby/buildkit`（ダイジェストで固定、ビルドの道具。イメージには入らない）。
+- §5.3 の T25 の名指しのアクションから `docker/login-action` を外す（使わないため）。
+- `docs/conventions.md` に `eng/container/` を書く。
+
+測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -3910,6 +3991,8 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
 | `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils、libicu を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
+| `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定） | `elm-service` のコンテナイメージのベース（§20.6） | glibc、libssl、CA の束だけを持つ Microsoft のイメージで、UID 1654 で動く。.NET 10 のサポートは 2028-11-14 まで（https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core ）、Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで（https://ubuntu.com/about/release-cycle ）。ダイジェストは Dependabot が上げる | 対象外（実行の土台） |
+| `moby/buildkit` v0.34.1（ダイジェストで固定） | `release.yml` の `image` のジョブのビルドの道具（§20.6） | OCI layout の出力と `rewrite-timestamp`（v0.13 以降）に使う。イメージには入らない。ダイジェストはリリースの前に持ち主が合わせる（`docs/releasing.md`） | 対象外（ビルドの道具） |
 
 ## 22. 段階
 
@@ -3944,7 +4027,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | M6b | `libelasticlm` の有効化: `elm_activation`（オンラインの操作、試用、オフラインのファイル、自動の更新とコールバック）（決めた形は 0.106） | §12.6.2, §12.8, §12.9, §17 |
 | M6c | `libelasticlm` のリース: `elm_client`（オンプレミスと SaaS 型のリース、更新のスレッド、コールバック、借り出し、サーバーのピンの消去）（決めた形は 0.107） | §12.7, §13, §13.5, §17 |
 | F1 | リリース基盤: `release.yml`、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`（決めた形は 0.109） | §4.1, §20.5 |
-| F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（0.108） | §1.3, §5, §14.8 |
+| F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（決めた形は 0.111） | §1.3, §5, §14.8, §20.6 |
 | V1 | 端から端までのテスト、§4.2 の目標の参照機（`ubuntu-latest`）での計測、文書、サンプル、安全性の見直し、v1 の公開 | §4.2, §20 |
 
 ## 23. v1 の範囲外

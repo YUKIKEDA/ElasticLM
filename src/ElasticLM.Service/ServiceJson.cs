@@ -88,6 +88,9 @@ internal sealed class SigningSection
 
     [JsonPropertyName("certificates")]
     public List<string>? Certificates { get; set; }
+
+    [JsonPropertyName("passphraseFile")]
+    public string? PassphraseFile { get; set; }
 }
 
 /// <summary><c>trust</c>.</summary>

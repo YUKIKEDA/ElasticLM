@@ -26,6 +26,9 @@ env:
   DOTNET_SDK_VERSION: 10.0.403
   ALMALINUX_IMAGE: almalinux:8@sha256:2d0f2eb2a83cc09dbc2eb92fade4dbe8f709628149e81aa00aec70630406603b
   ALPINE_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot@sha256:8a339f2175a99aad64cd618450303b8361d565eebbdf8aad95cdf8e6b54ab9d3
+  # design §20.6: the BuildKit that builds the elm-service image. Dependabot does not raise it (docs/releasing.md).
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+  IMAGE_NAME: ghcr.io/yukikeda/elm-service
 
 jobs:
   version:
@@ -348,9 +351,115 @@ jobs:
           path: sbom
           retention-days: 7
 
+  image:
+    # design §20.6: the elm-service image as an OCI layout, built from this run's archives in a read-only job (T22, T27).
+    name: Container image
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: archives
+          pattern: archives-linux-*64
+          merge-multiple: true
+
+      # The docker driver has no OCI exporter. No version is given, so the runner's buildx is used and nothing is cached.
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          driver: docker-container
+          driver-opts: image=${{ env.BUILDKIT_IMAGE }}
+          cache-binary: false
+
+      - name: Build
+        id: build
+        run: ./eng/container/Build-Image.ps1 -Version $env:VERSION -Revision $env:GITHUB_SHA -ArchiveDir archives -OutFile elm-service-image.tar
+
+      - name: Copy with skopeo as the publish job does
+        # design §20.6: the publish job pushes with skopeo; copying to a local layout here checks, before V1, that the
+        # runner has skopeo, that oci-archive: reads this tar, and that the index digest is kept.
+        shell: bash
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          skopeo --version | tee -a "$GITHUB_STEP_SUMMARY"
+          skopeo copy --all --preserve-digests --digestfile probe oci-archive:elm-service-image.tar oci:probe-layout
+          [ "$(cat probe)" = "$DIGEST" ] || { echo "::error::skopeo copied $(cat probe), not $DIGEST."; exit 1; }
+          rm -rf probe probe-layout
+
+      - name: Build again and compare
+        # design §20.6: the same commit and base give the same index digest.
+        env:
+          FIRST: ${{ steps.build.outputs.digest }}
+        run: |
+          $second = (./eng/container/Build-Image.ps1 -Version $env:VERSION -Revision $env:GITHUB_SHA -ArchiveDir archives -OutFile again.tar | Select-Object -Last 1) -replace '^.*: ', ''
+          Remove-Item again.tar
+          if ($second -ne $env:FIRST) { "::error::A second build gave $second, not $env:FIRST."; exit 1 }
+          "Two builds gave the same index digest $second." >> $env:GITHUB_STEP_SUMMARY
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-oci
+          path: elm-service-image.tar
+          # The publish job takes it after the owner's approval; 90 days is upload-artifact's longest.
+          retention-days: 90
+
+  image-test:
+    name: Container image (linux/${{ matrix.arch }})
+    needs: [version, image]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            os: ubuntu-latest
+            rid: linux-x64
+          - arch: arm64
+            os: ubuntu-24.04-arm
+            rid: linux-arm64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-oci
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-${{ matrix.rid }}
+          path: archives
+
+      - name: Check and run the image
+        env:
+          DIGEST: ${{ needs.image.outputs.digest }}
+          VERSION: ${{ needs.version.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: ./eng/container/Test-Image.ps1 -ImageTar elm-service-image.tar -ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
+
   checksums:
     name: SHA256SUMS
-    needs: [build, pack, consume, sbom]
+    # The image test is here too, so that no draft is made when the image fails (design §20.6).
+    needs: [build, pack, consume, sbom, image-test]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -440,16 +549,20 @@ jobs:
 
   publish:
     # Q6, Q16, T23: after the owner approves the environment, push the packages from the draft (checked against its
-    # SHA256SUMS) with Trusted Publishing, then publish the draft. No checkout and no build code.
+    # SHA256SUMS) with Trusted Publishing, push the tested image unchanged and attest it (design §20.6, T26), then publish
+    # the draft. No checkout and no build code.
     name: Publish
-    needs: draft
+    needs: [version, image, draft]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment: release
+    # id-token is for NuGet's Trusted Publishing and the attestation's Sigstore signature (T22).
     permissions:
       contents: write
       id-token: write
+      packages: write
+      attestations: write
     steps:
       - name: Download the packages from the draft
         env:
@@ -476,6 +589,43 @@ jobs:
           for package in *.nupkg; do
             dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
           done
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-oci
+
+      - name: Push the image
+        # design §20.6: docker login writes ~/.docker/config.json, which skopeo and actions/attest read; no third-party
+        # login action runs in this job. The tested index is pushed with its digest kept, and checked before and after.
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DIGEST: ${{ needs.image.outputs.digest }}
+          VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          set -euo pipefail
+          echo "$GITHUB_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          skopeo --version
+          tested=$(tar -xOf elm-service-image.tar index.json | jq -r '.manifests[0].digest')
+          [ "$tested" = "$DIGEST" ] || { echo "::error::The image tar holds $tested, not the tested $DIGEST."; exit 1; }
+          skopeo copy --all --preserve-digests --digestfile pushed oci-archive:elm-service-image.tar "docker://$IMAGE_NAME:$VERSION"
+          [ "$(cat pushed)" = "$DIGEST" ] || { echo "::error::GHCR holds $(cat pushed), not $DIGEST."; exit 1; }
+          if [ "$PRERELEASE" = "false" ]; then
+            skopeo copy --all --preserve-digests --digestfile latest "docker://$IMAGE_NAME:$VERSION" "docker://$IMAGE_NAME:latest"
+            [ "$(cat latest)" = "$DIGEST" ] || { echo "::error::latest is $(cat latest), not $DIGEST."; exit 1; }
+          fi
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ needs.image.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      # The token docker login wrote is not left in ~/.docker/config.json for the steps after this one.
+      - name: Log out of GHCR
+        if: always()
+        run: docker logout ghcr.io
 
       - name: Publish the release
         env:
