@@ -112,6 +112,9 @@ internal static class Leases
                 }
 
                 await Task.Delay(probe.RetryAfter ?? TimeSpan.FromSeconds(5), TimeProvider.System);
+
+                // The reclaim time (a lease's length, 10 minutes) outlasts a nonce (300 seconds, design §12.2): get a new one.
+                await devices[0].PrepareAsync();
             }
 
             double recoveryWait = TimeProvider.System.GetElapsedTime(waitStart).TotalSeconds;
