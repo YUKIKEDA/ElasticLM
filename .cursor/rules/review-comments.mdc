@@ -15,7 +15,7 @@ Before acting on a finding or declining it, check its claim against the code of 
 
 A finding that asks to change a decision the owner made is not declined by citing the rule that records the decision. Reply with what the decision was and what the finding shows, and ask the owner (`.cursor/rules/consent.mdc`).
 
-A review the owner asks for is posted on the pull request, in the same turn, without waiting for an ask to post it. A review shown only in the conversation is not seen by anyone else. A re-review after fixes is posted the same way.
+A review the owner asks for is posted on the pull request, in the same turn, without waiting for an ask to post it. A review shown only in the conversation is not seen by anyone else. A re-review after fixes is posted the same way. An independent design review the agent runs itself (`.cursor/rules/design-docs.mdc`) is posted too: the gist of each finding, how it was fixed, and the owner's decisions, on the Issue or the PR, in the turn its fixes land. In the release threats the review stayed in the conversation, and the owner's review asked for it (PR #151).
 
 Before calling a PR ready, and whenever the owner asks for the next step, read the reviews and inline comments of every open PR (`gh pr view <n> --json reviews,comments` and `gh api repos/{owner}/{repo}/pulls/<n>/comments`).
 
