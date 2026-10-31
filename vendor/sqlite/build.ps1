@@ -54,7 +54,8 @@ function Invoke-Native([string] $command) {
         cmd /c $command
     }
     else {
-        bash -c $command
+        # sh, not bash: the .NET SDK's Alpine image has no bash (design §20.5).
+        sh -c $command
     }
 
     if ($LASTEXITCODE -ne 0) {
@@ -65,7 +66,9 @@ function Invoke-Native([string] $command) {
 
 if ($Rid -like "win-*") {
     $vswhere = Join-Path ${env:ProgramFiles(x86)} "Microsoft Visual Studio\Installer\vswhere.exe"
-    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    # design §20.5: win-arm64 needs MSVC's ARM64 tools, the other Windows targets the x64 ones.
+    $component = if ($Rid -eq "win-arm64") { "Microsoft.VisualStudio.Component.VC.Tools.ARM64" } else { "Microsoft.VisualStudio.Component.VC.Tools.x86.x64" }
+    $vs = & $vswhere -latest -products * -requires $component -property installationPath
     if (-not $vs) {
         Write-Error "MSVC was not found. Install Visual Studio's 'Desktop development with C++' workload (.cursor/rules/engineering.mdc)."
         exit 1
@@ -88,9 +91,16 @@ else {
     $obj = Join-Path $OutDir "sqlite3.o"
     $extension = if ($Rid -like "osx-*") { "dylib" } else { "so" }
     $libraries = if ($Rid -like "osx-*") { "" } else { "-lpthread -ldl -lm" }
-    Invoke-Native "clang -c -O2 -fPIC $flags -o '$obj' sqlite3.c"
+    # design §20.5: on macOS the target comes from the RID, with the minimum version NativeAOT links for (12.0), so osx-x64
+    # builds on an arm64 runner and the object agrees with the executable.
+    $target = switch ($Rid) {
+        "osx-x64" { "--target=x86_64-apple-macos12.0" }
+        "osx-arm64" { "--target=arm64-apple-macos12.0" }
+        default { "" }
+    }
+    Invoke-Native "clang -c -O2 -fPIC $target $flags -o '$obj' sqlite3.c"
     Invoke-Native "ar rcs '$static/libe_sqlite3.a' '$obj'"
-    Invoke-Native "clang -shared -o '$shared/libe_sqlite3.$extension' '$obj' $libraries"
+    Invoke-Native "clang -shared $target -o '$shared/libe_sqlite3.$extension' '$obj' $libraries"
 }
 
 Write-Host "SQLite built for $Rid in $OutDir."

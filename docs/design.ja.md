@@ -3777,7 +3777,7 @@ F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち�
 | `consume` | いつも（3 つの OS の matrix） | `contents: read` | パッケージだけを参照するアプリを NativeAOT で発行して動かす |
 | `sbom` | いつも | `contents: read` | 依存グラフの SBOM を書き出す（下の「配布物」） |
 | `checksums` | いつも | `contents: read` | 圧縮ファイル、パッケージ、SBOM の `SHA256SUMS` を作る |
-| `attest` | タグの push と `workflow_dispatch` | `contents: read`、`id-token: write`、`attestations: write` | `SHA256SUMS` を `subject-checksums` に渡し、そこに並ぶすべてのファイルに来歴の証明を付ける（`actions/attest`。`subject-checksums` は `sha256sum` の形のファイルを受け、1 回に 1024 件まで。https://github.com/actions/attest ）。ビルドのコードを動かさない |
+| `attest` | タグの push と `workflow_dispatch` | `contents: read`、`id-token: write`、`attestations: write` | `SHA256SUMS` を `subject-checksums` に渡し、そこに並ぶすべてのファイルに来歴の証明を付ける（`actions/attest`。`subject-checksums` は `sha256sum` の形のファイルを受け、1 回に 1024 件まで。https://github.com/actions/attest ）。`SHA256SUMS` そのものにも付ける。`create-storage-record: false` にして、記録の口の権限（`artifact-metadata: write`）を持たない。ビルドのコードを動かさない |
 | `draft` | タグの push だけ | `contents: write` | 渡されたファイルと本文で、下書きの GitHub Release を作る。ビルドのコードを動かさない |
 | `publish` | タグの push だけ、environment `release` | `contents: write`、`id-token: write` | 持ち主の承認のあと、NuGet に Trusted Publishing で push し、下書きの Release を公開する |
 
@@ -3799,14 +3799,14 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | --- | --- | --- |
 | `win-x64` | `windows-latest` | そのまま |
 | `win-arm64` | `windows-11-arm` | そのまま。SQLite は `vcvarsall arm64` |
-| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具は `dnf install clang zlib-devel`（AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
+| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具は `dnf install clang zlib-devel binutils`（AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
 | `linux-arm64` | `ubuntu-24.04-arm` | `linux-x64` と同じく `almalinux:8` の arm64 のコンテナで作る |
 | `linux-musl-x64` | `ubuntu-latest` | ダイジェストで固定した `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot` のコンテナ（NativeAOT の道具 `build-base clang zlib-dev` が入っている。Alpine 3.24 のサポートは 2028-06-01 まで。https://github.com/dotnet/dotnet-docker/blob/main/src/sdk/10.0/alpine3.24-aot/amd64/Dockerfile 、https://alpinelinux.org/releases/ ）を `docker run` で動かし、`apk add` はしない |
 | `osx-arm64` | `macos-latest` | そのまま |
 | `osx-x64` | `macos-latest` | クロスコンパイル（`dotnet publish -r osx-x64`）。Intel の macOS のランナー（`macos-15-intel`）は 2027 年秋に打ち切られるので使わない（https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/ ） |
 
-- コンテナは、ステップの中の `docker run` で動かす（artifact の取得と送出、要約への書き出しをランナーで行うため）。`--user $(id -u):$(id -g)` と `-e HOME=/tmp` を付け、出力がランナーの利用者のものになるようにする。
-- 発行は `eng/release/Publish-Rid.ps1 -Rid <RID> -VersionSuffix <後ろ>`、検査と圧縮は `eng/release/Test-Publish.ps1` と `eng/release/Pack-Rid.ps1` にし、どのランナーでも同じものを走らせる。コンテナの中で動かすのは発行（`dotnet publish` と、そこから呼ばれる SQLite の C のビルド）だけで、検査、スモークテスト、圧縮はランナーで行う（Alpine の RID のスモークテストと C のテストだけはコンテナの中）。SQLite のビルドは MSBuild から `pwsh` で呼ばれる。SDK の Alpine のイメージには `pwsh` がある。`almalinux:8` には、ランナーの PowerShell（`/opt/microsoft/powershell/7`、RHEL 8 で動く自己完結の配布）を読み取りだけでつなぐ。つないだ PowerShell が動くことは試しで確かめ、動かなければ持ち主に知らせて決め直す。CI の `aot` のジョブも、検査は同じ `Test-Publish.ps1` で行う。
+- コンテナは、ステップの中の `docker run` で動かす（artifact の取得と送出、要約への書き出しをランナーで行うため）。root で動かし（`almalinux:8` の `dnf` に root が要る）、終わりに出力の持ち主をランナーの利用者に `chown` で戻す。`HOME` は `/tmp` にする。
+- 発行は `eng/release/Publish-Rid.ps1 -Rid <RID> -VersionSuffix <後ろ>`、検査は `eng/release/Test-Publish.ps1`、スモークテストは `eng/release/Test-Smoke.ps1`、圧縮は `eng/release/Pack-Rid.ps1` にし、どのランナーでも同じものを走らせる。コンテナの中で動かすのは発行（`dotnet publish` と、そこから呼ばれる SQLite の C のビルド）だけで、検査、スモークテスト、圧縮はランナーで行う（Alpine の RID のスモークテストと C のテストだけはコンテナの中）。SQLite のビルドは MSBuild から `pwsh` で呼ばれる。SDK の Alpine のイメージには `pwsh` がある。`almalinux:8` には、ランナーの PowerShell（`/opt/microsoft/powershell/7`、RHEL 8 で動く自己完結の配布）を読み取りだけでつなぐ。つないだ PowerShell が動くことは試しで確かめ、動かなければ持ち主に知らせて決め直す。CI の `aot` のジョブも、検査は同じ `Test-Publish.ps1` で行う。
 - 直すもの:
   - `vendor/sqlite/build.ps1` は、Unix で `bash -c` ではなく `sh -c` を使う（Alpine のイメージに `bash` がない）。`osx-*` では RID から `--target=x86_64-apple-macos12.0` か `--target=arm64-apple-macos12.0` を渡す（NativeAOT は macOS の最低の版の既定を 12.0 にしてリンクする。https://github.com/dotnet/runtime/blob/release/10.0/src/coreclr/nativeaot/BuildIntegration/Microsoft.NETCore.Native.Unix.targets ）。`win-arm64` では MSVC の ARM64 の部品（`Microsoft.VisualStudio.Component.VC.Tools.ARM64`）を求める。部品の ID が `windows-11-arm` のイメージにあることは、試しで `vswhere` を動かして確かめる。
   - `ElasticLM.Native` のアセンブリ名は、RID があれば RID で（`win-` で始まれば `elasticlm`）、なければビルドする機械の OS で決める（今は機械の OS が先に効く）。
@@ -3816,8 +3816,8 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 検査（Q12、Q13。CI の `aot` のジョブと `release.yml` の `build` の両方）:
 
 - 単一バイナリ: 発行したフォルダーには、実行ファイルとそのデバッグシンボル（Windows は `.pdb`、Linux は `.dbg`、macOS は `.dSYM` のフォルダー）しかない。`libelasticlm` のフォルダーには、ライブラリとそのデバッグシンボルしかない（Q14 のとおり、Windows のリンク用の `elasticlm.lib` は配らない。§17.4 は実行時に読み込む形を前提にしている）。ほかのファイルがあれば失敗にし、その名前を出す。
-- 実行時の依存: `dumpbin /dependents`（Windows）、`readelf -d` の `NEEDED`（Linux）、`otool -L`（macOS）の結果をジョブの要約に書く。Linux の glibc の RID では、`NEEDED` に `libc.so.6` と `libm.so.6` のほかがあれば失敗にする。`linux-musl-x64` では musl の `libc` のほかがあれば失敗にする（名前は最初の実行で確かめて書く）。macOS では `/usr/lib/` と `/System/Library/` の外のものがあれば失敗にする。Windows は記録だけにする。
-- glibc の版: Linux の glibc の RID では、`objdump -T` が示す `GLIBC_` の最も新しい版をジョブの要約に書き、2.28 を超えれば失敗にする。
+- 実行時の依存: `dumpbin /dependents`（Windows）、`readelf -d` の `NEEDED`（Linux）、`otool -L`（macOS）の結果をジョブの要約に書く。Linux の glibc の RID では、`NEEDED` に glibc の一部（`libc.so.6`、`libm.so.6`、glibc 2.28 では `libc` と別の `libpthread.so.0`、`libdl.so.2`、`librt.so.1`、動的リンカー）のほかがあれば失敗にする。`linux-musl-x64` では musl の `libc` のほかがあれば失敗にする（名前は最初の実行で確かめて書く）。macOS では `/usr/lib/` と `/System/Library/` の外のものがあれば失敗にする。Windows は記録だけにする。
+- glibc の版: Linux の glibc の RID では、`objdump -T` が示す `GLIBC_` の最も新しい版をジョブの要約に書き、`release.yml` では 2.28 を超えれば失敗にする。CI は Linux をランナーの新しい glibc で作るので、記録だけにする（`-RecordGlibcOnly`）。
 - macOS の署名: `codesign -dv` の結果をジョブの要約に書き、`osx-arm64` で ad-hoc の署名（`Signature=adhoc`）がなければ失敗にする。`osx-x64` は書くだけにする（§5.4）。
 - 大きさ: §4.2 の目標を 10 進のバイトで当てはめ、`elm-service` が 40,000,000 バイト、`elm-server` が 30,000,000 バイト、`libelasticlm` が 8,000,000 バイトを超えれば失敗にする。`elm` には目標がないので記録だけにする。デバッグシンボルは数えない。
 - 警告: 今の CI と同じく、`: warning ` の行が 1 つでもあれば失敗にする（macOS の `dsymutil` の `ModuleCache/*.pcm` を除く。`.cursor/rules/aot.mdc`）。
@@ -3826,7 +3826,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 
 - 実行ファイルごと、RID ごとに 1 つの圧縮ファイル: `elm-<版>-<RID>`、`elm-server-<版>-<RID>`、`elm-service-<版>-<RID>`、`libelasticlm-<版>-<RID>`。`win-*` は `.zip`、ほかは `.tar.gz`。中身は、実行ファイル（`libelasticlm` はライブラリと `include/elasticlm.h`）と `LICENSE`。
 - デバッグシンボルは、同じ名前に `-symbols` を付けた別の圧縮ファイル。
-- SBOM は `sbom` のジョブで、GitHub の依存グラフの非同期の書き出し（`GET /repos/{owner}/{repo}/dependency-graph/sbom/generate-report` で作らせ、返った URL を、できるまで取りに行く）で得た SPDX の JSON を `elasticlm-<版>.spdx.json` とする。同期の `GET /repos/{owner}/{repo}/dependency-graph/sbom` は 2026-11-13 で使えなくなる（https://docs.github.com/en/rest/dependency-graph/sboms ）。これは書き出したときの依存グラフ（既定のブランチ）で、タグのコミットのものとは限らない。NuGet の依存が版つきで載ることを試しで確かめる（中央のパッケージ管理の `Directory.Packages.props` は、依存グラフの対象のファイルに挙がっていない。https://docs.github.com/en/code-security/reference/supply-chain-security/dependency-graph-supported-package-ecosystems ）。載らなければ、持ち主に知らせて決め直す。
+- SBOM は `sbom` のジョブで、`eng/release/Export-Sbom.ps1` が、GitHub の依存グラフの非同期の書き出し（`GET /repos/{owner}/{repo}/dependency-graph/sbom/generate-report` で作らせ、返った URL を、できるまで取りに行く）で得た SPDX の JSON を `elasticlm-<版>.spdx.json` とする。同期の `GET /repos/{owner}/{repo}/dependency-graph/sbom` は 2026-11-13 で使えなくなる（https://docs.github.com/en/rest/dependency-graph/sboms ）。これは書き出したときの依存グラフ（既定のブランチ）で、タグのコミットのものとは限らない。NuGet の依存が版つきで載ることを試しで確かめる（中央のパッケージ管理の `Directory.Packages.props` は、依存グラフの対象のファイルに挙がっていない。https://docs.github.com/en/code-security/reference/supply-chain-security/dependency-graph-supported-package-ecosystems ）。載らなければ、持ち主に知らせて決め直す。
 - `SHA256SUMS` は、すべての圧縮ファイル、2 つの `.nupkg`・`.snupkg`、SBOM の SHA-256 を `sha256sum` の形（`<16 進>  <名前>`）で並べる。
 
 パッケージ（Q4、Q11）:
@@ -3838,7 +3838,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 公開（Q6、Q16、PR #151 の R11）:
 
 - `draft` は、`gh release create v<版> --draft --verify-tag` で、`version` が作った本文と、すべての配布物、`SHA256SUMS`、SBOM を付けた下書きを作る。プレリリース（`VersionSuffix` があるとき）は `--prerelease` を付ける。
-- `publish` は environment `release` で動き、持ち主の承認を待つ。承認のあと、`actions/checkout` をせず、ビルドのコードを動かさずに、下書きの Release から `gh release download` で `.nupkg`、`.snupkg`、`SHA256SUMS` を取り、`SHA256SUMS` と照らす。`NuGet/login`（Trusted Publishing。入力は nuget.org のプロフィール名 `user`、得た一時の API キーは 1 時間有効）でキーを得て、`dotnet nuget push --skip-duplicate`（`.snupkg` は同じ場所にあれば一緒に push される。https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-nuget-push ）で push し、最後に `gh release edit v<版> --draft=false` で公開する。`--skip-duplicate` があるので、Release の公開だけが失敗した実行をやり直せる。NuGet の push が失敗すれば Release は下書きのまま残る。
+- `publish` は environment `release` で動き、持ち主の承認を待つ。承認のあと、`actions/checkout` をせず、ビルドのコードを動かさずに、下書きの Release から `gh release download` で `.nupkg`、`.snupkg`、`SHA256SUMS` を取り、`SHA256SUMS` と照らす。`NuGet/login`（Trusted Publishing。入力は nuget.org のプロフィール名 `user` で、持ち主が設定するリポジトリの変数 `NUGET_USER` から取る。秘密ではない。得た一時の API キーは 1 時間有効）でキーを得て、`dotnet nuget push --skip-duplicate`（`.snupkg` は同じ場所にあれば一緒に push される。https://learn.microsoft.com/en-us/dotnet/core/tools/dotnet-nuget-push ）で push し、最後に `gh release edit v<版> --draft=false` で公開する。`--skip-duplicate` があるので、Release の公開だけが失敗した実行をやり直せる。NuGet の push が失敗すれば Release は下書きのまま残る。
 - 持ち主の作業の手順は `docs/releasing.md`（英語）に書く:
   - リポジトリの書き込みの権限は持ち主だけにし、共同作業者を置かない。Actions の `GITHUB_TOKEN` の既定の権限を読み取りだけにする（T22）。
   - environment `release`: 必須の承認者を持ち主にし、「Prevent self-review」は無効にする（承認できるのは持ち主 1 人で、有効にするとタグを押した持ち主が承認できない。https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments ）。配備できる ref を `v*` のタグに限り、管理者の迂回を許さない。
@@ -3878,6 +3878,8 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | `preact` 11（W0 で 11.1.0） | `web/admin/`（管理画面の SPA。ビルド結果が `ElasticLM.Service` に埋め込まれる） | 画面の部品と状態（§15.2、0.96）。MIT。実行時の依存はこれだけで、その先の依存はない | 対象外（ブラウザで動く）。W0 の試作の `dist` は 17,791 バイト（brotli で 6,771）。`elm-service` の大きさの差は M5c で測る |
 | `vite` 8.3.5, `vitest` 4.1.12, `happy-dom` 21.0.4, `@types/node`（MIT）、`typescript` 7.0.2（Apache-2.0） | `web/admin/` のビルドとテストだけ | ビルド、型の確かめ、ブラウザのないテスト。ビルド結果には入らない。推移的な依存は `pnpm-lock.yaml` にある。W0 の試作で、`preact` と合わせて入るパッケージは 56 個（Windows） | 対象外 |
 | Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
+| `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
+| `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
 
 ## 22. 段階
 

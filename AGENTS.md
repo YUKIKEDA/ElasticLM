@@ -12,6 +12,7 @@ A software licensing platform for .NET: signed license verification, an on-premi
 | Order and status of work | `docs/roadmap.md` |
 | Projects, folders, coding conventions | `docs/conventions.md` |
 | Build, format, and test gate | `./build.ps1` |
+| Release path and the owner's release steps | `.github/workflows/release.yml`, `eng/release/`, `docs/releasing.md` |
 
 The current row lives only in `docs/roadmap.md`. `.dev/` is local scratch; nothing there is a decision.
 

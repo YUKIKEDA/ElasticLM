@@ -26,6 +26,10 @@
 .PARAMETER Server
     The elm-server executable the lease test runs against.
 
+.PARAMETER Rid
+    The runtime identifier the library was published for (design §20.5). Defaults to this machine's. The C test is compiled
+    for it: osx-x64 on an arm64 Mac runs under Rosetta.
+
 .PARAMETER Publish
     Publish the four with NativeAOT for this machine first, into the temporary folder, instead of taking -Library, -Elm,
     -Service, and -Server. elm-service needs web/admin/dist (design §15.2).
@@ -36,6 +40,7 @@ param(
     [string]$Elm,
     [string]$Service,
     [string]$Server,
+    [string]$Rid,
     [switch]$Publish
 )
 
@@ -54,12 +59,16 @@ function Invoke-Checked([string]$what, [scriptblock]$command) {
 }
 
 # On Windows, the MSVC environment of the newest Visual Studio, found with vswhere (cl.exe, link.exe, dumpbin.exe).
+# design §20.5: the tools of the machine's architecture, so win-arm64 is built and run on an arm64 runner.
 function Import-MsvcEnvironment {
+    $arm64 = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64'
+    $component = if ($arm64) { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
     $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    $vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+    $vs = & $vswhere -latest -products * -requires $component -property installationPath
     if (-not $vs) { throw 'No Visual Studio with the C++ tools was found.' }
-    $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvars64.bat'
-    foreach ($line in (cmd /c "`"$vcvars`" >nul && set")) {
+    $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
+    $arch = if ($arm64) { 'arm64' } else { 'x64' }
+    foreach ($line in (cmd /c "`"$vcvars`" $arch >nul && set")) {
         if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) }
     }
 
@@ -68,7 +77,12 @@ function Import-MsvcEnvironment {
 }
 
 try {
-    $rid = if ($IsWindows) { 'win-x64' } elseif ($IsMacOS) { 'osx-arm64' } else { 'linux-x64' }
+    $arm64 = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64'
+    $rid = if ($Rid) { $Rid }
+    elseif ($IsWindows) { $arm64 ? 'win-arm64' : 'win-x64' }
+    elseif ($IsMacOS) { $arm64 ? 'osx-arm64' : 'osx-x64' }
+    elseif (Test-Path '/etc/alpine-release') { 'linux-musl-x64' }
+    else { $arm64 ? 'linux-arm64' : 'linux-x64' }
     if ($IsWindows) {
         # The NativeAOT linker step finds Visual Studio with vswhere too.
         $env:PATH = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer') + [IO.Path]::PathSeparator + $env:PATH
@@ -119,7 +133,9 @@ try {
     if ($IsWindows) {
         Invoke-Checked 'Compiling the C test' { cl /nologo /W4 /WX /std:c11 /I $include $source /Fo"$(Join-Path $work 'test_elasticlm.obj')" /Fe"$test" | Out-Host }
     } elseif ($IsMacOS) {
-        Invoke-Checked 'Compiling the C test' { clang -std=c11 -Wall -Wextra -Werror -I $include $source -o $test -lpthread }
+        # The test is built for the library's architecture: an x86_64 test runs under Rosetta and loads the osx-x64 library.
+        $arch = $rid -eq 'osx-x64' ? 'x86_64' : 'arm64'
+        Invoke-Checked 'Compiling the C test' { clang -arch $arch -std=c11 -Wall -Wextra -Werror -I $include $source -o $test -lpthread }
     } else {
         Invoke-Checked 'Compiling the C test' { gcc -std=c11 -Wall -Wextra -Werror -pthread -I $include $source -o $test -ldl }
     }

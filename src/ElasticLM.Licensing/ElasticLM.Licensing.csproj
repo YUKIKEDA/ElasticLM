@@ -5,7 +5,13 @@
     <Description>Offline verification of ElasticLM license files: signed tokens, trust store, clock guard, and machine fingerprints. NativeAOT compatible, no dependencies.</Description>
     <PackageTags>licensing;license;verification;nativeaot</PackageTags>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- design §20.5: the package checks its API against a baseline once a version is published (V1). -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
   <ItemGroup>
     <InternalsVisibleTo Include="ElasticLM.Licensing.Tests" />
     <!-- The issuing side signs the same payload types and applies the same rules (docs/conventions.md). -->

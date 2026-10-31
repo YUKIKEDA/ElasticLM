@@ -1,9 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <!-- libelasticlm: the C ABI over ElasticLM.Licensing and ElasticLM.Client, published as a NativeAOT shared library
        (design §17, decision 0.105). NativeAOT names the file after the assembly, so the name differs by OS:
-       elasticlm.dll, libelasticlm.so, libelasticlm.dylib. -->
+       elasticlm.dll, libelasticlm.so, libelasticlm.dylib. The runtime identifier decides when there is one, so a
+       publish for another OS gets that OS's name (design §20.5); without one, the OS of the machine decides. -->
   <PropertyGroup>
-    <AssemblyName Condition="$([MSBuild]::IsOSPlatform('Windows')) Or $(RuntimeIdentifier.StartsWith('win'))">elasticlm</AssemblyName>
+    <AssemblyName Condition="'$(RuntimeIdentifier)' != '' And $(RuntimeIdentifier.StartsWith('win'))">elasticlm</AssemblyName>
+    <AssemblyName Condition="'$(RuntimeIdentifier)' == '' And $([MSBuild]::IsOSPlatform('Windows'))">elasticlm</AssemblyName>
     <AssemblyName Condition="'$(AssemblyName)' != 'elasticlm'">libelasticlm</AssemblyName>
     <RootNamespace>ElasticLM.Native</RootNamespace>
     <PublishAot>true</PublishAot>

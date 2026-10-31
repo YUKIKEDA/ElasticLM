@@ -4,6 +4,9 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # design §20.5, T25: a new version waits a week before Dependabot proposes it.
+    cooldown:
+      default-days: 7
     open-pull-requests-limit: 5
     groups:
       analyzers:
@@ -19,3 +22,6 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    # design §20.5, T25: the actions run in the jobs that hold the publishing credentials.
+    cooldown:
+      default-days: 7

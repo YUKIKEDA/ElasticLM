@@ -5,7 +5,13 @@
     <Description>ElasticLM client: installation keys, request proofs, and leases from on-premises servers and the hosted service. NativeAOT compatible.</Description>
     <PackageTags>licensing;license;floating;lease;nativeaot</PackageTags>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <!-- design §20.5: the package checks its API against a baseline once a version is published (V1). -->
+    <EnablePackageValidation>true</EnablePackageValidation>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
+  <ItemGroup>
+    <None Include="README.md" Pack="true" PackagePath="/" />
+  </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Licensing\ElasticLM.Licensing.csproj" />
   </ItemGroup>

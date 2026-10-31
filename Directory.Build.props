@@ -44,6 +44,10 @@
     <EmbedUntrackedSources>true</EmbedUntrackedSources>
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!-- design §4.1, §20.5: a NativeAOT publish folder holds the executable and its native symbols only. Without these,
+         the XML docs and the managed .pdb of the referenced projects are copied beside it. -->
+    <PublishDocumentationFiles>false</PublishDocumentationFiles>
+    <AllowedReferenceRelatedFileExtensions>none</AllowedReferenceRelatedFileExtensions>
   </PropertyGroup>
 
   <ItemGroup Condition="'$(ElmIsTestProject)' == 'true'">

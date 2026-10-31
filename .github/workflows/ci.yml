@@ -163,30 +163,13 @@ jobs:
           restore-keys: nuget-aot-${{ runner.os }}-
 
       - name: Publish
-        run: |
-          foreach ($target in @(@('src/ElasticLM.Server', 'elm-server'), @('src/ElasticLM.Cli', 'elm'), @('src/ElasticLM.Service', 'elm-service'))) {
-            $log = dotnet publish $target[0] -c Release -r ${{ matrix.rid }} -o publish -nologo 2>&1
-            $log
-            if ($LASTEXITCODE -ne 0) { exit 1 }
-            # dsymutil's missing clang module caches on macOS are not counted: the Swift parts of .NET's Apple crypto (CryptoKit,
-            # AES-GCM, M5b) carry debug references to the module cache of the machine that built them (.cursor/rules/aot.mdc).
-            $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
-            if ($warnings.Count -gt 0) { "::error::NativeAOT publish of $($target[1]) reported $($warnings.Count) warnings"; exit 1 }
-            $exe = Get-Item (Join-Path publish ($IsWindows ? "$($target[1]).exe" : $target[1]))
-            "$($target[1]) (${{ matrix.rid }}): $($exe.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
-          }
+        # design §20.5: the same publish as release.yml, one folder for each of the four, with zero warnings.
+        run: ./eng/release/Publish-Rid.ps1 -Rid ${{ matrix.rid }} -OutDir publish
 
-      - name: Publish libelasticlm
-        # design §17.4: the C ABI as a NativeAOT shared library. NativeAOT names the file after the assembly.
-        run: |
-          $log = dotnet publish src/ElasticLM.Native -c Release -r ${{ matrix.rid }} -o native -nologo 2>&1
-          $log
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
-          if ($warnings.Count -gt 0) { "::error::NativeAOT publish of libelasticlm reported $($warnings.Count) warnings"; exit 1 }
-          $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
-          $library = Get-Item (Join-Path native $name)
-          "libelasticlm (${{ matrix.rid }}): $name, $($library.Length) bytes, 0 warnings" >> $env:GITHUB_STEP_SUMMARY
+      - name: Check the publish folders
+        # design §4.1, §4.2, §20.5: single binary, runtime dependencies, macOS signature, and sizes. CI builds Linux on the
+        # runner's glibc, so the glibc version is recorded only; release.yml builds against glibc 2.28 and applies the limit.
+        run: ./eng/release/Test-Publish.ps1 -Rid ${{ matrix.rid }} -PublishDir publish -RecordGlibcOnly
 
       - name: C test of libelasticlm
         # design §17.4: the exports against the header, then the C test compiled with warnings as errors and run against
@@ -194,14 +177,14 @@ jobs:
         # published elm-service on loopback, and design §17.6 the lease test against the published elm-server on https.
         run: |
           $name = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
-          ./tests/native/run.ps1 -Library (Join-Path native $name) -Elm (Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')) -Service (Join-Path publish ($IsWindows ? 'elm-service.exe' : 'elm-service')) -Server (Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server'))
+          ./tests/native/run.ps1 -Library (Join-Path publish/libelasticlm $name) -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')) -Service (Join-Path publish/elm-service ($IsWindows ? 'elm-service.exe' : 'elm-service')) -Server (Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server'))
 
       - name: Smoke
         run: |
-          $elm = Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')
+          $elm = Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')
           & $elm --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          $exe = Join-Path publish ($IsWindows ? 'elm-server.exe' : 'elm-server')
+          $exe = Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server')
           & $exe --help
           if ($LASTEXITCODE -ne 0) { exit 1 }
           $env:ELM_PRODUCT = 'acme-cad'
@@ -214,9 +197,8 @@ jobs:
         # The single executable with SQLite linked in (design §14.2): keys made by elm, setup prints a key, the service starts
         # with nothing beside it, answers /health, and serves the audit log to the key.
         run: |
-          $elm = Join-Path publish ($IsWindows ? 'elm.exe' : 'elm')
-          $service = Join-Path publish ($IsWindows ? 'elm-service.exe' : 'elm-service')
-          if (@(Get-ChildItem publish -Filter '*sqlite*').Count -gt 0) { "::error::a SQLite library was published beside elm-service"; exit 1 }
+          $elm = Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')
+          $service = Join-Path publish/elm-service ($IsWindows ? 'elm-service.exe' : 'elm-service')
           $env:ELM_KEY_PASSPHRASE = 'ci smoke passphrase 0123'
           & $elm key root create --out root.key.pem --public-out root.pub.pem
           & $elm key signing create --out signing.key.pem --public-out signing.pub.pem
@@ -290,8 +272,8 @@ jobs:
             Start-Sleep -Seconds 1
           }
           if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
-          $elm = Join-Path publish 'elm'
-          $service = Join-Path publish 'elm-service'
+          $elm = Join-Path publish/elm 'elm'
+          $service = Join-Path publish/elm-service 'elm-service'
           New-Item -ItemType Directory pg | Out-Null
           $env:ELM_KEY_PASSPHRASE = 'ci measure passphrase 0123'
           & $elm key root create --out pg/root.key.pem --public-out pg/root.pub.pem

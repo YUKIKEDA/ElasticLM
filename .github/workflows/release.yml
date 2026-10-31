@@ -1,0 +1,464 @@
+# design §20.5 (decision 0.109) and the threats it holds against, §5.3 T22-T25.
+# A tag v<version> builds, checks, attests, and drafts a release; the owner's approval of the environment "release" pushes
+# the NuGet packages and publishes the release. workflow_dispatch and every pull request run the same build and checks
+# without publishing (workflow_dispatch also attests). Every action is pinned to a commit of its own repository's tag.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+# A pull request's run is cancelled by its next push; a tag's or a manual run is never cancelled.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  # One SDK for every runtime identifier and both containers, so a release has one ILCompiler and runtime (design §20.5).
+  DOTNET_SDK_VERSION: 10.0.403
+  ALMALINUX_IMAGE: almalinux:8@sha256:2d0f2eb2a83cc09dbc2eb92fade4dbe8f709628149e81aa00aec70630406603b
+  ALPINE_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot@sha256:8a339f2175a99aad64cd618450303b8361d565eebbdf8aad95cdf8e6b54ab9d3
+
+jobs:
+  version:
+    name: Version and release notes
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      suffix: ${{ steps.version.outputs.suffix }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check the version script
+        run: ./eng/release/Test-ReleaseVersion.ps1
+
+      - name: Decide the version
+        id: version
+        run: ./eng/release/Get-ReleaseVersion.ps1 -Ref '${{ github.ref }}' -EventName '${{ github.event_name }}' -RunNumber '${{ github.run_number }}' -NotesPath release-notes.md
+
+      - name: The tag is on main
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        run: |
+          git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+          if ($LASTEXITCODE -ne 0) { "::error::The tag's commit is not on main."; exit 1 }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 7
+
+  spa:
+    # The admin UI, built once with no secrets (design §15.2, T21).
+    name: Admin UI (web/admin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: web/admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/admin/.node-version
+
+      - name: Build
+        run: |
+          corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+          retention-days: 7
+
+  build:
+    name: Build ${{ matrix.rid }}
+    needs: [version, spa]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: win-arm64
+            os: windows-11-arm
+          - rid: linux-x64
+            os: ubuntu-latest
+            container: almalinux
+          - rid: linux-arm64
+            os: ubuntu-24.04-arm
+            container: almalinux
+          - rid: linux-musl-x64
+            os: ubuntu-latest
+            container: alpine
+          - rid: osx-arm64
+            os: macos-latest
+          - rid: osx-x64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      RID: ${{ matrix.rid }}
+      SUFFIX: ${{ needs.version.outputs.suffix }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Publish
+        if: ${{ !matrix.container }}
+        run: ./eng/release/Publish-Rid.ps1 -Rid $env:RID -VersionSuffix $env:SUFFIX -OutDir artifacts/release/publish
+
+      - name: Publish in AlmaLinux 8 (glibc 2.28)
+        # design §4.1, §20.5: built against glibc 2.28 so the binaries run on RHEL 8, Debian 10, Ubuntu 20.04 and later.
+        # The SDK and PowerShell are the runner's, mounted read-only. dnf needs root, so the outputs are handed back to the
+        # runner's user at the end.
+        if: matrix.container == 'almalinux'
+        shell: bash
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" -v "$DOTNET_ROOT:/opt/dotnet:ro" -v /opt/microsoft/powershell/7:/opt/pwsh:ro \
+            -w /src -e HOME=/tmp -e DOTNET_ROOT=/opt/dotnet -e PATH=/opt/dotnet:/opt/pwsh:/usr/bin:/bin \
+            -e DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=1 -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 \
+            -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
+            "$ALMALINUX_IMAGE" bash -c '
+              status=0
+              dnf install -y -q clang zlib-devel binutils && rpm -q clang zlib-devel binutils glibc || status=1
+              if [ $status -eq 0 ]; then
+                pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish || status=1
+              fi
+              chown -R "$OWNER" /src
+              exit $status'
+
+      - name: Publish, smoke, and C test in Alpine (musl)
+        # design §20.5: the SDK's Alpine AOT image carries clang, build-base, and zlib-dev; nothing is installed. The smoke and
+        # C tests run here too, since the binaries need musl.
+        if: matrix.container == 'alpine'
+        shell: bash
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -w /src -e HOME=/tmp \
+            -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
+            "$ALPINE_SDK_IMAGE" sh -c '
+              status=0
+              pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish || status=1
+              if [ $status -eq 0 ]; then pwsh -NoProfile -File eng/release/Test-Smoke.ps1 -PublishDir artifacts/release/publish || status=1; fi
+              if [ $status -eq 0 ]; then
+                p=artifacts/release/publish
+                pwsh -NoProfile -File tests/native/run.ps1 -Rid "$RID" -Library $p/libelasticlm/libelasticlm.so -Elm $p/elm/elm \
+                  -Service $p/elm-service/elm-service -Server $p/elm-server/elm-server || status=1
+              fi
+              chown -R "$OWNER" /src
+              exit $status'
+
+      - name: Check the publish folders
+        # design §20.5: single binary, runtime dependencies, glibc version, macOS signature, and the sizes of design §4.2.
+        run: ./eng/release/Test-Publish.ps1 -Rid $env:RID -PublishDir artifacts/release/publish
+
+      - name: Smoke test
+        if: ${{ matrix.container != 'alpine' }}
+        run: ./eng/release/Test-Smoke.ps1 -PublishDir artifacts/release/publish
+
+      - name: C test of libelasticlm
+        # design §17.4-§17.6: the exports against the header and the C tests, against the published elm-service and elm-server.
+        if: ${{ matrix.container != 'alpine' }}
+        run: |
+          $p = 'artifacts/release/publish'
+          $exe = $IsWindows ? '.exe' : ''
+          $library = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
+          ./tests/native/run.ps1 -Rid $env:RID -Library "$p/libelasticlm/$library" -Elm "$p/elm/elm$exe" -Service "$p/elm-service/elm-service$exe" -Server "$p/elm-server/elm-server$exe"
+
+      - name: Pack the archives
+        run: ./eng/release/Pack-Rid.ps1 -Rid $env:RID -Version $env:VERSION -PublishDir artifacts/release/publish -OutDir artifacts/release/archives
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: archives-${{ matrix.rid }}
+          path: artifacts/release/archives
+          retention-days: 7
+
+  pack:
+    name: NuGet packages
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      SUFFIX: ${{ needs.version.outputs.suffix }}
+      VERSION: ${{ needs.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Pack
+        # design §20.5: package validation is on in the two projects; ContinuousIntegrationBuild is on under GitHub Actions.
+        run: |
+          foreach ($project in 'src/ElasticLM.Licensing', 'src/ElasticLM.Client') {
+            $arguments = @('pack', $project, '-c', 'Release', '-o', 'artifacts/packages', '-nologo')
+            if ($env:SUFFIX) { $arguments += "-p:VersionSuffix=$env:SUFFIX" }
+            dotnet @arguments
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Check the packages
+        run: ./eng/release/Test-Package.ps1 -PackageDir artifacts/packages -Version $env:VERSION
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: packages
+          path: artifacts/packages
+          retention-days: 7
+
+  consume:
+    # design §4.1, §20.5: an app that references only the packages publishes with NativeAOT and zero warnings, and runs.
+    name: Use the packages (${{ matrix.rid }})
+    needs: [version, pack]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rid: win-x64
+            os: windows-latest
+          - rid: linux-x64
+            os: ubuntu-latest
+          - rid: osx-arm64
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: artifacts/packages
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Publish and run
+        run: |
+          if ($IsWindows) { $env:PATH = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer') + ';' + $env:PATH }
+          $log = dotnet publish samples/PackageConsumer -c Release -r ${{ matrix.rid }} -o consumer -nologo -p:ElmPackageVersion=${{ needs.version.outputs.version }} 2>&1
+          $log
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          $warnings = @($log | Select-String -Pattern ': warning ' | Where-Object { $_.Line -notmatch 'ModuleCache/.+\.pcm: No such file or directory' })
+          if ($warnings.Count -gt 0) { "::error::The NativeAOT publish of the package consumer reported $($warnings.Count) warnings"; exit 1 }
+          & (Join-Path consumer ($IsWindows ? 'PackageConsumer.exe' : 'PackageConsumer'))
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  sbom:
+    name: SBOM
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Export
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          New-Item -ItemType Directory -Force sbom | Out-Null
+          ./eng/release/Export-Sbom.ps1 -Repository '${{ github.repository }}' -Token $env:GH_TOKEN -OutFile 'sbom/elasticlm-${{ needs.version.outputs.version }}.spdx.json'
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom
+          path: sbom
+          retention-days: 7
+
+  checksums:
+    name: SHA256SUMS
+    needs: [build, pack, consume, sbom]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: assets
+          pattern: archives-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: sbom
+          path: assets
+
+      - name: Write SHA256SUMS
+        working-directory: assets
+        run: |
+          sha256sum -- * > ../SHA256SUMS
+          mv ../SHA256SUMS .
+          cat SHA256SUMS
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-assets
+          path: assets
+          retention-days: 7
+
+  attest:
+    # T24: provenance for every file SHA256SUMS lists, and for SHA256SUMS itself. No build code runs here.
+    name: Attest
+    needs: checksums
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: assets
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: assets/SHA256SUMS
+          create-storage-record: false
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: assets/SHA256SUMS
+          create-storage-record: false
+
+  draft:
+    # Q16: a draft release with every file; the owner looks at it before approving the environment. No build code runs here.
+    name: Draft the release
+    needs: [version, attest]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+
+      - name: Create the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        run: |
+          flags="--draft --verify-tag"
+          if [ "$PRERELEASE" = "true" ]; then flags="$flags --prerelease"; fi
+          gh release create "$TAG" $flags --title "$TAG" --notes-file release-notes.md assets/*
+
+  publish:
+    # Q6, Q16, T23: after the owner approves the environment, push the packages from the draft (checked against its
+    # SHA256SUMS) with Trusted Publishing, then publish the draft. No checkout and no build code.
+    name: Publish
+    needs: draft
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download the packages from the draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          mkdir packages
+          cd packages
+          gh release download "$TAG" --pattern '*.nupkg' --pattern '*.snupkg' --pattern SHA256SUMS
+          grep -E '\.s?nupkg$' SHA256SUMS | sha256sum --check --strict
+
+      # The nuget.org profile name is a repository variable the owner sets (docs/releasing.md); it is not a secret.
+      - uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        id: login
+        with:
+          user: ${{ vars.NUGET_USER }}
+
+      - name: Push to NuGet
+        working-directory: packages
+        env:
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: |
+          for package in *.nupkg; do
+            dotnet nuget push "$package" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
+          done
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release edit "$TAG" --draft=false
