@@ -42,6 +42,9 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The script works in its own folder: the paths it was given are made absolute first.
+$Bin = (Resolve-Path $Bin).Path
+$Out = [IO.Path]::GetFullPath($Out)
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
 $work = Join-Path ([IO.Path]::GetTempPath()) ('elm-measure-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6)))
 New-Item -ItemType Directory $work | Out-Null
