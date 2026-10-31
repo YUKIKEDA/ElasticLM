@@ -2,7 +2,7 @@
 
 This is the owner's guide to the release path of design §20.5 (decision 0.109) and the threats it holds against (§5.3
 T22–T25). `.github/workflows/release.yml` builds, checks, and attests every release; nothing is published without the
-owner's approval. Nothing has been published yet: the first release is roadmap row V1.
+owner's approval. Nothing has been published yet: the first release is roadmap row V1e.
 
 ## One-time setup
 
@@ -44,13 +44,13 @@ Settings → Environments → New environment `release`:
    - Packages: `ElasticLM.*`.
    - The first release creates the two packages, so the policy needs the scope that allows new packages. After the first
      release, narrow it to new versions of existing packages.
-4. Before V1, decide whether to reserve the ID prefix `ElasticLM`
+4. Before V1e, decide whether to reserve the ID prefix `ElasticLM`
    (https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation).
 
 ## Cutting a release
 
 1. Open a pull request that sets `VersionPrefix` in `Directory.Build.props` and adds a `CHANGELOG.md` section for the
-   version, `## [<version>] - <date>`. A prerelease tag (`v0.1.0-rc.1`) needs its own section (`## [0.1.0-rc.1]`).
+   version, `## [<version>] - <date>`. A prerelease tag (`v1.0.0-rc.1`) needs its own section (`## [1.0.0-rc.1]`).
    Merge it.
 2. Check the container images pinned in `release.yml` (`ALMALINUX_IMAGE`, `ALPINE_SDK_IMAGE`, `BUILDKIT_IMAGE`):
    Dependabot does not update a digest in a workflow's `env`. Take the current digest of `almalinux:8`, of

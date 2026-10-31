@@ -388,7 +388,7 @@ jobs:
         run: ./eng/container/Build-Image.ps1 -Version $env:VERSION -Revision $env:GITHUB_SHA -ArchiveDir archives -OutFile elm-service-image.tar
 
       - name: Copy with skopeo as the publish job does
-        # design §20.6: the publish job pushes with skopeo; copying to a local layout here checks, before V1, that the
+        # design §20.6: the publish job pushes with skopeo; copying to a local layout here checks, before V1e, that the
         # runner has skopeo, that oci-archive: reads this tar, and that the index digest is kept.
         shell: bash
         env:
