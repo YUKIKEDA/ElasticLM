@@ -48,6 +48,38 @@ public sealed class MigratorTests
         }
     }
 
+    /// <summary>
+    /// On SQLite, a migration waits for another writer longer than the 5 seconds of a request (design §14.2, Issue #158).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty SQLite database; another connection holds a write transaction (BEGIN IMMEDIATE).
+    ///
+    /// Steps:
+    /// - Start the migrations; wait 7 seconds of real time (the lock is SQLite's, not the fake clock's); commit the other
+    ///   transaction; wait for the migrations.
+    ///
+    /// Expected:
+    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 8.
+    /// </remarks>
+    [Fact]
+    public async Task Run_WhileAnotherWriterHoldsTheLock_WaitsPastFiveSeconds()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await using Database database = Database.Create(test.Provider, test.ConnectionString);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        IReadOnlyList<Migration> migrations = Migrator.Embedded(test.Provider);
+        await using DbConnection other = await database.OpenAsync(cancel);
+        await using DbTransaction held = await Database.BeginWriteAsync(other, cancel);
+
+        Task<IReadOnlyList<int>> run = Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel);
+        await Task.Delay(TimeSpan.FromSeconds(7), cancel);
+        Assert.False(run.IsCompleted, run.Exception?.ToString());
+        await held.CommitAsync(cancel);
+
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8], await run);
+    }
+
     /// <summary>Gets each engine with each version a database may stand at before the last.</summary>
     public static TheoryData<string, int> EarlierVersions
     {

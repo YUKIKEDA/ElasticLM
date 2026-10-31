@@ -70,6 +70,23 @@ internal abstract partial class Database : IAsyncDisposable
         await Source.OpenConnectionAsync(cancellationToken).ConfigureAwait(false);
 
     /// <summary>
+    /// Makes a SQLite connection of <see cref="OpenAsync"/> wait up to <paramref name="wait"/> for another writer, for the
+    /// migrations (design §14.2). Microsoft.Data.Sqlite retries a busy database until the timeout of the command, which a
+    /// command and a write transaction take from the connection's default; SQLite's own busy wait stays at 5 seconds and is
+    /// retried within it. Connections of other engines are left as they are.
+    /// </summary>
+    /// <param name="connection">The open connection.</param>
+    /// <param name="wait">How long to wait for another writer.</param>
+    public static void WaitForWriters(DbConnection connection, TimeSpan wait)
+    {
+        ArgumentNullException.ThrowIfNull(connection);
+        if (connection is SqliteConnection sqlite)
+        {
+            sqlite.DefaultTimeout = (int)wait.TotalSeconds;
+        }
+    }
+
+    /// <summary>
     /// Starts a write transaction on a connection of <see cref="OpenAsync"/>. SQLite takes the write lock at once
     /// (<c>BEGIN IMMEDIATE</c>, design §14.4), so two writers do not both read and then fail to write.
     /// </summary>

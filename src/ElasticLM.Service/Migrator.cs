@@ -31,6 +31,11 @@ internal static partial class Migrator
     // An arbitrary 64-bit number that names this lock among the database's advisory locks ("elm-migr" in ASCII).
     private const long AdvisoryLockId = 0x656C_6D2D_6D69_6772;
 
+    // design §14.2: a SQLite migration waits this long for another writer, not the 5 seconds of a request. Two processes that
+    // migrate one empty file at once take turns per version, and the one that waits can wait for all the other's versions: on
+    // CI's Windows runner that took more than 5 seconds (Issue #158).
+    private static readonly TimeSpan SqliteWriterWait = TimeSpan.FromSeconds(60);
+
     /// <summary>
     /// Returns the migrations embedded for an engine, in order.
     /// </summary>
@@ -109,6 +114,8 @@ internal static partial class Migrator
         bool postgres = database.Provider == DatabaseProvider.Postgres;
         if (!postgres)
         {
+            Database.WaitForWriters(connection, SqliteWriterWait);
+
             // design §14.2: write-ahead logging lets readers go on while one writer writes. The mode is kept in the file.
             await using DbCommand wal = Database.Command(connection, null, "PRAGMA journal_mode = WAL");
             await wal.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
