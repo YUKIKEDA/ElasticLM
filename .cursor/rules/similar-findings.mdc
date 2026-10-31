@@ -9,5 +9,6 @@ When a problem is pointed out, do not fix only the cited spot and stop. Before f
 
 - Look in the same file, in callees with the same contract, and in the paired code: the offline verifier and the floating server, the on-premises server and the hosted service, checkout and renewal, the Windows, Linux, and macOS machine ID readers, the JIT and NativeAOT builds.
 - Examples: an expiry compared with the wall clock in the verifier and the same comparison in the server; a request field that the signature does not cover on checkout and the same field on check-in; an unbounded read of a token file and the same read of a key file.
+- A decision is restated in settings and examples as well as in prose. Search the build files (`Directory.Build.props`, `.csproj`), the workflows, and the example values in the documents too. In the V1 split the first version became `1.0.0` while `VersionPrefix` stayed 0.1.0, `CHANGELOG.md` and `CONTRIBUTING.md` kept the pre-1.0 policy, and §20.5 and `docs/releasing.md` kept `0.1.0-rc.1` as the example; the independent review found them (R9 and R10 of PR #174).
 - If you find the same kind of problem, fix it together with the cited spot.
 - If you find none, say what you checked and that nothing remains.
