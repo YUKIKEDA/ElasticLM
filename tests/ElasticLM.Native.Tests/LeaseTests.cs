@@ -329,14 +329,16 @@ public sealed class LeaseTests : IAsyncLifetime
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Lease A of pro from a server, and lease B of pro 100 s later, so B's renewal comes 100 s after A's and not at the
-    ///   200 s that brings A's (a refused connection comes back at once on Linux and macOS); the server stopped.
+    /// - Lease A of pro from a server at t0, and lease B of pro at t0+60 s; each renews a third of its 600 s later, so A at
+    ///   t0+200 s and B at t0+260 s; the server stopped.
     ///
     /// Steps:
-    /// - Hold the callback; move the clock 200 s and wait until A's failed renewal enters it; destroy on another thread and
-    ///   see it has not returned after 300 ms, nor after the clock moves 6 s (past the 5 s DisposeAsync gives the returns);
-    ///   wait until destroy has stopped new callbacks (it may start late on a busy thread pool); move the clock 100 s more,
-    ///   wait until B is RETRYING, and give its change 200 ms to reach the callback; let the callback go, which then reads A
+    /// - Hold the callback; move the clock 150 s (to t0+210 s, which wakes A's renewal and not B's; a timer due exactly at
+    ///   the new time also wakes) and wait until A's failed renewal enters it; destroy on another thread and see it has not
+    ///   returned after 300 ms, nor after the clock moves 6 s to t0+216 s (past the 5 s DisposeAsync gives the returns, and
+    ///   before A's retry at t0+225 s); wait until destroy has stopped new callbacks (it may start late on a busy thread
+    ///   pool); move the clock 60 s to t0+276 s, which wakes A's retry and B's renewal, wait until B is RETRYING, and give
+    ///   its change 200 ms to reach the callback; let the callback go, which then reads A
     ///   and deletes a pin through the client while destroy waits; then move the clock a day.
     ///
     /// Expected:
@@ -351,13 +353,13 @@ public sealed class LeaseTests : IAsyncLifetime
         nint client = Create(server.PublicUrls[0].AbsoluteUri);
         Assert.Equal(0, LeaseApi.Acquire(_api, client, "pro", 1, out nint lease, out _));
         string id = LeaseApi.Id(lease);
-        _deployment.Time.Advance(TimeSpan.FromSeconds(100));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(60));
         Assert.Equal(0, LeaseApi.Acquire(_api, client, "pro", 1, out nint later, out _));
         await server.DisposeAsync();
 
         using var hold = new ManualResetEventSlim(false);
         LeaseCallbacks.Hold = hold;
-        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(150));
         await Deployment.WaitUntilAsync(() => LeaseCallbacks.Entered.IsSet);
         NativeClient handle = NativeHandles.Find<NativeClient>(client)!;
         Task destroy = Task.Run(() => LeaseApi.Destroy(client), TestContext.Current.CancellationToken);
@@ -365,7 +367,7 @@ public sealed class LeaseTests : IAsyncLifetime
         _deployment.Time.Advance(TimeSpan.FromSeconds(6));
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         await Deployment.WaitUntilAsync(() => handle.IsClosing);
-        _deployment.Time.Advance(TimeSpan.FromSeconds(100));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(60));
         await Deployment.WaitUntilAsync(() => LeaseApi.State(later) == 1);
         await Task.Delay(200, TestContext.Current.CancellationToken);
         LeaseCallbacks.AfterHold = (client, lease);
