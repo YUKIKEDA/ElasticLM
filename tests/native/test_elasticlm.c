@@ -2,13 +2,20 @@
  * The C test of libelasticlm (design §17.4). It loads the published library at run time and calls every function through
  * a pointer of the header's type (name_fn), so the header's declarations are what the calls are compiled against.
  *
- * Usage (run.ps1 drives both steps):
+ * Usage (run.ps1 drives every step). Each test prints "ok" or "not ok" for each check and exits 1 when one fails.
  *   test_elasticlm thumbprint <library> <key folder>
  *     Creates this installation's key in the folder and prints its thumbprint.
  *   test_elasticlm verify <library> <key folder> <root.pub.pem> <signing key ID> <unbound.elmlic> <bound.elmlic>
- *     Runs the verification tests and prints "ok" or "not ok" for each; exits 1 when one fails.
+ *     Runs the verification tests.
  *   test_elasticlm activation <library> <key folder> <root.pub.pem> <service URL> <license key>
- *     Runs the activation tests against the elm-service at the URL (design §17.5).
+ *     Runs the online activation tests against the elm-service at the URL (design §17.5): activation, refresh, and
+ *     deactivation in the folder, then a trial in "<key folder>-trial".
+ *   test_elasticlm offline-request <library> <key folder> <root.pub.pem> <service URL> <license key> <request file>
+ *   test_elasticlm offline-import <library> <key folder> <root.pub.pem> <service URL> <answer file>
+ *   test_elasticlm revoked <library> <key folder> <root.pub.pem> <service URL>
+ *     The phases of the offline activation and the refused refresh (design §20.7, V1a). The C program has no HTTP client,
+ *     so run.ps1 runs elm offline process between the first two and revokes the license before the third. The folder
+ *     keeps the waiting request and the activation between the phases.
  *   test_elasticlm lease <library> <key folder> <root.pub.pem> <server URL> <service URL> <license key>
  *     Runs the lease tests against the elm-server (https) and the elm-service at the URLs (design §17.6).
  */
@@ -436,34 +443,30 @@ static void test_null_handles(void)
     check(elm.version() != NULL && strlen(elm.version()) > 0, "version");
 }
 
-/* The state callback of the activation test: counts the changes and keeps the last one. */
+/* The state callback of the activation tests: counts the changes and keeps the last one. */
 static int state_changes;
 static int32_t last_previous = -1;
 static int32_t last_current = -1;
+static int32_t last_error = -1;
 
 static void on_state(void* user, int32_t previous, int32_t current, int32_t error, const char* message)
 {
-    (void)error;
     (void)message;
     if (user == (void*)&state_changes) {
         state_changes++;
         last_previous = previous;
         last_current = current;
+        last_error = error;
     }
 }
 
-/*
- * An activation with the hosted service, from C (design §17.5).
- * Preconditions: elm-service on loopback, started by run.ps1 with product acme-cad, feature pro, and a license of 3
- *   activations whose key is passed in.
- * Steps: create the activation with the state callback; activate; check feature pro; read the state and the ID; make a
- *   refresh request and free it; deactivate; read the state; call the remaining functions with a NULL activation.
- * Expected: ELM_OK for each; the callback saw NONE->ACTIVE before activate returned and ACTIVE->NONE before deactivate
- *   returned; the state is ACTIVE then NONE; the ID is not empty while active; the request is text; each remaining
- *   function returns ELM_INVALID_ARGUMENT for the NULL activation.
- */
-static void test_activation(const char* folder, const char* root_pem, const char* url, const char* key)
+/* Creates the activation of the folder with the state callback, and resets the callback's counts. */
+static elm_activation* make_activation(const char* folder, const char* root_pem, const char* url)
 {
+    state_changes = 0;
+    last_previous = -1;
+    last_current = -1;
+    last_error = -1;
     elm_activation_options options;
     memset(&options, 0, sizeof options);
     options.struct_size = sizeof options;
@@ -475,7 +478,58 @@ static void test_activation(const char* folder, const char* root_pem, const char
     options.on_state = on_state;
     options.user = &state_changes;
     elm_activation* activation = NULL;
-    check(elm.activation_create(&options, &activation) == ELM_OK && activation != NULL, "activation created");
+    if (elm.activation_create(&options, &activation) != ELM_OK) {
+        fprintf(stderr, "elm_activation_create: %s\n", elm.last_error_message());
+    }
+
+    return activation;
+}
+
+/*
+ * A trial from the hosted service, from C (design §12.9, §20.7).
+ * Preconditions: the product's trial policy, set by run.ps1; a folder with no installation key yet, so no activation.
+ * Steps: create the activation; start the trial; read the license and the state; check feature pro as a trial.
+ * Expected: ELM_OK, retry_after_seconds 0, and a trial license of acme-cad with feature pro; the callback saw
+ *   NONE->ACTIVE before start_trial returned; the state is ACTIVE; the check is ELM_OK.
+ */
+static void test_trial(const char* folder, const char* root_pem, const char* url)
+{
+    elm_activation* activation = make_activation(folder, root_pem, url);
+    check(activation != NULL, "trial activation created");
+    if (activation == NULL) {
+        return;
+    }
+
+    elm_license* license = NULL;
+    int64_t retry = -1;
+    check(elm.activation_start_trial(activation, &license, &retry) == ELM_OK && license != NULL && retry == 0, "start trial");
+    check(elm.license_kind(license) == ELM_KIND_TRIAL && license != NULL && strcmp(elm.license_product(license), "acme-cad") == 0, "trial license");
+    check(state_changes == 1 && last_previous == ELM_STATE_NONE && last_current == ELM_STATE_ACTIVE, "callback before start_trial returned");
+    elm.license_free(license);
+
+    license = NULL;
+    check(elm.activation_state(activation) == ELM_STATE_ACTIVE, "trial state active");
+    check(elm.activation_check(activation, "pro", NULL, ELM_KIND_TRIAL, &license) == ELM_OK && license != NULL, "trial check");
+    elm.license_free(license);
+    elm.activation_destroy(activation);
+}
+
+/*
+ * An activation with the hosted service, from C (design §17.5).
+ * Preconditions: elm-service on loopback, started by run.ps1 with product acme-cad, feature pro, a license of 3
+ *   activations whose key is passed in, and the product's trial policy.
+ * Steps: create the activation with the state callback; activate; refresh online; check feature pro; read the state and
+ *   the ID; make a refresh request and free it; deactivate; read the state; start a trial in "<folder>-trial"
+ *   (test_trial); call the functions that have no other test with a NULL activation.
+ * Expected: ELM_OK for each; the callback saw NONE->ACTIVE before activate returned and ACTIVE->NONE before deactivate
+ *   returned; the refresh gives the same license ID, an issue time not before the first, retry_after_seconds 0, and no
+ *   state change; the state is ACTIVE then NONE; the ID is not empty while active; the request is text; each function
+ *   called with the NULL activation returns ELM_INVALID_ARGUMENT, or -1 for the state.
+ */
+static void test_activation(const char* folder, const char* root_pem, const char* url, const char* key)
+{
+    elm_activation* activation = make_activation(folder, root_pem, url);
+    check(activation != NULL, "activation created");
     if (activation == NULL) {
         return;
     }
@@ -484,6 +538,17 @@ static void test_activation(const char* folder, const char* root_pem, const char
     int64_t retry = -1;
     check(elm.activation_activate(activation, key, &license, &retry) == ELM_OK && license != NULL && retry == 0, "activate");
     check(state_changes == 1 && last_previous == ELM_STATE_NONE && last_current == ELM_STATE_ACTIVE, "callback before activate returned");
+    char license_id[128];
+    snprintf(license_id, sizeof license_id, "%s", license == NULL ? "" : elm.license_id(license));
+    int64_t issued = elm.license_issued_at(license);
+    elm.license_free(license);
+
+    /* design §20.7: a refresh the service really answers, not only a request file. */
+    license = NULL;
+    retry = -1;
+    check(elm.activation_refresh(activation, &license, &retry) == ELM_OK && license != NULL && retry == 0, "refresh sent");
+    check(license != NULL && strcmp(elm.license_id(license), license_id) == 0 && elm.license_issued_at(license) >= issued, "refreshed license");
+    check(state_changes == 1 && elm.activation_state(activation) == ELM_STATE_ACTIVE, "refresh keeps the state");
     elm.license_free(license);
 
     license = NULL;
@@ -504,6 +569,10 @@ static void test_activation(const char* folder, const char* root_pem, const char
     check(state_changes == 2 && last_current == ELM_STATE_NONE && elm.activation_state(activation) == ELM_STATE_NONE, "callback before deactivate returned");
     elm.activation_destroy(activation);
 
+    char trial_folder[1024];
+    snprintf(trial_folder, sizeof trial_folder, "%s-trial", folder);
+    test_trial(trial_folder, root_pem, url);
+
     license = NULL;
     check(elm.activation_start_trial(NULL, &license, NULL) == ELM_INVALID_ARGUMENT, "start_trial with NULL");
     check(elm.activation_refresh(NULL, &license, NULL) == ELM_INVALID_ARGUMENT, "refresh with NULL");
@@ -515,6 +584,108 @@ static void test_activation(const char* folder, const char* root_pem, const char
     check(elm.activation_state(NULL) == -1, "state of NULL");
     elm.string_free(NULL);
     elm.activation_destroy(NULL);
+}
+
+static int write_file(const char* path, const char* text)
+{
+    FILE* file = fopen(path, "wb");
+    if (file == NULL) {
+        return 0;
+    }
+
+    size_t length = strlen(text);
+    int written = fwrite(text, 1, length, file) == length;
+    return fclose(file) == 0 && written;
+}
+
+/*
+ * The first phase of an offline activation: the request file (design §12.8.1, §20.7).
+ * Preconditions: a folder with no installation key yet; a license of the native policy whose key is passed in.
+ * Steps: create the activation; make the activation request; write it to the request file; free it.
+ * Expected: ELM_OK, a request that replaced nothing, and the file written; the state stays NONE. run.ps1 passes the file
+ *   to elm offline process, which writes the answer for offline-import.
+ */
+static void test_offline_request(const char* folder, const char* root_pem, const char* url, const char* key, const char* path)
+{
+    elm_activation* activation = make_activation(folder, root_pem, url);
+    check(activation != NULL, "offline activation created");
+    if (activation == NULL) {
+        return;
+    }
+
+    char* request = NULL;
+    int32_t replaced = -1;
+    check(elm.activation_create_activation_request(activation, key, 0, &request, &replaced) == ELM_OK && request != NULL && replaced == 0,
+          "activation request");
+    check(request != NULL && write_file(path, request), "activation request written");
+    check(elm.activation_state(activation) == ELM_STATE_NONE && state_changes == 0, "no activation before the answer");
+    elm.string_free(request);
+    elm.activation_destroy(activation);
+}
+
+/*
+ * The second phase of an offline activation: the service's answer (design §12.8.1, §20.7).
+ * Preconditions: the folder of offline-request, with its waiting request; the answer file that elm offline process wrote
+ *   for that request.
+ * Steps: create the activation; import the answer; read the license, the state, and the ID; check feature pro.
+ * Expected: ELM_OK and a standard license of acme-cad with feature pro, not in its grace period; the callback saw
+ *   NONE->ACTIVE before import_response returned; the state is ACTIVE; the ID is not empty; the check is ELM_OK.
+ */
+static void test_offline_import(const char* folder, const char* root_pem, const char* url, const char* path)
+{
+    size_t length = 0;
+    char* answer = read_file(path, &length);
+    check(answer != NULL && length > 0, "answer read");
+    elm_activation* activation = answer == NULL ? NULL : make_activation(folder, root_pem, url);
+    check(activation != NULL, "offline activation opened");
+    if (activation == NULL) {
+        free(answer);
+        return;
+    }
+
+    elm_license* license = NULL;
+    check(elm.activation_import_response(activation, (const uint8_t*)answer, length, &license) == ELM_OK && license != NULL, "answer imported");
+    free(answer);
+    check(license != NULL && elm.license_kind(license) == ELM_KIND_STANDARD && strcmp(elm.license_product(license), "acme-cad") == 0
+              && elm.license_in_grace_period(license) == 0,
+          "imported license");
+    check(state_changes == 1 && last_previous == ELM_STATE_NONE && last_current == ELM_STATE_ACTIVE, "callback before import returned");
+    elm.license_free(license);
+
+    char id[128];
+    size_t needed = 0;
+    check(elm.activation_state(activation) == ELM_STATE_ACTIVE && elm.activation_id(activation, id, sizeof id, &needed) == ELM_OK && needed > 1,
+          "offline activation active");
+    license = NULL;
+    check(elm.activation_check(activation, "pro", NULL, ELM_KIND_STANDARD, &license) == ELM_OK && license != NULL, "offline check");
+    elm.license_free(license);
+    elm.activation_destroy(activation);
+}
+
+/*
+ * A refresh after the license is revoked is refused (design §9.4, §12.6.2, §20.7).
+ * Preconditions: the folder of offline-import, with its activation; the license revoked by run.ps1 through the
+ *   administration API since.
+ * Steps: create the activation; read the state; refresh online; read the state.
+ * Expected: ACTIVE before the refresh; ELM_LICENSE_REVOKED with license NULL and a message; the callback saw
+ *   ACTIVE->REFUSED with error ELM_LICENSE_REVOKED before refresh returned; the state is REFUSED.
+ */
+static void test_revoked(const char* folder, const char* root_pem, const char* url)
+{
+    elm_activation* activation = make_activation(folder, root_pem, url);
+    check(activation != NULL, "revoked activation opened");
+    if (activation == NULL) {
+        return;
+    }
+
+    check(elm.activation_state(activation) == ELM_STATE_ACTIVE, "active before the refresh");
+    elm_license* license = (elm_license*)&license;
+    check(elm.activation_refresh(activation, &license, NULL) == ELM_LICENSE_REVOKED && license == NULL, "refresh refused as revoked");
+    check(strlen(elm.last_error_message()) > 0, "a message after the refusal");
+    check(state_changes == 1 && last_previous == ELM_STATE_ACTIVE && last_current == ELM_STATE_REFUSED && last_error == ELM_LICENSE_REVOKED,
+          "callback before refresh returned");
+    check(elm.activation_state(activation) == ELM_STATE_REFUSED, "state refused");
+    elm.activation_destroy(activation);
 }
 
 /* The lease callback of the lease test: counts the changes and keeps the last one. */
@@ -661,39 +832,50 @@ static void test_lease(const char* folder, const char* root_pem, const char* ser
     elm.client_destroy(NULL);
 }
 
-int main(int argc, char** argv)
+/* Loads the library of argv[2] and reads the root key of argv[4]; NULL after printing why. */
+static char* load_with_root(char** argv)
 {
-    if (argc == 8 && strcmp(argv[1], "lease") == 0) {
-        if (!load(argv[2])) {
-            return 2;
-        }
-
-        size_t root_length = 0;
-        char* root = read_file(argv[4], &root_length);
-        if (root == NULL) {
-            fprintf(stderr, "cannot read %s\n", argv[4]);
-            return 1;
-        }
-
-        test_lease(argv[3], root, argv[5], argv[6], argv[7]);
-        free(root);
-        printf("1..%d\n", number);
-        return failures == 0 ? 0 : 1;
+    if (!load(argv[2])) {
+        return NULL;
     }
 
-    if (argc == 7 && strcmp(argv[1], "activation") == 0) {
-        if (!load(argv[2])) {
+    size_t root_length = 0;
+    char* root = read_file(argv[4], &root_length);
+    if (root == NULL) {
+        fprintf(stderr, "cannot read %s\n", argv[4]);
+    }
+
+    return root;
+}
+
+static int is_command(int argc, char** argv, const char* name, int count)
+{
+    return argc == count && strcmp(argv[1], name) == 0;
+}
+
+int main(int argc, char** argv)
+{
+    int online = is_command(argc, argv, "lease", 8) || is_command(argc, argv, "activation", 7)
+                 || is_command(argc, argv, "offline-request", 8) || is_command(argc, argv, "offline-import", 7)
+                 || is_command(argc, argv, "revoked", 6);
+    if (online) {
+        char* root = load_with_root(argv);
+        if (root == NULL) {
             return 2;
         }
 
-        size_t root_length = 0;
-        char* root = read_file(argv[4], &root_length);
-        if (root == NULL) {
-            fprintf(stderr, "cannot read %s\n", argv[4]);
-            return 1;
+        if (strcmp(argv[1], "lease") == 0) {
+            test_lease(argv[3], root, argv[5], argv[6], argv[7]);
+        } else if (strcmp(argv[1], "activation") == 0) {
+            test_activation(argv[3], root, argv[5], argv[6]);
+        } else if (strcmp(argv[1], "offline-request") == 0) {
+            test_offline_request(argv[3], root, argv[5], argv[6], argv[7]);
+        } else if (strcmp(argv[1], "offline-import") == 0) {
+            test_offline_import(argv[3], root, argv[5], argv[6]);
+        } else {
+            test_revoked(argv[3], root, argv[5]);
         }
 
-        test_activation(argv[3], root, argv[5], argv[6]);
         free(root);
         printf("1..%d\n", number);
         return failures == 0 ? 0 : 1;
@@ -716,7 +898,7 @@ int main(int argc, char** argv)
     }
 
     if (argc != 8 || strcmp(argv[1], "verify") != 0) {
-        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound> | activation <library> <folder> <root.pub.pem> <url> <key> | lease <library> <folder> <root.pub.pem> <server url> <service url> <key>\n");
+        fprintf(stderr, "usage: test_elasticlm thumbprint <library> <folder> | verify <library> <folder> <root.pub.pem> <signing kid> <unbound> <bound> | activation <library> <folder> <root.pub.pem> <url> <key> | offline-request <library> <folder> <root.pub.pem> <url> <key> <request> | offline-import <library> <folder> <root.pub.pem> <url> <answer> | revoked <library> <folder> <root.pub.pem> <url> | lease <library> <folder> <root.pub.pem> <server url> <service url> <key>\n");
         return 2;
     }
 

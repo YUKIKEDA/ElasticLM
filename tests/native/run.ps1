@@ -7,8 +7,12 @@
     - Compiles tests/native/test_elasticlm.c with warnings as errors (MSVC /W4 /WX, gcc and clang -Wall -Wextra -Werror).
     - Makes keys and two licenses with elm in a temporary folder: one unbound, one bound to the key the test creates.
     - Runs the verification test in its two steps.
-    - Starts elm-service on a free loopback port, makes a product, a feature, a policy, and a license with the setup key,
-      and runs the activation test against it (design §17.5).
+    - Starts elm-service on a free loopback port (with 10 requests a second per installation key, not 2), makes a product, a feature, a policy, a license, and the product's trial
+      policy with the setup key, and runs the activation test against it: activation, a refresh, deactivation, and a trial
+      (design §17.5, §20.7).
+    - Runs the offline activation in phases of the C test that share one activation folder: the test writes the request
+      file, elm offline process gets the answer from elm-service, and the test imports it. Then it revokes that license
+      through the administration API, and the test's refresh must be refused with ELM_LICENSE_REVOKED (design §20.7).
     - Starts elm-server on a free https loopback port with a server license of 15-second leases bound to its key, makes a
       cloud-floating license on elm-service, and runs the lease test against both (design §17.6).
     - Prints the library's runtime dependencies.
@@ -18,7 +22,7 @@
     The published libelasticlm (elasticlm.dll, libelasticlm.so, or libelasticlm.dylib).
 
 .PARAMETER Elm
-    The elm executable used to make the keys and licenses.
+    The elm executable used to make the keys and licenses and to pass the offline request to elm-service.
 
 .PARAMETER Service
     The elm-service executable the activation test runs against.
@@ -180,6 +184,10 @@ try {
         $env:ELM_BOOTSTRAPOWNER_ISS = 'https://idp.example'
         $env:ELM_BOOTSTRAPOWNER_SUB = 'native-test'
         $env:ELM_LISTEN = $url
+
+        # design §14.7: the default of 2 requests a second per installation key fits a real device. The activation test
+        # sends three requests with one key at once (activate, refresh, deactivate), so this run allows more.
+        $env:ELM_RATELIMIT_CLIENTPERKEY = '10'
         $apiKey = (& $Service setup).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $apiKey.StartsWith('elm_')) { throw 'elm-service setup did not print a key.' }
         $process = Start-Process $Service -PassThru -NoNewWindow
@@ -200,8 +208,30 @@ try {
             $policy = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"native`",`"maxActivations`":3}").id
             $licenseKey = (Add-AdminRecord 'licenses' "{`"policyId`":`"$policy`",`"name`":`"native`",`"features`":[{`"code`":`"pro`"}]}").key
 
-            & $test activation $Library (Join-Path $work 'activation') (Join-Path $work 'root.pub.pem') $url $licenseKey
+            # design §9.3, §12.9: the product offers a trial through its trial policy, set by PATCH. A trial policy is
+            # node-locked and has no grace period.
+            $trial = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"trial`",`"licenseKind`":`"trial`",`"gracePeriod`":0}").id
+            Invoke-RestMethod "$url/v1/admin/products/$product" -Method Patch -Headers $headers -ContentType 'application/json' -Body "{`"trialPolicyId`":`"$trial`"}" | Out-Null
+
+            $rootKey = Join-Path $work 'root.pub.pem'
+            & $test activation $Library (Join-Path $work 'activation') $rootKey $url $licenseKey
             if ($LASTEXITCODE -ne 0) { throw 'The C activation test failed.' }
+
+            # design §20.7: the offline activation and the refused refresh, in phases that share one activation folder.
+            # The C program has no HTTP client, so elm offline process carries the request between the first two, and the
+            # administration API revokes the license before the third.
+            $offline = Add-AdminRecord 'licenses' "{`"policyId`":`"$policy`",`"name`":`"offline`",`"features`":[{`"code`":`"pro`"}]}"
+            $offlineFolder = Join-Path $work 'offline'
+            $request = Join-Path $work 'offline.elmreq'
+            $answer = Join-Path $work 'offline.elmresp'
+            & $test offline-request $Library $offlineFolder $rootKey $url $offline.key $request
+            if ($LASTEXITCODE -ne 0) { throw 'The C offline request test failed.' }
+            Invoke-Checked 'elm offline process' { & $Elm offline process --url $url --in $request --out $answer | Out-Null }
+            & $test offline-import $Library $offlineFolder $rootKey $url $answer
+            if ($LASTEXITCODE -ne 0) { throw 'The C offline import test failed.' }
+            Add-AdminRecord "licenses/$($offline.id)/revoke" '' | Out-Null
+            & $test revoked $Library $offlineFolder $rootKey $url
+            if ($LASTEXITCODE -ne 0) { throw 'The C revoked refresh test failed.' }
 
             # design §17.6: a cloud-floating license on the service, and elm-server on https with its own self-signed
             # certificate. The server's data folder is not made here: the server makes it 0700, and ProtectedFiles refuses
