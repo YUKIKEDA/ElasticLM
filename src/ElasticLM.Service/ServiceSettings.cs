@@ -67,6 +67,12 @@ internal sealed record ServiceSettings
 
     public IReadOnlyList<string> SigningCertificateFiles { get; init; } = [];
 
+    /// <summary>
+    /// Gets the file of the signing key's passphrase (<c>signing.passphraseFile</c>, design §14.8), read when
+    /// <c>ELM_SIGNING_PASSPHRASE</c> is not set; <see langword="null"/> when the configuration has none.
+    /// </summary>
+    public string? SigningPassphraseFile { get; init; }
+
     public IReadOnlyList<string> TrustRootKeyFiles { get; init; } = [];
 
     public IReadOnlyList<string> TrustRevokedKeyIds { get; init; } = [];
@@ -248,6 +254,7 @@ internal sealed record ServiceSettings
             ConnectionString = connection,
             SigningKeyFile = signingKey,
             SigningCertificateFiles = certificates,
+            SigningPassphraseFile = file.Signing?.PassphraseFile,
             TrustRootKeyFiles = EnvList("ELM_TRUST_ROOTKEYS") ?? file.Trust?.RootKeys ?? [],
             TrustRevokedKeyIds = EnvList("ELM_TRUST_REVOKEDKEYIDS") ?? file.Trust?.RevokedKeyIds ?? [],
             BootstrapOwner = owner,
@@ -345,6 +352,7 @@ internal sealed record ServiceSettings
         Text(file.Database?.ConnectionFile, "database.connectionFile");
         Text(file.Signing?.Key, "signing.key");
         List(file.Signing?.Certificates, "signing.certificates");
+        Text(file.Signing?.PassphraseFile, "signing.passphraseFile");
         List(file.Trust?.RootKeys, "trust.rootKeys");
         List(file.Trust?.RevokedKeyIds, "trust.revokedKeyIds");
         List(file.PublicUrls, "publicUrls");
@@ -390,8 +398,14 @@ internal sealed record ServiceSettings
         }
     }
 
-    // A secret in a file: its text without the line break an editor leaves at the end.
-    private static string ReadSecret(string path, string key)
+    /// <summary>
+    /// Reads a secret from a file: its text without the line break an editor leaves at the end, up to 16 KiB.
+    /// </summary>
+    /// <param name="path">The file.</param>
+    /// <param name="key">The setting that names it, for the message.</param>
+    /// <returns>The secret.</returns>
+    /// <exception cref="ServiceStartException">The file is missing, larger than 16 KiB, empty, or cannot be read.</exception>
+    internal static string ReadSecret(string path, string key)
     {
         try
         {

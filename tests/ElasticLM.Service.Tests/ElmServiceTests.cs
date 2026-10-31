@@ -73,12 +73,77 @@ public sealed class ElmServiceTests
             await Refused(test.FilePath("signing.cert"), "wrong passphrase for the key")
         );
         Assert.Equal(
-            $"Set {ServiceSettings.SigningPassphraseVariable} to the signing key's passphrase.",
+            $"Set {ServiceSettings.SigningPassphraseVariable} or signing.passphraseFile to the signing key's passphrase.",
             await Refused(test.FilePath("signing.cert"), null)
         );
 
         ElmService service = await test.StartAsync();
         Assert.Equal((KeyFiles.KeyId(test.SigningKey), KeyUses.License | KeyUses.Lease), (service.Signing.KeyId, service.Signing.Uses));
+    }
+
+    /// <summary>
+    /// The signing key's passphrase comes from ELM_SIGNING_PASSPHRASE or, when it is not set, from signing.passphraseFile
+    /// (design §14.8, F2), so that every secret can be given as a file.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A vendor, a signing key, and certificates written in the test; a file with the passphrase and a line break.
+    ///
+    /// Steps:
+    /// - Start with the file and no variable; with the variable and a file of a wrong passphrase; with an empty file and no
+    ///   variable; with a file that does not exist.
+    ///
+    /// Expected:
+    /// - A running service; a running service (the variable wins); ServiceStartException saying the file is empty; one
+    ///   saying it does not exist.
+    /// </remarks>
+    [Fact]
+    public async Task Start_PassphraseFromTheFile_Starts()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string File(string name, string text)
+        {
+            string path = test.FilePath(name);
+            System.IO.File.WriteAllText(path, text);
+            return path;
+        }
+
+        string right = File("passphrase", TestService.Passphrase + "\n");
+        string wrong = File("wrong-passphrase", "not the passphrase\n");
+        string empty = File("empty-passphrase", "\n");
+        string missing = test.FilePath("no-such-passphrase");
+
+        await using (
+            ElmService fromFile = await ElmService.StartAsync(
+                test.Settings(s => s with { SigningPassphraseFile = right }),
+                test.HostOptions(null),
+                cancel
+            )
+        )
+        {
+            Assert.Equal(KeyFiles.KeyId(test.SigningKey), fromFile.Signing.KeyId);
+        }
+
+        await using (
+            ElmService fromVariable = await ElmService.StartAsync(
+                test.Settings(s => s with { SigningPassphraseFile = wrong }),
+                test.HostOptions(TestService.Passphrase),
+                cancel
+            )
+        )
+        {
+            Assert.Equal(KeyFiles.KeyId(test.SigningKey), fromVariable.Signing.KeyId);
+        }
+
+        Assert.Equal($"signing.passphraseFile '{empty}' is empty.", await RefusedWith(empty));
+        Assert.Equal($"signing.passphraseFile '{missing}' does not exist or is larger than 16 KiB.", await RefusedWith(missing));
+
+        async Task<string> RefusedWith(string passphraseFile)
+        {
+            ServiceSettings settings = test.Settings(s => s with { SigningPassphraseFile = passphraseFile });
+            return (await Assert.ThrowsAsync<ServiceStartException>(() => ElmService.StartAsync(settings, test.HostOptions(null), cancel))).Message;
+        }
     }
 
     /// <summary>

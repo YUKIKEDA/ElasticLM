@@ -162,7 +162,7 @@ public sealed class ServiceSettingsTests : IDisposable
     ///   characters; perIp, perKey, clientPerIp, clientPerKey 0 and 10001; retentionDays 0 and 36601; a listen with a path;
     ///   a listen host name; listen ""; signing.key ""; a certificate entry ""; a null certificate entry; tls.certificate "";
     ///   a settings file of 64 KiB + 1; a perKey variable that is not a number; no nonce secret; one of 31 bytes; one that
-    ///   is not base64; nonce.secretFile ""; a public URL over http, with a query, and ""; listen on 0.0.0.0 without
+    ///   is not base64; nonce.secretFile ""; signing.passphraseFile ""; a public URL over http, with a query, and ""; listen on 0.0.0.0 without
     ///   publicUrls.
     ///
     /// Expected:
@@ -257,6 +257,10 @@ public sealed class ServiceSettingsTests : IDisposable
         Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? Convert.ToBase64String(new byte[31]) : null);
         Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? "not base64!" : null);
         Refused(withoutNonce[..^1] + ",\"nonce\":{\"secretFile\":\"\"}}", "nonce.secretFile must not be empty; leave it out instead.");
+        Refused(
+            "{\"signing\":{\"key\":\"k\",\"certificates\":[\"c\"],\"passphraseFile\":\"\"}," + Connection(ConnectionFile) + "}",
+            "signing.passphraseFile must not be empty; leave it out instead."
+        );
         Refused(Base(",\"publicUrls\":[\"http://elm.example/\"]"), "publicUrls must be https URLs without query or fragment: 'http://elm.example/'.");
         Refused(
             Base(",\"publicUrls\":[\"https://elm.example/?a=1\"]"),
