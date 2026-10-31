@@ -25,3 +25,13 @@ updates:
     # design §20.5, T25: the actions run in the jobs that hold the publishing credentials.
     cooldown:
       default-days: 7
+
+  # design §20.6, T27: the base image of elm-service, pinned by digest in the Dockerfile. Dependabot raises the digest even
+  # when the tag stays the same. MCR gives no publication date, so the cooldown does not apply there yet; it is written for
+  # the day it does, the same as the other ecosystems.
+  - package-ecosystem: docker
+    directory: /eng/container
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

@@ -52,11 +52,12 @@ Settings → Environments → New environment `release`:
 1. Open a pull request that sets `VersionPrefix` in `Directory.Build.props` and adds a `CHANGELOG.md` section for the
    version, `## [<version>] - <date>`. A prerelease tag (`v0.1.0-rc.1`) needs its own section (`## [0.1.0-rc.1]`).
    Merge it.
-2. Check the two container images pinned in `release.yml` (`ALMALINUX_IMAGE`, `ALPINE_SDK_IMAGE`): Dependabot does not
-   update a digest in a workflow's `env`. Take the current digest of `almalinux:8` and of
-   `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot` (for example with
-   `docker buildx imagetools inspect <image>`), and update them in a pull request if they changed. Raising
-   `DOTNET_SDK_VERSION` always changes the Alpine image's tag and digest.
+2. Check the container images pinned in `release.yml` (`ALMALINUX_IMAGE`, `ALPINE_SDK_IMAGE`, `BUILDKIT_IMAGE`):
+   Dependabot does not update a digest in a workflow's `env`. Take the current digest of `almalinux:8`, of
+   `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot`, and of the latest `moby/buildkit` release (for
+   example with `docker buildx imagetools inspect <image>`), and update them in a pull request if they changed. Raising
+   `DOTNET_SDK_VERSION` always changes the Alpine image's tag and digest. The base of the `elm-service` image, in
+   `eng/container/Dockerfile`, is raised by Dependabot's pull requests; merge the open one before the release.
 3. Release a candidate first: tag the merge commit on `main` with `v<version>-rc.1` and push the tag.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
@@ -69,6 +70,17 @@ Settings → Environments → New environment `release`:
 
 A run that fails before the draft leaves nothing behind. Fix the cause on `main` and release the next version: a tag is
 never moved.
+
+## The container image
+
+The `publish` job pushes the `elm-service` image to `ghcr.io/yukikeda/elm-service` (design §20.6). A package that is
+published for the first time is private.
+
+1. After the first release pushes it, open the package's settings on GitHub and make it public. This cannot be undone
+   (https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility).
+2. In the same settings, give Actions access to this repository only.
+3. Create no personal access token (classic) with `write:packages` or `delete:packages`: GitHub Packages accepts only
+   classic tokens, and such a token could push or move a tag without the workflow (design §5.3 T26).
 
 ## What users can check
 

@@ -3900,7 +3900,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 - `eng/container/Dockerfile` は、ベース（`mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`）を `FROM` にダイジェストつきで書き、`RUN` を持たない（Q2、T27）。中身は次の 3 つだけで、ほかに何も足さない（T27）。
   - `/app/elm-service` と `/app/LICENSE`: 同じ実行の `release.yml` が作った `elm-service-<版>-linux-x64.tar.gz` と `-linux-arm64.tar.gz` から取り出したもの（Q3）。アーキテクチャは `TARGETARCH` で選ぶ。
   - `/data`: 空のフォルダーで、持ち主は UID 1654（Q10）。`VOLUME` にする。
-- 実行の利用者はベースの UID 1654（`app`）のまま（Q2）。`ENTRYPOINT` は `/app/elm-service`。
+- 実行の利用者はベースの UID 1654（`app`）のまま（Q2）。`ENTRYPOINT` は `/app/elm-service`。作業のフォルダーは `/data` にする（運用者が相対のパスで SQLite のファイルを指しても `/data` に置かれる）。
 - 環境変数: イメージが足すのは `ELM_LISTEN=http://0.0.0.0:8080` で、`EXPOSE 8080` を書く（Q9）。ベースが持つ `ASPNETCORE_HTTP_PORTS=8080` は空にする（`elm-service` は `listen` だけで待ち受けるので、ASP.NET Core に別の待ち受けを知らせない。PR #170 の持ち主の決定）。ベースのほかの環境変数（`APP_UID`、`DOTNET_RUNNING_IN_CONTAINER`、`DOTNET_SYSTEM_GLOBALIZATION_INVARIANT`）はそのままにする（https://github.com/dotnet/dotnet-docker/blob/main/src/runtime-deps/10.0/noble-chiseled/amd64/Dockerfile 。`elm-service` は `InvariantGlobalization` で作る）。`ELM_PUBLICURLS`（ループバックでない待ち受けでは `setup` と起動の両方で必須、§14.8）と `ELM_NODE_NAME`（決めないと、コンテナを作り直すたびに利用ログが別のノードのものになる）は、運用者が必ず決める値として文書に書き、イメージに入れない。
 - `HEALTHCHECK` は書かない（ベースにシェルも `curl` もない。Q11）。
 - ラベルと index の注記: `org.opencontainers.image.source`（このリポジトリ）、`.version`（版）、`.revision`（コミット）、`.licenses`（`MIT`）、`.title`、`.description` を、各プラットフォームの config のラベルと、index の注記（`annotation-index.`）の両方に付ける（GHCR はマルチアーキテクチャのイメージの説明を index の注記から読む。https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。リポジトリとのつながりは `GITHUB_TOKEN` での push で自動でできるので（同じページ）、ラベルにも注記にも守りを頼らない（T26）。
@@ -3976,6 +3976,8 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 | Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
 | `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils、libicu を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
+| `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定） | `elm-service` のコンテナイメージのベース（§20.6） | glibc、libssl、CA の束だけを持つ Microsoft のイメージで、UID 1654 で動く。.NET 10 のサポートは 2028-11-14 まで（https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core ）、Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで（https://ubuntu.com/about/release-cycle ）。ダイジェストは Dependabot が上げる | 対象外（実行の土台） |
+| `moby/buildkit` v0.34.1（ダイジェストで固定） | `release.yml` の `image` のジョブのビルドの道具（§20.6） | OCI layout の出力と `rewrite-timestamp`（v0.13 以降）に使う。イメージには入らない。ダイジェストはリリースの前に持ち主が合わせる（`docs/releasing.md`） | 対象外（ビルドの道具） |
 
 ## 22. 段階
 

@@ -22,6 +22,7 @@ include/                     libelasticlm の C ヘッダー（elasticlm.h。手
 tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）と、libelasticlm の C のテスト（tests/native/）
 samples/                     利用例と NativeAOT の確認用のアプリ
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
+eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
 web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
