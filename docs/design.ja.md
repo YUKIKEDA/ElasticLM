@@ -182,6 +182,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.111 | `elm-service` のコンテナイメージ | F2 で、0.108〜0.110 の上に次を決めた。イメージは `ghcr.io/yukikeda/elm-service` で、`linux/amd64` と `linux/arm64` の OCI の index。`runtime-deps:10.0-noble-chiseled` をダイジェストで固定したベースに、同じ実行の F1 の配布物の `elm-service`、`LICENSE`、空の `/data` だけを `COPY` し、UID 1654 で動かす。イメージが足す環境変数は `ELM_LISTEN=http://0.0.0.0:8080` で、ベースの `ASPNETCORE_HTTP_PORTS` は空にし、`HEALTHCHECK` は書かない。`contents: read` のジョブで OCI layout を作り、2 つのアーキテクチャのランナーで起動、`/health`、UID、実行ファイルの SHA-256、足したファイルを確かめ、承認のあとの公開のジョブがそれをダイジェストを変えずに push して来歴の証明を付ける。タグは版と、正式版の `latest`。設定ファイルに `signing.passphraseFile` を足し、すべての秘密をファイルで渡せるようにする。ベースのダイジェストは Dependabot が上げる。GHCR へのログインは `docker login` の run の段で行い、第三者のアクションを足さない（§20.6。F2 の Grill の Q1〜Q12、PR #167 と PR #170 の持ち主の決定、Issue #157） |
 | 0.112 | V1 の分け方と最初の版 | V1 の Grill（Issue #173、Q1〜Q3）で決めた。V1 を、V1a 端から端までのテスト、V1b 参照機での計測、V1c 文書とサンプル、V1d 安全性の見直し、V1e v1 の公開の 5 行に分け、この順に進める。安全性の見直しを公開の直前に置き、V1a〜V1c のコード・テスト・計測・文書を見直す。V1d の見つけたものがすべて直るか §5.4 に受け入れた脅威として書かれるまで、V1e は公開しない。各行の Grill で決める点と行をまたぐ決まりは §20.7。V1a の前に、時々落ちるテスト（Issue #106）を独立したバグの PR で直す。最初の正式版は `1.0.0` で、先に `1.0.0-rc.1` を出して公開の経路を確かめる（§20.5）。V1e で `VersionPrefix` を `1.0.0` にし、`1.0` より前の決まりを `CHANGELOG.md` と `CONTRIBUTING.md` から外す。退けた案は design-decisions.md |
 | 0.113 | 端から端までのテスト（V1a） | V1a の Grill（Issue #178、Q1〜Q8）とその設計のレビューで決めた。`tests/ElasticLM.E2E` が、公開した `elm`・`elm-server`・`elm-service` を別のプロセスとして起動し、`ElasticLM.Client` から発行者と利用者の主な流れを通す。`libelasticlm` は C のテストに流れを足す。公開するバイナリに時計の入口は作らず、時間の経過は短い期間と本当の時計で待ち、合計は 1 つの OS で 2 分以下。PR ごとに CI の `aot` ジョブの 3 つの OS で動かし、Linux では PostgreSQL でも通す。`./build.ps1` には入れない。退けた案は design-decisions.md、形は §20.7 |
+| 0.114 | 参照機での計測（V1b） | V1b の Grill（Issue #182、Q1〜Q7）とその設計のレビューで決めた。§4.2 の目標を、`workflow_dispatch` と計測に触れる PR で動くワークフロー `measure.yml` で、公開したバイナリを相手に `ubuntu-latest` の 3 つのジョブで測る。計測するプロセスは CPU 0・1 に、負荷をかける道具 `tools/ElasticLM.Measure` は CPU 2・3 に固定する。リース 10,000 件は 100 個のインストール鍵で毎秒 50 件で取り、更新を 2 巡測る。有効化は毎秒 50 件を 60 秒。M3b・M4a1・M4b1 の値は、JIT の `elm-service` を含めて同じ測り方で測り直す。目標に届かなければジョブを失敗にする。形は §20.7 |
 
 ## 1. 目的と利用者
 
@@ -4034,6 +4035,50 @@ V1a の Grill（Issue #178、Q1〜Q8）と、その設計のレビュー（R1〜
   - 鍵、ライセンス、データベース、設定は実行ごとの一時のフォルダーに作り、終わりに消す。ポートは OS が選ぶ空きのループバックのポート。
   - テストの出力とジョブの要約に、`setup` が出す API キーとライセンスキーを書かない。失敗したときに出すのは、製品が秘密を書かないと決めているプロセスのログだけにする。
 
+#### V1b の形（0.114）
+
+V1b の Grill（Issue #182、Q1〜Q7）と、その設計のレビュー（R1〜R14。持ち主の決定 4 件を含む）で決めた。
+
+- ワークフロー `measure.yml`:
+  - 動く契機は `workflow_dispatch` と、`measure.yml`・`tools/ElasticLM.Measure/` に触れる `pull_request`。`workflow_dispatch` は既定のブランチにあるワークフローしか動かせない（「This event will only trigger a workflow run if the workflow file exists on the default branch.」、GitHub Docs の Events that trigger workflows）ので、計測を足す PR と変える PR は PR の契機で測る。§4.2 に関わるほかの PR は、そのブランチを選んで `workflow_dispatch` で測る。フォークからの PR でも、権限は `contents: read` で、秘密はない。
+  - 形は `release.yml` と同じ。`contents: read`、SHA で固定したアクション、`persist-credentials: false`、キャッシュなし、`DOTNET_SDK_VERSION` で固定した SDK。
+  - ジョブ:
+    - `spa`: 管理画面を作る（`release.yml` と同じ）。
+    - `publish`: `release.yml` と同じ `ALMALINUX_IMAGE` の中で `eng/release/publish-rid.sh` を動かし、出荷するものと同じ `linux-x64` の `elm`・`elm-server`・`elm-service`・`libelasticlm` を作る。同じコンテナーで NativeAOT の `samples/VerifyLicense` も作る。実行の印が落ちないよう tar にして artifact にする。
+    - `measure`: 同じバイナリで、`run` を 1〜3 とする 3 つのジョブが並んで、下の計測を順に行う。`timeout-minutes` は 60（見込みは下）。
+    - `report`: `if: always()`。3 つの結果から幅を計算し、目標と比べる。`measure` の結果が 1 つでも欠ければ失敗にする。
+  - 結果はジョブの要約と artifact（JSON）に書き、PR で §4.2 に写す。
+- 道具 `tools/ElasticLM.Measure`（C# のコンソール、JIT の Release）と、手順の `tools/ElasticLM.Measure/run.ps1`:
+  - CPU の分け方: `ubuntu-latest` は公開リポジトリで 4 vCPU・16 GB（GitHub Docs の GitHub-hosted runners）。`run.ps1` は `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list` を読み、計測するプロセスと負荷をかける道具を、物理コアの単位で 2 つずつに分けて、その分け方を要約に書く。負荷をかける道具は `taskset` で自分の 2 つに固定する。
+  - 計測するプロセスは、設定と秘密をファイルで渡す（`--config`、`nonce.secretFile`、`signing.passphraseFile`。§14.8）。`sudo` は既定で環境変数を消すので、環境変数には頼らない。
+  - 道具は `ElasticLM.Client` の公開の部品（`InstallationKeyStore`、`ProofBuilder`）で、`TestDevice`（`tests/ElasticLM.Service.Tests`）と同じ要求を作る。`LicenseClient` はリースの更新を自分の中で行い、1 件ごとの時間を外に出さないので、更新は道具が自分で送る（持ち主の決定、R3）。インストール鍵は、鍵ごとにジョブの一時のフォルダーの下に分けて作る。
+  - `elm-server` の TLS は、最初の接続の証明書を覚え、ほかの証明書は断る（アプリのピンと同じ形）。返ってきたリースのトークンは、時間を測る範囲の外で、すべて `LeaseVerifier` で確かめる（持ち主の決定、R3）。
+  - p50・p99・最大は道具が計算する（p99 は、並べた値の `ceil(0.99 × n)` 番目）。
+- リース 10,000 件（§4.2 の処理の表の「`elm-server` が同時に持つリース」）:
+  - サーバーライセンス: `elm-server` を一度ライセンスなしで動かしてインストール鍵を作らせ、`elm license issue --kind server --product acme-cad --feature "pro;seats=10000" --lease-minutes 10 --bind-key <その鍵> --expires <30 日後>` で作る。
+  - 計測する `elm-server` は、`sudo systemd-run --scope --unit=elm-measure-server --uid=<ランナーの利用者> --gid=<そのグループ> -p AllowedCPUs=<計測の 2 つ> -- elm-server --config <ファイル>` で起動する（systemd-run(1) の `--scope`・`--uid`、systemd.resource-control(5) の `AllowedCPUs=`）。プロセスの ID は、そのスコープの cgroup の `cgroup.procs` で得て、止めるときは `sudo systemctl stop elm-measure-server.scope`。`rateLimit.perIp` は計測の間だけ 10,000（設定の上限）。
+  - 100 個のインストール鍵が 100 件ずつ持つ。取るのは毎秒 50 件（鍵ごとに 2 秒に 1 件）で 200 秒。更新は各リースを取ったときから 200 秒ごとなので、200 秒から 600 秒まで毎秒 50 件で続き（$10000 / 200\,\mathrm{s} = 50$ 件/秒）、2 巡（400 秒、20,000 件）を測る。1 つの鍵の要求は 1 つずつ送り、鍵ごとの更新は 2 秒に 1 件で、鍵の中で待たない。
+  - 流れと時間の見込み: 起動のあとの回収の間（§13.4。リースの長さの 10 分で、前のリースがないので早くは終わらない）は `ELM_SERVER_RECOVERING` の `Retry-After` を待つ。回収 600 秒 ＋ 取得 200 秒 ＋ 更新 2 巡 400 秒 ＝ 1,200 秒。`jti` の記録は 5 分で消え、毎秒 50 件なら多くて約 15,000 件で、上限の 100,000 件（§13.2）に届かない。
+  - 測る値: 更新 1 件の、証明を作るところから応答までの時間（p50・p99・最大）、取得と更新の失敗の数、予定の時刻からの送る遅れの最大、終わりの `GET /admin/v1/status` のリースの数、プロセスの `VmHWM`（`/proc/<ID>/status`）、記録だけとして cgroup の `memory.peak`（cgroup v2 の `memory.peak`）。
+- 有効化の毎秒 50 件（§4.2 の処理の表の「`elm-service` の有効化」）:
+  - 公開した NativeAOT の `elm-service`（SQLite、移行の済んだデータベース）を、計測の 2 つの CPU に固定する（`taskset`）。目標は CPU の数を名指さないが、Q3 の形にそろえる（目標より厳しい）。
+  - `maxActivations` が 3,000 のライセンスに、まずインストール鍵 3,000 個を作り、最後にノンス 3,000 個を取ってから、すぐ時間を測り始める（ノンスは 300 秒で切れる。取り始めから使い終わりまで 300 秒未満であることを道具が確かめる）。`ELM_RATELIMIT_CLIENTPERIP` はその実行だけ 10,000（設定の上限。`GET /v1/nonce` も数える）。
+  - 毎秒 50 件の決まった時刻に `POST /v1/activations` を送る（前の応答を待たない）。60 秒（3,000 件）で、証明を作るところから応答までの時間（p50・p99・最大）、失敗の数、予定の時刻からの送る遅れの最大を測る。
+- 前の行の値の測り直し（`open-ends` の「同じ測り方で」）:
+  - M4b1（有効化）と M4a1（監査ログを書く管理 API の 1 件、API キーの作成）: 同じ道具で、JIT の Release の `elm-service`（`dotnet build -c Release` の出力を `dotnet` で動かす。SQLite、計測の 2 つの CPU）も測り、Windows の値と並べる。管理 API の 1 件は、M4a1 と同じく 200 件の平均を 3 回。目標と比べるのは NativeAOT の値（持ち主の決定、R2、R4）。
+  - M3b（起動、更新 1 件のサーバー側の処理）: 起動から待ち受けまでは、`elm-server` を `taskset` で計測の 2 つの CPU に固定して直接起動し（`sudo` も systemd-run も通さない）、5 回。目標の「1 秒以下」と比べるのは、サーバーの起動の記録（`server.started` の `in … ms`）。外から測った時間（プロセスの起動から、pwsh の `Invoke-WebRequest` で 20 ミリ秒おきに確かめた最初の HTTPS の応答まで）は記録として並べる。更新 1 件のサーバー側の処理は、NativeAOT の `samples/VerifyLicense --self-test`（計測の 2 つの CPU で 4 回）。
+  - M4a1（起動）: `elm-service` を SQLite と PostgreSQL（ゲートと同じダイジェストのイメージ）で、移行の済んだデータベースで 3 回ずつ。`service.started` の記録と外から測った時間を記録する（`elm-service` の起動に目標はない）。PostgreSQL は `ci.yml` の「Measure elm-service on PostgreSQL」と同じ手順。
+  - 大きさ: `publish` のジョブの実行ファイルのバイト数（`libelasticlm` を含む）。F1 の `release.yml` の値と同じ作り方なので並べる。
+- ライセンスの検証（§4.2 の処理の表の「ライセンスファイル 1 件の検証」）: NativeAOT の `samples/VerifyLicense --self-test` の `verify` の値（2,000 回の平均）。
+- 目標との比べ方（`report`）: 3 つのジョブのそれぞれで、次の 1 つでも満たさなければ失敗にする（持ち主の決定、R4）。
+  - 大きさ: `elm-service` 40,000,000 バイト以下、`elm-server` 30,000,000 バイト以下、`libelasticlm` 8,000,000 バイト以下。
+  - 検証 1 ms 以下、`elm-server` の起動の記録 1 秒以下（5 回すべて）。
+  - リース: 更新の p99 50 ms 以下、`VmHWM` 200,000,000 バイト以下、取得と更新の失敗 0 件（回収の間の `ELM_SERVER_RECOVERING` は数えない）、終わりのリースの数 10,000、送る遅れの最大 1 秒以下。
+  - 有効化: p99 200 ms 以下、失敗 0 件、送る遅れの最大 1 秒以下。
+  - 届かない目標が出たら、V1b の PR で、製品を直すか設計の目標を見直すかを、持ち主に案として出す。
+- 1 つの `measure` のジョブの時間の見込み: リース 20 分、起動の計測と PostgreSQL のコンテナーで 2 分、鍵 3,000 個と有効化で 2 分、JIT の `elm-service` のビルドと計測で 3 分、自己試験で 1 分。合わせて約 28 分で、上限 60 分に収まる。
+- 後片付けと秘密: 鍵、ライセンス、データベース、設定はジョブの一時のフォルダーに作り、終わりにプロセスを止めて消す。ジョブの要約、artifact、ログに、API キー、ライセンスキー、`elm-server` の管理のトークン、ノンスの秘密、署名鍵のパスフレーズを書かない。`sudo` は、計測する `elm-server` のスコープを作るためだけに使う。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4094,7 +4139,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | F1 | リリース基盤: `release.yml`、パッケージと単一バイナリの検査、NuGet の Trusted Publishing、CI が作らない 4 つの RID（`win-arm64`、`linux-arm64`、`linux-musl-x64`、`osx-x64`）の 3 つの実行ファイルと `libelasticlm`（決めた形は 0.109） | §4.1, §20.5 |
 | F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（決めた形は 0.111） | §1.3, §5, §14.8, §20.6 |
 | V1a | 端から端までのテスト: `tests/ElasticLM.E2E` で NativeAOT で公開した `elm-server`・`elm-service`・`elm` を、`tests/native` で `libelasticlm` を動かす（決めた形は §20.7 の V1a の形、0.113） | §17.4, §17.6, §20.1, §20.7 |
-| V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（Grill で決める点は §20.7） | §4.2, §20.7 |
+| V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（決めた形は §20.7 の V1b の形、0.114） | §4.2, §20.7 |
 | V1c | 文書とサンプル（書く文書と作るサンプルは、Grill で決める点として §20.7） | §20.7 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |

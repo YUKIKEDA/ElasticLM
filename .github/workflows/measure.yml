@@ -1,0 +1,190 @@
+# design §20.7 (V1b, 0.114): measures the §4.2 targets on the reference machine (ubuntu-latest) against the binaries that
+# release.yml ships, three times side by side, and checks every run against the targets. workflow_dispatch runs only a
+# workflow that is on the default branch, so a pull request that adds or changes the measurement runs it too. The workflow
+# holds no secret and every action is pinned to a commit of its own repository's tag, as release.yml does (T25).
+name: Measure
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/measure.yml
+      - tools/ElasticLM.Measure/**
+
+concurrency:
+  group: measure-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+  # The SDK and the AlmaLinux 8 image of release.yml, so the measured binaries are built as the shipped ones (design §20.5).
+  DOTNET_SDK_VERSION: 10.0.403
+  ALMALINUX_IMAGE: almalinux:8@sha256:2d0f2eb2a83cc09dbc2eb92fade4dbe8f709628149e81aa00aec70630406603b
+  # The gate's PostgreSQL (ci.yml).
+  POSTGRES_IMAGE: postgres:18@sha256:edb0c08dc33befd0262ab3b5cf1c4f3f8cfd8b09e88c05b45adee29d6761ddb6
+
+jobs:
+  spa:
+    name: Admin UI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: web/admin
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/admin/.node-version
+
+      - name: Build
+        run: |
+          corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+          retention-days: 7
+
+  publish:
+    name: Publish linux-x64
+    needs: spa
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Publish in AlmaLinux 8 (glibc 2.28)
+        # The same container and script as release.yml's linux-x64 build, plus the NativeAOT samples/VerifyLicense.
+        run: |
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" -v "$DOTNET_ROOT:/opt/dotnet:ro" \
+            -w /src -e HOME=/tmp -e DOTNET_ROOT=/opt/dotnet -e PATH=/opt/dotnet:/usr/bin:/bin \
+            -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e OWNER="$(id -u):$(id -g)" \
+            "$ALMALINUX_IMAGE" bash -c '
+              status=0
+              options="--setopt=fastestmirror=True --setopt=max_parallel_downloads=10 --setopt=install_weak_deps=False"
+              dnf install -y $options clang zlib-devel binutils libicu || status=1
+              if [ $status -eq 0 ]; then
+                sh eng/release/publish-rid.sh linux-x64 "" artifacts/measure/bin artifacts/measure/logs || status=1
+                dotnet publish samples/VerifyLicense -c Release -r linux-x64 -o artifacts/measure/verify -nologo || status=1
+              fi
+              chown -R "$OWNER" /src
+              exit $status'
+
+      - name: Pack
+        # A tar keeps the executables' mode, which an artifact drops.
+        run: tar -C artifacts/measure -cf measure-bin.tar bin verify
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: measure-bin
+          path: measure-bin.tar
+          retention-days: 7
+
+  measure:
+    name: Measure (run ${{ matrix.run }})
+    needs: [spa, publish]
+    strategy:
+      fail-fast: false
+      matrix:
+        run: [1, 2, 3]
+    runs-on: ubuntu-latest
+    # design §20.7: about 28 minutes (leases 20, starts 2, activations 2, the JIT elm-service 3, the self-test 1).
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: admin-ui-dist
+          path: web/admin/dist
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: measure-bin
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Measure
+        env:
+          MEASURE_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          New-Item -ItemType Directory measure | Out-Null
+          tar -C measure -xf measure-bin.tar
+          docker run -d --name elm-measure-postgres -e POSTGRES_PASSWORD=elm-measure -p 5434:5432 $env:POSTGRES_IMAGE | Out-Null
+          for ($i = 0; $i -lt 60; $i++) {
+            docker exec elm-measure-postgres pg_isready -U postgres | Out-Null
+            if ($LASTEXITCODE -eq 0) { break }
+            Start-Sleep -Seconds 1
+          }
+          if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
+          try {
+            ./tools/ElasticLM.Measure/run.ps1 -Bin measure/bin -VerifyLicense measure/verify/VerifyLicense -Out run-${{ matrix.run }}.json `
+              -Postgres 'Host=127.0.0.1;Port=5434;Username=postgres;Password=elm-measure;Database=postgres'
+          }
+          finally {
+            docker rm -f elm-measure-postgres | Out-Null
+          }
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: measure-run-${{ matrix.run }}
+          path: run-${{ matrix.run }}.json
+          retention-days: 90
+
+  report:
+    name: Report
+    needs: measure
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: measure-run-*
+          path: results
+
+      - name: Compare with the targets
+        # design §20.7: every run against every §4.2 target; a missing run fails too.
+        run: ./tools/ElasticLM.Measure/Report.ps1 -Results results -Expected 3
