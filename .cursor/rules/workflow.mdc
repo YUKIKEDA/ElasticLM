@@ -38,6 +38,7 @@ Labels have the form `<axis>:<value>`. The only axis today is `type`.
 - `./build.ps1`: tool restore, CSharpier check, restore, then Release and Debug builds with warnings as errors, each followed by every `tests/**/*.Tests.csproj`.
 - The NativeAOT publish check runs where the Issue names it (`.cursor/rules/aot.mdc`).
 - After each merge, read `main`'s CI. A red `main` gets its own Issue and PR before the next merge.
+- A `main` run cancelled before any job started is not a failure. It was waiting in its concurrency group, and the next merge's run took its place: "By default, any existing `pending` job or workflow in the same concurrency group will be canceled" (GitHub Docs, Workflow syntax, `concurrency`). The newer run holds the cancelled commit, so read that run instead. After PR #164, the run of PR #167's merge was cancelled this way by the run of PR #169.
 
 ## Forbidden
 

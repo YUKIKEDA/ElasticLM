@@ -30,7 +30,7 @@ After two attempts that change nothing, stop and decide before a third:
 
 Report to the owner at that point, in a line: what stands, what was tried, what happens next. Do not go on silently.
 
-A tool or an environment is looked up before it is called missing. When the owner names one, it is searched for and tried, not mapped to a familiar one. In M5a the owner's "WSL コンテナ" was read as Docker and answered with a question; `wslc` was on the machine all along, and the Keycloak test had already gone to CI five times, past the two attempts above (PR #105).
+A tool or an environment is looked up before it is called missing. When the owner names one, it is searched for and tried, not mapped to a familiar one. In M5a the owner's "WSL コンテナ" was read as Docker and answered with a question; `wslc` was on the machine all along, and the Keycloak test had already gone to CI five times, past the two attempts above (PR #105). In F2 the agent wrote that there was no local Docker and sent the container image test to CI alone, with this rule and `wslc` already in place; the owner pointed at the WSL containers again (PR #170).
 
 ## What comes next is decided, not read off a list
 
