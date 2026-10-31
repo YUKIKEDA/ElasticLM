@@ -13,6 +13,8 @@
     <InternalsVisibleTo Include="ElasticLM.Client.Tests" />
     <!-- The end-to-end tests lose an answer on purpose through LicenseClientOptions.WrapHandler. -->
     <InternalsVisibleTo Include="ElasticLM.Server.Tests" />
+    <!-- The lease tests of libelasticlm share Deployment.cs, which makes protected data folders (design §17.6). -->
+    <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
     <!-- The offline request tests (service and elm) sign request files with an installation key until M4c2 makes them in the client. -->
     <InternalsVisibleTo Include="ElasticLM.Service.Tests" />
     <InternalsVisibleTo Include="ElasticLM.Cli.Tests" />

@@ -503,6 +503,92 @@ public sealed class LeaseClientTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Once DisposeAsync has begun, no new event starts: a reclaim that raises Reclaiming then Held, with the first handler
+    /// held while the client is disposed, does not raise Held afterwards (design §17.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A lease from a server on port P; the server restarted on P; a handler that records each state and holds on
+    ///   Reclaiming.
+    ///
+    /// Steps:
+    /// - Advance 200 s so the client reclaims; once the handler holds, dispose the client; then let the handler go and wait
+    ///   300 ms.
+    ///
+    /// Expected:
+    /// - DisposeAsync returns while the handler holds; the handler saw Reclaiming only.
+    /// </remarks>
+    [Fact]
+    public async Task Dispose_DuringAReclaimEvent_StopsTheNextEvent()
+    {
+        string data = _deployment.NewFolder("server");
+        ElmServer before = await StartOpenServerAsync(data);
+        int port = before.PublicUrls[0].Port;
+        LicenseClient client = _deployment.Client(before.PublicUrls[0]);
+        var states = new List<LeaseState>();
+        using var entered = new ManualResetEventSlim(false);
+        using var hold = new ManualResetEventSlim(false);
+        using var left = new ManualResetEventSlim(false);
+        client.LeaseStateChanged += (_, e) =>
+        {
+            lock (states)
+            {
+                states.Add(e.Current);
+            }
+
+            if (e.Current == LeaseState.Reclaiming)
+            {
+                entered.Set();
+                hold.Wait(TestContext.Current.CancellationToken);
+                left.Set();
+            }
+        };
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        await before.DisposeAsync();
+        await _deployment.StartServerAsync(data, s => With(s, port));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => entered.IsSet);
+
+        await client.DisposeAsync();
+        hold.Set();
+        await Deployment.WaitUntilAsync(() => left.IsSet);
+        await Task.Delay(300, TestContext.Current.CancellationToken);
+        lock (states)
+        {
+            Assert.Equal([LeaseState.Reclaiming], states);
+        }
+    }
+
+    /// <summary>
+    /// A client refuses to release a lease another client made; the owner keeps renewing it (design §17.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its reclaim window; client A holding a lease of pro; client B.
+    ///
+    /// Steps:
+    /// - B releases A's lease; advance 200 s.
+    ///
+    /// Expected:
+    /// - ArgumentException; the lease stays Held, A renews it to sequence 2, and the server still counts 1 seat.
+    /// </remarks>
+    [Fact]
+    public async Task Release_OfAnotherClientsLease_IsRefused()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        LicenseClient owner = _deployment.Client(server.PublicUrls[0]);
+        LicenseClient other = _deployment.Client(server.PublicUrls[0]);
+        Lease lease = Acquired(await owner.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        await Assert.ThrowsAsync<ArgumentException>(() => other.ReleaseLeaseAsync(lease, TestContext.Current.CancellationToken));
+        Assert.Equal(LeaseState.Held, lease.State);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 2);
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     private static ErrorCode Failed(LeaseResult result) => Assert.IsType<LeaseResult.Failed>(result).Error.Code;

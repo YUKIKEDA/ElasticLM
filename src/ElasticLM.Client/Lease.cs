@@ -70,6 +70,9 @@ public sealed class Lease
 
     internal ITimer? Timer { get; set; }
 
+    // The client that made the lease; only it may release the lease (design §17.6).
+    internal LicenseClient? Owner { get; init; }
+
     // design §12.7.6: the certificates that came with the last token from elm-service; a hosted borrow is saved with them.
     internal IReadOnlyList<string> Certificates { get; set; } = [];
 

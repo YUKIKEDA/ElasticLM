@@ -62,7 +62,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private volatile string? _pinnedKeyId;
     private volatile bool _pinFailed;
     private string? _nonce;
-    private bool _disposed;
+    private volatile bool _disposed;
 
     private LicenseClient(LicenseClientOptions options, InstallationKeyStore store, InstallationKey key, IReadOnlyList<string> fingerprints)
     {
@@ -289,7 +289,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 case LeaseVerificationResult.Valid valid when valid.Lease.IsBorrow != (borrow is not null):
                     return new LeaseResult.Failed(new LicenseError(ErrorCode.Malformed, "The server's lease is not of the kind asked for."), null);
                 case LeaseVerificationResult.Valid valid:
-                    var lease = new Lease(valid.Lease) { Certificates = certificates };
+                    var lease = new Lease(valid.Lease) { Owner = this, Certificates = certificates };
                     if (lease.IsBorrow && SaveBorrow(lease) is LicenseError saveError)
                     {
                         return new LeaseResult.Failed(saveError, null);
@@ -315,17 +315,26 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Returns a lease to the server (design §12.7.1) and stops renewing it. The lease is <see cref="LeaseState.Released"/>
-    /// afterwards even when the server could not be reached; the server then drops it at its expiry.
+    /// Returns a lease to the server (design §12.7.1) and stops renewing it. A lease that is not a borrow is
+    /// <see cref="LeaseState.Released"/> afterwards even when the server could not be reached; the server then drops it at its
+    /// expiry. A borrow that the server refuses to take back or cannot be reached for, other than with
+    /// <c>ELM_UNKNOWN_LEASE</c>, keeps its state and its file. A lease that is already lost or released is not sent again.
     /// </summary>
-    /// <param name="lease">The lease.</param>
+    /// <param name="lease">The lease, made by this client.</param>
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests; a canceled request ends as
     /// <c>ELM_NETWORK_ERROR</c>.</param>
-    /// <returns><see langword="null"/> when the server confirmed the return, otherwise why it did not.</returns>
+    /// <returns><see langword="null"/> when the server confirmed the return or the lease was already lost or released,
+    /// otherwise why it was not returned.</returns>
+    /// <exception cref="ArgumentException">The lease was made by another client.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public async Task<LicenseError?> ReleaseLeaseAsync(Lease lease, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(lease);
+        if (!ReferenceEquals(lease.Owner, this))
+        {
+            throw new ArgumentException("The lease was made by another client.", nameof(lease));
+        }
+
         var events = new List<LeaseStateChangedEventArgs>();
         LicenseError? error;
         await _gate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -370,7 +379,8 @@ public sealed class LicenseClient : IAsyncDisposable
 
     /// <summary>
     /// Stops the renewal timers, returns every lease the client holds (failures are ignored), and releases the key and the
-    /// connections. No event is raised afterwards.
+    /// connections. No new event starts once it has begun; an event already being raised may still run around the time it
+    /// returns (design §17.6).
     /// </summary>
     /// <returns>A task that completes when the leases are returned.</returns>
     public async ValueTask DisposeAsync()
@@ -539,12 +549,12 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // A saved borrow that verified is used; an expired one is deleted; anything else is left alone and not returned.
-    private static Lease? Restored(string path, LeaseVerificationResult result, IReadOnlyList<string> certificates)
+    private Lease? Restored(string path, LeaseVerificationResult result, IReadOnlyList<string> certificates)
     {
         switch (result)
         {
             case LeaseVerificationResult.Valid { Lease.IsBorrow: true } valid:
-                return new Lease(valid.Lease) { Certificates = certificates };
+                return new Lease(valid.Lease) { Owner = this, Certificates = certificates };
             case LeaseVerificationResult.Invalid { Error.Code: ErrorCode.Expired }:
                 TryDelete(path);
                 return null;
@@ -737,6 +747,12 @@ public sealed class LicenseClient : IAsyncDisposable
     {
         foreach (LeaseStateChangedEventArgs change in events)
         {
+            // The events are raised after the lock is released, so DisposeAsync can run in between (design §17.6).
+            if (_disposed)
+            {
+                break;
+            }
+
             try
             {
                 LeaseStateChanged?.Invoke(this, change);

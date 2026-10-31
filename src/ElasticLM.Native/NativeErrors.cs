@@ -25,6 +25,12 @@ internal static unsafe class NativeErrors
     [ThreadStatic]
     private static byte[]? _message;
 
+    /// <summary>
+    /// Gets this thread's message array, or <see langword="null"/> before the first message. The test of design §17.6 holds
+    /// it by a weak reference to see whether it is collected after a thread that C made ends.
+    /// </summary>
+    internal static byte[]? Current => _message;
+
     /// <summary>Gets the message as a NUL-terminated UTF-8 string, valid until the next function that returns a number.</summary>
     public static byte* Pointer
     {
