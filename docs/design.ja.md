@@ -426,17 +426,18 @@ M6b（Issue #141）の実測（PR #142 の head `173e6e3` のコード。main �
 - 公開する名前は 3 つの OS で 36 個で、ヘッダーの宣言と一致した。C のテストは、検証の 25 件と有効化の 16 件が 3 つの OS で通った（有効化は、`run.ps1` が発行して `http://127.0.0.1:<空いているポート>` で立てた `elm-service` に対して）。
 - 実行時の依存: Windows は、M6a の一覧に `IPHLPAPI`、`Secur32`、`WS2_32` が足された（どれもシステムの DLL）。Linux の `ldd` に出るのは M6a と同じ `libm` と `libc` だけで、OpenSSL は `DT_NEEDED` に入らない（.NET が実行時に読み込む）。macOS は M6a と同じ一覧（`libSystem`、`libobjc`、Swift、`libicucore`、CoreFoundation、CryptoKit、Foundation、Network、Security、GSS）。どの OS も横に置くファイルはない（§4.1）。
 
-M6c（Issue #145）の実測（コミット `ab39827` のコード。大きさの内訳は手元の `win-x64`）:
+M6c（Issue #145）の実測（PR #146 の head `8b5e5ae` のコード。大きさと依存は CI の 3 つのランナー、内訳は手元の `win-x64`）:
 
-- `libelasticlm` の NativeAOT の共有ライブラリは、`win-x64` で 6,690,816 バイト（M6b から +272,896、+4.3%）。警告は 0 件。目標の 8 MB 以下に収まる。M6b のコード（main の `622b57e`）を同じ手元で発行すると、CI の M6b の値と同じ 6,417,920 バイトだった。
-- `win-x64` の増えをマップのファイル（`-p:IlcGenerateMapFile=true`）で分けた値。M6b と同じまとめ方で、5 行の合計は +272,896 バイトで、ファイルの差と一致する。M6b になかったアセンブリはない:
+- `libelasticlm` の NativeAOT の共有ライブラリは、`win-x64` で 6,690,816 バイト（M6b から +272,896、+4.3%）、`linux-x64` で 7,158,608 バイト（+170,320、+2.4%）、`osx-arm64` で 6,553,616 バイト（+166,928、+2.6%）。警告は 3 つとも 0 件。目標の 8 MB 以下に収まる。`win-x64` は手元（コミット `ab39827`）で発行しても同じ値で、M6b のコード（main の `622b57e`）を同じ手元で発行すると、CI の M6b の値と同じ 6,417,920 バイトだった。
+- `win-x64` の増えをマップのファイル（`-p:IlcGenerateMapFile=true`）で分けた値（`linux-x64` と `osx-arm64` の増えが `win-x64` より小さい理由は測っていない）。M6b と同じまとめ方で、5 行の合計は +272,896 バイトで、ファイルの差と一致する。M6b になかったアセンブリはない:
   - CoreLib とランタイム（`S_P_*`）: +91,388
   - ElasticLM のアセンブリ（`ElasticLM.*` と `elasticlm`）: +67,419
   - メタデータ、凍結したオブジェクト、スタックトレースの対応表、ほかの表: +59,842
   - ほかの BCL: +32,465（うち `System.Linq` が +25,990）
   - ノードの外（ヘッダー、詰め物、ランタイム）: +21,782
-- 公開する名前は 52 個で、ヘッダーの宣言と一致した。C のテストは、検証の 25 件、有効化の 16 件、リースの 24 件が通った（リースは、`run.ps1` が発行して `https://127.0.0.1:<空いているポート>` で立てた `elm-server` と、`elm-service` に対して）。
-- C のスレッドの記録（§17.3、§17.6）: OS が作ったスレッド（Windows は `CreateThread`、ほかは `pthread_create`）で誤りの文を書かせ、その配列を弱い参照で持つと、スレッドが待っている間は生きていて、スレッドが終わったあとの GC で集められた。.NET が作ったスレッドでも同じだった（`ThreadRecordTests`）。この確かめは JIT のテストのプロセスで動くので、NativeAOT のランタイムを直接は示さない。
+- 公開する名前は 3 つの OS で 52 個で、ヘッダーの宣言と一致した。C のテストは、検証の 25 件、有効化の 16 件、リースの 24 件が 3 つの OS で通った（リースは、`run.ps1` が発行して `https://127.0.0.1:<空いているポート>` で立てた `elm-server` と、`elm-service` に対して）。
+- C のスレッドの記録（§17.3、§17.6）: OS が作ったスレッド（Windows は `CreateThread`、ほかは `pthread_create`）で誤りの文を書かせ、その配列を弱い参照で持つと、スレッドが待っている間は生きていて、スレッドが終わったあとの GC で集められた。.NET が作ったスレッドでも同じだった（`ThreadRecordTests`。3 つの OS の CI で通った）。この確かめは JIT のテストのプロセスで動くので、NativeAOT のランタイムを直接は示さない。
+- 実行時の依存: 3 つの OS とも M6b の一覧と同じ。HTTPS を C のテストで初めて通したが、Linux の `ldd` に出るのは `libm` と `libc` だけで、OpenSSL は `DT_NEEDED` に入らない。どの OS も横に置くファイルはない（§4.1）。
 
 M5d2（Issue #129）の実測（コミット `82607b4` のコード。Windows、win-x64）:
 
@@ -3530,7 +3531,7 @@ void elm_client_destroy(elm_client* c);
   - 借りたリースの一覧は送らない（ファイルを読むだけ）が、ほかの操作の終わりを待つ。
 - 結果と出力の引数:
   - `LeaseResult.Acquired` は `ELM_OK` と新しい `elm_lease`。`Failed` は、その番号と文。`retry_after_seconds` は `NULL` でよく、決まりは §17.5 と同じ（成功では 0、失敗では `RetryAfter` の秒を切り上げ、なければ 0）。立ち上げのあとの回収の間のサーバーは、取得を `ELM_SERVER_RECOVERING` と `Retry-After` で断る（§13.4）。
-  - `count` は 1 以上（.NET の `ArgumentOutOfRangeException`）、`feature_id` は空でない（`ArgumentException`）。どちらも `ELM_INVALID_ARGUMENT`。`period_seconds` は 1 以上 3,162,240,000（36,600 日、サーバーの上限と同じ）以下で、外れれば `ELM_INVALID_ARGUMENT`（C が `TimeSpan` に変える前に確かめる。大きい値で .NET の変換があふれるため）。`feature_version` は `NULL` でよい。席数を超える `count` と、形の悪い `feature_version` は、.NET が確かめずに送り、サーバーの番号（席の不足、形の誤りなど）をそのまま返す。
+  - `count` は 1 以上（.NET の `ArgumentOutOfRangeException`）、`feature_id` は空でない（`ArgumentException`）。どちらも `ELM_INVALID_ARGUMENT`。`period_seconds` は 1 以上 3,162,240,000（36,600 日、サーバーの上限と同じ）以下で、外れれば `ELM_INVALID_ARGUMENT`（C が `TimeSpan` に変える前に確かめる。上限は §8.6 の期間の上限で、サーバーも同じ値で断る。それよりずっと大きい値では .NET の `TimeSpan` への変換があふれ、`ELM_INTERNAL_ERROR` になる）。`feature_version` は `NULL` でよい。席数を超える `count` と、形の悪い `feature_version` は、.NET が確かめずに送り、サーバーの番号（席の不足、形の誤りなど）をそのまま返す。
   - 返却は .NET の `ReleaseLeaseAsync` の結果（`null` なら `ELM_OK`、ほかはその番号と文）。借り出しでないリースは、返せなかったときも RELEASED になる。借り出しは、`ELM_UNKNOWN_LEASE` 以外の誤り（`ELM_RETURN_NOT_ALLOWED`、届かないなど）で返せなければ、状態が変わらず、ファイルも残る。LOST か RELEASED のリースの返却は、何も送らずに `ELM_OK`。.NET の `ReleaseLeaseAsync` の XML ドキュメントも、同じ PR で借り出しの場合を正しく書く。
   - 返却に渡せるのは、同じ `elm_client` が返したリースだけである。.NET の `Lease` に持ち主の `LicenseClient` を持たせ、`ReleaseLeaseAsync` はほかのクライアントの `Lease` を `ArgumentException` で断る（設計のレビュー R7。.NET の公開の API の穴も塞ぐ。`_leases` に入っているかでは見分けない。LOST と RELEASED のリースは外れるため）。C はそれを `ELM_INVALID_ARGUMENT` にする。
   - `elm_client_get_borrowed_leases` は、`GetBorrowedLeases` の各 `Lease` の新しいハンドルを並べた配列を、ライブラリが確保して `*out` に、個数を `*count` に返す（0 個なら `*out` は `NULL`）。`elm_lease_list_free(leases, count)` は、中のハンドルと配列をまとめて解放する。呼ぶたびに新しいハンドルになる。
@@ -3555,7 +3556,7 @@ void elm_client_destroy(elm_client* c);
     - 出力の引数の失敗のときの値と、`retry_after_seconds` の切り上げと `NULL`（回収の間の `ELM_SERVER_RECOVERING`）。`count` 0、`period_seconds` 0 と 3,162,240,000 と 3,162,240,001、空の `feature_id`、ピンの消去の http(s) でない URL（両方の形）。
     - コールバックの引数（ID、番号、文）、自動の更新が起こすコールバックとそのスレッド、返却が起こすコールバック。
     - コールバックの中からの待つ操作の `ELM_INVALID_STATE`、`destroy` が何もしないこと、リースの読み取りと解放とピンの消去を呼べること、誤りの文が保たれること（コールバックが呼んだスレッドで走る経路で確かめる。`testing.mdc`）。
-    - `destroy` が走っているコールバックを待つこと（`DisposeAsync` の待ちに隠されないよう、偽の時計を 6 秒進めても待つこと）と、待つ間にコールバックがリースを読めること、`destroy` のあとにコールバックが呼ばれないこと、`destroy` が持っているリースを返すこと。
+    - `destroy` が走っているコールバックを待つこと（`DisposeAsync` の待ちに隠されないよう、偽の時計を 6 秒進めても待つこと）と、待つ間にコールバックがリースを読め、同じ `elm_client` でピンの消去を呼べること（ハンドルは待ちのあとに解放する）、待つ間に起きた別のリースの変化と `destroy` のあとの変化がコールバックを呼ばないこと、`destroy` が持っているリースを返すこと。待つ間の変化を起こす前に、`destroy` が新しいコールバックを止めたことを `internal` の印（`NativeCallbackHandle.IsClosing`）で待つ（`destroy` を走らせるスレッドが遅れて始まることがあるため）。
     - オプションの確かめ: `struct_size`、`server_url`（オンプレミスの http、SaaS 型の http のループバックとそうでない http、URL として読めないもの、`NULL`）、ライセンスキーと期待するサーバーライセンスの ID を一緒に、空のライセンスキー、`app_version` の 64 と 65 バイト。
   - .NET の `LicenseClient` の直しのテストは `ElasticLM.Server.Tests` に置く（`ElasticLM.Client.Tests` は `elm-server` を立てられず、1 回の知らせに 2 つの変化が入るのはオンプレミスの回収だけのため）: 再起動のあとの更新で RECLAIMING のハンドラーを止め、`DisposeAsync` が戻ってからハンドラーを放し、続く HELD が知らされないこと。ほかのクライアントの `Lease` の返却が `ArgumentException` で、持ち主のリースが HELD のまま更新されること。
   - `tests/native/test_elasticlm.c`: `run.ps1` が、§17.5 の `elm-service` に加えて、発行した `elm-server` を https のループバック（自分の鍵で署名した証明書）で立てる。C のテストは、オンプレミスと SaaS 型の両方で、取得・リースの読み取り・返却とコールバック、借り出しと借りたリースの一覧、ピンの消去を通す。オンプレミスの最初の取得は、立ち上げのあとの回収の間なので `ELM_SERVER_RECOVERING` と `retry_after_seconds > 0` になることを確かめ、その秒数だけ待って取り直す（本物の時計で `retry_after` の経路も通す）。公開するすべての新しい関数をヘッダーの型の関数ポインターに入れ、残りの関数は `NULL` のハンドルで呼ぶ。これまでの C のテストは http だけだったので、`libelasticlm` の HTTPS（Linux では OpenSSL を実行時に読み込む）を 3 つの OS で初めて確かめる。

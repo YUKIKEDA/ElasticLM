@@ -10,7 +10,8 @@ namespace ElasticLM.Native;
 /// </content>
 public static unsafe partial class Exports
 {
-    // design §17.6: 36,600 days, the server's own bound; a larger value would overflow the conversion to TimeSpan.
+    // design §17.6: 36,600 days, the bound of design §8.6 that the server enforces. Far larger values would also overflow
+    // the conversion to TimeSpan, which would become ELM_INTERNAL_ERROR.
     private const long MaxBorrowSeconds = 3_162_240_000;
 
     /// <summary><c>elm_client_create</c>: makes a lease client for this installation. It does not contact the server.</summary>
