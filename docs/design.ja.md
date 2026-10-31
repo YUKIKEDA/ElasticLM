@@ -3824,7 +3824,7 @@ RID ごとの作り方（Q9。glibc の下限は持ち主の決定）:
 | --- | --- | --- |
 | `win-x64` | `windows-latest` | そのまま |
 | `win-arm64` | `windows-11-arm` | そのまま。SQLite は `vcvarsall arm64` |
-| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具と ICU は `dnf install clang zlib-devel binutils libicu`（ICU がないと SDK がカルチャ名を認識できず、地域化した資源を持つパッケージで NETSDK1188 の警告を出す。AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
+| `linux-x64` | `ubuntu-latest` | ダイジェストで固定した `almalinux:8` のコンテナ（glibc 2.28。セキュリティサポートは 2029-05-31 まで。https://wiki.almalinux.org/release-notes/ ）を `docker run` で動かし、その中で同じスクリプトを走らせる。SDK はランナーで `setup-dotnet` が入れたものを読み取りだけでつなぐ（.NET の Linux の SDK は RHEL 8 で動く）。C の道具と ICU は `dnf install clang zlib-devel binutils libicu`（`fastestmirror=True` でミラーを測って速いものを選び、`max_parallel_downloads=10` で並べて取り、`install_weak_deps=False` で弱い依存を入れない。遅いミラーに当たった回は `dnf` だけで 36 分かかった。Issue #160。ICU がないと SDK がカルチャ名を認識できず、地域化した資源を持つパッケージで NETSDK1188 の警告を出す。AlmaLinux の署名を `dnf` が確かめる。版は固定せず、入った版を `rpm -q` でジョブの要約に書く） |
 | `linux-arm64` | `ubuntu-24.04-arm` | `linux-x64` と同じく `almalinux:8` の arm64 のコンテナで作る |
 | `linux-musl-x64` | `ubuntu-latest` | ダイジェストで固定した `mcr.microsoft.com/dotnet/sdk:<DOTNET_SDK_VERSION>-alpine3.24-aot` のコンテナ（NativeAOT の道具 `build-base clang zlib-dev` が入っている。Alpine 3.24 のサポートは 2028-06-01 まで。https://github.com/dotnet/dotnet-docker/blob/main/src/sdk/10.0/alpine3.24-aot/amd64/Dockerfile 、https://alpinelinux.org/releases/ ）を `docker run` で動かし、`apk add` はしない |
 | `osx-arm64` | `macos-latest` | そのまま |
