@@ -74,3 +74,6 @@ finally {
 }
 
 Get-ChildItem $OutDir | ForEach-Object { "$($_.Name) $($_.Length)" }
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0

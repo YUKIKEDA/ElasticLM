@@ -93,7 +93,7 @@ if ($start -ge 0) {
 
 $header = Get-Content -Raw (Join-Path $Root 'vendor/sqlite/sqlite3.h')
 if ($header -notmatch '#define SQLITE_VERSION\s+"([^"]+)"') { Stop-Release 'vendor/sqlite/sqlite3.h has no SQLITE_VERSION.' }
-$notes = (($body -join "`n").Trim() + "`n`nSQLite $($Matches[1]) is built in from vendor/sqlite (not listed in the SBOM).`n").TrimStart()
+$notes = (($body -join "`n").Trim() + "`n`nSQLite $($Matches[1]) is built in from vendor/sqlite.`n").TrimStart()
 
 if ($NotesPath) { Set-Content -Path $NotesPath -Value $notes -NoNewline -Encoding utf8NoBOM }
 if ($env:GITHUB_OUTPUT) {

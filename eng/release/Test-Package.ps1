@@ -89,3 +89,6 @@ foreach ($id in @('ElasticLM.Licensing', 'ElasticLM.Client')) {
 
 foreach ($failure in $failures) { "FAILED: $failure" }
 if ($failures.Count -gt 0) { throw "$($failures.Count) check(s) of the packages failed." }
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0

@@ -60,3 +60,6 @@ foreach ($target in $targets) {
 }
 
 "Published elm, elm-server, elm-service, and libelasticlm for $Rid with SDK $sdk into $OutDir."
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0

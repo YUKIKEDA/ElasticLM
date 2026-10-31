@@ -80,3 +80,6 @@ finally {
         if (-not $saved.Contains($name)) { [Environment]::SetEnvironmentVariable($name, $null) }
     }
 }
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0

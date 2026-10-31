@@ -138,3 +138,6 @@ foreach ($failure in $failures) { $lines.Add("- FAILED: $failure") }
 $lines | Out-Host
 if ($Summary) { $lines | Add-Content -Path $Summary -Encoding utf8NoBOM }
 if ($failures.Count -gt 0) { throw "$($failures.Count) check(s) of the $Rid publish failed." }
+
+# A native command's exit code (codesign, tar, a stopped process) would otherwise become the step's result.
+exit 0
