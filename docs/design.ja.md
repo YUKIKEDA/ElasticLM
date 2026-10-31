@@ -3940,7 +3940,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 
 - Dependabot に `docker`（`/eng/container`）を足す。`cooldown` は、MCR では公開の日を取れないので今は効かないが、MCR が出すようになれば効くので、ほかの ecosystem とそろえて 7 日を書く（T27）。
 - 運用の文書 `docs/container.md`（英語）:
-  - `docker run` と Kubernetes の例。`docker run … <イメージ> setup` の形と、`setup` にも `ELM_PUBLICURLS` が要ること。
+  - `docker run` と Kubernetes の例。`docker run … <イメージ> setup --config <ファイル>` の形（`setup` が先。`elm-service` の引数は `[setup] [--config <file>]`）と、`setup` にも `ELM_PUBLICURLS` が要ること。
   - 設定ファイルと秘密のファイルのマウント。秘密のファイルは UID 1654 が読める必要がある（Kubernetes の Secret では `defaultMode` か `fsGroup`）。環境変数は `docker inspect` や Pod の定義に見えるので、ファイルを勧める。
   - `/data`: 名前つきのボリュームをつなぐ（試しで確かめた形）。何もつながずに起動すると無名のボリュームになり、コンテナを作り直すとデータを失う。Kubernetes の PersistentVolumeClaim では `securityContext.fsGroup: 1654`、ホストのフォルダーをつなぐなら UID 1654 に持ち主を変える。
   - `ELM_PUBLICURLS` と `ELM_NODE_NAME`。

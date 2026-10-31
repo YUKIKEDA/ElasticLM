@@ -53,7 +53,7 @@ beside the database).
 ```sh
 docker volume create elm-data
 docker run --rm -v elm-data:/data -v "$PWD/config:/config:ro" -e ELM_PUBLICURLS=https://licenses.example.com/ \
-  ghcr.io/yukikeda/elm-service@sha256:<digest> --config /config/elm-service.json setup
+  ghcr.io/yukikeda/elm-service@sha256:<digest> setup --config /config/elm-service.json
 docker run -d --name elm-service -p 8080:8080 -v elm-data:/data -v "$PWD/config:/config:ro" \
   -e ELM_PUBLICURLS=https://licenses.example.com/ -e ELM_NODE_NAME=node-1 \
   ghcr.io/yukikeda/elm-service@sha256:<digest> --config /config/elm-service.json

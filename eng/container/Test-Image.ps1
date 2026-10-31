@@ -160,7 +160,7 @@ try {
     Invoke-Native 'docker volume create' { docker volume create $volume } | Out-Null
     $common = @('-v', "${volume}:/data", '-v', "${config}:/config:ro", '-e', 'ELM_PUBLICURLS=https://elm.test/')
     # setup prints the key on its own line; its log lines come with it through 2>&1.
-    $setupOutput = @(Invoke-Native 'setup' { docker run --rm @common $tag --config /config/elm-service.json setup } | ForEach-Object { $_.ToString().Trim() })
+    $setupOutput = @(Invoke-Native 'setup' { docker run --rm @common $tag setup --config /config/elm-service.json } | ForEach-Object { $_.ToString().Trim() })
     if (-not ($setupOutput | Where-Object { $_ -match '^elm_' })) { $setupOutput | Out-Host; $failures.Add('setup did not print a key.') }
 
     Invoke-Native 'docker run' { docker run -d --name $container @common -p '127.0.0.1:18090:8080' $tag --config /config/elm-service.json } | Out-Null
