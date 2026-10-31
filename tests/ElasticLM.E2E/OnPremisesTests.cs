@@ -108,8 +108,10 @@ public sealed class OnPremisesTests
 
         // design §13.4: after a crash the server waits a lease's length; a client's renewal gets ELM_UNKNOWN_LEASE and takes its
         // seat back, while a new acquisition waits.
-        DateTimeOffset beforeRestart = lease.ExpiresAt;
+        // Read after the kill: a renewal between the read and the kill would move the expiry, and the wait below would hold
+        // before the server took the seat back (PR #179's review).
         await server.KillAsync();
+        DateTimeOffset beforeRestart = lease.ExpiresAt;
         await server.StartAsync();
         LeaseResult.Failed waiting = Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("pro", cancellationToken: Cancel));
         Assert.Equal(ErrorCode.ServerRecovering, waiting.Error.Code);
