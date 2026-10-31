@@ -75,6 +75,14 @@ internal abstract partial class Database : IAsyncDisposable
     /// command and a write transaction take from the connection's default; SQLite's own busy wait stays at 5 seconds and is
     /// retried within it. Connections of other engines are left as they are.
     /// </summary>
+    /// <remarks>
+    /// Read in Microsoft.Data.Sqlite 10.0 (branch release/10.0 of dotnet/efcore; this build uses 10.0.14):
+    /// src/Microsoft.Data.Sqlite.Core/SqliteCommand.cs, where <c>CommandTimeout</c> reads the connection's
+    /// <c>DefaultTimeout</c> while the command has none of its own, and a busy or locked database is tried again every 150 ms
+    /// until <c>CommandTimeout</c> seconds have passed; SqliteConnection.cs, whose <c>DefaultTimeout</c> is also used for the
+    /// internal commands of <c>BeginTransaction()</c>; and SqliteTransaction.cs, which runs <c>BEGIN IMMEDIATE;</c> as such a
+    /// command.
+    /// </remarks>
     /// <param name="connection">The open connection.</param>
     /// <param name="wait">How long to wait for another writer.</param>
     public static void WaitForWriters(DbConnection connection, TimeSpan wait)
