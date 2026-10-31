@@ -660,3 +660,21 @@
 - **決定:** E2E は PR ごとに CI の `aot` ジョブの 3 つの OS で流し、`release.yml` の 7 つの RID では流さない（持ち主の決定。[design.ja.md](./design.ja.md) 0.113）。
 - **理由:** 流れの正しさは RID によらない。RID に固有の問題（ローダー、glibc、ICU、マシン ID）は、7 つの RID で動くいまのスモークと C のテストが見つける。
 - **却下した案:** `release.yml` の各 RID のビルドのジョブでも E2E を流す。
+
+### 参照機での計測を PR ごとに動かす（V1b の Grill、Issue #182）
+
+- **決定:** §4.2 の計測は、`workflow_dispatch` と計測に触れる PR で動くワークフロー `measure.yml` で行い、PR ごとの CI では動かさない（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** リース 10,000 件の計測だけで、起動のあとの回収の 10 分を含めて 20 分かかる。PR ごとに流すと、すべての PR の確かめが遅くなる。§4.2 に関わる PR は、その PR で手で動かす。
+- **却下した案:** `ci.yml` の `aot` ジョブで、PR ごとに計測する。
+
+### リースの負荷を `LicenseClient` で作る（V1b の設計のレビュー、Issue #182）
+
+- **決定:** 計測の道具は、`ElasticLM.Client` の公開の部品（`InstallationKeyStore`、`ProofBuilder`）で要求を自分で作って送り、返ったリースのトークンを時間を測る範囲の外で `LeaseVerifier` で確かめる（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** `LicenseClient` はリースの更新を自分の中で行い、1 件ごとの時間を外に出さない。目標の「更新の p99」を測るには、1 件ごとの時間が要る。
+- **却下した案:** Grill の Q4 のとおり、100 個の `LicenseClient` を動かす。
+
+### メモリの目標を cgroup の `memory.peak` で比べる（V1b の設計のレビュー、Issue #182）
+
+- **決定:** 「メモリ 200 MB 以下」は、プロセスの `VmHWM` を 200,000,000 バイトと比べる。cgroup の `memory.peak` は記録だけにする（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** `memory.peak` は、サーバーが更新のたびに書く利用ログのページキャッシュも数える。プロセスが持つメモリの目標とは違うものを含む。
+- **却下した案:** cgroup の `memory.peak` を目標と比べる。
