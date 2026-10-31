@@ -96,8 +96,9 @@ public sealed partial class ActivationClientTests
         vendor.Test.Time.Advance(TimeSpan.FromHours(12));
         await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64() == 2);
 
-        // Each wait below moves the clock: the move above may come while the client's last refresh is still ending, and the
-        // timer it then sets waits from the time it read (Issue #106).
+        // The first wait above needs no move: ActivateAsync sets the timer before it returns. Each wait below moves the
+        // clock: the move above may come while the client's last refresh is still ending, and the timer it then sets waits
+        // from the time it read (Issue #106).
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/suspend", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromHours(12));
         await vendor.Test.WaitWithClockAsync(() => Task.FromResult(Refusal(changes) is not null), Step);
@@ -662,7 +663,7 @@ public sealed partial class ActivationClientTests
 
     // How far a wait moves the clock every 10 polls: a timer set an hour late (the retry interval) comes within 6 steps,
     // and 50 steps stay short of the tokens' day.
-    private static TimeSpan Step => TimeSpan.FromMinutes(10);
+    private static readonly TimeSpan Step = TimeSpan.FromMinutes(10);
 
     private static ActivationStateChangedEventArgs? Refusal(List<ActivationStateChangedEventArgs> changes)
     {
