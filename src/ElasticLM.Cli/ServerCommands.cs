@@ -186,8 +186,16 @@ internal static class ServerCommands
     {
         writer.WriteLine($"product: {status.GetProperty("product").GetString()}");
         writer.WriteLine($"license: {status.GetProperty("license").GetString()} (token {status.GetProperty("licenseToken").GetString()})");
-        JsonElement expires = status.GetProperty("licenseExpires");
-        writer.WriteLine("expires: " + (expires.ValueKind == JsonValueKind.Number ? Time(expires.GetInt64()) : "never"));
+
+        // elm-server leaves licenseExpires out when the server license has no expiry (design §13.7).
+        writer.WriteLine(
+            "expires: "
+                + (
+                    status.TryGetProperty("licenseExpires", out JsonElement expires) && expires.ValueKind == JsonValueKind.Number
+                        ? Time(expires.GetInt64())
+                        : "never"
+                )
+        );
         writer.WriteLine($"key: {status.GetProperty("key").GetString()}");
         writer.WriteLine(
             status.GetProperty("recovering").GetBoolean()

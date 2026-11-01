@@ -69,6 +69,36 @@ public sealed class ElmCommandsTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// elm server status prints "never" for a server license without expiry, whose status answer leaves out licenseExpires
+    /// (design §13.7, Issue #203).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server whose license has no expiry.
+    ///
+    /// Steps:
+    /// - status, and status --json.
+    ///
+    /// Expected:
+    /// - Exit 0 with "expires: never"; the JSON answer has no licenseExpires member.
+    /// </remarks>
+    [Fact]
+    public async Task ServerStatus_LicenseWithoutExpiry_PrintsNever()
+    {
+        string data = _deployment.NewFolder("server");
+        _deployment.WriteServerLicense(data, spec => spec with { ExpiresAt = null });
+        ElmServer server = await _deployment.StartServerAsync(data);
+        string[] target = ["--url", server.AdminUrl.ToString(), "--data", server.DataDirectory];
+
+        (int code, string output, _) = Run(["server", "status", .. target]);
+
+        Assert.Equal(0, code);
+        Assert.Contains("expires: never", output, StringComparison.Ordinal);
+        using JsonDocument json = JsonDocument.Parse(Run(["server", "status", "--json", .. target]).Out);
+        Assert.False(json.RootElement.TryGetProperty("licenseExpires", out _));
+    }
+
+    /// <summary>
     /// elm log verify checks a folder of usage logs and of the borrow record, and fails on a changed line.
     /// </summary>
     /// <remarks>
