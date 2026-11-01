@@ -10,23 +10,23 @@ This page is for everyone who meets ElasticLM for the first time: vendors who is
 
 ElasticLM lets the vendor of a .NET or C/C++ app issue licenses for its products, check those licenses on the customer's machines, and count how many people use the product at the same time. It is open source (MIT) and ships as NativeAOT single binaries and NuGet packages. Nothing has been released yet; 1.0 is coming.
 
-The design puts one goal first: stop three kinds of abuse with cryptography rather than with secrecy.
+ElasticLM puts one goal first: stop three kinds of abuse with cryptography rather than with secrecy.
 
 - **A forged or edited license.** A license is signed by the vendor. An app accepts only licenses whose signature leads back to a key the app was built to trust.
-- **A forged or replayed request.** Every request that changes state on a server is signed by a key that belongs to one installation of the app, and carries a one-time server nonce.
+- **A forged or replayed request.** Every request that changes state on a server is signed by a key that belongs to one installation of the app. It also carries a recent server nonce (a random value the server handed out a short time before) and a one-time ID, so a captured request cannot be sent again.
 - **Use beyond the seats that were bought.** Servers count seats under a lock, and a client checks that what a server lends it fits in the license the vendor signed.
 
-ElasticLM does not try to stop a person who changes the app's own binary so that it skips the check. No client-side licensing can stop that, and obfuscation is out of scope too (design §5.4, §23). The [security model](security-model.md) lists everything that is and is not protected.
+ElasticLM does not try to stop a person who changes the app's own binary so that it skips the check; the [security model](security-model.md) explains why, and lists everything that is and is not protected.
 
 ## The people
 
-The design names these people and things (design §1.2). The rest of the guide uses the same names.
+The rest of the guide uses these names.
 
 | Name | Who or what |
 | --- | --- |
 | Vendor (issuer) | The organization that uses ElasticLM to license its product. It holds the root key and runs the hosted activation service. |
-| Vendor's administrators | The vendor's staff. They issue and revoke licenses in the admin UI, with the `elm` CLI, or through the management API. Their roles limit what each can do. |
-| Vendor's systems | The vendor's sales, billing, or CI systems. They call the management API with an API key. |
+| Vendor's administrators | The vendor's staff. They issue and revoke licenses in the admin UI, with the `elm` CLI, or through the administration API. Their roles limit what each can do. |
+| Vendor's systems | The vendor's sales, billing, or CI systems. They call the administration API with an API key. |
 | Licensee (customer) | The organization or person who bought the product. |
 | Customer's administrator | The person at the customer who runs the on-premises license server. |
 | App | The vendor's product. It embeds the verification library, or the client (.NET or C). |
@@ -39,12 +39,12 @@ The design names these people and things (design §1.2). The rest of the guide u
 | `ElasticLM.Client` | NuGet package | The app | Talks to the servers: online and offline activation, refresh, deactivation, trials, leases, and borrowing. It creates and keeps the installation key. |
 | `libelasticlm` | NativeAOT shared library (`.dll`, `.so`, `.dylib`) and the C header `elasticlm.h` | C and C++ apps | The functions of both packages behind a C ABI. |
 | `elm-server` | Single binary | The customer's administrator | The on-premises license server. It lends floating seats inside the customer's network. |
-| `elm-service` | Single binary and container image | The vendor | The hosted activation service: license keys, activations, trials, cloud leases, the management API, and the admin UI. |
-| `elm` | Single binary (CLI) | The vendor and the customer's administrator | Creates keys and key certificates, issues and inspects license files, verifies logs, calls the management API, and administers a local `elm-server`. |
+| `elm-service` | Single binary and container image | The vendor | The hosted activation service: license keys, activations, trials, cloud leases, the administration API, and the admin UI. |
+| `elm` | Single binary (CLI) | The vendor and the customer's administrator | Creates keys and key certificates, issues and inspects license files, verifies logs, calls the administration API, and administers a local `elm-server`. |
 
-The executables run with no files beside them; a settings file is optional (design §4.1). They are built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`, and `libelasticlm` for the same targets. The NuGet packages are AOT-compatible, so an app that embeds them can itself be published with NativeAOT without warnings.
+The executables run with no files beside them; a settings file is optional. They are built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`, and `libelasticlm` for the same targets. The NuGet packages are AOT-compatible, so an app that embeds them can itself be published with NativeAOT without warnings.
 
-The app embeds only `ElasticLM.Licensing` and `ElasticLM.Client`, or `libelasticlm`. The code that signs licenses lives only in `elm`, `elm-server`, and `elm-service`, and never ships inside the app (design §6.2).
+The app embeds only `ElasticLM.Licensing` and `ElasticLM.Client`, or `libelasticlm`. The code that signs licenses lives only in `elm`, `elm-server`, and `elm-service`, and never ships inside the app.
 
 ## The core idea: a signed license, checked offline
 
@@ -58,9 +58,9 @@ The app checks the license file with nothing but the file, the clock, and a **tr
 
 Because the app trusts only the root key, the vendor can replace a signing key without shipping a new app. The [trust chain](trust-chain.md) page explains this in full, and [license files and verification](license-files-and-verification.md) gives the order of checks.
 
-The license is signed, not encrypted. Anyone who holds the file can read it; nobody without the signing key can change it or make a new one (design decision 0.33).
+The license is signed, not encrypted. Anyone who holds the file can read it; nobody without the signing key can change it or make a new one.
 
-The online parts of ElasticLM exist to issue and refresh these signed tokens, and to lend seats. When the network is gone, an app keeps working for as long as its token, its grace period, or its lease allows (design §4.5).
+The online parts of ElasticLM exist to issue and refresh these signed tokens, and to lend seats. When the network is gone, an app keeps working for as long as its token, its grace period, or its lease allows.
 
 ## How the parts fit together
 
@@ -95,7 +95,7 @@ flowchart LR
     CLI2 -- "local admin API" --> Srv
 ```
 
-Read the figure like this (design §6.1):
+Read the figure like this:
 
 - The vendor uses `elm` with the root key to create a signing key and its key certificate, and gives both to `elm-service`.
 - `elm-service` keeps products, features, policies, licenses, activations, and leases in SQLite or PostgreSQL. Vendor administrators log in through the vendor's identity provider; the vendor's systems use API keys.
@@ -104,7 +104,7 @@ Read the figure like this (design §6.1):
 
 ## Deployment shapes
 
-You do not have to run every part. The design names four shapes (design §6.3), and a vendor may use more than one at once.
+You do not have to run every part. There are four shapes, and a vendor may use more than one at once. The most common combination, a hosted service that activates on-premises servers, is described after the four.
 
 | Shape | Parts | In short |
 | --- | --- | --- |
@@ -117,40 +117,45 @@ You do not have to run every part. The design names four shapes (design §6.3), 
 
 - If the license limits only who may run the app, on which device, and until when, use **offline only** when the vendor runs no service, or **hosted activation** when it does.
 - If the license limits concurrent users (seats), use **cloud floating** when the apps can reach the vendor's service, or **on-premises floating** when they cannot or the customer wants the seats on site.
-- An on-premises server gets its server license either from `elm-service` (the shape **both**, below) or from `elm`, issued by hand.
+- An on-premises server gets its server license either from `elm-service` (see "On-premises floating with elm-service", below) or from `elm`, issued by hand.
+
 ### Offline only
 
-The vendor runs `elm license issue` and sends the `.elmlic` file to the customer. The app checks it with `ElasticLM.Licensing` (or `libelasticlm`). The file can be node-locked: `elm license issue` takes `--bind-key` (the thumbprint of the device's installation key) and `--fingerprint` (machine fingerprints), which the vendor must first get from the customer's device. Without them, the file works on any device.
+The vendor runs `elm license issue` and sends the `.elmlic` file to the customer. The app checks it with `ElasticLM.Licensing` (or `libelasticlm`).
 
-There is no refresh and no revocation in this shape. A file is good until its expiry, and a file issued with `--expires never` is good forever; `elm` warns when it writes one (design §16). Choose expiry dates with that in mind.
+The file can be node-locked to one device. Each device has an **installation key**: a key pair that the client creates on the device and keeps there, and whose **thumbprint** (a short hash of the public key) names the device. Each device also has **machine fingerprints**, values derived from the operating system's machine ID. [Devices and proofs](devices-and-proofs.md) explains both. `elm license issue` takes `--bind-key` (the thumbprint) and `--fingerprint` (the fingerprints), which the vendor must first get from the customer's device. `elm` has no command that prints them for an app's device, so the app must show them: in .NET, `InstallationKey.Thumbprint` from an `InstallationKeyStore` and `MachineFingerprint.Compute(productId)`; C exposes only the thumbprint, with `elm_installation_thumbprint`. Without `--bind-key` and `--fingerprint`, the file works on any device.
+
+There is no refresh and no revocation in this shape. A file is good until its expiry plus its grace period (`elm license issue --grace-days`, by default 7 days, and 0 for trials). A file issued with `--expires never` is good forever; `elm` warns when it writes one. Choose expiry dates with that in mind.
 
 ### Hosted activation
 
-The vendor runs `elm-service`, defines products and policies, and issues a **license key** (a string such as `ELM-7Q2KX-M9D4R-HV0T8-3NPWZ`) for each sale. The service stores only the SHA-256 hash of the key and shows the key once, when it is issued (design §9.5). In the app, `ElasticLM.Client` (`ActivationClient`) activates that key: it creates an **installation key** for the device, signs the request with it, and receives a license file bound to that key. The policy's `MaxActivations` limits how many devices can activate one license.
+The vendor runs `elm-service`, defines products and policies, and issues a **license key** (a string such as `ELM-7Q2KX-M9D4R-HV0T8-3NPWZ`) for each sale. The service stores only the SHA-256 hash of the key and shows the key once, when it is issued. In the app, `ElasticLM.Client` (`ActivationClient`) activates that key: it creates the device's installation key, signs the request with it, and receives a license file bound to that key. The policy's `maxActivations` limits how many devices can activate one license.
 
-The token in that file expires (by default after 30 days, `TokenLifetime`), and the client refreshes it online before then; if it cannot, the license still works for the grace period (by default 7 days, `GracePeriod`) (design §9.3). This short life is how revocation reaches a device: a revoked or suspended license gets no new token. The same service handles deactivation, trials (one per product and machine), and offline activation by carrying request and response files by hand. See [devices and proofs](devices-and-proofs.md) and [activation](activation.md).
+The token in that file expires (by default after 30 days, `tokenLifetime`), and the client refreshes it online before then; if it cannot, the license still works for the grace period (by default 7 days, `gracePeriod`). This short life is how revocation reaches a device: a revoked or suspended license gets no new token. The same service handles deactivation, trials (one per product and machine), and offline activation by carrying request and response files by hand. See [devices and proofs](devices-and-proofs.md) and [activation](activation.md).
 
-`elm-service` can also produce a license file that is not bound to any device (`Binding: Unbound`) from its management API, for customers who will never go online (design §9.3).
+`elm-service` can also produce a license file that is not bound to any device (`binding`: `unbound`) from its administration API, for customers who will never go online.
 
 ### Cloud floating
 
-A policy with `Floating: Cloud` gives each feature a number of seats. The app's `LicenseClient`, given the license key, asks `elm-service` for a lease, renews it every third of the lease length (the default lease is 10 minutes), and returns it when done. The service keeps leases in its database, so a restart of the service does not lose them. See [floating licenses](floating-licenses.md).
+A policy with `floating`: `cloud` gives each feature a number of seats. The app's `LicenseClient`, given the license key, asks `elm-service` for a lease, renews it every third of the lease length (the default lease is 10 minutes), and returns it when done. The service keeps leases in its database, so a restart of the service does not lose them. See [floating licenses](floating-licenses.md).
 
 ### On-premises floating
 
-The customer's administrator runs `elm-server` on a machine in their own network. The server has its own installation key and a **server license**: a license token of kind `server` that names the server's key, the features, and the seats for each. The server lends seats only within that license, and signs each lease with its own installation key. Apps use `LicenseClient` pointed at the server, and check every lease against the server license, so even a server whose key was taken out cannot lend more than the vendor signed (design §12.7.5).
+The customer's administrator runs `elm-server` on a machine in their own network. The server has its own installation key and a **server license**: a license token of kind `server` that names the server's key, the features, and the seats for each. `elm-server` prints its thumbprint and fingerprints when it first starts without a license, so the administrator can send them to the vendor. The server lends seats only within that license, and signs each lease with its own installation key. Apps use `LicenseClient` pointed at the server and check every lease against the server license.
 
-`elm-server` keeps its leases in memory and has no database. After a restart, clients hand their still-valid leases back during a short reclaim window. Only borrowed seats, which leave the network, are written to a signed record on disk (design §13.4). There is no high-availability pair: the operating system's service manager restarts the server, and running apps hold leases long enough to ride out the restart (design §13.6).
+Those checks limit what a stolen server key can do. A person who takes the server's installation key out of its machine can sign leases only inside the server license's product, features, seat count per lease, lease length, and end. They can, however, lend the same seats to more clients than were bought, for example from a copied server. The server license's expiry, and the refresh that renews it, are what end that.
 
-### Both
+`elm-server` keeps its leases in memory and has no database. After a restart, clients hand their still-valid leases back during a short reclaim window. Only borrowed seats, which leave the network, are written to a signed record on disk. There is no high-availability pair: the operating system's service manager restarts the server, and running apps hold leases long enough to ride out the restart.
 
-When the vendor runs `elm-service` and a customer runs `elm-server`, the server activates its server license with the service like any device (`elm server activate`, or a request file when the server has no internet access). The server license expires (by default after 30 days) and the server refreshes it from the service, online when `service.url` is set, or through files (`elm server refresh-request`, then `elm server import`). Each refresh lets the service notice a copied server (design §9.6, §10.4).
+### On-premises floating with elm-service
 
-Without `elm-service`, the vendor issues the server license by hand with `elm license issue --kind server`. Such a license has no refresh, so a copied server machine cannot be detected; `elm` warns when such a license has no expiry (design §9.6).
+When the vendor runs `elm-service` and a customer runs `elm-server`, the server activates its server license with the service like any device (`elm server activate`, or a request file when the server has no internet access). The server license expires (by default after 30 days) and the server refreshes it from the service, online when `service.url` is set, or through files (`elm server refresh-request`, then `elm server import`). Each refresh lets the service notice a copied server.
+
+Without `elm-service`, the vendor issues the server license by hand with `elm license issue --kind server`. Such a license is never refreshed, so a copied server is not detected; only the license's expiry ends a copy's use. `elm` warns when such a license has no expiry.
 
 ## Who holds which secret
 
-Most of what keeps ElasticLM safe is about where private keys and secrets live. The table gives the main ones (design §7.2, §10.2, §13.7, §14.8).
+Most of what keeps ElasticLM safe is about where private keys and secrets live. The table gives the main ones.
 
 | Secret | Who holds it | Where |
 | --- | --- | --- |
@@ -160,7 +165,7 @@ Most of what keeps ElasticLM safe is about where private keys and secrets live. 
 | `elm-server`'s installation key and admin token | The customer's administrator | The server's data folder, readable only by Administrators, SYSTEM, and the account that created it (Windows), or by its owner (Linux and macOS). |
 | License key | The customer | Typed in by a person. `elm-service` stores only its hash. |
 
-No private key is ever built into a binary or a resource. The app holds only public keys.
+No vendor private key is built into a binary or a resource. The app carries only the vendor's root public keys. The only private key on a customer's device is that device's own installation key, which the client creates there; `elm-server` likewise creates its own installation key and admin token.
 
 ## What can go wrong, and what you must do
 
@@ -169,28 +174,29 @@ Each role has a few things that only it can do. The pages that follow explain wh
 **Vendors**
 
 - Keep the root key offline and its passphrase secret. With the root key, anyone can certify a signing key and make any license.
-- Build your root public key into the app's trust store. If a signing key leaks, you revoke it by listing its key ID in the trust store, which reaches devices only through an app update (design §7.5). See the [trust chain](trust-chain.md).
-- Choose token lifetimes and lease lengths on purpose. A revoked license keeps working until its token and grace period run out, and a token with no expiry can never be revoked (design §5.4).
-- If you issue server licenses by hand, give them an expiry; otherwise a copied server can never be found.
+- Build your root public key into the app's trust store. If a signing key leaks, you revoke it by listing its key ID in the trust store, which reaches devices only through an app update. See the [trust chain](trust-chain.md).
+- Choose token lifetimes and lease lengths on purpose. A revoked license keeps working until its token and grace period run out, and a token with no expiry cannot be revoked, except by revoking the key that signed it. The [security model](security-model.md) explains this.
+- If you issue server licenses by hand, give them an expiry. Such a license is never refreshed, so the expiry is the only thing that ends a copied server's use.
 
 **App developers**
 
-- Embed only public keys. A private key in an app lets anyone who has the app make licenses.
+- Embed only the vendor's root public keys. A private key in an app lets anyone who has the app make licenses.
 - Decide what the app does when verification fails, when it is in its grace period, and when a lease is lost. ElasticLM reports these states; the app decides what to stop.
-- Do not count on ElasticLM to stop someone who patches your binary. That threat is accepted (design §5.4).
+- For node-locked license files issued by hand, show the device's installation key thumbprint and machine fingerprints in the app, so the customer can send them to the vendor.
+- Do not count on ElasticLM to stop someone who patches your binary; see the [security model](security-model.md).
 
 **Customers' administrators**
 
-- Run `elm-server` under the operating system's service manager (a Windows service, systemd, or launchd) so that it restarts on its own. With the default 10-minute lease, apps keep working if the server is back within about 6 minutes 40 seconds (design §13.6).
-- Keep the server license fresh: let the server refresh online, or carry refresh files at least once every 37 days with the default 30-day token and 7-day grace period (design §12.8.3).
+- Run `elm-server` under the operating system's service manager (a Windows service, systemd, or launchd) so that it restarts on its own. With the default 10-minute lease, apps keep working if the server is back within about 6 minutes 40 seconds; `elm-server` itself starts in about 0.1 s on a 4-CPU Linux machine.
+- Keep the server license fresh: let the server refresh online, or carry refresh files at least once every 37 days with the default 30-day token and 7-day grace period.
 - Keep the server's data folder private. It holds the server's installation key, the admin token, and the borrow record.
 
 **When the network goes away**
 
 | Shape | The app keeps working until |
 | --- | --- |
-| Offline only | Not affected: the file needs no network and works until it expires, plus its grace period. |
-| Hosted activation | The token expires plus the grace period: 37 days with the defaults. |
+| Offline only | Not affected: the file needs no network and works until its expiry plus its grace period. |
+| Hosted activation | The last token's expiry plus its grace period: up to 37 days after the last refresh with the defaults. |
 | Cloud or on-premises floating | The current lease ends: at most one lease length, by default 10 minutes. A borrowed lease lasts until its own end. |
 
 ## Where to read next

@@ -637,7 +637,9 @@ jobs:
 
   site:
     # design §20.7 (V1c1, T28): the user documentation site, built from this commit with no secrets. Every pull request
-    # checks it here, broken links and pnpm audit included; a tag's run hands it to the pages job.
+    # checks it here, broken links and pnpm audit included; a tag's run hands it to the pages job. A tag's run skips the
+    # audit: its lockfile passed the audit in the pull request, and an advisory published since could only keep the tag's
+    # site from ever being published, while the previous site stays up (Issue #190, R4).
     name: Documentation site (website)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -661,8 +663,10 @@ jobs:
         run: |
           corepack pnpm install --frozen-lockfile
           if ($LASTEXITCODE -ne 0) { exit 1 }
-          corepack pnpm audit
-          if ($LASTEXITCODE -ne 0) { exit 1 }
+          if ($env:GITHUB_EVENT_NAME -ne 'push') {
+            corepack pnpm audit
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
           corepack pnpm build
           if ($LASTEXITCODE -ne 0) { exit 1 }
 

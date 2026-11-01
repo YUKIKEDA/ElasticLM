@@ -8,31 +8,31 @@ This page is for vendors who create and keep the keys, for app developers who bu
 
 ## What the chain is for
 
-Every license and every lease in ElasticLM is a token signed with ECDSA P-256 (`ES256`). An app accepts a token only when the key that signed it can be traced, through signatures, to a key the vendor built into the app. That path from the built-in key to the token is the trust chain.
+Every license and every lease in ElasticLM is a token: a short piece of text that holds a header, a JSON payload, and a signature. The format is JWS (JSON Web Signature, RFC 7515), and the signature is ECDSA P-256 (`ES256`). An app accepts a token only when the key that signed it can be traced, through signatures, to a key the vendor built into the app. That path from the built-in key to the token is the trust chain.
 
-The chain answers one question: who may create a license that the app accepts? The answer is only the vendor (the issuer), and only through keys the vendor has certified. A licensee (the customer) who holds a valid license file, edits it, or writes a new one from nothing cannot make the app accept it, because they do not hold a private key that the chain leads to (threat T1 in design §5.3).
+The chain answers one question: who may create a license that the app accepts? The answer is only the vendor (the issuer), and only through keys the vendor has certified. A licensee (the customer) who edits a valid license file, or writes a new one from nothing, cannot make the app accept it, because they do not hold a private key that the chain leads to.
 
 The chain has two levels instead of one:
 
 - A **root key** that the vendor keeps offline. It signs nothing but key certificates.
-- **Signing keys** that sign licenses, leases, and log records day to day. Each one is certified by the root key for named uses and a limited period.
+- **Signing keys** that sign licenses, leases, and usage log records day to day. The root key certifies each one for named uses and a limited period.
 
-The app trusts only the root key. A signing key can therefore be replaced, and a leaked one recovered from, without rebuilding the app (design §7.1). The rejected alternative, building the signing key itself into the app as Keygen does, would need an app update for every key change (see [design choices](design-choices.md)).
+The app trusts only the root key. A signing key can therefore be replaced, and a leaked one recovered from, without rebuilding the app. The alternative, building the signing key itself into the app, would need an app update for every key change (see [design choices](design-choices.md)).
 
 ## The keys
 
 | Key | Who holds it | Where it lives | What it signs |
 | --- | --- | --- | --- |
-| Root key | The vendor | A file the vendor keeps offline and passes to `elm` only when it is needed | Key certificates (`elm-cert+jws`) |
+| Root key | The vendor | A file the vendor keeps offline and passes to `elm` only when it is needed | Key certificates |
 | Signing key of `elm-service` | The vendor's operators | A file given to `elm-service` at start | License tokens, cloud lease tokens, usage log records |
 | Signing key used with `elm license issue` | The vendor | A file passed to `elm` | License files issued without the service |
-| Installation key of `elm-server` | The customer's server | Created by the server on its first start (design §10.2) | On-premises lease tokens and the server's usage log |
+| Installation key of `elm-server` | The customer's server | Created by the server on its first start | On-premises lease tokens and the server's usage log |
 
-No private key is ever placed in an executable's resources or constants (design §7.2). `elm` is a generic binary: it holds no vendor key and reads the root key from a file each time.
+No private key is ever placed in an executable's resources or constants. `elm` is a generic binary: it holds no vendor key and reads the root key from a file each time.
 
 ### Root key
 
-The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase (PBES2 with PBKDF2-HMAC-SHA256 at 600,000 iterations and AES-256-CBC, design §7.2). A new key's passphrase must be at least 12 characters (design §16). `elm` reads the passphrase from the environment variable named by `--passphrase-env` (default `ELM_KEY_PASSPHRASE`) or asks for it.
+The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase; a new key's passphrase must be at least 12 characters.
 
 The root key never goes onto an online service. Its only job is `elm key certify`, which signs a key certificate for a signing key. Because it is used rarely, it can stay on an offline machine or removable media between uses.
 
@@ -40,48 +40,45 @@ The root key never goes onto an online service. Its only job is `elm key certify
 
 A signing key is created with `elm key signing create`. On its own it is trusted by nothing. It becomes useful only when the root key certifies it.
 
-`elm-service` reads exactly one signing key at start: `signing.key` (or `ELM_SIGNING_KEY`), with its passphrase and its certificate files in `signing.certificates` (design §14.8, decision 0.75). It refuses to start if no certificate covers the current time or if the certificate does not allow both `license` and `lease`. When `usageLog.directory` is set, the certificate must also allow `log`.
+`elm-service` reads exactly one signing key at start: `signing.key` (or `ELM_SIGNING_KEY`), with its passphrase, and 1 to 4 certificate files in `signing.certificates`. It refuses to start unless, for `license` and for `lease`, some certificate that chains to a root key in `trust.rootKeys` certifies this key and covers the current time. One certificate may cover both uses, or separate ones may. When `usageLog.directory` is set, the same must hold for `log`.
 
 The on-premises license server does not use a vendor signing key at all. It signs leases with its own installation key, and the vendor grants that key its authority through the server license (see below).
 
 ### Key certificates
 
-A key certificate is a token of type `elm-cert+jws`, signed by the root key (design §8.4.1). Its payload carries:
+A key certificate is a token signed by the root key. Each token says what it is in its header member `typ` (the token type): a key certificate is `elm-cert+jws`, a license token is `elm-license+jws`, and a lease token is `elm-lease+jws`. A verifier accepts only the type it expects, so one kind of token cannot be passed off as another.
 
-| Claim | Meaning |
-| --- | --- |
-| `sub` | The key ID of the certified public key |
-| `jwk` | The certified public key itself (EC P-256: `kty`, `crv`, `x`, `y` only) |
-| `use` | What the key may sign: one or more of `license`, `lease`, `log` |
-| `nbf` | Start of the validity period |
-| `exp` | End of the validity period (required) |
+A certificate's payload carries:
 
-It also carries the claims every token has: `ver`, `iat`, and `jti` (design §8.3).
+- `sub`: the key ID of the certified public key (key IDs are explained below);
+- `jwk`: the certified public key itself;
+- `use`: what the key may sign, one or more of `license`, `lease`, and `log`;
+- `nbf` and `exp`: the start and end of the validity period.
 
-`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731 (design §7.1 and §16, checked in `src/ElasticLM.Cli/KeyCommands.cs`).
+`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731.
 
-**Uses.** A verifier asks for exactly one use. The license verifier accepts only certificates with `license`; the lease verifier for hosted leases accepts only `lease`; `elm log verify` uses `log`. A key certified only for logs cannot sign a license the app accepts.
+**Uses.** A verifier asks for exactly one use. The license verifier accepts only certificates with `license`; the verifier for cloud leases accepts only `lease`; `elm log verify` uses `log`. A key certified only for logs cannot sign a license the app accepts.
 
-**Validity and the `iat` rule.** A certificate's period says when the key may make new signatures. It does not say when the signatures stop being valid. A token is accepted when its own issue time (`iat`) falls between the certificate's `nbf` and `exp`, with the allowed clock skew on both ends (design §7.5, decision 0.39). The current time is not compared with the certificate's `exp`.
+**Validity and the issue time.** Every token carries `iat`, the time it was issued. A certificate's period says when the key may make new signatures. It does not say when those signatures stop being valid. A token is accepted when its `iat` falls between the certificate's `nbf` and `exp`, with the allowed clock skew on both ends. The current time is not compared with the certificate's `exp`.
 
-This is the same idea as a timestamp on a code signature. It lets a license without expiry, or a long license, keep working after its signing key's certificate has ended. If the certificate were checked against the current time, every license would stop working within two years at most, and every perpetual license would have to be issued again within that time (decision 0.39).
+This is the same idea as a timestamp on a code signature. It lets a perpetual or long license keep working after its signing key's certificate has ended. If the certificate were checked against the current time, every license would stop working within two years at most.
 
-The cost of the rule is that a signing key's period does not limit a thief. Someone who steals a signing key can write a token with an `iat` inside the old period, and the certificate check will pass. The defence against that is the list of revoked key IDs, described below.
+The cost of this rule is that a signing key's period does not limit a thief. Someone who steals a signing key can write a token with an `iat` inside the old period, and the certificate check passes. The defence against that is the list of revoked key IDs, described below.
 
 ### Key IDs
 
-A key ID (`kid`) is the JWK thumbprint of the public key (RFC 7638, SHA-256, base64url; design §7.4). Anyone can compute it from the public key, and `elm key thumbprint` prints it. Because the ID is derived from the key, a certificate that claims one `kid` but carries a different key is caught: the verifier checks that the thumbprint of `jwk` equals `sub`.
+A key ID (`kid`) is a short name for a public key, computed from the key itself: its JWK thumbprint (RFC 7638, SHA-256, base64url). Anyone can compute it from the public key, and `elm key thumbprint` prints it. A token's header names the signing key by its `kid`, and a certificate's header names the root key the same way. Because the ID is derived from the key, a certificate that claims one key ID but carries a different key is caught: the verifier checks that the thumbprint of `jwk` equals `sub`.
 
 ### The trust store
 
 The trust store is the set of root public keys that an app trusts, together with a list of revoked key IDs. The app developer builds it into the app:
 
-- In .NET, `TrustStore.Create(rootPublicKeysPem, revokedKeyIds)` in `ElasticLM.Licensing`. Each root key is one P-256 public key in one PEM `PUBLIC KEY` block; a private key, several blocks in one string, or the same key twice is an `ArgumentException` (design §11.1).
-- In C, the `root_keys_pem` (1 to 16 keys) and `revoked_key_ids` (0 to 1,024 IDs) fields of `elm_verifier_options` in `include/elasticlm.h`.
+- In .NET, `TrustStore.Create(rootPublicKeysPem, revokedKeyIds)` in `ElasticLM.Licensing`. Each root key is one P-256 public key in one PEM `PUBLIC KEY` block.
+- In C, the `root_keys_pem` and `revoked_key_ids` fields of `elm_verifier_options`.
 
-The trust store holds only public keys, so it is not a secret. Its integrity is what matters: the trust store an app uses decides which licenses it accepts.
+A trust store can hold several root keys. It holds only public keys, so it is not a secret. Its integrity is what matters: the trust store an app uses decides which licenses it accepts.
 
-`elm-server`, `elm-service`, and some `elm` commands also take root keys (`trust.rootKeys` and `trust.revokedKeyIds` in the server and service settings; `--trust`, `--revoked`, or `ELM_TRUST_ROOT_KEYS` for `elm`). On the servers this catches configuration mistakes early, for example a certificate that the root did not sign. It is not what protects the app. A customer administrator who puts their own root key into `elm-server` and writes their own server license gains nothing, because the apps trust only the vendor's root key and refuse that server's leases (design §16).
+`elm-server`, `elm-service`, and some `elm` commands also take root keys and revoked key IDs (`trust.rootKeys` and `trust.revokedKeyIds` in the server and service settings; `--trust`, `--revoked`, or `ELM_TRUST_ROOT_KEYS` for `elm`). There they decide what that program itself accepts and uses: `elm-service` checks its own signing key's certificates and every file it issues against them, and `elm-server` checks its server license against them. This catches configuration mistakes at start, for example a certificate that the root did not sign. It is not what protects the app. A customer administrator who puts their own root key into `elm-server` and writes their own server license gains nothing, because the apps trust only the vendor's root key and refuse that server's leases.
 
 ## How a token is traced to the root
 
@@ -89,7 +86,7 @@ The trust store holds only public keys, so it is not a secret. Its integrity is 
 flowchart TD
     TS["Trust store built into the app:<br/>root public keys and revoked key IDs"]
     Root["Root key<br/>offline, used only by elm key certify"]
-    SvcKey["elm-service signing key<br/>use: license, lease, log"]
+    SvcKey["elm-service signing key<br/>use: license, lease (and log)"]
     CliKey["Signing key for elm license issue<br/>use: license"]
     Lic["License tokens and server licenses"]
     CliLic["License files issued without the service"]
@@ -107,7 +104,7 @@ flowchart TD
     SrvKey -->|"signs elm-lease+jws"| OnPrem
 ```
 
-The figure follows design §7.1. A license file carries the license token and the certificates of the key that signed it (design §8.5), so the app can check the whole path offline:
+The `elm-service` signing key needs `log` only when the usage log is turned on. A license file carries the license token and the certificates of the key that signed it, so the app can check the whole path offline:
 
 1. The certificate's header names a root key (`kid`) that is in the trust store and not revoked, and the root key's signature on the certificate is correct.
 2. The certificate allows the use the verifier needs (`license` for a license file).
@@ -115,38 +112,38 @@ The figure follows design §7.1. A license file carries the license token and th
 4. The token's signature is correct under the certified key.
 5. The token's `iat` lies in the certificate's period.
 
-The full order of checks, with the error each one returns, is in [license files and verification](license-files-and-verification.md). A cloud lease from `elm-service` is checked the same way with the `lease` use (design §12.7.5).
+The full order of checks, with the error each one returns, is in [license files and verification](license-files-and-verification.md). A cloud lease from `elm-service` is checked the same way with the `lease` use.
 
 ### On-premises leases: the server's own key
 
-An on-premises lease is not signed by a vendor key. It is signed by the installation key of the customer's `elm-server`. The vendor grants that key its authority with a **server license**: a license token of `kind: server` whose `cnf.jkt` is the thumbprint of the server's installation key (design §9.6).
+An on-premises lease is not signed by a vendor key. It is signed by the installation key of the customer's `elm-server`. The vendor grants that key its authority with a **server license**: a license token of `kind: server` whose `cnf.jkt` is the thumbprint of the server's installation key.
 
-The client fetches the server license and the server's public key from `GET /v1/server/license`, verifies the server license from the root like any license file, and checks that the public key's thumbprint equals `cnf.jkt`. Only then does it accept leases signed by that key, and only within the limits of the server license: its product, features, seat counts, lease and borrow periods, and its expiry plus grace period (design §12.7.5, §13.5). A server running on a trial or standard license is refused (threat T18). How leases work is explained in [floating licenses](floating-licenses.md).
+The client fetches the server license and the server's public key from `GET /v1/server/license`, verifies the server license from the root like any license file, and checks that the public key's thumbprint equals `cnf.jkt`. Only then does it accept leases signed by that key, and only within the limits of the server license: its product, features, seat counts, lease and borrow periods, and its expiry plus grace period. A server running on a trial or standard license is refused, so a licensee cannot turn their own license into a lease server. How leases work is explained in [floating licenses](floating-licenses.md).
 
 ## Rotating keys
 
 ### Renewing a certificate
 
-A certificate can be renewed without changing the key: certify the same public key again with a new period. A license file may then carry several certificates for the same key with different periods. The verifier uses whichever one holds the token's `iat`, in any order (design §11.2 step 5). `elm-service` accepts 1 to 4 certificate files in `signing.certificates`, and a license file carries at most 4 certificates (design §8.6).
+A certificate can be renewed without changing the key: certify the same public key again with a new period. A license file may then carry several certificates for the same key with different periods, and the verifier uses whichever one holds the token's `iat`, in any order. A license file carries at most 4 certificates.
 
-A certificate that fails any check is skipped instead of failing the whole file, so an old certificate kept for rotation cannot break a file that also carries a good one (design §11.2 step 3).
+A certificate that fails any check is skipped instead of failing the whole file, so an old certificate kept for rotation cannot break a file that also carries a good one.
 
-The service's signing key status in the administration API returns the key ID, the certificate's expiry, and its uses, and warns when fewer than 30 days remain. After the certificate ends, issuing from the service fails with `500` and `ELM_INTERNAL_ERROR`, and the reason is written to the service log (design §14.8). Renew before that.
+The service's signing key status in the administration API returns the key ID, the certificate's expiry, and its uses, and warns when fewer than 30 days remain. After the certificate ends, issuing from the service fails with `500` and `ELM_INTERNAL_ERROR`, and the reason is written to the service log. Renew before that: put the new certificate file into `signing.certificates` and restart the service.
 
 ### Replacing a signing key
 
 1. Create a new signing key and certify it with the root key.
-2. Give `elm-service` the new key and its certificate, and restart it. The service holds one signing key at a time, so the change takes effect at restart (design §14.8, decision 0.75).
-3. Tokens already signed by the old key keep verifying, even after the old certificate's period ends, because each license file carries the old certificate and the `iat` rule applies. This lasts as long as the old key is not on the revoked list (design §7.3).
+2. Replace the signing key file and its certificate files given to `elm-service`, and restart it. The service reads one signing key at start, so the new key signs from the restart on.
+3. Tokens already signed by the old key keep verifying, even after the old certificate's period ends, because each license file carries the old certificate and the issue-time rule applies. This lasts as long as the old key is not on the revoked list.
 4. Devices that refresh online receive new tokens signed by the new key at their next refresh.
 
 No app update is needed, because the app trusts the root key, not the signing key.
 
 ### Replacing a root key
 
-A root key change does need an app update, and the order matters (design §7.3):
+A root key change does need an app update, and the order matters:
 
-1. Ship an app version whose trust store holds both the old and the new root public key. A trust store can hold several root keys.
+1. Ship an app version whose trust store holds both the old and the new root public key.
 2. Wait until the apps in use carry the new root.
 3. Only then certify signing keys with the new root.
 
@@ -154,28 +151,26 @@ If you certify with the new root first, every app that does not yet know it reje
 
 ## When a signing key leaks
 
-A leaked signing key lets the thief sign any license that the chain accepts (design §5.1). Because of the `iat` rule, the certificate's period does not stop them: they can back-date `iat` into the old period.
+A leaked signing key lets the thief sign any license that the chain accepts. Because of the issue-time rule, the certificate's period does not stop them: they can back-date `iat` into the old period.
 
-The answer is the list of revoked key IDs in the trust store (design §7.5). When a key ID is on that list, the verifier rejects any license token signed by that key with `ELM_KEY_REVOKED` before it reads the payload (design §11.2 step 2), and it ignores certificates for that key. In the code, a certificate signed by a revoked root key ID is ignored too (`src/ElasticLM.Licensing/CertificateSet.cs`).
+The answer is the list of revoked key IDs in the trust store. When a key ID is on that list, the verifier rejects any license or cloud lease token signed by that key with `ELM_KEY_REVOKED` before it reads the payload, and it ignores certificates for that key. A certificate signed by a revoked root key ID is ignored too.
 
-The vendor's response to a leak (design §7.5, threat T12):
+What protects apps is only the trust store built into them. The vendor's response to a leak:
 
 1. Replace the signing key as described above.
-2. Issue the legitimate licenses again with the new key. Devices that refresh online move to new-key tokens at their next refresh. Licensees who received license files by hand need new files.
-3. Ship an app version whose trust store lists the leaked key ID as revoked.
+2. Issue the legitimate licenses again with the new key. Devices that refresh online move to new-key tokens at their next refresh. Licensees who received license files by hand need new files, and on-premises servers need a new server license.
+3. Ship an app version whose trust store lists the leaked key ID as revoked. Until an app runs that version, it keeps accepting tokens from the leaked key, forged ones included; there is no revocation list fetched over the network.
+4. Add the leaked key ID to `trust.revokedKeyIds` on `elm-service` and on the `elm-server` installations you or your customers run. This makes those programs stop using the key: `elm-service` refuses to start with it, and `elm-server` refuses a server license signed by it. It does not reach any app.
 
 A token signed by a revoked key fails even when it is legitimate, and even inside its grace period. Once the app update with the revoked ID reaches a device, that device rejects any old-key license it still holds. Plan the timing: the sooner the update ships, the sooner forged licenses stop working, but licensees who have not yet received a new-key license stop working at the same moment.
 
-### Accepted limits
+A token without expiry (from `elm license issue --expires never`, or an unbound license file of a license without expiry) cannot be revoked in the service at all; revoking its signing key is the only way to stop it. Revoking a license in the service reaches a device only when its token expires, and a patched app binary is out of scope; both are explained in [the security model](security-model.md).
 
-These limits are stated in design §5.4. ElasticLM does not protect against them.
+### When the root key leaks
 
-- **The list arrives only with an app update.** There is no revocation list fetched over the network. An app version without the revoked ID keeps accepting forged tokens from the leaked key, for as long as that version stays in use. This follows from the decision not to distribute a revocation list: no product the design surveyed distributes a CRL-like list, and short token lifetimes with online refresh are used instead.
-- **Offline tokens are not revoked before their expiry.** Revoking a license in the service stops new tokens and leases, but a token already on a device stays valid until its `exp` plus the grace period. Shorter policy token lifetimes (`tokenLifetime`, 30 days by default, design §9.3) narrow this window.
-- **Tokens without expiry cannot be revoked at all**, other than by revoking the signing key. They exist only for license files issued by hand with `elm license issue --expires never` and for `Unbound` license files of licenses without expiry (decisions 0.17 and 0.86). `elm` warns when it issues one.
-- **Binary tampering is out of scope.** Someone who controls the device can patch the app to skip verification or to replace the trust store with their own root key. Client-side code cannot prevent this, and obfuscation is not offered (decision 0.18). See [the security model](security-model.md).
+A leaked root key is worse: it lets the thief certify signing keys of their own, and every app that trusts that root accepts what they sign. ElasticLM keeps the root key offline so that this does not happen, and it offers no recovery procedure beyond the app update.
 
-A leaked root key is worse than a leaked signing key: it lets the thief certify signing keys of their own. The design keeps the root key offline (design §7.2) so that this does not happen. Recovering from it goes through the same app-update path as a root key change: ship a trust store with a new root key and without the leaked one.
+Any recovery needs an app update whose trust store drops the leaked root key, or lists its key ID as revoked, and holds a new root key. After that update, every license file certified through the old root fails with `ELM_UNTRUSTED_KEY`, legitimate ones included. Every license must therefore be issued again with signing keys certified by the new root, and the new licenses must reach devices before or with the update.
 
 ## What can go wrong and what to do
 
@@ -184,11 +179,11 @@ A leaked root key is worse than a leaked signing key: it lets the thief certify 
 | `ELM_UNTRUSTED_KEY` | No certificate in the file is signed by a root key in the app's trust store, allows `license`, and certifies the token's key | Check that the app's trust store holds the right root public key, that the certificate was made with `--use license`, and that the service is configured with the certificate of the key it signs with |
 | `ELM_CERTIFICATE_EXPIRED` | The token's `iat` is outside every candidate certificate's period | Renew the certificate; check that the service did not keep signing after its certificate ended |
 | `ELM_KEY_REVOKED` | The token was signed by a key ID on the app's revoked list | Issue the license again with the current signing key |
-| `elm-service` does not start | The certificate does not cover the current time, lacks `license` or `lease`, lacks `log` while `usageLog.directory` is set, or does not match the key | Certify the key again with the right uses and period |
+| `elm-service` does not start | No certificate covers the current time for `license`, for `lease`, or for `log` while `usageLog.directory` is set; or the certificates do not match the key | Certify the key again with the right uses and period |
 | New licenses fail on older app versions after a root change | The new root was used before the apps carried it | Keep certifying with the old root until the app versions in use know the new one |
 
 Your duties, by role:
 
 - **Vendor:** keep the root key offline and its passphrase out of scripts and repositories; give certificates only the uses each key needs; renew certificates before they end; on a leak, follow the steps above and decide when to ship the revoked ID.
 - **App developer:** build the vendor's root public keys and the current revoked key IDs into the app; ship app updates when the vendor revokes a key or adds a root key.
-- **Customer administrator:** set `trust.rootKeys` on `elm-server` to the vendor's root public keys, so that mistakes show at start.
+- **Customer administrator:** set `trust.rootKeys` on `elm-server` to the vendor's root public keys, and `trust.revokedKeyIds` to the IDs the vendor tells you, so that mistakes show at start.

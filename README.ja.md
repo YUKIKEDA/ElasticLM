@@ -28,7 +28,7 @@
 
 ## 試す
 
-`elm` にパスを通し、ルート鍵と、それが証明する署名鍵を作り、ライセンスを発行して確かめる。`elm` は、それぞれの秘密鍵を `ELM_KEY_PASSPHRASE` のパスフレーズで暗号化するので、先にこの変数を設定しておく。
+`elm` にパスを通し、ルート鍵と、それが証明する署名鍵を作り、ライセンスを発行して確かめる。`elm` は、それぞれの秘密鍵をパスフレーズで暗号化する。パスフレーズは `ELM_KEY_PASSPHRASE` から読み、この変数がなければ尋ねる。
 
 ```shell
 elm key root create --out root.key.pem --public-out root.pub.pem

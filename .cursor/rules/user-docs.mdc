@@ -39,7 +39,10 @@ A page that needs another kind links to it instead of growing a second kind.
 
 - Terms follow the table in `.agents/skills/english-writing/SKILL.md`. The first use of a term on a page says what it is in a few words or links to the page that explains it.
 - Wire names, settings, error codes, and commands are in code spans exactly as the code has them. Check each one in the code before it goes in.
-- A figure (a size, a time, a default) names where it comes from: the design section or the code.
+- A figure (a size, a time, a default) is checked in the design or the code before it goes in. The PR names the source; the page does not.
+- Write for users, not for this repository's developers. A page carries no design section numbers, decision numbers (`0.xx`), threat or attacker IDs (`T12`, `A3`), roadmap rows, row names (`V1b`), source file paths, "in the code", or stories of earlier attempts. Say the fact itself. When the design and the code differ, the page follows the code and the PR fixes the design.
+- One name for one thing across all pages: "administration API" (not "management API"); policy settings and values as the administration API spells them (`maxActivations`, `cloneStrategy`: `deny`); settings as the configuration file spells them (`rateLimit.clientPerIp`).
+- A caveat that several pages share (revocation reaches a device only when its token expires, a patched app binary is out of scope, offline copies are not detected) is explained once, on the page it belongs to, and the other pages say it in a sentence and link there.
 
 ## Checks before a PR
 

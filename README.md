@@ -28,7 +28,7 @@ Builds are made for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-m
 
 ## Try it
 
-With `elm` on your path, create a root key, a signing key certified by it, and a license, then verify the license. `elm` encrypts each private key with the passphrase in `ELM_KEY_PASSPHRASE`, so set that variable first.
+With `elm` on your path, create a root key, a signing key certified by it, and a license, then verify the license. `elm` encrypts each private key with a passphrase: it reads it from `ELM_KEY_PASSPHRASE`, or asks for it when the variable is not set.
 
 <!-- readme-steps:start -->
 ```shell

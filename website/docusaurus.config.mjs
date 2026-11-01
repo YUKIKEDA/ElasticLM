@@ -29,6 +29,7 @@ const config = {
         docs: {
           path: '../docs/guide',
           routeBasePath: '/',
+          sidebarPath: './sidebars.js',
         },
         blog: false,
         pages: false,
@@ -52,6 +53,7 @@ const config = {
   plugins: [
     // @docusaurus/theme-mermaid imports the optional @mermaid-js/layout-elk behind a flag that is false when the package
     // is missing, and webpack still resolves that import under pnpm. The ELK layout is not used, so it resolves to nothing.
+    // Remove this plugin if @mermaid-js/layout-elk is ever installed: the flag would turn true and the import would be empty.
     () => ({
       name: 'elasticlm-no-mermaid-elk',
       configureWebpack: (_config, isServer) =>
