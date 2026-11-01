@@ -12,3 +12,4 @@ Remove, in the turn that made them: extra worktrees and checkouts, throwaway pro
 - A script that writes scratch stops at its first failed command (`$ErrorActionPreference = 'Stop'`) and names its targets by absolute path.
 - Long text for `gh` goes through a temporary UTF-8 file that is deleted after the call.
 - A removal names its targets with a literal absolute path, or with `"${DIR:?}"` in Bash. `rm -rf "$DIR"/*` is refused by the agent's safety check and stops the whole command.
+- A subagent is asked to remove what it writes, and after it reports, the scratchpad is listed and what it left is removed. In the V1c design the source check and the design review left a copy of a README and a diff there (PR #187).
