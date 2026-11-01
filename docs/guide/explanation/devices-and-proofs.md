@@ -71,7 +71,7 @@ A request for which the server may not know the key carries the public key in `j
 
 `bdy` is the part DPoP lacks. Without it, an attacker in the middle could keep the proof and change the body. This is also why the activation ID goes in the path and the sequence number goes in the body of a refresh: the query string is not part of `htu`, so a value there would not be protected.
 
-Both sides normalize the URI the same way before comparing it (lowercase scheme and host, no default port, a normalized path, no query or fragment). The server compares `htu` with its own configured public URLs (`publicUrls`), not with the request's `Host` header, so a proof stays valid behind a reverse proxy and cannot be aimed at a host the operator did not list.
+Both sides normalize the URI the same way before comparing it (lowercase scheme and host, no default port, a normalized path, no query or fragment). The server compares `htu` with its own configured public URLs (`publicUrls`), not with the request's `Host` header, so a proof stays valid behind a reverse proxy and cannot be aimed at a host the operator did not list. The exact header, claims, and limits of a proof are in [Device protocol](../reference/device-protocol.md#the-proof).
 
 ### How the server checks a proof
 
@@ -107,7 +107,7 @@ For refresh and deactivation, `elm-service` also checks that the proof's key is 
 
 A nonce is a short value the server hands out so that a proof cannot be made in advance.
 
-- **How a client gets one.** From `GET /v1/nonce`, and from the `ELM-Nonce` header, which `elm-service` puts on every response to a device request and `elm-server` on every response to a lease request. So a client calls `GET /v1/nonce` only when it has no nonce. When a request is refused with `ELM_NONCE_REQUIRED`, the client sends it once more with the nonce from that response.
+- **How a client gets one.** From `GET /v1/nonce` (see [Device protocol](../reference/device-protocol.md#nonces)), and from the `ELM-Nonce` header, which `elm-service` puts on every response to a device request and `elm-server` on every response to a lease request. So a client calls `GET /v1/nonce` only when it has no nonce. When a request is refused with `ELM_NONCE_REQUIRED`, the client sends it once more with the nonce from that response.
 - **What it contains and how long it lives.** The time it was made and 128 random bits, with an HMAC-SHA256 under a server secret, so the server can check a nonce without storing it. A nonce is valid for 300 seconds.
 - **How replay is stopped.** The server keeps each used `jti` for as long as its nonce can be valid (`elm-service` adds 60 seconds for clock differences between nodes). After that, the nonce inside the old proof has expired, so the proof is refused anyway.
 - **The secret.** `elm-service` reads it from `ELM_NONCE_SECRET` (base64) or from the file named by `nonce.secretFile`, at least 32 bytes, and does not start without one, because all nodes of a multi-node service must accept each other's nonces. `elm-server` makes a new secret at every start, because its record of used `jti` values lives only in memory; a restart invalidates old nonces along with that record.

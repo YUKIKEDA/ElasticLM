@@ -1,3 +1,4 @@
+using System.Collections.Frozen;
 using System.Net;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -116,6 +117,36 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _guardKey = parts.GuardKey;
     }
 
+    /// <summary>
+    /// Gets the HTTP status of each error code that the server answers with a status of its own (design §19). A code not in the
+    /// table is answered with 500.
+    /// </summary>
+    internal static FrozenDictionary<ErrorCode, int> ErrorStatuses { get; } =
+        new Dictionary<ErrorCode, int>
+        {
+            [ErrorCode.InvalidArgument] = StatusCodes.Status400BadRequest,
+            [ErrorCode.Malformed] = StatusCodes.Status400BadRequest,
+            [ErrorCode.FingerprintUnavailable] = StatusCodes.Status400BadRequest,
+            [ErrorCode.ProofInvalid] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.NonceRequired] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.Replayed] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.Unauthorized] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.Expired] = StatusCodes.Status403Forbidden,
+            [ErrorCode.FeatureNotLicensed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.FeatureVersionNotLicensed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.FeatureExpired] = StatusCodes.Status403Forbidden,
+            [ErrorCode.BorrowNotAllowed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.Forbidden] = StatusCodes.Status403Forbidden,
+            [ErrorCode.UnknownLease] = StatusCodes.Status404NotFound,
+            [ErrorCode.CloneDetected] = StatusCodes.Status409Conflict,
+            [ErrorCode.NoSeats] = StatusCodes.Status409Conflict,
+            [ErrorCode.ReturnNotAllowed] = StatusCodes.Status409Conflict,
+            [ErrorCode.PayloadTooLarge] = StatusCodes.Status413PayloadTooLarge,
+            [ErrorCode.RateLimited] = StatusCodes.Status429TooManyRequests,
+            [ErrorCode.ServerRecovering] = StatusCodes.Status503ServiceUnavailable,
+            [ErrorCode.ServerBusy] = StatusCodes.Status503ServiceUnavailable,
+        }.ToFrozenDictionary();
+
     /// <summary>Gets the lease engine.</summary>
     public LeaseEngine Engine { get; }
 
@@ -133,6 +164,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
     /// <summary>Gets the clock.</summary>
     public TimeProvider Time { get; }
+
+    /// <summary>Gets the host's services, for tests that look at what the host registered (the routes, design §20.7).</summary>
+    internal IServiceProvider Services => _app.Services;
 
     private SigningKeyAccess KeyAccess => use => _key.WithPrivateKey(use);
 
@@ -518,24 +552,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     }
 
     private static int StatusOf(ErrorCode code) =>
-        code switch
-        {
-            ErrorCode.InvalidArgument or ErrorCode.Malformed or ErrorCode.FingerprintUnavailable => StatusCodes.Status400BadRequest,
-            ErrorCode.BadSignature or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed or ErrorCode.Unauthorized =>
-                StatusCodes.Status401Unauthorized,
-            ErrorCode.Expired
-            or ErrorCode.FeatureNotLicensed
-            or ErrorCode.FeatureVersionNotLicensed
-            or ErrorCode.FeatureExpired
-            or ErrorCode.BorrowNotAllowed
-            or ErrorCode.Forbidden => StatusCodes.Status403Forbidden,
-            ErrorCode.UnknownLease => StatusCodes.Status404NotFound,
-            ErrorCode.CloneDetected or ErrorCode.NoSeats or ErrorCode.ReturnNotAllowed => StatusCodes.Status409Conflict,
-            ErrorCode.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
-            ErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
-            ErrorCode.ServerRecovering or ErrorCode.ServerBusy => StatusCodes.Status503ServiceUnavailable,
-            _ => StatusCodes.Status500InternalServerError,
-        };
+        ErrorStatuses.TryGetValue(code, out int status) ? status : StatusCodes.Status500InternalServerError;
 
     private static async Task<byte[]?> ReadBodyAsync(HttpContext context)
     {

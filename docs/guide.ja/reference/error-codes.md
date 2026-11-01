@@ -19,7 +19,7 @@ sidebar_position: 4
 - `elm-service`: SaaS 型のアクティベーションサービス。デバイスへのレスポンスと、管理 API で返す。
 - `elm`: コマンドラインツール。`elm license verify` のように、自分で行う検証で返す。`elm-server` や `elm-service` がレスポンスで返したコードも表示する。
 
-HTTP の状態は、サーバーがそのコードを HTTP で送る場合に示す。「—」は、そのコードがローカルでしか返らないことを表す。
+HTTP の状態は、サーバーがリクエストにそのコードで答える場合に示す。「—」は、そのコードがローカルでしか返らないか、`elm-server` がリースの再登録（`POST /v1/leases/reclaim`）のレスポンスの中でリースごとにしか返さないことを表す。リースの再登録のレスポンス自体は `200` だ。`elm-server` のライセンスの再読み込み（`POST /admin/v1/license/reload`）は、新しいサーバーライセンスが通らなかった検証のコードを、ほかの場面での HTTP の状態に関係なく `409` で返す。そうしたコードの行には、そのことを書いている。
 
 ## クライアントが自動で再試行するもの
 
@@ -37,26 +37,26 @@ HTTP の状態は、サーバーがそのコードを HTTP で送る場合に示
 | --- | --- | --- | --- | --- | --- |
 | `ELM_OK` | 0 | 2xx | すべて | 成功。 | 何もしない。 |
 | `ELM_INVALID_ARGUMENT` | 1 | 400 | `elm-server`、`elm-service`、`libelasticlm` | 引数が正しくない。管理 API のクエリの値や本文の項目が正しくない、機能のバージョンが `major.minor[.patch]` の形でない、シート数が 1 から機能のシート数までの範囲にない、借用の期間が 1 秒より短い、借用の更新を求めた（借用は期間のあいだずっと続き、更新しない。[借用](../explanation/floating-licenses.md#借用)を参照）、C で出力先が `NULL` か `struct_size` が違う、のどれかだ。 | 呼び出しを直す。メッセージに引数の名前が出る。 |
-| `ELM_MALFORMED` | 2 | 400 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 入力の形式かサイズが正しくない。有効でないライセンスファイルやトークン、サイズの上限を超えたファイル、解析できないリクエストの本文、壊れた保存済みのアクティベーションファイル、有効でないサーバーのレスポンス、のどれかだ。 | ファイルや本文が想定したもので、欠けていないかを確かめる。保存したアクティベーションが壊れている場合は、管理者にアクティベーションを解除してもらい、もう一度アクティベーションする。 |
-| `ELM_UNTRUSTED_KEY` | 3 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | ライセンスやリースにあるどの鍵証明書も、トラストストアのルート鍵でその署名鍵を証明していない。 | アプリが発行元のルート鍵を信頼していることと、ファイルがその発行元のものであることを確かめる。 |
-| `ELM_BAD_SIGNATURE` | 4 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | 署名が検証に通らない、またはトークンが ES256 で署名されていない。`elm-server` は、リースの再登録のレスポンスで、リースごとにこのコードを返す。 | ファイルは書き換えられたか壊れたものとして扱い、発行元から新しいファイルを受け取る。 |
-| `ELM_CERTIFICATE_EXPIRED` | 5 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | トークンが、その鍵証明書の有効期間の外で発行された。 | 有効な鍵証明書のもとで署名したファイルを、発行元に求める。 |
-| `ELM_CLOCK_TAMPERED` | 6 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | 時計が戻された、またはトークンの発行時刻が未来になっている。 | システムの時計を正しく合わせる。 |
-| `ELM_WRONG_PRODUCT` | 7 | 400 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-service`、`elm` | ライセンスやリースが別の製品のものである。`elm-service` では、ライセンスキーがリクエストの製品のものでない。 | この製品のライセンスかキーを使う。 |
-| `ELM_WRONG_INSTALLATION` | 8 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | ライセンスやリースが、別のインストール鍵に紐付いている。 | このインストールでアクティベーションするか、このインストール用のライセンスを使う。 |
-| `ELM_FINGERPRINT_MISMATCH` | 9 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | マシンフィンガープリントがライセンスと一致しない。 | ライセンスを受けたマシンで動かすか、このマシン用にライセンスを発行し直してもらう。 |
-| `ELM_EXPIRED` | 10 | 403 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | ライセンスやリースが、有効期限と猶予期間を過ぎている。`elm-server` は、自分のサーバーライセンスの期限が切れると、すべてのリースのリクエストにこのコードを返す。`elm-service` は、サービスでのライセンスの期間が終わったときに返す。 | ライセンスを更新するか、期限を延長する。`elm-server` の場合は、新しいサーバーライセンスを受け取る。 |
+| `ELM_MALFORMED` | 2 | 400（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 入力の形式かサイズが正しくない。有効でないライセンスファイルやトークン、サイズの上限を超えたファイル、解析できないリクエストの本文、壊れた保存済みのアクティベーションファイル、有効でないサーバーのレスポンス、のどれかだ。 | ファイルや本文が想定したもので、欠けていないかを確かめる。保存したアクティベーションが壊れている場合は、管理者にアクティベーションを解除してもらい、もう一度アクティベーションする。 |
+| `ELM_UNTRUSTED_KEY` | 3 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | ライセンスやリースにあるどの鍵証明書も、トラストストアのルート鍵でその署名鍵を証明していない。 | アプリが発行元のルート鍵を信頼していることと、ファイルがその発行元のものであることを確かめる。 |
+| `ELM_BAD_SIGNATURE` | 4 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | 署名が検証に通らない、またはトークンが ES256 で署名されていない。`elm-server` は、リースの再登録のレスポンスで、リースごとにこのコードを返す。 | ファイルは書き換えられたか壊れたものとして扱い、発行元から新しいファイルを受け取る。 |
+| `ELM_CERTIFICATE_EXPIRED` | 5 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | トークンが、その鍵証明書の有効期間の外で発行された。 | 有効な鍵証明書のもとで署名したファイルを、発行元に求める。 |
+| `ELM_CLOCK_TAMPERED` | 6 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | 時計が戻された、またはトークンの発行時刻が未来になっている。`elm-server` は、リースの再登録のレスポンスで、リースごとにもこのコードを返す。 | システムの時計を正しく合わせる。 |
+| `ELM_WRONG_PRODUCT` | 7 | 400（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | ライセンスやリースが別の製品のものである。`elm-service` では、ライセンスキーがリクエストの製品のものでない。`elm-server` は、リースの再登録のレスポンスで、リースごとにもこのコードを返す。 | この製品のライセンスかキーを使う。 |
+| `ELM_WRONG_INSTALLATION` | 8 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | ライセンスやリースが、別のインストール鍵に紐付いている。`elm-server` は、リースの再登録のレスポンスで、リースごとにもこのコードを返す。 | このインストールでアクティベーションするか、このインストール用のライセンスを使う。 |
+| `ELM_FINGERPRINT_MISMATCH` | 9 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | マシンフィンガープリントがライセンスと一致しない。 | ライセンスを受けたマシンで動かすか、このマシン用にライセンスを発行し直してもらう。 |
+| `ELM_EXPIRED` | 10 | 403（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | ライセンスやリースが、有効期限と猶予期間を過ぎている。`elm-server` は、自分のサーバーライセンスの期限が切れると、すべてのリースのリクエストにこのコードを返す。`elm-service` は、サービスでのライセンスの期間が終わったときに返す。 | ライセンスを更新するか、期限を延長する。`elm-server` の場合は、新しいサーバーライセンスを受け取る。 |
 | `ELM_FEATURE_NOT_LICENSED` | 11 | 403 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 機能がライセンスに含まれていない。 | その機能を含むライセンスを求める。 |
 | `ELM_FEATURE_VERSION_NOT_LICENSED` | 12 | 403 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 機能のバージョンが、ライセンスで許された範囲の外にある。 | このバージョンを含むライセンスを求める。 |
 | `ELM_FEATURE_EXPIRED` | 13 | 403 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 機能が、その機能自体の有効期限を過ぎている。 | 機能の期限を更新する。 |
-| `ELM_FINGERPRINT_UNAVAILABLE` | 14 | 400 | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | マシンフィンガープリントを計算できない。または、フィンガープリントが必要なリクエスト（トライアル、借用、フィンガープリントを照合するポリシーでのアクティベーション）にフィンガープリントがない。 | フィンガープリントを得られる環境で動かすか、ノードロックでないライセンスを使う。 |
+| `ELM_FINGERPRINT_UNAVAILABLE` | 14 | 400（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | マシンフィンガープリントを計算できない。または、フィンガープリントが必要なリクエスト（トライアル、借用、フィンガープリントを照合するポリシーでのアクティベーション）にフィンガープリントがない。 | フィンガープリントを得られる環境で動かすか、ノードロックでないライセンスを使う。 |
 | `ELM_INSTALLATION_KEY_UNREADABLE` | 15 | — | `ElasticLM.Client`、`libelasticlm` | インストール鍵を読めない、または作れない。 | 選んだスコープの鍵のフォルダーの権限を確かめる。 |
-| `ELM_WRONG_KIND` | 16 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | ライセンスの種類が、求められた種類と違う。たとえば、トライアルをサーバーライセンスとして使った。 | 求められた種類のライセンスを使う。 |
-| `ELM_KEY_REVOKED` | 17 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm` | ライセンスやリースが、トラストストアで失効した鍵で署名されている。 | 現在の鍵で署名したファイルを受け取る。 |
-| `ELM_LEASE_OUT_OF_BOUNDS` | 18 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm` | リースがサーバーライセンスの範囲外にある。別のサーバーライセンスのリースである、サーバーライセンスにない機能やシート数を持つ、期間が長すぎる、サーバーライセンスの終了を過ぎている、のいずれかだ。 | サーバーライセンスを取得し直す。繰り返すなら、サーバーの管理者に伝える。 |
+| `ELM_WRONG_KIND` | 16 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | ライセンスの種類が、求められた種類と違う。たとえば、トライアルをサーバーライセンスとして使った。 | 求められた種類のライセンスを使う。 |
+| `ELM_KEY_REVOKED` | 17 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | ライセンスやリースが、トラストストアで失効した鍵で署名されている。 | 現在の鍵で署名したファイルを受け取る。 |
+| `ELM_LEASE_OUT_OF_BOUNDS` | 18 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server` | リースがサーバーライセンスの範囲外にある。別のサーバーライセンスのリースである、サーバーライセンスにない機能やシート数を持つ、期間が長すぎる、サーバーライセンスの終了を過ぎている、のいずれかだ。`elm-server` は、リースの再登録のレスポンスで、リースごとにこのコードを返す。 | サーバーライセンスを取得し直す。繰り返すなら、サーバーの管理者に伝える。 |
 | `ELM_INVALID_STATE` | 19 | — | `ElasticLM.Client`、`libelasticlm`、`elm` | 今はその呼び出しができない。サービスの URL がない、アクティベーションがすでに保存されている、アクティベーションが保存されていない、アクティベーション解除のプルーフがまだ保存されている、トークンの更新の時期ではない、別のプロセスがアクティベーションのロックを持っている、レスポンスのないリクエストが 16 件たまった、同じハンドルのコールバックの中から呼んだ、のどれかだ。`elm` は、サーバーがライセンスをオンラインで更新しているときにこのコードを返す。 | メッセージに従い、先にアクティベーション解除をする、待つ、コールバックの外から呼ぶ、のいずれかをする。レスポンスのないリクエストが 16 件たまったあとは、もう一度アクティベーションする前に、管理者がそのインストールのアクティベーションを解除する。 |
 | `ELM_PROOF_INVALID` | 20 | 401（オフラインのリクエストファイルでは 400） | `elm-server`、`elm-service` | リクエストのプルーフがない、検証に通らない、または別のメソッド、URI、本文、鍵のものである。オフラインのリクエストファイルの署名が検証に通らない。 | 同じインストールからリクエストを送り直す。オフラインのファイルなら、新しく作る。 |
-| `ELM_NONCE_REQUIRED` | 21 | 401 | `elm-server`、`elm-service` | ノンスがない、または期限が切れている。レスポンスの `ELM-Nonce` に新しいノンスが入っている。 | 何もしない。クライアントが新しいノンスでリクエストを送り直す。 |
+| `ELM_NONCE_REQUIRED` | 21 | 401 | `elm-server`、`elm-service` | プルーフのノンスが空か、サーバーの知らない値か、期限が切れている。`nonce` クレームのないプルーフには、代わりに `ELM_PROOF_INVALID` が返る。レスポンスの `ELM-Nonce` に新しいノンスが入っている。 | 何もしない。クライアントが新しいノンスでリクエストを送り直す。 |
 | `ELM_REPLAYED` | 22 | 401（オフラインのリクエストファイルでは 409） | `elm-server`、`elm-service` | プルーフがすでに使われた。または、このリクエストのノンスを別のオフラインのリクエストが使った。 | 新しいリクエストかリクエストファイルを作る。 |
 | `ELM_SERVER_PIN_MISMATCH` | 23 | — | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm` | オンプレミスのサーバーが、クライアントがピンとして記録したサーバーではない。サーバーの鍵や TLS の鍵がサーバーライセンスの鍵と違う、または保存したピンが壊れている。 | クライアントが正しいサーバーにつながっているかを確かめる。意図してサーバーを置き換えたなら、ピンをリセットする。 |
 | `ELM_PAYLOAD_TOO_LARGE` | 24 | 413 | `elm-server`、`elm-service` | リクエストの本文が 64 KiB より大きい。 | 本文を小さくして送る。 |
@@ -65,7 +65,7 @@ HTTP の状態は、サーバーがそのコードを HTTP で送る場合に示
 
 | コード | 番号 | HTTP の状態 | 返すもの | 意味 | すべきこと |
 | --- | --- | --- | --- | --- | --- |
-| `ELM_LICENSE_NOT_FOUND` | 30 | 404 | `ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service` | ライセンスキーやライセンスが存在しない。クライアントは、アクティベーションが保存されていないときにこのコードを返す。`elm-server` は、サーバーライセンスのファイルがないと起動時に止まる。 | ライセンスキーや ID を確かめる。先にアクティベーションする。`elm-server` にライセンスファイルを渡す。 |
+| `ELM_LICENSE_NOT_FOUND` | 30 | 404（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service` | ライセンスキーやライセンスが存在しない。クライアントは、アクティベーションが保存されていないときにこのコードを返す。`elm-server` は、サーバーライセンスのファイルがないと、起動時に止まり、ライセンスの再読み込みも拒否する。 | ライセンスキーや ID を確かめる。先にアクティベーションする。`elm-server` にライセンスファイルを渡す。 |
 | `ELM_LICENSE_SUSPENDED` | 31 | 403 | `elm-service` | ライセンスが一時停止されている。 | ベンダーに問い合わせる。管理者がライセンスを再開できる。 |
 | `ELM_LICENSE_REVOKED` | 32 | 403 | `elm-service` | ライセンスが失効している。 | ベンダーに新しいライセンスを求める。 |
 | `ELM_ACTIVATION_LIMIT` | 33 | 409 | `elm-service` | ライセンスのアクティベーション数が上限に達した。 | ほかのデバイスのアクティベーションを解除するか、アクティベーション数を増やしてもらう。 |
@@ -90,7 +90,7 @@ HTTP の状態は、サーバーがそのコードを HTTP で送る場合に示
 | `ELM_UNAUTHORIZED` | 50 | 401 | `elm-server`、`elm-service` | 管理者の認証に失敗した。管理者トークン、API キー、アクセストークン、セッションがない、または正しくない。 | トークン、API キー、サインインを確かめる。 |
 | `ELM_FORBIDDEN` | 51 | 403 | `elm-server`、`elm-service` | 管理者に権限がない、アクセストークンがどのロールにも対応しない、CSRF 対策のヘッダーがない、または `elm-server` の `allow` / `deny` の設定がアドレス、ホスト、ユーザーを拒否した。 | メッセージにある権限を持つキーかロールを使う。またはサーバーのアクセスの設定を変える。 |
 | `ELM_RATE_LIMITED` | 52 | 429 | `elm-server`、`elm-service` | このアドレス、インストール鍵、API キー、管理者からのリクエストが多すぎる。レスポンスには `Retry-After` が付く。 | `Retry-After` の時間だけ待ってから、もう一度試す。 |
-| `ELM_SERVER_BUSY` | 53 | 503 | `elm-server` | サーバーが一時的に過負荷になっている。 | しばらくしてから、もう一度試す。 |
+| `ELM_SERVER_BUSY` | 53 | 503 | `elm-server` | サーバーが、使用済みのプルーフの ID（`jti`）を上限の 100,000 件まで保持していて、そのいくつかが期限切れになるまで、プルーフ付きのリクエストを拒否する。 | しばらくしてから、もう一度試す。 |
 | `ELM_NOT_FOUND` | 54 | 404 | `elm-service` | 管理 API の呼び出しが、存在しない対象を指している。たとえば、API キー、トライアル、利用ログのファイルだ。 | ID や名前を確かめる。 |
 | `ELM_CONFLICT` | 55 | 409 | `elm-service` | リクエストが、対象の状態や一意の値と衝突する。使用中のコード、対象の状態では許されない変更（呼び出した管理者自身、ブートストラップのオーナー、有効な最後のオーナーを無効にするなど）、ノードロックやクラウドのフローティングのライセンスのライセンスファイルのリクエスト（ライセンスファイルがあるのは、マシンに紐付けないライセンスだけだ）、一時停止・失効・期限切れのライセンスのライセンスファイルのリクエスト、マシンに紐付けないライセンスやクラウドのフローティングのライセンスのアクティベーション、クラウドのフローティングでないライセンスのリース、利用ログを書かないノードへの利用ログのリクエスト、のどれかだ。 | メッセージに従う。マシンに紐付けないライセンスでは、アクティベーションせずにライセンスファイルを使う。 |
 | `ELM_ACTIVATION_NOT_FOUND` | 56 | 404 | `elm-service` | その ID のアクティベーションがない。管理者が削除したか、アクティベーションが解除された。 | もう一度アクティベーションする。 |
@@ -100,4 +100,4 @@ HTTP の状態は、サーバーがそのコードを HTTP で送る場合に示
 | コード | 番号 | HTTP の状態 | 返すもの | 意味 | すべきこと |
 | --- | --- | --- | --- | --- | --- |
 | `ELM_NETWORK_ERROR` | 90 | — | `ElasticLM.Client`、`libelasticlm`、`elm` | サーバーやサービスにつながらない、またはレスポンスがなかった。 | URL とネットワークを確かめ、サーバーが動いているかを確かめる。 |
-| `ELM_INTERNAL_ERROR` | 99 | 500 | すべて | 内部エラー。データベースの処理が失敗した、ファイルに書き込めない、予期しない失敗が起きた、のどれかだ。サーバーのレスポンスに未知のコードがあったときも、クライアントではこのコードになる。 | メッセージを読む。`elm-server` や `elm-service` が返したときは、そのプログラムの運用ログを読んで原因を調べる。運用ログは[ログ](logs.md)で説明している。繰り返すなら報告する。 |
+| `ELM_INTERNAL_ERROR` | 99 | 500（`elm-server` のライセンスの再読み込みでは 409） | すべて | 内部エラー。データベースの処理が失敗した、ファイルに書き込めない、予期しない失敗が起きた、のどれかだ。`elm-server` は、借用の記録に新しいライセンスを書き込めないとき、このコードでライセンスの再読み込みを拒否する。サーバーのレスポンスに未知のコードがあったときも、クライアントではこのコードになる。 | メッセージを読む。`elm-server` や `elm-service` が返したときは、そのプログラムの運用ログを読んで原因を調べる。運用ログは[ログ](logs.md)で説明している。繰り返すなら報告する。 |

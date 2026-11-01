@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
+using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Service.Tests;
 
@@ -361,5 +362,54 @@ public sealed class ElmServiceTests
         test.Time.Advance(TimeSpan.FromDays(1) + TimeSpan.FromHours(1));
         await test.WaitWithClockAsync(async () => (await database.ListAuditAsync(null, false, 10, cancel)).Count == 0);
         Assert.Equal(new AuditCheck(0, null), await database.VerifyAuditAsync(cancel));
+    }
+
+    /// <summary>
+    /// Every route of the service appears in the elm-service section of its reference page, in both languages (design §20.7,
+    /// V1c2b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the default test settings: no web settings, so the routes of the admin UI's sign-in are not mapped.
+    /// - docs/guide/reference and docs/guide.ja/reference under the repository root.
+    ///
+    /// Steps:
+    /// - Read every route endpoint of the running host as its method and path, such as GET /v1/nonce.
+    /// - Look for the routes under /v1/admin/ and GET /health on administration-api.md, and every other route on
+    ///   device-protocol.md, each in the section whose level-2 heading holds `elm-service`.
+    ///
+    /// Expected:
+    /// - Both groups have routes.
+    /// - On both pages of each group, a code span in the elm-service section is each route exactly; the message lists every
+    ///   route that is not.
+    /// </remarks>
+    [Fact]
+    public async Task Routes_AllEndpoints_AppearOnReferencePages()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await test.StartAsync();
+        static bool Administration(string route)
+        {
+            string path = route[(route.IndexOf(' ', StringComparison.Ordinal) + 1)..];
+            return path.StartsWith("/v1/admin/", StringComparison.Ordinal) || path == "/health";
+        }
+
+        ILookup<bool, string> routes = EndpointRoutes.Of(service.Services).ToLookup(Administration);
+        Assert.NotEmpty(routes[true]);
+        Assert.NotEmpty(routes[false]);
+
+        IReadOnlyList<string> missing =
+        [
+            .. ReferencePages.FindMissingRoutes(
+                "administration-api.md",
+                new Dictionary<string, IReadOnlyList<string>> { ["elm-service"] = [.. routes[true]] }
+            ),
+            .. ReferencePages.FindMissingRoutes(
+                "device-protocol.md",
+                new Dictionary<string, IReadOnlyList<string>> { ["elm-service"] = [.. routes[false]] }
+            ),
+        ];
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
 }

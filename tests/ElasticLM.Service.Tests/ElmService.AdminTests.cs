@@ -1,5 +1,7 @@
 using System.Net;
 using System.Text.Json;
+using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Service.Tests;
 
@@ -570,5 +572,32 @@ public sealed class ElmServiceAdminTests
             length = -1;
             return false;
         }
+    }
+
+    /// <summary>
+    /// The error code reference gives, for each error code, the HTTP status the service answers it with (design §19, §20.7,
+    /// V1c2b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/error-codes.md and docs/guide.ja/reference/error-codes.md under the repository root.
+    ///
+    /// Steps:
+    /// - For every pair of <see cref="ElmService.ErrorStatuses"/>, find the table row whose cell is the code's wire name in a code
+    ///   span, and read its cell in the column headed "HTTP status" or "HTTP の状態".
+    ///
+    /// Expected:
+    /// - On both pages, that cell starts with the status as its first whole number, such as 409 for ELM_TRIAL_USED; the message
+    ///   lists every pair that it does not.
+    /// </remarks>
+    [Fact]
+    public void ErrorStatuses_AllPairs_AppearOnReferencePage()
+    {
+        IReadOnlyList<string> missing = ReferencePages.FindMissingStatuses(
+            "error-codes.md",
+            ElmService.ErrorStatuses.Select(pair => (ErrorCodes.ToWireName(pair.Key), pair.Value))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
 }

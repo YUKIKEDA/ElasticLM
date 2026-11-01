@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Collections.Frozen;
 using System.Data.Common;
 using System.Globalization;
 using System.Net;
@@ -42,6 +43,46 @@ internal sealed record AdminOutcome(string Result, string? Target = null, string
 internal sealed partial class ElmService
 {
     private const string BearerPrefix = "Bearer ";
+
+    /// <summary>
+    /// Gets the HTTP status of each error code that the service answers with a status of its own (design §19). A code not in the
+    /// table is answered with 500.
+    /// </summary>
+    internal static FrozenDictionary<ErrorCode, int> ErrorStatuses { get; } =
+        new Dictionary<ErrorCode, int>
+        {
+            [ErrorCode.InvalidArgument] = StatusCodes.Status400BadRequest,
+            [ErrorCode.Malformed] = StatusCodes.Status400BadRequest,
+            [ErrorCode.FingerprintUnavailable] = StatusCodes.Status400BadRequest,
+            [ErrorCode.WrongProduct] = StatusCodes.Status400BadRequest,
+            [ErrorCode.RequestExpired] = StatusCodes.Status400BadRequest,
+            [ErrorCode.Unauthorized] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.ProofInvalid] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.NonceRequired] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.Replayed] = StatusCodes.Status401Unauthorized,
+            [ErrorCode.FeatureNotLicensed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.FeatureVersionNotLicensed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.FeatureExpired] = StatusCodes.Status403Forbidden,
+            [ErrorCode.BorrowNotAllowed] = StatusCodes.Status403Forbidden,
+            [ErrorCode.Forbidden] = StatusCodes.Status403Forbidden,
+            [ErrorCode.LicenseSuspended] = StatusCodes.Status403Forbidden,
+            [ErrorCode.LicenseRevoked] = StatusCodes.Status403Forbidden,
+            [ErrorCode.Expired] = StatusCodes.Status403Forbidden,
+            [ErrorCode.NotFound] = StatusCodes.Status404NotFound,
+            [ErrorCode.LicenseNotFound] = StatusCodes.Status404NotFound,
+            [ErrorCode.ActivationNotFound] = StatusCodes.Status404NotFound,
+            [ErrorCode.TrialNotOffered] = StatusCodes.Status404NotFound,
+            [ErrorCode.UnknownLease] = StatusCodes.Status404NotFound,
+            [ErrorCode.Conflict] = StatusCodes.Status409Conflict,
+            [ErrorCode.ActivationLimit] = StatusCodes.Status409Conflict,
+            [ErrorCode.DeactivationLimit] = StatusCodes.Status409Conflict,
+            [ErrorCode.TrialUsed] = StatusCodes.Status409Conflict,
+            [ErrorCode.CloneDetected] = StatusCodes.Status409Conflict,
+            [ErrorCode.NoSeats] = StatusCodes.Status409Conflict,
+            [ErrorCode.ReturnNotAllowed] = StatusCodes.Status409Conflict,
+            [ErrorCode.PayloadTooLarge] = StatusCodes.Status413PayloadTooLarge,
+            [ErrorCode.RateLimited] = StatusCodes.Status429TooManyRequests,
+        }.ToFrozenDictionary();
 
     private void MapAdmin()
     {
@@ -499,31 +540,7 @@ internal sealed partial class ElmService
         WriteProblemAsync(context, code, message, status ?? StatusOf(code));
 
     private static int StatusOf(ErrorCode code) =>
-        code switch
-        {
-            ErrorCode.InvalidArgument
-            or ErrorCode.Malformed
-            or ErrorCode.FingerprintUnavailable
-            or ErrorCode.WrongProduct
-            or ErrorCode.RequestExpired => StatusCodes.Status400BadRequest,
-            ErrorCode.FeatureNotLicensed or ErrorCode.FeatureVersionNotLicensed or ErrorCode.FeatureExpired or ErrorCode.BorrowNotAllowed =>
-                StatusCodes.Status403Forbidden,
-            ErrorCode.Unauthorized or ErrorCode.ProofInvalid or ErrorCode.NonceRequired or ErrorCode.Replayed => StatusCodes.Status401Unauthorized,
-            ErrorCode.Forbidden or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => StatusCodes.Status403Forbidden,
-            ErrorCode.NotFound or ErrorCode.LicenseNotFound or ErrorCode.ActivationNotFound or ErrorCode.TrialNotOffered or ErrorCode.UnknownLease =>
-                StatusCodes.Status404NotFound,
-            ErrorCode.Conflict
-            or ErrorCode.ActivationLimit
-            or ErrorCode.DeactivationLimit
-            or ErrorCode.TrialUsed
-            or ErrorCode.CloneDetected
-            or ErrorCode.NoSeats
-            or ErrorCode.ReturnNotAllowed => StatusCodes.Status409Conflict,
-            ErrorCode.PayloadTooLarge => StatusCodes.Status413PayloadTooLarge,
-            ErrorCode.RateLimited => StatusCodes.Status429TooManyRequests,
-            ErrorCode.ServerBusy => StatusCodes.Status503ServiceUnavailable,
-            _ => StatusCodes.Status500InternalServerError,
-        };
+        ErrorStatuses.TryGetValue(code, out int status) ? status : StatusCodes.Status500InternalServerError;
 
     private static Task WriteProblemAsync(HttpContext context, ErrorCode code, string message, int status)
     {

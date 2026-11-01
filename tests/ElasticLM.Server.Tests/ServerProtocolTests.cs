@@ -4,6 +4,8 @@ using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
+using ElasticLM.Service.Tests;
 
 namespace ElasticLM.Server.Tests;
 
@@ -581,5 +583,74 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             string text = base64Url.Replace('-', '+').Replace('_', '/');
             return text.PadRight(text.Length + ((4 - (text.Length % 4)) % 4), '=');
         }
+    }
+
+    /// <summary>
+    /// Every route of the server appears in the elm-server section of its reference page, in both languages (design §20.7,
+    /// V1c2b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server started with a server license.
+    /// - docs/guide/reference and docs/guide.ja/reference under the repository root.
+    ///
+    /// Steps:
+    /// - Read every route endpoint of the running host as its method and path, such as POST /v1/leases.
+    /// - Look for the routes under /admin/v1/ on administration-api.md, and every other route on device-protocol.md, each in the
+    ///   section whose level-2 heading holds `elm-server`.
+    ///
+    /// Expected:
+    /// - Both groups have routes.
+    /// - On both pages of each group, a code span in the elm-server section is each route exactly; the message lists every
+    ///   route that is not.
+    /// </remarks>
+    [Fact]
+    public async Task Routes_AllEndpoints_AppearOnReferencePages()
+    {
+        ElmServer server = await _deployment.StartServerAsync();
+        ILookup<bool, string> routes = EndpointRoutes.Of(server.Services).ToLookup(route => route.Contains(" /admin/v1/", StringComparison.Ordinal));
+        Assert.NotEmpty(routes[true]);
+        Assert.NotEmpty(routes[false]);
+
+        IReadOnlyList<string> missing =
+        [
+            .. ReferencePages.FindMissingRoutes(
+                "administration-api.md",
+                new Dictionary<string, IReadOnlyList<string>> { ["elm-server"] = [.. routes[true]] }
+            ),
+            .. ReferencePages.FindMissingRoutes(
+                "device-protocol.md",
+                new Dictionary<string, IReadOnlyList<string>> { ["elm-server"] = [.. routes[false]] }
+            ),
+        ];
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The error code reference gives, for each error code, the HTTP status the server answers it with (design §19, §20.7,
+    /// V1c2b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/error-codes.md and docs/guide.ja/reference/error-codes.md under the repository root.
+    ///
+    /// Steps:
+    /// - For every pair of <see cref="ElmServer.ErrorStatuses"/>, find the table row whose cell is the code's wire name in a code
+    ///   span, and read its cell in the column headed "HTTP status" or "HTTP の状態".
+    ///
+    /// Expected:
+    /// - On both pages, that cell starts with the status as its first whole number, such as 503 for ELM_SERVER_RECOVERING; the
+    ///   message lists every pair that it does not.
+    /// </remarks>
+    [Fact]
+    public void ErrorStatuses_AllPairs_AppearOnReferencePage()
+    {
+        IReadOnlyList<string> missing = ReferencePages.FindMissingStatuses(
+            "error-codes.md",
+            ElmServer.ErrorStatuses.Select(pair => (ErrorCodes.ToWireName(pair.Key), pair.Value))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
 }

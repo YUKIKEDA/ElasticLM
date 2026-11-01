@@ -70,7 +70,7 @@ The states are the values of `LeaseState`: `Held`, `Retrying`, `Reclaiming`, `Lo
 
 ### Acquire
 
-The client sends `POST /v1/leases` with the feature, the app's version of the feature, and `count`. The proof includes the public key, because the server does not know the key yet. The server answers `201` with the lease token. `count` must be from 1 to the feature's seats; otherwise the answer is `ELM_INVALID_ARGUMENT`. On premises, the first acquire also checks who the server is (see below).
+The client sends `POST /v1/leases` with the feature, the app's version of the feature, and `count`. The proof includes the public key, because the server does not know the key yet. The server answers `201` with the lease token. `count` must be from 1 to the feature's seats; otherwise the answer is `ELM_INVALID_ARGUMENT`. On premises, the first acquire also checks who the server is (see below). Every lease route of both programs, with its body and answer, is in [Device protocol](../reference/device-protocol.md).
 
 ### Renewal and retries
 
@@ -109,7 +109,7 @@ If a check fails, the lease is not used (`ELM_LEASE_OUT_OF_BOUNDS` or the error 
 
 Before the client takes any lease from a server, it checks the server:
 
-1. It calls `GET /v1/server/license` and receives the server license and the server's public key.
+1. It calls [`GET /v1/server/license`](../reference/device-protocol.md#get-v1serverlicense) and receives the server license and the server's public key.
 2. It verifies the server license from the root key, requires `kind: server`, and checks that the public key's thumbprint equals `cnf.jkt`. A mismatch is `ELM_SERVER_PIN_MISMATCH`.
 3. It checks the pin. If the app set `ExpectedServerLicenseId` (C: `expected_server_license_id`), the license ID must equal it. If not, the client trusts the first server license it sees at that URL: it saves its license ID and `cnf.jkt` next to the installation key and requires them on every later connection.
 4. From then on, it verifies that server's leases with the `cnf.jkt` key.
@@ -211,7 +211,7 @@ For the borrow record's lines and how to verify it with `elm log verify --stream
 
 ## What the customer's administrator can and cannot do
 
-The `elm server` commands work through a local admin API that listens only on loopback (`admin.listen`, `http://127.0.0.1:7071` by default) and requires the 256-bit admin token the server makes at first start in its data folder.
+The `elm server` commands work through a local admin API that listens only on loopback (`admin.listen`, `http://127.0.0.1:7071` by default) and requires the 256-bit admin token the server makes at first start in its data folder. Its routes are in [Administration API](../reference/administration-api.md#elm-server-local-administration-api).
 
 The administrator can see the server's state and leases (`elm server status`, `elm server leases`), force-return a normal lease (`elm server release <ID>`, for example for a machine that crashed), reload, activate, or renew the server license, allow or deny clients by IP address or range (`allow`, `deny`), set the per-IP request limit (`rateLimit.perIp`, 20 per second by default), limit borrowing, and choose the TLS certificate. Every admin action is written to the usage log as `admin.action`.
 

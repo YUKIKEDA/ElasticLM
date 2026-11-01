@@ -17,5 +17,6 @@
     <!-- design §20.7, V1c2: the reference pages are compared with the code. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\SettingsReference.cs" Link="SettingsReference.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\EndpointRoutes.cs" Link="EndpointRoutes.cs" />
   </ItemGroup>
 </Project>
