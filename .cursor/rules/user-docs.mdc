@@ -25,6 +25,7 @@ A page that needs another kind links to it instead of growing a second kind.
 
 - The first heading is the page title. Under it, one paragraph says who the page is for and what they should know first.
 - An explanation page goes: what it is for → how it works, with a figure → what can go wrong and what the reader must do.
+- A reference page is written from the code: every name, value, limit, default, and condition is read where the code defines or checks it, not only in the design. Where the design says otherwise, the same PR fixes the design. In V1c2a (PR #199), pages written from the design had 16 errors that the accuracy review found, and 10 design sections disagreed with the code.
 - Name the threat when the page says something is safe: who the attacker is, what they hold, and what stops them. Write what the product does not protect against as plainly as what it does.
 - A figure is a fenced `mermaid` block: a sequence diagram for a protocol, a state diagram for a lifecycle, a flowchart for an order of checks. No ASCII art and no images of text.
 - Until roadmap row V1c5 (Issue #192) is done, a page has at most one flowchart or state diagram: a second one rendered empty on the site in V1c1, while Mermaid alone drew it. The PR counts the drawn figures of each page in a browser.
@@ -100,5 +101,7 @@ Phrases that read as translations, and what to write instead: "consume a seat" �
 ## Checks before a PR
 
 - `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` in `website/` pass.
-- A reviewer other than the translator checks the Japanese pages for natural Japanese and for any difference from the English.
 - Two independent reviewers read the pages (design §20.7, V1c1): one is given only `docs/guide/` and `README.md` and reports what a first-time reader cannot follow; the other is given the design and the code and reports every statement that differs from them.
+- The Japanese pages are written, or brought up to date, after both reviews of the English pages are fixed. In V1c2a (PR #199) they were translated first, and every page was translated a second time after the reviews.
+- A reviewer other than the translator checks the Japanese pages for natural Japanese and for any difference from the English.
+- A statement about what a program does at run time that no test checks (an environment variable changes the log level, a file appears at the start) is tried once by running the program, and the PR says how. In V1c2a the review of PR #199 found `Logging__LogLevel__Default` stated without a run; starting `elm-server` and `elm-service` with `Warning` then showed no `info` lines, against 10 without it.
