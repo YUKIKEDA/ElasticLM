@@ -82,5 +82,5 @@ docs/                        設計・却下した案・ADR・ロードマップ
 
 ## 言語
 
-- コード、コメント、ルール、コミットの件名、PR のタイトルと見出し、README.md は英語。
-- 設計書（`docs/` 配下）、Issue と PR の本文、README.ja.md は日本語でよい。日本語は常体で書く。
+- コード、コメント、ルール、コミットの件名、PR のタイトルと見出し、README.md、利用者の文書（`docs/guide/`、design §20.7）、`docs/releasing.md`、`docs/container.md` は英語。
+- 設計書（上の英語の文書を除く `docs/` 配下）、Issue と PR の本文、README.ja.md は日本語でよい。日本語は常体で書く。

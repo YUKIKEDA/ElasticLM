@@ -184,6 +184,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.113 | 端から端までのテスト（V1a） | V1a の Grill（Issue #178、Q1〜Q8）とその設計のレビューで決めた。`tests/ElasticLM.E2E` が、公開した `elm`・`elm-server`・`elm-service` を別のプロセスとして起動し、`ElasticLM.Client` から発行者と利用者の主な流れを通す。`libelasticlm` は C のテストに流れを足す。公開するバイナリに時計の入口は作らず、時間の経過は短い期間と本当の時計で待ち、合計は 1 つの OS で 2 分以下。PR ごとに CI の `aot` ジョブの 3 つの OS で動かし、Linux では PostgreSQL でも通す。`./build.ps1` には入れない。退けた案は design-decisions.md、形は §20.7 |
 | 0.114 | 参照機での計測（V1b） | V1b の Grill（Issue #182、Q1〜Q7）とその設計のレビューで決めた。§4.2 の目標を、`workflow_dispatch` と計測に触れる PR で動くワークフロー `measure.yml` で、公開したバイナリを相手に `ubuntu-latest` の 3 つのジョブで測る。計測するプロセスは CPU 0・1 に、負荷をかける道具 `tools/ElasticLM.Measure` は CPU 2・3 に固定する。リース 10,000 件は 100 個のインストール鍵で毎秒 50 件で取り、更新を 2 巡測る。有効化は毎秒 50 件を 60 秒。M3b・M4a1・M4b1 の値は、JIT の `elm-service` を含めて同じ測り方で測り直す。目標に届かなければジョブを失敗にする。形は §20.7 |
 | 0.115 | 有効化の p99 の外れ（V1b） | V1b の PR の計測で、有効化の p99 が 3 つのうち 2 つのジョブで 200 ms を外れた（350.64 ms と 329.06 ms）。遅い有効化とディスクの書き出しの時刻を記録して測り直すと、3 つとも目標を満たし、遅い 2 件は書き出しが 64.4 ms 止まった時刻に重なった。遅れはランナーのディスクによると見て、SQLite の `synchronous` も目標も変えない（持ち主の決定）。記録は計測に残す。値は §4.2、形は §20.7、退けた案は design-decisions.md |
+| 0.116 | 利用者の文書とそのサイト（V1c） | V1c の Grill（Issue #186、Q1〜Q18）で決めた。利用者の文書を Diátaxis の 4 つ（Tutorials、How-to guides、Reference、Explanation）で、全体の構成、信頼の鎖、認証の仕組みと流れ、安全性のモデル、使い方まで英語で書く（持ち主の訂正）。Markdown は `docs/guide/` に置き、Docusaurus のサイトにして、`v*` のタグで GitHub Pages に公開する（持ち主の訂正）。サイトの書き換えを脅威 T28 と攻撃者 A15 として足す。V1c を V1c1（Explanation、入口、README、サイトの土台）、V1c2（Reference）、V1c3（Tutorials とサンプル）、V1c4（How-to guides）に分ける。設計の文書は正本のまま残し、組み直しは roadmap の A-5。設計のレビュー（R1〜R17）で、サイトの公開にも持ち主の承認を置き、版ごとの公開は `1.0.0` の次のタグの前に入れ、PR の確かめは `release.yml` のジョブで行い、ほかの Pages のサイトとの origin の共有を受け入れた（持ち主の決定）。形は §20.7、退けた案は design-decisions.md |
 
 ## 1. 目的と利用者
 
@@ -611,6 +612,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | Data Protection の鍵と鍵暗号化鍵 | ログインの途中の `state` と `nonce` の Cookie を守る（M5b。相関の Cookie は `state` を通して結びつく）。鍵はデータベースに鍵暗号化鍵で暗号化して置く。両方を知れば、ログインの途中の `state` を読め（ほかの管理者の `code_verifier` を含む）、偽れる |
 | 利用ログ・監査ログ | 課金や紛争の証拠になる |
 | 配布物と公開の権限 | 実行ファイル、`libelasticlm`、NuGet パッケージ、`elm-service` のコンテナイメージと、それを NuGet、GitHub Release、GHCR に公開する権限（F1、F2）。偽の配布物を配れば、利用者の手元の検証を差し替えられ、偽の `elm` と `elm-service`（イメージを含む）はベンダーの署名鍵を読める |
+| 利用者の文書のサイトと、その公開の権限 | `https://yukikeda.github.io/ElasticLM/` の文書と、それを GitHub Pages に公開する権限（V1c1、0.116）。読む人は、配布物の取り方と確かめ方、トラストストアの組み込み方、`elm-server` と `elm-service` の安全に関わる設定を、この文書に従って行う。書き換えた文書は、偽の配布物へ導き、確かめを飛ばさせ、守りを弱める設定を勧められる |
 
 ### 5.2 攻撃者
 
@@ -630,6 +632,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | A12 | 持ち主の資格情報の 1 つ（GitHub の PAT やセッション、nuget.org の API キー）を盗んだ者 | 盗んだ資格情報。持ち主のアカウントそのものの奪取は §5.4 |
 | A13 | ビルドとリリースの道具（GitHub Actions のアクション、NuGet のビルドの道具、.NET SDK）と、`elm-service` のイメージのベースのイメージ（`mcr.microsoft.com/dotnet/runtime-deps`）を乗っ取った者 | その道具やイメージの新しい版か、タグの付け替え |
 | A14 | 配布の経路（ミラー、別のダウンロードのサイト、社内の配布の共有、コンテナのレジストリとその中継のキャッシュ）で配布物をすり替える者 | 利用者が取ってくる場所に置いたファイルやイメージ |
+| A15 | 文書のサイトの npm の依存（Docusaurus、そのテーマと plugin、検索の `@easyops-cn/docusaurus-search-local`、それらの推移的な依存）を乗っ取った者 | そのパッケージの新しい版を公開できる（A7 と同じ） |
 
 ### 5.3 脅威と対策
 
@@ -659,9 +662,10 @@ M3c（Issue #25）の実測（同じ条件）:
 | T22 | リリースのワークフローの乗っ取り | A11, A13 | 権限はジョブごとに分ける。ビルドのジョブ（依存とビルドの道具を動かす）は `contents: read` だけを持つ。証明のジョブ（`id-token: write`、`attestations: write`）と下書きのジョブ（`contents: write`）は、同じ実行のビルドのジョブが渡した配布物を扱うだけで、ビルドのコードを動かさない。下書きはタグの push のときだけ、証明はタグの push と持ち主の手動の実行（`workflow_dispatch`。書き込みの権限が要る）のときだけ作る。NuGet への push、GHCR へのイメージの index の push とその来歴の証明（F2、T26。`push-to-registry` の証明はレジストリにあるイメージに付けるので、push のあとにしか作れない）、Release の公開は、持ち主が承認する environment `release` のジョブだけが行う。そのジョブは `packages: write` と `attestations: write` も持ち、GHCR には `GITHUB_TOKEN` でログインする。イメージの証明はタグの push の承認のあとにだけ作り、試しでは作らない。リポジトリの持ち主は個人のアカウントなので、証明の storage record は作られず、`artifact-metadata: write` は与えない（https://github.com/actions/attest ）。イメージの証明では `create-storage-record: false` を渡す（`push-to-registry: true` のときだけ効く入力で、既定の `true` のままでも、個人のアカウントでは記録を作らずに進み、失敗は警告で握られる。固定したコミットの `src/attest.ts` で読んだ。余計な問い合わせと警告を出さないため）。公開と下書きのジョブは、イベントが `push` で ref が `refs/tags/v` で始まるときだけ動く（`workflow_dispatch` はタグに対しても走らせられるため）。PR の試しは `contents: read` だけで、秘密を持たず、証明も下書きも作らない。`pull_request_target` と `workflow_run` は使わない。書き込みの権限は持ち主だけに与え、リポジトリのルールセットで `v*` のタグの作成を持ち主だけに許し、更新と削除は持ち主にも許さない。environment `release` は、必須の承認者を持ち主にし、配備できる ref を `v*` のタグに限り、管理者による迂回を許さない。リリースのワークフローはキャッシュを戻さない（`actions/cache` も setup 系のアクションのキャッシュも使わない）。タグの実行は既定のブランチのキャッシュを戻せ、`main` で動いたコードはそのキャッシュに書けるため（https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching ）。ジョブの間の配布物は同じ実行の artifact だけで渡し、ほかの実行の artifact は取らない。管理画面の `dist` も同じ実行の SPA のジョブから取る（T21）。リリースのワークフローのアクションは、すべてコミットの SHA で固定する（F1、https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows ） |
 | T23 | 公開の資格情報の盗用 | A12 | NuGet への公開は Trusted Publishing（GitHub の OIDC のトークンを、そのたびに 1 時間有効の一時の API キーに換える）にし、長く使える API キーを GitHub にも手元にも置かず、盗む資格情報を残さない。nuget.org のポリシーは、このリポジトリ・`release.yml`・environment `release` に限り、範囲を `ElasticLM.*` のパッケージに絞る（ポリシーは ref に縛れないので、ref は T22 の environment で絞る）。GitHub と nuget.org のアカウントには二要素認証（パスキー）を使う。公開の前に、持ち主が下書きの Release を見て environment を承認する（F1、https://learn.microsoft.com/en-us/nuget/nuget-org/trusted-publishing ） |
 | T24 | 配布物のすり替え | A14（A12 によるものは T23、持ち主のアカウントそのものの奪取は §5.4） | GitHub Release の配布物ごとの SHA-256 を `SHA256SUMS` に載せ、配布物と `SHA256SUMS` に GitHub の artifact attestation（Sigstore の来歴の証明）を付ける。利用者は `gh attestation verify <ファイル> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で、このリポジトリのリリースのワークフローがそのタグから作ったことを確かめられる（`--repo` だけでは署名したワークフローを確かめないので、コマンドは文書に書く）。公開した Release は immutable にし、タグとファイルを持ち主にも変えられなくする。下書きにすべてのファイルを付けてから公開する。NuGet パッケージは nuget.org のリポジトリの署名を持つ（nuget.org から取ったことを示し、作り手は示さない）。nuget.org は push したパッケージすべてに署名を足すので、CI で付けた証明とは照らせない。配布物はリリースのワークフローだけが作り、手元で作った物は置かない（F1、https://docs.github.com/en/actions/concepts/security/artifact-attestations 、https://cli.github.com/manual/gh_attestation_verify 、https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases 、https://learn.microsoft.com/en-us/nuget/reference/signed-packages-reference ） |
-| T25 | ビルドとリリースの道具の乗っ取り | A13 | アクションは SHA で固定し、固定する SHA はそのアクションのリポジトリのタグを指すことを確かめ（フォークにだけあるコミットも `uses:` で解決されるため）、版をコメントで添える。公開の資格情報に触るアクション（NuGet の Trusted Publishing のログイン、`actions/attest`）は名指しで確かめる。GHCR へのログインはアクションを使わず、`docker login` の run の段で行う（§20.6）。Dependabot の更新は PR でレビューし、`cooldown` で出たばかりの版を待つ（T21 の `minimumReleaseAge` と同じ考え）。NuGet の依存は `Directory.Packages.props` で版を固定し、nuget.org は同じ版の上書きを許さない（中身のハッシュは固定しない）。`linux-musl-x64` を作る Alpine のイメージはダイジェストで固定する。SQLite はリポジトリに入れたアマルガメーションから毎回作る（0.72）。SDK とランナーのイメージは、Microsoft と GitHub の配布をそのまま信じる（§5.4 の GitHub の侵害の行）。管理画面の依存は T21（F1、https://docs.github.com/en/actions/reference/security/secure-use ） |
+| T25 | ビルドとリリースの道具の乗っ取り | A13 | アクションは SHA で固定し、固定する SHA はそのアクションのリポジトリのタグを指すことを確かめ（フォークにだけあるコミットも `uses:` で解決されるため）、版をコメントで添える。公開の資格情報に触るアクション（NuGet の Trusted Publishing のログイン、`actions/attest`、V1c1 の `actions/deploy-pages`）は名指しで確かめる。composite のアクション（`actions/upload-pages-artifact` は中で `actions/upload-artifact` を SHA で呼ぶ）は、中で固定したアクションもタグを指すことを確かめる。GHCR へのログインはアクションを使わず、`docker login` の run の段で行う（§20.6）。Dependabot の更新は PR でレビューし、`cooldown` で出たばかりの版を待つ（T21 の `minimumReleaseAge` と同じ考え）。NuGet の依存は `Directory.Packages.props` で版を固定し、nuget.org は同じ版の上書きを許さない（中身のハッシュは固定しない）。`linux-musl-x64` を作る Alpine のイメージはダイジェストで固定する。SQLite はリポジトリに入れたアマルガメーションから毎回作る（0.72）。SDK とランナーのイメージは、Microsoft と GitHub の配布をそのまま信じる（§5.4 の GitHub の侵害の行）。管理画面の依存は T21（F1、https://docs.github.com/en/actions/reference/security/secure-use ） |
 | T26 | GHCR のタグの付け替えとイメージのすり替え | A12, A14 | イメージは `contents: read` のビルドのジョブで OCI layout として作り、同じ実行の artifact で渡し、試しのジョブが 2 つのアーキテクチャで起動して確かめる。公開のジョブはその layout を、ダイジェストを変えずに push し、証明を付けるだけで、BuildKit もベースのイメージの取得も行わない（T22、持ち主の決定）。イメージを GHCR に push するのは environment `release` の承認のあとの公開のジョブだけで、`packages: write` もそのジョブだけが持つ。PR と `workflow_dispatch` の試しはイメージを作って確かめるだけで、push しない（証明もレジストリのイメージに付けるので、試しでは作らない）。ワークフローが公開した package ではリポジトリが admin の役割になるので、`packages: write` を公開のジョブのほかに与えないことが、削除と付け替えの守りになる（https://docs.github.com/en/packages/learn-github-packages/deleting-and-restoring-a-package ）。package はリポジトリからアクセスを引き継ぎ（書き込みの権限は持ち主だけ）、Actions のアクセスはこのリポジトリだけに与える（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）。GitHub Packages の認証は classic の PAT だけで、`write:packages` を持つ PAT を盗んだ者はワークフローを通さずに push し、タグを付け替えられる（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry ）。持ち主は `write:packages` と `delete:packages` の classic の PAT を作らない。証明の subject は、2 つのアーキテクチャをまとめた index のダイジェストである。利用者は `gh attestation verify oci://ghcr.io/yukikeda/elm-service:<版> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<版> --deny-self-hosted-runners` で確かめ、確かめた index のダイジェスト（`@sha256:`）で固定する。gh は証明を既定で GitHub の API から取り、OCI の URL ではそのレジストリへの認証を求める（https://cli.github.com/manual/gh_attestation_verify ）。`--bundle-from-oci` を付ければ、`push-to-registry` で置いた証明をレジストリから取る。このコマンドは V1e の初めての公開で、public にする前と後に試し、`SECURITY.md` に書く。正しく証明された古い版に `latest` を付け替えることもできるので、`--source-ref` には期待する版のタグを渡す。`latest` で取ったイメージは、どの版かを照らせない。似た名前のイメージや、ラベル（`org.opencontainers.image.source`）でこのリポジトリを名乗るイメージは、`--repo` と `--signer-workflow` の確かめで断られる。文書はイメージの名前を `ghcr.io/yukikeda/elm-service` だけと書き、ラベルを信じない。最初に公開した package は private で、public にする操作は取り消せないので、持ち主が V1e の命令を受けてから手で行う（https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility ）（F2） |
 | T27 | ベースのイメージの乗っ取り | A13 | ベースのイメージ（`mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`）は Dockerfile の `FROM` にダイジェストつきで書き、イメージはそのベースに F1 の配布物（同じ実行で作り、検査し、`SHA256SUMS` と証明に載せた `elm-service`）を `COPY` するだけで作る。ビルドの文脈には同じ実行の配布物と `LICENSE` だけを置き、秘密も `ARG` の秘密も渡さない。イメージに入るのは `elm-service`、`LICENSE`、空の `/data` だけで、F2 の試しで層の中身と、イメージの中の `elm-service` の SHA-256 が配布物と同じことを確かめる。そのため、ベースのイメージは実行ファイルのバイト列を変えられない。ただし、ベースの glibc と libssl は `elm-service` のプロセスに読み込まれ（.NET の Linux の暗号は OpenSSL を実行の時に読み込む）、CA の束は外への TLS の信頼を決めるので、ベースを乗っ取った者はベンダーの署名鍵と鍵暗号化鍵を読める（§5.1）。守りはダイジェストでの固定と、固定を上げるときの確かめに頼る。ダイジェストは Dependabot の `docker` が PR で上げ（タグが同じでもダイジェストだけを上げる。https://github.com/dependabot/dependabot-core/blob/main/docker/lib/dependabot/docker/update_checker.rb ）、持ち主が PR で確かめる（持ち主の決定）。MCR では Dependabot が公開の日を取れないので、`cooldown` は効かず、警告を残して提案される（https://github.com/dependabot/dependabot-core/blob/main/docker/README.md ）。ベースのイメージの署名は確かめず、T25 の SDK のイメージと同じく Microsoft の配布を信じる（持ち主の決定）。Microsoft のイメージは、ベースの更新から 12 時間以内と毎月作り直される（https://github.com/dotnet/dotnet-docker/blob/main/README.runtime-deps.md ）（F2） |
+| T28 | 文書のサイトの書き換え | A11, A12, A13, A15 | サイトは `release.yml` で、`v*` のタグの push のときだけ公開する（§20.7 の V1c の形）。サイトを作るジョブは `contents: read` だけを持ち、秘密も `id-token` も持たず、Docusaurus と npm の依存はこのジョブでだけ動く。そのジョブの出力がそのまま公開されるので、ビルドの依存（A15）と道具（A13）の乗っ取りはそのままサイトの書き換えになり、下の依存の守りは入りにくくするだけである。公開のジョブは、同じ実行のそのジョブが `actions/upload-pages-artifact` で渡した artifact を `actions/deploy-pages` で配るだけで、ビルドのコードを動かさない。公開のジョブだけが `pages: write` と `id-token: write` を持つ。deploy-pages は OIDC のトークンを Pages の配備の API に渡し、API はそのクレームの ref で、その実行が配備してよいかを確かめる（https://github.com/actions/deploy-pages の README の「OIDC」、v5.0.1）。公開のジョブは environment `github-pages` を名指す。`needs` で T22 の公開のジョブを待つのは順序のためで、守りではない（`needs` はタグのコミットの `release.yml` が決めるので、`v*` のタグを押せる者は外せる）。GitHub が強制する守りは、`v*` のタグのルールセット（T22）と、下の environment の規則である。environment `github-pages` は、`release` と同じく必須の承認者を持ち主にし、管理者による迂回を許さない（持ち主の決定、Issue #186 の R2）。タグのコミットの `release.yml` を変えても、公開には持ち主の承認が要る。environment `github-pages` は、配備できる ref を「Selected branches and tags」で `v*` のタグだけにする（https://docs.github.com/en/actions/reference/workflows-and-actions/deployments-and-environments#deployment-branches-and-tags ）。ワークフローが作る environment には守りの規則がない（https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments ）。Pages の source を GitHub Actions にしたときは、deploy-pages の README が既定で規則を置くと書く（「we will configure it by default for you」、Security Considerations の 5）が、その中身は書かれておらず、タグを許さないこともありうる。そこで持ち主が規則を設定し直し、管理者による迂回を切り、`gh api` で確かめる（`docs/releasing.md`、V1c1）。Pages の source が「Deploy from a branch」に戻ると、ブランチへの push でワークフローを通らずに配られるので、持ち主は source が GitHub Actions であること（`gh api repos/YUKIKEDA/ElasticLM/pages` の `build_type` が `workflow`）も確かめる。持ち主の資格情報を盗んだ者（A12）は、source、environment の規則、タグを操作できる。守りは T23 と T26 と同じく、二要素認証（パスキー）と、`repo` の範囲を持つ classic の PAT を作らないことである。PR の試しはサイトを作るだけで、公開しない。`pull_request_target` と `workflow_run` は使わない。アクションは SHA で固定し（`actions/deploy-pages` は T25 の名指しで確かめる）、キャッシュは戻さない（T22、T25。`actions/setup-node` の `package-manager-cache` は既定で `true` なので `false` を明示する）。artifact は、持ち主が `publish` を承認するまで残るよう `retention-days: 7` を明示する（既定は 1 日。`actions/upload-pages-artifact` の `action.yml`、v5.0.0）。`actions/configure-pages` は使わない（Pages を有効にするには `GITHUB_TOKEN` でない資格情報が要り、持ち主の手の設定で足りる。https://github.com/actions/configure-pages の `action.yml` の `enablement`、v6.0.0）。npm の依存は T21 と同じ守り（`pnpm-lock.yaml` の版とハッシュ、`--frozen-lockfile`、`strictDepBuilds: true` と `minimumReleaseAge` の明示、Corepack のハッシュ、lock の差分のレビュー）で、管理画面とは別の lock にする。サイトに読み手の情報を送る plugin（アクセス解析など）は入れない。配布物の確かめは文書のサイトに頼らない: `gh attestation verify` のコマンドは `SECURITY.md` にも書き（T24、T26）、確かめはこのリポジトリのワークフローと署名に照らす。持ち主のアカウントの奪取と GitHub の侵害は §5.4 の行のとおりで、サイトも同じ。ほかの Pages のサイトとの origin の共有は §5.4（V1c1、0.116） |
 
 ### 5.4 受け入れる脅威
 
@@ -697,7 +701,8 @@ M3c（Issue #25）の実測（同じ条件）:
 | データベースと鍵暗号化鍵を持つ者が、ログインの途中の `state` を読み、偽る（M5b） | Data Protection の鍵を復号できるので、見た `state` から `code_verifier` を読め、`state` を偽れる。ただし、ログイン CSRF には、それと合う相関と `nonce` の Cookie を管理者のブラウザに置くことが要り、それは `__Host-` で別のサブドメインからは防ぐ（T14。同じホスト名の別のポートからは、鍵がなくても押し込める、上の行）。`code_verifier` だけでは、コードと Web のクライアントの秘密がなければトークンを得られない。データベースに書ける者は、値を知るセッションの行を足せば管理 API を使えるので、「データベースに書ける者が監査ログを書き直す」の行と同じく、ログインの途中の状態だけを守る手段はない。鍵暗号化鍵はデータベースの外に置く（§14.8、Issue #110） |
 | 画面のログアウトの後も IdP のセッションが残る（M5b） | `POST /auth/logout` はサービスのセッションを消し、IdP の `end_session_endpoint` への移動を画面に渡す。IdP がそれを示さないか、画面が移らないか、IdP が求める確認を利用者が押さなければ（`id_token_hint` を付けないので、Keycloak は確認の画面を出す、§15.3）、IdP のセッションは残り、共用のブラウザでは次の人が資格情報なしでログインできる。IdP のセッションは IdP のもので、サービスは消せない。ログインのたびに資格情報を求める（`prompt=login`）と SSO の便利さを失う。運用者は、共用の端末ではブラウザを閉じるか IdP でもログアウトするよう、利用者に勧める（M5b の設計のレビュー、持ち主が受けた。Issue #110） |
 | 実行ファイルと `libelasticlm` にコードの署名がない（F1） | v1 では Authenticode も Developer ID の署名と公証もしない（`osx-*` の ad-hoc の署名は F1 で確かめる）。Windows の SmartScreen は警告を出し、macOS の Gatekeeper は、取ってきたソフトに App Store か Developer ID の署名と公証を求める既定の方針で、そのどちらもないソフトは開かせない（利用者は方針を越えて開ける。https://support.apple.com/guide/security/gatekeeper-and-runtime-protection-sec5599b66df/web ）。OS では発行者を確かめられない。証明書には費用と秘密の管理が要る。確かめる手段は `SHA256SUMS` と来歴の証明（T24）で、Gatekeeper の扱いは文書に書く。署名が要るようになれば行を足す |
-| 持ち主の GitHub か nuget.org のアカウントそのものが奪われる（F1） | 奪った者は、持ち主としてタグを押し、environment を承認し、nuget.org で API キーを作れる。GHCR のイメージを消し、タグを付け替え、package の公開の範囲を変えることもできる。来歴の証明も正しく作られ、同じ Release の `SHA256SUMS` も作り直せる。二要素認証（パスキー）で奪われにくくし、公開した Release を immutable にして、公開済みの配布物の書き換えだけは防ぐ（T24）。持ち主の権限を持つ者を、この製品の仕組みで止める手段はない |
+| 持ち主の GitHub か nuget.org のアカウントそのものが奪われる（F1） | 奪った者は、持ち主としてタグを押し、environment を承認し、nuget.org で API キーを作れる。GHCR のイメージを消し、タグを付け替え、package の公開の範囲を変えることもできる。environment `github-pages` の規則を変えて、文書のサイトを書き換えることもできる（T28）。来歴の証明も正しく作られ、同じ Release の `SHA256SUMS` も作り直せる。二要素認証（パスキー）で奪われにくくし、公開した Release を immutable にして、公開済みの配布物の書き換えだけは防ぐ（T24）。持ち主の権限を持つ者を、この製品の仕組みで止める手段はない |
+| 文書のサイトが、持ち主のほかの Pages のサイトと origin を共有する（V1c1） | `https://yukikeda.github.io` は、持ち主のすべてのプロジェクトサイトの origin である（今は `github-project-metrics` と `github-project-sample` が Pages を持つ）。そのどれかの依存が乗っ取られると、読み手がそのサイトを開いたとき、同じ origin のスクリプトとして ElasticLM の文書の頁を開いて書き換えられる。独自ドメインは、費用と DNS の管理を持ち主の作業に足す。持ち主はユーザーサイトのリポジトリ（`yukikeda.github.io`）を作らない（その根の service worker は `/ElasticLM/` を横取りできる）。持ち主の決定（Issue #186 の R12） |
 | GitHub とそのランナーのイメージが侵害される（F1） | リリースはすべて GitHub のランナーで作り、来歴の証明も GitHub の仕組みである。GitHub そのものの侵害には、この製品の側で守る手段がない |
 | GHCR のタグは書き換えられる（F2） | 持ち主と、`write:packages` を持つ PAT や `packages: write` を持つワークフローの実行は、`<版>` や `latest` のタグを別のイメージに付け替えられる。GHCR の文書（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry 、2026-10 に確かめた）は、タグを変えられなくする設定を挙げていない。タグで取る利用者は付け替えに気づけないので、文書はダイジェストで取り、証明を確かめることを勧める（T26）。GHCR が止まるか、イメージが消えたときは、Release の単一バイナリの `elm-service` を使える |
 | ベースのイメージの脆弱性は、次の版まで直らない（F2） | イメージはリリースのときに、固定したダイジェストのベースで作るので、Microsoft がベースを作り直しても、公開済みのイメージの libssl などは変わらない。直すには、ベースのダイジェストを上げた次の版を出す。単一バイナリの `elm-service` を使う利用者は、OS の libssl の更新を受ける |
@@ -3839,13 +3844,13 @@ Linux と macOS での同じ確認は、各行（M3〜M6c）の受け入れ条�
 
 ### 20.5 リリースの経路（F1、0.109）
 
-F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち主の決定（PR #151 の R1、R11）、F1 の設計のレビューの持ち主の決定（PR #154 の glibc の下限）で決めた。守りは §5.3 の T22〜T25 に対応する。F1 は仕組みを作って公開しない試しで確かめ、初めての公開（タグの push、NuGet への push、Release の公開）は V1e で持ち主の命令を受けてから行う。
+F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち主の決定（PR #151 の R1、R11）、F1 の設計のレビューの持ち主の決定（PR #154 の glibc の下限）で決めた。守りは §5.3 の T22〜T25 に対応する（V1c1 が足すサイトの公開は T28）。F1 は仕組みを作って公開しない試しで確かめ、初めての公開（タグの push、NuGet への push、Release の公開）は V1e で持ち主の命令を受けてから行う。
 
 ワークフロー `.github/workflows/release.yml`:
 
 - 動くとき: `v*` のタグの push、`workflow_dispatch`、すべての `pull_request`（公開しない試し）。`pull_request_target` と `workflow_run` は使わない。
 - 一番上の権限は `contents: read`。権限はジョブごとに足す。キャッシュは戻さない: `actions/cache` を使わず、`actions/setup-dotnet` には `cache: false` を明示する（既定も `false` だが、守りを既定に頼らない。https://github.com/actions/setup-dotnet/blob/main/action.yml ）。`actions/checkout` には `persist-credentials: false` を付ける。アクションはすべてコミットの SHA で固定し、版をコメントで添える。固定する SHA は、そのアクションのリポジトリのタグを指すことを確かめる（T25）。
-- `concurrency` は PR の実行だけを途中で止め、タグと `workflow_dispatch` の実行は止めない。どのジョブにも `timeout-minutes` を付ける。artifact の保存期間は 7 日にする（公開は下書きの Release のファイルから行うので、artifact の期間に縛られない）。
+- `concurrency` は PR の実行だけを途中で止め、タグと `workflow_dispatch` の実行は止めない。どのジョブにも `timeout-minutes` を付ける。artifact の保存期間は 7 日にする（公開は下書きの Release のファイルから行うので、artifact の期間に縛られない。ただし V1c1 が足すサイトの公開は、同じ実行の artifact を配るので、その期間に縛られる。§20.7 の V1c の形）。
 - .NET SDK は、ワークフローの 1 つの値（`env.DOTNET_SDK_VERSION`）で版を固定し、`setup-dotnet` の `dotnet-version` とコンテナのイメージの版に同じ値を使う。どのビルドも `dotnet --version` がその値であることを確かめる。同じリリースの RID の間で ILCompiler とランタイムのパッチが違わないようにするため。
 - ジョブ（`needs` で順につなぐ。ジョブの間の配布物は同じ実行の artifact だけで渡す）:
 
@@ -3860,9 +3865,11 @@ F1 の Grill（Issue #149、Q1〜Q16）、その設計のレビューの持ち�
 | `checksums` | いつも | `contents: read` | 圧縮ファイル、パッケージ、SBOM の `SHA256SUMS` を作る |
 | `attest` | タグの push と `workflow_dispatch` | `contents: read`、`id-token: write`、`attestations: write` | `SHA256SUMS` を `subject-checksums` に渡し、そこに並ぶすべてのファイルに来歴の証明を付ける（`actions/attest`。`subject-checksums` は `sha256sum` の形のファイルを受け、1 回に 1024 件まで。https://github.com/actions/attest ）。`SHA256SUMS` そのものにも付ける。記録の口の権限（`artifact-metadata: write`）は持たない。ビルドのコードを動かさない |
 | `draft` | タグの push だけ | `contents: write` | 渡されたファイルと本文で、下書きの GitHub Release を作る。ビルドのコードを動かさない |
-| `publish` | タグの push だけ、environment `release` | `contents: write`、`id-token: write` | 持ち主の承認のあと、NuGet に Trusted Publishing で push し、下書きの Release を公開する |
+| `publish` | タグの push だけ、environment `release` | `contents: write`、`id-token: write`、`packages: write`、`attestations: write` | 持ち主の承認のあと、NuGet に Trusted Publishing で push し、試したイメージを GHCR に push して証明を付け（§20.6、T26）、下書きの Release を公開する |
+| サイトを作るジョブ（V1c1） | いつも | `contents: read` | 利用者の文書の Docusaurus のサイトを作り、`actions/upload-pages-artifact` で渡す（§20.7 の V1c の形、T28） |
+| サイトの公開のジョブ（V1c1） | タグの push だけ、environment `github-pages`（持ち主の承認）、`publish` のあと | `pages: write`、`id-token: write` | サイトを `actions/deploy-pages` で GitHub Pages に配る。ビルドのコードを動かさない（T28） |
 
-- `draft` と `publish` の条件は、`github.event_name == 'push'` と `startsWith(github.ref, 'refs/tags/v')` の両方（`workflow_dispatch` はタグに対しても走らせられるため。T22）。`attest` は、それに `github.event_name == 'workflow_dispatch'` を加えた条件で動く。PR の試しでは、フォークの PR に OIDC のトークンが出ないので証明を作らない（PR #151 の R1）。
+- `draft` と `publish` の条件は、`github.event_name == 'push'` と `startsWith(github.ref, 'refs/tags/v')` の両方（`workflow_dispatch` はタグに対しても走らせられるため。T22）。サイトの公開のジョブ（V1c1）も同じ条件で動く。`attest` は、それに `github.event_name == 'workflow_dispatch'` を加えた条件で動く。PR の試しでは、フォークの PR に OIDC のトークンが出ないので証明を作らない（PR #151 の R1）。
 - T25 が名指す証明のアクションは `actions/attest` にする（`actions/attest-build-provenance` は v4 からその薄い包みで、新しい利用には `actions/attest` が勧められている。https://github.com/actions/attest-build-provenance ）。
 
 版:
@@ -4007,19 +4014,22 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 
 ### 20.7 V1 の行（0.112）
 
-V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。各行の中身は、その行の Grill で決める。
+V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は、V1c の Grill で V1c1〜V1c4 の 4 行に分けた（0.116。形は下の「V1c の形」）。各行の中身は、その行の Grill で決める。
 
 | 行 | その行の Grill で決める点 |
 | --- | --- |
 | V1a | 通す流れ（発行、オンラインとオフラインの有効化、オンプレミスと SaaS 型のリース、借り出し、利用ログの確かめ、失効）、動かす OS と RID、PostgreSQL も通すか、`libelasticlm` を C のテストのプログラムで通すか、CI のどのジョブで動かすか |
 | V1b | 測る §4.2 の目標と、測り直す前の行の値、10,000 件のリースの負荷の作り方、2 vCPU での p99 とメモリの測り方、計測を動かすワークフローとその記録の残し方 |
-| V1c | 書く文書（README、利用者の手引き、API の参照、運用の文書）と、作るサンプル（言語、場面） |
+| V1c1 | Explanation の頁の割り方と、各頁が書く範囲と深さ、描く図（どの流れを sequence 図にするか）、入口の文書の読む人ごとの道筋、README の中身と、公開の前の状態の書き方、Docusaurus の版と使う plugin、サイトの目次と見た目、CI の文書のジョブ（ランナー、Node.js、どの PR で動くか）、`release.yml` に足すサイトのジョブの名前と順、§21 の依存の表に足す行（Docusaurus 3 の系統の保守の終わり）、`website/` のランタイムのパッケージ（React など、読み手のブラウザで動くもの）を `dependencies.mdc` でどう扱うか、依存の更新の道筋（Dependabot の npm を足すか）、`trailingSlash` の値、手引きの書き方の規則（`dev-docs.mdc` は設計の文書だけを受け持つ）、README の手順を CI で流すスクリプトとジョブ、`docs/container.md` と `SECURITY.md` の確かめの節を手引きとどうつなぐか、`README.md` を「読む人の正本」とする `language.mdc` の文の書き直し、`AGENTS.md`・`docs/conventions.md`・`english-writing` に `docs/guide/` と `website/` を足すこと、初見の読み手のレビューの数と渡し方 |
+| V1c2 | Reference の頁の一覧と、それぞれの正本（コードの何から書くか）、コードと食い違わないための確かめ（設定の表と設定のクラス、誤りのコードの表と `ErrorCode`、`elm` の頁と `--help` の出力を比べるテストか、手で比べるか）、管理 API と端末のプロトコルの頁の形 |
+| V1c3 | 各 Tutorial の手順と、使うもの（公開したバイナリか `dotnet run` か）、足すサンプルのプロジェクトの名前と置き場所、C のサンプルのビルド（Windows は MSVC、ほかは cc）、Tutorials の手順を流す CI のジョブと OS、手引きのコードをサンプルから引く方法 |
+| V1c4 | How-to の頁の一覧と順、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか） |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
 | V1e | `-rc.1` で確かめることと正式版に進む条件、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
 
 行をまたいで決めてあること:
 
-- V1d は、V1a〜V1c のコード、テスト、計測、文書を見直す。見つかったものはそれぞれ Issue にし、V1e は、そのすべてが直されるか（それぞれのバグの PR）、§5.4 の受け入れた脅威に書かれるまで公開しない。V1e で足す文書と変更は、V1e の設計のレビューで見る。
+- V1d は、V1a〜V1c4 のコード、テスト、計測、文書を見直す。見つかったものはそれぞれ Issue にし、V1e は、そのすべてが直されるか（それぞれのバグの PR）、§5.4 の受け入れた脅威に書かれるまで公開しない。V1e で足す文書と変更は、V1e の設計のレビューで見る。
 - V1b のあとの修正（V1d の見つけたものを含む）が §4.2 の目標に関わるなら、その PR で測り直す（§4.2 の「各行の PR で測る」）。
 - V1e は、版を `1.0.0` にする PR で、`Directory.Build.props` の `VersionPrefix` を `1.0.0` にし、`CHANGELOG.md` と `CONTRIBUTING.md` の `1.0` より前の決まり（0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい）を外す。
 
@@ -4114,6 +4124,49 @@ V1b の Grill（Issue #182、Q1〜Q7）と、その設計のレビュー（R1〜
 - 1 つの `measure` のジョブの時間の見込み: リース 20 分、起動の計測と PostgreSQL のコンテナーで 2 分、鍵 3,000 個と有効化で 2 分、JIT の `elm-service` のビルドと計測で 3 分、自己試験で 1 分。合わせて約 28 分で、上限 60 分に収まる。
 - 後片付けと秘密: 鍵、ライセンス、データベース、設定はジョブの一時のフォルダーに作り、終わりにプロセスを止めて消す。ジョブの要約、artifact、ログに、API キー、ライセンスキー、`elm-server` の管理のトークン、ノンスの秘密、署名鍵のパスフレーズを書かない。`sudo` は、計測する `elm-server` のスコープを作るためだけに使う。
 
+#### V1c の形（0.116）
+
+V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で決めた。
+
+- 目的: 初めての人が、ElasticLM の仕組みと安全性の前提を理解し、組み込み、運用できる利用者の文書を作る。設計の文書は決定の記録で、その読み物にならない（持ち主の訂正、Q1）。
+- 読む人: ベンダーの管理者（鍵、発行、`elm-service` の運用）、アプリの開発者（.NET と C）、利用者の管理者（`elm-server` の運用）、ベンダーのシステムを作る人（管理 API）。§1.2 の人に合わせる。
+- 種類: Diátaxis の 4 つで分ける（https://diataxis.fr/start-here/ ）。
+  - Tutorials: 「A tutorial is a lesson」。初めての人が手を動かして一通り通す。
+  - How-to guides: 「A how-to guide addresses a real-world goal or problem」。目的の決まった人のための手順。
+  - Reference: 「Reference guides contain the technical description」。引くための正確な一覧。
+  - Explanation: 「Explanatory guides provide context and background」。仕組みと理由。
+- 置き場所と言語: `docs/guide/` の下に `tutorials/`、`how-to/`、`reference/`、`explanation/` を置き、入口の `docs/guide/README.md` に読む人ごとの道筋を書く。英語だけで書く（`.cursor/rules/language.mdc`。日本語は roadmap の A-7）。図は Mermaid で描く。Markdown は GitHub の表示でも読める形で書き、サイトにしかない書き方は入口の文書だけにする。
+- 中身（行ごと）:
+  - Explanation（V1c1）: 全体の構成（6 つの配布物、だれが何を動かすか、置き方の型: オフラインだけ、SaaS 型、オンプレミス、両方）。信頼の鎖（ルート鍵、署名鍵、鍵の証明書、トラストストア、鍵の交代と失効）。ライセンスの検証（ファイルの形、確かめる順、猶予期間、時計の巻き戻しの検出）。端末の認証（インストール鍵、証明、ノンス、マシン指紋。有効化、更新、解除の流れ）。リース（取得、更新、返却、回収、借り出し、席の上限）。複製の検出とオフラインの有効化。安全性のモデル（守る物、攻撃者、守れること、守れないこと、利用者がすべきこと。§5 から書き、受け入れた脅威を含む）。主な設計の選択とその理由。
+  - Reference（V1c2）: `elm` のコマンド、`elm-server` と `elm-service` の設定（項目と環境変数）、管理 API と端末のプロトコル、ライセンスファイルとトークンの形式、誤りのコード、監査ログと利用ログの項目、.NET と C の API の要点。.NET の API の正本は NuGet に入れた XML ドキュメント、C の正本は `elasticlm.h` のコメントで、Reference はそこから主な型と関数を指す。docfx のサイトと OpenAPI は作らない（roadmap の A-8）。
+  - Tutorials（V1c3）: 1. 鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる。2. `elm-service` を立て、アプリをオンラインで有効化する。3. `elm-server` を立て、フローティングのライセンスを使う。4. C のアプリに `libelasticlm` を組み込む。
+  - How-to guides（V1c4）: 鍵（ルート鍵の保管、署名鍵の交代、失効）、`elm-service`（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限）、ライセンス（ポリシー、試用、オフラインの有効化、端末の解除）、`elm-server`（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ）、アプリ（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行）。
+  - README（V1c1）: 何ができるか、配る物、文書のサイトへの入口。`README.ja.md` はその訳で、同じ PR で直す。
+- サンプル（V1c3）: 今の `samples/VerifyLicense` と `samples/PackageConsumer` に、.NET のオンラインの有効化（`ActivationClient`）、フローティングのリース（`LicenseClient` と `elm-server`）、オフラインの有効化（ファイルのやり取り）と、C の検証と有効化（`libelasticlm`）を足す。試用と借り出しは、手引きの中の短い例にする。
+- 設計との関係: `docs/design.ja.md` は仕様の正本のまま残す。利用者の文書は設計から書き起こし、訳にはしない。2 つが食い違えば設計が正しく、文書を直す。設計を初めての人が読める形に組み直すのは roadmap の A-5。
+- 古くしない仕組み:
+  - サンプルはすべてゲートでビルドする（C のサンプルは C のテストと同じジョブで作る）。
+  - 手引きのコードはサンプルのファイルから引き、コンパイルされないコードを文書に置かない。
+  - README の手順と各 Tutorial の手順は、CI のスクリプトで同じ順に流す。
+  - How-to guides の手順は、その PR で一度実際に流す。
+- 読めるかの確かめ: 各行の PR で、設計を読んでいない独立のレビュアーに文書だけを渡し、分からないところと手順で詰まるところを挙げさせ、直す。
+- サイト（V1c1）:
+  - Docusaurus（3.10.2 が最新の安定版。V1c1 で版を固定する）で作る。設定とテーマは `website/` に置き、docs の plugin の `path` で `../docs/guide` を読ませる（`path` はサイトのフォルダーからの相対のパス。https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs ）。`..` で外のフォルダーを指せることは、Docusaurus の文書に例がないので V1c1 で確かめる。
+  - Docusaurus 3 は既定で `.md` も MDX として読む。`markdown.format: 'detect'` にして、`.md` を CommonMark として読ませる（https://docusaurus.io/docs/markdown-features#mdx-vs-commonmark ）。CommonMark の扱いは試験扱いで制限がある（https://github.com/facebook/docusaurus/issues/9092 ）ので、Mermaid、表、リンクがその形で動くことを V1c1 で確かめ、動かなければ持ち主に案を出す。
+  - Mermaid は `@docusaurus/theme-mermaid` と `markdown.mermaid: true`（https://docusaurus.io/docs/markdown-features/diagrams ）。検索は `@easyops-cn/docusaurus-search-local`（MIT、v0.55.3。ビルドの `postBuild` で索引を書き（ソースの `src/server/utils/postBuildFactory.ts`）、検索に外のサービスを使わない。opt-in の「Ask AI」は外のサービスを使うので入れない。https://github.com/easyops-cn/docusaurus-search-local ）。plugin は文書の場所を自分の `docsDir`（プロジェクトのフォルダーからの相対）で持つので、`../docs/guide` での設定と、Docusaurus 3.10 で動くことを V1c1 で確かめる。
+  - 壊れたリンクで落とす: `onBrokenLinks`（既定で `throw`）、`markdown.hooks.onBrokenMarkdownLinks`（既定で `warn`）、`onBrokenAnchors`（既定で警告）を、すべて `throw` と明示する（https://docusaurus.io/docs/api/docusaurus-config ）。
+  - `url` は `https://yukikeda.github.io`、`baseUrl` は `/ElasticLM/`。GitHub Pages が URL の末尾に `/` を足すので、`trailingSlash` を `true` か `false` で明示する（https://docusaurus.io/docs/deployment 。どちらにするかは V1c1）。
+  - アクセス解析の plugin は入れない。Docusaurus は、更新を知らせるために npm の登録所へ版を問い合わせる（`packages/docusaurus/bin/beforeCli.mjs` の `update-notifier`、v3.10.2）。update-notifier は CI では問い合わせない（6.0.2 の `update-notifier.js` の `isCi`。Docusaurus 3.10.2 は `^6.0.2` を参照する）が、ビルドの環境で `NO_UPDATE_NOTIFIER` を明示する。
+  - Node.js は管理画面と同じ `web/admin/.node-version`（24。Docusaurus 3.10.2 は 20 以上を求める、https://docusaurus.io/docs/installation ）、pnpm は Corepack。`actions/setup-node` には `package-manager-cache: false` を明示する（既定は `true`。管理画面の `spa` のジョブも V1c1 でそろえる）。依存は `website/` の自分の `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml` で、T21 と同じ守りを置く（T28）。`.cursor/rules/dependencies.mdc` の npm の節を `website/` に広げ、§21 に行を足す（V1c1）。
+- 確かめる場所（V1c1）: `release.yml` のサイトを作るジョブが、すべての PR の試しでサイトを作り、壊れたリンクで落ちる（`contents: read`、秘密なし）。`ci.yml` には足さず、`./build.ps1` にも入れない（持ち主の決定、Issue #186 の R6）。
+- 公開（V1c1、T28）:
+  - `release.yml` に 2 つのジョブを足す。サイトを作るジョブ（`contents: read`。タグのコードで作り、`actions/upload-pages-artifact` で渡す。https://github.com/actions/upload-pages-artifact 、v5.0.0）と、公開のジョブ（`contents: read`、`pages: write`、`id-token: write`、environment `github-pages`、`actions/deploy-pages`。https://github.com/actions/deploy-pages 、v5.0.1）。
+  - 公開のジョブは、イベントが `push` で ref が `refs/tags/v` で始まるときだけ動き、`needs` で、サイトを作るジョブと T22 の `publish` を待つ（順序のためで、守りは T28）。PR と `workflow_dispatch` の試しは、サイトを作るところまで。
+  - artifact には `retention-days: 7` を明示する（既定は 1 日）。持ち主が `publish` を 7 日のうちに承認しなければ、artifact が消えて公開のジョブは落ちる。そのときの戻し方（`gh run rerun --job` でサイトを作るジョブと公開のジョブを走らせ直す。1 つのジョブを走らせ直したとき、それに依るジョブがどうなるかは GitHub の文書に書かれていない。https://docs.github.com/en/actions/how-tos/manage-workflow-runs/re-run-workflows-and-jobs ）は、V1c1 で試して `docs/releasing.md` に書く。
+  - Pages の上限: 公開したサイトは 1 GB 以下、配備は 10 分で切れる（https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits ）。
+  - 最初の公開は V1e の `1.0.0-rc.1`。`1.0.0` までは、あとのタグのサイトが前のサイトを置き換える。版ごとの公開（roadmap の A-6）は、`1.0.0` の次のタグを押す前に入れる。入れずに押すと、正式版の利用者に、出していない機能の手順が見え、古い系統の修正版は新しい文書を置き換える（持ち主の決定、Issue #186 の R5）。
+- 持ち主の作業（V1c1 が `docs/releasing.md` に書く）: Settings → Pages → Build and deployment → Source を GitHub Actions にする（https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site ）。environment `github-pages` の配備できる ref を `v*` のタグだけにし、必須の承認者を持ち主にし、管理者による迂回を切り（R2）、`gh api repos/YUKIKEDA/ElasticLM/environments/github-pages` と `.../deployment-branch-policies` で確かめる。`gh api repos/YUKIKEDA/ElasticLM/pages` の `build_type` が `workflow` であることも確かめる（T28）。HTTPS の強制が入っていることを確かめる（https://docs.github.com/en/pages/getting-started-with-github-pages/securing-your-github-pages-site-with-https ）。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4175,7 +4228,10 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | F2 | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと署名鍵・鍵暗号化鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明）（決めた形は 0.111） | §1.3, §5, §14.8, §20.6 |
 | V1a | 端から端までのテスト: `tests/ElasticLM.E2E` で NativeAOT で公開した `elm-server`・`elm-service`・`elm` を、`tests/native` で `libelasticlm` を動かす（決めた形は §20.7 の V1a の形、0.113） | §17.4, §17.6, §20.1, §20.7 |
 | V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（決めた形は §20.7 の V1b の形、0.114） | §4.2, §20.7 |
-| V1c | 文書とサンプル（書く文書と作るサンプルは、Grill で決める点として §20.7） | §20.7 |
+| V1c1 | 利用者の文書の Explanation、入口の文書、README、Docusaurus のサイトの土台と、`v*` のタグで GitHub Pages に公開するジョブ（決めた形は §20.7 の V1c の形、0.116） | §5.1, §5.2（A15）, §5.3（T28）, §20.5, §20.7, §21 |
+| V1c2 | 利用者の文書の Reference（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
+| V1c3 | 利用者の文書の Tutorials と、足すサンプル。Tutorials の手順を CI で流す（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
+| V1c4 | 利用者の文書の How-to guides（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 
