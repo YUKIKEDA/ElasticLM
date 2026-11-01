@@ -1,10 +1,12 @@
 ---
 description: Figures and math in the design documents
-globs: "docs/**/*.md"
+globs: "docs/design.ja.md, docs/design-decisions.md, docs/adr/**/*.md"
 alwaysApply: false
 ---
 
 # Figures and math in the design
+
+This rule covers the design documents. The user documentation in `docs/guide/` follows its own rules, which V1c1 writes (design §20.7).
 
 - Figures: a fenced `mermaid` block (sequence diagrams for protocols, state diagrams for leases and activations). No ASCII-art diagrams. A directory tree, a code signature, or a byte layout in a code block is not a diagram.
 - Math: inline `$...$`, display `$$...$$`. Do not use `\(` or `\[`. Do not put `$` inside a code block.

@@ -72,7 +72,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | A-3 | ML-DSA への移行（.NET の `MLDsa` が試験扱いでなくなり、3 OS で動いたら） | not-started | —     |
 | A-4 | 鍵管理サービス（KMS）の署名鍵                                            | not-started | —     |
 | A-5 | 設計の文書（`docs/design.ja.md`）を、開発に加わる人が初めて読める形に組み直す（design.ja.md 0.116） | not-started | —     |
-| A-6 | 文書のサイトの版ごとの公開（2 つ目の版を出すとき。design.ja.md 0.116） | not-started | —     |
+| A-6 | 文書のサイトの版ごとの公開（`1.0.0` の次のタグを押す前。design.ja.md 0.116） | not-started | —     |
 | A-7 | 日本語の利用者の文書（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
 | A-8 | .NET の API の参照のサイトと、管理 API の OpenAPI（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
 
