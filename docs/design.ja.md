@@ -1005,8 +1005,8 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `fp` の数 | 8 |
 | `meta` の組の数 | 32（キー 64 バイト、値 1 KiB まで） |
 | JSON の入れ子の深さ | 8 |
-| 要求の `fingerprints` の数 | 8（各 32 文字の 16 進） |
-| 要求の `client` のホスト名・ユーザー名 | 各 255 バイト |
+| 要求の `fingerprints` の数 | 8（各 32 文字の 16 進。`elm-service` は同じ値を 1 つにまとめ、`elm-server` はまとめない。§12.7.1） |
+| 要求の `client` のホスト名・ユーザー名 | 各 255 バイト（`elm-server` では各々任意、`elm-service` では両方とも必須。§12.7.1） |
 | 要求の `app` | 64 バイト |
 | 回収の要求のリーストークンの数 | 64 |
 | 更新の要求の `retry`（応答のなかった要求の `jti`） | 16 件、各 64 文字 |
@@ -1110,7 +1110,7 @@ erDiagram
 
 `Binding: Unbound` のライセンスファイル（インストール鍵とマシン指紋を持たない）は、M4a3 で管理 API から出す（0.76, 0.82）。トークンの期限はライセンスの期限と同じにする（0.86）。`Unbound` には期限の起点になる有効化がないので、`Binding: Unbound` と `ExpirationBasis: FromFirstActivation` の組は拒む。Keygen にも、オフライン用にライセンスファイルを出す「チェックアウト」の操作がある（https://keygen.sh/docs/api/licenses/ 。端末の有効化が要るかは資料に書かれていない）。`Unbound` のライセンスはオンラインで有効化しない（`409` と `ELM_CONFLICT`、0.88）。インストール鍵に結びつかない有効化は、台数も複製も数えられないためである。
 
-発行済みのライセンスがあるポリシーも、`LicenseKind` と `Binding` を除いて管理 API で変えられる（0.68）。変更は、次に出すトークン（更新・再有効化）から効き、すでに渡したトークンは期限まで今の値のままである。`LicenseKind` と `Binding` は、発行済みのトークンの形を変えるため変えられない。
+発行済みのライセンスがあるポリシーも、`LicenseKind` と `Binding` を除いて管理 API で変えられる（0.68）。変更は、次に出すトークン（更新・再有効化）から効き、すでに渡したトークンは期限まで今の値のままである。ただし `Duration` と `ExpirationBasis` は、ライセンスの期限がまだないときだけ効く。期限のないライセンスの次の新しい有効化か、`Floating: Cloud` のライセンスの次のリースの取得で、そのときのポリシーが `FromFirstActivation` で `Duration` を持てば、期限をその時刻 + `Duration` に決める。すでに期限を持つライセンスの期限は変わらない（§14.5）。`LicenseKind` と `Binding` は、発行済みのトークンの形を変えるため変えられない。
 
 ### 9.4 ライセンスの状態
 
@@ -1382,8 +1382,8 @@ public static class ErrorCodes
 - 時刻は UNIX 秒。
 - ライセンスキーを送るクライアント（`LicenseClient`、`ActivationClient`、`elm offline process`）はリダイレクトに従わない。`3xx` は誤りの応答として扱う（`ELM_INTERNAL_ERROR`）。設定を誤ったプロキシの `307` や `308` に従うと、ライセンスキーを含む本文を別の送り先へ送り直してしまうためである。証明の `htu` で要求はそこで失敗するが、キーはもう届いている（M4d2 の設計のレビュー R5、持ち主が受けた）。
 - サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
-- 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。
-- `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。
+- 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。`ELM_RATE_LIMITED` の `Retry-After` は、どちらのプログラムでもいつも `1` である（`elm-server` の `GuardAsync`、`elm-service` の `WriteProblemAsync`）。
+- `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
 
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
@@ -1409,13 +1409,16 @@ M3a（Issue #15）のレビューで、手順 3 を「それ以外は変えな�
 
 | クレーム | 意味 |
 | --- | --- |
-| `jti` | 128 ビットの乱数 |
+| `ver` | 形式の版。`1` でなければ `ELM_PROOF_INVALID`（`ProofVerifier.Verify`） |
+| `jti` | 一度だけ使う識別子。検証する側は 1〜64 文字を受け、それ以外は `ELM_PROOF_INVALID`。`ElasticLM.Client` は 128 ビットの乱数の base64url を送る（`ProofBuilder.Create`） |
 | `htm` | HTTP メソッド |
 | `htu` | 要求の URI（クエリと断片を除く。RFC 9449 §4.2） |
 | `iat` | 作った時刻 |
 | `nonce` | サーバーのノンス |
 | `bdy` | 本文の SHA-256 の base64url。本文がなければ空文字列の SHA-256 |
 | `jwk` | インストール鍵の公開鍵（最初のリクエストだけ） |
+
+ペイロードは §8.3 の決まりで読む。表のクレームが 2 回あれば `ELM_PROOF_INVALID`、知らないクレームは 2 回あっても無視する（`ElasticLM.Licensing` のソース生成の型で読み、`AllowDuplicateProperties = false` は型のプロパティーにだけ効く。§12.7.1）。両方のサーバーで同じである。
 
 検証の規則:
 
@@ -1428,7 +1431,7 @@ M3a（Issue #15）のレビューで、手順 3 を「それ以外は変えな�
 
 ノンス:
 
-- サーバーは `GET /v1/nonce` と、`401` の応答の `ELM-Nonce` ヘッダーでノンスを出す（RFC 9449 §8, §9 と同じ流れ）。`elm-server` はリースの要求へのすべての応答にも付ける（§12.1）。
+- サーバーは `GET /v1/nonce` と、`401` の応答の `ELM-Nonce` ヘッダーでノンスを出す（RFC 9449 §8, §9 と同じ流れ）。`elm-server` はリースの要求への応答にも付ける（経路の処理の前に答える IP の規則の `403` と送信元ごとの `429` を除く。§12.1）。
 - ノンスは、作った時刻と 128 ビットの乱数を、サーバーの秘密で HMAC-SHA256 したものを含む。有効期間は 300 秒。サーバーはノンス自体を保存しない。
 - `jti` は、ノンスの有効期間のあいだ保存して重複を断る。オンプレミスはメモリ、SaaS 型はデータベース（一意制約）に置く。
 - 複数ノードの SaaS 型では、HMAC の秘密を全ノードで共有する（§14.8）。
@@ -1477,7 +1480,7 @@ public static class KeyIds { public static string Of(ECDsa key); }              
 | --- | --- |
 | `fingerprints` | マシン指紋（§10.3） |
 | `seq` | 最後に受け取った更新番号（初回は省略） |
-| `client` | `ClientInfoStrategy: HostAndUser` のときだけ、ホスト名と OS のユーザー名 |
+| `client` | `ClientInfoStrategy: HostAndUser` のときだけ、ホスト名と OS のユーザー名（`{host, user}`。`elm-server` では各々任意、`elm-service` では両方とも必須。§12.7.1） |
 | `app` | アプリの版（任意。監査と利用ログのため） |
 
 ### 12.4 オンラインの有効化
@@ -1526,7 +1529,7 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 | `POST /v1/trials` | `{product, fingerprints, retry?, client?, app?}` | `201`、再試行は `200`。発行の応答 |
 
 - 発行の応答は `{"activationId": "<UUID>", "license": <§8.5 のライセンスファイル>}`（`application/json`）。`license` は署名したファイルの JSON をそのまま置く。トークン（§8.4.2）は有効化 ID を持たないので、クライアントはファイルと一緒に ID を保存する。
-- すべての応答（`GET /v1/nonce` も、成功も失敗も）は、ヘッダー `ELM-Nonce` で新しいノンスを持つ（§12.1）。
+- 応答（`GET /v1/nonce` も、成功も失敗も）は、ヘッダー `ELM-Nonce` で新しいノンスを持つ（§12.1）。例外は、経路の処理の前に答える送信元ごとの頻度の制限の `429` で、`ELM-Nonce` を持たない（`ElmService.GuardAsync`）。インストール鍵ごとの `429` は持つ。
 - すべての `POST` は `ELM-Proof`（§12.2）を持つ。有効化と試用の証明は `jwk` を持つ。更新と解除の証明の鍵は、有効化が覚えた公開鍵で確かめる（`jwk` は要らない）。
 
 本文（上限は §8.6。本文は 64 KiB まで（超えれば `413` と `ELM_PAYLOAD_TOO_LARGE`）、入れ子の深さ 8、同じメンバーが 2 回あれば誤り。知らないメンバーは無視する。任意のメンバーの `null` は送らなかったものと同じに扱う）:
@@ -1746,7 +1749,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 
 | 操作 | 要求 |
 | --- | --- |
-| 取得 | `POST /v1/leases {feature, version, count, borrow?}` + 証明 |
+| 取得 | `POST /v1/leases {feature, version?, count, borrow?, fingerprints?, client?, app?}` + 証明（`version` は両方のプログラムで任意。`fingerprints`・`client`・`app` は §12.3） |
 | 更新 | `POST /v1/leases/{id}/renew {seq, retry?}` + 証明（`retry` は §10.4 の手順 2） |
 | 返却 | `DELETE /v1/leases/{id}` + 証明 |
 
@@ -1755,7 +1758,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - 更新の `seq` は §10.4 の手順 3 で判定する。
 - オンプレミスのサーバーは、リースの `exp` を自分のサーバーライセンスの `exp + grace` を超えない値に切り詰める（§12.7.5 の手順 5 を満たすため）。
 - 応答は `{"lease": "<elm-lease+jws>", "certificates": ["<elm-cert+jws>"]}` である。SaaS 型は `use: lease` の署名鍵の証明書を `certificates` に入れ、オンプレミスは空にする（サーバーライセンスで検証するため）。借り出しをオフラインで使うときも、クライアントは手元の証明書で検証できる。
-- 応答はヘッダー `ELM-Server-License` に、発行に使ったサーバーライセンスの `jti` を入れる（オンプレミスだけ）。リーストークンの `slic` にも同じ値が入る（§8.4.3）。
+- 応答はヘッダー `ELM-Server-License` に、サーバーが今発行に使うサーバーライセンスの `jti` を入れる（オンプレミスだけ。`ElmServer.AnswerAsync`）。新しく発行したトークンの `slic` にも同じ値が入る（§8.4.3）。更新の再試行（§10.4 の手順 3）で前のトークンをそのまま返すときも、ヘッダーは今のサーバーライセンスの `jti` で、その間にサーバーライセンスを入れ替えていれば、トークンの `slic` と違いうる。
 - クライアントは §12.7.5 で検証する。
 - 更新と返却は、`cnf.jkt` のインストール鍵の証明がなければ断る（前身の「誰でも他人のセッションを返却できる」問題への対策）。
 - 返却は冪等で、すでに返却されたリースには `204` を返す。
@@ -1765,6 +1768,12 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - 借り出したリースの更新は `ELM_INVALID_ARGUMENT` で断る。早期返却が規則で断られたら `409` と `ELM_RETURN_NOT_ALLOWED` を返す。
 - 借り出しの返却の証明は `jwk` を持つ。サーバーが再起動の後に記録から戻した借り出しは、取得の証明の公開鍵を知らないためである。
 - 借り出しの取得は、本文の `fingerprints`（§10.3）を 1 つ以上要る（0.57）。なければ、期間の上限の判定の後に `400` と `ELM_FINGERPRINT_UNAVAILABLE` を返す。
+- 本文の読み方は、`elm-server` と `elm-service` で次の点が違う。`elm-server` は本文をソース生成の型（`ServerJson` の `AcquireBody`・`RenewBody`・`ReclaimBody`）で読み、`elm-service` は `RequestBody`（`JsonDocument`）で読む（§12.6.1, §12.7.6）。
+  - `client` の `host` と `user`: `elm-server` では各々任意（なくても `null` でもよい）で、各 255 バイトまで（`ElmServer.AcquireAsync`）。`elm-service` では両方とも必須で、欠ければ `ELM_MALFORMED`（`Activations.Client`）。
+  - `feature`: `elm-server` は形を確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
+  - `fingerprints`: どちらも 8 個まで、各 32 文字の小文字の 16 進。`elm-service` は同じ値を 1 つにまとめ（`Activations.Fingerprints`）、`elm-server` はまとめずに受け取ったまま使う。
+  - 更新の `seq`: `elm-server` は 64 ビットの整数なら負の値も受け、§10.4 の手順 3 で複製と判定する（`LeaseRules.Judge`。負の値は今の更新番号とも、その 1 つ前とも一致しない）。`elm-service` は負の値を `ELM_MALFORMED` で断る（`Activations.Sequence`）。
+  - 同じメンバーが 2 回ある本文: `elm-server` は、型が知るメンバーの 2 回だけを `ELM_MALFORMED` とし、知らないメンバーの 2 回は無視する。System.Text.Json のソース生成の読み手の `AllowDuplicateProperties = false` は、型のプロパティーにだけ効く（.NET 10 で試して確かめた）。`elm-service` は、どのメンバーの 2 回も `ELM_MALFORMED` とする（`JsonDocument` の `AllowDuplicateProperties = false`）。
 
 API（`ElasticLM.Client`、M3b で出荷した形。0.42）:
 
@@ -1947,7 +1956,7 @@ M4d1（0.93）で、§12.7.1〜§12.7.4 を `elm-service` に出す。プロト�
 - サービスは、出したトークンを返す前にクライアントと同じ検証（§12.7.5 の手順 1、2、6）にかける。通らなければ（証明書の期限が切れたなど）`500` と `ELM_INTERNAL_ERROR` で答え、トランザクションを戻す。
 - 本文の上限は §12.6.1 と §12.7.1 と同じ。`licenseKey` と `product` の形は有効化と同じ、`feature` は製品の `code` と同じ形、`version` は 32 文字まで、`count` は必須の整数、`borrow` は 0 以上の秒数で 100 年まで、`fingerprints` は 8 個まで。外れれば `ELM_MALFORMED`。
 - リース ID は 128 ビットの乱数の base64url（22 文字、§14.2）。
-- すべての応答（成功も失敗も）は、ヘッダー `ELM-Nonce` で新しいノンスを持つ（§12.6.1 と同じ）。
+- 応答（成功も失敗も）は、ヘッダー `ELM-Nonce` で新しいノンスを持つ。送信元ごとの頻度の制限の `429` だけは持たない（§12.6.1 と同じ）。
 - 頻度の制限は、ほかの端末の要求と同じ（送信元ごとと、インストール鍵ごと、§14.7）。証明（§12.2）と `jti` の記録も同じである。
 
 取得の検査の順:
@@ -2218,12 +2227,12 @@ M4c2（0.91）で、§12.8.1〜§12.8.3 の端末の側を `ActivationClient`（
 ```text
 POST /v1/leases/reclaim + 証明（jwk つき）
 {"leases": ["<elm-lease+jws>", ...]}                       64 件まで。超えれば 400 と ELM_MALFORMED
-200 {"results": [{"lease": "<ID>", "code": "ELM_OK"}, ...]}  要求と同じ順に 1 件ずつ。読めないトークンは lease を省く
+200 {"results": [{"lease": "<ID>", "code": "ELM_OK"}, ...]}  要求と同じ順に 1 件ずつ。検証に通らないトークンは lease を省く
 ```
 
 - トークンは要求の順に 1 件ずつ処理する（全体を 1 つの単位にはしない）。回収の時間の中でも外でも、各トークンを機能の排他の中で、超過を含む空き席（§12.7.2）に収まるときだけ戻す。席数の減ったサーバーライセンスに入れ替えた後や、返却したリースのトークンを再起動の後に送り直されたときにも、席数を超えないためである。同じトークンが 1 つの要求に 2 度あれば、2 度目はすでに持つリースとして判定する（席は 1 度だけ数える）。
-- 各トークンは §12.7.5 の手順で確かめる。ただし `slic` が今のサーバーライセンスと違ってもよい。そのサーバーの鍵でしか署名できないトークンであり、今のサーバーライセンスの範囲（機能・席数・期間・期限）には収まっている必要がある。サーバーが止まっている間にサーバーライセンスを入れ替えても、クライアントが席を失わないためである。
-- リースごとの結果のコード: 読めない・形の誤り（`ELM_MALFORMED`）、署名の誤り（`ELM_BAD_SIGNATURE`）、期限切れ（`ELM_EXPIRED`）、サーバーライセンスの範囲外（`ELM_LEASE_OUT_OF_BOUNDS`）、製品の違い（`ELM_WRONG_PRODUCT`）、証明の鍵がトークンの `cnf.jkt` と違う（`ELM_WRONG_INSTALLATION`）、借り出しのトークン（`ELM_BORROW_NOT_ALLOWED`。借り出しは記録から戻すため）、空き席なし（`ELM_NO_SEATS`）、止めたリース（`ELM_CLONE_DETECTED`）。
+- 各トークンは §12.7.5 の手順で確かめる。ただし `slic` が今のサーバーライセンスと違ってもよい。そのサーバーの鍵でしか署名できないトークンであり、今のサーバーライセンスの範囲（ライセンス ID・機能・席数・期間・期限）には収まっている必要がある。トークンの `lic` が今のサーバーライセンスのライセンス ID と違えば `ELM_LEASE_OUT_OF_BOUNDS` である（`LeaseVerifier.VerifyOnPremises`）。サーバーが止まっている間にサーバーライセンスを入れ替えても、クライアントが席を失わないためである。
+- リースごとの結果のコード: 読めない・形の誤り（`ELM_MALFORMED`）、署名の誤り（`ELM_BAD_SIGNATURE`）、期限切れ（`ELM_EXPIRED`）、トークンの `iat` がサーバーの時計より 5 分（`LicenseVerifierOptions.ClockSkew` の既定）を超えて先（`ELM_CLOCK_TAMPERED`。`elm-server` の検証器は `StatelessClockGuard` を使い、時計の巻き戻しの記録は見ないので、これだけで返る）、サーバーライセンスの範囲外（`ELM_LEASE_OUT_OF_BOUNDS`）、製品の違い（`ELM_WRONG_PRODUCT`）、証明の鍵がトークンの `cnf.jkt` と違う（`ELM_WRONG_INSTALLATION`）、借り出しのトークン（`ELM_BORROW_NOT_ALLOWED`。借り出しは記録から戻すため）、空き席なし（`ELM_NO_SEATS`）、止めたリース（`ELM_CLONE_DETECTED`）。検証に通らないトークン（`ELM_MALFORMED` から `ELM_WRONG_INSTALLATION` まで）の結果は、トークンのリース ID を読めても `lease` を持たない（`LeaseEngine.ReclaimOne`）。借り出し・空き席なし・止めたリースの結果は `lease` を持つ。
 - クライアントは、そのサーバーから借りているリースを 64 件ずつの要求に分けて回収する。
 - 回収の時間中の取得への `Retry-After` は、回収の時間の残りを秒に切り上げたものである。
 - サーバーがすでに持つリースのトークンは、`seq` が同じときだけ同じクライアントとし、それ以外は複製とする（§10.4）。
@@ -2324,9 +2333,10 @@ FlexNet の 3 台構成は 3 台中 2 台の合意を要し、安定した LAN �
 M3c で作った形（0.50。オフラインの更新の要求ファイルは M4c）:
 
 - `admin.listen`（既定 `http://127.0.0.1:7071`）で、TLS なしの HTTP で待ち受ける。ループバック以外のアドレスや https を設定したら起動しない（`ELM_` の設定の誤り、終了コード 2）。管理 API はこの待ち受けだけで答え、リースのプロトコルは TLS の待ち受けだけで答える（ほかは `404`）。IP の規則と頻度の制限は管理 API に当てない。
-- 管理者トークンはデータのフォルダーの `admin.token`（32 バイト。DPAPI の付加エントロピーは `ElasticLM admin token v1`）。要求の `Authorization: Bearer <base64url>` と一定時間で比べ、ないか違えば `401` と `ELM_UNAUTHORIZED`。
-- エンドポイント: `GET /admin/v1/status`、`GET /admin/v1/leases`、`DELETE /admin/v1/leases/{id}`（強制返却。知らなければ `404` と `ELM_UNKNOWN_LEASE`、借り出しなら `409` と `ELM_RETURN_NOT_ALLOWED`。0.56）、`POST /admin/v1/license/reload`（§13.1）、`POST /admin/v1/log/seal`（利用ログの署名を今書く）。
+- 管理者トークンはデータのフォルダーの `admin.token`（32 バイト。DPAPI の付加エントロピーは `ElasticLM admin token v1`）。要求の `Authorization: Bearer <base64url>` と一定時間で比べ、ないか違えば `401` と `ELM_UNAUTHORIZED`。スキーム名は大文字と小文字を区別して `Bearer `（空白を含む）で始まるものだけを受ける（`ElmServer.AdminAsync`。`bearer` は `401`）。`elm-service` の管理 API は区別しない（§14.5）。
+- エンドポイント: `GET /admin/v1/status`、`GET /admin/v1/leases`、`DELETE /admin/v1/leases/{id}`（強制返却。知らなければ `404` と `ELM_UNKNOWN_LEASE`、借り出しなら `409` と `ELM_RETURN_NOT_ALLOWED`。0.56。強制返却したリースのクライアントは、次の更新で `ELM_UNKNOWN_LEASE` を受けて回収を送り（§13.4 の手順 4）、手持ちのトークンが期限内で空き席があれば、席をまた持つ。`LeaseEngine.ForceRelease` は記録を消すだけで、トークンを止めないためである）、`POST /admin/v1/license/reload`（§13.1）、`POST /admin/v1/log/seal`（利用ログの署名を今書く）。
 - 認証された各操作を利用ログに `{"type": "admin.action", "action", "target", "result": <コード>}` で書く。認証の失敗は 1 行ずつ書かず、1 分ごとに `{"type": "admin.denied", "code": "ELM_UNAUTHORIZED", "count"}` で件数を書く（0.58）。ほかの利用者やブラウザーからループバックへ送る要求で、利用ログを際限なく増やせないためである。
+- 状態の表示（`GET /admin/v1/status`）の応答は `{"product", "license": <ライセンス ID>, "licenseToken": <トークン ID>, "licenseExpires": <UNIX 秒>, "key": <サーバーのインストール鍵の拇印>, "recovering": <回収の時間中か>, "recoveryEnds": <回収の時間の終わりの UNIX 秒>, "leases": <持っているリースの数>, "features": [{"feature", "seats", "allowed": <超過を含む席数>, "inUse": <期限内のリースの席>, "borrowed": <借り出しの席>}], "autoRefresh"}` である（`StatusAnswer`）。期限のないサーバーライセンスでは `licenseExpires` を書かない（`null` も書かない。`ServerJsonContext` の `WhenWritingNull`）。`elm server status` がこの応答で例外になる不具合は、行 V1c7（Issue #203）で直す。
 - `elm server status|leases|release <ID>|reload|seal` が、`--data`（データのフォルダー）か `--product`（端末の範囲の既定の場所）から管理者トークンを読み、`--url`（既定 `http://127.0.0.1:7071`）を呼ぶ。`--url` は http の URL ならループバックでなくても受ける（`ServerCommands.Call`。下のサーバーライセンスのコマンドはループバックだけ）。要求の時間切れは 30 秒。終了コードは、成功 0、サーバーの拒否 1、引数の誤りとトークンが読めないとき 2、つながらないとき 3。
 
 サーバーライセンスの有効化と更新（M4c3、0.92）:
@@ -2458,7 +2468,7 @@ M4a1 のエンドポイント（0.79）:
 | --- | --- | --- |
 | `POST /v1/admin/api-keys` | `apikey.create` | 本文 `{name, permissions, expiresInDays}`。`201` で、キー本体は一度だけ返す。期限は既定 90 日、上限 365 日。作る人の許可を超える許可は `403` と `ELM_FORBIDDEN` |
 | `GET /v1/admin/api-keys` | `apikey.read` | 一覧。キー本体は返さず、先頭 8 文字だけを返す |
-| `DELETE /v1/admin/api-keys/{id}` | `apikey.revoke` | キーを止める。行は消さずに止めた時刻を記録する |
+| `DELETE /v1/admin/api-keys/{id}` | `apikey.revoke` | キーを止める。行は消さずに止めた時刻を記録する。止めたキーをもう一度止めると、`revokedAt` は最初の時刻のまま変えず、監査ログには毎回 `apikey.revoke` の行（`result` `ELM_OK`、`detail` なし）を書く（`ServiceStore.RevokeKeyAsync`） |
 | `GET /v1/admin/audit` | `audit.read` | 監査ログの一覧。M5d1 から `?order=`（`asc` か `desc`、既定は `asc`。ほかの値と 2 回以上の指定は `400` と `ELM_INVALID_ARGUMENT`）。`desc` では新しい順で、`after` がなければ最新の行から、あれば `after` より小さい `n` の行を返し（知らない値でも同じ。`after=0` は空の一覧）、`next` はそのページの最後の行の `n` |
 | `POST /v1/admin/audit/verify` | `audit.read` | 連なりを確かめ、`{intact, checked, firstBroken}` を返す |
 | `GET /health` | なし | データベースに届けば `200`。秘密は返さない |
@@ -2478,7 +2488,7 @@ M4a1 のエンドポイント（0.79）:
 
 | 応答 | 形 |
 | --- | --- |
-| 一覧 | `{"items": [...], "next": <次の after>}`。`next` がなければ、それ以上の行はない |
+| 一覧 | `{"items": [...], "next": <次の after>}`。最後のページでは `next` を書かない（`null` も書かない。`ServiceJsonContext` の `WhenWritingNull`）。`next` がなければ、それ以上の行はない |
 | API キーの 1 件 | `{"id", "name", "prefix": <先頭 8 文字>, "permissions", "createdBy": <管理者の ID>, "createdAt", "expiresAt", "revokedAt": <止めていなければ null>}`。時刻は ISO 8601 の UTC（`2026-10-27T00:00:00Z`） |
 | `POST /v1/admin/api-keys` の `201` | API キーの 1 件に `"key": "elm_..."` を足したもの。キー本体はこの応答だけに入る |
 | 監査ログの 1 件 | §18.2 の 10 列（`n`、`ts`、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`、`prev`）と `hash`。`ts` は ISO 8601 の UTC（ハッシュに入る UNIX 秒へ一意に戻せる）、`prev` と `hash` は base64url、`detail` は保存した JSON の文字列をそのまま文字列として返す（例 `"detail": "{\"count\":12}"`）。解釈し直したオブジェクトでは、空白やメンバーの順が保存したものと違いうるため、§18.2 のハッシュを API の利用者が出し直せるよう、保存したバイト列を変えずに返す |
@@ -2497,7 +2507,8 @@ M4a1 のエンドポイント（0.79）:
 | `/health` でデータベースに届かない | `503`（本文なし） |
 
 - 頻度の制限（§14.7）: すべての要求は、認証の前に送信元 IP ごとの制限（設定 `rateLimit.perIp`）を受ける。`/health` と認証に失敗した要求は、この制限だけを受ける。認証された要求は、API キーごと（OIDC のアクセストークンでは管理者ごと、M5a）の制限（設定 `rateLimit.perKey`）も受ける。どちらの制限の `429` も監査ログに書かない（拒んだ要求で記録を増やさないため）。
-- `Authorization` のスキーム名 `Bearer` は、大文字と小文字を区別しない（RFC 9110 §11.1）。
+- `Authorization` のスキーム名 `Bearer` は、大文字と小文字を区別しない（RFC 9110 §11.1）。`elm-server` の管理 API は区別する（§13.7）。
+- 経路はメソッドごとに登録し、受け皿の経路を置かない。知っているパスに違うメソッドで送れば、ASP.NET Core の経路の選び方が `405` を本文なしで返す。`AdminAsync` を通らないので、認証も監査ログの行もない（送信元ごとの頻度の制限は受ける）。
 M4a2 のエンドポイント（0.82〜0.84、0.87）:
 
 | メソッドとパス | 許可 | 中身 |
@@ -2513,7 +2524,7 @@ M4a2 のエンドポイント（0.82〜0.84、0.87）:
 | `GET /v1/admin/policies` | `policy.read` | 一覧。`?productId=` で絞り込める |
 | `GET /v1/admin/policies/{id}` | `policy.read` | 1 件 |
 | `PATCH /v1/admin/policies/{id}` | `policy.write` | 送ったメンバー（`null` を含む）を置き換える。`productId`・`licenseKind`・`binding` を送れば `400` と `ELM_INVALID_ARGUMENT`（0.68）。置き換えた後の全体を下の制約で確かめる |
-| `GET /v1/admin/signing-key` | `signingkey.read` | `{"keyId", "uses": ["license", "lease"], "expiresAt", "expiresSoon"}`。`expiresAt` は証明書の期限、`expiresSoon` は期限まで 30 日を切ったら `true`（0.75） |
+| `GET /v1/admin/signing-key` | `signingkey.read` | `{"keyId", "uses": ["license", "lease"], "expiresAt", "expiresSoon"}`。値は起動のときに計算し、起動の後は変わらない（`SigningKeyCertificates.TryCheck`）。`uses` は、起動の時点で有効な（`nbf` 以後で `exp` 以前の）証明書が許す用途を `license`・`lease`・`log` の順に並べたもので、`log` を含みうる。`expiresAt` は、サービスが要る用途（`license` と `lease`、利用ログを書くときは `log` も）ごとに、その用途を許す証明書の期限の最も遅いものを取り、それらの最も早いものである。`expiresSoon` は期限まで 30 日を切ったら `true`（0.75） |
 
 製品と機能の本文:
 
@@ -2592,7 +2603,7 @@ M4a3 のエンドポイント（0.85, 0.86）:
 | `expiresAt` | 時刻 | 任意（作成のときだけ） | 下の期限の決まり。時刻は秒までの UTC の 1 つの形（`2026-10-27T00:00:00Z`）だけを受け、ほかの形（小数の秒、`+00:00` など）は `ELM_MALFORMED`。機能の `expiresAt` と `extend` の `{expiresAt}` も同じ |
 | `meta` | 文字列の組 | 任意 | §8.6（32 組、キー 64 バイト、値 1 KiB） |
 
-- 期限（0.85）: `fromIssue` のポリシーでは、既定は作った時刻 + `duration`（`null` なら期限なし）。`expiresAt` で上書きでき、今より後でなければ `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のポリシーでは、期限は最初の有効化（M4b1、§12.6.1 の手順 13）まで `null` で、`expiresAt` を送れば `400`。
+- 期限（0.85）: `fromIssue` のポリシーでは、既定は作った時刻 + `duration`（`null` なら期限なし）。`expiresAt` で上書きでき、今より後でなければ `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のポリシーでは、期限は最初の有効化（M4b1、§12.6.1 の手順 13）まで `null` で、`expiresAt` を送れば `400`。期限のないライセンスの期限は、新しい有効化か、`floating: cloud` のライセンスのリースの取得のたびに、そのときのポリシーが `fromFirstActivation` で `duration` を持てば、その時刻 + `duration` に決まる（`ElmService.ActivateInScopeAsync`、`ElmService.AcquireInScopeAsync`）。そのため、ポリシーの `duration` と `expirationBasis` の変更は、まだ期限のないライセンスの次の有効化か、クラウドのライセンスの次のリースの取得で効く。すでに決まった期限は変わらない（変えるのは `extend`）。
 - 機能ごとの `expiresAt` は今より後で、ライセンスに期限があればその期限以下（期限のないライセンスでは任意）。外れれば `400` と `ELM_INVALID_ARGUMENT`。`fromFirstActivation` のライセンスでは送れない（`400`）。`extend` は機能の期限を変えない（変えるなら `PATCH` の `features`）。
 - `extend` の `expiresAt` は、今の期限と今の時刻の両方より後でなければ `400` と `ELM_INVALID_ARGUMENT`。期限のないライセンスは `409` と `ELM_CONFLICT`。
 - 状態（§9.4）: `Suspended` と `Revoked` は時刻（`suspendedAt`、`revokedAt`）で持ち、`Expired` は保存せず、期限が今の時刻以前なら `Expired` とみなす。重なったときは `Revoked` > `Suspended` > `Expired` > `Active` の順で 1 つに決める（`state`、`?state=` の絞り込み、操作の可否はこの値に依る）。
@@ -2826,7 +2837,7 @@ M5 の各行の Grill で決める点（0.97）:
 ### 14.7 入力の上限と頻度の制限
 
 - 本文は 64 KiB まで（§12.1）。一覧の 1 ページは 200 件まで。
-- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`、`/v1/leases`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、それ以外のすべての経路（管理 API、管理画面とその `/auth/` の経路、`/health`）は送信元 IP ごと（`rateLimit.perIp`）に制限し、管理 API はさらに、認証された API キー（OIDC のアクセストークンと画面のセッションでは管理者、M5a・M5b）ごと（`rateLimit.perKey`。数える鍵は `Caller.RateKey`）に制限する（§14.5、`ElmService.GuardAsync` と `AdminAsync`）。端末とそれ以外の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。
+- 頻度の制限: 端末の要求（`/v1/nonce`、`/v1/activations`、`/v1/trials`、`/v1/offline`、`/v1/leases`）は送信元 IP ごと（`rateLimit.clientPerIp`）と、証明を確かめたインストール鍵ごと（`rateLimit.clientPerKey`）、それ以外のすべての経路（管理 API、管理画面とその `/auth/` の経路、`/health`）は送信元 IP ごと（`rateLimit.perIp`）に制限し、管理 API はさらに、認証された API キー（OIDC のアクセストークンと画面のセッションでは管理者、M5a・M5b）ごと（`rateLimit.perKey`。数える鍵は `Caller.RateKey`）に制限する（§14.5、`ElmService.GuardAsync` と `AdminAsync`）。端末とそれ以外の送信元ごとの器は別で、端末の多い送信元が管理 API を止めない。値は設定で変えられる。どの制限で断っても、端末の要求を含めて `429` と `ELM_RATE_LIMITED`、`Retry-After: 1` で答える（`WriteProblemAsync`、§12.1）。送信元ごとの `429` は `ELM-Nonce` を持たない（§12.6.1）。
 - `rateLimit.clientPerKey` の既定は 2 である。正しい端末の要求は、有効化 1 回と数日おきの更新なので、鍵ごとの器は小さくて足りる。1 つの有効化は GET のノンスと POST の 2 つの要求なので、送信元ごとの既定 20 は、1 秒に 10 台の有効化にあたる。クラウドのリース（§12.7.6）も同じ器を使う。更新も 2 つの要求で、端末ごとに期間の 1/3（既定 10 分なら約 200 秒）に 1 回なので、既定 20 で 1 つの送信元（NAT の後ろの事業所）から約 2,000 台が更新できる。それより多い送信元は `rateLimit.clientPerIp` を上げる。鍵ごとの既定 2 は、1 台が取得・更新・返却を順に送る限り足りる。
 - 制限器は `elm-server` と同じ、`TimeProvider` で動くトークンバケット（0.46、`ElasticLM.Issuing` の `RateLimiter<TKey>`）である。ASP.NET Core の RateLimiting は `TimeProvider` を受け取らず、偽の時計でテストできない（[design-decisions.md](./design-decisions.md) の「BCL と ASP.NET Core の頻度の制限器」）。送信元は IPv4 のアドレスか IPv6 の /64、覚える送信元とキーは各 100,000 まで（§13.8 と同じ）。30 秒ごとの掃除で、1 秒以上要求のない送信元とキーを忘れる。
 - `rateLimit.perKey` の既定（10）は `rateLimit.perIp` の既定（20）以下にする。管理 API の要求はまず送信元ごとの制限を受けるので、キーごとの制限が送信元ごとより大きいと、1 台から使うキーには効かない。
@@ -3741,6 +3752,7 @@ M3c で作った形:
 
 - `elm-service` の管理操作と、端末からの有効化・解除・複製の検出・試用（§12.6.1。更新と、断った端末の要求は書かない）を、データベースの追記だけの表に記録する。行は、下の連なりの形の 10 列（行の番号、時刻、操作者の種類と ID、操作、対象、結果、送信元 IP、詳細、前の行のハッシュ）と、その行のハッシュを持つ。
 - `actorType` は `apikey`（`actorId` は API キーの ID）、`oidc`（`actorId` は管理者の ID。`iss` と `sub` は `admin.create` の行の `detail` にある、M5a）、`system`（`actorId` は `setup` などの操作の名前、または認証の失敗の件数の行では `auth`）、`installation`（`actorId` はインストール鍵の拇印、端末からの操作、§12.6.1、M4b1）のどれか。`detail` は操作ごとの JSON のオブジェクトで、例えば API キーの作成では `{"name": "ci", "permissions": ["license.read"], "expiresAt": "2027-01-25T00:00:00Z"}`、認証の失敗の件数の行では `{"count": 12}` である。秘密（キー本体など）は入れない。
+- 止めた API キーをもう一度止める `DELETE` は、`revokedAt` を最初の時刻のまま変えず、そのたびに `apikey.revoke` の行（`result` `ELM_OK`）を書く（`ServiceStore.RevokeKeyAsync`、§14.5）。
 - 各行は、前の行のハッシュを含めた SHA-256 を持ち、連なりで改ざんを検出できる。データベースに書ける者による書き直しは検出できず、§5.4 で受け入れる。
 - 連なりの形（0.70）: 最初の行の「前の行のハッシュ」は 32 バイトの 0。各行のハッシュは、列の値を長さつきで並べたバイト列（前の行のハッシュを含む）の SHA-256 で、JSON の書き方の揺れに左右されない。正確なバイト列（0.77）: 列は `n`（行の番号）、`ts`（UNIX 秒）、`actorType`、`actorId`、`action`、`target`、`result`、`ip`、`detail`（JSON の文字列）、`prev` の順に並べる。各列は 4 バイトのビッグエンディアンの長さと、その後ろの UTF-8 のバイト列で、数は 10 進の文字列にする。`prev` は、ほかの列と同じく 4 バイトの長さ（`0x00000020`）の後に、32 バイトをそのまま（16 進にせず）入れる。最初の行の `prev`（32 バイトの 0）と、保管期間で古い行を消した後の起点も同じ形である。`NULL` は長さを `0xFFFFFFFF` にして、空文字列（長さ 0）と区別する。行のハッシュは、これらを並べたバイト列の SHA-256 である。この形だけで、別の道具でも同じハッシュを出せる。追記は直列にする。連なりの先頭（最後の行の番号とハッシュ）と起点（保管期間で消した最後の行の番号とハッシュ）を 1 行の表 `audit_state` に持ち、追記はその行を固定してから行を足し、先頭を進める（PostgreSQL は列を自分自身に更新する `UPDATE ... RETURNING` で行のロックを取る。`SELECT ... FOR UPDATE` と同じロックを、クエリビルダーの中で取れる。SQLite は `BEGIN IMMEDIATE`）。最後の行そのものを固定する形では、表が空のときに固定する行がないためである（M4a1）。状態を変える操作（API キーの作成と停止、`setup`、管理者の作成・役割の書き直し・無効化・有効化、画面のセッションの作成と削除（`session.create`・`session.revoke`・`session.logout`、M5b））は、その監査ログの行と同じトランザクションで書く。読み取り、拒否（`400`、`403`、`404`）、連なりの確認の行は、応答の後に別のトランザクションで書き、書けなければサービスのログに書く。連なりの確認は、1 つの読み取りのスナップショットで、起点の次の行から順に、番号が続き、`prev` が前の行のハッシュで、ハッシュが行から計算した値と合い、最後の行が先頭と合うことを確かめる。管理 API に、連なりを確かめて最初に食い違う行を返す操作を置く。保管期間で古い行を消すときは、保管期間の内にある最初の行より前の行を消し、消した最後の行のハッシュを起点として残す。時計が戻って、後の行の時刻が前の行より古くても、途中に穴を開けない。
 - 行のハッシュと `prev` は、SQLite では `BLOB`、PostgreSQL では `bytea` の 32 バイトとして保存し、16 進の文字列にしない。管理 API では base64url で返す（§14.5）。
@@ -3754,25 +3766,25 @@ M3c で作った形:
 | 0 | `ELM_OK` | 成功 | 2xx |
 | 1 | `ELM_INVALID_ARGUMENT` | 引数の誤り | 400 |
 | 2 | `ELM_MALFORMED` | 形式・大きさの誤り | 400 |
-| 3 | `ELM_UNTRUSTED_KEY` | 信頼できない鍵 | — |
-| 4 | `ELM_BAD_SIGNATURE` | 署名が合わない。どちらのサーバーも誤りの応答としては返さない。`elm-server` は回収の応答（§13.4）の各リースの `code` でだけ返す | — |
-| 5 | `ELM_CERTIFICATE_EXPIRED` | 鍵の証明書の期限外 | — |
-| 6 | `ELM_CLOCK_TAMPERED` | 時計の巻き戻し | — |
+| 3 | `ELM_UNTRUSTED_KEY` | 信頼できない鍵 | —（再読み込みは 409、下を見よ） |
+| 4 | `ELM_BAD_SIGNATURE` | 署名が合わない。`elm-service` は誤りの応答としては返さない。`elm-server` は、回収の応答（§13.4）の各リースの `code` と、サーバーライセンスの再読み込みの `409`（下を見よ）でだけ返す | —（再読み込みは 409、下を見よ） |
+| 5 | `ELM_CERTIFICATE_EXPIRED` | 鍵の証明書の期限外 | —（再読み込みは 409、下を見よ） |
+| 6 | `ELM_CLOCK_TAMPERED` | 時計の巻き戻し。`elm-server` の回収の応答の各リースの `code` では、トークンの `iat` がサーバーの時計より 5 分を超えて先のときだけ返す（§13.4） | —（再読み込みは 409、下を見よ） |
 | 7 | `ELM_WRONG_PRODUCT` | 製品が違う（`elm-service` では、有効化のキーが要求の `product` の製品のものでない、M4b2） | 400 |
-| 8 | `ELM_WRONG_INSTALLATION` | インストール鍵が違う | — |
-| 9 | `ELM_FINGERPRINT_MISMATCH` | マシン指紋が合わない | — |
+| 8 | `ELM_WRONG_INSTALLATION` | インストール鍵が違う | —（再読み込みは 409、下を見よ） |
+| 9 | `ELM_FINGERPRINT_MISMATCH` | マシン指紋が合わない | —（再読み込みは 409、下を見よ） |
 | 10 | `ELM_EXPIRED` | 期限と猶予期間を過ぎた（サーバー側ではサーバーライセンスの期限切れ） | 403 |
 | 11 | `ELM_FEATURE_NOT_LICENSED` | 機能がない | 403 |
 | 12 | `ELM_FEATURE_VERSION_NOT_LICENSED` | 機能の版が範囲外 | 403 |
 | 13 | `ELM_FEATURE_EXPIRED` | 機能の期限切れ | 403 |
 | 14 | `ELM_FINGERPRINT_UNAVAILABLE` | マシン指紋を作れない | 400 |
 | 15 | `ELM_INSTALLATION_KEY_UNREADABLE` | インストール鍵が読めない | — |
-| 16 | `ELM_WRONG_KIND` | ライセンスの種類が違う（試用をサーバーライセンスとして使う等） | — |
-| 17 | `ELM_KEY_REVOKED` | 無効にした鍵 | — |
+| 16 | `ELM_WRONG_KIND` | ライセンスの種類が違う（試用をサーバーライセンスとして使う等） | —（再読み込みは 409、下を見よ） |
+| 17 | `ELM_KEY_REVOKED` | 無効にした鍵 | —（再読み込みは 409、下を見よ） |
 | 18 | `ELM_LEASE_OUT_OF_BOUNDS` | リースがサーバーライセンスの範囲外（§12.7.5） | — |
 | 19 | `ELM_INVALID_STATE` | 呼び出してはいけない状態での呼び出し（C ABI のコールバックの中など）。`elm` では、動いているサーバーが自動の更新をしている間の `elm server activate-request` と `refresh-request`（§13.7、`ServerLicenseCommands`）。`ActivationClient` では、有効化があるときの別の有効化と試用、ほかのプロセスが有効化のロックを持つとき、応答のわからない要求が 16 件たまったとき（§12.6.2）。`ServiceUrl` のないクライアントのオンラインの操作、解除の証明が残るうちの有効化・試用・有効化の要求、有効化のないときの更新の要求と解除の証明（§12.8.5） | — |
 | 20 | `ELM_PROOF_INVALID` | 証明が無効（署名・メソッド・URI・本文）。オフラインの要求ファイルの署名が無効 | 401（オフラインの要求は 400、§12.8.4） |
-| 21 | `ELM_NONCE_REQUIRED` | ノンスがないか期限切れ（`ELM-Nonce` で新しいノンスを返す） | 401 |
+| 21 | `ELM_NONCE_REQUIRED` | 証明のノンスが空か、サーバーの知らない値か、期限切れ（`ELM-Nonce` で新しいノンスを返す）。`nonce` のクレームのない証明は `ELM_PROOF_INVALID`（`ProofPayload` の `JsonRequired`） | 401 |
 | 22 | `ELM_REPLAYED` | `jti` の再利用。オフラインの要求の `nonce` を、中身の違う要求が使った | 401（オフラインの要求は 409、§12.8.4） |
 | 23 | `ELM_SERVER_PIN_MISMATCH` | オンプレミスのサーバーが期待したものと違う（§13.5） | — |
 | 24 | `ELM_PAYLOAD_TOO_LARGE` | 本文が上限を超えた | 413 |
@@ -3794,12 +3806,15 @@ M3c で作った形:
 | 50 | `ELM_UNAUTHORIZED` | 管理の認証の失敗（`elm-server` の管理者トークンを含む） | 401 |
 | 51 | `ELM_FORBIDDEN` | 管理の権限なし。`elm-server` の `allow` / `deny` で断られた要求（§13.8） | 403 |
 | 52 | `ELM_RATE_LIMITED` | 頻度の制限 | 429 |
-| 53 | `ELM_SERVER_BUSY` | サーバーの記録の上限に達した。返すのは `elm-server` だけで、証明の `jti` の記録が満ちたとき（`ProofVerifier`。`elm-service` は `jti` を表 `proof_jtis` に書くので返さない） | 503 |
+| 53 | `ELM_SERVER_BUSY` | サーバーの記録の上限に達した。返すのは `elm-server` だけで、証明の `jti` の記録が 100,000 件に達したとき（`ProofVerifier`、`MemoryReplayStore`、§13.2）。`elm-service` は返さない（検証器の記録はいつも受け（`ElmService` の `AcceptingReplays`）、`jti` を表 `proof_jtis` に書く） | 503 |
 | 54 | `ELM_NOT_FOUND` | 管理 API で、指定した実体（API キーなど）がない。リースは `ELM_UNKNOWN_LEASE`、ライセンスは `ELM_LICENSE_NOT_FOUND`、有効化は `ELM_ACTIVATION_NOT_FOUND` を使う | 404 |
 | 55 | `ELM_CONFLICT` | 要求が実体の今の状態か一意の値とぶつかる（§9.4 の図にない遷移、使われている `code`、`Unbound` でないライセンスのファイル、`Unbound` のライセンスの有効化）（0.85, 0.88） | 409 |
 | 56 | `ELM_ACTIVATION_NOT_FOUND` | 有効化がない（管理者が解除した、解除済み、知らない ID）。クライアントは再有効化を促す（0.88） | 404 |
 | 90 | `ELM_NETWORK_ERROR` | 通信の失敗（クライアント側） | — |
 | 99 | `ELM_INTERNAL_ERROR` | 内部の誤り | 500 |
+
+- HTTP の列は、各経路がそのコードを誤りの応答で返すときの状態コードである。例外は `elm-server` の `POST /admin/v1/license/reload`（§13.1, §13.7）で、新しいサーバーライセンスを断るとき、理由のコードを列の値によらず `409` で返す（古いライセンスのまま。`ElmServer.ReloadAsync`）。返しうるのは、ファイルの読み取りと検証の 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 16, 17, 30 と、借り出しの記録に書けないときの 99 である（`ElmServer.ReloadLicense`）。
+- `elm-server` の回収の応答（§13.4）は `200` で、各リースの `code` に 2, 4, 6, 7, 8, 10, 18, 36, 40, 42 を入れうる。4, 6, 7, 8, 18 を `elm-server` が返すのは、この回収の応答と、（18 を除き）上の再読み込みの `409` だけである（7 の `400` は `elm-service` の有効化とリースの取得のもの）。
 
 番号とコードは公開後に変えない。新しいコードは空いている番号に足す。
 
@@ -4331,6 +4346,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c4 | 利用者の文書の How-to guides（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。V1d の前に行う | §20.7 |
+| V1c7 | `elm server status` が、有効期限のないサーバーライセンス（`licenseExpires` を書かない状態の応答）で例外になる不具合の修正と、CLI のほかの `GetProperty` の確かめ（Issue #203。V1c2b で見つけた。V1c2c の前） | §13.7 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 

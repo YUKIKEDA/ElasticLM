@@ -17,7 +17,7 @@ A vendor sells a license with a limit, for example "this customer may use the pr
 
 ## How the service sees products, policies, and licenses
 
-`elm-service` keeps a small model. A vendor's sales or billing system, or a person in the admin UI, builds it through the administration API.
+`elm-service` keeps a small model. A vendor's sales or billing system, or a person in the admin UI, builds it through the [administration API](../reference/administration-api.md).
 
 - A **product** is something the vendor sells. Its `code` (lowercase letters, digits, and `-`) is what the app names when it activates, and what the license token carries.
 - A **feature** is a part of a product that a license can grant on its own, also named by a `code`. An app checks for a feature by that code.
@@ -59,7 +59,7 @@ Through the administration API, a sales or billing system can:
 - Hand in an offline request file for a customer (below), and read and delete trial records.
 - Create a license file for an `unbound` license, which is not activated.
 
-Every change takes effect from the next file the service issues; files already on devices keep their values until they expire. The billing system calls the API with an API key that carries only the permissions it needs, and people log in with a role. Both are explained, with the threats against them, in [Security model](security-model.md).
+Every change takes effect from the next file the service issues; files already on devices keep their values until they expire. The billing system calls the API with an API key that carries only the permissions it needs, and people log in with a role. Both are explained, with the threats against them, in [Security model](security-model.md). Each route, with its permission, request, and answer, is in [Administration API](../reference/administration-api.md).
 
 ### Policy settings
 
@@ -68,7 +68,7 @@ A vendor chooses these settings per policy. The names and values are as the admi
 | Setting | Values | Default | What it decides |
 | --- | --- | --- | --- |
 | `licenseKind` | `standard`, `trial`, `server` | `standard` | The kind of token; `server` is for `elm-server` (see [Floating licenses](floating-licenses.md)) |
-| `binding` | `unbound`, `nodeLocked` | `nodeLocked` | Whether the license is bound to a device. An `unbound` license is not activated: its file comes from the administration API |
+| `binding` | `unbound`, `nodeLocked` | `nodeLocked` | Whether the license is bound to a device. An `unbound` license is not activated: its file comes from the administration API ([`POST /v1/admin/licenses/{id}/file`](../reference/administration-api.md#post-v1adminlicensesidfile)) |
 | `maxActivations` | 1 to 100,000 | 1 | How many devices may hold an activation at once. A license can set its own value |
 | `deactivationLimit` | 0 to 100,000, or none | none (unlimited) | How many times devices may deactivate this license, in total |
 | `expirationBasis` | `fromIssue`, `fromFirstActivation` | `fromIssue` | Whether the license's `duration` starts when it is created or at its first activation |
@@ -132,15 +132,15 @@ An app with a kept activation that is not a trial cannot activate another licens
 
 ## Refresh
 
-The client sets a timer for the file's expiry minus its refresh window. With the defaults, that is 10 days after the file was issued. When it fires, the client sends `POST /v1/activations/{id}/refresh` with `{seq}` in the body and a proof. The app can also call `RefreshAsync`.
+The client sets a timer for the file's expiry minus its refresh window. With the defaults, that is 10 days after the file was issued. When it fires, the client sends [`POST /v1/activations/{id}/refresh`](../reference/device-protocol.md#post-v1activationsidrefresh) with `{seq}` in the body and a proof. The app can also call `RefreshAsync`.
 
 The service checks that the proof's key is the activation's key (`ELM_PROOF_INVALID` otherwise), checks the license's state, and checks `seq` for clones (below). If all is well, it returns a new file with `seq` one higher. This is where a policy change, an extended expiry, a suspension, or a revocation reaches the device. When the client accepts a new file, it also gives the token's `iat` to the clock guard, so a user who moved the clock forward and back again gets unstuck.
 
 ## Deactivation
 
-The app calls `DeactivateAsync`, which sends `POST /v1/activations/{id}/deactivate` with `{seq}` and a proof. The service checks the key and `seq`, frees the activation, and answers `204`. The client then deletes `activation.json`. It does not delete the installation key, because borrowed leases, server pins, and the clock guard's state in the same folder depend on it.
+The app calls `DeactivateAsync`, which sends [`POST /v1/activations/{id}/deactivate`](../reference/device-protocol.md#post-v1activationsiddeactivate) with `{seq}` and a proof. The service checks the key and `seq`, frees the activation, and answers `204`. The client then deletes `activation.json`. It does not delete the installation key, because borrowed leases, server pins, and the clock guard's state in the same folder depend on it.
 
-A vendor's administrator can also deactivate any activation from the admin UI or the administration API, without a proof. This is the way back for a lost device, a damaged `activation.json`, or a device stopped by clone detection.
+A vendor's administrator can also deactivate any activation from the admin UI or the administration API ([`POST /v1/admin/activations/{id}/deactivate`](../reference/administration-api.md#post-v1adminactivationsiddeactivate)), without a proof. This is the way back for a lost device, a damaged `activation.json`, or a device stopped by clone detection.
 
 `deactivationLimit` counts deactivations made by devices, online and offline, over the life of the license. Deactivations by an administrator are not counted, so operational moves are not limited. When the limit is reached, a device gets `409` and `ELM_DEACTIVATION_LIMIT`.
 
@@ -171,8 +171,8 @@ The request file is a JWS of type `elm-actreq+jws`, signed with the installation
 
 There are two ways to hand the file in:
 
-- **The customer** runs `elm offline process --url <service URL> --in <request file> --out <response file>` on the connected computer. Without credentials, the command uses the public endpoint `POST /v1/offline`.
-- **A vendor's administrator** hands it in on the customer's behalf, through the admin UI's offline page, or with `elm offline process` and an API key (`ELM_API_KEY`) or after `elm admin login`. Both use `POST /v1/admin/offline`, which writes an audit log row for each file.
+- **The customer** runs `elm offline process --url <service URL> --in <request file> --out <response file>` on the connected computer. Without credentials, the command uses the public endpoint [`POST /v1/offline`](../reference/device-protocol.md#post-v1offline).
+- **A vendor's administrator** hands it in on the customer's behalf, through the admin UI's offline page, or with `elm offline process` and an API key (`ELM_API_KEY`) or after `elm admin login`. Both use [`POST /v1/admin/offline`](../reference/administration-api.md#post-v1adminoffline), which writes an audit log row for each file.
 
 The public endpoint needs no credentials because the file proves as much as an online request. An activation request is signed by the installation key and contains the license key; a refresh request must be signed by the key the activation remembers.
 
@@ -193,7 +193,7 @@ For the options of `elm offline process` and `elm admin login`, see the [elm com
 
 ## Trials
 
-A trial lets a device use the product for a limited time without a key. The app calls `StartTrialAsync`, which sends `POST /v1/trials` with the product's code, the fingerprints, and a proof with the public key. Trials are online only.
+A trial lets a device use the product for a limited time without a key. The app calls `StartTrialAsync`, which sends [`POST /v1/trials`](../reference/device-protocol.md#post-v1trials) with the product's code, the fingerprints, and a proof with the public key. Trials are online only.
 
 - The product must name a trial policy (`trialPolicyId`). Without one, or for an unknown product, the answer is `404` and `ELM_TRIAL_NOT_OFFERED`.
 - The service records each trial by product and fingerprint. If any of the device's fingerprints already has a trial of this product, the answer is `409` and `ELM_TRIAL_USED`, even from the same installation key.
