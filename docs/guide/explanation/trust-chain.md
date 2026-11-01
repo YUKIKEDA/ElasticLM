@@ -158,7 +158,7 @@ The answer is the list of revoked key IDs in the trust store. When a key ID is o
 What protects apps is only the trust store built into them. The vendor's response to a leak:
 
 1. Replace the signing key as described above.
-2. Issue the legitimate licenses again with the new key. Devices that refresh online move to new-key tokens at their next refresh. Licensees who received license files by hand need new files, and on-premises servers need a new server license.
+2. Issue the legitimate licenses again with the new key. Devices that refresh online move to new-key tokens at their next refresh. Licensees who received license files by hand need new files. A server activated with `elm-service` gets a new-key server license at its next refresh, online or by refresh files; a server license issued by hand with `elm` must be issued again.
 3. Ship an app version whose trust store lists the leaked key ID as revoked. Until an app runs that version, it keeps accepting tokens from the leaked key, forged ones included; there is no revocation list fetched over the network.
 4. Add the leaked key ID to `trust.revokedKeyIds` on `elm-service` and on the `elm-server` installations you or your customers run. This makes those programs stop using the key: `elm-service` refuses to start with it, and `elm-server` refuses a server license signed by it. It does not reach any app.
 
@@ -170,7 +170,7 @@ A token without expiry (from `elm license issue --expires never`, or an unbound 
 
 A leaked root key is worse: it lets the thief certify signing keys of their own, and every app that trusts that root accepts what they sign. ElasticLM keeps the root key offline so that this does not happen, and it offers no recovery procedure beyond the app update.
 
-Any recovery needs an app update whose trust store drops the leaked root key, or lists its key ID as revoked, and holds a new root key. After that update, every license file certified through the old root fails with `ELM_UNTRUSTED_KEY`, legitimate ones included. Every license must therefore be issued again with signing keys certified by the new root, and the new licenses must reach devices before or with the update.
+Any recovery needs an app update whose trust store drops the leaked root key, or lists its key ID as revoked, and holds a new root key. After that update, every license file certified through the old root fails with `ELM_UNTRUSTED_KEY`, legitimate ones included. A license certified only through the new root also fails on every app that does not yet have the update. Every license must therefore be issued again with signing keys certified by the new root, and each device needs the app update and its new license together: a device that gets only one of them stops working.
 
 ## What can go wrong and what to do
 

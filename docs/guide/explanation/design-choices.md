@@ -86,7 +86,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Reason.** A request can be forged only by someone who holds that device's private key. The body hash closes a gap in DPoP, which does not cover the body. The nonce and the one-time ID stop a captured request from being sent again, and freshness does not depend on the device's clock, because the server judges it by its own nonce.
 
-**Rejected.** A secret shared by every client, used for an HMAC over the request: one customer could take it out of the app and sign requests for anyone. HTTP Message Signatures (RFC 9421): much harder to build correctly with the base class library alone, for no gain here.
+**Rejected.** A secret shared by every client, used for an HMAC over the request: one customer could take it out of the app and sign requests for anyone. HTTP Message Signatures (RFC 9421): building its signature base (structured fields, RFC 8941) correctly with the base class library alone is much harder, and the proxy interoperability it offers is not a requirement.
 
 **Cost.** The installation key is the device's identity. A device administrator who copies the key and the state files to another machine copies the identity; ElasticLM notices only when both copies talk to a server (see the next sections).
 
@@ -134,7 +134,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Choice.** v1 has no redundant `elm-server` setup. The operating system's service manager restarts the server.
 
-**Reason.** Clients renew every third of the lease length, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. The server starts in about 0.1 s on a 4-CPU Linux machine, and reclaim then restores the state. Only a machine that stays down for more than about six minutes stops the apps.
+**Reason.** Clients renew every third of the lease length, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. `elm-server` aims to listen within 1 second of starting (on a Linux test machine it took about 0.1 s), and reclaim then restores the state. Only a machine that stays down for more than about six minutes stops the apps.
 
 **Rejected.** A cluster of servers that must agree, or independent servers that split the seats between them. Both are heavy for v1.
 
@@ -164,7 +164,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Reason.** A single binary is easy to install, copy, and check against its published hash. On a Linux x64 build, `elm-service` is about 27 MB, `elm-server` 13 MB, `elm` 8 MB, and `libelasticlm` 7 MB, and verifying one license file takes about 0.1 ms.
 
-**Rejected.** Targeting .NET 8 as well: its support ends in November 2026, and NativeAOT support in .NET 10 is further along. Several languages: a native library loaded across a language boundary breaks the single binary and invites memory-ownership bugs. SQLite as a separate library beside `elm-service`: that breaks the single binary.
+**Rejected.** Targeting .NET 8 as well: its support ends in November 2026, and NativeAOT support in .NET 10 is further along. Writing parts in another language, such as a client or a key library in Rust: a server that loads a library written in another language cannot be a single binary, and every string and buffer that crosses the boundary needs agreed rules for termination and freeing. Native callers get `libelasticlm` instead, which is .NET code published as a NativeAOT shared library. SQLite as a separate library beside `elm-service`: that breaks the single binary.
 
 **Cost.** The Linux builds need glibc 2.28 or later, and the macOS builds macOS 12.0 or later. The executables and `libelasticlm` carry no code signature in v1; you check them with the published `SHA256SUMS` and the build provenance attestations instead.
 

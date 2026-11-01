@@ -125,7 +125,7 @@ The vendor runs `elm license issue` and sends the `.elmlic` file to the customer
 
 The file can be node-locked to one device. Each device has an **installation key**: a key pair that the client creates on the device and keeps there, and whose **thumbprint** (a short hash of the public key) names the device. Each device also has **machine fingerprints**, values derived from the operating system's machine ID. [Devices and proofs](devices-and-proofs.md) explains both. `elm license issue` takes `--bind-key` (the thumbprint) and `--fingerprint` (the fingerprints), which the vendor must first get from the customer's device. `elm` has no command that prints them for an app's device, so the app must show them: in .NET, `InstallationKey.Thumbprint` from an `InstallationKeyStore` and `MachineFingerprint.Compute(productId)`; C exposes only the thumbprint, with `elm_installation_thumbprint`. Without `--bind-key` and `--fingerprint`, the file works on any device.
 
-There is no refresh and no revocation in this shape. A file is good until its expiry plus its grace period (`elm license issue --grace-days`, by default 7 days, and 0 for trials). A file issued with `--expires never` is good forever; `elm` warns when it writes one. Choose expiry dates with that in mind.
+There is no refresh and no revocation in this shape. A file is good until its expiry plus its grace period (`elm license issue --grace-days`, 7 days by default; a trial always has 0). A file issued with `--expires never` is good forever; `elm` warns when it writes one. Choose expiry dates with that in mind.
 
 ### Hosted activation
 
@@ -187,7 +187,7 @@ Each role has a few things that only it can do. The pages that follow explain wh
 
 **Customers' administrators**
 
-- Run `elm-server` under the operating system's service manager (a Windows service, systemd, or launchd) so that it restarts on its own. With the default 10-minute lease, apps keep working if the server is back within about 6 minutes 40 seconds; `elm-server` itself starts in about 0.1 s on a 4-CPU Linux machine.
+- Run `elm-server` under the operating system's service manager (a Windows service, systemd, or launchd) so that it restarts on its own. With the default 10-minute lease, apps keep working if the server is back within about 6 minutes 40 seconds. `elm-server` aims to listen within 1 second of starting; on a Linux test machine it took about 0.1 s.
 - Keep the server license fresh: let the server refresh online, or carry refresh files at least once every 37 days with the default 30-day token and 7-day grace period.
 - Keep the server's data folder private. It holds the server's installation key, the admin token, and the borrow record.
 
