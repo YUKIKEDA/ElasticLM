@@ -1332,7 +1332,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 権限: `license.file`。
 
-`200` でライセンスファイルを返す（`application/json` で、`Content-Disposition: attachment; filename="<license ID>.elmlic"` が付く）。そのメンバーは[トークンとファイルの形式](formats.md#ライセンスファイル-elmlic)に挙げている。それが何のためのものかは[ライセンスファイルと検証](../explanation/license-files-and-verification.md#ライセンスファイル)で説明している。
+`200` でライセンスファイルを返す（`application/json` で、`Content-Disposition: attachment; filename="<license ID>.elmlic"` が付く）。そのメンバーは[トークンとファイルの形式](formats.md#ライセンスファイル-elmlic)に挙げ、何のためのファイルかは[ライセンスファイルと検証](../explanation/license-files-and-verification.md#ライセンスファイル)で説明している。
 
 ```json
 {

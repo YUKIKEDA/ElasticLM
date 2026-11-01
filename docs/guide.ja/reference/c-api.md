@@ -32,7 +32,7 @@ sidebar_position: 10
 
 ### バイトバッファー
 
-文字列でない入力が 2 つある。`elm_verifier_verify` のライセンスファイルと、`elm_activation_import_response` のサービスの応答だ。どちらもポインターとバイト数の長さ（`const uint8_t*` と `size_t`）で渡し、NUL は要らない。ライブラリが読むのは呼び出しのあいだだけだ。文字列の 16 KiB と 1 KiB の上限は当てはまらず、次の上限がある。
+文字列でない入力が 2 つある。`elm_verifier_verify` のライセンスファイルと、`elm_activation_import_response` のサービスのレスポンスだ。どちらもポインターとバイト数の長さ（`const uint8_t*` と `size_t`）で渡し、NUL は要らない。ライブラリが読むのは呼び出しのあいだだけだ。文字列の 16 KiB と 1 KiB の上限は当てはまらず、次の上限がある。
 
 | 関数 | バッファー | 上限 | 上限を超えたとき |
 | --- | --- | --- | --- |
@@ -134,14 +134,14 @@ size_t elm_license_meta_count(const elm_license* license);
 | `elm_activation_create` | エラー番号 | SaaS 型のアクティベーションサービスでの、このインストールのアクティベーションのハンドルを作る。インストール鍵があれば読み、保存してあるアクティベーションを読んで、そのトークンの更新を予定する。サービスには接続せず、鍵も作らない。鍵を作るのは、最初の `elm_activation_activate`、`elm_activation_start_trial`、`elm_activation_create_activation_request` だ。鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE` になる。 |
 | `elm_activation_activate` | エラー番号 | ライセンスキーでオンラインのアクティベーションをし、新しい `elm_license` を返す。 |
 | `elm_activation_start_trial` | エラー番号 | オンラインでトライアルを始め、新しい `elm_license` を返す。 |
-| `elm_activation_refresh` | エラー番号 | 保存してあるアクティベーションのトークンを今すぐオンラインで更新し、新しい `elm_license` を返す。`service_url` がない、保存してあるアクティベーションがない、10 秒たってもこのデバイスの別のプロセスがアクティベーションのロックを持っている、16 件のリクエストに応答がない（待機中のオフラインのリクエストは 1 件と数える）、同じアクティベーションの状態のコールバックの中で呼んだ、のどれかなら、リクエストを送らずに `ELM_INVALID_STATE` を返す。トークンの更新の時期がまだ来ていなくても、リクエストを送る。 |
+| `elm_activation_refresh` | エラー番号 | 保存してあるアクティベーションのトークンを今すぐオンラインで更新し、新しい `elm_license` を返す。`service_url` がない、保存してあるアクティベーションがない、10 秒たってもこのデバイスの別のプロセスがアクティベーションのロックを持っている、16 件のリクエストにレスポンスがない（待機中のオフラインのリクエストは 1 件と数える）、同じアクティベーションの状態のコールバックの中で呼んだ、のどれかなら、リクエストを送らずに `ELM_INVALID_STATE` を返す。トークンの更新の時期がまだ来ていなくても、リクエストを送る。 |
 | `elm_activation_deactivate` | エラー番号 | このインストールのアクティベーションをオンラインで解除する。 |
 | `elm_activation_check` | エラー番号 | 保存してあるアクティベーションを、種類と、省略できる機能とバージョンについてオフラインで確かめ、新しい `elm_license` を返す。 |
 | `elm_activation_create_activation_request` | エラー番号 | ライセンスキーについて、オフラインのアクティベーションのリクエストのテキストを作る。待機中のリクエストを置き換えたときは `*replaced` が `1`、そうでなければ `0` になる。 |
 | `elm_activation_create_refresh_request` | エラー番号 | オフラインのトークンの更新のリクエストのテキストを作る。待機中のリクエストを置き換えたときは `*replaced` が `1`、そうでなければ `0` になる。 |
 | `elm_activation_create_deactivation_proof` | エラー番号 | オフラインのアクティベーション解除のプルーフのテキストを作る。`*replaced` は常に `0` だ。 |
 | `elm_activation_forget_deactivation_proof` | エラー番号 | 保存してあるアクティベーション解除のプルーフを破棄する。 |
-| `elm_activation_import_response` | エラー番号 | 待機中のオフラインのリクエストへのサービスの応答を保存し、新しい `elm_license` を返す。262,144 バイトを超える応答は `ELM_MALFORMED` になる。 |
+| `elm_activation_import_response` | エラー番号 | 待機中のオフラインのリクエストへのサービスのレスポンスを保存し、新しい `elm_license` を返す。262,144 バイトを超えるレスポンスは `ELM_MALFORMED` になる。 |
 | `elm_activation_id` | エラー番号 | 現在のアクティベーション ID（なければ空）を、呼び出し側のバッファーにコピーする。`*needed` には、NUL を含めたサイズが入る。バッファーが小さすぎるときも入り、そのとき関数は `ELM_INVALID_ARGUMENT` を返し、バッファーには触れない。 |
 | `elm_activation_state` | `int32_t`: `ELM_STATE_*` の値。`NULL` には `-1` | アクティベーションの状態。 |
 
@@ -170,7 +170,7 @@ int32_t elm_activation_state(const elm_activation* activation);
 | `elm_client_create` | エラー番号 | オンプレミスのライセンスサーバーのリースのクライアントを作る。`license_key` を設定したときは、SaaS 型のサービスのリースのクライアントになる。インストール鍵を開くか、なければ作り（鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE`）、マシンフィンガープリントを読む。サーバーには接続しない。 |
 | `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。 |
 | `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。 |
-| `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが返却を受け付けなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |
+| `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが引き取らなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |
 | `elm_client_get_borrowed_leases` | エラー番号 | 保存してある借用のうち、まだ有効なものを、新しいハンドルの配列で返す。配列は `elm_lease_list_free` で解放する。 |
 | `elm_client_reset_server_pin` | エラー番号 | オンプレミスのサーバーのピンを削除する。`server_url` は `http` か `https` の絶対 URL でなければならず、そうでなければ `ELM_INVALID_ARGUMENT` になる。ピンを削除したときは `*deleted` が `1` になる。ライセンスキーを持つクライアントにはピンがないので、その場合は常に `0` だ。 |
 | `elm_lease_id` | エラー番号 | リース ID を返す。 |
@@ -179,7 +179,7 @@ int32_t elm_activation_state(const elm_activation* activation);
 | `elm_lease_seats` | `int32_t`。`NULL` には `-1` | シートの数。 |
 | `elm_lease_is_borrow` | `int32_t`: `1` か `0`。`NULL` には `-1` | リースが借用かどうか。 |
 | `elm_lease_state` | `int32_t`: `ELM_LEASE_*` の値。`NULL` には `-1` | リースの状態。 |
-| `elm_lease_last_error` | `int32_t`: エラー番号。なければ `0`。`NULL` には `-1` | 最後に失敗したリースの更新かリースの再登録のエラー、またはサーバーが確認しなかった返却のエラー。回復したあとも残る。サーバーが返却を受け付けなかった借用は、それまでのエラーを保つ。 |
+| `elm_lease_last_error` | `int32_t`: エラー番号。なければ `0`。`NULL` には `-1` | 最後に失敗したリースの更新かリースの再登録のエラー、またはサーバーが確認しなかった返却のエラー。回復したあとも残る。サーバーが引き取らなかった借用は、それまでのエラーを保つ。 |
 
 ```c
 int32_t elm_client_create(const elm_client_options* options, elm_client** out);
@@ -222,7 +222,7 @@ const char* elm_version(void);
 | `elm_lease_free` | `void` | リースを返さずに、リースのハンドルを解放する。 |
 | `elm_lease_list_free` | `void` | `elm_client_get_borrowed_leases` の配列とそのハンドルを、同じ個数を渡して解放する。先に要素を解放したときの動作は未定義だ。 |
 | `elm_client_destroy` | `void` | 実行中のコールバックと進行中の操作を待ち（時間の上限なし）、次に借用でないリースを 5 秒以内に返して、ハンドルを解放する。借用はそのまま残る。 |
-| `elm_string_free` | `void` | この関数で解放するよう関数が示している文字列を、消去してから解放する。 |
+| `elm_string_free` | `void` | ほかの関数が、この関数で解放するよう示している文字列を、消去してから解放する。 |
 
 ```c
 void elm_installation_free(elm_installation* installation);
@@ -404,7 +404,7 @@ void elm_string_free(char* text);
 | `ELM_STATE_NONE` | `0` | 保存してあるアクティベーションがない。 |
 | `ELM_STATE_ACTIVE` | `1` | アクティベーションを保存してあり、トークンの更新をしていれば、最後の更新は成功した。 |
 | `ELM_STATE_REFRESH_FAILING` | `2` | トークンの更新が失敗している。保存してあるライセンスファイルを、期限が切れるまで使う。 |
-| `ELM_STATE_REFUSED` | `3` | サービスがライセンスを拒否した（失効、停止、期限切れ）。保存してあるファイルを、期限が切れるまで使う。ファイルの有効期限と猶予期間が過ぎるまでは `elm_activation_check` が成功し続けるので、どうするかはアプリが決める。 |
+| `ELM_STATE_REFUSED` | `3` | サービスがライセンスを拒否した（失効、一時停止、期限切れ）。保存してあるファイルを、期限が切れるまで使う。ファイルの有効期限と猶予期間が過ぎるまでは `elm_activation_check` が成功し続けるので、どうするかはアプリが決める。 |
 | `ELM_STATE_CLONE_DETECTED` | `4` | サービスがこのインストールの別のコピーを見つけ、自動のトークンの更新が止まる。保存してあるファイルを、期限が切れるまで使う。ファイルの有効期限と猶予期間が過ぎるまでは `elm_activation_check` が成功し続けるので、どうするかはアプリが決める。 |
 
 ### リースの状態
@@ -415,7 +415,7 @@ void elm_string_free(char* text);
 | `ELM_LEASE_RETRYING` | `1` | 最後のリースの更新が失敗した。クライアントは、リースの有効期限まで再試行する。 |
 | `ELM_LEASE_RECLAIMING` | `2` | 再起動のあと、サーバーがリースを知らなかった。クライアントがリースを再登録している。 |
 | `ELM_LEASE_LOST` | `3` | 借用でないリースが、リースの更新に成功する前に期限切れになった、リースの再登録を拒否された、SaaS 型のサービスがリースをもう知らなかった、またはクローンを検出した。借用は、期限切れで `ELM_LEASE_LOST` になることはなく、`ELM_LEASE_HELD` のままだ。 |
-| `ELM_LEASE_RELEASED` | `4` | アプリがリースを返したか、`elm_client_destroy` が返した。`elm_client_destroy` は借用を返さない。借用が返却済みになるのは、サーバーが返却を受け付けたときか、サーバーがその借用を知らなかったときだけだ。 |
+| `ELM_LEASE_RELEASED` | `4` | アプリがリースを返したか、`elm_client_destroy` が返した。`elm_client_destroy` は借用を返さない。借用が返却済みになるのは、サーバーが引き取ったときか、サーバーがその借用を知らなかったときだけだ。 |
 
 ### その他のマクロ
 

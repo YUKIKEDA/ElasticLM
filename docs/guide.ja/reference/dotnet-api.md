@@ -33,12 +33,12 @@ sidebar_position: 9
 | `CloneStrategy` | 列挙型 | クローンしたインストールを検出したときにサーバーがどうするか。`Deny`（止めて `ELM_CLONE_DETECTED` を返す）か `Flag`（記録して、通常どおり返す）。 |
 | `ErrorCode` | 列挙型 | ElasticLM のすべてのエラーコードと、その番号（`Ok` は 0、`Malformed` は 2）。番号と名前は、一度公開したら変えない。 |
 | `ErrorCodes` | 静的クラス | `ErrorCode` と通信で使う名前を相互に変換する。`ToWireName` と `TryParseWireName`。 |
-| `FileClockGuard` | クラス | 最後に見た時刻をファイルに保存する時刻巻き戻し対策。[後述](#fileclockguard)。 |
+| `FileClockGuard` | クラス | 最後に確認した時刻をファイルに保存する時刻巻き戻し対策。[後述](#fileclockguard)。 |
 | `HttpTargetUri` | 静的クラス | `Normalize` は、プルーフが署名するリクエストの URI の形を返す。スキームとホストは小文字にし、既定のポートを省き、パーセントエンコードは大文字にし、クエリとフラグメントを除く。 |
-| `IClockGuard` | インターフェイス | 時刻巻き戻し対策。`Observe` は、現在時刻を最後に見た時刻と比べ、確認に通ればその時刻を記録する。`AcceptServerTime` は、オンラインでのトークンの更新のあとにサービスの時刻を受け取る（既定では何もしない）。 |
+| `IClockGuard` | インターフェース | 時刻巻き戻し対策。`Observe` は、現在時刻を最後に確認した時刻と比べ、確認に通ればその時刻を記録する。`AcceptServerTime` は、オンラインでのトークンの更新のあとにサービスの時刻を受け取る（既定では何もしない）。 |
 | `InstallationIdentity` | クラス | デバイスに紐付いたライセンスのための、このインストール。インストール鍵のサムプリントと、現在のマシンフィンガープリントを持つ。[後述](#installationidentity)。 |
 | `KeyIds` | 静的クラス | `Of` は P-256 の鍵の鍵 ID を返す。鍵の JWK サムプリント（RFC 7638）を base64url にしたものだ。 |
-| `LeaseExpectation` | レコード | リースが何のためのものでなければならないか。`ProductId` と `InstallationKeyThumbprint`。 |
+| `LeaseExpectation` | レコード | リースが対象としていなければならないもの。`ProductId` と `InstallationKeyThumbprint`。 |
 | `LeaseVerificationResult` | 抽象レコード | リースの確認の結果。`Valid` の場合は `VerifiedLease`（`Lease`）を、`Invalid` の場合は `LicenseError`（`Error`）を持つ。 |
 | `LeaseVerifier` | クラス | オンプレミスのサーバーか `elm-service` から受け取ったリーストークンを確かめる。[後述](#leaseverifier)。 |
 | `LicensedFeature` | レコード | 検証したライセンスの機能。`Id`、`VersionRange`（すべてのバージョンなら `null`）、`Seats`（サーバーライセンスだけ）、`ExpiresAt`（機能自体の有効期限、または `null`）。 |
@@ -78,7 +78,7 @@ sidebar_position: 9
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
-| `Verify` | `ReadOnlySpan<byte> licenseFile`、`LicenseRequirement requirement` | `LicenseVerificationResult` | ライセンスファイルのバイト列を、アプリが求めることに照らして検証する。`ArgumentException` を投げるのは、求めることの製品 ID が空のときと、機能のバージョンが `major.minor[.patch]` の形でないときだけだ。 |
+| `Verify` | `ReadOnlySpan<byte> licenseFile`、`LicenseRequirement requirement` | `LicenseVerificationResult` | ライセンスファイルのバイト列を、アプリが求めることに照らして検証する。`ArgumentException` を投げるのは、求める製品 ID が空のときと、求める機能のバージョンが `major.minor[.patch]` の形でないときだけだ。 |
 
 オプションは `LicenseVerifierOptions` で指定する（どのプロパティにも公開の `set` がある。コンストラクターが値をコピーするので、あとから変えても反映されない）。
 
@@ -109,7 +109,7 @@ return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
 | `VerifyOnPremises` | `string leaseToken`、`ServerIdentity server`、`LeaseExpectation expect` | `LeaseVerificationResult` | オンプレミスのサーバーから受け取ったリースを確かめる。サーバーの鍵で署名されていること、サーバーの現在のサーバーライセンスのもとで発行されたこと、この製品とインストール鍵のためのものであること、サーバーライセンスの機能、シート数、リースの期間か借用の上限、有効期限の範囲内であること、未来に発行されていないこと、時刻巻き戻し対策に通ること、期限が切れていないことを確かめる。 |
-| `VerifyHosted` | `string leaseToken`、`IReadOnlyList<string> certificates`、`LeaseExpectation expect` | `LeaseVerificationResult` | `elm-service` から受け取ったリースを確かめる。リースと一緒に送られた 1 から 4 個の鍵証明書のどれかが、信頼するルート鍵のもとでリース用に証明した鍵で署名されていること、その鍵が失効していないこと、その鍵証明書の有効期間内に発行されたこと、この製品とインストール鍵のためのものであること、未来に発行されていないこと、時刻巻き戻し対策に通ること、期限が切れていないことを確かめる。 |
+| `VerifyHosted` | `string leaseToken`、`IReadOnlyList<string> certificates`、`LeaseExpectation expect` | `LeaseVerificationResult` | `elm-service` から受け取ったリースを確かめる。信頼するルート鍵のもとで、リースと一緒に送られた 1 から 4 個の鍵証明書のどれかがリース用に証明した鍵で署名されていること、その鍵が失効していないこと、その鍵証明書の有効期間内に発行されたこと、この製品とインストール鍵のためのものであること、未来に発行されていないこと、時刻巻き戻し対策に通ること、期限が切れていないことを確かめる。 |
 
 オプションには同じ型の `LicenseVerifierOptions` を受け取るが、コピーするのは `ClockSkew` だけだ。`AcceptTrialAsStandard` はリースには影響しない。
 
@@ -139,7 +139,7 @@ return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
 
 ### `FileClockGuard`
 
-アプリが渡したパスのファイルに、最後に見た時刻を保存する時刻巻き戻し対策。既定のパスはない。`IDisposable` ではない。
+アプリが渡したパスのファイルに、最後に確認した時刻を保存する時刻巻き戻し対策。既定のパスはない。`IDisposable` ではない。
 
 | コンストラクター | 引数 |
 | --- | --- |
@@ -155,7 +155,7 @@ return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
-| `TryVerify` | `LicenseVerifier verifier`、`ReadOnlySpan<byte> licenseFile`、`ReadOnlySpan<byte> publicKeyJwk`、`string productId`、`out ServerIdentity? identity`、`out LicenseError? error` | `bool` | サーバーライセンスのファイルを、その製品の種類 `Server` のライセンスとして検証する。フィンガープリントは比べない（サーバーが自分のマシンで確かめる）。また、JWK で渡したサーバーの公開鍵のサムプリントが、ライセンスの `cnf.jkt` と一致することを求める。失敗すると、検証のエラーを返す。鍵が P-256 の JWK でなければ `ELM_MALFORMED`、別の鍵なら `ELM_SERVER_PIN_MISMATCH` を返す。`verifier` が `null` なら `ArgumentNullException` を、`productId` が空なら `ArgumentException` を投げる。 |
+| `TryVerify` | `LicenseVerifier verifier`、`ReadOnlySpan<byte> licenseFile`、`ReadOnlySpan<byte> publicKeyJwk`、`string productId`、`out ServerIdentity? identity`、`out LicenseError? error` | `bool` | サーバーライセンスのファイルを、指定した製品の、種類が `Server` のライセンスとして検証する。フィンガープリントは比べない（サーバーが自分のマシンで確かめる）。また、JWK で渡したサーバーの公開鍵のサムプリントが、ライセンスの `cnf.jkt` と一致することを求める。検証のエラー、鍵が P-256 の JWK でなければ `ELM_MALFORMED`、別の鍵なら `ELM_SERVER_PIN_MISMATCH` で失敗する。`verifier` が `null` なら `ArgumentNullException` を、`productId` が空なら `ArgumentException` を投げる。 |
 | `TryCreate` | `VerifiedLicense license`、`ReadOnlySpan<byte> publicKeyJwk`、`out ServerIdentity? identity`、`out LicenseError? error` | `bool` | 検証済みのサーバーライセンスから作る。サーバーライセンスでないライセンスなら `ELM_WRONG_KIND`、鍵が P-256 の JWK でなければ `ELM_MALFORMED`、別の鍵なら `ELM_SERVER_PIN_MISMATCH` で失敗する。`license` が `null` なら `ArgumentNullException` を投げる。 |
 | `Dispose` | なし | `void` | サーバーの鍵を解放する。 |
 
@@ -220,7 +220,7 @@ return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
 
 ### `ActivationClient`
 
-ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに届かないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。
+ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに接続できないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
@@ -228,7 +228,7 @@ return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
 | `ActivateAsync` | `string licenseKey`、`CancellationToken cancellationToken = default` | `Task<ActivationResult>` | ライセンスキーでこのインストールをアクティベーションする。保存したトライアルは、成功すれば置き換える。それ以外のアクティベーションか、アクティベーション解除のプルーフを保存しているときは、リクエストを送らずに `ELM_INVALID_STATE` を返す（先にアクティベーションを解除する）。キャンセルしたリクエストは `ELM_NETWORK_ERROR` で終わる。 |
 | `StartTrialAsync` | `CancellationToken cancellationToken = default` | `Task<ActivationResult>` | 製品のトライアルを始める。トライアルを含めて何かのアクティベーションを保存しているとき、またはアクティベーション解除のプルーフを保存しているときは、リクエストを送らずに `ELM_INVALID_STATE` を返す。 |
 | `RefreshAsync` | `CancellationToken cancellationToken = default` | `Task<ActivationResult>` | 保存したアクティベーションのトークンを、まだ時期が来ていなくても今すぐ更新する。クライアントは、トークンの更新を始める期間に入ったときにも自分で更新する。`ServiceUrl` がない、アクティベーションを保存していない、このデバイスの別のプロセスが 10 秒経ってもアクティベーションのロックを持っている、または 16 個のリクエストにレスポンスがなかった（待っているオフラインのリクエストは 1 つと数える）ときは、リクエストを送らずに `ELM_INVALID_STATE` を返す。 |
-| `DeactivateAsync` | `CancellationToken cancellationToken = default` | `Task<LicenseError?>` | このインストールのアクティベーションを解除する。サービスがその枠を空け、保存したライセンスファイルを消す。インストール鍵は残る。サービスがもう持っていないアクティベーションは、解除したものとして扱う。失敗したときは何も消さない。 |
+| `DeactivateAsync` | `CancellationToken cancellationToken = default` | `Task<LicenseError?>` | このインストールのアクティベーションを解除する。サービスがその枠を解放し、保存したライセンスファイルを消す。インストール鍵は残る。サービスがもう持っていないアクティベーションは、解除したものとして扱う。失敗したときは何も消さない。 |
 | `CreateActivationRequestAsync` | `string licenseKey`、`bool renew = false`、`CancellationToken cancellationToken = default` | `Task<OfflineRequestResult>` | オフラインのアクティベーションのリクエスト（`.elmreq`）を作る。7 日後に期限が切れるか、そのレスポンスをインポートするまでは、同じリクエストを署名し直して返す。`renew` を指定すると、それより前でも新しいリクエストを作る。デバイスの時計が遅れていて、サービスが `ELM_REQUEST_EXPIRED` を返したときに使う。トライアル以外のアクティベーションか、アクティベーション解除のプルーフを保存しているときは `ELM_INVALID_STATE` を返す。 |
 | `CreateRefreshRequestAsync` | `bool renew = false`、`CancellationToken cancellationToken = default` | `Task<OfflineRequestResult>` | 保存したアクティベーションの、オフラインでのトークンの更新のリクエストを作る。期限が切れるか、そのレスポンスをインポートするまでは、同じリクエストを返す。アクティベーションがなければ `ELM_INVALID_STATE` を返す。 |
 | `ImportResponseAsync` | `string response`、`CancellationToken cancellationToken = default` | `Task<ActivationResult>` | 待っているリクエストへのサービスのレスポンス（`.elmresp`、最大 256 KiB）をインポートし、オンラインのレスポンスと同じように確かめて保存する。別のリクエストへのレスポンスなら `ELM_REQUEST_MISMATCH`、レスポンスでないテキストなら `ELM_MALFORMED` で失敗する。保存したレスポンスをもう一度インポートしても、何も変わらない。 |
