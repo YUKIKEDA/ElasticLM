@@ -4,11 +4,32 @@ sidebar_position: 5
 
 # Logs
 
-This page lists what ElasticLM's logs hold: the signed usage log of `elm-server` and `elm-service`, the signed borrow record of `elm-server`, and the hash-chained audit log of `elm-service`. It gives the files, the line and row formats, every event and action, and how to verify each log. It is for administrators who read, keep, or hand over these logs, and for anyone who checks them for tampering. What the signatures protect against, and what they do not, is in the [Security model](../explanation/security-model.md).
+This page lists what ElasticLM's logs hold: the signed usage log of `elm-server` and `elm-service`, the signed borrow record of `elm-server`, and the hash-chained audit log of `elm-service`. It gives the files, the line and row formats, every event and action, and how to verify each log. It is for administrators who read, keep, or hand over these logs, and for anyone who checks them for tampering. What the signatures protect against, and what they do not, is in the [Security model](../explanation/security-model.md). The operational log, which is not signed, comes first.
+
+## Operational log
+
+While they run, `elm-server` and `elm-service` write messages about their own work to standard output, with the .NET console logger. This log is not signed, and the programs do not keep it in a file: to keep it, capture standard output, for example with the service manager or the container runtime that starts the program.
+
+Each message takes two lines: the level (`dbug`, `info`, `warn`, `fail`, or `crit`), the category, and the event number, then the message, indented. For example:
+
+```text
+info: elm-server[2]
+      server.stopped: 0 leases were not returned
+```
+
+| Category | Messages |
+| --- | --- |
+| `elm-server` | The start (port, public URLs, key ID, server license ID, and the end of the reclaim window) and the stop; each lease acquired, released, or reclaimed; detected clones; administration requests; license reloads and failed license renewals; a usage log that cannot be written, or whose chain could not continue at the start; a borrow record set aside; a failed cleanup. |
+| `elm-service` | The start (address, database, signing key, and the end of its certificates) and the stop; the database schema versions applied; signing key certificates that end within 30 days; where the usage log is; audit log rows and admin UI sessions removed; failed periodic tasks and database requests; a license file or lease that could not be signed; a usage log that cannot be written; the keys of the admin UI's sign-in made or skipped; refused API keys of inactive administrators; refused admin UI sign-ins; an identity provider that cannot be reached; and, at the `Debug` level, why an access token was refused. |
+| `Microsoft.*` | The web host's own messages, such as the address it listens on and its start and stop. |
+
+The level is `Information` by default. To change it, set the environment variable `Logging__LogLevel__Default` to `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, or `None`: for example, `Logging__LogLevel__Default=Warning` writes only warnings and errors.
+
+The error that stops a program before it starts is not part of this log: `elm-server` writes `error:` and the reason to standard error, and `elm-service` writes the reason to standard error. The exit codes are in [elm-server configuration](server-configuration.md#command-line-and-exit-codes) and [elm-service configuration](service-configuration.md#command-line-and-exit-codes).
 
 ## Usage log
 
-The usage log records leases, borrows, refusals, and the life of the server. It is a record for audits and billing questions: the seat count does not depend on it, and a failure to write it goes to the operational log without failing the request.
+The usage log records leases, borrows, refusals, and events of the program that writes it, such as its starts and stops. It is a record for audits and billing questions: the seat count does not depend on it, and a failure to write it goes to the operational log without failing the request.
 
 ### Who writes it and where
 
@@ -19,7 +40,7 @@ The usage log records leases, borrows, refusals, and the life of the server. It 
 
 - The UTC time in a name has the form `yyyyMMddTHHmmssfffZ`, for example `usage-20270125T093000123Z.jsonl`. Names sort in time order: a new file is never named before the newest one, even when the clock went back.
 - A new file starts at each start and at each new UTC day.
-- A node of `elm-service` does not start when another node of the same name already writes in the folder. Each node writes only its own files; collecting the files of every node is the operator's.
+- A node of `elm-service` does not start when another node of the same name already writes in the folder. Each node writes only its own files; collecting the files of every node is the operator's job.
 - Old files stay until the operator deletes them.
 - `elm-server` also keeps the borrow record, `borrows-<UTC time>.jsonl` in its data folder. It is a separate log, described in [Borrow record (elm-server)](#borrow-record-elm-server).
 
@@ -32,7 +53,11 @@ Each line is one JSON object followed by a line feed (JSON Lines). Every line st
 | `type` | The event or line type. |
 | `ts` | The time, in Unix seconds. |
 
-The other members depend on the type.
+The other members depend on the type. For example, a lease granted by `elm-server` (fake values):
+
+```json
+{"type":"lease.acquired","ts":1800000000,"lic":"LIC-0042","feat":"pro","n":1,"key":"q3V9xYc0lJm2nRtA8sKdE4fGhUiOpWzX1bN5vC7eY6M","lease":"Xk2bQ9rT4mVn8sLp0wZa1g","host":"ws-12","user":"alice","app":"2.1.0"}
+```
 
 ### Signed lines and the chain
 
@@ -40,14 +65,14 @@ The other members depend on the type.
 | --- | --- | --- |
 | `chain.start` | First line of a file that continues the chain of the previous file | `stream` (`usage`); `prev`: `file` (the previous file's name) and `auth` (the SHA-256 of its last `auth` line, base64url), left out when there is no previous file; then the key members below. |
 | `chain.reset` | First line of a file whose chain cannot continue: the previous file cannot be read, has no signature in its last 1 MiB, or a write failed | `stream`, `reason`, then the key members below. Signature numbering starts again at 1. |
-| `key.changed` | `elm-server` only, when the server license changes while it runs | `license`, `key`. The next signature is still made with the old key; later ones use the new key. |
-| `auth` | After every 100 lines, every 60 seconds when lines are pending, before a file is closed, and on an administrator's order | `sig`: an `elm-log+jws` token. |
+| `key.changed` | `elm-server` only, when the server license changes while it runs | `license` (the new server license file), `key` (the new public key, as a JWK). The next signature is still made with the old key; later ones use the new key. |
+| `auth` | After the first lines of each file, after every 100 lines, every 60 seconds when lines are pending, before a file is closed, and on an administrator's order | `sig`: an `elm-log+jws` token. |
 
 The key members of the first line say which key signs the file:
 
 | Program | Members |
 | --- | --- |
-| `elm-server` | `license` (the server license file) and `key` (the server's public key as a JWK). The server signs with its installation key. |
+| `elm-server` | `license` (the server license file) and `key` (here the server's public key as a JWK, not a thumbprint). The server signs with its installation key. |
 | `elm-service` | `node` (the node name) and `certificates` (one to four `elm-cert+jws` certificates of the service's signing key for logs). |
 
 The payload of an `auth` token:
@@ -58,7 +83,7 @@ The payload of an `auth` token:
 | `iat` | The time of signing, in Unix seconds. |
 | `jti` | A unique ID of the signature. |
 | `stream` | `usage` or `borrows`. |
-| `n` | The number of this signature in the chain, from 1. |
+| `n` | Here the number of this signature in the chain, from 1, not a seat count. |
 | `prev` | The SHA-256 of the previous `auth` line, line feed included, base64url; empty at the start of a new chain. |
 | `digest` | The SHA-256 of the lines this signature covers, line feeds included, base64url. |
 | `lines` | The number of lines covered. |
@@ -67,7 +92,7 @@ The administrator's order to sign now: `elm server seal` or `POST /admin/v1/log/
 
 ### Events of `elm-server`
 
-Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the seats), `key` (the thumbprint of the client's installation key), and `lease` (the lease ID), where the event knows them.
+Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the seats), `key` (the thumbprint of the client's installation key), and `lease` (the lease ID), where the event knows them. `code` and `result` hold an error code name, such as `ELM_NO_SEATS`; the codes are listed in [Error codes](error-codes.md).
 
 | Type | Written when | Members |
 | --- | --- | --- |
@@ -83,7 +108,7 @@ Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the 
 | `lease.denied` | Refused acquisitions, renewals, reclaims, and early returns, counted every 60 seconds and at stop | `feat` (when known), `code`, `count` |
 | `admin.denied` | Administration requests without the right token, counted every 60 seconds and at stop | `code` (`ELM_UNAUTHORIZED`), `count` |
 | `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`), `result` (an error code name) |
-| `server.started` | The server starts | `lic`, `key` (the server's key ID), `borrows` (the borrows restored) |
+| `server.started` | The server starts | `lic`, `key` (here the server's key ID: the thumbprint of the server's own installation key, not a client's), `borrows` (the borrows restored) |
 | `server.stopped` | The server stops | `leases` (the leases not returned) |
 | `records.set_aside` | The server started with `--set-aside-broken-records` and moved a broken borrow record aside | `file` |
 | `license.refreshed` | The server license was renewed from `elm-service` | `lic`, `token` (the token ID), `seq` |
@@ -93,7 +118,7 @@ A refusal line counts one kind (feature and code) for the period. Up to 100 kind
 
 ### Events of `elm-service`
 
-Lease lines carry `lic` (the license ID), `prd` (the product's `code`), `feat`, `n`, `key` (the thumbprint of the device's installation key), and `lease`. License keys are never written. Activations, administration, and clone detection are in the audit log, not here.
+Lease lines carry `lic` (the license ID), `prd` (the product's `code`, the product ID that apps and license files use, such as `acme-cad`; not the product's `id` in the administration API), `feat`, `n` (the seats), `key` (the thumbprint of the device's installation key), and `lease`. `exp` is the lease's expiry in Unix seconds. `code` holds an error code name; see [Error codes](error-codes.md). License keys are never written. Activations, administration, and clone detection are in the audit log, not here.
 
 | Type | Written when | Members |
 | --- | --- | --- |
@@ -104,7 +129,7 @@ Lease lines carry `lic` (the license ID), `prd` (the product's `code`), `feat`, 
 | `borrow.returned` | A borrow is returned early, or released by an administrator | As `lease.released` |
 | `lease.expired` | The cleanup removes an expired lease | `lic`, `prd`, `feat`, `n`, `key`, `lease` |
 | `borrow.expired` | The cleanup removes an ended borrow | `lic`, `prd`, `feat`, `n`, `key`, `lease` |
-| `lease.denied` | Acquisitions, renewals, and releases refused by the lease rules, counted every minute, at stop, and on a seal order; refusals for a bad proof, the rate limit (`429`), or the body size (`413`) are not counted | `feat` (when known), `code`, `count` |
+| `lease.denied` | Acquisitions, renewals, and releases refused by the lease rules, counted every 60 seconds, at stop, and on a seal order; refusals for a bad proof, the rate limit (`429`), or the body size (`413`) are not counted | `feat` (when known), `code`, `count` |
 | `service.started` | The node starts, before it accepts requests | `node` |
 | `service.stopped` | The node stops | `node` |
 
@@ -116,15 +141,12 @@ A line is written after the request's change is committed. An expired lease is w
 elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--json]
 ```
 
-| Option | Value | Default | Meaning |
-| --- | --- | --- | --- |
-| `<files or folders>` | Paths | — | The log files, or folders of them. Files are verified in name order, oldest first. A folder stands for the files of the stream in it. |
-| `--product` | Product ID | — | The product ID of the server license; needed for `elm-server`'s log, not for `elm-service`'s. |
-| `--node` | Node name | — | For folders of `elm-service`'s usage logs: the node whose `usage-<node>-*.jsonl` files to verify. Not with file paths. |
-| `--stream` | `usage` or `borrows` | `usage` | The usage log or the borrow record. |
-| `--trust` | File | The PEM keys in `ELM_TRUST_ROOT_KEYS` | A root public key file to trust. Repeat for several. |
-| `--revoked` | Key ID | — | A revoked key ID. Repeat for several. |
-| `--json` | — | — | Writes `intact`, `files`, `entries`, and `issues` (each with `file`, `line`, `severity`, `message`) as JSON. |
+Every option is listed in [`elm log verify`](elm-cli.md#elm-log-verify). For the usage log:
+
+- Give the log files, or folders of them. Files are verified in name order, oldest first. A folder stands for the files of the stream in it.
+- `--product` is needed for the log of `elm-server`, not for that of `elm-service`.
+- `--node` picks a node's `usage-<node>-*.jsonl` files in folders of `elm-service`'s usage logs. It is not allowed with file paths.
+- `--json` writes `intact`, `files`, `entries`, and `issues` (each with `file`, `line`, `severity`, `message`).
 
 The command checks the key material of each first line against the trust store at the time of that line: a server license for `elm-server`, certificates for logs for `elm-service`. It then checks every `auth` line, the chain inside each file, and the chain from file to file. The text output gives one line per issue, `error: <file>:<line>: <message>` or `warning: ...`, then `intact: <files> file(s), <lines> event line(s)` or `NOT INTACT: ...`.
 
@@ -134,7 +156,7 @@ The command checks the key material of each first line against the trust store a
 | 1 | Not intact: at least one error. |
 | 2 | Invalid input, such as a path that is not a file or folder, or no log file found. |
 
-Errors: a line that is not JSON or is longer than 1 MiB, a first line that is not `chain.start` or `chain.reset`, another stream, key material that does not verify, a signature that is not by the file's key, a `digest` or line count that does not match, a break in `prev` or `n`, no old-key signature after `key.changed`, a missing or cut file between files, a file that continues with another key than the previous file's last key under another license, and for `elm-service` a file that names another node or a `key.changed` line.
+Errors: a file that cannot be read or is empty, a line that is not JSON or is longer than 1 MiB, a first line that is not `chain.start` or `chain.reset`, a chain line after the first line, another stream, key material that does not verify, a signature that is not by the file's key, a `digest` or line count that does not match, a break in `prev` or `n`, no old-key signature after `key.changed`, a missing or cut file between files, a file that continues with another key than the previous file's last key under another license, files of a server and of `elm-service` mixed in one chain, and for `elm-service` a file that names another node or no node, or a `key.changed` line.
 
 Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle, a server that moved (another key of the same server license), and an `elm-service` signing key that was replaced.
 
@@ -176,8 +198,14 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 | `borrow` | The server license's borrow limit at the time of the borrow, in seconds. |
 | `fp` | The machine fingerprints that the client sent: an array of at most 8 strings. Anything else is read as no fingerprints. |
 | `id` | The lease ID of the returned borrow. |
-| `key` | The thumbprint of the installation key that borrowed it. |
+| `key` | The thumbprint of the client's installation key that borrowed it. |
 | `at` | The time of the return, in Unix seconds. |
+
+For example, an early return (fake values):
+
+```json
+{"type":"borrow.returned","ts":1800003600,"id":"Xk2bQ9rT4mVn8sLp0wZa1g","key":"q3V9xYc0lJm2nRtA8sKdE4fGhUiOpWzX1bN5vC7eY6M","fp":["3f2a9c4e1b7d40a8b6e5c2d9f0a1b3c4"],"at":1800003600}
+```
 
 `lic`, `seats`, and `borrow` let the server refuse an early return after the server license changed. The returns of the last 30 days count against the early returns that an installation key and each fingerprint may make. The usage log has events of the same names with other members; the two logs are separate.
 
@@ -185,9 +213,13 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 
 1. The server verifies the newest file as `elm log verify` does. The file's last key must be the server's own key, or a key of the same server license (the server moved to another machine). A record of another server counts as broken.
 2. A broken record stops the start with exit code 1, and the message names the problem. With `--set-aside-broken-records`, the server renames the file, starts without its borrows, and writes `records.set_aside` with the file name to the usage log.
-3. From an intact file, the server restores the borrows whose lease token it signed and that have not expired, less the returned ones. Lines after the last `auth` line, left by a stop right after a write, are read for `borrow.started` but not for `borrow.returned`: the client of such a return was not told that it succeeded.
+3. From an intact file, the server restores the borrows whose lease token it signed and that have not expired, less the returned ones.
 
 The borrows in a file that was set aside, deleted, or edited are not counted until they end. An administrator who can write to the data folder can free borrowed seats this way; the traces are `records.set_aside` and `chain.reset` in the logs, or a missing file.
+
+#### Reading the record yourself
+
+A stop right after a write can leave event lines after the last `auth` line. At start, the server reads such a line when it is `borrow.started`, but not when it is `borrow.returned`: the client of such a return was not told that it succeeded.
 
 ### Verifying the borrow record
 
@@ -214,13 +246,13 @@ Secrets, such as API keys, are never written.
 
 | Field | Value |
 | --- | --- |
-| `n` | The row number. |
+| `n` | Here the row number, not a seat count. |
 | `ts` | The time. Stored as Unix seconds; the administration API returns it as `yyyy-MM-ddTHH:mm:ssZ`. |
 | `actorType` | `apikey`, `oidc`, `system`, or `installation`. |
 | `actorId` | For `apikey`, the API key ID. For `oidc`, the administrator's ID. For `system`, `setup` or `auth`. For `installation`, the thumbprint of the device's installation key. |
 | `action` | The action, from the table below. |
 | `target` | What the action acted on, such as a license, activation, or lease ID; or `null`. |
-| `result` | `ELM_OK`, or the error code name of the refusal. |
+| `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). |
 | `ip` | The source address, or `null`. |
 | `detail` | A JSON object with the action's details, or `null`. |
 | `prev` | The hash of the previous row (32 bytes). |
@@ -287,7 +319,11 @@ A call refused for a missing permission is recorded with its action, `result` `E
 
 ### The hash chain
 
-A row's hash is the SHA-256 of its columns in this order: `n`, `ts`, `actorType`, `actorId`, `action`, `target`, `result`, `ip`, `detail`, `prev`. Each column is a 4-byte big-endian length followed by its UTF-8 bytes. Numbers are decimal text, `ts` in Unix seconds. `prev` is its 32 raw bytes after the length `0x00000020`. `NULL` is the length `0xFFFFFFFF` with no bytes, so it differs from an empty string. The first row's `prev` is 32 zero bytes.
+Each row holds the hash of the previous row (`prev`) and its own hash (`hash`), so a changed, removed, or inserted row breaks the chain. The service checks the chain on request; see [Verifying the audit log](#verifying-the-audit-log).
+
+#### Checking the chain yourself
+
+To check the rows without the service, compute each row's hash as the SHA-256 of its columns in this order: `n`, `ts`, `actorType`, `actorId`, `action`, `target`, `result`, `ip`, `detail`, `prev`. Each column is a 4-byte big-endian length followed by its UTF-8 bytes. Numbers are decimal text, `ts` in Unix seconds. `prev` is its 32 raw bytes after the length `0x00000020`. `NULL` is the length `0xFFFFFFFF` with no bytes, so it differs from an empty string. The first row's `prev` is 32 zero bytes.
 
 ### Retention
 
@@ -304,4 +340,4 @@ With a retention period, the service removes old rows every hour: the rows befor
 | `POST /v1/admin/audit/verify` | `audit.read` | `intact` (true or false), `checked` (the rows read), `firstBroken` (the number of the first row that does not follow, or `null`). |
 | `GET /v1/admin/audit` | `audit.read` | `items` (rows with the fields above) and `next`. Query: `limit` (1 to 200, default 50), `after` (a row number), `order` (`asc`, the default, or `desc`). |
 
-The check reads the rows from the chain's start in one snapshot: the numbers follow, each `prev` is the previous row's hash, each hash matches its row, and the last row matches the chain's head. Someone who can write to the database can rewrite the rows and their hashes; the chain does not detect that.
+The check reads the rows from the chain's start in one snapshot: the numbers follow, each `prev` is the previous row's hash, each hash matches its row, and the number and hash of the last row are those that the service stores apart from the rows at each append, so a removed last row or a row added after it is found. Someone who can write to the database can rewrite the rows and their hashes; the chain does not detect that.

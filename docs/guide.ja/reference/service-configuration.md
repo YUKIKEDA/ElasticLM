@@ -24,7 +24,7 @@ elm-service [setup] [--config <settings.json>]
 | 終了コード | 意味 |
 | --- | --- |
 | 0 | サービスが正常に止まった |
-| 1 | サービスを起動できない。たとえば、署名鍵や証明書のファイルを読めない、署名鍵と証明書が対応していない、データベースでエラーが起きた |
+| 1 | サービスを起動できない。たとえば、ルート公開鍵が指定されていない、署名鍵のパスフレーズが指定されていない、署名鍵や証明書のファイルを読めない、署名鍵と証明書が対応していない、データベースでエラーが起きた、利用ログを書き込めない、`listen` で待ち受けられない |
 | 2 | 引数が有効でない。または設定のエラー（設定ファイルや値が有効でない、必須の値がない） |
 
 `setup` の終了コード:
@@ -32,7 +32,7 @@ elm-service [setup] [--config <settings.json>]
 | 終了コード | 意味 |
 | --- | --- |
 | 0 | API キーを作った |
-| 1 | データベースでエラーが起きた。使えない、スキーマがこのバージョンの `elm-service` より新しい、適用済みのマイグレーションが変わっている、`bootstrapOwner` の管理者が存在するが無効になっているか別のロールを持っている、キーを記録できない、のいずれか |
+| 1 | データベースでエラーが起きた。使えない、スキーマがこのバージョンの `elm-service` より新しいか、別のバージョンによって違う形に変えられている、`bootstrapOwner` の管理者が存在するが無効になっているか別のロールを持っている、キーを記録できない、のいずれか |
 | 2 | 引数が有効でない、サービスと同じ設定のエラーがある、`bootstrapOwner` が設定されていない、または `database` の設定を使えない |
 
 終了コード 1 か 2 で終わる前に、`elm-service` は理由を標準エラー出力に表示する。
@@ -47,7 +47,7 @@ elm-service [setup] [--config <settings.json>]
   ```
 
 - `--config` がなければ、`elm-service` は環境変数だけを読む。
-- 環境変数は、ファイルにある同じ設定より優先する。空の値を設定した環境変数は、設定されていないものとして扱う。
+- 環境変数は、ファイルにある同じ設定より優先する。空の値を設定した環境変数は、設定されていないものとして扱う。ただ 1 つの例外は `ELM_SIGNING_PASSPHRASE` で、空の値は空のパスフレーズとして使う。
 - ファイルは 64 KiB までだ。ファイルが知らないキー（たとえばつづりを間違えたキー）はエラーになる。キーの名前は大文字と小文字を区別する。
 - ファイルの値は省略してよいが、空にしてはならない。空の文字列や、リストの中の空または `null` の要素は、既定値にはならずエラーになる。
 - シークレットは設定ファイルに書かない。[シークレット](#シークレット)を参照。
@@ -63,11 +63,11 @@ elm-service [setup] [--config <settings.json>]
 | 設定 | 環境変数 | 変数の中身 |
 | --- | --- | --- |
 | `database.connectionFile` | `ELM_DATABASE_CONNECTION` | 接続文字列そのもの。ファイルのパスではない |
-| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | 署名鍵のパスフレーズそのもの。ファイルのパスではない |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | 署名鍵のパスフレーズそのもの。ファイルのパスではない。空の値は空のパスフレーズになる |
 | `nonce.secretFile` | `ELM_NONCE_SECRET` | ノンスのシークレットそのもの（base64）。ファイルのパスではない |
 | `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET` | Web クライアントのシークレットそのもの。ファイルのパスではない |
 | `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK` | 鍵暗号化鍵そのもの（base64）。ファイルのパスではない |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` または `ELM_TRUST_ROOT_KEYS` | `ELM_TRUST_ROOTKEYS` は規則に従い、ファイルのパスを入れる。`ELM_TRUST_ROOT_KEYS` はルート公開鍵を PEM テキストで入れ、ファイルから鍵が 1 つも得られないときだけ読む |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` または `ELM_TRUST_ROOT_KEYS` | `ELM_TRUST_ROOTKEYS` は規則に従い、ファイルのパスを入れる。`ELM_TRUST_ROOT_KEYS` はルート公開鍵を PEM テキストで入れ、ファイルから鍵が 1 つも得られないときだけ読む。**2 つ目の `_` に注意:** 2 つの名前の違いはこれだけだ |
 | `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | スコープを `;` ではなく空白で区切る |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | `value=role` の組を `;` で区切る。たとえば `elm-owners=owner;elm-support=support`。`;` を含むクレームの値は、代わりにファイルに書く |
 
@@ -76,7 +76,7 @@ elm-service [setup] [--config <settings.json>]
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `listen` | `ELM_LISTEN` | URL | `http://127.0.0.1:8080` | サービスが待ち受ける場所。パス、クエリ、フラグメントのない `http` または `https` の URL。ホストは IP アドレス、`localhost`、`0.0.0.0`、`[::]` のいずれか。`https` には `tls.certificate` と `tls.key` が必要 |
-| `publicUrls` | `ELM_PUBLICURLS` | URL のリスト | `listen` の URL（`listen` がループバックアドレスか `localhost` のときだけ） | デバイスがサービスに接続するときの URL。デバイスのプルーフは、このうちの 1 つを指定していなければならない。どれもクエリとフラグメントのない `https` の URL。`listen` がループバックアドレスでなければ必須。TLS を終端するプロキシの後ろでは、`listen` が `http` でも、これらは `https` にする。管理画面のログインを有効にしたときは、管理画面は最初の URL で提供するので、その URL は `https` で、パスが `/` でなければならない |
+| `publicUrls` | `ELM_PUBLICURLS` | URL のリスト | `listen` の URL（`listen` がループバックアドレスか `localhost` のときだけ） | デバイスがサービスに接続するときの URL。デバイスのプルーフは、このうちの 1 つを指定していなければならない。どれもクエリとフラグメントのない `https` の URL。`listen` がループバックアドレスでなければ必須。TLS を終端するプロキシの後ろでは、`listen` が `http` でも、これらは `https` にする。管理画面のサインインを有効にしたときは、管理画面は最初の URL で提供するので、その URL は `https` で、パスが `/` でなければならない（`publicUrls` がなければ、ループバックの `listen` の URL で提供する） |
 
 ## `tls`
 
@@ -90,15 +90,22 @@ elm-service [setup] [--config <settings.json>]
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `database.provider` | `ELM_DATABASE_PROVIDER` | 文字列 | `sqlite` | `sqlite` または `postgres`。SQLite は 1 ノードでしか使えない。複数のノードには PostgreSQL（15 から 18）が必要 |
-| `database.connectionFile` | `ELM_DATABASE_CONNECTION`（接続文字列） | ファイルのパス | なし（必須） | 接続文字列を入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
+| `database.connectionFile` | `ELM_DATABASE_CONNECTION` | ファイルのパス | なし（必須） | 接続文字列を入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
+
+接続文字列は、データベースのドライバーのものを使う。`sqlite` なら Microsoft.Data.Sqlite、`postgres` なら Npgsql だ。たとえば次のように書く（値は架空のもの）。
+
+```text
+Data Source=/var/lib/elm-service/elm.db
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password
+```
 
 ## `signing`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。各証明書の前後の空白と改行は取り除く。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
-| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE`（パスフレーズ） | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `trust`
 
@@ -114,11 +121,16 @@ elm-service [setup] [--config <settings.json>]
 | `bootstrapOwner.iss` | `ELM_BOOTSTRAPOWNER_ISS` | 文字列 | なし | 最初の `owner` の管理者の OIDC 発行者（issuer）。1 から 255 文字。`iss` と `sub` は両方設定するか、どちらも設定しない。`oidc.issuer` を設定したときは、`oidc.issuer` と同じでなければならない |
 | `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_SUB` | 文字列 | なし | その発行者における、最初の `owner` の管理者のサブジェクト（`sub`）。1 から 255 文字 |
 
+`elm-service setup` には `bootstrapOwner` が必要で、この管理者の API キーを作る。
+
+- OIDC を使うとき（`oidc.issuer` を設定したとき）: `iss` は ID プロバイダーの発行者、`sub` は、最初の `owner` になる人に ID プロバイダーが与えるサブジェクトだ。その人がサインインすると、`oidc.roleMap` の内容にかかわらず `owner` のロールを得る。
+- OIDC を使わないとき: 誰もサインインせず、最初の `owner` は `setup` が作る API キーで操作する。`iss` と `sub` はその管理者に名前を付けるだけなので、`local` と `owner` のように、1 から 255 文字の任意の文字列でよい。あとで OIDC を有効にするかもしれないなら、最初から、その ID プロバイダーの発行者とその人のサブジェクトを使う。OIDC を有効にすると、`bootstrapOwner.iss` は `oidc.issuer` と同じでなければならず、その `sub` を持つ人がサインインのときに `owner` のロールを得る。
+
 ## `nonce`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `nonce.secretFile` | `ELM_NONCE_SECRET`（シークレット） | ファイルのパス | なし（必須。`setup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。シークレットだ。[シークレット](#シークレット)を参照 |
+| `nonce.secretFile` | `ELM_NONCE_SECRET` | ファイルのパス | なし（必須。`setup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `rateLimit`
 
@@ -139,7 +151,7 @@ elm-service [setup] [--config <settings.json>]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `usageLog.directory` | `ELM_USAGELOG_DIRECTORY` | フォルダーのパス | なし。利用ログを書かない | このノードの利用ログのフォルダー。サービスがこのフォルダーに書き込めなければならず、署名鍵の証明書がログへの署名を許可していなければならない |
+| `usageLog.directory` | `ELM_USAGELOG_DIRECTORY` | フォルダーのパス | なし。利用ログを書かない | このノードの利用ログのフォルダー。サービスがこのフォルダーに書き込めなければならず、署名鍵の証明書がログへの署名を許可していなければならない。そのような証明書は、[`elm key certify`](elm-cli.md#elm-key-certify) に `--use log` を付けて作る（`--use license,lease,log` のように、ほかの用途と一緒に指定する） |
 
 ## `node`
 
@@ -156,23 +168,32 @@ elm-service [setup] [--config <settings.json>]
 | `oidc.issuer` | `ELM_OIDC_ISSUER` | URL | なし。OIDC は無効 | 発行者（issuer）。クエリ、フラグメント、ユーザー情報のない `https` の URL（またはループバックのホストの `http`）で、2048 文字まで。トークンの `iss` とは文字列として比べる。設定したときは、`oidc.audience`、`oidc.cliClientId`、`oidc.roleMap` が必須になる |
 | `oidc.audience` | `ELM_OIDC_AUDIENCE` | 文字列 | なし | アクセストークンの `aud` が含んでいなければならない値。1 から 255 文字。`oidc.cliClientId` とは別の値にする |
 | `oidc.cliClientId` | `ELM_OIDC_CLICLIENTID` | 文字列 | なし | `elm admin login` が使うクライアント ID。シークレットを持たないパブリッククライアント。1 から 255 文字 |
-| `oidc.cliScopes` | `ELM_OIDC_CLISCOPES`（空白区切り） | 文字列のリスト | `openid`、`offline_access` | `elm admin login` が要求するスコープ。1 から 20 個で、それぞれ空白、`"`、`\` を含まない 1 から 100 文字の印字可能な ASCII 文字 |
+| `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | 文字列のリスト | `openid`、`offline_access` | `elm admin login` が要求するスコープ。1 から 20 個で、それぞれ空白、`"`、`\` を含まない 1 から 100 文字の印字可能な ASCII 文字 |
 | `oidc.roleClaim` | `ELM_OIDC_ROLECLAIM` | 文字列 | `groups` | 値がロールを表すトークンのクレーム。1 から 255 文字 |
-| `oidc.roleMap` | `ELM_OIDC_ROLEMAP`（`;` で区切った `value=role` の組） | 文字列のオブジェクト | なし | クレームの値と、その値に与えるロール。1 から 100 個。値は 1 から 255 文字で、ロールは `owner`、`admin`、`support`、`viewer` のいずれか。環境変数では、同じ値を 2 回書かない |
-| `oidc.webClientId` | `ELM_OIDC_WEBCLIENTID` | 文字列 | なし。管理画面のログインは無効 | 管理画面のログインに使うコンフィデンシャルクライアント。1 から 255 文字。`oidc.issuer` と Web クライアントのシークレットが必要。`oidc.cliClientId` とも `oidc.audience` とも別の値にする |
-| `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET`（シークレット） | ファイルのパス | なし | Web クライアントのシークレットを入れたファイル。空白を含まない 1 から 1024 文字の印字可能な ASCII 文字。`oidc.webClientId` を設定したときは必須。シークレットだ。[シークレット](#シークレット)を参照 |
+| `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | 文字列のオブジェクト | なし | クレームの値と、その値に与えるロール。1 から 100 個。値は 1 から 255 文字で、ロールは `owner`、`admin`、`support`、`viewer` のいずれか。環境変数では、同じ値を 2 回書かない |
+| `oidc.webClientId` | `ELM_OIDC_WEBCLIENTID` | 文字列 | なし。管理画面のサインインは無効 | 管理画面のサインインに使うコンフィデンシャルクライアント。1 から 255 文字。`oidc.issuer` と Web クライアントのシークレットが必要。`oidc.cliClientId` とも `oidc.audience` とも別の値にする |
+| `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET` | ファイルのパス | なし | Web クライアントのシークレットを入れたファイル。空白を含まない 1 から 1024 文字の印字可能な ASCII 文字。`oidc.webClientId` を設定したときは必須。シークレットだ。[シークレット](#シークレット)を参照 |
+
+管理画面のサインインを使うには、ID プロバイダーに Web クライアントを次の URL で登録する。`<origin>` は、`publicUrls` の最初の URL（`https://activation.example.com` など）のスキーム、ホスト、ポートだ。`publicUrls` がなければ、ループバックの `listen` の URL のものになる。
+
+| ID プロバイダーでの項目 | URL |
+| --- | --- |
+| リダイレクト URI（コールバック） | `<origin>/auth/callback` |
+| ログアウト後のリダイレクト URI | `<origin>/` |
+
+サインインには PKCE 付きの認可コードフローを使い、スコープは `openid` だけを要求する。サインアウトのときは、ID プロバイダーのディスカバリードキュメントに `end_session_endpoint` があれば、管理画面はブラウザーを `client_id` と `post_logout_redirect_uri` 付きでそのエンドポイントに送る。
 
 ## `apiKeys`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `apiKeys.inactiveAdminDays` | `ELM_APIKEYS_INACTIVEADMINDAYS` | 整数 | `90` | 管理者がこの日数ログインしないと、その管理者の API キーが使えなくなる。0 から 3650。`0` にするとこのルールは無効になる。`oidc.issuer` を設定したときだけ適用する |
+| `apiKeys.inactiveAdminDays` | `ELM_APIKEYS_INACTIVEADMINDAYS` | 整数 | `90` | 管理者がこの日数サインインしないと、その管理者の API キーが使えなくなる。0 から 3650。`0` にするとこのルールは無効になる。`oidc.issuer` を設定したときだけ適用する |
 
 ## `dataProtection`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK`（鍵） | ファイルのパス | なし | 管理画面のログインに使う鍵暗号化鍵を入れたファイル。32 バイトを base64 で書く。`oidc.webClientId` を設定したときは必須で、設定しないときは指定できない。シークレットだ。[シークレット](#シークレット)を参照 |
+| `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK` | ファイルのパス | なし | 管理画面のサインインに使う鍵暗号化鍵を入れたファイル。32 バイトを base64 で書く。`oidc.webClientId` を設定したときは必須で、設定しないときは指定できない。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `session`
 
@@ -195,7 +216,7 @@ elm-service [setup] [--config <settings.json>]
 | Web クライアントのシークレット | `ELM_OIDC_WEBCLIENTSECRET` | `oidc.webClientSecretFile` | 空白を含まない 1 から 1024 文字の印字可能な ASCII 文字 | `oidc.webClientId` を設定したとき |
 | 鍵暗号化鍵 | `ELM_DATAPROTECTION_KEK` | `dataProtection.kekFile` | 32 バイトを base64 で書く。すべてのノードで同じ値 | `oidc.webClientId` を設定したとき |
 
-- シークレットのファイルは 16 KiB までで、空であってはならない。末尾の改行は取り除く。
+- シークレットのファイルは 16 KiB までで、空であってはならない。末尾にある改行はすべて取り除く。
 - 署名鍵そのものはファイル（`signing.key`）で、上のパスフレーズで暗号化する。その鍵証明書（`signing.certificates`）とルート公開鍵（`trust.rootKeys`）は公開してよいもので、シークレットではない。
 - CLI のクライアント（`oidc.cliClientId`）にはシークレットがない。
 

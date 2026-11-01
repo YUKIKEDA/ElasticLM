@@ -8,69 +8,96 @@ This page lists every ElasticLM error code: what it means, which part returns it
 
 ## Where codes appear
 
-The same code reaches you in four ways. In .NET, a failed check or request carries a `LicenseError`, whose `Code` is an `ErrorCode` value and whose `WireName` is the name in the table. In libelasticlm, a function that returns a number returns the code's number, and `elasticlm.h` defines a macro with the code's name for each one (`ELM_NO_SEATS` is `40`); `elm_last_error_message` gives this thread's message. The HTTP APIs of `elm-server` and `elm-service` answer an error with a problem response (RFC 9457, `application/problem+json`) whose `code` member, and also `title`, hold the name. `elm` writes the name in its output, such as `invalid: ELM_EXPIRED: The license has expired.` from `elm license verify`. A code's name and number never change once published; a new code takes a free number.
+The same code reaches you in four ways. In .NET, a failed check or request carries a `LicenseError`, whose `Code` is an `ErrorCode` value and whose `WireName` is the name in the tables. In libelasticlm, a function that returns a number returns the code's number, and `elasticlm.h` defines a macro with the code's name for each one (`ELM_NO_SEATS` is `40`); `elm_last_error_message` gives this thread's message. The HTTP APIs of `elm-server` and `elm-service` answer an error with a problem response (RFC 9457, `application/problem+json`) whose `code` member, and also `title`, hold the name. `elm` writes the name in its output, such as `invalid: ELM_EXPIRED: The license has expired.` from `elm license verify`. A code's name and number never change once published; a new code takes a free number.
 
-The parts in the "Returned by" column:
+The "Returned by" column names the programs and libraries that return the code themselves:
 
-- **verification**: the checks of a license file, a lease token, or a server key, in the .NET library and in libelasticlm.
-- **client**: the .NET client and libelasticlm, for what they do beyond verification: activation, leases, the server pin, the files they keep.
-- **elm-server**: the on-premises license server, in its answers to clients and in its local administration API.
-- **elm-service**: the hosted activation service, in its answers to devices and in its administration API.
-- **elm**: the command line tool.
-- **libelasticlm**: the C library itself, for errors in how it is called.
+- `ElasticLM.Licensing`: the .NET library that checks a license file, a lease token, and a server license.
+- `ElasticLM.Client`: the .NET client for activation and leases. It runs the checks of `ElasticLM.Licensing` on every license and lease it receives or keeps, so it also returns their codes.
+- `libelasticlm`: the C library. It offers the functions of both .NET libraries and returns their codes, and adds codes for how it is called.
+- `elm-server`: the on-premises license server, in its answers to clients and in its local administration API.
+- `elm-service`: the hosted activation service, in its answers to devices and in its administration API.
+- `elm`: the command line tool, for the checks it runs itself, such as `elm license verify`. `elm` also prints any code that `elm-server` or `elm-service` answers it with.
 
 An HTTP status is given when a server sends the code over HTTP. A dash means the code is only returned locally.
 
-## Codes
+## What the client retries on its own
+
+`ElasticLM.Client` and `libelasticlm` handle a few codes without the app:
+
+- `ELM_NONCE_REQUIRED`: the client sends the request once more with the new nonce from the answer. The app sees the code only when the second request gets it too.
+- A lease renewal runs in the background. When it fails with any code other than `ELM_CLONE_DETECTED` or `ELM_UNKNOWN_LEASE`, the client tries again after 15 seconds, then 30, then every 60 seconds until the lease expires. `ELM_UNKNOWN_LEASE` from `elm-server` makes the client reclaim its leases; from `elm-service`, and after `ELM_CLONE_DETECTED`, the lease is lost. [Floating licenses](../explanation/floating-licenses.md#renewal-and-retries) explains the states.
+- A refresh of a kept activation also runs in the background. When it fails, the client tries again an hour later, or after the `Retry-After` time when that is longer (at most a day). It does not try again after `ELM_PROOF_INVALID` or a detected clone. [Activation](../explanation/activation.md#refresh) explains refresh.
+
+Every other failure goes back to the app, including those of an acquire, a borrow, an activation, and a trial. When the server sent `Retry-After` (with `ELM_SERVER_RECOVERING` or `ELM_RATE_LIMITED`), the result carries the time: `RetryAfter` of `LeaseResult.Failed` or `ActivationResult.Failed` in .NET, and the `retry_after_seconds` output in C.
+
+## Success, checks, and signed requests (0 to 24)
 
 | Code | Number | HTTP status | Returned by | Meaning | What to do |
 | --- | --- | --- | --- | --- | --- |
-| `ELM_OK` | 0 | 2xx | All parts | Success. | Nothing. |
-| `ELM_INVALID_ARGUMENT` | 1 | 400 | elm-server, elm-service, libelasticlm | An argument is invalid: a bad query value or body member of the administration API, a feature version that is not `major.minor[.patch]`, a seat count outside 1 to the feature's seats, a renewal of a borrowed lease, a `NULL` output or a wrong `struct_size` in C. | Fix the call; the message names the argument. |
-| `ELM_MALFORMED` | 2 | 400 | verification, client, elm-server, elm-service, libelasticlm | The input has the wrong format or size: a license file or token that is not valid, a file over its size limit, a request body that does not parse, a damaged kept activation file, a server answer that is not valid. | Check that the file or body is the one expected and complete. For a damaged kept activation, have an administrator deactivate it and activate again. |
-| `ELM_UNTRUSTED_KEY` | 3 | — | verification | No certificate in the license or lease certifies its signing key with a root key in the trust store. | Check that the app trusts the issuer's root key and that the file comes from that issuer. |
-| `ELM_BAD_SIGNATURE` | 4 | — | verification, elm-server | A signature does not verify, or the token is not signed with ES256. `elm-server` gives it per lease in a reclaim answer. | Treat the file as edited or damaged; get a new one from the issuer. |
-| `ELM_CERTIFICATE_EXPIRED` | 5 | — | verification | The token was issued outside the validity period of its key certificate. | Ask the issuer for a file signed under a valid certificate. |
-| `ELM_CLOCK_TAMPERED` | 6 | — | verification | The clock was set back, or the token is issued in the future. | Correct the system clock. |
-| `ELM_WRONG_PRODUCT` | 7 | 400 | verification, elm-service | The license or lease is for another product. In `elm-service`, the license key is not for the product in the request. | Use the license or key of this product. |
-| `ELM_WRONG_INSTALLATION` | 8 | — | verification | The license or lease is bound to another installation key. | Activate this installation, or use its own license. |
-| `ELM_FINGERPRINT_MISMATCH` | 9 | — | verification | The machine fingerprints do not match the license. | Run on the licensed machine, or have the license reissued for this one. |
-| `ELM_EXPIRED` | 10 | 403 | verification, client, elm-server, elm-service | The license or lease is past its expiry and grace period. On a server, the server license or the license has expired. | Renew or extend the license. |
-| `ELM_FEATURE_NOT_LICENSED` | 11 | 403 | verification, elm-server, elm-service | The feature is not in the license. | Ask for a license with the feature. |
-| `ELM_FEATURE_VERSION_NOT_LICENSED` | 12 | 403 | verification, elm-server, elm-service | The feature version is outside the licensed range. | Ask for a license that covers this version. |
-| `ELM_FEATURE_EXPIRED` | 13 | 403 | verification, elm-server, elm-service | The feature is past its own expiry. | Renew the feature. |
-| `ELM_FINGERPRINT_UNAVAILABLE` | 14 | 400 | verification, elm-server, elm-service | No machine fingerprint can be computed, or a request that needs fingerprints (a trial, a borrow, an activation under a policy that compares them) has none. | Run where a fingerprint is available, or use a license that is not node-locked. |
-| `ELM_INSTALLATION_KEY_UNREADABLE` | 15 | — | client | The installation key cannot be read or created. | Check the permissions of the key folder for the chosen scope. |
-| `ELM_WRONG_KIND` | 16 | — | verification, client | The license has another kind than the one required, such as a trial used as a server license. | Use a license of the required kind. |
-| `ELM_KEY_REVOKED` | 17 | — | verification | The license or lease was signed by a key revoked in the trust store. | Get a file signed with a current key. |
-| `ELM_LEASE_OUT_OF_BOUNDS` | 18 | — | verification | The lease is outside its server license: another server license, a feature or seat count it does not have, too long, or past its end. | Fetch the server license again; if it repeats, tell the server's administrator. |
-| `ELM_INVALID_STATE` | 19 | — | client, elm, libelasticlm | The call is not allowed now: no service URL, an activation already kept, no activation kept, a deactivation proof still kept, a refresh not due, another process holds the activation lock, 16 requests that got no answer, a call inside a callback of the same handle. `elm` returns it when a server refreshes its license online. | Follow the message: deactivate first, wait, or call from outside the callback. After 16 unanswered requests, an administrator deactivates the installation before it activates again. |
-| `ELM_PROOF_INVALID` | 20 | 401; 400 for an offline request file | verification, elm-server, elm-service | The request proof is missing, does not verify, or is for another method, URI, body, or key. An offline request file's signature does not verify. | Send the request again from the same installation; for an offline file, make a new one. |
-| `ELM_NONCE_REQUIRED` | 21 | 401 | elm-server, elm-service | The nonce is missing or expired. The answer carries a new nonce in `ELM-Nonce`. | Nothing: the client retries with the new nonce. |
-| `ELM_REPLAYED` | 22 | 401; 409 for an offline request file | elm-server, elm-service | The proof was already used, or another offline request used this request's nonce. | Make a new request or request file. |
-| `ELM_SERVER_PIN_MISMATCH` | 23 | — | verification, client | The on-premises server is not the one the client is pinned to: its key or TLS key is not the key of its server license, or the saved pin is damaged. | Check that the client reaches the right server; if the server was replaced on purpose, reset the pin. |
-| `ELM_PAYLOAD_TOO_LARGE` | 24 | 413 | elm-server, elm-service | The request body is larger than 64 KiB. | Send a smaller body. |
-| `ELM_LICENSE_NOT_FOUND` | 30 | 404 | client, elm-server, elm-service | The license key or the license does not exist. The client returns it when no activation is kept; `elm-server` stops at start when its server license file is missing. | Check the license key or ID; activate first; give `elm-server` its license file. |
-| `ELM_LICENSE_SUSPENDED` | 31 | 403 | elm-service | The license is suspended. | Ask the vendor; an administrator can resume it. |
-| `ELM_LICENSE_REVOKED` | 32 | 403 | elm-service | The license is revoked. | Ask the vendor for a new license. |
-| `ELM_ACTIVATION_LIMIT` | 33 | 409 | elm-service | The license has reached its activation limit. | Deactivate another device, or ask for more activations. |
-| `ELM_DEACTIVATION_LIMIT` | 34 | 409 | elm-service | The license has reached its deactivation limit. | Ask the vendor; an administrator can deactivate for you. |
-| `ELM_TRIAL_USED` | 35 | 409 | elm-service | A fingerprint of this installation already had a trial of the product. | Buy a license; an administrator can delete the trial record. |
-| `ELM_CLONE_DETECTED` | 36 | 409 | client, elm-server, elm-service | A copy of the installation was detected; with the `deny` strategy, the activation or lease is stopped. | Have an administrator deactivate the activation, then activate again. A stopped lease ends at its expiry. |
-| `ELM_REQUEST_EXPIRED` | 37 | 400 | elm-service | The offline request file has expired. | Make a new request file. |
-| `ELM_REQUEST_MISMATCH` | 38 | — | client | The offline answer does not match the request the client is waiting for. | Import the answer to the latest request, or make a new request. |
-| `ELM_TRIAL_NOT_OFFERED` | 39 | 404 | elm-service | The product offers no trial. | Ask the vendor; the product needs a trial policy. |
-| `ELM_NO_SEATS` | 40 | 409 | elm-server, elm-service | No seat of the feature is free, or the license now allows fewer seats than are held. | Wait for a seat, or ask for more seats. |
-| `ELM_UNKNOWN_LEASE` | 41 | 404 | elm-server, elm-service | The server does not know the lease. | From `elm-server`, nothing: the client reclaims its leases after a server restart. From `elm-service`, the lease is lost; acquire a new one. For an administrator, check the lease ID. |
-| `ELM_BORROW_NOT_ALLOWED` | 42 | 403 | elm-server, elm-service | Borrowing is not allowed, or the period exceeds the limit; a borrowed lease is not reclaimed. | Borrow for a shorter period, or ask for borrowing to be allowed. |
-| `ELM_SERVER_RECOVERING` | 43 | 503 | elm-server | The server is reclaiming leases after a restart. The answer has `Retry-After`. | Nothing: the client retries after the time given. |
-| `ELM_RETURN_NOT_ALLOWED` | 44 | 409 | elm-server, elm-service | The early return of a borrow is not allowed now: the early returns of 30 days are used up, or the server license changed. An administrator of `elm-server` cannot release a borrow. | Let the borrow end at its expiry. |
-| `ELM_UNAUTHORIZED` | 50 | 401 | elm-server, elm-service | Administrator authentication failed: a missing or wrong administrator token, API key, access token, or session. | Check the token, API key, or sign-in. |
-| `ELM_FORBIDDEN` | 51 | 403 | elm-server, elm-service | The administrator lacks the permission, the access token maps to no role, the CSRF header is missing, or `elm-server`'s `allow` / `deny` settings refuse the address, host, or user. | Use a key or role with the permission named in the message, or change the server's access settings. |
-| `ELM_RATE_LIMITED` | 52 | 429 | elm-server, elm-service | Too many requests from this address, installation key, API key, or administrator. The answer has `Retry-After`. | Wait and try again. |
-| `ELM_SERVER_BUSY` | 53 | 503 | elm-server | The server cannot record more proof IDs now. | Try again later. |
-| `ELM_NOT_FOUND` | 54 | 404 | elm-service | An administration API call names an entity that does not exist, such as an API key, a trial, or a usage log file. | Check the ID or name. |
-| `ELM_CONFLICT` | 55 | 409 | elm-service | The request conflicts with an entity's state or a unique value: a code in use, a change the entity's state does not allow, a license file of a license that is not unbound, an activation of an unbound license, a lease of a license that is not cloud-floating, or a node that writes no usage log. | Follow the message; for an unbound license, use the license file instead of activating. |
-| `ELM_ACTIVATION_NOT_FOUND` | 56 | 404 | elm-service | No activation has the ID: an administrator removed it, or it was deactivated. | Activate again. |
-| `ELM_NETWORK_ERROR` | 90 | — | client, elm | The server or service cannot be reached, or did not answer. | Check the URL, the network, and that the server is running. |
-| `ELM_INTERNAL_ERROR` | 99 | 500 | All parts | An internal error: the database failed, a file cannot be written, or an unexpected failure. A server answer with an unknown code also becomes this code in the client. | Read the message and the service log; report it if it repeats. |
+| `ELM_OK` | 0 | 2xx | All | Success. | Nothing. |
+| `ELM_INVALID_ARGUMENT` | 1 | 400 | `elm-server`, `elm-service`, `libelasticlm` | An argument is invalid: a bad query value or body member of the administration API, a feature version that is not `major.minor[.patch]`, a seat count outside 1 to the feature's seats, a borrow period shorter than one second, a request to renew a borrow (a borrow lasts its whole period and is not renewed; see [Borrowing](../explanation/floating-licenses.md#borrowing)), a `NULL` output or a wrong `struct_size` in C. | Fix the call; the message names the argument. |
+| `ELM_MALFORMED` | 2 | 400 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | The input has the wrong format or size: a license file or token that is not valid, a file over its size limit, a request body that does not parse, a damaged kept activation file, a server answer that is not valid. | Check that the file or body is the one expected and complete. For a damaged kept activation, have an administrator deactivate it and activate again. |
+| `ELM_UNTRUSTED_KEY` | 3 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | No certificate in the license or lease certifies its signing key with a root key in the trust store. | Check that the app trusts the issuer's root key and that the file comes from that issuer. |
+| `ELM_BAD_SIGNATURE` | 4 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm` | A signature does not verify, or the token is not signed with ES256. `elm-server` gives it per lease in a reclaim answer. | Treat the file as edited or damaged; get a new one from the issuer. |
+| `ELM_CERTIFICATE_EXPIRED` | 5 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The token was issued outside the validity period of its key certificate. | Ask the issuer for a file signed under a valid certificate. |
+| `ELM_CLOCK_TAMPERED` | 6 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The clock was set back, or the token is issued in the future. | Correct the system clock. |
+| `ELM_WRONG_PRODUCT` | 7 | 400 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-service`, `elm` | The license or lease is for another product. In `elm-service`, the license key is not for the product in the request. | Use the license or key of this product. |
+| `ELM_WRONG_INSTALLATION` | 8 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The license or lease is bound to another installation key. | Activate this installation, or use its own license. |
+| `ELM_FINGERPRINT_MISMATCH` | 9 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The machine fingerprints do not match the license. | Run on the licensed machine, or have the license reissued for this one. |
+| `ELM_EXPIRED` | 10 | 403 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | The license or lease is past its expiry and grace period. `elm-server` returns it for every lease request once its own server license has expired; `elm-service` returns it when the license's term in the service has ended. | Renew or extend the license. For `elm-server`, get a new server license. |
+| `ELM_FEATURE_NOT_LICENSED` | 11 | 403 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | The feature is not in the license. | Ask for a license with the feature. |
+| `ELM_FEATURE_VERSION_NOT_LICENSED` | 12 | 403 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | The feature version is outside the licensed range. | Ask for a license that covers this version. |
+| `ELM_FEATURE_EXPIRED` | 13 | 403 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | The feature is past its own expiry. | Renew the feature. |
+| `ELM_FINGERPRINT_UNAVAILABLE` | 14 | 400 | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service`, `elm` | No machine fingerprint can be computed, or a request that needs fingerprints (a trial, a borrow, an activation under a policy that compares them) has none. | Run where a fingerprint is available, or use a license that is not node-locked. |
+| `ELM_INSTALLATION_KEY_UNREADABLE` | 15 | — | `ElasticLM.Client`, `libelasticlm` | The installation key cannot be read or created. | Check the permissions of the key folder for the chosen scope. |
+| `ELM_WRONG_KIND` | 16 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The license has another kind than the one required, such as a trial used as a server license. | Use a license of the required kind. |
+| `ELM_KEY_REVOKED` | 17 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm`, `elm` | The license or lease was signed by a key revoked in the trust store. | Get a file signed with a current key. |
+| `ELM_LEASE_OUT_OF_BOUNDS` | 18 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm` | The lease is outside its server license: another server license, a feature or seat count it does not have, too long, or past its end. | Fetch the server license again; if it repeats, tell the server's administrator. |
+| `ELM_INVALID_STATE` | 19 | — | `ElasticLM.Client`, `libelasticlm`, `elm` | The call is not allowed now: no service URL, an activation already kept, no activation kept, a deactivation proof still kept, a refresh not due, another process holds the activation lock, 16 requests that got no answer, a call inside a callback of the same handle. `elm` returns it when a server refreshes its license online. | Follow the message: deactivate first, wait, or call from outside the callback. After 16 unanswered requests, an administrator deactivates the installation before it activates again. |
+| `ELM_PROOF_INVALID` | 20 | 401; 400 for an offline request file | `elm-server`, `elm-service` | The request proof is missing, does not verify, or is for another method, URI, body, or key. An offline request file's signature does not verify. | Send the request again from the same installation; for an offline file, make a new one. |
+| `ELM_NONCE_REQUIRED` | 21 | 401 | `elm-server`, `elm-service` | The nonce is missing or expired. The answer carries a new nonce in `ELM-Nonce`. | Nothing: the client sends the request again with the new nonce. |
+| `ELM_REPLAYED` | 22 | 401; 409 for an offline request file | `elm-server`, `elm-service` | The proof was already used, or another offline request used this request's nonce. | Make a new request or request file. |
+| `ELM_SERVER_PIN_MISMATCH` | 23 | — | `ElasticLM.Licensing`, `ElasticLM.Client`, `libelasticlm` | The on-premises server is not the one the client is pinned to: its key or TLS key is not the key of its server license, or the saved pin is damaged. | Check that the client reaches the right server; if the server was replaced on purpose, reset the pin. |
+| `ELM_PAYLOAD_TOO_LARGE` | 24 | 413 | `elm-server`, `elm-service` | The request body is larger than 64 KiB. | Send a smaller body. |
+
+## Licenses, activations, and leases (30 to 44)
+
+| Code | Number | HTTP status | Returned by | Meaning | What to do |
+| --- | --- | --- | --- | --- | --- |
+| `ELM_LICENSE_NOT_FOUND` | 30 | 404 | `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service` | The license key or the license does not exist. The client returns it when no activation is kept; `elm-server` stops at start when its server license file is missing. | Check the license key or ID; activate first; give `elm-server` its license file. |
+| `ELM_LICENSE_SUSPENDED` | 31 | 403 | `elm-service` | The license is suspended. | Ask the vendor; an administrator can resume it. |
+| `ELM_LICENSE_REVOKED` | 32 | 403 | `elm-service` | The license is revoked. | Ask the vendor for a new license. |
+| `ELM_ACTIVATION_LIMIT` | 33 | 409 | `elm-service` | The license has reached its activation limit. | Deactivate another device, or ask for more activations. |
+| `ELM_DEACTIVATION_LIMIT` | 34 | 409 | `elm-service` | The license has reached its deactivation limit. | Ask the vendor; an administrator can deactivate for you. |
+| `ELM_TRIAL_USED` | 35 | 409 | `elm-service` | A fingerprint of this installation already had a trial of the product. | Buy a license; an administrator can delete the trial record. |
+| `ELM_CLONE_DETECTED` | 36 | 409 | `ElasticLM.Client`, `libelasticlm`, `elm-server`, `elm-service` | A copy of the installation was detected; with the `deny` strategy, the activation or lease is stopped. | Have an administrator deactivate the activation, then activate again. A stopped lease ends at its expiry. |
+| `ELM_REQUEST_EXPIRED` | 37 | 400 | `elm-service` | The offline request file has expired. | Make a new request file. |
+| `ELM_REQUEST_MISMATCH` | 38 | — | `ElasticLM.Client`, `libelasticlm` | The offline answer does not match the request the client is waiting for. | Import the answer to the latest request, or make a new request. |
+| `ELM_TRIAL_NOT_OFFERED` | 39 | 404 | `elm-service` | The product offers no trial. | Ask the vendor; the product needs a trial policy. |
+| `ELM_NO_SEATS` | 40 | 409 | `elm-server`, `elm-service` | No seat of the feature is free, or the license now allows fewer seats than are held. | Wait for a seat, or ask for more seats. |
+| `ELM_UNKNOWN_LEASE` | 41 | 404 | `elm-server`, `elm-service` | The server does not know the lease. | From `elm-server`, nothing: the client reclaims its leases after a server restart. From `elm-service`, the lease is lost; acquire a new one. For an administrator, check the lease ID. |
+| `ELM_BORROW_NOT_ALLOWED` | 42 | 403 | `elm-server`, `elm-service` | Borrowing is not allowed, or the period exceeds the limit. In a reclaim answer, `elm-server` also gives it for the token of a borrow: after a restart, borrows come back from the server's borrow record, not by reclaim. | Borrow for a shorter period, or ask for borrowing to be allowed. |
+| `ELM_SERVER_RECOVERING` | 43 | 503 | `elm-server` | The server is reclaiming leases after a restart. The answer has `Retry-After`. | For an acquire or a borrow, wait for the `Retry-After` time and try again; show the time to the user. A lease renewal is retried by the client. |
+| `ELM_RETURN_NOT_ALLOWED` | 44 | 409 | `elm-server`, `elm-service` | The early return of a borrow is not allowed now: the early returns of 30 days are used up, or the license changed for the worse since the borrow (another license, fewer seats of the feature, or a shorter borrow limit). An administrator of `elm-server` cannot release a borrow. | Let the borrow end at its expiry. |
+
+## Authentication, limits, and administration (50 to 56)
+
+In `ELM_CONFLICT`, an unbound license is one whose policy has `binding`: `unbound`: it is not tied to a device, is never activated, and its license file comes from the administration API. A node-locked license (`binding`: `nodeLocked`) is activated on each device instead. A cloud-floating license is one whose policy has `floating`: `cloud`: `elm-service` lends its seats as leases. [Activation](../explanation/activation.md#policy-settings) lists the policy settings.
+
+| Code | Number | HTTP status | Returned by | Meaning | What to do |
+| --- | --- | --- | --- | --- | --- |
+| `ELM_UNAUTHORIZED` | 50 | 401 | `elm-server`, `elm-service` | Administrator authentication failed: a missing or wrong administrator token, API key, access token, or session. | Check the token, API key, or sign-in. |
+| `ELM_FORBIDDEN` | 51 | 403 | `elm-server`, `elm-service` | The administrator lacks the permission, the access token maps to no role, the CSRF header is missing, or `elm-server`'s `allow` / `deny` settings refuse the address, host, or user. | Use a key or role with the permission named in the message, or change the server's access settings. |
+| `ELM_RATE_LIMITED` | 52 | 429 | `elm-server`, `elm-service` | Too many requests from this address, installation key, API key, or administrator. The answer has `Retry-After`. | Wait for the `Retry-After` time and try again. |
+| `ELM_SERVER_BUSY` | 53 | 503 | `elm-server` | The server is overloaded for the moment. | Try again later. |
+| `ELM_NOT_FOUND` | 54 | 404 | `elm-service` | An administration API call names an entity that does not exist, such as an API key, a trial, or a usage log file. | Check the ID or name. |
+| `ELM_CONFLICT` | 55 | 409 | `elm-service` | The request conflicts with an entity's state or a unique value: a code in use, a change the entity's state does not allow (such as disabling the caller, the bootstrap owner, or the last enabled owner), a request for the license file of a node-locked or cloud-floating license (only an unbound license has a license file) or of a suspended, revoked, or expired license, an activation of an unbound or cloud-floating license, a lease of a license that is not cloud-floating, or a usage log request to a node that writes no usage log. | Follow the message; for an unbound license, use the license file instead of activating. |
+| `ELM_ACTIVATION_NOT_FOUND` | 56 | 404 | `elm-service` | No activation has the ID: an administrator removed it, or it was deactivated. | Activate again. |
+
+## Network and internal errors (90 and 99)
+
+| Code | Number | HTTP status | Returned by | Meaning | What to do |
+| --- | --- | --- | --- | --- | --- |
+| `ELM_NETWORK_ERROR` | 90 | — | `ElasticLM.Client`, `libelasticlm`, `elm` | The server or service cannot be reached, or did not answer. | Check the URL, the network, and that the server is running. |
+| `ELM_INTERNAL_ERROR` | 99 | 500 | All | An internal error: the database failed, a file cannot be written, or an unexpected failure. A server answer with an unknown code also becomes this code in the client. | Read the message. When `elm-server` or `elm-service` returned it, read that program's operational log, described in [Logs](logs.md), for the cause. Report it if it repeats. |

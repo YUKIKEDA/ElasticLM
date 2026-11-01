@@ -76,7 +76,7 @@ The client sends `POST /v1/leases` with the feature, the app's version of the fe
 
 The client renews each lease every third of its lease time: about every 200 seconds for the default 10 minutes. A renewal is `POST /v1/leases/{id}/renew` with the last `seq` the client received and a proof from the same key.
 
-Renewing at one third means one late or lost renewal does not cost the seat. After a network failure, a `5xx` answer, or a server pin mismatch, the lease moves to `Retrying`, and the client tries again after 15 seconds, then 30, then every 60 seconds; if the lease expires first, it becomes `Lost`. `ELM_CLONE_DETECTED` is not retried. `ELM_UNKNOWN_LEASE` means the server does not know the lease: on premises a restarted server says this and the client reclaims (below); the hosted service never forgets a lease, so there it is `Lost` at once.
+Renewing at one third means one late or lost renewal does not cost the seat. When a renewal fails for any reason other than `ELM_CLONE_DETECTED` or `ELM_UNKNOWN_LEASE` (a network failure, a `5xx` answer, a server pin mismatch, or another error code), the lease moves to `Retrying`, and the client tries again after 15 seconds, then 30, then every 60 seconds; if the lease expires first, it becomes `Lost`. `ELM_CLONE_DETECTED` is not retried. `ELM_UNKNOWN_LEASE` means the server does not know the lease: on premises a restarted server says this and the client reclaims (below); the hosted service never forgets a lease, so there it is `Lost` at once.
 
 When a lease becomes `Lost`, the app decides what to do: ask the user to save their work, turn the feature off, or try to acquire again.
 

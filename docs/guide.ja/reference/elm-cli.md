@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # elm コマンドリファレンス
 
-このページは、ベンダーと管理者が使うコマンドラインツール `elm` の、すべてのコマンドとオプションをまとめたものだ。`elm` は、鍵を作って証明し、ライセンスファイルを発行・検証し、同じマシン上のオンプレミスのライセンスサーバーを管理し、`elm-service` の管理 API を呼び出し、オフラインのリクエストファイルをサービスに渡し、署名付きのログを検証する。使うコマンドがすでにわかっているときに調べるためのページだ。鍵、証明書、ライセンスファイル、サーバーとは何かは、先に[概要](../explanation/overview.md)と[トラストチェーン](../explanation/trust-chain.md)を読むこと。
+このページは、ベンダーと管理者が使うコマンドラインツール `elm` の、すべてのコマンドとオプションをまとめたものだ。`elm` は、鍵を作って証明し、ライセンスファイルを発行・検証し、同じマシン上のオンプレミスのライセンスサーバーを管理し、`elm-service` の管理 API を呼び出し、オフラインのリクエストファイルをサービスに渡し、署名付きのログを検証する。使うコマンドがすでにわかっているときに調べるためのページだ。鍵、証明書、ライセンスファイル、サーバーとは何かについては、先に[概要](../explanation/overview.md)と[トラストチェーン](../explanation/trust-chain.md)を読むこと。
 
 ## 共通の動作
 
@@ -19,6 +19,8 @@ elm <group> <command> [arguments] [options]
 どのコマンドも `--help`（`-h` または `-?` でもよい）を受け付け、使い方を表示する。`elm --version` は `elm` のバージョンを表示する。
 
 日付や時刻（`--expires`、`--not-before`、`--feature` の `exp=`）は ISO 8601 で書く。時刻のない日付は UTC の 0 時、オフセットのない時刻は UTC とみなす。
+
+製品 ID（`--product`）は、英小文字、数字、`-` からなる 1 から 64 文字で、たとえば `example-editor` のように書く。`elm-service` での製品の `code` であり、`elm-server` の設定 `product` でもある。`ElasticLM.Client`、`elm-server`、`elm-service` はこれ以外の形を受け付けず、`elm server` のコマンドはこの ID でサーバーのフォルダーを探す。`elm license issue` は形を確かめないが、製品 ID がこれ以外の形のライセンスは、この 3 つでは使えない。
 
 エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプション、または必須のオプションがないときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。
 
@@ -58,7 +60,9 @@ elm <group> <command> [arguments] [options]
 | `ELM_TRUST_ROOT_KEYS` | `--trust` をとるコマンド | PEM 形式のルート公開鍵 1 つ以上。`--trust` を指定しないときに使う |
 | `ELM_API_KEY` | `elm admin request`、`elm offline process` | `elm-service` の API キー。設定されていれば、保存したログインの代わりに使う |
 | `ELM_SERVICE_URL` | `elm admin request` | `--url` を指定しないときの `elm-service` の URL |
-| `ELM_ADMIN_LOGIN` | `elm admin` | `elm admin login` のログインを保存するファイル。既定の場所の代わりに使う |
+| `ELM_ADMIN_LOGIN` | `elm admin`、`elm offline process` | `elm admin login` のログインを保存するファイル。既定の場所の代わりに使う |
+
+`elm-server` も、設定 [`service.url`](server-configuration.md#service) として `ELM_SERVICE_URL` を読み、この変数は設定ファイルの値より優先される。`elm` と `elm-server` が同じサービスアカウントや同じコンテナのような同じ環境で動くときは、`elm admin request` のためにこの変数を設定すると、`elm-server` がサーバーライセンスのトークンの更新に使うサービスも変わる。
 
 ログインを保存する既定のファイルは、Windows では `%LOCALAPPDATA%\ElasticLM\elm\login`、Linux では `$XDG_DATA_HOME/elasticlm/elm/login`（`XDG_DATA_HOME` が設定されていなければ `~/.local/share/elasticlm/elm/login`）、macOS では `~/Library/Application Support/ElasticLM/elm/login` だ。
 
@@ -70,6 +74,8 @@ elm <group> <command> [arguments] [options]
 | `1` | 検証の失敗 | ライセンスファイルやログの検証に失敗した。または、サーバー、`elm-service`、ID プロバイダーがリクエストを拒否したか、エラーを返した |
 | `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、信頼する鍵、資格情報のどれかが見つからない |
 | `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server` と `elm offline process` では）レスポンスを読めない |
+
+`elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
 
 ## elm key
 
@@ -119,7 +125,7 @@ elm key certify --root <file> --public <file> --out <file> [options]
 | `--public` | ファイルのパス | — | はい | 証明する署名鍵の公開鍵のファイル |
 | `--use` | `license`、`lease`、`log` | `license` | いいえ | 鍵で署名してよいもの。複数を指定するときは、繰り返すかカンマで区切る |
 | `--not-before` | ISO 8601 の日付または時刻 | 現在時刻 | いいえ | 有効期間の始まり |
-| `--days` | 整数（731 以下） | `365` | いいえ | 有効期間の日数 |
+| `--days` | 整数（1 から 731） | `365` | いいえ | 有効期間の日数 |
 | `--out` | ファイルのパス | — | はい | 書き出す証明書のファイル |
 | `--passphrase-env` | 変数名 | `ELM_KEY_PASSPHRASE` | いいえ | ルート鍵のパスフレーズを入れた環境変数 |
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
@@ -131,9 +137,9 @@ elm key certify --root <file> --public <file> --out <file> [options]
 elm key thumbprint <public-key-file>
 ```
 
-公開鍵の鍵 ID（JWK のサムプリント）を表示する。
+ルート鍵や署名鍵などの公開鍵の、鍵 ID（`kid`、JWK のサムプリント）を表示する。`--revoked` に渡す鍵 ID を調べるときや、鍵のファイルを、`elm license inspect` が証明書やライセンスに表示する `kid` と照らし合わせるときに使う。インストール鍵には公開鍵のファイルがないので、`--bind-key` に渡すサムプリントはこのコマンドでは得られない。[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<public-key-file>` | ファイルのパス | — | はい | 引数。公開鍵の PEM ファイル |
 
@@ -151,21 +157,21 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | --- | --- | --- | --- | --- |
 | `--signing-key` | ファイルのパス | — | はい | 暗号化した署名鍵のファイル |
 | `--certificate` | ファイルのパス | — | はい | 署名鍵の証明書のファイル。複数を指定するときは繰り返す（4 つまで） |
-| `--product` | 製品 ID | — | はい | 製品 ID |
+| `--product` | 製品 ID | — | はい | 製品 ID（[書式](#書式)を参照） |
 | `--license-id` | ライセンス ID | — | はい | ライセンス ID |
 | `--kind` | `standard`、`trial`、`server` | `standard` | いいえ | ライセンスの種類 |
-| `--feature` | `ID[;ver=RANGE][;seats=N][;exp=DATE]` | — | いいえ | 機能。バージョンの範囲、シート数、有効期限を任意で付けられる。複数を指定するときは繰り返す |
+| `--feature` | `ID[;ver=RANGE][;seats=N][;exp=DATE]` | — | いいえ | 機能。バージョンの範囲、シート数、有効期限を任意で付けられる（[機能の値](#機能の値)を参照）。複数を指定するときは繰り返す |
 | `--expires` | ISO 8601 の日付または時刻、または `never` | — | はい | トークンの有効期限。`never` を指定すると警告を書く。有効期限のないライセンスは失効させられないからだ |
-| `--grace-days` | 数値 | `7`（`trial` では `0`） | いいえ | 猶予期間の日数 |
-| `--refresh-days` | 数値 | なし | いいえ | 有効期限の何日前から、クライアントがオンラインでトークンの更新を始めるか |
-| `--bind-key` | サムプリント | — | いいえ | ライセンスを紐付けるインストール鍵のサムプリント |
-| `--fingerprint` | フィンガープリント | — | いいえ | ライセンスを紐付けるマシンフィンガープリント。複数を指定するときは繰り返す |
+| `--grace-days` | 数値（小数も可） | `7`（`trial` では `0`） | いいえ | 猶予期間の日数 |
+| `--refresh-days` | 数値（小数も可） | — | いいえ | 有効期限の何日前から、クライアントがオンラインでトークンの更新を始めるか |
+| `--bind-key` | サムプリント | — | いいえ | ライセンスを紐付けるインストール鍵のサムプリント（[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照） |
+| `--fingerprint` | フィンガープリント | — | いいえ | ライセンスを紐付けるマシンフィンガープリント（[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照）。複数を指定するときは繰り返す |
 | `--fingerprint-matching` | `any`、`all`、`ignore` | `any` | いいえ | マシンフィンガープリントをどう照合するか |
-| `--lease-minutes` | 数値 | `10` | いいえ | サーバーライセンスのみ。リースの期間（分） |
-| `--borrow-days` | 数値 | `0` | いいえ | サーバーライセンスのみ。借用の上限（日）。`0` なら借用を許さない |
-| `--overage` | 整数 | `0` | いいえ | サーバーライセンスのみ。超過を許すパーセント |
+| `--lease-minutes` | 数値（小数も可） | `10` | いいえ | サーバーライセンスのみ。リースの期間（分） |
+| `--borrow-days` | 数値（小数も可） | `0` | いいえ | サーバーライセンスのみ。借用の上限（日）。`0` なら借用を許さない |
+| `--overage` | 整数（0 から 1000） | `0` | いいえ | サーバーライセンスのみ。超過を許すパーセント |
 | `--clone` | `deny`、`flag` | `deny` | いいえ | サーバーライセンスのみ。検出したクローンを拒否するか、印を付けるか |
-| `--borrow-returns` | 整数 | `2` | いいえ | サーバーライセンスのみ。1 つのインストールが 30 日間に借用を早期返却できる回数 |
+| `--borrow-returns` | 整数（0 から 1000） | `2` | いいえ | サーバーライセンスのみ。1 つのインストールが 30 日間に借用を早期返却できる回数 |
 | `--meta` | `key=value` | — | いいえ | ベンダーのメタデータ。複数を指定するときは繰り返す |
 | `--out` | ファイルのパス | — | はい | 書き出すライセンスファイル |
 | `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 書き出す前にライセンスを検証するルート公開鍵のファイル。複数を指定するときは繰り返す |
@@ -174,7 +180,31 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
-`--lease-minutes`、`--borrow-days`、`--overage`、`--clone`、`--borrow-returns` を、`server` 以外の `--kind` と一緒に指定すると、コマンドは終了コード 2 で止まる。
+`--grace-days`、`--refresh-days`、`--lease-minutes`、`--borrow-days` には、`0.5` のような小数も指定できる。ライセンスにはそれぞれを秒単位で、端数を切り捨てて記録する。`--lease-minutes` は 1 秒以上にならなければならない。`--overage` と `--borrow-returns` は整数だけを受け付ける。
+
+`--lease-minutes`、`--borrow-days`、`--overage`、`--clone`、`--borrow-returns` を、`server` 以外の `--kind` と一緒に指定すると、コマンドは終了コード 2 で止まる。`server` のライセンスには、`--bind-key` と、すべての機能の `seats=` も必要だ。`standard` と `trial` のライセンスには `seats=` を付けられず、`trial` のライセンスの猶予期間には `--grace-days 0` しか指定できない。これらの規則のどれかに反するライセンスは書き出さず、コマンドは終了コード 2 で止まる。
+
+#### 機能の値
+
+値は機能 ID で始め、そのあとに下の部分を、それぞれ `;` に続けて書く。バージョンの範囲にはスペースと `<` や `>` が入るので、シェルでは値全体を引用符で囲む。
+
+| 部分 | 形 | 意味 |
+| --- | --- | --- |
+| `ID` | テキスト | アプリが求める機能 ID |
+| `ver=RANGE` | スペースで区切った 1 から 4 個の比較で、すべてを満たさなければならない。比較は、`>=`、`<=`、`>`、`<`、`=` のどれかに、数字だけからなる `major.minor` または `major.minor.patch` のバージョンを続けたもの。patch がなければ 0 とみなす | ライセンスが対象とする機能のバージョン。たとえば `>=1.0 <2.0`。指定しなければ、すべてのバージョン |
+| `seats=N` | 1 以上の整数 | その機能の同時使用シート数。`server` のライセンスでは必須で、それ以外では指定できない |
+| `exp=DATE` | ISO 8601 の日付または時刻（`--expires` と同じ） | その機能自体の有効期限。指定しなければ、機能はライセンスと同じだけ有効だ |
+
+たとえば、`server` のライセンスで `--feature "pro;ver=>=1.0 <2.0;seats=5;exp=2027-06-30"` と指定すると、`pro` を、1.0 以上 2.0 未満のバージョンに、5 シートで、2027-06-30 00:00 UTC まで許可する。
+
+#### 紐付けに使う値の入手先
+
+`--bind-key` には、インストール鍵（1 台のデバイスやサーバーを識別する鍵ペア）のサムプリントを指定する。`--fingerprint` には、16 進数の小文字 32 文字のマシンフィンガープリントを指定する。どちらも、ライセンスを使うマシンから得る。
+
+- **`elm-server` の場合。** サーバーライセンスがないまま起動すると、`elm-server` は止まり、インストール鍵のサムプリントとフィンガープリントを含むメッセージを表示する。顧客の管理者が、それをベンダーに送る。
+- **アプリのデバイスの場合。** `elm` には、これらを表示するコマンドがない。アプリがユーザーに表示しなければならない。これらを得る呼び出しは、[概要](../explanation/overview.md#オフラインのみ)に書いてある。
+
+`elm key thumbprint` はここでは使えない。このコマンドは公開鍵のファイルを読むが、インストール鍵には公開鍵のファイルがないからだ。
 
 ### elm license inspect
 
@@ -184,7 +214,7 @@ elm license inspect <license-file> [--json]
 
 ライセンスファイルとその証明書のヘッダーとペイロードを表示する。署名は検証しない。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<license-file>` | ファイルのパス | — | はい | 引数。ライセンスファイル |
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
@@ -197,7 +227,7 @@ elm license verify <license-file> --product <id> [options]
 
 ライセンスファイルを、トラストストアと指定した条件で検証する。ライセンスが有効でなければ終了コード 1 を返す。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<license-file>` | ファイルのパス | — | はい | 引数。ライセンスファイル |
 | `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
@@ -215,13 +245,9 @@ elm license verify <license-file> --product <id> [options]
 
 `elm server` のコマンドは、同じマシン上のオンプレミスのライセンスサーバーを管理する。サーバーのデータフォルダーから管理者トークンを読むので、サーバーと同じユーザーで実行する。`--data` がなければ、データフォルダーは `--product` のマシン全体用のフォルダーになる。Windows では `%ProgramData%\ElasticLM\<product>`、Linux では `/var/lib/elasticlm/<product>`、macOS では `/Library/Application Support/ElasticLM/<product>` だ。各リクエストは 30 秒でタイムアウトする。
 
-### elm server status
+### サーバー管理のオプション
 
-```text
-elm server status (--data <folder> | --product <id>) [options]
-```
-
-サーバーライセンス、再起動後にリースの再登録をしているかどうか、機能ごとの使用中のシート数を表示する。
+`elm server status`、`elm server leases`、`elm server reload`、`elm server seal`、`elm server release` は、実行中のサーバーの管理 API を呼び出す。これらのコマンドは次のオプションをとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
@@ -229,6 +255,14 @@ elm server status (--data <folder> | --product <id>) [options]
 | `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
 | `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
 | `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+
+### elm server status
+
+```text
+elm server status (--data <folder> | --product <id>) [options]
+```
+
+サーバーライセンス、再起動後にリースの再登録をしているかどうか、機能ごとの使用中のシート数を表示する。とるのは[サーバー管理のオプション](#サーバー管理のオプション)だけだ。
 
 ### elm server leases
 
@@ -236,14 +270,7 @@ elm server status (--data <folder> | --product <id>) [options]
 elm server leases (--data <folder> | --product <id>) [options]
 ```
 
-サーバーが保持しているリースと借用の一覧を表示する。
-
-| オプション | 値 | 既定 | 必須 | 意味 |
-| --- | --- | --- | --- | --- |
-| `--url` | `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API（サーバーの設定 `admin.listen`） |
-| `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
-| `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+サーバーが保持しているリースと借用の一覧を表示する。とるのは[サーバー管理のオプション](#サーバー管理のオプション)だけだ。
 
 ### elm server reload
 
@@ -251,14 +278,7 @@ elm server leases (--data <folder> | --product <id>) [options]
 elm server reload (--data <folder> | --product <id>) [options]
 ```
 
-実行中のサーバーに、ライセンスファイルを読み直させる。
-
-| オプション | 値 | 既定 | 必須 | 意味 |
-| --- | --- | --- | --- | --- |
-| `--url` | `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API（サーバーの設定 `admin.listen`） |
-| `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
-| `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+実行中のサーバーに、ライセンスファイルを読み直させる。とるのは[サーバー管理のオプション](#サーバー管理のオプション)だけだ。
 
 ### elm server seal
 
@@ -266,14 +286,7 @@ elm server reload (--data <folder> | --product <id>) [options]
 elm server seal (--data <folder> | --product <id>) [options]
 ```
 
-利用ログのまだ署名していない行に、サーバーにすぐ署名させる。
-
-| オプション | 値 | 既定 | 必須 | 意味 |
-| --- | --- | --- | --- | --- |
-| `--url` | `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API（サーバーの設定 `admin.listen`） |
-| `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
-| `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+サーバーに、利用ログのまだ署名していない行へすぐ署名させる。とるのは[サーバー管理のオプション](#サーバー管理のオプション)だけだ。
 
 ### elm server release
 
@@ -281,19 +294,15 @@ elm server seal (--data <folder> | --product <id>) [options]
 elm server release <lease-id> (--data <folder> | --product <id>) [options]
 ```
 
-リースまたは借用を、サーバー側で解放する。
+リースまたは借用を、サーバー側で解放する。引数のほかに、[サーバー管理のオプション](#サーバー管理のオプション)をとる。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| 引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `<lease-id>` | リース ID | — | はい | 引数。`elm server leases` が表示するリース ID |
-| `--url` | `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API（サーバーの設定 `admin.listen`） |
-| `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
-| `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+| `<lease-id>` | リース ID | — | はい | `elm server leases` が表示するリース ID |
 
 ### サーバーライセンスのコマンド
 
-以下のコマンドは、サーバーのデータフォルダーに保存したアクティベーションを使ってサーバーライセンスを管理する。サーバーを止めていても動く。サーバーのインストール鍵が必要で、この鍵は `elm-server` が初めて起動したときに作る。以下のオプションは共通だ。
+以下のコマンドは、サーバーのデータフォルダーに保存したアクティベーションを使ってサーバーライセンスを管理する。サーバーを止めていても動く。サーバーのインストール鍵が必要で、この鍵は `elm-server` が初めて起動したときに作る。どのコマンドも下のオプションをとる。各コマンドの節には、そのコマンドだけのオプションと引数を載せる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
@@ -311,16 +320,11 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 elm server activate <license-key> --product <id> --service <url> --license <file> [options]
 ```
 
-`elm-service` を使ってサーバーのライセンスをオンラインでアクティベーションし、ライセンスファイルを書く。
+`elm-service` を使ってサーバーのライセンスをオンラインでアクティベーションし、ライセンスファイルを書く。ライセンスキーは、このコマンドでは引数で渡し、`elm server activate-request` では `--key` で渡す。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<license-key>` | ライセンスキー | — | はい | 引数。サーバーライセンスのライセンスキー |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--service` | `https` の URL、またはループバックアドレスの `http` の URL | — | はい | `elm-service` の URL |
 | `--license` | ファイルのパス | — | はい | サーバーのライセンスファイル（サーバーの設定 `license`） |
 
@@ -330,15 +334,10 @@ elm server activate <license-key> --product <id> --service <url> --license <file
 elm server refresh --product <id> --service <url> --license <file> [options]
 ```
 
-`elm-service` を使って、サーバーのライセンスのトークンの更新をオンラインで行い、ライセンスファイルを書く。
+`elm-service` を使って、サーバーのライセンスのトークンの更新をオンラインで行い、ライセンスファイルを書く。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--service` | `https` の URL、またはループバックアドレスの `http` の URL | — | はい | `elm-service` の URL |
 | `--license` | ファイルのパス | — | はい | サーバーのライセンスファイル（サーバーの設定 `license`） |
 
@@ -348,15 +347,10 @@ elm server refresh --product <id> --service <url> --license <file> [options]
 elm server deactivate --product <id> --service <url> [options]
 ```
 
-サーバーのライセンスのアクティベーション解除をオンラインで行い、ライセンスファイルを削除する。サーバーが実行中なら、終了コード 1 で止まる。
+サーバーのライセンスのアクティベーション解除をオンラインで行い、ライセンスファイルを削除する。サーバーが実行中なら、終了コード 1 で止まる。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--service` | `https` の URL、またはループバックアドレスの `http` の URL | — | はい | `elm-service` の URL |
 | `--license` | ファイルのパス | — | いいえ | サーバーのライセンスファイル。このアクティベーションのファイルであるときだけ削除する |
 
@@ -366,16 +360,11 @@ elm server deactivate --product <id> --service <url> [options]
 elm server activate-request --key <license-key> --product <id> --out <file> [options]
 ```
 
-`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。
+`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。ライセンスキーは、このコマンドでは `--key` で渡し、`elm server activate` では引数で渡す。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `--key` | ライセンスキー | — | はい | サーバーライセンスのライセンスキー |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--out` | ファイルのパス | — | はい | リクエストファイルの書き出し先 |
 | `--renew` | — | オフ | いいえ | 待機中のリクエストの期限が切れる前に、新しいリクエストを作る。それまでのリクエストファイルは置き換わるので、捨てなければならない |
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
@@ -386,15 +375,10 @@ elm server activate-request --key <license-key> --product <id> --out <file> [opt
 elm server refresh-request --product <id> --out <file> [options]
 ```
 
-`elm offline process` に渡す、オフラインのトークンの更新のリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。
+`elm offline process` に渡す、オフラインのトークンの更新のリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--out` | ファイルのパス | — | はい | リクエストファイルの書き出し先 |
 | `--renew` | — | オフ | いいえ | 待機中のリクエストの期限が切れる前に、新しいリクエストを作る。それまでのリクエストファイルは置き換わるので、捨てなければならない |
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
@@ -405,16 +389,11 @@ elm server refresh-request --product <id> --out <file> [options]
 elm server import <answer> --product <id> --license <file> [options]
 ```
 
-待機中のリクエストに対するサービスのレスポンスファイル（`.elmresp`）を取り込み、ライセンスファイルを書く。
+待機中のリクエストに対するサービスのレスポンスファイル（`.elmresp`）を取り込み、ライセンスファイルを書く。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<answer>` | ファイルのパス | — | はい | 引数。サービスのレスポンスファイル（`.elmresp`） |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--license` | ファイルのパス | — | はい | サーバーのライセンスファイル（サーバーの設定 `license`） |
 
 ### elm server deactivate-proof
@@ -423,17 +402,12 @@ elm server import <answer> --product <id> --license <file> [options]
 elm server deactivate-proof --out <file> --product <id> [options]
 ```
 
-オフラインのアクティベーション解除のプルーフ（`.elmdeact`）を書き、アクティベーションとそのライセンスファイルを削除する。サーバーが実行中なら、終了コード 1 で止まる。
+オフラインのアクティベーション解除のプルーフ（`.elmdeact`）を書き、アクティベーションとそのライセンスファイルを削除する。サーバーが実行中なら、終了コード 1 で止まる。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `--out` | ファイルのパス | — | はい | アクティベーション解除のプルーフ（`.elmdeact`）の書き出し先 |
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 | `--license` | ファイルのパス | — | いいえ | サーバーのライセンスファイル。このアクティベーションのファイルであるときだけ削除する |
 
 ### elm server forget-proof
@@ -442,19 +416,11 @@ elm server deactivate-proof --out <file> --product <id> [options]
 elm server forget-proof --product <id> [options]
 ```
 
-保存しているアクティベーション解除のプルーフを、サービスが受け取ったあとで破棄し、サーバーがもう一度アクティベーションできるようにする。
-
-| オプション | 値 | 既定 | 必須 | 意味 |
-| --- | --- | --- | --- | --- |
-| `--product` | 製品 ID | — | はい | サーバーの製品 ID（サーバーの設定 `product`） |
-| `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
-| `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
-| `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
+保存しているアクティベーション解除のプルーフを、サービスが受け取ったあとで破棄し、サーバーがもう一度アクティベーションできるようにする。とるのは[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)だけだ。
 
 ## elm admin
 
-`elm admin` のコマンドは、`elm-service` にログインし、その管理 API を呼び出す。サービスの URL は `https`、またはループバックアドレスの `http` だ。保存したログインは、ログインした URL と同じオリジン（スキーム、ホスト、ポート）へのリクエストにだけ使う。アクセストークンは、期限切れまで 60 秒を切ると更新する。トークンと鍵を標準出力や標準エラー出力に書くことはない。
+`elm admin` のコマンドは、`elm-service` にサインインし、その管理 API を呼び出す。サービスの URL は `https`、またはループバックアドレスの `http` だ。保存したログインは、そのログインを作った URL と同じオリジン（スキーム、ホスト、ポート）へのリクエストにだけ使う。アクセストークンは、期限切れまで 60 秒を切ると更新する。トークンと鍵を標準出力や標準エラー出力に書くことはない。
 
 ### elm admin login
 
@@ -462,7 +428,7 @@ elm server forget-proof --product <id> [options]
 elm admin login --url <url>
 ```
 
-`elm-service` の ID プロバイダーで（OIDC のデバイス認可フローを使って）ログインし、ログインを保存する。それまでのログインは置き換える。ログイン先のアドレスとコードは標準エラー出力に書く。
+`elm-service` の ID プロバイダーで（OIDC のデバイス認可フローを使って）サインインし、ログインを保存する。それまでのログインは置き換える。サインイン用のアドレスとコードは標準エラー出力に書く。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
@@ -486,7 +452,7 @@ elm admin request <METHOD> <path> [--body <file>] [--url <url>]
 
 管理 API を 1 回呼び出し、成功したレスポンスの本文を標準出力に書く。それ以外のレスポンスの本文は標準エラー出力に書き、終了コード 1 で終わる。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<METHOD>` | `GET`、`POST`、`PUT`、`PATCH`、`DELETE` | — | はい | 引数。HTTP メソッド |
 | `<path>` | `/v1/admin/` で始まるパス | — | はい | 引数。パス。クエリを含めてもよい。2,048 文字以内で、フラグメント、バックスラッシュ、`.` や `..` のセグメント、`%2e`、`%2f`、`%5c` を含まないこと |
@@ -525,7 +491,7 @@ elm log verify <files>... [options]
 
 ライセンスサーバーの利用ログや借用の記録、または `elm-service` の利用ログについて、署名とチェーンを検証する。エラーが見つかれば終了コード 1 を、警告だけなら 0 を返す。
 
-| オプション | 値 | 既定 | 必須 | 意味 |
+| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `<files>` | ファイルまたはフォルダーのパス | — | はい（1 つ以上） | 引数。ログのファイル、またはログのファイルを入れたフォルダー。ファイル名の順に、古いものから検証する |
 | `--product` | 製品 ID | — | サーバーのログでは必須 | サーバーライセンスの製品 ID。`elm-service` のログでは使わない |
@@ -544,10 +510,10 @@ elm key root create --out root.key.pem
 elm key signing create --out signing.key.pem
 elm key certify --root root.key.pem --public signing.key.pem.pub.pem --use license --days 365 --out signing.cert.jws
 elm license issue --signing-key signing.key.pem --certificate signing.cert.jws --trust root.key.pem.pub.pem \
-  --product com.example.editor --license-id LIC-0001 --feature "pro;ver=>=1.0 <2.0;seats=5" --expires 2027-12-31 --out LIC-0001.elmlic
-elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product com.example.editor --feature pro --version 1.4
-elm server status --product com.example.editor
+  --product example-editor --license-id LIC-0001 --feature "pro;ver=>=1.0 <2.0" --expires 2027-12-31 --out LIC-0001.elmlic
+elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product example-editor --feature pro --version 1.4
+elm server status --product example-editor
 elm admin request GET /v1/admin/licenses --url https://licensing.example.com
 elm offline process --url https://licensing.example.com --in server.elmreq --out server.elmresp
-elm log verify ./usage --product com.example.editor --trust root.key.pem.pub.pem
+elm log verify ./usage --product example-editor --trust root.key.pem.pub.pem
 ```
