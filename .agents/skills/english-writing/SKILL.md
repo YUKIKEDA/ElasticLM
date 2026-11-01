@@ -68,7 +68,7 @@ The left column is the term in `docs/design.ja.md`. Write the right column in co
 | 有効化、解除（無効化） | activation, deactivation |
 | 失効 | revocation |
 | オンプレミスのライセンスサーバー | on-premises license server |
-| SaaS 型の認証サーバー | hosted activation service |
+| SaaS 型の有効化サービス（SaaS 型のサービス） | hosted activation service |
 
 Words to avoid:
 

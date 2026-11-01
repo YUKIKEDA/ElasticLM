@@ -209,7 +209,7 @@ For each refresh, deactivation, or reactivation, the service compares the `seq` 
 
 1. If the two are equal, the request is normal: the service issues the next file with `seq` one higher.
 2. If the received `seq` is one lower and `retry` names the `jti` of the request that got the last file, the answer to that request was lost: the service returns the last file again.
-3. Otherwise a clone is detected, and the policy's `cloneStrategy` decides what happens: with `deny`, the service stops the activation, writes the audit log, and answers `ELM_CLONE_DETECTED`; with `flag`, it writes the audit log and answers normally.
+3. Otherwise a clone is detected, and the policy's `cloneStrategy` decides what happens next (below).
 
 A lost response must not look like a clone. If the answer to a refresh never arrived, the service has moved to the next `seq` while the device still holds the old one. So the client sends the `jti` of each request whose answer it did not get in the body's `retry` list (up to 16), and the service treats "one lower" as a retry only if `retry` names the exact request that got the last file. A cloned copy cannot pass this test, because it cannot know the `jti` of the other copy's request. A `seq` two or more lower, higher, or missing is always a clone.
 
