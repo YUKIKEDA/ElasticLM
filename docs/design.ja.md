@@ -4261,7 +4261,7 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
   - 例の JSON（Q4）は、実際に起動した `elm-service` と `elm-server` のレスポンスを写し、ID、鍵、トークンを作りものの値に置き換える。PR に取り方を書き、使い捨ての鍵はその回のうちに消す。例はテストで確かめない。
 - V1c2c の頁の範囲と載せるもの（V1c2b の Grill の Q5〜Q7）:
   - トークンとファイルの形式（Q5）: 鍵のファイル（暗号化した PKCS#8 の PEM、公開鍵の PEM）と鍵 ID、鍵の証明書、ライセンストークン、ライセンスファイル（`.elmlic`）、リーストークン、オフラインのファイル（`.elmreq`、`.elmdeact`、`.elmresp`）、サーバーライセンスは、ヘッダーとペイロードの表を書く（§7、§8、§12.8、§13.5）。証明は H2 と短い説明だけにして、表は書かず、端末のプロトコルの頁（クレームの正本）を指す（V1c2c の設計のレビューの R1）。利用ログの署名（`elm-log+jws`）はログの頁を指す。クライアントが手元に持つファイル（インストール鍵、`activation.json`、`borrows/`、`servers/`、時刻の状態、`elm-server` の `admin.token`）は中の形を書かず、場所、何か、写しや消去をしてよいかを 1 つの表に並べる。
-  - .NET の API（Q6）: 配る 2 つのパッケージ（`ElasticLM.Licensing` と `ElasticLM.Client`）だけを扱う。`ElasticLM.Issuing` と `ElasticLM.Leasing` は配らないので載せない。すべての公開の型を 1 行の説明つきで表にし、入口の型（`LicenseVerifier`、`TrustStore`、`LeaseVerifier`、`LicenseClient`、`ActivationClient`）は主なメソッドとオプションの型のすべてのプロパティを書く。
+  - .NET の API（Q6）: 配る 2 つのパッケージ（`ElasticLM.Licensing` と `ElasticLM.Client`）だけを扱う。`ElasticLM.Issuing` と `ElasticLM.Leasing` は配らないので載せない。すべての公開の型を 1 行の説明つきで表にし、入口の型（`LicenseVerifier`、`TrustStore`、`LeaseVerifier`、`LicenseClient`、`ActivationClient`）はすべての public メソッドとオプションの型のすべての公開のプロパティを書く（V1c2c の設計のレビューの R9 で「主なメソッド」を改めた。下の V1c2c の形）。
   - C の API（Q6）: `elasticlm.h` のすべての関数（`ELM_FUNCTION`、52）を組（インストールと検証、ライセンス、有効化、クライアントとリース、解放）ごとの表に 1 行ずつ載せ、ヘッダーの頭の規則（UTF-8、所有と解放、誤りの返し方、`struct_size`、スレッド）を書く。
   - 指し方（Q7）: .NET の頁は、すべてのメンバーの説明がパッケージの XML ドキュメントとして IDE に出ると書き、ソースへのリンクは置かない。C の頁は、リリースのアーカイブの `elasticlm.h` を正本として指し、GitHub の `main` の `include/elasticlm.h` の URL を添える。docfx のサイトは作らない（A-8）。
 - V1c2c の頁の形（V1c2c の Grill、Issue #208、Q1〜Q6。持ち主の決定はすべて推奨案）:
