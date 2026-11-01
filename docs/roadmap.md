@@ -58,6 +58,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c2 | 利用者の文書の Reference（`elm`、設定、管理 API と端末のプロトコル、形式、誤りのコード、ログ、.NET と C の API の要点。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1c3 | 利用者の文書の Tutorials と、足すサンプル（.NET の有効化・リース・オフラインの有効化、C の検証と有効化）。Tutorials の手順を CI で流す（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1c4 | 利用者の文書の How-to guides（鍵、`elm-service` の運用、ライセンス、`elm-server`、アプリ。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の原因を調べて直す（V1e の最初の公開の前。design.ja.md §20.7 の V1c1 の形） | not-started | [#192](https://github.com/YUKIKEDA/ElasticLM/issues/192) |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e | v1 の公開（`1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 

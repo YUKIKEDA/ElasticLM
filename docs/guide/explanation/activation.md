@@ -205,17 +205,11 @@ Rewriting the OS machine ID gives the device new fingerprints and so a new trial
 
 Copying a virtual machine copies its installation key, its machine ID, and its `activation.json`, so both copies hold the same activation. Instead of the machine ID, the service watches the sequence number (`seq`), in the same way as refresh token rotation in OAuth (RFC 9700). Every new file carries `seq` one higher, the service remembers the last value and the request that got it, and every refresh, deactivation, and reactivation sends the last `seq` the device received. Only one copy can move forward: when copy A refreshes from 5 to 6, copy B still holds 5, and B's next request shows that another copy moved ahead.
 
-```mermaid
-flowchart TD
-    R[Refresh, deactivation, or reactivation with seq] --> E{seq equals the last issued?}
-    E -- yes --> OK[Normal: issue the next file, seq + 1]
-    E -- no --> O{seq is one lower and retry names<br/>the jti of the request that got the last file?}
-    O -- yes --> RT[Lost response: return the last file again]
-    O -- no --> CL[Clone detected]
-    CL --> P{cloneStrategy}
-    P -- deny --> D[Stop the activation, write the audit log,<br/>answer ELM_CLONE_DETECTED]
-    P -- flag --> F[Write the audit log, answer normally]
-```
+For each refresh, deactivation, or reactivation, the service compares the `seq` it receives with the last one it issued:
+
+1. If the two are equal, the request is normal: the service issues the next file with `seq` one higher.
+2. If the received `seq` is one lower and `retry` names the `jti` of the request that got the last file, the answer to that request was lost: the service returns the last file again.
+3. Otherwise a clone is detected, and the policy's `cloneStrategy` decides what happens: with `deny`, the service stops the activation, writes the audit log, and answers `ELM_CLONE_DETECTED`; with `flag`, it writes the audit log and answers normally.
 
 A lost response must not look like a clone. If the answer to a refresh never arrived, the service has moved to the next `seq` while the device still holds the old one. So the client sends the `jti` of each request whose answer it did not get in the body's `retry` list (up to 16), and the service treats "one lower" as a retry only if `retry` names the exact request that got the last file. A cloned copy cannot pass this test, because it cannot know the `jti` of the other copy's request. A `seq` two or more lower, higher, or missing is always a clone.
 

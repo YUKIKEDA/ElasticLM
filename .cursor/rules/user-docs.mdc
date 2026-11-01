@@ -27,6 +27,7 @@ A page that needs another kind links to it instead of growing a second kind.
 - An explanation page goes: what it is for → how it works, with a figure → what can go wrong and what the reader must do.
 - Name the threat when the page says something is safe: who the attacker is, what they hold, and what stops them. Write what the product does not protect against as plainly as what it does.
 - A figure is a fenced `mermaid` block: a sequence diagram for a protocol, a state diagram for a lifecycle, a flowchart for an order of checks. No ASCII art and no images of text.
+- Until roadmap row V1c5 (Issue #192) is done, a page has at most one flowchart or state diagram: a second one rendered empty on the site in V1c1, while Mermaid alone drew it. The PR counts the drawn figures of each page in a browser.
 - Code in a page is taken from a sample in `samples/`, which the gate builds (from V1c3 on). Commands are given as they are typed, with fake keys and IDs.
 
 ## Markdown that works on GitHub and on the site

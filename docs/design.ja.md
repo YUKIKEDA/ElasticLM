@@ -4186,7 +4186,8 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
   - `website/package.json` に `"type": "module"` を置かない。置くと、Docusaurus が生成する `.docusaurus/registry.js` の `require` を webpack が ESM として扱って変換せず、静的な頁の生成が `require.resolveWeak is not a function` で落ちた。設定は `docusaurus.config.mjs` にする。
   - `@docusaurus/theme-mermaid` 3.10.2 は、任意の peer の `@mermaid-js/layout-elk` を、パッケージがないとき false になる印の内側で `import` する（`lib/client/loadMermaid.js`、`lib/index.js`）が、pnpm では webpack がその `import` を解決しようとして落ちた。ELK の配置は使わないので、クライアントの bundle だけで、その名前を何も指さないようにする（設定の中の小さな plugin。サーバーの bundle で同じことをすると、生成が落ちた）。
   - `core-js` 3.51.0 の `postinstall` は寄付の案内を出すだけ（`postinstall.js`）なので、`allowBuilds` で見たうえで走らせないと書く（`strictDepBuilds` の守り、T28）。
-  - 確かめた: `../docs/guide` の読み込み、CommonMark の形（`markdown.format: 'detect'`）での表、リンク、見出しへのリンク、Mermaid（`mermaid` のコンポーネントに変わる）、検索の索引。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
+  - 確かめた: `../docs/guide` の読み込み、CommonMark の形（`markdown.format: 'detect'`）での表、リンク、見出しへのリンク、Mermaid（`mermaid` のコンポーネントに変わる）、検索の索引。
+  - 頁の 2 つ目以降の flowchart（と state 図）が、サイトでは空になることがあった（headless の Edge。Mermaid 12.2.0 の単体では描ける）。原因は分かっておらず、V1c1 ではその図を消すか番号つきの文に替えた。原因を調べて直すのは roadmap の V1c5（Issue #192）で、V1e の最初の公開の前に行う。それまでは、1 つの頁に flowchart と state 図を合わせて 1 つまでにし、PR で頁ごとに描けた図を数える。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
 - npm の依存（`dependencies.mdc` に書く）: 直接の依存（上の Docusaurus の 3 つ、検索の plugin、React、react-dom、`@mdx-js/react`）を §21 に並べ、直接の依存を足すときだけ設計の Issue にする。推移的な依存は lock の差分のレビューで見る（持ち主の決定、Issue #190 の Q5）。
 - 依存の脆弱性: `pnpm audit` を、CI の管理画面のジョブと、`release.yml` の `site` の PR と `workflow_dispatch` の実行で流し、見つかれば落とす。タグの実行では流さない。そのタグの lock はマージの前の PR で audit を通っており、マージのあとに公表された勧告でタグの実行を落としても、そのタグのサイトがずっと出なくなるだけで、前のサイトは残り、読み手の守りは増えない（持ち主の決定、Issue #190 の R4）。V1c1 の時点で、Docusaurus 3.10.2 の木に 8 件あった。
   - 8 件の内訳は、直した版に上書きする 5 件と、見たうえで受け入れる 3 件である。上書きの行と受け入れの行には、勧告の ID と理由を書く。
@@ -4265,6 +4266,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c2 | 利用者の文書の Reference（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1c3 | 利用者の文書の Tutorials と、足すサンプル。Tutorials の手順を CI で流す（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1c4 | 利用者の文書の How-to guides（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
+| V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 
