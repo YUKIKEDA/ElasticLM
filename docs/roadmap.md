@@ -58,10 +58,10 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c2a | 利用者の文書の Reference の前半（`elm` のコマンド、`elm-server` と `elm-service` の設定、誤りのコード、ログ。英語と日本語。決めた形は design.ja.md §20.7 の V1c2 の形） | done        | [#197](https://github.com/YUKIKEDA/ElasticLM/issues/197) |
 | V1c2b | 利用者の文書の Reference の管理 API とデバイスのプロトコル、経路と HTTP の状態を頁と比べるテスト（英語と日本語。決めた形は design.ja.md §20.7 の V1c2 の形） | done        | [#202](https://github.com/YUKIKEDA/ElasticLM/issues/202) |
 | V1c2c | 利用者の文書の Reference のトークンとファイルの形式、.NET と C の API の要点、公開の型と関数を頁と比べるテスト（英語と日本語。V1c2b の Grill で分けた。決めた形は design.ja.md §20.7 の V1c2 の形） | done        | [#208](https://github.com/YUKIKEDA/ElasticLM/issues/208) |
-| V1c3a | 利用者の文書の Tutorials の土台（手順を CI で流す仕組み、コードをサンプルから引く仕組み、サイドバーの区分）と Tutorial 1（.NET のアプリでオフラインで確かめる）とそのサンプル（英語と日本語。V1c3 の Grill で分けた。決めた形は design.ja.md §20.7 の V1c3 の形） | done        | [#213](https://github.com/YUKIKEDA/ElasticLM/issues/213) |
-| V1c3b | 利用者の文書の Tutorial 2（`elm-service` でオンラインの有効化）と Tutorial 3（`elm-server` でフローティングのライセンス）とそのサンプル（英語と日本語。Grill で決める点は design.ja.md §20.7） | not-started | —     |
-| V1c3c | 利用者の文書の Tutorial 4（C のアプリに `libelasticlm`）と C のサンプル（英語と日本語。V1c8 のあと。Grill で決める点は design.ja.md §20.7） | not-started | —     |
-| V1c4 | 利用者の文書の How-to guides（鍵、`elm-service` の運用、ライセンス、`elm-server`、アプリ。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c3a | 利用者の文書の Tutorials の土台（手順を CI で流す仕組み、コードをサンプルから引く仕組み、サイドバーの区分）と Tutorial 1（.NET のアプリでオフラインで確かめる）とそのサンプル `samples/VerifyOffline`（英語と日本語。V1c3 の Grill で分けた。決めた形は design.ja.md §20.7 の V1c3 の形） | done        | [#213](https://github.com/YUKIKEDA/ElasticLM/issues/213) |
+| V1c3b | 利用者の文書の Tutorial 2（`elm-service` でオンラインの有効化）と Tutorial 3（`elm-server` でフローティングのライセンス）とそのサンプル。手順を流す仕組みに、裏で動かすサーバーと出力の値の受け渡しを足す（英語と日本語。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c3c | 利用者の文書の Tutorial 4（C のアプリに `libelasticlm`）と C のサンプル。手順を流す仕組みに C のコンパイラーを足す（英語と日本語。V1c8 のあと。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c4 | 利用者の文書の How-to guides（鍵、`elm-service` の運用、ライセンス、`elm-server`、アプリ）と、オフラインの有効化（ファイルのやり取り）のサンプル（V1c3 から移した。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の原因を調べて直す（V1e の最初の公開の前。design.ja.md §20.7 の V1c1 の形） | not-started | [#192](https://github.com/YUKIKEDA/ElasticLM/issues/192) |
 | V1c6 | 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）から設計の節番号を外す。内部のコメントと公開しない型の XML ドキュメントは残す（V1d の前。design.ja.md §20.7 の V1c2 の形） | not-started | [#198](https://github.com/YUKIKEDA/ElasticLM/issues/198) |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンスで例外になる不具合の修正（V1c2b で見つけた。V1c2c の前） | done        | [#203](https://github.com/YUKIKEDA/ElasticLM/issues/203) |
