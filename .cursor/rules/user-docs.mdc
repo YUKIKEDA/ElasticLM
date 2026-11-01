@@ -48,9 +48,54 @@ A page that needs another kind links to it instead of growing a second kind.
 ## Japanese pages
 
 - A faithful translation of the English page: the same facts, sections, figures, tables, and links. Nothing added, dropped, strengthened, or weakened. An error found in the English is fixed in the English first.
-- Terms are the design's Japanese terms (the left column of the table in `.agents/skills/english-writing/SKILL.md`), plain form (常体), written and checked with `.agents/skills/natural-japanese/`. Code, commands, settings, wire names, and error codes stay in English.
+- Terms follow the glossary below, not the design's Japanese: the design's terms were coined to record decisions and read unnaturally to users (owner's decision, Issue #190). Plain form (常体), written and checked with `.agents/skills/natural-japanese/`, without stiff Sino-Japanese words (本ドキュメント, 〜を実施する, 当該) and without asking the reader (〜してほしい). Code, commands, settings, wire names, and error codes stay in English.
 - Mermaid labels are translated; node, state, and participant IDs stay ASCII.
 - A link to a heading uses the Japanese page's own heading; the site build checks it.
+
+## Japanese glossary
+
+Reviewed by Gemini and decided by the owner in V1c1 (Issue #190). The design's term is listed so that roadmap row A-5 can align the design with this table.
+
+| English | Japanese in the user documentation | The design's term |
+| --- | --- | --- |
+| seat / concurrent seats | シート / 同時使用シート数 | 席 / 同時利用数 |
+| floating license | フローティングライセンス | フローティング |
+| lease / lease renewal | リース / リースの更新 | リース / 貸出の更新 |
+| borrow | 借用 | 借り出し |
+| reclaim | リースの再登録 | 回収 |
+| activation / deactivation | アクティベーション / アクティベーション解除 | 有効化 / 解除 |
+| refresh | トークンの更新 | 更新 |
+| device | デバイス | 端末 |
+| installation key | インストール鍵 | インストール鍵 |
+| machine fingerprint | マシンフィンガープリント | マシン指紋 |
+| proof | プルーフ（最初の 1 回だけ「所有証明」と添える） | 証明 |
+| nonce | ノンス | ノンス |
+| sequence number | シーケンス番号 | 更新番号 |
+| thumbprint | サムプリント | 拇印 |
+| clone / clone detection | クローン / クローン検出 | 複製 / 複製の検出 |
+| clock guard | 時刻巻き戻し対策 | 時計の守り |
+| grace period | 猶予期間 | 猶予期間 |
+| trial | トライアル | 試用 |
+| revocation | 失効 | 失効 |
+| root key / signing key / key certificate / trust store | ルート鍵 / 署名鍵 / 鍵証明書 / トラストストア | ルート鍵 / 署名鍵 / 鍵の証明書 / トラストストア |
+| trust chain | トラストチェーン | 信頼の鎖 |
+| license file / license token / license key | ライセンスファイル / ライセンストークン / ライセンスキー | 同じ |
+| server license | サーバーライセンス | サーバーライセンス |
+| usage log / audit log | 利用ログ / 監査ログ | 利用ログ / 監査ログ |
+| administration API / admin UI | 管理 API / 管理画面 | 管理 API / 管理画面 |
+| security model | セキュリティモデル | 安全性のモデル |
+| issuer (vendor) / licensee (customer) | 発行元（ベンダー） / ライセンシー（顧客） | 発行者（ベンダー） / 利用者（顧客） |
+| design choices (page title) | 設計上の選択 | — |
+| node-locked | ノードロック | 端末紐づけ |
+| unbound license | マシンに紐付けないライセンス | `Unbound` のライセンス |
+| user scope / machine scope | ユーザースコープ / マシンスコープ | ユーザーの範囲 / 端末の範囲 |
+| verifier (the side that checks) | 検証側 | — |
+| request / response (HTTP) | リクエスト / レスポンス | 要求 / 応答 |
+| recovery window (reclaim after a restart) | リースの再登録の期間 | 回収の間 |
+| hosted service (`elm-service`) | SaaS 型のサービス | SaaS 型のサービス |
+| copy (of a device or a server) | コピー | 写し |
+
+Phrases that read as translations, and what to write instead: "consume a seat" シートを使う (not 消費する), "release a seat" シートを返す, "bound to a machine" マシンに紐付ける (not 縛られる), "fail silently" what happens instead (not 静かに失敗する), "enforce" 制限する・確かめる (not 強制する).
 
 ## Checks before a PR
 

@@ -2,7 +2,7 @@
 sidebar_position: 2
 ---
 
-# The trust chain
+# Trust chain
 
 This page is for vendors who create and keep the keys, for app developers who build the trust store into their app, and for administrators who configure `elm-server` and `elm-service` with root keys. It explains which keys exist, why there are two levels of them, how an app traces a signed token back to a key it trusts, and how keys are replaced or taken out of use. Read [the overview](overview.md) first if you do not yet know the six deliverables.
 

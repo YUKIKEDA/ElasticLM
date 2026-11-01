@@ -4199,7 +4199,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
 - `release.yml` のジョブ: `site`（いつも、`contents: read`、`ubuntu-latest`、Node.js は `web/admin/.node-version`）と `pages`（`needs: [site, publish]`。T28）。
 - レビュー: 各行の PR で、初見の読み手（設計を渡さず、文書と README だけ）と、正しさの確かめ（設計とコードを渡す）の 2 人の独立したレビュアーに見せる（Q9）。
 - 日本語（0.117）:
-  - `docs/guide.ja/` に、`docs/guide/` と同じフォルダーとファイルの名前で訳を置く。英語の頁を足すか直す PR は、同じ PR で日本語の頁も直す。用語は設計の日本語（`english-writing` の用語表の左の列）に合わせ、文は常体で、`natural-japanese` で書く。書き手と別のレビュアーが、自然さと英語との食い違いを確かめる。
+  - `docs/guide.ja/` に、`docs/guide/` と同じフォルダーとファイルの名前で訳を置く。英語の頁を足すか直す PR は、同じ PR で日本語の頁も直す。用語は設計の日本語ではなく、`.cursor/rules/user-docs.mdc` の日本語の用語集に従う（設計の用語は決定の記録のために作った言葉で、利用者には不自然に読めるため。Gemini に見せたうえでの持ち主の決定、Issue #190）。文は常体で、`natural-japanese` で書く。書き手と別のレビュアーが、自然さと英語との食い違いを確かめる。
   - サイトは `i18n.locales` に `en` と `ja` を置き、英語を `/ElasticLM/`、日本語を `/ElasticLM/ja/` に出し、上のバーの `localeDropdown` で切り替える。検索の plugin の `language` を `en` と `ja` にし、日本語の索引も作る（V1c1 で確かめた）。
   - Docusaurus は、言語ごとの文書を `i18n/<言語>/docusaurus-plugin-content-docs/current/` からしか読まない（`@docusaurus/utils` の `getPluginI18nPath`）。設定ではほかの場所を向けられないので、`website/sync-guide-ja.mjs` が、ビルドと `start` の前に `docs/guide.ja/` をそこへ写す。写した先は git に入れない。サイトの区分の名前などの訳は `website/i18n/ja/docusaurus-plugin-content-docs/current.json` に置き、テーマの文言は Docusaurus に入っている日本語を使う。
   - まだ訳のない英語の頁があると、日本語のサイトで、その頁からのリンクが解決できずにビルドが落ちた。英語と日本語の頁は同じ PR でそろえる。

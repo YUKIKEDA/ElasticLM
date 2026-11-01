@@ -65,7 +65,7 @@ A proof is a compact JWS with the type `elm-proof+jws`, signed with ES256 by the
 | `nonce` | A nonce the server issued | Using a proof made long ago |
 | `jti` | 128 random bits | Sending the same proof twice |
 | `iat` | When the proof was made | Nothing; it is not used for freshness |
-| `jwk` | The public key, in requests for which the server may not know the key | Lets the server learn the key |
+| `jwk` | The public key, in requests for which the server may not know the key | Nothing; it lets the server learn the key |
 
 A request for which the server may not know the key carries the public key in `jwk`: an activation, a trial, every lease acquire, a reclaim, and the early return of a borrow. (A borrow can outlive a restart of `elm-server`, after which the server no longer has the key of the acquire.) The server checks that the key's thumbprint equals `kid` and that the point is on the P-256 curve before it uses the key. Refreshes, deactivations, lease renewals, and returns of normal leases do not carry `jwk`: the server uses the key the activation or lease remembers.
 

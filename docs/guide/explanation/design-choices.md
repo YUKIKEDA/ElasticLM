@@ -134,7 +134,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Choice.** v1 has no redundant `elm-server` setup. The operating system's service manager restarts the server.
 
-**Reason.** Clients renew every third of the lease length, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. `elm-server` aims to listen within 1 second of starting (on a Linux test machine it took about 0.1 s), and reclaim then restores the state. Only a machine that stays down for more than about six minutes stops the apps.
+**Reason.** Clients renew every third of the lease length, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. `elm-server` aims to listen within 1 second of starting (on a Linux test machine it took about 0.1 s), and reclaim then restores the state. Only a machine that stays down for more than about 6 minutes 40 seconds stops the apps.
 
 **Rejected.** A cluster of servers that must agree, or independent servers that split the seats between them. Both are heavy for v1.
 
