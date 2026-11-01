@@ -17,7 +17,7 @@ sidebar_position: 5
 
 ## サービスから見た製品、ポリシー、ライセンス
 
-`elm-service` が保持するデータのモデルは小さい。ベンダーの販売・課金システムか、管理画面を使う人が、管理 API を通してこのモデルを作る。
+`elm-service` が保持するデータのモデルは小さい。ベンダーの販売・課金システムか、管理画面を使う人が、[管理 API](../reference/administration-api.md) を通してこのモデルを作る。
 
 - **製品**は、ベンダーが販売するものだ。製品の `code`（英小文字、数字、`-`）は、アプリがアクティベーションのときに指定する値で、ライセンストークンにも入る。
 - **機能**は、製品の一部で、ライセンスが個別に付与できるものだ。機能も `code` で指定し、アプリはこのコードで機能の有無を確かめる。
@@ -59,7 +59,7 @@ stateDiagram-v2
 - 顧客に代わってオフラインのリクエストファイル（後述）を提出する。トライアルの記録を参照・削除する。
 - アクティベーションをしない `unbound` のライセンスのライセンスファイルを作成する。
 
-変更はどれも、サービスが次に発行するファイルから反映される。すでにデバイスにあるファイルは、有効期限まで元の値のままだ。課金システムは、必要な権限だけを持つ API キーで API を呼び出す。人はロールを持ってログインする。どちらについても、想定する脅威とあわせて[セキュリティモデル](security-model.md)で説明している。
+変更はどれも、サービスが次に発行するファイルから反映される。すでにデバイスにあるファイルは、有効期限まで元の値のままだ。課金システムは、必要な権限だけを持つ API キーで API を呼び出す。人はロールを持ってログインする。どちらについても、想定する脅威とあわせて[セキュリティモデル](security-model.md)で説明している。各ルートの権限、リクエスト、レスポンスは[管理 API](../reference/administration-api.md) にある。
 
 ### ポリシーの設定
 
@@ -68,7 +68,7 @@ stateDiagram-v2
 | 設定 | 値 | 既定 | 決めること |
 | --- | --- | --- | --- |
 | `licenseKind` | `standard`、`trial`、`server` | `standard` | トークンの種類。`server` は `elm-server` 用（[フローティングライセンス](floating-licenses.md)を参照） |
-| `binding` | `unbound`、`nodeLocked` | `nodeLocked` | ライセンスをデバイスに紐付けるか。`unbound` のライセンスはアクティベーションをせず、ファイルは管理 API から発行する |
+| `binding` | `unbound`、`nodeLocked` | `nodeLocked` | ライセンスをデバイスに紐付けるか。`unbound` のライセンスはアクティベーションをせず、ファイルは管理 API から発行する（[`POST /v1/admin/licenses/{id}/file`](../reference/administration-api.md#post-v1adminlicensesidfile)） |
 | `maxActivations` | 1〜100,000 | 1 | 同時にアクティベーションを保持できるデバイスの台数。ライセンスごとに別の値を設定できる |
 | `deactivationLimit` | 0〜100,000、またはなし | なし（無制限） | デバイスがこのライセンスのアクティベーション解除をできる回数の合計 |
 | `expirationBasis` | `fromIssue`、`fromFirstActivation` | `fromIssue` | ライセンスの `duration` を、作成時から数えるか、最初のアクティベーションから数えるか |
@@ -132,15 +132,15 @@ sequenceDiagram
 
 ## トークンの更新
 
-クライアントは、ファイルの有効期限から `refreshWindow` を引いた時刻にタイマーを設定する。既定の値では、ファイルの発行から 10 日後だ。その時刻になると、クライアントは本文に `{seq}` を入れ、プルーフを付けて `POST /v1/activations/{id}/refresh` を送る。アプリが `RefreshAsync` を呼んでもよい。
+クライアントは、ファイルの有効期限から `refreshWindow` を引いた時刻にタイマーを設定する。既定の値では、ファイルの発行から 10 日後だ。その時刻になると、クライアントは本文に `{seq}` を入れ、プルーフを付けて [`POST /v1/activations/{id}/refresh`](../reference/device-protocol.md#post-v1activationsidrefresh) を送る。アプリが `RefreshAsync` を呼んでもよい。
 
 サービスは、プルーフの鍵がアクティベーションの鍵と一致するか（一致しなければ `ELM_PROOF_INVALID`）、ライセンスの状態、クローン検出のための `seq`（後述）を確かめる。問題がなければ、`seq` を 1 つ上げた新しいファイルを返す。ポリシーの変更、延長した有効期限、一時停止、失効がデバイスに届くのはこのときだ。クライアントは新しいファイルを受け入れるときに、トークンの `iat` を時刻巻き戻し対策にも渡す。そのため、時計を進めてから戻したユーザーも、動けない状態から抜け出せる。
 
 ## アクティベーション解除
 
-アプリが `DeactivateAsync` を呼ぶと、`{seq}` とプルーフを付けた `POST /v1/activations/{id}/deactivate` が送られる。サービスは鍵と `seq` を確かめ、アクティベーションの枠を空けて `204` を返す。クライアントはそのあと `activation.json` を削除する。インストール鍵は削除しない。同じフォルダーにある借用中のリース、サーバーのピン、時刻巻き戻し対策の状態が、この鍵を必要とするからだ。
+アプリが `DeactivateAsync` を呼ぶと、`{seq}` とプルーフを付けた [`POST /v1/activations/{id}/deactivate`](../reference/device-protocol.md#post-v1activationsiddeactivate) が送られる。サービスは鍵と `seq` を確かめ、アクティベーションの枠を空けて `204` を返す。クライアントはそのあと `activation.json` を削除する。インストール鍵は削除しない。同じフォルダーにある借用中のリース、サーバーのピン、時刻巻き戻し対策の状態が、この鍵を必要とするからだ。
 
-ベンダーの管理者も、管理画面か管理 API から、どのアクティベーションでもプルーフなしで解除できる。デバイスを紛失したとき、`activation.json` が壊れたとき、クローン検出で止まったデバイスを戻すときは、この方法を使う。
+ベンダーの管理者も、管理画面か管理 API（[`POST /v1/admin/activations/{id}/deactivate`](../reference/administration-api.md#post-v1adminactivationsiddeactivate)）から、どのアクティベーションでもプルーフなしで解除できる。デバイスを紛失したとき、`activation.json` が壊れたとき、クローン検出で止まったデバイスを戻すときは、この方法を使う。
 
 `deactivationLimit` は、デバイス自身によるアクティベーション解除を、オンラインとオフラインの両方について、ライセンスの全期間を通して数える。管理者によるアクティベーション解除は数えないので、運用上の移し替えは制限されない。上限に達すると、デバイスには `409` と `ELM_DEACTIVATION_LIMIT` が返る。
 
@@ -171,8 +171,8 @@ sequenceDiagram
 
 ファイルを提出する方法は 2 つある。
 
-- **顧客**が、ネットワークにつながったコンピューターで `elm offline process --url <service URL> --in <request file> --out <response file>` を実行する。資格情報がなければ、このコマンドは公開エンドポイントの `POST /v1/offline` を使う。
-- **ベンダーの管理者**が顧客に代わって提出する。管理画面のオフラインのページを使うか、`elm offline process` を API キー（`ELM_API_KEY`）付きで、または `elm admin login` のあとに実行する。どちらも `POST /v1/admin/offline` を使い、ファイルごとに監査ログに 1 行を書き込む。
+- **顧客**が、ネットワークにつながったコンピューターで `elm offline process --url <service URL> --in <request file> --out <response file>` を実行する。資格情報がなければ、このコマンドは公開エンドポイントの [`POST /v1/offline`](../reference/device-protocol.md#post-v1offline) を使う。
+- **ベンダーの管理者**が顧客に代わって提出する。管理画面のオフラインのページを使うか、`elm offline process` を API キー（`ELM_API_KEY`）付きで、または `elm admin login` のあとに実行する。どちらも [`POST /v1/admin/offline`](../reference/administration-api.md#post-v1adminoffline) を使い、ファイルごとに監査ログに 1 行を書き込む。
 
 公開エンドポイントが資格情報を求めないのは、ファイルがオンラインのリクエストと同じだけのことを証明するからだ。アクティベーションのリクエストはインストール鍵で署名され、ライセンスキーを含む。トークンの更新のリクエストは、アクティベーションに記録された鍵で署名されていなければならない。
 
@@ -193,7 +193,7 @@ sequenceDiagram
 
 ## トライアル
 
-トライアルでは、デバイスがキーなしで、期間を限って製品を使える。アプリが `StartTrialAsync` を呼ぶと、製品のコード、フィンガープリント、公開鍵付きのプルーフを入れた `POST /v1/trials` が送られる。トライアルはオンラインでしか始められない。
+トライアルでは、デバイスがキーなしで、期間を限って製品を使える。アプリが `StartTrialAsync` を呼ぶと、製品のコード、フィンガープリント、公開鍵付きのプルーフを入れた [`POST /v1/trials`](../reference/device-protocol.md#post-v1trials) が送られる。トライアルはオンラインでしか始められない。
 
 - 製品にトライアルのポリシー（`trialPolicyId`）が指定されている必要がある。指定がないときや、登録されていない製品のときは、`404` と `ELM_TRIAL_NOT_OFFERED` が返る。
 - サービスは、トライアルを製品とフィンガープリントの組ごとに記録する。デバイスのフィンガープリントのどれかで、この製品のトライアルがすでに記録されていれば、同じインストール鍵からでも `409` と `ELM_TRIAL_USED` が返る。

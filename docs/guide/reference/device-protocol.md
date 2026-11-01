@@ -490,7 +490,7 @@ The new token lasts the policy's current `leaseDuration`, cut as on acquire.
 Returns a lease, or returns a borrow early. `{id}` is the lease ID. A release is idempotent. See [Release](../explanation/floating-licenses.md#release) and [Early return](../explanation/floating-licenses.md#early-return).
 
 - Authentication: a proof signed by the lease's installation key. It needs no `jwk`.
-- Request body: none. A body sent anyway is only covered by `bdy`.
+- Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
 - Success: `204`, with no body, also when no lease has the ID or the lease has expired (answered before the proof is checked).
 - Response headers: `ELM-Nonce`.
 
@@ -640,7 +640,7 @@ The codes of a result:
 | `ELM_OK` | The lease is held again, or it was already held with the same `seq`, or a clone was recorded under the server license's `cloneStrategy` `flag`. |
 | `ELM_MALFORMED` | The token cannot be read. |
 | `ELM_BAD_SIGNATURE` | The token is not signed by this server's key. |
-| `ELM_LEASE_OUT_OF_BOUNDS` | The token does not fit the current server license: another license ID, a feature or seat count it does not have, too long, or past its end. |
+| `ELM_LEASE_OUT_OF_BOUNDS` | The token does not fit the current server license: another license ID, a feature or seat count it does not have, too long, or lasting past the server license's expiry plus its grace period. |
 | `ELM_WRONG_PRODUCT` | The token is for another product. |
 | `ELM_WRONG_INSTALLATION` | The token is bound to another installation key than the proof's. |
 | `ELM_CLOCK_TAMPERED` | The token's issue time is more than 5 minutes ahead of the server's clock. |
@@ -690,7 +690,7 @@ The new token lasts the server license's lease period, cut as on acquire.
 Returns a lease, or returns a borrow early. `{id}` is the lease ID. A release is idempotent. See [Release](../explanation/floating-licenses.md#release) and [Early return](../explanation/floating-licenses.md#early-return).
 
 - Authentication: a proof signed by the lease's installation key. It needs no `jwk` for a lease; send `jwk` for a borrow, because the server may have restored it from its borrow record without the key.
-- Request body: none. A body sent anyway is only covered by `bdy`.
+- Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
 - Success: `204`, with no body, also when the server does not know the lease (answered before the proof is checked when it has no record of the ID).
 - Response headers: `ELM-Nonce`.
 
