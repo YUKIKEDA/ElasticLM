@@ -208,7 +208,8 @@ jobs:
 
       - name: README steps
         # design §20.7 (V1c1): the commands between the README's markers, run line by line with the published elm.
-        run: ./eng/docs/Test-ReadmeSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
+        run: |
+          ./eng/docs/Test-ReadmeSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
 
       - name: Smoke
         run: |
