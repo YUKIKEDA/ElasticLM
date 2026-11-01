@@ -87,7 +87,7 @@ sidebar_position: 9
 | `ClockSkew` | `TimeSpan` | 5 分 | いいえ | このマシンと発行元のあいだで許す時刻のずれ。0 から `LicenseVerifierOptions.MaxClockSkew`（1 時間）まで。コンストラクターが確かめる。 |
 | `AcceptTrialAsStandard` | `bool` | `true` | いいえ | `LicenseKind.Standard` を求めたときに、トライアルのライセンスも受け入れるかどうか。 |
 
-下のコードは、[ライセンスを発行して .NET のアプリで確かめる](../tutorials/verify-a-license-offline.md)で作るアプリのうち検証する部分で、アプリが呼ぶ順に並んでいる。このアプリは、ルート鍵の公開鍵のファイルとライセンスファイルをコマンドラインで受け取り、製品 `acme-cad` とその機能 `pro` を求める。製品と機能は、定数 `ProductId` と `FeatureId` に持っている。
+下のコードは、[ライセンスを発行して .NET のアプリで確かめる](../tutorials/verify-a-license-offline.md)で作るアプリのうち検証する部分で、アプリが呼ぶ順に並んでいる。このアプリは、ルート公開鍵のファイルとライセンスファイルをコマンドラインで受け取り、製品 `acme-cad` とその機能 `pro` を求める。製品と機能は、定数 `ProductId` と `FeatureId` に持っている。
 
 <!-- sample: samples/VerifyOffline/Program.cs#verify -->
 ```csharp
