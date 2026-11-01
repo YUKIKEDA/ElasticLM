@@ -2,7 +2,7 @@
 
 ElasticLM lets the vendor of a .NET or C/C++ application issue licenses, check them on their customers' machines, and count concurrent use. This documentation is for the people who issue the licenses, the developers who build the checks into an app, and the administrators who run a license server. It assumes you know your own platform; it does not assume you have read the design.
 
-> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials and how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the error codes, and the logs. The explanation pages below explain how ElasticLM works.
+> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials and how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, and the logs. The explanation pages below explain how ElasticLM works.
 
 ## How the documentation is organized
 
@@ -48,7 +48,7 @@ Read [Overview](explanation/overview.md) first, whoever you are. It names the pa
 
 To understand why ElasticLM is built the way it is, read [Design choices](explanation/design-choices.md).
 
-**Reference.** To look up an exact name, use [elm command reference](reference/elm-cli.md), [elm-server configuration](reference/server-configuration.md), [elm-service configuration](reference/service-configuration.md), [Administration API](reference/administration-api.md), [Device protocol](reference/device-protocol.md), [Error codes](reference/error-codes.md), or [Logs](reference/logs.md).
+**Reference.** To look up an exact name, use [elm command reference](reference/elm-cli.md), [elm-server configuration](reference/server-configuration.md), [elm-service configuration](reference/service-configuration.md), [Administration API](reference/administration-api.md), [Device protocol](reference/device-protocol.md), [Token and file formats](reference/formats.md), [Error codes](reference/error-codes.md), or [Logs](reference/logs.md).
 
 ## Elsewhere
 

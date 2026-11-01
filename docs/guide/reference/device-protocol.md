@@ -365,7 +365,7 @@ Takes an offline request file and answers it: an activation or refresh request (
 - Success: `200` with the same answer as `POST /v1/activations` for an activation or refresh request, a new activation included. This body, unchanged, is the response file (`.elmresp`) that [`elm offline process`](elm-cli.md#elm-offline-process) writes with `--out` and that the device imports. `204`, with no body, for a deactivation proof.
 - Response headers: none of the protocol's headers. The file carries its own nonce, so the answer has no `ELM-Nonce`.
 
-The header of a file has `alg` `ES256`, `kid` (the installation key's thumbprint), and `typ`. The claims the service reads from an activation or refresh request:
+The header of a file has `alg` `ES256`, `kid` (the installation key's thumbprint), and `typ`. The formats of the request, the answer, and the deactivation proof, with examples, are in [Token and file formats](formats.md#offline-request-elm-actreqjws). The claims the service reads from an activation or refresh request:
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
@@ -425,7 +425,7 @@ Lends seats of a feature of a license whose policy's `floating` is `cloud`, or b
 | `client` | object | no | As in `POST /v1/activations`. Kept only when the policy's `clientInfoStrategy` is `hostAndUser`. |
 | `app` | string | no | The app's version, at most 64 bytes. |
 
-The lease lasts the policy's `leaseDuration`, or the `borrow` period, cut at the license's and the feature's expiry. The answer holds the lease token and the certificates of the service's signing key, which check it; the token is shortened to `eyJ…` here. The lease token is a compact JWS whose payload is JSON. The claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Leases and lease tokens](../explanation/floating-licenses.md#leases-and-lease-tokens) lists every claim, and [What the client checks in every lease](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) says how a client checks the token.
+The lease lasts the policy's `leaseDuration`, or the `borrow` period, cut at the license's and the feature's expiry. The answer holds the lease token and the certificates of the service's signing key, which check it; the token is shortened to `eyJ…` here. The lease token is a compact JWS whose payload is JSON. The claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim, and [What the client checks in every lease](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) says how a client checks the token.
 
 ```json
 {
@@ -530,7 +530,7 @@ Returns the server license file and the server's public key, with which a client
 - Success: `200`.
 - Response headers: none of the protocol's headers.
 
-`license` is the server license file, the same JSON as a `.elmlic` file. `key` is the public key of the server's installation key, as a JWK with `kty`, `crv`, `x`, and `y`; its thumbprint is the server license's `cnf.jkt`. Tokens and certificates are shortened to `eyJ…` here:
+`license` is the server license file, the same JSON as a `.elmlic` file (see [Token and file formats](formats.md#server-license)). `key` is the public key of the server's installation key, as a JWK with `kty`, `crv`, `x`, and `y`; its thumbprint is the server license's `cnf.jkt`. Tokens and certificates are shortened to `eyJ…` here:
 
 ```json
 {
@@ -569,7 +569,7 @@ Lends seats of a feature of the server license, or borrows them when the body ha
 | `client` | object | no | `{"host": <string>, "user": <string>}`, each optional and at most 255 bytes. Checked against the `host:` and `user:` entries of `allow` and `deny` (see [Access rules](server-configuration.md#access-rules)). |
 | `app` | string | no | The app's version, at most 64 bytes. It is written to the usage log. |
 
-`elm-server` does not read `licenseKey` or `product`. The lease lasts the server license's lease period, or the `borrow` period, and ends no later than the server license's expiry plus its grace period. The answer holds the lease token, which the server signed with its installation key, and an empty `certificates`; the token is shortened to `eyJ…` here. The client checks the token with the key from `GET /v1/server/license`. As on `elm-service`, the claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Leases and lease tokens](../explanation/floating-licenses.md#leases-and-lease-tokens) lists every claim.
+`elm-server` does not read `licenseKey` or `product`. The lease lasts the server license's lease period, or the `borrow` period, and ends no later than the server license's expiry plus its grace period. The answer holds the lease token, which the server signed with its installation key, and an empty `certificates`; the token is shortened to `eyJ…` here. The client checks the token with the key from `GET /v1/server/license`. As on `elm-service`, the claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim.
 
 ```json
 {

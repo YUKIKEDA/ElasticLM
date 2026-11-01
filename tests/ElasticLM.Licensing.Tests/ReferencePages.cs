@@ -1,11 +1,13 @@
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Text.RegularExpressions;
 
 namespace ElasticLM.Licensing.Tests;
 
 /// <summary>
 /// Reads the reference pages of the user documentation, in English and in Japanese, from the repository (design §20.7, V1c2),
-/// so that a test can check that every name the code defines appears on them. Each test project that checks a page links this
-/// file.
+/// so that a test can check that every name the code defines appears on them, and takes the names of a package's public types and
+/// members by reflection. Each test project that checks a page links this file.
 /// </summary>
 internal static partial class ReferencePages
 {
@@ -83,43 +85,28 @@ internal static partial class ReferencePages
     }
 
     /// <summary>
-    /// Returns the routes that do not appear in their program's section of one reference page, in either language. A program's
-    /// section starts at a level-2 heading (<c>## </c>) that holds the program's name as a whole code span, such as
-    /// <c>## `elm-server` local administration API</c>, and runs to the next level-2 heading. A route appears when a whole
-    /// inline code span is the route: the method, one space, and the path, such as <c>GET /v1/nonce</c>.
+    /// Returns the names that do not appear in their section of one reference page, in either language. A section starts at a
+    /// heading of the given level that holds the section's name as a whole code span, such as
+    /// <c>## `elm-server` local administration API</c> or <c>### `LicenseClient`</c>, and runs to the next heading of the same or a
+    /// higher level. A name appears when a whole inline code span is the name, such as <c>GET /v1/nonce</c> or
+    /// <c>TrustStore</c>; lines in fenced code blocks do not count.
     /// </summary>
     /// <param name="page">The page's file name under <c>reference/</c>, such as <c>device-protocol.md</c>.</param>
-    /// <param name="routes">The routes to find, by the name of the program whose section must hold them.</param>
-    /// <returns>One line per missing route, prefixed with the page's path and the program; empty when every route appears.</returns>
-    public static IReadOnlyList<string> FindMissingRoutes(string page, IReadOnlyDictionary<string, IReadOnlyList<string>> routes)
-    {
-        var missing = new List<string>();
-        foreach (string folder in (string[])["docs/guide/reference", "docs/guide.ja/reference"])
-        {
-            string relative = folder + "/" + page;
-            string path = Path.Combine(RepositoryRoot.Value, relative);
-            if (!File.Exists(path))
-            {
-                missing.Add(relative + ": the page does not exist");
-                missing.AddRange(routes.SelectMany(program => program.Value.Select(route => relative + ": " + program.Key + ": " + route)));
-                continue;
-            }
+    /// <param name="level">The level of the sections' headings: 2 for <c>## </c>, 3 for <c>### </c>.</param>
+    /// <param name="names">The names to find, by the name of the section that must hold them.</param>
+    /// <returns>One line per missing name, prefixed with the page's path and the section; empty when every name appears.</returns>
+    public static IReadOnlyList<string> FindMissingInSections(string page, int level, IReadOnlyDictionary<string, IReadOnlyList<string>> names) =>
+        FindMissingSpans(page, level, [.. names.Select(section => ((string?)section.Key, section.Value))]);
 
-            string[] lines = File.ReadAllLines(path);
-            foreach ((string program, IReadOnlyList<string> wanted) in routes)
-            {
-                HashSet<string> spans = SectionSpans(lines, program);
-                if (spans.Count == 0)
-                {
-                    missing.Add(relative + ": no level-2 heading holds `" + program + "`, or its section has no code");
-                }
-
-                missing.AddRange(wanted.Where(route => !spans.Contains(route)).Select(route => relative + ": " + program + ": " + route));
-            }
-        }
-
-        return missing;
-    }
+    /// <summary>
+    /// Returns the names that do not appear anywhere on one reference page, in either language. A name appears when a whole
+    /// inline code span is the name, such as <c>elm_verifier_create</c>; lines in fenced code blocks do not count.
+    /// </summary>
+    /// <param name="page">The page's file name under <c>reference/</c>, such as <c>c-api.md</c>.</param>
+    /// <param name="names">The names to find.</param>
+    /// <returns>One line per missing name, prefixed with the page's path; empty when every name appears.</returns>
+    public static IReadOnlyList<string> FindMissingOnPage(string page, IEnumerable<string> names) =>
+        FindMissingSpans(page, 0, [(null, [.. names.Distinct(StringComparer.Ordinal)])]);
 
     /// <summary>
     /// Returns the name and HTTP status pairs that one reference page does not hold, in either language. A page holds a pair when
@@ -195,6 +182,101 @@ internal static partial class ReferencePages
     public static string Message(IReadOnlyList<string> missing) =>
         missing.Count + " names are missing from the reference pages:" + Environment.NewLine + string.Join(Environment.NewLine, missing);
 
+    /// <summary>
+    /// Returns the full path of a file of the repository.
+    /// </summary>
+    /// <param name="relative">The file's path under the repository root, such as <c>include/elasticlm.h</c>.</param>
+    /// <returns>The full path.</returns>
+    public static string RepositoryFile(string relative) => Path.Combine(RepositoryRoot.Value, relative);
+
+    /// <summary>
+    /// Returns the names of an assembly's public top-level types, without the generic arity suffix (<c>`1</c>). Nested types
+    /// are left out: the page lists them in their parent type's row (design §20.7, V1c2c).
+    /// </summary>
+    /// <param name="assembly">The assembly of a package.</param>
+    /// <returns>The names, in order.</returns>
+    public static IReadOnlyList<string> TypeNames(Assembly assembly) =>
+        [
+            .. assembly
+                .GetExportedTypes()
+                .Where(type => type.DeclaringType is null)
+                .Select(type => type.Name.Split('`')[0])
+                .Distinct()
+                .Order(StringComparer.Ordinal),
+        ];
+
+    /// <summary>
+    /// Returns the names of the public methods a type declares, static ones included. Left out are the methods the compiler
+    /// makes or names specially (property accessors, event add and remove, operators, and a record's members, which carry
+    /// <see cref="CompilerGeneratedAttribute"/>) and the overrides of <see cref="object"/>'s methods (<c>Equals</c>,
+    /// <c>GetHashCode</c>, <c>ToString</c>). Overloads give one name.
+    /// </summary>
+    /// <param name="type">The type.</param>
+    /// <returns>The names, in order.</returns>
+    public static IReadOnlyList<string> MethodNames(Type type) =>
+        [
+            .. type.GetMethods(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static | BindingFlags.DeclaredOnly)
+                .Where(method =>
+                    !method.IsSpecialName
+                    && !method.IsDefined(typeof(CompilerGeneratedAttribute))
+                    && method.GetBaseDefinition().DeclaringType != typeof(object)
+                )
+                .Select(method => method.Name)
+                .Distinct()
+                .Order(StringComparer.Ordinal),
+        ];
+
+    /// <summary>
+    /// Returns the names an entry type's section must hold: the public methods the type declares (<see cref="MethodNames"/>) and
+    /// the public properties of its options type, static ones included.
+    /// </summary>
+    /// <param name="entry">The entry type, such as <c>LicenseVerifier</c>.</param>
+    /// <param name="options">Its options type, or <see langword="null"/> when it has none.</param>
+    /// <returns>The names.</returns>
+    public static IReadOnlyList<string> EntryNames(Type entry, Type? options) =>
+        [
+            .. MethodNames(entry),
+            .. options?.GetProperties(BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static).Select(property => property.Name) ?? [],
+        ];
+
+    private static List<string> FindMissingSpans(string page, int level, (string? Section, IReadOnlyList<string> Names)[] wanted)
+    {
+        string Line(string relative, string? section, string name) => relative + ": " + (section is null ? string.Empty : section + ": ") + name;
+        var missing = new List<string>();
+        foreach (string folder in (string[])["docs/guide/reference", "docs/guide.ja/reference"])
+        {
+            string relative = folder + "/" + page;
+            string path = Path.Combine(RepositoryRoot.Value, relative);
+            if (!File.Exists(path))
+            {
+                missing.Add(relative + ": the page does not exist");
+                missing.AddRange(wanted.SelectMany(section => section.Names.Select(name => Line(relative, section.Section, name))));
+                continue;
+            }
+
+            string[] lines = File.ReadAllLines(path);
+            foreach ((string? section, IReadOnlyList<string> names) in wanted)
+            {
+                HashSet<string> spans = SectionSpans(lines, level, section);
+                if (spans.Count == 0)
+                {
+                    missing.Add(
+                        relative
+                            + (
+                                section is null
+                                    ? ": the page has no code"
+                                    : $": no level-{level} heading holds `{section}`, or its section has no code"
+                            )
+                    );
+                }
+
+                missing.AddRange(names.Where(name => !spans.Contains(name)).Select(name => Line(relative, section, name)));
+            }
+        }
+
+        return missing;
+    }
+
     private static string FindRepositoryRoot()
     {
         for (DirectoryInfo? folder = new(AppContext.BaseDirectory); folder is not null; folder = folder.Parent)
@@ -241,12 +323,13 @@ internal static partial class ReferencePages
         return code;
     }
 
-    // The inline code spans of every section whose level-2 heading holds the program's name as a whole code span. Lines in fenced
-    // code blocks are neither headings nor spans.
-    private static HashSet<string> SectionSpans(string[] lines, string program)
+    // The inline code spans of every section whose heading of the level holds the section's name as a whole code span, to the next
+    // heading of the same or a higher level; of the whole page when the section is null. Deeper headings are part of the section,
+    // as the route headings (### `GET /v1/nonce`) are. Lines in fenced code blocks are neither headings nor spans.
+    private static HashSet<string> SectionSpans(string[] lines, int level, string? section)
     {
         var spans = new HashSet<string>(StringComparer.Ordinal);
-        bool inSection = false;
+        bool inSection = section is null;
         string? fence = null;
         foreach (string line in lines)
         {
@@ -267,9 +350,10 @@ internal static partial class ReferencePages
                 continue;
             }
 
-            if (line.StartsWith("## ", StringComparison.Ordinal))
+            int heading = line.TakeWhile(c => c == '#').Count();
+            if (section is not null && heading > 0 && heading <= level && line.Length > heading && line[heading] == ' ')
             {
-                inSection = CodeSpan().Matches(line).Any(match => match.Groups["code"].Value == program);
+                inSection = heading == level && CodeSpan().Matches(line).Any(match => match.Groups["code"].Value == section);
                 continue;
             }
 

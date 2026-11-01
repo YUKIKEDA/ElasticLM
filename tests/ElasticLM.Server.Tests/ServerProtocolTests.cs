@@ -614,12 +614,14 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         IReadOnlyList<string> missing =
         [
-            .. ReferencePages.FindMissingRoutes(
+            .. ReferencePages.FindMissingInSections(
                 "administration-api.md",
+                2,
                 new Dictionary<string, IReadOnlyList<string>> { ["elm-server"] = [.. routes[true]] }
             ),
-            .. ReferencePages.FindMissingRoutes(
+            .. ReferencePages.FindMissingInSections(
                 "device-protocol.md",
+                2,
                 new Dictionary<string, IReadOnlyList<string>> { ["elm-server"] = [.. routes[false]] }
             ),
         ];

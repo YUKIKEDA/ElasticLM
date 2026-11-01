@@ -32,7 +32,7 @@ No private key is ever placed in an executable's resources or constants. `elm` i
 
 ### Root key
 
-The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase; a new key's passphrase must be at least 12 characters.
+The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase; a new key's passphrase must be at least 12 characters. The formats of the private and public key files are in [Token and file formats](../reference/formats.md#key-files-and-key-ids).
 
 The root key never goes onto an online service. Its only job is `elm key certify`, which signs a key certificate for a signing key. Because it is used rarely, it can stay on an offline machine or removable media between uses.
 
@@ -55,7 +55,7 @@ A certificate's payload carries:
 - `use`: what the key may sign, one or more of `license`, `lease`, and `log`;
 - `nbf` and `exp`: the start and end of the validity period.
 
-`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731.
+`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731. Every member of a certificate, and the seven token types, are listed in [Token and file formats](../reference/formats.md#key-certificate-elm-certjws).
 
 **Uses.** A verifier asks for exactly one use. The license verifier accepts only certificates with `license`; the verifier for cloud leases accepts only `lease`; `elm log verify` uses `log`. A key certified only for logs cannot sign a license the app accepts.
 
@@ -67,7 +67,7 @@ The cost of this rule is that a signing key's period does not limit a thief. Som
 
 ### Key IDs
 
-A key ID (`kid`) is a short name for a public key, computed from the key itself: its JWK thumbprint (RFC 7638, SHA-256, base64url). Anyone can compute it from the public key, and `elm key thumbprint` prints it. A token's header names the signing key by its `kid`, and a certificate's header names the root key the same way. Because the ID is derived from the key, a certificate that claims one key ID but carries a different key is caught: the verifier checks that the thumbprint of `jwk` equals `sub`.
+A key ID (`kid`) is a short name for a public key, computed from the key itself: its JWK thumbprint (RFC 7638, SHA-256, base64url). Anyone can compute it from the public key, and `elm key thumbprint` prints it. A token's header names the signing key by its `kid`, and a certificate's header names the root key the same way. Because the ID is derived from the key, a certificate that claims one key ID but carries a different key is caught: the verifier checks that the thumbprint of `jwk` equals `sub`. The exact text that is hashed is in [Token and file formats](../reference/formats.md#key-ids).
 
 ### The trust store
 

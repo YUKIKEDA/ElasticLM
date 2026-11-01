@@ -30,7 +30,7 @@ The header has exactly three members: `alg`, which must be `ES256`; `kid`, the k
 
 A header with any other member (`jwk`, `x5c`, `crit`, or anything else) is rejected, so a token cannot bring its own key. The verifier never takes a key or an algorithm from the token: it finds the key through the certificates, and `alg` must be `ES256`. Each verifying function accepts one `typ` only, so a lease token cannot be passed off as a license.
 
-The signature is checked over the exact bytes received, and the payload is not parsed as JSON until the signature has been checked. Nothing in the payload is trusted, or even read, before then.
+The signature is checked over the exact bytes received, and the payload is not parsed as JSON until the signature has been checked. Nothing in the payload is trusted, or even read, before then. The rules every token follows, and the seven token types, are in [Token and file formats](../reference/formats.md#jws-rules).
 
 ### Claims
 
@@ -46,7 +46,7 @@ The license claims carry:
 - For a server license, the lease period, borrow limit, overage, and clone strategy that the on-premises server must keep.
 - `meta`: vendor strings that the verifier does not interpret.
 
-`cnf`, `fp`, and `seq` are explained in [devices and proofs](devices-and-proofs.md) and [activation](activation.md); the server license values in [floating licenses](floating-licenses.md).
+`cnf`, `fp`, and `seq` are explained in [devices and proofs](devices-and-proofs.md) and [activation](activation.md); the server license values in [floating licenses](floating-licenses.md). Every claim, with its type, range, and when it is required, is listed in [Token and file formats](../reference/formats.md#license-token-elm-licensejws).
 
 ### Signed, not encrypted
 
@@ -67,7 +67,7 @@ A license file is UTF-8 JSON with the extension `.elmlic`:
 
 `certificates` holds 1 to 4 key certificates of the key that signed the token, so the file can be verified from the root key with nothing else. The outer JSON is not signed; each token inside it is signed on its own. Changing the outer JSON can only make the file fail, not make it pass.
 
-The verifier sets limits on the file's size, the number of entries in each list, and the nesting depth, so that a hostile file cannot use up memory or time. The file is at most 64 KiB; the full list of limits belongs to the reference.
+The verifier sets limits on the file's size, the number of entries in each list, and the nesting depth, so that a hostile file cannot use up memory or time. The file is at most 64 KiB. The members of the file and the full list of limits are in [Token and file formats](../reference/formats.md#license-file-elmlic).
 
 ## The order of checks
 
@@ -168,7 +168,7 @@ A licensee could set the device clock back to keep using an expired token. The c
 
 1. For every token that passes steps 1 to 6, the guard records the later of the current time and the token's `iat` as the "last time seen".
 2. If the current time is earlier than the last time seen minus the allowed skew, the clock has been set back, and the result is `ELM_CLOCK_TAMPERED`.
-3. The state is kept in a file (`FileClockGuard` in .NET; in C, the file `clock` in the installation's folder unless `clock_guard_path` names another). When an installation key is available, the state is signed with it, and a state whose signature fails is treated as missing.
+3. The state is kept in a file (`FileClockGuard` in .NET; in C, the file `clock` in the installation's folder unless `clock_guard_path` names another). When an installation key is available, the state is signed with it, and a state whose signature fails is treated as missing. Where each client keeps the state is in [Files the client keeps](../reference/formats.md#files-the-client-keeps).
 4. A state that is missing, edited, or unreadable falls back to the `iat` of the token being verified. The token's `iat` comes from the signer's clock, so whatever happens to the state, the clock can never be set back before the token was issued.
 5. The guard also runs when lease tokens are verified, including borrowed leases, which are checked against the device clock while offline (see [floating licenses](floating-licenses.md)).
 
