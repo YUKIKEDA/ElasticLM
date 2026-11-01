@@ -4211,8 +4211,8 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
 - 頁の書き方: 「何のためか → 仕組みと流れ（図）→ 何が起こりうるか、利用者がすべきこと」の順。図は、信頼の鎖、検証の順、有効化の sequence 図、リースの state 図、回収の sequence 図、置き方の型。まだない頁（Reference、Tutorials、How-to guides）へはリンクせず、その頁を書く行がリンクを足す。書き方の規則は `.cursor/rules/user-docs.mdc`（頁ごとに Diátaxis の種類を 1 つ、冒頭に読む人と前提、`english-writing` の用語、MDX と JSX を使わない、相対の `.md` のリンク、Mermaid、V1c3 からはコードをサンプルから引く）。
 - 入口（`docs/guide/README.md`）: 読む人ごと（ベンダー、アプリの開発者、利用者の管理者、管理 API を使う人）の読む順。
 - README: 何ができるか、配る物、`elm` の 5 つのコマンド（ルート鍵、署名鍵、署名鍵の証明、ライセンスの発行、確かめ）で通す短い手順、文書への入口。V1e の最初の公開まではサイトがないので、README は GitHub の `docs/guide/` を指し、V1e でサイトの URL に替える。状態の文は「1.0 はまだ出ていない」。`README.ja.md` はその訳。
-- README の手順の確かめ: 手順は README の印（`<!-- readme-steps:start -->` と `<!-- readme-steps:end -->`）で挟んだコードの区画に置き、`eng/docs/Test-ReadmeSteps.ps1` がその区画を読んで、公開した `elm` で行ごとに流す。CI の `aot` ジョブの 3 つの OS で動かす。文書とスクリプトに手順を 2 か所で持たない。V1c3a で、README の印を Tutorials と同じ印（`<!-- steps:run -->`）に替えて `readme-steps` の印をなくし、このスクリプトを README と Tutorials の両方を流すものに広げる（下の「V1c3 の形」。V1c3 の設計のレビューの R5）。
-  - 区画の各行は `elm` で始まる 1 つのコマンドで、どのシェルでも同じに打てる形にする（行の続き、変数、引用符の中の空白に頼らない。二重引用符の中は 1 つの引数）。シェルに固有のこと（パスフレーズの環境変数の設定）は、区画の外の文で書く。
+- README の手順の確かめ: 手順は README の、印（`<!-- steps:run -->`）を付けたコードブロックに置き、`eng/docs/Test-GuideSteps.ps1` がそのブロックを読んで、公開した `elm` で行ごとに流す。CI の `aot` ジョブの 3 つの OS で動かす。文書とスクリプトに手順を 2 か所で持たない。印とスクリプトは Tutorials と共通で、README と Tutorials の両方を流す（V1c3a。下の「V1c3 の形」。V1c3 の設計のレビューの R5）。
+  - README の手順のブロックの各行は `elm` で始まる 1 つのコマンドで、どのシェルでも同じに打てる形にする（行の続き、変数、引用符の中の空白に頼らない。二重引用符の中は 1 つの引数）。シェルに固有のこと（パスフレーズの環境変数の設定）は、ブロックの外の文で書く。
   - パスフレーズ: スクリプトは、その実行で作った乱数のパスフレーズを `ELM_KEY_PASSPHRASE` で渡す（README の文と同じ渡し方）。この変数があれば、`elm` は対話で聞かない（`src/ElasticLM.Cli/CliSupport.cs` の `ForNewKey`。変数がなく、入力が対話でなければ誤りで止まる）。
   - スクリプトは一時のフォルダーで流し、終わりに鍵ごと消す。各行は終了コード 0 で成功とし、0 でなければその行のコマンドの最初の 2 語だけを出して落ちる（引数を出さない）。
 - サイト（`website/`）:
@@ -4299,12 +4299,12 @@ V1c3 の Grill（Issue #213、Q1〜Q7）で決め、その設計を独立した�
 
 - 行（Q1）: V1c3 を 3 つに分ける。4 つの Tutorial、サンプル、手順を流す仕組み、コードをサンプルから引く仕組みを 1 つの PR で書くと、V1c2 の 10 頁より重くなるため。
   - V1c3a: 手順を流す仕組みのうち README と Tutorial 1 が使う分（下の「手順を流す仕組み」）、コードをサンプルから引く仕組み、サイドバーの Tutorials の区分、Tutorial 1（鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる）。
-  - V1c3b: Tutorial 2（`elm-service` を立て、アプリをオンラインで有効化する）と Tutorial 3（`elm-server` を立て、フローティングのライセンスを使う）。手順を流す仕組みに、サーバーを裏で動かすブロックと、前の手順の出力の値を次の手順に入れることを足す（R6）。
+  - V1c3b: Tutorial 2（`elm-service` を立て、アプリをオンラインで有効化する）と Tutorial 3（`elm-server` を立て、フローティングのライセンスを使う）。手順を流す仕組みに、サーバーを裏で動かすブロック、前の手順の出力の値を次の手順に入れること、アプリの実行ファイルで始まる行を足す（R6）。
   - V1c3c: Tutorial 4（C のアプリに `libelasticlm` を組み込む）。手順を流す仕組みに、C のコンパイラーを流すことを足す（R6）。
 - 順（Q6）: V1c3a → V1c3b → V1c8 → V1c3c。C の Tutorial は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書き、普通のリンクの手順を教える。今の、実行時に読み込む方法で先に書くと、V1c8 のあとに書き直すことになる。
 - 公開の前の入手（Q2、R2〜R4）: Tutorials の頭に「始める前に」の節を置き、ソースから作る手順を書く。公開のあと（V1e）は、この節をリリースからのダウンロードと nuget.org のパッケージに書き換える（V1e の行）。Tutorial 1 の節は、要るもの（`elm` と `ElasticLM.Licensing` のパッケージ）だけを `dotnet` で作る（R2、持ち主の決定）。`eng/release/Publish-Rid.ps1`（RID を引数に取り、4 つの実行ファイルとライブラリをまとめて作る）は頁で使わない。
   - 前提: リポジトリのクローン、.NET 10 SDK、NativeAOT の前提（Windows は Visual Studio の「Desktop development with C++」、Ubuntu は `clang` と `zlib1g-dev`、macOS は Xcode の Command Line Tools。https://learn.microsoft.com/dotnet/core/deploying/native-aot/ の Prerequisites。`CONTRIBUTING.md` は Windows の分だけを書いている）。手順はクローンの外で打つので、クローンの `global.json` は効かない（`dotnet` は今のフォルダーとその親から `global.json` を探す。https://learn.microsoft.com/dotnet/core/tools/global-json ）。そのため頁は、前提の SDK を「.NET 10 SDK」と書く。
-  - `elm`: `dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools`。`-r` を書かない。`ElasticLM.Cli.csproj` は `PublishAot` が `true` で、SDK は、実行ファイルを発行するときに `RuntimeIdentifier` が空で `PublishAot` が `true` なら `UseCurrentRuntimeIdentifier` を `true` にし、`RuntimeIdentifier` に `NETCoreSdkPortableRuntimeIdentifier`（SDK が動いている OS と CPU の RID）を入れる（SDK 10.0.402 の `Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets`）。したがって、手元の RID の NativeAOT の `elm` が `tools` にできる。`tools` を PATH に足すことは、シェルに固有なので区画の外の文で書く。
+  - `elm`: `dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools`。`-r` を書かない。`ElasticLM.Cli.csproj` は `PublishAot` が `true` で、SDK は、実行ファイルを発行するときに `RuntimeIdentifier` が空で `PublishAot` が `true` なら `UseCurrentRuntimeIdentifier` を `true` にし、`RuntimeIdentifier` に `NETCoreSdkPortableRuntimeIdentifier`（SDK が動いている OS と CPU の RID）を入れる（SDK 10.0.402 の `Sdks/Microsoft.NET.Sdk/targets/Microsoft.NET.RuntimeIdentifierInference.targets`）。したがって、手元の RID の NativeAOT の `elm` が `tools` にできる。`tools` を PATH に足すことは、シェルに固有なのでコードブロックの外の文で書く。
   - パッケージ: `dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed`。Tutorial 1 は `ElasticLM.Licensing` だけを使う（`ElasticLM.Client` は V1c3b）。版は `Directory.Build.props` の `VersionPrefix`（今は `0.1.0`）で、頁はその版を `dotnet add` に書く。版を上げて頁を直さなければ、手順の CI の復元が落ちる。
   - `nuget.config`（R4）: 頁は、作業フォルダーに `nuget.config` を書くファイルのブロックを置く。`<clear/>` のあと、相対のパスの `feed` と nuget.org を源にし、`packageSourceMapping` で `ElasticLM.*` を `feed` だけから、ほかを nuget.org から取る（`samples/PackageConsumer/nuget.config` と同じ形）。`ElasticLM.*` は nuget.org にまだなく、ID の接頭辞の予約は V1e なので、だれかが同じ名前のパッケージを nuget.org に置けるため。
 - サンプル（Q3、R1、R11）: Tutorial ごとに新しいサンプルを `samples/` に作る。V1c3a は `samples/VerifyOffline`（Tutorial 1 のアプリ）の 1 つで、`docs/conventions.md` のプロジェクトの表に行を足す。
@@ -4312,31 +4312,33 @@ V1c3 の Grill（Issue #213、Q1〜Q7）で決め、その設計を独立した�
   - 頁は、読み手にアプリを `dotnet new console -o app` で作らせ、`dotnet add app package ElasticLM.Licensing --version 0.1.0` で参照させ、`app/Program.cs` に書く中身の全体を、サンプルの `Program.cs` の全体と同じにする（下の「コードをサンプルから引く」のテストで確かめる）。手順を流す CI は、頁の手順を書いてあるとおりに、ローカルに pack したパッケージで流す。パッケージから組み立てるのは、この頁の手順だけになる。
   - `samples/VerifyLicense` は Tutorials に使わない。
 - Tutorial 1 の中身（R7、R10）:
-  - 読み手はクローンの外に作業フォルダーを作り、その中で打つ。クローンの中で打つと、リポジトリの `Directory.Build.props` と `Directory.Packages.props` がアプリにも効くため。作業フォルダーの中で、鍵は `keys/`、アプリは `app/`、パッケージは `feed/` に分ける。
+  - 読み手はクローンの外に作業フォルダーを作り、その中で打つ。クローンの中で打つと、リポジトリの `Directory.Build.props` と `Directory.Packages.props` がアプリにも効くため。作業フォルダーの中で、アプリは `app/`、パッケージは `feed/` に分け、鍵のファイル（`root.key.pem`、`root.pub.pem`、`signing.key.pem`、`signing.pub.pem`、`signing.cert`）は作業フォルダーの直下に置く。`elm` は `--out` のパスの親のフォルダーを作らず（`src/ElasticLM.Cli/CliSupport.cs` の `CliFiles.Write` は `FileStream` でファイルを開くだけ）、手順の行はフォルダーを作るコマンド（`mkdir`）を流せない（行は `elm` か `dotnet` で始まる。下の「手順を流す仕組み」）ため。`app/` と `feed/` は、`dotnet new -o` と `dotnet pack -o` が作る。
   - ID は README と同じにする（製品 `acme-cad`、ライセンス `first-license`、機能 `pro`、期限 `2099-12-31T00:00:00Z`）。README の値と食い違う点はない。
   - ライセンスは端末に結び付けない（`--bind-key` も `--fingerprint` も渡さない）。`elm` には、アプリの端末のサムプリントと指紋を出すコマンドがないため（Explanation の overview の頁）。
   - 鍵のパスフレーズは、読み手が対話で打つ。手順を流す CI は、頁の外で `ELM_KEY_PASSPHRASE` を渡す（README と同じ。上の V1c1 の形）。
   - アプリは、`root.pub.pem` とライセンスファイルのパスを引数で受け取り、製品 ID と機能はコードの定数で持つ。頁は、本物のアプリは公開鍵を埋め込むと書く（README の「Your app embeds `root.pub.pem`」と同じ）。
-  - アプリは `dotnet run --project app -- keys/root.pub.pem first.elmlic` で動かし、出力の行を `<!-- steps:expect -->` で確かめる。
+  - アプリは `dotnet run --project app -- root.pub.pem first.elmlic` で動かし、出力の行を `<!-- steps:expect -->` で確かめる。
 - コードをサンプルから引く（Q4、R8、R9）:
-  - 頁のコードブロックの開きの行のすぐ前の行に、`<!-- sample: <リポジトリの直下からのパス>#<名前> -->` を置く。`#<名前>` がなければファイルの全体を引く。
+  - 頁のコードブロックの開きの行の上に、`<!-- sample: <リポジトリの直下からのパス>#<名前> -->` を置く。置く場所は、開きの行のすぐ上から空の行を挟まずに続く HTML のコメントの行の並びのどれか。同じブロックに手順の印（`<!-- steps:… -->`）も付けるときは、手順の印を開きの行のすぐ前の行に置き（下の「手順を流す仕組み」の印）、`sample:` の印をその上の行に置く（Tutorial 1 の `app/Program.cs` のブロック）。
+  - `#<名前>` がなければファイルの全体を引く。そのときは、範囲の印だけの行（字下げのある `// <snippet:名前>` と `// </snippet:名前>`）をファイルから除いて比べる。頁のブロックは印の行を載せない（読み手には意味のない行のため）。`steps:file` のブロックは頁のブロックをそのまま書くので、読み手の `app/Program.cs` にも印の行はない。印はコメントなので、あってもなくてもビルドは変わらない。
   - C# のサンプルの中の範囲は、`// <snippet:名前>` と `// </snippet:名前>` の行で挟む。StyleCop の SA1515 は行のコメントの前に空の行を求めるので、印の行の前に空の行を置く。範囲は入れ子にしない。
   - 比べるときは、両方から共通の字下げと、頭と終わりの空の行を除き、そのあとは一字一句同じことを求める。ファイルか範囲がなければ落ちる。
   - Tutorials の頁と .NET の API の頁（英語と日本語）のすべての `csharp` のコードブロックは、この印を持つ。印のないブロックがあれば落ちる。
   - テストは `tests/ElasticLM.Licensing.Tests` に置き、リポジトリの直下は `ReferencePages` の探し方（`RepositoryFile`）で見つける。
   - サンプルの中のコメントは英語のままにし、日本語の頁も同じコードを載せる。
   - .NET の API の頁の抜き出しは、`samples/VerifyLicense` の手で写した 4 行をやめ、Tutorial 1 のサンプル（`samples/VerifyOffline`）から引く。その前の文（`VerifyLicense` の検証の部分だという文）も、英語と日本語の両方で、Tutorial 1 のサンプルを指す文に替える（R9、持ち主の決定）。
-- 手順を流す仕組み（Q5、R3、R5〜R7）: `eng/docs/Test-ReadmeSteps.ps1` を広げ、README と Tutorials の両方を流す。V1c3a は、README と Tutorial 1 が使う分（`elm`、`dotnet`、ファイルのブロック、アプリの実行、出力の確かめ）だけを作る（R6、持ち主の決定）。サーバーを裏で動かすブロックと、前の手順の出力の値を次の手順のプレースホルダー（`<license-key>` など）に入れることは V1c3b、C のコンパイラーは V1c3c で足す。
-  - 印（R5）: コードブロックの開きの行のすぐ前に、HTML のコメントを置く。1 頁にいくつもの手順のブロックを置ける。
+- 手順を流す仕組み（Q5、R3、R5〜R7）: `eng/docs/Test-GuideSteps.ps1` が README と Tutorials の両方を流す（V1c1 の README だけを流すスクリプトを広げ、名前を替えた）。V1c3a は、README と Tutorial 1 が使う分（`elm`、`dotnet`、ファイルのブロック、アプリの実行、出力の確かめ）だけを作る（R6、持ち主の決定）。サーバーを裏で動かすブロックと、前の手順の出力の値を次の手順のプレースホルダー（`<license-key>` など）に入れることは V1c3b、C のコンパイラーは V1c3c で足す。
+  - 印（R5）: コードブロックの開きの行のすぐ前の行に、HTML のコメントを置く。ほかの行に置いた手順の印は誤りで落ちる。その上の行には、`sample:` の印（上の「コードをサンプルから引く」）など、ほかのコメントを置ける。1 頁にいくつもの手順のブロックを置ける。
     - `<!-- steps:run -->`: ブロックの各行が 1 つのコマンドで、上から順に流す。
     - `<!-- steps:file path=<相対のパス> -->`: ブロックの中身を、作業フォルダーからのそのパスのファイルに書く（`nuget.config`、`app/Program.cs`）。
-    - `<!-- steps:expect -->`: すぐ前の `steps:run` のブロックの最後のコマンドの出力に、このブロックの各行が、行の全体として、この順に含まれることを確かめる。
+    - `<!-- steps:expect -->`: すぐ前の手順のブロックは `steps:run` でなければならず、その最後のコマンドの標準出力に、このブロックの各行が、行の全体として、この順に含まれることを確かめる（標準エラーは比べない）。
     - `<!-- steps:prebuilt name=elm -->`: 「始める前に」の `elm` を発行する 1 行のブロックに付ける。スクリプトはこのブロックを流さず、ジョブが発行した `elm`（`-Elm` の引数）で置き換える。パッケージを作る `dotnet pack` の行は `steps:run` で、書いてあるとおりに流す。
     - 印のないブロックは流さない。
-  - README も V1c3a でこの印に移し、`readme-steps` の印はなくす（印の書き方を 1 つにする。R5）。`ci.yml` の README の段の注記と、`docs/conventions.md` の `eng/docs/` の行（今は「README の手順を流す」）も、README と Tutorials を流すと直す。
-  - 行（R7）: 各行は `elm`、`dotnet`、アプリの実行ファイルのどれかで始まる（Tutorial 1 のアプリは `dotnet run` で動かすので、実行ファイルでは始めない）。`cd` を書かず、フォルダーは引数で渡す（`-o app`、`dotnet add app package`、`dotnet run --project app -- …`）。パスの区切りは `/`。README の決まり（行の続き、変数、引用符の中の空白に頼らない。二重引用符の中は 1 つの引数。シェルに固有のことは区画の外の文で書く）は Tutorials にも当てはまる。
-  - プレースホルダー（R5）: スクリプトが決まった名前で埋めるのは `<repo>`（クローンの直下の絶対パス。区切りは `/`）だけ。行の頭の `elm` は、ジョブが発行した `elm` のパスで動かす。頁は、`<repo>` を自分のクローンのパスに替えて打つと書く。
-  - 流す場所（R3、R7）: スクリプトは、実行ごとにクローンの外の一時のフォルダーを作業フォルダーにして流し、終わりに鍵ごと消す。頁の外で `NUGET_PACKAGES` を実行ごとの新しい一時のフォルダーにする。`aot` ジョブは `~/.nuget/packages` を `actions/cache` で戻す（`.github/workflows/ci.yml` の `aot` の `actions/cache` の段）ので、前の実行の `ElasticLM.Licensing` 0.1.0 が残っていれば、復元はこの実行で pack したものではなく、その古いものを使うため。
+  - README も V1c3a でこの印に移す（印の書き方を 1 つにする。R5）。`ci.yml` の README の段の注記と、`docs/conventions.md` の `eng/docs/` の行（今は「README の手順を流す」）も、README と Tutorials を流すと直す。
+  - 行（R7）: V1c3a の各行は `elm` か `dotnet` で始まり、ほかの語で始まる行は誤りで落ちる。Tutorial 1 のアプリは `dotnet run` で動かすので、アプリの実行ファイルで始まる行は、それを使う V1c3b で足す（R6）。`cd` を書かず、フォルダーは引数で渡す（`-o app`、`dotnet add app package`、`dotnet run --project app -- …`）。パスの区切りは `/`。README の決まり（行の続き、変数、引用符の中の空白に頼らない。二重引用符の中は 1 つの引数。シェルに固有のことはコードブロックの外の文で書く）は Tutorials にも当てはまる。
+  - プレースホルダー（R5）: スクリプトが決まった名前で埋めるのは `<repo>`（クローンの直下の絶対パス。区切りは `/`）だけで、`steps:run` の行の中だけを替える（`steps:file` と `steps:expect` のブロックは、書いてあるとおりに使う）。行の頭の `elm` は、ジョブが発行した `elm` のパスで動かす。頁は、`<repo>` を自分のクローンのパスに替えて打つと書く。
+  - 流す場所（R3、R7）: スクリプトは、実行ごとにクローンの外の一時のフォルダーを作業フォルダーにして流し、終わりに鍵ごと消す。頁の外で `NUGET_PACKAGES` を実行ごとの新しい一時のフォルダーにする。`aot` ジョブは `~/.nuget/packages` を `actions/cache` で戻す（`.github/workflows/ci.yml` の `aot` の `actions/cache` の段）ので、前の実行の `ElasticLM.Licensing` 0.1.0 が残っていれば、復元はこの実行で pack したものではなく、その古いものを使うため。`MSBUILDDISABLENODEREUSE` も `1` にする。実行のあとに残る MSBuild のノードが作業フォルダーのファイルをつかみ、終わりに消せなくなるため。
+  - 訳の確かめ: スクリプトは、手順を流す前に、英語の頁の印を付けた各ブロックが、訳（README は `README.ja.md`、`docs/guide/` の頁は `docs/guide.ja/` の同じ名前の頁）にも、一字一句同じコードブロックとして同じ順に現れることを確かめる。ないか、変わっているか、順が違えば落ちる。訳の頁がなくても落ちる。
   - CI: `aot` ジョブの 3 つの OS で、README の段を広げて流す。pack も `aot` ジョブの中で頁のとおりに走る。V1c3a の PR は、ジョブに増えた時間を書く。各行は終了コード 0 で成功とし、0 でなければその行のコマンドの最初の 2 語だけを出して落ちる（README の決まりと同じ）。
   - V1c3b の頁の手順も、どのシェルでも同じに打てる形にする。環境変数の代わりに設定ファイル（`--config`）を使い、サーバーは「2 つ目の端末で動かす」と書く（Q5）。
 - 管理 API の呼び方（Q7、V1c3b）: 製品、ポリシー、ライセンスを作る手順は `elm admin request` で呼ぶ。セットアップの API キーを渡せるかは V1c3b の設計でコードを確かめ、渡せなければ本文をファイルに書く手順を置いて `curl` で送る（行の頭に `curl` を許すかは V1c3b の Grill。R7）。コマンドの中に JSON を書かない（シェルごとに引用符の書き方が違うため）。

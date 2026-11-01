@@ -30,7 +30,7 @@ Builds are made for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-m
 
 With `elm` on your path, create a root key, a signing key certified by it, and a license, then verify the license. `elm` encrypts each private key with a passphrase: it reads it from `ELM_KEY_PASSPHRASE`, or asks for it when the variable is not set.
 
-<!-- readme-steps:start -->
+<!-- steps:run -->
 ```shell
 elm key root create --out root.key.pem --public-out root.pub.pem
 elm key signing create --out signing.key.pem --public-out signing.pub.pem
@@ -38,7 +38,6 @@ elm key certify --root root.key.pem --public signing.pub.pem --use license --out
 elm license issue --signing-key signing.key.pem --certificate signing.cert --product acme-cad --license-id first-license --feature pro --expires 2099-12-31T00:00:00Z --trust root.pub.pem --out first.elmlic
 elm license verify first.elmlic --trust root.pub.pem --product acme-cad --feature pro
 ```
-<!-- readme-steps:end -->
 
 The root key only certifies signing keys: keep `root.key.pem` offline. Your app embeds `root.pub.pem` and verifies `first.elmlic` the way the last command does.
 

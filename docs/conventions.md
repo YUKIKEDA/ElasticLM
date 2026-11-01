@@ -24,7 +24,7 @@ samples/                     利用例と NativeAOT の確認用のアプリ
 tools/                       ロードマップの行が要るときに足す道具（tools/ElasticLM.Measure/: §4.2 の参照機での計測）
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
 eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
-eng/docs/                    利用者の文書の確かめのスクリプト（README の手順を流す Test-ReadmeSteps.ps1。design §20.7）
+eng/docs/                    利用者の文書の確かめのスクリプト（README と Tutorials の手順を流す Test-GuideSteps.ps1。design §20.7）
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
 web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
@@ -58,6 +58,7 @@ website/                     利用者の文書の Docusaurus のサイト（doc
 | `tests/ElasticLM.Cli.Tests` | `elm` のコマンドのテスト。一時フォルダのファイルで、鍵の作成から検証までを流す |
 | `web/admin` | 管理画面の SPA（design §15.2、0.96、0.100）。Preact 11 と TypeScript、Vite 8、テストは Vitest と happy-dom。Node.js は `.node-version`、pnpm は `package.json` の `packageManager`（Corepack が確かめる）、依存は `pnpm-lock.yaml`、pnpm の守りは `pnpm-workspace.yaml`。`build.ps1` がビルドし、`dist` を `ElasticLM.Service` が埋め込んで `/` と `/assets/` で配る。文言は `src/messages.ts` |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |
+| `samples/VerifyOffline` | 利用者の文書の Tutorial 1 のアプリ（design §20.7 の V1c3 の形）。ルートの公開鍵とライセンスファイルを引数で受け取り、`acme-cad` と機能 `pro` をオフラインで検証する。`Program.cs` の全体が Tutorial の頁の `Program.cs` で、検証の部分（`// <snippet:verify>`）を .NET の API の頁が引く。`ElasticLM.Licensing.Tests` の `GuideSamplesTests` が頁と比べる |
 | `tools/ElasticLM.Measure` | §4.2 の目標の参照機での計測（design §20.7 の V1b の形）。`run.ps1` が公開したバイナリを CPU を分けて起動し、この道具が `ElasticLM.Client` の公開の部品でリースと有効化の負荷をかける。`Report.ps1` が 3 回の幅を出して目標と比べる。`measure.yml` が動かし、`./build.ps1` はビルドだけ。手元では `run.ps1 -Small` で手順を試せる |
 | `samples/PackageConsumer` | 2 つの NuGet パッケージだけを版で参照するアプリ（design §20.5）。ルートの設定を読み込まず、`nuget.config` は `ElasticLM.*` を `artifacts/packages` だけから取る。ソリューションと `build.ps1` には入れず、`release.yml` がパッケージを作ったあとに NativeAOT で発行して動かす |
 | `eng/release` | リリースと CI のスクリプト（design §20.5）。`Get-ReleaseVersion.ps1`（版、タグ、`CHANGELOG.md`）と `Test-ReleaseVersion.ps1`、`Publish-Rid.ps1`（RID ごとの発行。`almalinux:8` の中では POSIX の `publish-rid.sh`）、`Test-Publish.ps1`（単一バイナリ、依存、glibc、署名、大きさ）、`Test-Smoke.ps1`、`Pack-Rid.ps1`（圧縮ファイル）、`Test-Package.ps1`（パッケージの中身）、`New-Sbom.ps1`（その実行のコミットの SPDX の SBOM）。持ち主の手順は `docs/releasing.md` |

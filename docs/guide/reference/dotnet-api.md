@@ -87,13 +87,14 @@ The options, `LicenseVerifierOptions` (each property has a public `set`; the con
 | `ClockSkew` | `TimeSpan` | 5 minutes | No | The clock difference allowed between this machine and the issuer, from zero to `LicenseVerifierOptions.MaxClockSkew` (one hour). The constructor checks it. |
 | `AcceptTrialAsStandard` | `bool` | `true` | No | Whether a requirement for `LicenseKind.Standard` also accepts a trial license. |
 
-The sample below is the verifying part of the `VerifyLicense` sample program, which takes the root key file, the license file, the product ID, and optionally the feature and its version on the command line:
+The code below is the verifying part of the app that [Issue a license and verify it in a .NET app](../tutorials/verify-a-license-offline.md) builds, in the order an app makes the calls. The app takes the root public key file and the license file on the command line, and requires the product `acme-cad` and its feature `pro`, which it keeps in the constants `ProductId` and `FeatureId`:
 
+<!-- sample: samples/VerifyOffline/Program.cs#verify -->
 ```csharp
 TrustStore trust = TrustStore.Create([File.ReadAllText(args[0])], []);
 var verifier = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
-var requirement = new LicenseRequirement(args[2], LicenseKind.Standard, args.Length > 3 ? args[3] : null, args.Length > 4 ? args[4] : null, null);
-return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
+var requirement = new LicenseRequirement(ProductId, LicenseKind.Standard, FeatureId, null, null);
+LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), requirement);
 ```
 
 The sample passes `StatelessClockGuard`, which keeps no state and so does not detect a clock set back. [Clock rollback detection and its limits](../explanation/license-files-and-verification.md#clock-rollback-detection-and-its-limits) explains what a guard with state, `FileClockGuard` or `InstallationClockGuard`, detects and what it does not.
