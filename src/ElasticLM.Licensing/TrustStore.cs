@@ -26,9 +26,13 @@ public sealed class TrustStore
     /// Creates a trust store.
     /// </summary>
     /// <param name="rootPublicKeysPem">One or more P-256 public keys as PEM <c>PUBLIC KEY</c> blocks.</param>
-    /// <param name="revokedKeyIds">Key IDs whose certificates and tokens are rejected (design §7.5).</param>
+    /// <param name="revokedKeyIds">Revoked key IDs. A license token or an <c>elm-service</c> lease signed by a revoked key fails
+    /// with <c>ELM_KEY_REVOKED</c>. A key certificate signed by a revoked key, or for one, is not trusted and is skipped, so a
+    /// token without another trusted certificate fails with <c>ELM_UNTRUSTED_KEY</c>.</param>
     /// <returns>The trust store.</returns>
-    /// <exception cref="ArgumentException">No root key is given, a key is not a P-256 public key in one PEM <c>PUBLIC KEY</c> block, or a key is given twice.</exception>
+    /// <exception cref="ArgumentNullException">A revoked key ID is <see langword="null"/>.</exception>
+    /// <exception cref="ArgumentException">No root key is given, a key is not a P-256 public key in one PEM <c>PUBLIC KEY</c> block, a key is given twice,
+    /// or a revoked key ID is empty.</exception>
     public static TrustStore Create(ReadOnlySpan<string> rootPublicKeysPem, ReadOnlySpan<string> revokedKeyIds)
     {
         if (rootPublicKeysPem.IsEmpty)

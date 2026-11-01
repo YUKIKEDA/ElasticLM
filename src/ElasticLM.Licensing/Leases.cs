@@ -37,6 +37,7 @@ public sealed class ServerIdentity : IDisposable
     /// <c>ELM_MALFORMED</c> for a key that is not such a JWK, <c>ELM_SERVER_PIN_MISMATCH</c> for a key that is not the
     /// license's <c>cnf.jkt</c>.</param>
     /// <returns><see langword="true"/> when the identity was created.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="license"/> is <see langword="null"/>.</exception>
     public static bool TryCreate(VerifiedLicense license, ReadOnlySpan<byte> publicKeyJwk, out ServerIdentity? identity, out LicenseError? error)
     {
         ArgumentNullException.ThrowIfNull(license);

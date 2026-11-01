@@ -66,8 +66,8 @@ internal sealed unsafe class NativeClient(nint callback, nint user) : NativeCall
     }
 
     /// <summary>
-    /// Stops new callbacks, waits for the running ones, then disposes the client, which returns its leases within 5 seconds
-    /// (design §17.6).
+    /// Stops new callbacks, waits for the running ones, then disposes the client, which returns its leases that are not borrows
+    /// within 5 seconds.
     /// </summary>
     public void Close() => Close(() => Client?.DisposeAsync().AsTask().GetAwaiter().GetResult());
 }

@@ -2,7 +2,7 @@
 
 ElasticLM lets the vendor of a .NET or C/C++ application issue licenses, check them on their customers' machines, and count concurrent use. This documentation is for the people who issue the licenses, the developers who build the checks into an app, and the administrators who run a license server. It assumes you know your own platform; it does not assume you have read the design.
 
-> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials and how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, and the logs. The explanation pages below explain how ElasticLM works.
+> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials and how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, the logs, the .NET API, and the C API. The explanation pages below explain how ElasticLM works.
 
 ## How the documentation is organized
 
@@ -33,6 +33,7 @@ Read [Overview](explanation/overview.md) first, whoever you are. It names the pa
 2. [Devices and proofs](explanation/devices-and-proofs.md): the installation key that identifies a device.
 3. [Activation](explanation/activation.md) or [Floating licenses](explanation/floating-licenses.md), whichever your product uses.
 4. [Security model](explanation/security-model.md): what your app must check and what it cannot prevent.
+5. [.NET API](reference/dotnet-api.md) or [C API](reference/c-api.md): every type, function, and option of the library your app embeds.
 
 **If you run a license server for your organization (the customer's administrator).** You run `elm-server`, which lends your organization's seats.
 
@@ -48,7 +49,7 @@ Read [Overview](explanation/overview.md) first, whoever you are. It names the pa
 
 To understand why ElasticLM is built the way it is, read [Design choices](explanation/design-choices.md).
 
-**Reference.** To look up an exact name, use [elm command reference](reference/elm-cli.md), [elm-server configuration](reference/server-configuration.md), [elm-service configuration](reference/service-configuration.md), [Administration API](reference/administration-api.md), [Device protocol](reference/device-protocol.md), [Token and file formats](reference/formats.md), [Error codes](reference/error-codes.md), or [Logs](reference/logs.md).
+**Reference.** To look up an exact name, use [elm command reference](reference/elm-cli.md), [elm-server configuration](reference/server-configuration.md), [elm-service configuration](reference/service-configuration.md), [Administration API](reference/administration-api.md), [Device protocol](reference/device-protocol.md), [Token and file formats](reference/formats.md), [Error codes](reference/error-codes.md), [Logs](reference/logs.md), [.NET API](reference/dotnet-api.md), or [C API](reference/c-api.md).
 
 ## Elsewhere
 

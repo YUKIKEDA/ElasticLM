@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Floating licenses
 
-This page is for vendors who sell concurrent seats, app developers who embed `ElasticLM.Client` or `libelasticlm` to borrow seats, and the customer's administrators who run `elm-server`. It explains how a seat is lent, kept, returned, and recovered, on an on-premises license server and on the hosted activation service. You can read it first. It needs three terms: a signed token is data with the vendor's or the server's signature, which anyone can check but nobody can change (see [the trust chain](trust-chain.md)); the installation key is a key pair the app makes on each device, which is the device's identity; and a proof is a signature made with that key on each request, so the server knows which device sent it (both in [devices and proofs](devices-and-proofs.md)).
+This page is for vendors who sell concurrent seats, app developers who embed `ElasticLM.Client` or `libelasticlm` to borrow seats (see [.NET API](../reference/dotnet-api.md#licenseclient) and [C API](../reference/c-api.md#client-and-leases)), and the customer's administrators who run `elm-server`. It explains how a seat is lent, kept, returned, and recovered, on an on-premises license server and on the hosted activation service. You can read it first. It needs three terms: a signed token is data with the vendor's or the server's signature, which anyone can check but nobody can change (see [the trust chain](trust-chain.md)); the installation key is a key pair the app makes on each device, which is the device's identity; and a proof is a signature made with that key on each request, so the server knows which device sent it (both in [devices and proofs](devices-and-proofs.md)).
 
 ## What a floating license is for
 

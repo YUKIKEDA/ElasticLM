@@ -89,10 +89,10 @@ A client without a nonce, such as at its first request, gets one from `GET /v1/n
 
 `elm-service` records the `jti` in its database after the per-key rate limit and before it parses the body: a request refused after that point still uses up its `jti`. `elm-server` records the `jti` in memory.
 
-A proof as the libraries make it, for a refresh, decoded (the signature is left out):
+A proof as the libraries make it, for a refresh, decoded (the signature is left out). The libraries write the `+` of `typ` as the escape `\u002B`, as the example shows; a JSON parser reads it as `+` (see [Token and file formats](formats.md#header)):
 
 ```json
-{"alg":"ES256","kid":"FAKE-THUMBPRINT-0000000000000000000000000A1","typ":"elm-proof+jws"}
+{"alg":"ES256","kid":"FAKE-THUMBPRINT-0000000000000000000000000A1","typ":"elm-proof\u002Bjws"}
 ```
 
 ```json

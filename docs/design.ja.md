@@ -843,6 +843,8 @@ JWS コンパクト形式（RFC 7515）を、ElasticLM 用に絞った形で使�
 | `kid` | 署名した公開鍵の JWK 拇印（§7.4） |
 | `typ` | §8.4 の種類のどれか |
 
+ElasticLM のプログラムは、ヘッダーとペイロードの文字列を System.Text.Json の既定のエンコーダー（`JavaScriptEncoder.Default`。`LicensingJsonContext` も `Utf8JsonWriter` もエンコーダーを指定しない）で書く。そのため、`+`、`<`、`>`、`&`、`'`、`"`、`` ` `` と ASCII でないすべての文字は `\uXXXX` の形で現れる（たとえば `"typ":"elm-cert\u002Bjws"`）。読む側は、バイト列ではなく、JSON として復号したあとの値で比べる。
+
 検証の規則:
 
 1. コンパクト形式（`.` で区切った 3 つの base64url）だけを受け付ける。JSON 形式は受け付けない。
@@ -906,23 +908,23 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `prd` | string | 必須 | 製品 ID |
 | `kind` | string | 必須 | `standard`, `trial`, `server`（§9.6） |
 | `feat` | object[] | 必須（空でよい） | 機能。各要素は `id`（string、必須）、`ver`（string、任意。許す版の範囲 §9.2）、`seats`（int、`kind: server` のとき必須で、ほかの種類では持たない。持つトークンは検証で `ELM_MALFORMED`）、`exp`（int、任意。機能ごとの期限） |
-| `cnf` | object | 端末に紐づくとき | `{"jkt": "<インストール鍵の拇印>"}` |
-| `fp` | string[] | 端末に紐づき、`fpm` が `ignore` でないとき | マシン指紋（§10.3） |
-| `fpm` | string | `fp` があるとき | 指紋の照合方法（§9.3 の `FingerprintMatching`） |
-| `grace` | int | `exp` があるとき | 期限の後に使える秒数。`kind: trial` では 0 |
+| `cnf` | object | `kind: server` では必須。ほかの種類では端末に紐づくとき | `{"jkt": "<インストール鍵の拇印>"}` |
+| `fp` | string[] | 任意 | マシン指紋（§10.3）。`elm license issue` は、`--fingerprint` があれば `--fingerprint-matching ignore` でも書く。`elm-service` は、ポリシーの照合が `ignore` のときと指紋がないときは `fp` と `fpm` を書かない（`ElmService.Client.cs`、`LicenseIssuer`） |
+| `fpm` | string | `fp` が 1 つ以上の要素を持つとき | 指紋の照合方法（§9.3 の `FingerprintMatching`） |
+| `grace` | int | 任意（省略は 0） | 期限の後に使える秒数。`exp` のないトークンにもあってよく、そのときは使わない。発行する側は `exp` があるときだけ書く（`LicenseIssuer`）。`kind: trial` では 0 か省略 |
 | `refresh` | int | オンラインで更新するとき | 更新を試み始める、期限までの残り秒数 |
 | `seq` | int | 有効化から出したとき | 有効化の更新番号（§10.4）。`elm` の手動発行では省略 |
 | `areq` | string | オフラインの応答のとき | 要求の `nonce`（§12.8） |
-| `lease` | int | `kind: server` のとき | リースの期間の秒数（ポリシーの `LeaseDuration`）。回収の時間にも使う（§13.4） |
+| `lease` | int | `kind: server` のとき | リースの期間の秒数（ポリシーの `LeaseDuration`）。回収の時間にも使う（§13.4）。`kind: server` では 1 以上、ほかの種類では 0 も受け付ける |
 | `borrow` | int | `kind: server` のとき | 借り出しの上限の秒数。0 なら借り出しを許さない |
-| `overage` | int | `kind: server` のとき | 席数を超えて貸せる割合（百分率）。0 なら超えない |
+| `overage` | int | `kind: server` のとき | 席数を超えて貸せる割合（百分率）。0 なら超えない。どの種類でも 0〜1,000 |
 | `brl` | int | `kind: server` のとき | 30 日の間に借り出しを早期に返却できる回数。インストール鍵ごとと、マシン指紋ごとに数え、どれかが達したら断る（§9.3 の `BorrowReturnLimit`、§12.7.4、0.57）。0〜1,000。`elm license issue --borrow-returns` で指定し、既定は 2（M3c で足した） |
 | `clone` | string | `kind: server` のとき | 複製を検出したときの扱い。`deny` か `flag`（§9.3 の `CloneStrategy`、§10.4）。`elm license issue --clone` で指定し、既定は `deny`（M3b で足した） |
 | `meta` | object | 任意 | ベンダーが自由に入れる文字列の組。検証では解釈しない |
 
 #### 8.4.3 リーストークン（`elm-lease+jws`）
 
-§8.3 のクレームに加えて、次を持つ。`exp` は必須で、ないリーストークンは拒否する。
+§8.3 のクレームに加えて、次を持つ。`exp` は必須で、ないリーストークンと、`exp` が `iat` より後でないリーストークンは拒否する。`jti` は、空でないことだけを確かめる（発行する側は 128 ビットの乱数を書く。`LeaseVerifier.TryReadPayload`、`JwsWriter.NewTokenId`）。
 
 | クレーム | 型 | 必須 | 意味 |
 | --- | --- | --- | --- |
@@ -933,7 +935,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `n` | int | 必須 | 借りた席の数（1 以上） |
 | `cnf` | object | 必須 | `{"jkt": "<借りたインストール鍵の拇印>"}` |
 | `brw` | bool | 必須 | 借り出しなら `true` |
-| `srv` | string | 必須 | 発行したサーバーの `kid` |
+| `srv` | string | 必須 | 発行したサーバーの `kid`。`iss`（とヘッダーの `kid`）と同じでなければ拒否する |
 | `slic` | string | オンプレミスのとき | 発行に使ったサーバーライセンスの `jti`（§13.5） |
 | `seq` | int | 必須 | リースの更新番号。更新のたびに 1 増える |
 
@@ -1011,6 +1013,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | 回収の要求のリーストークンの数 | 64 |
 | 更新の要求の `retry`（応答のなかった要求の `jti`） | 16 件、各 64 文字 |
 | サーバーライセンスの `brl` | 0 以上、1,000 以下 |
+| ライセンストークンの `overage` | 0 以上、1,000 以下（どの種類でも。`LicensePayloadRules`） |
 | 取得の要求の `borrow` | 0 以上、100 年（3,162,240,000 秒）以下。範囲の外は `ELM_MALFORMED`、1 秒未満は `ELM_INVALID_ARGUMENT` |
 | 署名つきのログの 1 行 | 1 MiB。超えれば `elm log verify` と記録の読み込みはそのファイルを誤りとする |
 | クライアントが保存した借り出しのファイル | 256 KiB |
@@ -1180,7 +1183,7 @@ stateDiagram-v2
 - DPAPI には ElasticLM 用の付加エントロピー（`ElasticLM installation key v1`）を渡す。同じ利用者の別のアプリが DPAPI で守った値と取り違えないためである。
 - Windows の端末の範囲のフォルダーは、Administrators・SYSTEM・作った利用者だけに読み書きを許し、継承しない ACL で作る（0.51）。DPAPI の端末の範囲は、その端末のどの利用者でも開けるため、ほかの利用者から鍵を守るのはこの ACL である。`%ProgramData%` は既定で一般の利用者も読める。ユーザーの範囲は `%LOCALAPPDATA%` の ACL がその利用者に限る。
 - すでにある端末の範囲のフォルダーは、鍵を書く前と読む前に確かめる（0.53）。Windows では、フォルダーと親の所有者が Administrators・SYSTEM・今の利用者のどれかで、フォルダーが ACL を継承せず、許可の規則がこの 3 つだけを名指すこと。Linux と macOS では、フォルダーのモードがグループとほかに何も許さず、親がグループとほかに書き込みを許さないこと。外れれば `ELM_INSTALLATION_KEY_UNREADABLE` で止め、理由と直し方を示す。`%ProgramData%` には一般の利用者もフォルダーを作れるため、ほかの利用者が先に作ったフォルダーに鍵と管理者トークンを置かないためである。Win32-OpenSSH も、ホスト鍵を SYSTEM か Administrators の所有に限り、ほかの利用者が読めれば誤りとする（https://github.com/PowerShell/Win32-OpenSSH/wiki/Security-protection-of-various-files-in-Win32-OpenSSH 。そのときに起動まで止めるかは、この文書では確かめていない）。ユーザーの範囲は確かめない。
-- 同じフォルダーに、サーバーのピン（`servers/`、§13.5）、借り出したリース（`borrows/`、§12.7.4）、`elm-server` の管理者トークン（`admin.token`、§13.7）と借り出しの記録（§13.4）を置く。
+- 同じフォルダーに、サーバーのピン（`servers/`、§13.5）、借り出したリース（`borrows/`、§12.7.4）、`elm-server` の管理者トークン（`admin.token`、§13.7）と借り出しの記録（§13.4）を置く。有効化の `activation.json` と `activation.lock`（§12.6.2。ロックのファイルは `FileMode.OpenOrCreate` で開くだけで、中身を持たない。`ActivationStore`）、時計の守りの状態 `clock`（§11.4）も置く。
 
 `ElasticLM.Client` の API（M3a、Issue #15 で出荷した形）:
 
@@ -1364,7 +1367,7 @@ public static class ErrorCodes
 
 1. §11.2 の手順 1〜6 に通ったトークンごとに（手順 7 で）、そのときの時刻と、トークンの `iat` の大きいほうを「最後に確認した時刻」として記録する。手順 8 以降で失敗するトークン（別の製品、期限切れ）でも記録する。署名と証明書を通ったトークンの `iat` なので、記録してよい。トークンの `iat` は署名鍵の時計なので、端末の時計を進めて戻しても、`iat` より前には戻せない。
 2. 現在の時刻が「最後に確認した時刻 − 許容のずれ」より前なら、巻き戻りとみなす。
-3. 状態はアプリが指定する場所（既定はインストール鍵と同じ場所、§10.2）に置く。インストール鍵があれば状態に署名し、署名が合わなければ書き換えとみなす。端末に紐づかないライセンスにはインストール鍵がないため、署名しない。状態が書き換えられた、消された、読めないときは、最後に確認した時刻を「検証中のトークンの `iat`」とみなして続ける。どの場合も、時計をトークンの `iat` より前には戻せない。
+3. `FileClockGuard` は既定の場所を持たず、作る側が状態のパスを渡す。インストール鍵のフォルダーの `clock`（§10.2）を使うのは、`ActivationClient` と `LicenseClient`（アプリが `ClockGuard` を差し替えないとき）、`elm-server`（`ElmServer`）、インストールを渡した C の検証（`elm_verifier_create`。`clock_guard_path` があればそのパス）、C の有効化とクライアント（中の `ActivationClient` と `LicenseClient`）である。インストールを渡さない C の検証は、パスがあれば署名しない状態をそこに置き、パスもなければ状態を持たない実装を使う（`Exports.cs`）。インストール鍵があれば状態に署名し、署名が合わなければ書き換えとみなす。端末に紐づかないライセンスにはインストール鍵がないため、署名しない。状態が書き換えられた、消された、読めないときは、最後に確認した時刻を「検証中のトークンの `iat`」とみなして続ける。どの場合も、時計をトークンの `iat` より前には戻せない。
 4. FlexNet Embedded は、時計を進めて使い、戻すと、本当の時刻が追いつくまで使えなくなると書いている（https://community.revenera.com/s/article/clock-windback-detection-with-an-flexnet-embedded-client ）。ElasticLM も同じ振る舞いになる。オンラインの更新に成功すれば、サーバーの時刻を「最後に確認した時刻」として上書きし、戻せる。上書きは `IClockGuard.AcceptServerTime(serverTime)` で行い、サーバーの時刻は、時計の守りを使わずに確かめた新しいトークンの `iat` である（M4b2、§12.6.2）。`FileClockGuard` は記録をその時刻に置き換えて書き、状態を持たない実装は何もしない。オフラインの応答の取り込み（§12.8.5）では渡さない。応答は運ぶ間に古くなりうるので、渡すと記録が戻るためである（M4c2 の設計のレビュー）。
 
 5. 対象: 時計の守りは、ライセンストークンの検証と、リーストークン（借り出しを含む）の検証の両方で行う（§12.7.5）。借り出したリースはオフラインで端末の時計と比べるため、リースにも行わなければ、時計を戻して期限を延ばせる。
@@ -3238,18 +3241,22 @@ void    elm_verifier_destroy(elm_verifier* v);
 
 const char* elm_license_id(const elm_license* l);
 size_t      elm_license_feature_count(const elm_license* l);
-const char* elm_license_meta(const elm_license* l, const char* key);
+int32_t     elm_license_meta_get(const elm_license* l, const char* key,
+                                 const char** value, size_t* value_len);
+int32_t     elm_license_meta_at(const elm_license* l, size_t index, const char** key, size_t* key_len,
+                                const char** value, size_t* value_len);
 void        elm_license_free(elm_license* l);
 
 int32_t elm_activation_create(const elm_activation_options* options, elm_activation** out);
-int32_t elm_activation_activate(elm_activation* a, const char* license_key, elm_license** out);
+int32_t elm_activation_activate(elm_activation* a, const char* license_key, elm_license** out,
+                                int64_t* retry_after_seconds);
 void    elm_activation_destroy(elm_activation* a);
 
 int32_t elm_client_create(const elm_client_options* options, elm_client** out);
-int32_t elm_client_lease_acquire(elm_client* c, const char* feature, const char* version,
-                                 int32_t count, elm_lease** out);
-int32_t elm_client_lease_release(elm_client* c, elm_lease* lease);
-int32_t elm_client_reset_server_pin(elm_client* c, const char* server_url);
+int32_t elm_client_acquire_lease(elm_client* c, const char* feature_id, const char* feature_version,
+                                 int32_t count, elm_lease** out, int64_t* retry_after_seconds);
+int32_t elm_client_release_lease(elm_client* c, elm_lease* lease);
+int32_t elm_client_reset_server_pin(elm_client* c, const char* server_url, int32_t* deleted);
 void    elm_client_destroy(elm_client* c);
 
 const char* elm_last_error_message(void);
@@ -3266,26 +3273,26 @@ const char* elm_last_error_message(void);
 - ハンドルは複数のスレッドから同時に使ってよい。
 - リースの自動更新は、`elm_client` が持つバックグラウンドのスレッドで行い、期限切れはコールバックで通知する。
 - スレッドとコールバックの規則:
-  - 更新のスレッドは `elm_client_create` で作り、`elm_client_destroy` で止める。`destroy` は、スレッドに止まるよう伝え、最長 5 秒待って合流し、持っているリースを返却する（失敗しても続ける）。
-  - コールバックはライブラリのスレッドから呼ばれる。コールバックの中から、同じ `elm_client` の `destroy` と `lease_release` を呼んではいけない。呼べば `ELM_INVALID_STATE` を返し、何もしない。
+  - 更新のスレッドは `elm_client_create` で作り、`elm_client_destroy` で止める。`elm_client_destroy` は、走っているコールバックが戻るのと、同じハンドルの進行中の操作（自動の更新を含む）が終わるのを上限なく待ち、そのあと持っているリース（借り出しを除く）を最長 5 秒で返却する（失敗しても続ける）。`elm_activation_destroy` は、走っているコールバックが戻るのを上限なく待ち、そのあと自動の更新を最長 5 秒待って止める（§17.5、§17.6）。
+  - コールバックはライブラリのスレッドから呼ばれる。コールバックの中から同じハンドルの待つ操作（`elm_client_release_lease` など）を呼べば、`ELM_INVALID_STATE` を返し、何もしない。同じハンドルの `destroy` は値を返さず、何もしない（§17.5、§17.6）。
   - `destroy` の後に、そのハンドルでコールバックは呼ばれない。
   - プロセスの終了時に `destroy` を呼ばなかった場合、リースは返却されず、サーバーの期限で消える。
 - 正確な関数の一覧と構造体は、M6a〜M6c の各行で決め、本節を直す（§17.3）。D0 の案は有効化とリースを 1 つの `elm_client` に置いた（`elm_client_activate`）が、.NET と同じく別のハンドルにした（0.89、§12.6.2、0.104）。
 
-.NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。返却は合わせて最長 5 秒で打ち切り、返却できなかったリースはサーバーの期限で消える。違いは 1 つだけで、.NET はイベントをクライアントの排他の外で呼ぶので、ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい（C ABI のコールバックの中の `lease_release` は `ELM_INVALID_STATE`）。リースごとのタイマーは、そのリースが `Lost` か `Released` になったときに破棄する。
+.NET のクライアント（`ElasticLM.Client`）も同じ寿命の規則に従う。リースの自動更新は `TimeProvider.CreateTimer` で行い、クライアントの `DisposeAsync` でタイマーを止め、持っているリースを返却する。返却は合わせて最長 5 秒で打ち切り、返却できなかったリースはサーバーの期限で消える。違いは 1 つだけで、.NET はイベントをクライアントの排他の外で呼ぶので、ハンドラーの中から `ReleaseLeaseAsync` を呼んでよい（C ABI のコールバックの中の `elm_client_release_lease` は `ELM_INVALID_STATE`）。リースごとのタイマーは、そのリースが `Lost` か `Released` になったときに破棄する。
 
 ### 17.3 M6 の分け方と共通の決まり（0.104）
 
 M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に共通する決まりを決めた。設計の独立レビューで、共通の決まりと各行の Grill で決める点を足した。
 
 - 行: M6a（土台と検証）、M6b（有効化、`elm_activation`）、M6c（リース、`elm_client`）。この順に進める。
-- バックグラウンドのスレッドとコールバック: §17.2 のスレッドとコールバックの規則（作る時と止める時、`destroy` の最長 5 秒、コールバックの中からの `destroy` と操作は `ELM_INVALID_STATE`、`destroy` の後に呼ばない）は、`elm_client` だけでなく `elm_activation` にも当てはまる。.NET の `ActivationClient` も、タイマーで自動の更新をし、そのスレッドから `StateChanged` を出し、`DisposeAsync` で最長 5 秒待つ（`ActivationClient.cs`）。
+- バックグラウンドのスレッドとコールバック: §17.2 のスレッドとコールバックの規則（作る時と止める時、`destroy` の待ち、コールバックの中からの待つ操作は `ELM_INVALID_STATE` で `destroy` は何もしない、`destroy` の後に呼ばない）は、`elm_client` だけでなく `elm_activation` にも当てはまる。.NET の `ActivationClient` も、タイマーで自動の更新をし、そのスレッドから `StateChanged` を出し、`DisposeAsync` で最長 5 秒待つ（`ActivationClient.cs`）。
 - 例外: 公開するどの関数も、すべての例外を関数の中で受け止める。.NET の NativeAOT の共有ライブラリの例は「公開する関数は普通の C# の例外の扱いを使えず、誤りのコードを返す」と書く（https://github.com/dotnet/samples/blob/main/core/nativeaot/NativeLibrary/README.md ）。関数の外に出た例外がどうなるかを書いた資料は見つからなかった（NativeAOT の相互運用のページ https://learn.microsoft.com/en-us/dotnet/core/deploying/native-aot/interop と、例外の相互運用のページ https://learn.microsoft.com/en-us/dotnet/standard/native-interop/exceptions-interoperability は、Unix では予測できない動きか落ちる、とだけ書く）。M6a のテストで、受け止めることを確かめる。引数の例外（`ArgumentException` とその派生）は `ELM_INVALID_ARGUMENT`、ほかは `ELM_INTERNAL_ERROR`（99）にし、`elm_last_error_message` に文を残す。
 - 誤りの番号: 戻り値は `ElasticLM.Licensing.ErrorCode` の値をそのまま返す。この列挙の値は §19 の番号と同じである。
 - 結果の中身: 検証と有効化の結果は不透明なハンドル `elm_license` で返し、取り出しの関数（ID、製品、種類、期限、猶予期間の中か、機能の数と各機能（コード、版の範囲、席数、期限）、`meta`）で読む。猶予期間の中かは `VerifiedLicense` ではなく `LicenseVerificationResult.Valid` にあるので、`elm_license` が持つ。JSON の文字列では返さない（C の利用者に JSON の解析器を求めないため）。
 - 構造体の版:
   - オプションと要件の構造体は、先頭に `uint32_t struct_size` を置き、呼び出し側は `sizeof` を入れる。
-  - ライブラリが読むのは、最初の版の大きさ以上で今の版の大きさ以下の値だけで、それ以外（最初の版より小さい値と、今の版より大きい値）は `ELM_INVALID_ARGUMENT` で断る。読む値では、`struct_size` の中に収まるメンバー（オフセットと大きさの和が `struct_size` 以下）だけを読み、ほかは既定の値にする。
+  - ライブラリが受け付けるのは、`struct_size` が今の版の `sizeof` とちょうど等しい値だけで、ほかの値は `ELM_INVALID_ARGUMENT` で断る（`NativeStructs.cs` の `StructSizes.Check`）。`ELM_ABI_VERSION` が 1 の今は、どの構造体も最初の版なので、最初の版の大きさと今の版の大きさは同じである。
   - 後から足すメンバーは、前の版の `sizeof` の後ろに置く（前の版の末尾の詰め物に置くと、`sizeof` が変わらず見分けられない）。
   - 今の版より大きい値を断るので、新しいヘッダーで作ったアプリは、古いライブラリでは動かない。ライブラリはアプリと一緒に配る（§3.6）ので、これを受け入れる。
   - 真偽のメンバーは `int32_t`（0 か 1）にし、C の `bool` を使わない（§17.1 の blittable）。
@@ -3447,7 +3454,7 @@ void elm_license_free(elm_license* license);
   - 時刻は UNIX 秒の `int64_t`。期限のないライセンスは `elm_license_expires_at` が `*has_value = 0`。席数と期限のない機能も `has_seats`・`has_expires_at` が 0。猶予期間（`VerifiedLicense.GracePeriod`）は必ずあるので、秒をそのまま返す。
   - `meta` のキーと値は NUL を含みうる（§8.6 は禁じていない）ので、`elm_license_meta_at` と `elm_license_meta_get` は長さも返す。`elm_license_meta_at` の順は、作ったときの `VerifiedLicense.Metadata` を並べた順。`elm_license_meta_get` は、キーがなければ `ELM_OK` で `*value = NULL`。`key` が `NULL` なら `ELM_INVALID_ARGUMENT`。NUL を含むキーは並べて読む。
   - ID、製品、機能のコードと版の範囲も、ライセンスの規則（`LicensePayloadRules`）は NUL を禁じていない。これらは長さを返さないので、NUL を含めば C ではそこで切れて見える。ElasticLM の発行は、これらに NUL を入れない（`elm license issue` は値をコマンドの引数から読み、引数は NUL を含められない。`elm-service` は、製品と機能のコードを英小文字・数字・`-` に、ライセンス ID を UUID に、版の範囲を `LicenseRules.IsVersionRange` に限る）。
-  - `elm_license_feature` と `elm_license_meta_at` の範囲外の番号、出力の引数が `NULL`、`elm_feature.struct_size` が最初の版より小さいか今の版より大きいときは `ELM_INVALID_ARGUMENT`。
+  - `elm_license_feature` と `elm_license_meta_at` の範囲外の番号、出力の引数が `NULL`、`elm_feature.struct_size` が今の版の `sizeof` と違うときは `ELM_INVALID_ARGUMENT`（`ELM_ABI_VERSION` が 1 の今は、最初の版と今の版の大きさは同じ）。
 - ハンドル: 不透明なポインターは、.NET のオブジェクトを指す `GCHandle` の値である。違う型のハンドル（たとえば `elm_verifier*` を `elm_installation*` として渡す）は、見分けられるときは `ELM_INVALID_ARGUMENT`。二度の解放と解放した後の使用は、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。`elm_verifier` と `elm_installation` は、複数のスレッドから同時に使ってよい（`LicenseVerifier` は変わらない状態、確かめた鍵の証明書の `ConcurrentDictionary`、排他つきの `VerificationKey` だけを持ち、`FileClockGuard` は排他を持つ）。
 - 誤りの文: 番号を返す関数は、呼ばれるたびに同じスレッドの文を空にし、失敗なら文を書く。`elm_last_error_message` と `elm_version` と値を返す関数は、文を変えない。文は、スレッドごとのピン留めした配列（`[ThreadStatic]` の `GC.AllocateArray<byte>(n, pinned: true)`）に UTF-8 と NUL で持ち、同じスレッドの次の番号を返す関数の呼び出しまで有効。C が作ったスレッドについては、C のテストのプログラムが 3 つの OS で、スレッドを 4,000 回作ってライブラリを呼ばせては終わらせ、各スレッドが自分の文を読み、メインのスレッドの文が変わらないことを確かめ、前後の常駐のメモリを出す（M6a の PR #138 で、3 つの OS の値を §4.2 に記録した）。終わったスレッドの配列が集められるかは、この確かめでは見分けられず、M6c の Grill で決める（§17.3）。
 - `elm_version`: ライブラリの版を、ビルドで書き出した定数（`$(Version)` から MSBuild が作るソースの定数。リフレクションを使わない）から作り、プロセスの終わりまで有効な文字列で返す。
@@ -3566,7 +3573,7 @@ void elm_string_free(char* text);
     - `RetryAfter` の切り上げ（`429` か `503` と `Retry-After` を返すサービス）と、出力の引数の失敗のときの値（`*out == NULL`、`*replaced == 0`、`retry_after` の 0 と `NULL`）。
     - 状態の列挙、`elm_activation_state(NULL) == -1`、ID のバッファー（足りないとき、ないとき）。
     - コールバックの引数（番号と文）、自動の更新が起こすコールバックとそのスレッド、作る前に期限を過ぎた更新の最初の変化を落とさないこと。
-    - コールバックの中からの待つ操作と `destroy` の `ELM_INVALID_STATE`（と何もしないこと）、`state`・`id`・`check` を呼べること、コールバックのあとの誤りの文が保たれること。
+    - コールバックの中からの待つ操作の `ELM_INVALID_STATE`（と何もしないこと）、`destroy` が何もしないこと、`state`・`id`・`check` を呼べること、コールバックのあとの誤りの文が保たれること。
     - `destroy` が走っているコールバックを待つこと（内部の印でコールバックの中を止め、`destroy` が戻らないことを確かめてから放す）、自動の更新の最中の `destroy`、`destroy` のあとにコールバックが呼ばれないこと。
     - オプションの確かめ: `struct_size`、`service_url`（https、http のループバック、ループバックでない http、URL として読めないもの、`NULL` のオフラインだけの端末）、`app_version` の 64 と 65 バイト、オフラインだけの端末のオンラインの操作。
     - `import_response` の 262,144 と 262,145 バイト、`response == NULL`。`renew` で `*replaced == 1`。`elm_string_free(NULL)`。
@@ -3663,7 +3670,7 @@ void elm_client_destroy(elm_client* c);
   - `on_lease` は、.NET の `LeaseStateChanged` のたびに、リースの ID、`previous`、`current`、`error`（`LicenseError` の番号、なければ 0）、`message`（`LicenseError` の文、なければ空文字列）で呼ぶ。リースはハンドルではなく ID で渡す。アプリが解放したハンドルや、一覧で別に作ったハンドルと、同じものかを問わないためである。アプリは `elm_lease_id` と照らす。更新の失敗が続くと、RETRYING から RETRYING への変化も誤りつきで知らせる（`SetState` は、状態が変わるか誤りがあれば知らせる）。取得そのものと、誤りのない更新は知らせない（最初の状態は HELD）。
   - 呼ぶスレッド: 通信を終えた .NET のスレッド（返却の RELEASED への変化では、返却を呼んだ C のスレッドは関数の中で待っていて、知らせはスレッドプールのスレッドで来ることがある）か、自動の更新を走らせる .NET のスレッド。ヘッダーに書く「呼び出し側が持つ排他をコールバックで取らない」注意は、この場合に要る。
   - 守ることは §17.5 と同じ: 操作が起こした変化のコールバックは、その関数が戻る前に戻っている。`elm_client_destroy` が戻ったあと、コールバックは呼ばれない（ライブラリ自身の印と、走っているコールバックの数を、1 つの排他の下で確かめる）。ハンドルの解放は、走っているコールバックが戻ったあとにする。
-  - コールバックの中から同じ `elm_client` の待つ操作（取得、借り出し、返却、借りたリースの一覧）を呼べば `ELM_INVALID_STATE` で何もしない。§17.2 の「コールバックの中の `lease_release` は `ELM_INVALID_STATE`」はこの一部である。`elm_client_destroy` は何もしない。リースの読み取りと解放（`elm_lease_*`、`elm_lease_free`、`elm_lease_list_free`）と `elm_client_reset_server_pin`（ファイルの操作で、排他を取らない）は呼んでよい。見分けは §17.5 と同じ、ハンドルとスレッドごとの印。
+  - コールバックの中から同じ `elm_client` の待つ操作（取得、借り出し、返却、借りたリースの一覧）を呼べば `ELM_INVALID_STATE` で何もしない。§17.2 の「コールバックの中の `elm_client_release_lease` は `ELM_INVALID_STATE`」はこの一部である。`elm_client_destroy` は何もしない。リースの読み取りと解放（`elm_lease_*`、`elm_lease_free`、`elm_lease_list_free`）と `elm_client_reset_server_pin`（ファイルの操作で、排他を取らない）は呼んでよい。見分けは §17.5 と同じ、ハンドルとスレッドごとの印。
   - 誤りの文は、コールバックの前に写し、戻ったあとに戻す（§17.5）。
   - `elm_client_destroy` の待ちは、次の和である（ヘッダーにも書く）: 走っているコールバックが戻るまで（上限なし）、`DisposeAsync` が排他を取るまでの同じハンドルの進行中の操作（自動の更新と回収を含む。上限なし）、持っているリースの返却（最長 5 秒。借り出しは返さない）。ヘッダーに書く注意は §17.5 と同じ。
 - .NET の `LicenseClient` の直し（設計のレビュー R5、持ち主が決定）: 自動の更新と返却の結果は、排他を外したあとで知らせる（`RenewOnTimerAsync` と `ReleaseLeaseAsync` の `Raise`）。その間に `DisposeAsync` が排他を取って戻ると、戻ったあとに知らせが出る。`Raise` は、`ActivationClient` と同じく、知らせのたびに `_disposed`（`volatile` にする）を確かめて止める。確かめてから呼ぶまでの競り合いは残るので、XML ドキュメントは成り立つことだけを書く: 「`DisposeAsync` が始まったあと、新しい知らせは始まらない。すでに渡し始めた 1 件は、`DisposeAsync` が戻る前後に走りうる」。C の層は、上の自分の印で守るので、この直しには頼らない。
@@ -4166,7 +4173,7 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
 - 中身（行ごと）:
   - Explanation（V1c1）: 全体の構成（6 つの配布物、だれが何を動かすか、置き方の型: オフラインだけ、SaaS 型、オンプレミス、両方）。信頼の鎖（ルート鍵、署名鍵、鍵の証明書、トラストストア、鍵の交代と失効）。ライセンスの検証（ファイルの形、確かめる順、猶予期間、時計の巻き戻しの検出）。端末の認証（インストール鍵、証明、ノンス、マシン指紋。有効化、更新、解除の流れ）。リース（取得、更新、返却、回収、借り出し、席の上限）。複製の検出とオフラインの有効化。安全性のモデル（守る物、攻撃者、守れること、守れないこと、利用者がすべきこと。§5 から書き、受け入れた脅威を含む）。主な設計の選択とその理由。
   - Reference（V1c2a、V1c2b、V1c2c。下の「V1c2 の形」）: `elm` のコマンド、`elm-server` と `elm-service` の設定（項目と環境変数）、管理 API と端末のプロトコル、ライセンスファイルとトークンの形式、誤りのコード、監査ログと利用ログの項目、.NET と C の API の要点。.NET の API の正本は NuGet に入れた XML ドキュメント、C の正本は `elasticlm.h` のコメントで、Reference は配る公開の型と C のすべての関数を 1 行ずつ挙げ、入口の型を詳しく書き、すべてのメンバーの説明はそこに任せる（V1c2 の形）。docfx のサイトと OpenAPI は作らない（roadmap の A-8）。
-  - Tutorials（V1c3）: 1. 鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる。2. `elm-service` を立て、アプリをオンラインで有効化する。3. `elm-server` を立て、フローティングのライセンスを使う。4. C のアプリに `libelasticlm` を組み込む。
+  - Tutorials（V1c3）: 1. 鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる。2. `elm-service` を立て、アプリをオンラインで有効化する。3. `elm-server` を立て、フローティングのライセンスを使う。4. C のアプリに `libelasticlm` を組み込む。V1c3 は、.NET と C の API の Reference の頁から、ライブラリを順に呼ぶ Tutorials の手順へのリンクを足す（V1c2c の初見の読み手のレビューが呼ぶ順を求めた。Reference の頁は手順を持たない）。
   - How-to guides（V1c4）: 鍵（ルート鍵の保管、署名鍵の交代、失効）、`elm-service`（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限）、ライセンス（ポリシー、試用、オフラインの有効化、端末の解除）、`elm-server`（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ）、アプリ（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行）。
   - README（V1c1）: 何ができるか、配る物、文書のサイトへの入口。`README.ja.md` はその訳で、同じ PR で直す。
 - サンプル（V1c3）: 今の `samples/VerifyLicense` と `samples/PackageConsumer` に、.NET のオンラインの有効化（`ActivationClient`）、フローティングのリース（`LicenseClient` と `elm-server`）、オフラインの有効化（ファイルのやり取り）と、C の検証と有効化（`libelasticlm`）を足す。試用と借り出しは、手引きの中の短い例にする。
@@ -4262,7 +4269,7 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
   - 例（Q2、R4 は持ち主の決定）: 実際に作ったものから取る。鍵、鍵の証明書、ライセンスファイル、サーバーライセンスは `elm` で作る。サーバーの `.elmreq` は起動した `elm-server` のインストール鍵で、`.elmdeact` と `.elmresp` は起動した `elm-service` で、リーストークンは起動した `elm-server` とクライアントで作る。デコードしたヘッダーとペイロードを載せ、ID とサムプリントは作りものの値にし、署名と全体のトークンは `eyJ…` と短くして、そう注記する。手で組み立てた例は使わない。PR に取り方を書き、使い捨ての鍵はその回のうちに消す。
   - クライアントが手元に持つファイルの表（R10、持ち主の決定）: 端末のアプリが持つファイル（インストール鍵、`activation.json`、`borrows/`、`servers/`、`FileClockGuard` と `InstallationClockGuard` の時刻の状態）に限る。`elm-server` のファイル（`admin.token` など）は、`elm-server` の設定の頁のデータフォルダーの節を指すだけにする。
   - .NET の API（`reference/dotnet-api.md`、9。Q3）: パッケージごとに H2 を置き、頭にすべての公開の型の表（型、種類、1 行の説明）を置く。入口の型ごとに H3 を置き、その型のすべての public メソッドの表と、オプションの型（`LicenseVerifierOptions`、`ActivationClientOptions`、`LicenseClientOptions`）のすべての公開のプロパティの表を書く（R9、持ち主の決定。「主なメソッド」を改めた）。
-  - C の API（`reference/c-api.md`、10。Q4）: 組ごとの関数の表（関数、返すもの、1 行の説明）を置く。構造体（`elm_*_options` など）と数の `#define`（誤りの番号、種類、状態）は別の表にし、誤りの番号は誤りのコードの頁を指す。引数の細部は `elasticlm.h` に任せる。
+  - C の API（`reference/c-api.md`、10。Q4）: 組ごとの関数の表（関数、返すもの、1 行の説明）を置く。構造体（`elm_*_options` など）と数の `#define`（誤りの番号、種類、状態）は別の表にし、誤りの番号は誤りのコードの頁を指す。関数ごとに、ヘッダーから写したプロトタイプを載せ、各引数の意味はヘッダーに任せる（初見の読み手のレビューのあとで決めた）。
   - 行は分けない（Q6。3 頁で、管理 API の頁より小さい）。
   - リンク（R11）: 形式の頁へのリンクを、Explanation の license-files-and-verification、trust-chain、devices-and-proofs、floating-licenses と、管理 API の頁（ライセンスファイルとオフラインの経路）、端末のプロトコルの頁に足す（英語と日本語）。項目の表は形式の頁を正本にし、Explanation の頁は仕組みの説明を残して、項目の細部は形式の頁を指す。
 - V1c2a の頁の形:
@@ -4277,7 +4284,7 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
   - 経路（V1c2b の Grill の Q8）: `tests/ElasticLM.Service.Tests` と `tests/ElasticLM.Server.Tests` は、それぞれのプログラムの `EndpointDataSource` の `RouteEndpoint`（`RoutePattern.RawText` と `HttpMethodMetadata`）から、すべての経路のメソッドとパスを取る。`ElmServer` には、`ElmService.Services` と同じ `internal IServiceProvider Services => _app.Services;` を足す（設計のレビューの R6）。`MapMethods` で登録した経路も同じ形で取れる。`elm-service` は画面の設定（`web`）なしの既定の設定で起動するので、画面の経路（`GET /auth/login`、`POST /auth/logout`、`GET /`）は現れず、除く規則は置かない。`/assets/*` と `/auth/callback` は経路として登録されない（R7）。パスはコードのとおり（`{id}`、`{featureId}`、`{name}`）に書く。経路ごとに頁を決める（R4、持ち主の決定）: `/v1/admin/*`、`/admin/v1/*`、`/health` は管理 API の頁、それ以外は端末のプロトコルの頁。経路は、その頁の中の、そのプログラムの見出し（`elm-service` か `elm-server`）の節で探す。両方のプログラムにある 4 つの経路（`GET /v1/nonce`、`POST /v1/leases`、`POST /v1/leases/{id}/renew`、`DELETE /v1/leases/{id}`）が片方の節にしかなければ落ちる。経路は、コード片の全体が「メソッド、空白 1 つ、パス」と一致したときだけ見つかったとする。経路のためだけの判定を `ReferencePages` に足し、V1c2a の名前の判定（`IsNameCharacter`）は変えない（R5、持ち主の決定）。
   - HTTP の状態（Q8、R3 は持ち主の決定）: 製品のコードを次のように変える。`ElmService.StatusOf` と `ElmServer.StatusOf`（どちらも `private` で、表にないコードを 500 にする）を、誤りのコードから状態への `internal` の表に分ける。表にないコードの 500 は表の外の 1 か所に置く。HTTP の答えに届かない分岐（設計のレビューで、`elm-server` の `ELM_BAD_SIGNATURE` と `elm-service` の `ELM_SERVER_BUSY` が挙がった）は、届かないことをコードで確かめて表から消す（`no-dead-code`）。テストは、2 つの表のすべての組について、誤りのコードの頁のそのコードの行の「HTTP の状態」の列（見出しで見つける）のセルに、その番号が数として入っていることを確かめる。2 つの表は違うので、プログラムごとに確かめる。表の外で状態を変える所（オフラインの経路の `ELM_PROOF_INVALID` を 400、`ELM_REPLAYED` を 409、`elm-server` の読み直しの誤りを 409、表にないコードの 500）は、正しさのレビューに任せる。
   - 経路の許可はテストしない。許可は経路の処理の中にしかなく、テストで読むには製品のコードを変える必要があるため。正しさのレビューに任せる（Q8）。
-  - 公開の型と関数（V1c2b の Grill の Q8、V1c2c の Grill の Q5）: `tests/ElasticLM.Licensing.Tests` と `tests/ElasticLM.Client.Tests` は、それぞれのアセンブリ（`typeof(LicenseVerifier).Assembly`、`typeof(LicenseClient).Assembly`）の `GetExportedTypes()` のうち `DeclaringType` が `null` の型の名前を取る（テストは NativeAOT にしない。入れ子の型は親の型の行に含めるので数えない。総称の印 `` `1 `` は除いて比べる。R6）。それぞれが、.NET の頁の、パッケージの名前をコード片の全体として持つ H2（`` ## `ElasticLM.Licensing` ``。日本語の頁も同じ見出し）から次の H2 までの節に、コード片の全体として一致することを確かめる。経路の判定（`FindMissingRoutes`）を「節ごとに、コード片の全体と一致する名前を探す」1 つの関数にまとめ、経路と型の両方に使う（R5）。`ReferencePages.cs` を Client.Tests と Native.Tests にも取り込む。`tests/ElasticLM.Native.Tests` は、`include/elasticlm.h` の `#define` でない行のうち `ELM_FUNCTION` を含むすべての行が `^ELM_FUNCTION\(\s*[^,]+,\s*(\w+)\s*,` の形であることを確かめ、その 2 つ目の引数を関数の名前として、C の頁にコード片の全体として一致することを確かめる（R7）。入口の型の H3（コード片の全体として型の名前を持つ H3 から、次の H3 か H2 まで）に、その型の宣言した public メソッドの名前（`DeclaredOnly`、プロパティの取得と設定、イベントの追加と削除、`Equals` など `object` から来るものは除く）と、その型のオプションの型の公開のプロパティの名前がコード片の全体としてあることも確かめる（R9、持ち主の決定）。形式の頁（R3、持ち主の決定）: `tests/ElasticLM.Licensing.Tests` で、`TokenTypes` の 7 つの値が形式の頁にあることと、各ペイロードの型（`KeyCertificatePayload`、`LicensePayload`、`LicenseFileEnvelope`、`LeasePayload`、オフラインのファイルの型など）の `JsonPropertyName` の名前が、その形式の H2 の節にコード片の全体としてあることを確かめる。型と H2 の対はテストの中の表に置く。変異のチェック（`testing.mdc`、R8）: 公開の型を 1 つ足すと英語と日本語の両方の頁でその名前が挙がる、日本語の頁から型を 1 つ消すとその頁だけが挙がる、`ElasticLM.Client` の型の行を `ElasticLM.Licensing` の H2 に移すと落ちる、`ELM_FUNCTION` の行を 1 つ足すと落ちる、頁から関数を 1 つ消すと落ちる、オプションの型にプロパティを 1 つ足すと落ちる、ペイロードの型に項目を 1 つ足すと落ちる。V1c2c の設計は、Issue #208 の Grill の記録を独立したレビュアーが見た（R1〜R13。R3、R4、R9、R10 は持ち主の決定）。
+  - 公開の型と関数（V1c2b の Grill の Q8、V1c2c の Grill の Q5）: `tests/ElasticLM.Licensing.Tests` と `tests/ElasticLM.Client.Tests` は、それぞれのアセンブリ（`typeof(LicenseVerifier).Assembly`、`typeof(LicenseClient).Assembly`）の `GetExportedTypes()` のうち `DeclaringType` が `null` の型の名前を取る（テストは NativeAOT にしない。入れ子の型は親の型の行に含めるので数えない。総称の印 `` `1 `` は除いて比べる。R6）。それぞれが、.NET の頁の、パッケージの名前をコード片の全体として持つ H2（`` ## `ElasticLM.Licensing` ``。日本語の頁も同じ見出し）から次の H2 までの節に、コード片の全体として一致することを確かめる。経路の判定（`FindMissingRoutes`）を「節ごとに、コード片の全体と一致する名前を探す」1 つの関数にまとめ、経路と型の両方に使う（R5）。`ReferencePages.cs` を Client.Tests と Native.Tests にも取り込む。`tests/ElasticLM.Native.Tests` は、`include/elasticlm.h` の `#define` でない行のうち `ELM_FUNCTION` を含むすべての行が `^ELM_FUNCTION\(\s*[^,]+,\s*(\w+)\s*,` の形であることを確かめ、その 2 つ目の引数を関数の名前として、C の頁にコード片の全体として一致することを確かめる（R7）。入口の型の H3（コード片の全体として型の名前を持つ H3 から、次の H3 か H2 まで）に、その型の宣言した public メソッドの名前（`DeclaredOnly`、プロパティの取得と設定、イベントの追加と削除、`Equals` など `object` から来るものは除く）と、その型のオプションの型の公開のプロパティの名前がコード片の全体としてあることも確かめる（R9、持ち主の決定）。形式の頁（R3、持ち主の決定）: `tests/ElasticLM.Licensing.Tests` で、`TokenTypes` の 7 つの値が形式の頁にあることと、各ペイロードの型（`KeyCertificatePayload`、`LicensePayload`、`LicenseFileEnvelope`、`LeasePayload` の 4 つ）の `JsonPropertyName` の名前が、その形式の H2 の節にコード片の全体としてあることを確かめる。型と H2 の対はテストの中の表に置く。オフラインの要求（`elm-actreq+jws`）と解除の証明（`elm-deact+jws`）はペイロードの型を持たない（`ActivationClient` が `Utf8JsonWriter` で項目ごとに書き、`elm-service` が `RequiredText` で読む）ので、この 2 つの形式は `TokenTypes` のテストと正しさのレビューで確かめる。ペイロードの中のオブジェクトの項目（`feat` の要素、`cnf`、`jwk` の中）と JWS のヘッダーは、このテストでは数えない（頁は中の項目を `cnf.jkt` のような道で書くことがあるため）。変異のチェック（`testing.mdc`、R8）: 公開の型を 1 つ足すと英語と日本語の両方の頁でその名前が挙がる、日本語の頁から型を 1 つ消すとその頁だけが挙がる、`ElasticLM.Client` の型の行を `ElasticLM.Licensing` の H2 に移すと落ちる、`ELM_FUNCTION` の行を 1 つ足すと落ちる、頁から関数を 1 つ消すと落ちる、オプションの型にプロパティを 1 つ足すと落ちる、ペイロードの型に項目を 1 つ足すと落ちる。V1c2c の設計は、Issue #208 の Grill の記録を独立したレビュアーが見た（R1〜R13。R3、R4、R9、R10 は持ち主の決定）。
   - 名前があることだけを確かめ、説明の正しさは正しさのレビューに任せる。
 - 入口の頁（`docs/guide/README.md`）からも Reference の頁を指す（設計のレビューの R11、持ち主の決定）。
 - 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）に設計の節番号が入っていることを、V1c2a の頁を書くときに見つけた。直すのは roadmap の V1c6（Issue #198）で、V1d の前に行う。
@@ -4355,6 +4362,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。V1d の前に行う | §20.7 |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンス（`licenseExpires` を書かない状態の応答）で例外になる不具合の修正と、CLI のほかの `GetProperty` の確かめ（Issue #203。V1c2b で見つけた。V1c2c の前） | §13.7 |
+| V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れるか。今のアーカイブはバイナリ、ヘッダー、`LICENSE` だけで、Windows のアプリは実行時に読み込み、ヘッダーの `_fn` 型で呼ぶしかない。NativeAOT が作るかを調べ、入れるなら公開の検査と `Pack-Rid.ps1` を変え、CI で確かめる。Linux と macOS でビルド時にリンクする手順（`-lelasticlm` と実行時の検索パス）も試して C の API の頁に書く（今の C のテストは `dlopen` で読み込むだけ）（Issue #209。V1c2c で見つけた。V1e の前） | §17, §20.5 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 

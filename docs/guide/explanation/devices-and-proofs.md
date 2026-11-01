@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Devices and proofs
 
-This page is for app developers who embed `ElasticLM.Client` or `libelasticlm`, for vendors who decide how licenses are bound to devices, and for customers' administrators who run `elm-server` or keep apps running in containers. It explains how ElasticLM tells one device from another, and how a server knows that a request really comes from that device. Read [Trust chain](trust-chain.md) and [License files and verification](license-files-and-verification.md) first: this page assumes you know that a license token is signed by the vendor and checked offline by the app.
+This page is for app developers who embed `ElasticLM.Client` or `libelasticlm` ([.NET API](../reference/dotnet-api.md), [C API](../reference/c-api.md)), for vendors who decide how licenses are bound to devices, and for customers' administrators who run `elm-server` or keep apps running in containers. It explains how ElasticLM tells one device from another, and how a server knows that a request really comes from that device. Read [Trust chain](trust-chain.md) and [License files and verification](license-files-and-verification.md) first: this page assumes you know that a license token is signed by the vendor and checked offline by the app.
 
 ## What device identity is for
 
@@ -37,7 +37,7 @@ The app chooses one of two scopes in its client settings (`KeyScope` in `Elastic
 
 The machine scope needs more care, because every user of a device can read `%ProgramData%` and open DPAPI's machine scope, and any user can create a folder there before the app first runs. So on Windows the client creates the machine-scope folder with an access list that allows only Administrators, SYSTEM, and the user who made it. Before it uses an existing machine-scope folder, on any OS, it checks that no other user owns it or may write to it, and stops with `ELM_INSTALLATION_KEY_UNREADABLE` if one can. The user scope is not checked, because the user's own profile already limits access.
 
-The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token. [Files the client keeps](../reference/formats.md#files-the-client-keeps) lists them, with whether each may be copied or deleted.
+The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token. [Files the client keeps](../reference/formats.md#files-the-client-keeps) lists the client's files, with whether each may be copied or deleted.
 
 ### When the key cannot be read
 

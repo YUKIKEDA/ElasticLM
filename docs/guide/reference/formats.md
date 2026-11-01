@@ -4,9 +4,9 @@ sidebar_position: 8
 
 # Token and file formats
 
-This page lists the formats of the files and signed tokens that ElasticLM writes and reads: key files and key IDs, key certificates, license tokens and license files, lease tokens, the offline request, answer, and deactivation files, and the server license, with every member of each header and payload. It ends with the files that the client libraries keep on a device. It is for people who write their own verifier or client, inspect a file by hand, or need to know which files on a device may be copied or deleted. Read [Trust chain](../explanation/trust-chain.md) and [License files and verification](../explanation/license-files-and-verification.md) first for what these files are for. [`elm license inspect`](elm-cli.md#elm-license-inspect) shows the decoded contents of a license file.
+This page lists the formats of the files and signed tokens that ElasticLM writes and reads: key files and key IDs, key certificates, license tokens and license files, lease tokens, the offline request, answer, and deactivation files, and the server license, with every member of each header and payload. The members of a request proof are in [Device protocol](device-protocol.md#the-proof), and those of a log signature in [Logs](logs.md#signed-lines-and-the-chain). It ends with the files that the client libraries keep on a device. It is for people who write their own verifier or client, inspect a file by hand, or need to know which files on a device may be copied or deleted. Read [Trust chain](../explanation/trust-chain.md) and [License files and verification](../explanation/license-files-and-verification.md) first for what these files are for. [`elm license inspect`](elm-cli.md#elm-license-inspect) shows the decoded contents of a license file.
 
-The examples come from files that `elm`, `elm-server`, and `elm-service` wrote. Key IDs, key coordinates, token IDs, activation and license IDs, fingerprints, nonces, and license keys are replaced with fake values of the same length; times are kept. Signatures and whole tokens are shortened to `eyJ…`, and the body of a PEM file to `…`. The programs write JSON on one line; the decoded payloads are indented here for reading.
+The examples come from files that `elm`, `elm-server`, and `elm-service` wrote. Key IDs, key coordinates, token IDs, activation and license IDs, fingerprints, nonces, and license keys are replaced with fake values of the same length; times are kept. Signatures and whole tokens are shortened to `eyJ…`, and the body of a PEM file to `…`. The programs write JSON on one line; the decoded payloads are indented here for reading. Strings are shown as the programs write them, with their `\uXXXX` escapes (see [Header](#header)).
 
 ## Key files and key IDs
 
@@ -69,7 +69,7 @@ eyJ….eyJ….eyJ…
 
 - Only the canonical base64url form is accepted: no padding (`=`), no white space, and no other characters.
 - A token has at most 16,384 characters.
-- The signature is ES256 (ECDSA with P-256 and SHA-256) in the 64-byte `r || s` form, 86 characters in base64url. A DER signature is refused.
+- The signature is ES256 (ECDSA with P-256 and SHA-256) in the 64-byte `r || s` form, 86 characters in base64url. A DER signature is refused. The low-S form is not required: a signature with a high `s` that verifies is accepted.
 - The signature is checked over the ASCII bytes of `header.payload` exactly as received. The payload is not read as JSON before the signature is checked. The exceptions are the members that name the key which checks the signature: the `jwk` of a proof or of an [offline request](#offline-request-elm-actreqjws), and the `act` of an [offline deactivation proof](#offline-deactivation-proof-elm-deactjws). Only that member is read first.
 
 ### Header
@@ -79,12 +79,12 @@ The header is a JSON object with exactly three members:
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
 | `alg` | string | yes | `ES256`. Another value gets `ELM_BAD_SIGNATURE`. |
-| `kid` | string | yes | The key ID of the key that signed the token. Not empty. |
+| `kid` | string | yes | The key ID of the key that signed the token. The header check requires only that it is not empty; it must then name a key that the verifier knows, and a value that names none fails later. |
 | `typ` | string | yes | The token type, from the table below. Each verifier accepts one type only. |
 
-A header with any other member (such as `jwk`, `x5c`, or `crit`), with a member missing, or with the wrong `typ` gets `ELM_MALFORMED`. So a token cannot carry its own key, and one kind of token cannot be passed off as another.
+A header with any other member (such as `jwk`, `x5c`, or `crit`), with a member missing or given twice, with a value that is not a string, or with the wrong `typ` gets `ELM_MALFORMED`. Member names are compared exactly, case included. So a token cannot carry its own key, and one kind of token cannot be passed off as another.
 
-The programs escape the characters `+`, `<`, and `>` inside JSON strings, so the raw header of a certificate reads `elm-cert\u002Bjws`. The examples on this page show strings with their escapes resolved. A reader must decode the JSON and compare the values, not the raw text.
+The programs write some characters inside JSON strings as `\uXXXX` escapes: `+`, `<`, `>`, `&`, `'`, `"`, `` ` ``, and every character outside ASCII. So the header of a certificate reads `"typ":"elm-cert\u002Bjws"`, as in the examples on this page. A JSON parser reads an escape as the character itself, so a reader must decode the JSON and compare the values, not the raw text.
 
 ### Token types
 
@@ -156,7 +156,7 @@ A verifier uses a certificate only when all of these hold. A certificate that fa
 A certificate made with `--use license lease`, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-ROOT-KEY-ID-000000000000000000000000R1","typ":"elm-cert+jws"}
+{"alg":"ES256","kid":"FAKE-ROOT-KEY-ID-000000000000000000000000R1","typ":"elm-cert\u002Bjws"}
 ```
 
 ```json
@@ -205,18 +205,18 @@ Payload:
 | `prd` | string | yes | The product ID (the product's `code`), not empty. It must equal the product ID that the app requires. |
 | `kind` | string | yes | `standard`, `trial`, or `server`. |
 | `feat` | array of objects | yes | The features, 0 to 256, members below. |
-| `cnf` | object | for `server` | The installation key the token is bound to: one member, `jkt`, its key ID. With `cnf`, the token verifies only for an installation with that key ID (`ELM_WRONG_INSTALLATION`). |
-| `fp` | array of strings | no | The machine fingerprints the token is bound to, 0 to 8, compared as `fpm` says. |
+| `cnf` | object | in a `server` token; optional otherwise | The installation key the token is bound to: one member, `jkt`, its key ID. With `cnf`, the token verifies only for an installation with that key ID (`ELM_WRONG_INSTALLATION`). |
+| `fp` | array of strings | no | The machine fingerprints the token is bound to, 0 to 8, compared as `fpm` says. An empty or missing `fp` binds the token to no fingerprint, and `fpm` is then not read. |
 | `fpm` | string | when `fp` has an entry | How `fp` is compared: `any` (one must match), `all` (all must match), or `ignore` (not compared). |
 | `grace` | integer | no | How long after `exp` the token is still valid, in the grace period: a duration. It must be `0` or absent in a `trial` token. The issuers write it only with `exp`, and it has no effect without `exp`. |
 | `refresh` | integer | no | How long before `exp` the client starts to refresh online: a duration. `elm-service` writes the policy's `refreshWindow`; `elm license issue` writes it only with `--refresh-days`. |
 | `seq` | integer | no | The activation's sequence number: `1` in the first file of an activation, and one more in each new file. `elm-service` writes it in every file of an activation; `elm license issue` and the file of an unbound license leave it out. |
 | `areq` | string | no | The `nonce` of the offline request that this token answers. Only in an [offline answer](#offline-answer-elmresp). |
-| `lease` | integer | for `server` | The lease time, in seconds: 1 to 3162240000. |
-| `borrow` | integer | for `server` | The longest borrow, in seconds: a duration. `0` allows no borrowing. |
-| `overage` | integer | for `server` | How many seats over `seats` may be lent, in percent: 0 to 1,000. |
-| `clone` | string | for `server` | What `elm-server` does with a detected clone: `deny` or `flag`. |
-| `brl` | integer | for `server` | How many early returns of borrows one installation key, or one machine fingerprint, may make in 30 days: 0 to 1,000. |
+| `lease` | integer | in a `server` token; optional otherwise | The lease time, in seconds: a duration, and at least 1 in a `server` token. |
+| `borrow` | integer | in a `server` token; optional otherwise | The longest borrow, in seconds: a duration. `0` allows no borrowing. |
+| `overage` | integer | in a `server` token; optional otherwise | How many seats over `seats` may be lent, in percent: 0 to 1,000. |
+| `clone` | string | in a `server` token; optional otherwise | What `elm-server` does with a detected clone: `deny` or `flag`. |
+| `brl` | integer | in a `server` token; optional otherwise | How many early returns of borrows one installation key, or one machine fingerprint, may make in 30 days: 0 to 1,000. |
 | `meta` | object | no | Vendor values: 0 to 32 members, each a string. A key is at most 64 bytes and a value at most 1,024 bytes in UTF-8. The verifier does not read them. |
 
 Members of each item of `feat`:
@@ -225,7 +225,7 @@ Members of each item of `feat`:
 | --- | --- | --- | --- |
 | `id` | string | yes | The feature ID, not empty. |
 | `ver` | string | no | The feature versions the license covers: 1 to 4 comparators separated by spaces, all of which must hold. A comparator is `>=`, `<=`, `>`, `<`, or `=`, followed by a version `major.minor` or `major.minor.patch` of digits only, at most 9 digits each; a missing patch is 0. Without `ver`, every version. |
-| `seats` | integer | for `server` | The concurrent seats of the feature, 1 or more. Required in every feature of a `server` token, and not allowed in other kinds. |
+| `seats` | integer | in a `server` token; not allowed otherwise | The concurrent seats of the feature, 1 or more. Required in every feature of a `server` token, and not allowed in other kinds. |
 | `exp` | integer | no | The feature's own expiry: a time. No grace period is added. |
 
 Member of `cnf`:
@@ -239,7 +239,7 @@ A token that breaks a rule of these tables, such as `seats` in a `standard` toke
 A token that `elm license issue` wrote, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license+jws"}
+{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license\u002Bjws"}
 ```
 
 ```json
@@ -255,7 +255,7 @@ A token that `elm license issue` wrote, decoded:
   "feat": [
     {
       "id": "pro",
-      "ver": ">=2.0 <3.0"
+      "ver": "\u003E=2.0 \u003C3.0"
     },
     {
       "id": "export",
@@ -269,7 +269,7 @@ A token that `elm license issue` wrote, decoded:
 }
 ```
 
-It was issued with `--feature "pro;ver=>=2.0 <3.0" --feature "export;exp=2027-06-30" --expires 2027-12-31 --meta customer=Contoso`. A token from `elm-service` for an activation also carries `cnf`, `fp`, `fpm`, `refresh`, and `seq`; see the example in [Offline answer](#offline-answer-elmresp).
+It was issued with `--feature "pro;ver=>=2.0 <3.0" --feature "export;exp=2027-06-30" --expires 2027-12-31 --meta customer=Contoso`. A token from `elm-service` for an activation also carries `cnf`, `refresh`, and `seq`, and `fp` and `fpm` when the device sent fingerprints and the policy's `fingerprintMatching` is not `ignore`; see the example in [Offline answer](#offline-answer-elmresp). `elm license issue` writes `fp` and `fpm` whenever it is given `--fingerprint`, even with `--fingerprint-matching ignore`.
 
 ## License file: `.elmlic`
 
@@ -319,7 +319,7 @@ Payload:
 | `iss` | string | yes | The key ID of the signer. It must equal the header's `kid`. |
 | `iat` | integer | yes | When the token was issued: a time. It must not be later than the current time plus the allowed clock skew. |
 | `exp` | integer | yes | When the lease ends: a time later than `iat`. |
-| `jti` | string | yes | The token ID, not empty: 128 random bits in base64url, 22 characters. |
+| `jti` | string | yes | The token ID, not empty. The issuers write 128 random bits in base64url, 22 characters. |
 | `lse` | string | yes | The lease ID: 22 characters of `A`–`Z`, `a`–`z`, `0`–`9`, `-`, and `_`. The lease routes name it in their path. |
 | `prd` | string | yes | The product ID, not empty. It must equal the client's product ID. |
 | `lic` | string | yes | The license ID, not empty. From `elm-server`, the `lic` of its server license, which must equal it; from `elm-service`, the license's `id`. |
@@ -329,7 +329,7 @@ Payload:
 | `brw` | boolean | yes | `true` for a borrow, `false` for a lease that is renewed. |
 | `srv` | string | yes | The key ID of the issuing server. It must equal `iss`. |
 | `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it holds; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
-| `seq` | integer | yes | The lease's sequence number, 0 or more: 1 in the first token, and one more at each renewal. |
+| `seq` | integer | yes | The lease's sequence number. The verifier accepts 0 or more; `elm-server` and `elm-service` write 1 in the first token and one more at each renewal, so neither writes 0. |
 
 Member of `cnf`:
 
@@ -342,7 +342,7 @@ A lease from `elm-server` must also stay inside its server license: `exp` minus 
 A lease token that `elm-server` returned for `{"feature":"pro","version":"2.1","count":1}`, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-lease+jws"}
+{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-lease\u002Bjws"}
 ```
 
 ```json
@@ -399,7 +399,7 @@ Payload:
 | `fp` | array of strings | yes | The device's machine fingerprints: 0 to 8, each 32 lowercase hexadecimal characters. |
 | `jwk` | object | yes | The installation key's public key, with exactly `kty` (`EC`), `crv` (`P-256`), `x`, and `y` (see [Public keys in JSON](#public-keys-in-json)). |
 | `nonce` | string | yes | 128 random bits that the device made, in base64url: 22 characters of `A`–`Z`, `a`–`z`, `0`–`9`, `-`, and `_`. The answer's license token carries it back in `areq`. |
-| `iat` | integer | yes | When the request was made: a time. The service refuses a request made more than 5 minutes ahead of its own clock. |
+| `iat` | integer | yes | When the request was made: a time. The service refuses a request made more than 5 minutes ahead of its own clock with `ELM_MALFORMED`. |
 | `exp` | integer | yes | When the request expires: exactly `iat` + 604800 (7 days). After it, the service answers `ELM_REQUEST_EXPIRED`. |
 
 - `jwk` is the one claim read before the signature is checked: the service reads it, checks that its thumbprint is `kid` and that the point is on the curve, and checks the signature with it. A request that fails this gets `ELM_PROOF_INVALID`; every other broken claim gets `ELM_MALFORMED`.
@@ -408,7 +408,7 @@ Payload:
 A request that `elm server activate-request` wrote, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-actreq+jws"}
+{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-actreq\u002Bjws"}
 ```
 
 ```json
@@ -444,7 +444,7 @@ The answer file has the extension `.elmresp`. It is the body of the service's `2
 | `activationId` | string | yes | The activation ID, a UUID. |
 | `license` | object | yes | The [license file](#license-file-elmlic). Its token is bound to the request's installation key and fingerprints, and its `areq` is the request's `nonce`. |
 
-The device accepts the answer only when it is at most 256 KiB, its license file verifies for this installation, and `areq` is the `nonce` of the request it is waiting for; otherwise it reports `ELM_REQUEST_MISMATCH` or the verification error. An answer that is not the expected JSON gets `ELM_MALFORMED`.
+The device accepts the answer only when it is at most 256 KiB and is this JSON with an `activationId` in UUID form, its license file verifies for this installation, and `areq` is the `nonce` of the request it is waiting for. An answer that is larger or is not this JSON gets `ELM_MALFORMED`, a license file that does not verify gets the verification error, and a token whose `areq` is not the waiting request's `nonce` gets `ELM_REQUEST_MISMATCH`.
 
 The answer to the request above, as `elm offline process` saved it:
 
@@ -465,7 +465,7 @@ The answer to the request above, as `elm offline process` saved it:
 The license token in it, decoded. It is a server license, so it also has the members that only a server license needs:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license+jws"}
+{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license\u002Bjws"}
 ```
 
 ```json
@@ -527,15 +527,15 @@ Payload:
 | `act` | string | yes | The activation ID, a UUID. |
 | `seq` | integer | yes | The `seq` of the last license token the device received, 0 or more. |
 | `retry` | array of strings | no | The `jti` of requests that got no answer: at most 16, each 1 to 64 characters. |
-| `iat` | integer | yes | When the proof was made: a time. |
+| `iat` | integer | yes | When the proof was made: a time. The service refuses a proof made more than 5 minutes ahead of its own clock with `ELM_MALFORMED`. |
 
-- The proof has no `jwk`, no `jti`, and no `exp`. The service reads `act` first (`ELM_ACTIVATION_NOT_FOUND` when no activation has that ID), then checks the signature with the key the activation was made with (`ELM_PROOF_INVALID` when it does not verify), and only then reads the other claims.
+- The proof has no `jwk`, no `jti`, and no `exp`. The service reads `act` first (`ELM_MALFORMED` when it is not a UUID, `ELM_ACTIVATION_NOT_FOUND` when no activation has that ID), then checks that `kid` is the key ID of the key the activation was made with and that the signature verifies with it (`ELM_PROOF_INVALID` otherwise), and only then reads the other claims.
 - Until the user says that the proof was handed in, the device keeps it and returns the same file each time it is asked; `ForgetDeactivationProofAsync`, or [`elm server forget-proof`](elm-cli.md#elm-server-forget-proof), drops it.
 
 A proof that `elm server deactivate-proof` wrote for the activation above, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-deact+jws"}
+{"alg":"ES256","kid":"FAKE-SERVER-KEY-ID-0000000000000000000000V1","typ":"elm-deact\u002Bjws"}
 ```
 
 ```json
@@ -566,10 +566,10 @@ A token of kind `server` must have these members, besides the ones every license
 
 `fp` and `fpm` are optional: `elm-server` checks them against its own machine each time it reads the file, and clients do not check them. `elm-service` writes a server license from a policy with `licenseKind` `server`; `elm license issue --kind server` writes one by hand (see [elm command reference](elm-cli.md#elm-license-issue)).
 
-A server license that `elm license issue --kind server --feature "pro;seats=5" --borrow-days 1` wrote, decoded:
+A server license that `elm license issue --kind server --feature "pro;seats=5" --borrow-days 1` wrote, with the server's key ID in `--bind-key` and its fingerprint in `--fingerprint`, decoded:
 
 ```json
-{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license+jws"}
+{"alg":"ES256","kid":"FAKE-SIGNING-KEY-ID-000000000000000000000S1","typ":"elm-license\u002Bjws"}
 ```
 
 ```json
@@ -628,7 +628,7 @@ The `jti` of the server license is also the value of the `ELM-Server-License` he
 | `installation.key` | The installation key's folder | The device's installation key, a P-256 private key. On Windows it is protected with DPAPI, for the user or the machine; on Linux and macOS it is a file that only its owner can read (`0600`, in a `0700` folder). | Do not copy it: a copy on another device acts as the same device, and the service treats the two as a clone once both go online. Do not delete it while an activation, a lease, a borrow, or a server pin depends on it: tokens bound to it stop verifying on this device, and the next activation makes a new key, which uses one more activation. A key that cannot be read is never replaced on its own (`ELM_INSTALLATION_KEY_UNREADABLE`). |
 | `activation.json` and `activation.lock` | The installation key's folder | The kept activation: its ID, its last `seq`, its kind, the license file it received, the `jti` of requests that got no answer, a waiting offline request, and a deactivation proof not yet handed in. `activation.lock` lets one process at a time send activation requests. | Do not copy it: with the key, a copy is a clone. Delete it only after the activation is deactivated, or when an administrator has deactivated it: an activation request without the last `seq` looks like a clone. A damaged file makes `Check` return `ELM_MALFORMED`. `activation.lock` holds nothing and is made again when it is needed. |
 | `borrows/` | A folder in the installation key's folder | One file per borrowed lease, `<lease ID>.json`: the lease token with what verifies it, the server license file and the server key from `elm-server`, or the certificates from `elm-service`. At most 1,000 files, each at most 256 KiB. The client deletes a file once its borrow has expired. | A copy is of no use on another device: the lease names this installation key. Deleting a file loses the borrow on this device after a restart, while its seats stay taken on the server until it expires. |
-| `servers/` | A folder in the installation key's folder | One file per `elm-server` URL, named by the SHA-256 of the normalized URL in lowercase hex, with the `.json` extension: the license ID and the server key ID the client accepted first for that URL. | It holds no secret. Deleting a file makes the client accept the next server license it sees at that URL, as `ResetServerPin` (C: `elm_client_reset_server_pin`) does. A damaged file makes the client refuse that server. |
-| `clock` | The installation key's folder: `ActivationClient` and `LicenseClient` keep it there unless the app passes its own clock guard, and so does `libelasticlm`'s verifier with an installation unless `clock_guard_path` names another file | The clock state of the clock guard: the last time seen, signed with the installation key. | Deleting or editing it lets the clock be set back as far as the `iat` of the token being verified, and no further. A copy does not verify with another device's key and is ignored there. |
+| `servers/` | A folder in the installation key's folder | One file per `elm-server` URL. Its name is the SHA-256 of the UTF-8 bytes of the server URL in normalized form, in 64 lowercase hexadecimal characters, with the `.json` extension. The normalized form is the one a proof signs in `htu` (see [Device protocol](device-protocol.md#the-target-url-in-htu)): scheme and host in lowercase, no default port, percent-encodings in uppercase, no query or fragment, so `https://Licenses.Example:443/` becomes `https://licenses.example/`. The file holds the normalized URL, and the license ID and the server key ID the client accepted first for that URL. | It holds no secret. Deleting a file makes the client accept the next server license it sees at that URL, as `ResetServerPin` (C: `elm_client_reset_server_pin`) does. A damaged file makes the client refuse that server. |
+| `clock` | The installation key's folder: `ActivationClient` and `LicenseClient` keep it there unless the app passes its own clock guard, the activation and the client of `libelasticlm` always do, and so does `libelasticlm`'s verifier with an installation unless `clock_guard_path` names another file | The clock state of the clock guard: the last time seen, signed with the installation key. | Deleting or editing it lets the clock be set back as far as the `iat` of the token being verified, and no further. A copy does not verify with another device's key and is ignored there. |
 | The `FileClockGuard` state | The path the app passes to `FileClockGuard`, or to `clock_guard_path` in C | The same clock state. It is signed only when the app passes an installation key; without one, anyone who can write the file can reset it. | As for `clock`. |
 | The `InstallationClockGuard` state | The path the app passes to `CreateClockGuard` of `InstallationKey` | The same clock state, signed with the installation key. | As for `clock`. |

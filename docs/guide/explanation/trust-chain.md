@@ -55,7 +55,7 @@ A certificate's payload carries:
 - `use`: what the key may sign, one or more of `license`, `lease`, and `log`;
 - `nbf` and `exp`: the start and end of the validity period.
 
-`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731. Every member of a certificate, and the seven token types, are listed in [Token and file formats](../reference/formats.md#key-certificate-elm-certjws).
+`elm key certify` writes a certificate. `--use` names the uses (default `license`), `--not-before` sets the start (default: now), and `--days` sets the length: 365 by default, at most 731. Every member of a certificate is listed in [Token and file formats](../reference/formats.md#key-certificate-elm-certjws), and the seven token types in [Token types](../reference/formats.md#token-types).
 
 **Uses.** A verifier asks for exactly one use. The license verifier accepts only certificates with `license`; the verifier for cloud leases accepts only `lease`; `elm log verify` uses `log`. A key certified only for logs cannot sign a license the app accepts.
 

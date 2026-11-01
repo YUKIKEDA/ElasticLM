@@ -7,7 +7,7 @@ namespace ElasticLM.Client;
 /// </summary>
 public enum LeaseState
 {
-    /// <summary>The lease is valid and renewed every third of its duration.</summary>
+    /// <summary>The lease is valid. Unless it is a borrow, the client renews it every third of its duration.</summary>
     Held,
 
     /// <summary>The last renewal failed; the client retries from 15 seconds, doubling up to 60, until the lease expires.</summary>
@@ -19,12 +19,15 @@ public enum LeaseState
     /// <summary>The lease expired, its reclaim was refused, or a clone was detected. The app decides what to do.</summary>
     Lost,
 
-    /// <summary>The app released the lease, or the client was disposed.</summary>
+    /// <summary>The app released the lease, or the client returned it when disposed. A borrow is not returned on dispose, and
+    /// is released only when the server takes it back or does not know it.</summary>
     Released,
 }
 
 /// <summary>
-/// A lease the client holds and renews (design §12.7). It is created by <see cref="LicenseClient.AcquireLeaseAsync"/>.
+/// A lease the client holds; the client renews it unless it is a borrow. It comes from
+/// <see cref="LicenseClient.AcquireLeaseAsync"/>, <see cref="LicenseClient.BorrowLeaseAsync"/>, or
+/// <see cref="LicenseClient.GetBorrowedLeases"/>.
 /// </summary>
 public sealed class Lease
 {
@@ -65,7 +68,8 @@ public sealed class Lease
     /// <summary>Gets the state.</summary>
     public LeaseState State => (LeaseState)Volatile.Read(ref _state);
 
-    /// <summary>Gets the error of the last failed renewal, reclaim, or release, or <see langword="null"/>.</summary>
+    /// <summary>Gets the error of the last failed renewal or reclaim, or of a release the server did not confirm, or
+    /// <see langword="null"/>. A borrow the server does not take back keeps its earlier error.</summary>
     public LicenseError? LastError => _lastError;
 
     internal ITimer? Timer { get; set; }
@@ -123,8 +127,9 @@ public sealed class Lease
 /// <param name="lease">The lease.</param>
 /// <param name="previous">The state before.</param>
 /// <param name="current">The state now.</param>
-/// <param name="error">Why the state changed, for <see cref="LeaseState.Retrying"/>, <see cref="LeaseState.Lost"/>, and a
-/// failed release; otherwise <see langword="null"/>.</param>
+/// <param name="error">Why the state changed, for <see cref="LeaseState.Retrying"/>, <see cref="LeaseState.Lost"/>, and
+/// <see cref="LeaseState.Released"/> after a return the server did not confirm; otherwise <see langword="null"/>. A borrow the
+/// server does not take back keeps its state, and no event is raised.</param>
 public sealed class LeaseStateChangedEventArgs(Lease lease, LeaseState previous, LeaseState current, LicenseError? error) : EventArgs
 {
     /// <summary>Gets the lease.</summary>
@@ -141,13 +146,13 @@ public sealed class LeaseStateChangedEventArgs(Lease lease, LeaseState previous,
 }
 
 /// <summary>
-/// The result of <see cref="LicenseClient.AcquireLeaseAsync"/>.
+/// The result of <see cref="LicenseClient.AcquireLeaseAsync"/> and <see cref="LicenseClient.BorrowLeaseAsync"/>.
 /// </summary>
 public abstract record LeaseResult
 {
     private LeaseResult() { }
 
-    /// <summary>The lease was granted and verified; the client renews it until it is released.</summary>
+    /// <summary>The lease was granted and verified. Unless it is a borrow, the client renews it until it is released.</summary>
     /// <param name="Lease">The lease.</param>
     public sealed record Acquired(Lease Lease) : LeaseResult;
 

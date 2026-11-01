@@ -4,7 +4,7 @@ sidebar_position: 3
 
 # License files and verification
 
-This page is for vendors who issue license files and set the policies behind them, and for app developers who verify license files in their app with `ElasticLM.Licensing` or `libelasticlm`. It explains what a license token and a license file hold, the order in which a verifier checks them, how expiry, the grace period, and clock rollback detection work, and what the verifier reports. Read [the trust chain](trust-chain.md) first: this page assumes you know what a root key, a signing key, a key certificate, a key ID (`kid`), and the trust store are.
+This page is for vendors who issue license files and set the policies behind them, and for app developers who verify license files in their app with `ElasticLM.Licensing` or `libelasticlm` (every type and function is in [.NET API](../reference/dotnet-api.md) and [C API](../reference/c-api.md)). It explains what a license token and a license file hold, the order in which a verifier checks them, how expiry, the grace period, and clock rollback detection work, and what the verifier reports. Read [the trust chain](trust-chain.md) first: this page assumes you know what a root key, a signing key, a key certificate, a key ID (`kid`), and the trust store are.
 
 ## What a license file is for
 
@@ -67,7 +67,7 @@ A license file is UTF-8 JSON with the extension `.elmlic`:
 
 `certificates` holds 1 to 4 key certificates of the key that signed the token, so the file can be verified from the root key with nothing else. The outer JSON is not signed; each token inside it is signed on its own. Changing the outer JSON can only make the file fail, not make it pass.
 
-The verifier sets limits on the file's size, the number of entries in each list, and the nesting depth, so that a hostile file cannot use up memory or time. The file is at most 64 KiB. The members of the file and the full list of limits are in [Token and file formats](../reference/formats.md#license-file-elmlic).
+The verifier sets limits on the file's size, the number of entries in each list, and the nesting depth, so that a hostile file cannot use up memory or time. The file is at most 64 KiB. The members of the file are in [Token and file formats](../reference/formats.md#license-file-elmlic), and the full list of limits in [Size limits](../reference/formats.md#size-limits).
 
 ## The order of checks
 

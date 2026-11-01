@@ -4,7 +4,7 @@ sidebar_position: 5
 
 # Activation
 
-This page is for vendors who run the hosted activation service (`elm-service`), choose policies, and connect a sales or billing system to it, and for app developers who embed `ActivationClient` from `ElasticLM.Client` or the `elm_activation_*` functions of `libelasticlm`. It explains what the service keeps about products and licenses, how a license key becomes a license file bound to one device, how that file is renewed and given back, how devices without a network take part, and how cloned virtual machines are caught. Read [Devices and proofs](devices-and-proofs.md) first: activation is built on the installation key and on signed requests.
+This page is for vendors who run the hosted activation service (`elm-service`), choose policies, and connect a sales or billing system to it, and for app developers who embed `ActivationClient` from `ElasticLM.Client` or the `elm_activation_*` functions of `libelasticlm` (see [.NET API](../reference/dotnet-api.md#activationclient) and [C API](../reference/c-api.md#activation)). It explains what the service keeps about products and licenses, how a license key becomes a license file bound to one device, how that file is renewed and given back, how devices without a network take part, and how cloned virtual machines are caught. Read [Devices and proofs](devices-and-proofs.md) first: activation is built on the installation key and on signed requests.
 
 ## What activation is for
 

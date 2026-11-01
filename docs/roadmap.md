@@ -63,6 +63,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の原因を調べて直す（V1e の最初の公開の前。design.ja.md §20.7 の V1c1 の形） | not-started | [#192](https://github.com/YUKIKEDA/ElasticLM/issues/192) |
 | V1c6 | 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）から設計の節番号を外す。内部のコメントと公開しない型の XML ドキュメントは残す（V1d の前。design.ja.md §20.7 の V1c2 の形） | not-started | [#198](https://github.com/YUKIKEDA/ElasticLM/issues/198) |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンスで例外になる不具合の修正（V1c2b で見つけた。V1c2c の前） | done        | [#203](https://github.com/YUKIKEDA/ElasticLM/issues/203) |
+| V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れるかを調べて決め、入れるなら配って CI で確かめる。Linux と macOS でビルド時にリンクする手順も試して C の頁に書く（V1c2c で見つけた。V1e の前） | not-started | [#209](https://github.com/YUKIKEDA/ElasticLM/issues/209) |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e | v1 の公開（`1.0.0-rc.1` から `1.0.0`、持ち主の作業（GitHub Pages の有効化と environment `github-pages` の規則の確かめを含む）、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 
