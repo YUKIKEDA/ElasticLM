@@ -80,6 +80,8 @@ A trust store can hold several root keys. It holds only public keys, so it is no
 
 `elm-server`, `elm-service`, and some `elm` commands also take root keys and revoked key IDs (`trust.rootKeys` and `trust.revokedKeyIds` in the server and service settings; `--trust`, `--revoked`, or `ELM_TRUST_ROOT_KEYS` for `elm`). There they decide what that program itself accepts and uses: `elm-service` checks its own signing key's certificates and every file it issues against them, and `elm-server` checks its server license against them. This catches configuration mistakes at start, for example a certificate that the root did not sign. It is not what protects the app. A customer administrator who puts their own root key into `elm-server` and writes their own server license gains nothing, because the apps trust only the vendor's root key and refuse that server's leases.
 
+For the exact `elm key` commands and their options, see the [elm command reference](../reference/elm-cli.md); for the `trust` settings, see [elm-server configuration](../reference/server-configuration.md) and [elm-service configuration](../reference/service-configuration.md).
+
 ## How a token is traced to the root
 
 ```mermaid
@@ -181,6 +183,8 @@ Any recovery needs an app update whose trust store drops the leaked root key, or
 | `ELM_KEY_REVOKED` | The token was signed by a key ID on the app's revoked list | Issue the license again with the current signing key |
 | `elm-service` does not start | No certificate covers the current time for `license`, for `lease`, or for `log` while `usageLog.directory` is set; or the certificates do not match the key | Certify the key again with the right uses and period |
 | New licenses fail on older app versions after a root change | The new root was used before the apps carried it | Keep certifying with the old root until the app versions in use know the new one |
+
+For every error code and what to do about it, see [Error codes](../reference/error-codes.md).
 
 Your duties, by role:
 

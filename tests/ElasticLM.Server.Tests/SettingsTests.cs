@@ -1,5 +1,7 @@
 using System.Net;
 using ElasticLM.Issuing;
+using ElasticLM.Licensing.Tests;
+using ElasticLM.Service.Tests;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Server.Tests;
@@ -182,6 +184,42 @@ public sealed class SettingsTests : IDisposable
         Assert.True(AccessRules.Parse([], ["user:guest"]).AllowsClient(null, null));
         Assert.Throws<ServerStartException>(() => AccessRules.Parse(["host:"], []));
         Assert.Throws<ServerStartException>(() => AccessRules.Parse([.. Enumerable.Repeat("::1", 1_001)], []));
+    }
+
+    /// <summary>
+    /// The settings reference of <c>elm-server</c> lists every key of the settings file and its variable (design §20.7, V1c2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/server-configuration.md and docs/guide.ja/reference/server-configuration.md under the repository
+    ///   root.
+    ///
+    /// Steps:
+    /// - Walk the source-generated type of the settings file into its sections: every key as its dotted path (rateLimit.perIp),
+    ///   and its variable by the rule ELM_ + the path in upper case with '.' as '_' (ELM_RATELIMIT_PERIP). Every key of
+    ///   <see cref="ServerSettings.Load"/> reads that variable.
+    /// - Add the variables with no key: ELM_TRUST_ROOT_KEYS and ELM_TLS_PASSWORD.
+    /// - Look for each in code on both pages.
+    ///
+    /// Expected:
+    /// - Every path and variable appears as a whole word in a code span or a code block on both pages; the message lists every
+    ///   one that does not.
+    /// </remarks>
+    [Fact]
+    public void SettingsFile_AllKeysAndVariables_AppearOnReferencePage()
+    {
+        IReadOnlyList<string> keys = SettingsReference.KeyPaths(ServerJsonContext.Default.SettingsFile);
+        string[] names =
+        [
+            .. keys,
+            .. keys.Select(SettingsReference.Variable),
+            ServerSettings.TrustRootKeysVariable,
+            ServerSettings.TlsPasswordVariable,
+        ];
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissing("server-configuration.md", names);
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
 
     private string Write(string json)

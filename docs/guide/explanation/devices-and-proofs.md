@@ -114,6 +114,8 @@ A nonce is a short value the server hands out so that a proof cannot be made in 
 
 Offline request files (see [Activation](activation.md)) cannot use a server nonce, because there is no round trip. They carry the public key, their own random `nonce`, and expire after 7 days.
 
+For how to give `elm-service` the nonce secret, see [elm-service configuration](../reference/service-configuration.md).
+
 ## Machine fingerprints
 
 A machine fingerprint is a per-product value derived from the operating system's machine ID, written as 32 lowercase hex characters. The raw machine ID is never sent, and the same device gives different fingerprints for different products, so products cannot use them to track a device across each other.
@@ -162,3 +164,5 @@ For the people who run ElasticLM:
 - **Vendors.** Choose `fingerprintMatching` per product. On Windows, with `any` (the default), the token still verifies when one of the two IDs changes; with `all`, it fails when either changes. On Linux and macOS the two rules behave the same. `ignore` is the choice for containers and for devices without readable IDs; it cannot be used for trials.
 - **Operators of `elm-service`.** Generate the nonce secret with at least 32 random bytes, give the same secret to every node, and keep the nodes' clocks within 60 seconds of each other (NTP). Set `publicUrls` to every URL that clients use; a proof for a URL not in the list is refused.
 - **Anyone running an app or `elm-server` in a container.** Keep the key folder on a persistent volume and provide a machine ID, as described above.
+
+For every error code and what to do about it, see [Error codes](../reference/error-codes.md).

@@ -18,6 +18,8 @@ sidebar_position: 3
 
 どれも形式は同じで、アプリは同じ方法で検証する。
 
+`elm license issue` のオプションと、ファイルを読む `elm license inspect` と `elm license verify` のオプションは、[elm コマンドリファレンス](../reference/elm-cli.md)を参照。
+
 ## ライセンストークン
 
 ライセンストークンはコンパクト形式の JWS で、base64url の 3 つの部分を `.` でつないだものだ。中身はヘッダー、JSON のペイロード、署名の 3 つになる。ElasticLM が使うのは JWS を絞り込んだ形だけで、JOSE 全般には対応しない。
@@ -209,6 +211,8 @@ C では、`elm_verifier_verify` がエラーコードを返し、成功すれ�
 | `ELM_FINGERPRINT_UNAVAILABLE` | マシンからフィンガープリントが得られない。`/etc/machine-id` のないコンテナでよく起きる | ホストの `/etc/machine-id` を読み取り専用でマウントする。または `fingerprintMatching` を `ignore` にしたポリシーを使う |
 | `ELM_EXPIRED` | `exp + grace` を過ぎた | オンラインでトークンを更新する。またはオフラインでのトークンの更新で新しいファイルを持ち込む |
 | `ELM_FEATURE_NOT_LICENSED`、`ELM_FEATURE_VERSION_NOT_LICENSED`、`ELM_FEATURE_EXPIRED` | ライセンスにこの機能やバージョンが含まれない。または機能の期限が切れた | その機能、そのバージョン範囲、またはより後の機能の有効期限を含むライセンスを発行する |
+
+番号とサーバーが送る HTTP の状態を含め、すべてのエラーコードは[エラーコード](../reference/error-codes.md)を参照。
 
 役割ごとにすべきことは次のとおり。
 

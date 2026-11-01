@@ -46,6 +46,8 @@ ElasticLM は、アプリのバイナリ自体を書き換えて検証を飛ば�
 
 アプリに組み込むのは、`ElasticLM.Licensing` と `ElasticLM.Client`、または `libelasticlm` だけだ。ライセンスに署名するコードは `elm`、`elm-server`、`elm-service` にしかなく、アプリと一緒に出荷されることはない。
 
+3 つの実行ファイルのコマンドと設定の正確な書き方は、[elm コマンドリファレンス](../reference/elm-cli.md)、[elm-server の設定](../reference/server-configuration.md)、[elm-service の設定](../reference/service-configuration.md)を参照。
+
 ## 基本の仕組み: 署名したライセンスをオフラインで検証する
 
 ElasticLM のほかの機能は、すべて 1 つの仕組みの上に成り立っている。**ライセンストークン**は小さな JSON 文書で、どの製品のどの機能をいつまで使えるかを記す。ノードロックのライセンスなら、どのデバイスで使えるかも記す。ベンダーはこのトークンに ECDSA P-256（ES256）で署名する。**ライセンスファイル**（`.elmlic`）には、ライセンストークンと、その検証に必要な鍵証明書が入っている。

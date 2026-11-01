@@ -76,7 +76,7 @@ The client sends `POST /v1/leases` with the feature, the app's version of the fe
 
 The client renews each lease every third of its lease time: about every 200 seconds for the default 10 minutes. A renewal is `POST /v1/leases/{id}/renew` with the last `seq` the client received and a proof from the same key.
 
-Renewing at one third means one late or lost renewal does not cost the seat. After a network failure, a `5xx` answer, or a server pin mismatch, the lease moves to `Retrying`, and the client tries again after 15 seconds, then 30, then every 60 seconds; if the lease expires first, it becomes `Lost`. `ELM_CLONE_DETECTED` is not retried. `ELM_UNKNOWN_LEASE` means the server does not know the lease: on premises a restarted server says this and the client reclaims (below); the hosted service never forgets a lease, so there it is `Lost` at once.
+Renewing at one third means one late or lost renewal does not cost the seat. When a renewal fails for any reason other than `ELM_CLONE_DETECTED` or `ELM_UNKNOWN_LEASE` (a network failure, a `5xx` answer, a server pin mismatch, or another error code), the lease moves to `Retrying`, and the client tries again after 15 seconds, then 30, then every 60 seconds; if the lease expires first, it becomes `Lost`. `ELM_CLONE_DETECTED` is not retried. `ELM_UNKNOWN_LEASE` means the server does not know the lease: on premises a restarted server says this and the client reclaims (below); the hosted service never forgets a lease, so there it is `Lost` at once.
 
 When a lease becomes `Lost`, the app decides what to do: ask the user to save their work, turn the feature off, or try to acquire again.
 
@@ -132,6 +132,8 @@ What the customer's administrator gives the server, and what it keeps:
 - **The usage log.** The server writes every lease, borrow, return, refusal, and admin action to daily files, `usage-<UTC time>.jsonl`, in the data folder by default (`log.usage`). They are signed in blocks with the server's key, and each file is chained to the previous one, so `elm log verify` finds edited, missing, or cut files. The log is a record for audits and billing questions; the seat count does not depend on it. ElasticLM does not send it to the vendor or anywhere else, and old files stay until you delete them. If the vendor asks for it, they can check it with `elm log verify`.
 
 The server renews its license online when `service.url` names the vendor's `elm-service`; otherwise the administrator renews it with `elm server refresh-request` and `elm server import`. Each renewal lets the service find a copied server machine by its `seq`. While `elm-service` cannot be reached, the server keeps lending until its license's expiry plus grace period, then refuses new acquires and renewals. A server license issued by hand has no renewal, and one without an expiry cannot reveal a copied server, so `elm` warns when it issues one.
+
+For every setting, the command line, and the exit codes of `elm-server`, see [elm-server configuration](../reference/server-configuration.md). For the usage log's files and events, see [Logs](../reference/logs.md).
 
 ## Restarts and reclaim
 
@@ -196,6 +198,8 @@ The limit exists because a returned borrow's token stays valid until its `exp`; 
 
 A borrowing client is away and cannot reclaim. So `elm-server` writes every borrow and early return, before it takes effect, to the borrow record (`borrows-<UTC time>.jsonl` in its data folder, signed line by line with the server's key), and restores unexpired borrows from it at start. If the record is broken, the server does not start. `elm-server --set-aside-broken-records` moves the broken record aside and starts without its borrows; the usage log records this as `records.set_aside`.
 
+For the borrow record's lines and how to verify it with `elm log verify --stream borrows`, see [Logs](../reference/logs.md).
+
 ## The same protocol on the hosted service
 
 `elm-service` lends seats with the same requests and the same renewal, retry, borrow, and early-return rules. The differences:
@@ -217,6 +221,8 @@ Rules on host and user names (`host:<name>`, `user:<name>`) use names the client
 
 On the hosted service, the vendor's administrators can list a license's leases and force-return any lease, borrows included, with the `lease.release` permission; each force-return is written to the audit log.
 
+For the exact `elm server` commands and their options, see the [elm command reference](../reference/elm-cli.md).
+
 ## What can go wrong and what to do
 
 - **A returned lease token still works until it expires**: one lease time for a normal lease, which is why early returns of borrows are limited.
@@ -228,4 +234,4 @@ On the hosted service, the vendor's administrators can list a license's leases a
 - **The app must handle `Lost`**, and check a borrow's `ExpiresAt` itself.
 - **The server needs its own data folder** when an app of the same product runs on the same machine (see [Running `elm-server`](#running-elm-server)).
 
-What ElasticLM protects and what it does not, for every role, is on [the security model](security-model.md). Why the server keeps its state in memory is on [design choices](design-choices.md).
+What ElasticLM protects and what it does not, for every role, is on [the security model](security-model.md). Why the server keeps its state in memory is on [design choices](design-choices.md). For every error code and what to do about it, see [Error codes](../reference/error-codes.md).
