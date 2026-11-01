@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text.Json;
+using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Service.Tests;
 
@@ -559,6 +560,54 @@ public sealed class ServiceSettingsTests : IDisposable
         + "}"
         + more
         + "}";
+
+    /// <summary>
+    /// The settings reference of <c>elm-service</c> lists every key of the settings file and its variable (design §20.7, V1c2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/service-configuration.md and docs/guide.ja/reference/service-configuration.md under the
+    ///   repository root.
+    ///
+    /// Steps:
+    /// - Walk the source-generated type of the settings file into its sections: every key as its dotted path (rateLimit.perIp),
+    ///   and its variable by the rule ELM_ + the path in upper case with '.' as '_' (ELM_RATELIMIT_PERIP), except the keys
+    ///   that name a secret's file, whose variable holds the secret itself (database.connectionFile: ELM_DATABASE_CONNECTION).
+    /// - Add the variable with no key: ELM_TRUST_ROOT_KEYS.
+    /// - Look for each in code on both pages.
+    ///
+    /// Expected:
+    /// - Every exception names a key of the file.
+    /// - Every path and variable appears as a whole word in a code span or a code block on both pages; the message lists every
+    ///   one that does not.
+    /// </remarks>
+    [Fact]
+    public void SettingsFile_AllKeysAndVariables_AppearOnReferencePage()
+    {
+        IReadOnlyList<string> keys = SettingsReference.KeyPaths(ServiceJsonContext.Default.SettingsFile);
+
+        // ServiceSettings, OidcSettings, and WebLoginSettings read no variable by the rule for a key that names a secret's file:
+        // the secret itself comes from its own variable instead (design §14.8).
+        var secretFiles = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["database.connectionFile"] = ServiceSettings.ConnectionVariable,
+            ["signing.passphraseFile"] = ServiceSettings.SigningPassphraseVariable,
+            ["nonce.secretFile"] = ServiceSettings.NonceSecretVariable,
+            ["oidc.webClientSecretFile"] = WebLoginSettings.ClientSecretVariable,
+            ["dataProtection.kekFile"] = WebLoginSettings.KekVariable,
+        };
+        Assert.All(secretFiles.Keys, key => Assert.Contains(key, keys));
+        string[] names =
+        [
+            .. keys,
+            .. keys.Select(key => secretFiles.TryGetValue(key, out string? variable) ? variable : SettingsReference.Variable(key)),
+            ServiceSettings.TrustRootKeysVariable,
+        ];
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissing("service-configuration.md", names);
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
 
     private string Write(string json)
     {

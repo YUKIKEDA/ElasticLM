@@ -1,0 +1,553 @@
+---
+sidebar_position: 1
+---
+
+# elm command reference
+
+This page lists every command and option of `elm`, the command line tool for vendors and administrators: it creates and certifies keys, issues and verifies license files, administers an on-premises license server on its own machine, calls the administration API of `elm-service`, passes offline request files to the service, and verifies signed logs. It is for looking up a command you already know you need. For what keys, certificates, license files, and servers are, read the [Overview](../explanation/overview.md) and the [Trust chain](../explanation/trust-chain.md) first.
+
+## Common behavior
+
+### Form
+
+```text
+elm <group> <command> [arguments] [options]
+```
+
+The groups are `key`, `license`, `server`, `admin`, `offline`, and `log`. Options may come in any order after the command. An option that takes several values is repeated (`--feature A --feature B`); `elm key certify --use` also takes a comma-separated list.
+
+Every command takes `--help` (also `-h` or `-?`), which prints its usage. `elm --version` prints the version of `elm`.
+
+A date or time (`--expires`, `--not-before`, `exp=` in `--feature`) is ISO 8601: a date without a time is midnight UTC, and a time without an offset is UTC.
+
+Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, or a missing required option, is followed by `Run 'elm --help' for usage.` and exit code 2.
+
+### `--json`
+
+Writes the result to standard output as JSON instead of text. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm license inspect`, `elm license verify`, `elm server status`, `elm server leases`, `elm server reload`, `elm server seal`, `elm server release`, `elm offline process`, and `elm log verify`. The `elm server` commands write the administration API's answer as it came.
+
+### `--force`
+
+Overwrites an output file that exists. Without it, a command that would overwrite a file stops with exit code 2 and writes nothing. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm server activate-request`, `elm server refresh-request`, `elm server deactivate-proof`, and `elm offline process`.
+
+### Passphrases
+
+Every private key that `elm` writes is a PKCS#8 PEM file encrypted with a passphrase. On Linux and macOS a private key file is created with mode `0600`; on Windows it takes the access rules of its folder.
+
+The commands that read or write a private key (`elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`) take the passphrase from an environment variable:
+
+- `--passphrase-env <name>` names the variable. The default is `ELM_KEY_PASSPHRASE`.
+- When the variable is not set or is empty and input is interactive, `elm` asks for the passphrase on the terminal without echoing it. For a new key it asks twice, and the two must match.
+- When the variable is not set or is empty and input is redirected, the command stops with exit code 2.
+- A new key's passphrase must be at least 12 characters.
+
+### Trust options
+
+The commands that verify a signature (`elm license issue`, `elm license verify`, `elm log verify`, and the server license commands of `elm server`) need the vendor's root public keys, the [trust store](../explanation/trust-chain.md):
+
+- `--trust <file>` names a PEM file of root public keys. A file may hold several keys, and the option may be repeated.
+- Without `--trust`, the keys come from the environment variable `ELM_TRUST_ROOT_KEYS`, which holds one or more PEM public keys. When `--trust` is given, the variable is not read.
+- With neither, the command stops with exit code 2.
+- `--revoked <key ID>` names a revoked key ID (`kid`). It may be repeated.
+
+### Environment variables
+
+| Variable | Used by | Meaning |
+| --- | --- | --- |
+| `ELM_KEY_PASSPHRASE` | `elm key`, `elm license issue` | The passphrase of a private key, unless `--passphrase-env` names another variable. |
+| `ELM_TRUST_ROOT_KEYS` | Commands with `--trust` | One or more root public keys in PEM, used when `--trust` is not given. |
+| `ELM_API_KEY` | `elm admin request`, `elm offline process` | An API key of `elm-service`. When set, it is used instead of a saved login. |
+| `ELM_SERVICE_URL` | `elm admin request` | The `elm-service` URL when `--url` is not given. |
+| `ELM_ADMIN_LOGIN` | `elm admin` | The file that holds the login of `elm admin login`, instead of the default place. |
+
+The default login file is `%LOCALAPPDATA%\ElasticLM\elm\login` on Windows, `$XDG_DATA_HOME/elasticlm/elm/login` on Linux (`~/.local/share/elasticlm/elm/login` when `XDG_DATA_HOME` is not set), and `~/Library/Application Support/ElasticLM/elm/login` on macOS.
+
+### Exit codes
+
+| Code | Name | Meaning |
+| --- | --- | --- |
+| `0` | Success | The command did what it was asked. `elm log verify` returns 0 when the log is intact, even with warnings. |
+| `1` | Verification failed | A license file or log did not verify, or a server, `elm-service`, or the identity provider refused the request or answered with an error. |
+| `2` | Invalid input | An argument, option, or value is wrong or missing; a file is missing, unreadable, too large, or exists without `--force`; no passphrase, trust keys, or credentials were found. |
+| `3` | Network error | A server, `elm-service`, or the identity provider cannot be reached, the request timed out, or (for `elm server` and `elm offline process`) the answer cannot be read. |
+
+## elm key
+
+### elm key root create
+
+```text
+elm key root create --out <file> [options]
+```
+
+Creates a root key: an encrypted private key file and its public key file, and prints the key ID.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--out` | File path | — | Yes | The encrypted private key file to write. |
+| `--public-out` | File path | `<out>.pub.pem` | No | The public key file to write. |
+| `--passphrase-env` | Variable name | `ELM_KEY_PASSPHRASE` | No | The environment variable that holds the passphrase. |
+| `--force` | — | Off | No | Overwrite files that exist. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+### elm key signing create
+
+```text
+elm key signing create --out <file> [options]
+```
+
+Creates a signing key: an encrypted private key file and its public key file, and prints the key ID. The key signs nothing that a verifier accepts until `elm key certify` certifies it.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--out` | File path | — | Yes | The encrypted private key file to write. |
+| `--public-out` | File path | `<out>.pub.pem` | No | The public key file to write. |
+| `--passphrase-env` | Variable name | `ELM_KEY_PASSPHRASE` | No | The environment variable that holds the passphrase. |
+| `--force` | — | Off | No | Overwrite files that exist. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+### elm key certify
+
+```text
+elm key certify --root <file> --public <file> --out <file> [options]
+```
+
+Writes a key certificate that certifies a signing key with the root key, for named uses and a limited period.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--root` | File path | — | Yes | The encrypted root key file. |
+| `--public` | File path | — | Yes | The public key file of the signing key to certify. |
+| `--use` | `license`, `lease`, `log` | `license` | No | What the key may sign. Repeat, or separate with commas, for several. |
+| `--not-before` | ISO 8601 date or time | Now | No | The start of validity. |
+| `--days` | Integer, at most 731 | `365` | No | The validity in days. |
+| `--out` | File path | — | Yes | The certificate file to write. |
+| `--passphrase-env` | Variable name | `ELM_KEY_PASSPHRASE` | No | The environment variable that holds the root key's passphrase. |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+### elm key thumbprint
+
+```text
+elm key thumbprint <public-key-file>
+```
+
+Prints the key ID (JWK thumbprint) of a public key.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<public-key-file>` | File path | — | Yes | Argument: a public key PEM file. |
+
+## elm license
+
+### elm license issue
+
+```text
+elm license issue --signing-key <file> --certificate <file> --product <id> --license-id <id> --expires <time> --out <file> [options]
+```
+
+Issues a license file signed by a certified signing key; the file is verified with the trust store before it is written, and is not written if it does not verify.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--signing-key` | File path | — | Yes | The encrypted signing key file. |
+| `--certificate` | File path | — | Yes | A certificate file of the signing key. Repeat for several, at most four. |
+| `--product` | Product ID | — | Yes | The product ID. |
+| `--license-id` | License ID | — | Yes | The license ID. |
+| `--kind` | `standard`, `trial`, `server` | `standard` | No | The kind of license. |
+| `--feature` | `ID[;ver=RANGE][;seats=N][;exp=DATE]` | — | No | A feature, with an optional version range, seat count, and expiry. Repeat for several. |
+| `--expires` | ISO 8601 date or time, or `never` | — | Yes | The token's expiry. `never` writes a warning: a license without expiry cannot be revoked. |
+| `--grace-days` | Number | `7`; `0` for `trial` | No | The grace period in days. |
+| `--refresh-days` | Number | None | No | Days before expiry when clients start refreshing online. |
+| `--bind-key` | Thumbprint | — | No | The installation key thumbprint to bind the license to. |
+| `--fingerprint` | Fingerprint | — | No | A machine fingerprint to bind the license to. Repeat for several. |
+| `--fingerprint-matching` | `any`, `all`, `ignore` | `any` | No | How the machine fingerprints must match. |
+| `--lease-minutes` | Number | `10` | No | Server licenses only: the lease duration in minutes. |
+| `--borrow-days` | Number | `0` | No | Server licenses only: the borrow limit in days; `0` disallows borrowing. |
+| `--overage` | Integer | `0` | No | Server licenses only: the overage percentage. |
+| `--clone` | `deny`, `flag` | `deny` | No | Server licenses only: deny or flag a detected clone. |
+| `--borrow-returns` | Integer | `2` | No | Server licenses only: early returns of borrows one installation may make in 30 days. |
+| `--meta` | `key=value` | — | No | Vendor metadata. Repeat for several. |
+| `--out` | File path | — | Yes | The license file to write. |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to verify the license with before it is written. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--passphrase-env` | Variable name | `ELM_KEY_PASSPHRASE` | No | The environment variable that holds the signing key's passphrase. |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+`--lease-minutes`, `--borrow-days`, `--overage`, `--clone`, and `--borrow-returns` with a `--kind` other than `server` stop the command with exit code 2.
+
+### elm license inspect
+
+```text
+elm license inspect <license-file> [--json]
+```
+
+Shows the headers and payloads of a license file and its certificates without verifying any signature.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<license-file>` | File path | — | Yes | Argument: the license file. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+### elm license verify
+
+```text
+elm license verify <license-file> --product <id> [options]
+```
+
+Verifies a license file against a trust store and a requirement; it returns exit code 1 when the license is not valid.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<license-file>` | File path | — | Yes | Argument: the license file. |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--product` | Product ID | — | Yes | The product ID the license must be for. |
+| `--kind` | `standard`, `trial`, `server` | `standard` | No | The kind the license must be. |
+| `--feature` | Feature ID | — | No | A feature the license must grant. |
+| `--version` | `major.minor[.patch]` | — | No | The feature version to check. |
+| `--key-thumbprint` | Thumbprint | — | No | The installation key thumbprint, for a bound license. |
+| `--fingerprint` | Fingerprint | — | No | A current machine fingerprint. Repeat for several. Needs `--key-thumbprint`. |
+| `--this-machine` | — | Off | No | Use this machine's fingerprints for the product. Needs `--key-thumbprint`. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+## elm server
+
+The `elm server` commands administer an on-premises license server on its own machine. They read the administrator token from the server's data folder, so they run as the server's user. Without `--data`, the data folder is the machine-wide one of `--product`: `%ProgramData%\ElasticLM\<product>` on Windows, `/var/lib/elasticlm/<product>` on Linux, and `/Library/Application Support/ElasticLM/<product>` on macOS. Each request times out after 30 seconds.
+
+### elm server status
+
+```text
+elm server status (--data <folder> | --product <id>) [options]
+```
+
+Shows the server license, whether the server is reclaiming leases after a restart, and the seats in use for each feature.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
+| `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
+| `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
+| `--json` | — | Off | No | Write the answer as JSON. |
+
+### elm server leases
+
+```text
+elm server leases (--data <folder> | --product <id>) [options]
+```
+
+Lists the leases and borrows the server holds.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
+| `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
+| `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
+| `--json` | — | Off | No | Write the answer as JSON. |
+
+### elm server reload
+
+```text
+elm server reload (--data <folder> | --product <id>) [options]
+```
+
+Makes the running server read its license file again.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
+| `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
+| `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
+| `--json` | — | Off | No | Write the answer as JSON. |
+
+### elm server seal
+
+```text
+elm server seal (--data <folder> | --product <id>) [options]
+```
+
+Makes the server sign the pending lines of its usage log now.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
+| `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
+| `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
+| `--json` | — | Off | No | Write the answer as JSON. |
+
+### elm server release
+
+```text
+elm server release <lease-id> (--data <folder> | --product <id>) [options]
+```
+
+Releases a lease, or a borrow, on the server's side.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<lease-id>` | Lease ID | — | Yes | Argument: the lease ID, as `elm server leases` shows it. |
+| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
+| `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
+| `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
+| `--json` | — | Off | No | Write the answer as JSON. |
+
+### Server license commands
+
+The commands below manage the server license through the activation kept in the server's data folder, and work while the server is stopped. They need the server's installation key, which `elm-server` creates when it first starts. They take these options in common:
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+
+When a command writes a new license file and the server is running, it asks the server to reload it; when the server is not running, the server reads the file when it starts.
+
+### elm server activate
+
+```text
+elm server activate <license-key> --product <id> --service <url> --license <file> [options]
+```
+
+Activates the server's license online with `elm-service` and writes the license file.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<license-key>` | License key | — | Yes | Argument: the license key of a server license. |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--service` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
+| `--license` | File path | — | Yes | The server's license file (its setting `license`). |
+
+### elm server refresh
+
+```text
+elm server refresh --product <id> --service <url> --license <file> [options]
+```
+
+Refreshes the server's license online with `elm-service` and writes the license file.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--service` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
+| `--license` | File path | — | Yes | The server's license file (its setting `license`). |
+
+### elm server deactivate
+
+```text
+elm server deactivate --product <id> --service <url> [options]
+```
+
+Deactivates the server's license online and removes its license file; it stops with exit code 1 while the server is running.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--service` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
+| `--license` | File path | — | No | The server's license file. It is removed only when it is the file of this activation. |
+
+### elm server activate-request
+
+```text
+elm server activate-request --key <license-key> --product <id> --out <file> [options]
+```
+
+Writes an offline activation request file (`.elmreq`) for `elm offline process`; it stops with exit code 1 while the running server refreshes its license online.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--key` | License key | — | Yes | The license key of a server license. |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--out` | File path | — | Yes | Where to write the request file. |
+| `--renew` | — | Off | No | Make a new request before the waiting one expires. The earlier request file is then replaced and must be discarded. |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+
+### elm server refresh-request
+
+```text
+elm server refresh-request --product <id> --out <file> [options]
+```
+
+Writes an offline refresh request file (`.elmreq`) for `elm offline process`; it stops with exit code 1 while the running server refreshes its license online.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--out` | File path | — | Yes | Where to write the request file. |
+| `--renew` | — | Off | No | Make a new request before the waiting one expires. The earlier request file is then replaced and must be discarded. |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+
+### elm server import
+
+```text
+elm server import <answer> --product <id> --license <file> [options]
+```
+
+Imports the service's answer file (`.elmresp`) to the waiting request and writes the license file.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<answer>` | File path | — | Yes | Argument: the service's answer file (`.elmresp`). |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--license` | File path | — | Yes | The server's license file (its setting `license`). |
+
+### elm server deactivate-proof
+
+```text
+elm server deactivate-proof --out <file> --product <id> [options]
+```
+
+Writes an offline deactivation proof (`.elmdeact`) and removes the activation and its license file; it stops with exit code 1 while the server is running.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--out` | File path | — | Yes | Where to write the deactivation proof (`.elmdeact`). |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+| `--license` | File path | — | No | The server's license file. It is removed only when it is the file of this activation. |
+
+### elm server forget-proof
+
+```text
+elm server forget-proof --product <id> [options]
+```
+
+Forgets the kept deactivation proof once the service has it, so that the server may activate again.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--product` | Product ID | — | Yes | The server's product ID (its setting `product`). |
+| `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
+
+## elm admin
+
+The `elm admin` commands sign in to `elm-service` and call its administration API. A service URL is `https`, or `http` on a loopback address. A saved login is used only for requests to the same origin (scheme, host, and port) as the URL it was made for, and its access token is refreshed when it expires within 60 seconds. Tokens and keys are never written to standard output or standard error.
+
+### elm admin login
+
+```text
+elm admin login --url <url>
+```
+
+Signs in to `elm-service` with its identity provider (OIDC device authorization flow) and saves the login, replacing any earlier one; the sign-in address and code are written to standard error.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
+
+### elm admin logout
+
+```text
+elm admin logout
+```
+
+Removes the saved login and, when the identity provider offers it, revokes its refresh token first; the access token stays valid until it expires.
+
+This command takes no options.
+
+### elm admin request
+
+```text
+elm admin request <METHOD> <path> [--body <file>] [--url <url>]
+```
+
+Calls the administration API once and writes the body of a successful answer to standard output; any other answer's body goes to standard error with exit code 1.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<METHOD>` | `GET`, `POST`, `PUT`, `PATCH`, `DELETE` | — | Yes | Argument: the HTTP method. |
+| `<path>` | Path starting with `/v1/admin/` | — | Yes | Argument: the path, which may hold a query. At most 2,048 characters, with no fragment, no backslash, no `.` or `..` segment, and no `%2e`, `%2f`, or `%5c`. |
+| `--body` | File path | — | No | A JSON file to send as `application/json`, up to 64 KiB. |
+| `--url` | `https` URL, or `http` on a loopback address | `ELM_SERVICE_URL`, then the saved login's URL | No | The `elm-service` URL. |
+
+The request uses `ELM_API_KEY` when it is set, and the saved login otherwise; with neither, it stops with exit code 2. Redirects are not followed, and the request times out after 100 seconds.
+
+## elm offline
+
+### elm offline process
+
+```text
+elm offline process --url <url> --in <file> [--out <file>] [options]
+```
+
+Sends an offline activation request, refresh request, or deactivation proof to `elm-service` and, for a request, writes the answer file that the device imports.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--url` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
+| `--in` | File path | — | Yes | The request file (`.elmreq`) or deactivation proof (`.elmdeact`). |
+| `--out` | File path | — | For a request; not allowed for a deactivation proof | Where to write the answer (`.elmresp`) of an activation or refresh request. |
+| `--force` | — | Off | No | Overwrite the answer file if it exists. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+With `ELM_API_KEY`, or a saved `elm admin login` for the same origin as `--url`, the file is sent to the service's administration entry; otherwise it is sent to the public entry. Redirects are not followed, and the request times out after 30 seconds.
+
+## elm log
+
+### elm log verify
+
+```text
+elm log verify <files>... [options]
+```
+
+Verifies the signatures and the chain of a license server's usage log or borrow record, or of `elm-service`'s usage log; it returns exit code 1 when an error is found, and 0 when there are only warnings.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `<files>` | File or folder paths | — | Yes, one or more | Argument: the log files, or folders of them. They are verified in the order of their file names, oldest first. |
+| `--product` | Product ID | — | For a server's log | The product ID of the server license. Not used for `elm-service`'s log. |
+| `--node` | Node name: 1 to 64 of `A`–`Z`, `a`–`z`, `0`–`9`, `-` | — | For a folder of `elm-service`'s usage logs | The node whose files to verify (`usage-<node>-*.jsonl`). Only with `--stream usage`, and only with folders. |
+| `--stream` | `usage`, `borrows` | `usage` | No | Which log to verify: the usage log or the borrow record. |
+| `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
+| `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
+## Examples
+
+These use fake file names, IDs, and keys.
+
+```text
+elm key root create --out root.key.pem
+elm key signing create --out signing.key.pem
+elm key certify --root root.key.pem --public signing.key.pem.pub.pem --use license --days 365 --out signing.cert.jws
+elm license issue --signing-key signing.key.pem --certificate signing.cert.jws --trust root.key.pem.pub.pem \
+  --product com.example.editor --license-id LIC-0001 --feature "pro;ver=>=1.0 <2.0;seats=5" --expires 2027-12-31 --out LIC-0001.elmlic
+elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product com.example.editor --feature pro --version 1.4
+elm server status --product com.example.editor
+elm admin request GET /v1/admin/licenses --url https://licensing.example.com
+elm offline process --url https://licensing.example.com --in server.elmreq --out server.elmresp
+elm log verify ./usage --product com.example.editor --trust root.key.pem.pub.pem
+```

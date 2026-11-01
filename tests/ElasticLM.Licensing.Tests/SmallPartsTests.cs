@@ -55,6 +55,52 @@ public sealed class SmallPartsTests
     }
 
     /// <summary>
+    /// The error code reference lists every error code (design §20.7, V1c2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/error-codes.md and docs/guide.ja/reference/error-codes.md under the repository root.
+    ///
+    /// Steps:
+    /// - Convert every value of <see cref="ErrorCode"/> to its wire name and look for it in code on both pages.
+    ///
+    /// Expected:
+    /// - Every wire name, such as ELM_NO_SEATS, appears in a code span or a code block on both pages; the message lists every
+    ///   one that does not.
+    /// </remarks>
+    [Fact]
+    public void ToWireName_AllCodes_AppearOnReferencePage()
+    {
+        IReadOnlyList<string> missing = ReferencePages.FindMissing("error-codes.md", Enum.GetValues<ErrorCode>().Select(ErrorCodes.ToWireName));
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The error code reference gives each error code its number, which never changes once published (design §20.7, V1c2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/error-codes.md and docs/guide.ja/reference/error-codes.md under the repository root.
+    ///
+    /// Steps:
+    /// - For every value of <see cref="ErrorCode"/>, look for a table row that holds its wire name and its number.
+    ///
+    /// Expected:
+    /// - On both pages, one row holds each pair, such as ELM_NO_SEATS and 40; the message lists every pair that no row holds.
+    /// </remarks>
+    [Fact]
+    public void ToWireName_AllCodes_ListedWithTheirNumbers()
+    {
+        IReadOnlyList<string> missing = ReferencePages.FindMissingRows(
+            "error-codes.md",
+            Enum.GetValues<ErrorCode>().Select(code => (ErrorCodes.ToWireName(code), (int)code))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
     /// The trust store refuses no keys, keys that are not P-256 public keys in one PEM PUBLIC KEY block, private keys, and a
     /// key given twice.
     /// </summary>

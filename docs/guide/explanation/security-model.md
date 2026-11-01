@@ -57,6 +57,8 @@ Each administrator has a role: `owner` (everything), `admin` (everything except 
 
 **Resource limits.** Input size, depth, and counts have upper limits. `elm-service` limits device requests per source IP (`rateLimit.clientPerIp`, 20 per second by default) and per installation key (`rateLimit.clientPerKey`, 2 per second), and administration API requests per source IP (`rateLimit.perIp`, 20 per second) and per API key or administrator (`rateLimit.perKey`, 10 per second). Device and admin traffic use separate limits, so many devices behind one address do not lock out the administrators. When `usageLog.directory` is set, the service also writes leases and borrows to a signed usage log, one chain of files per node.
 
+For every setting of `elm-service`, see [elm-service configuration](../reference/service-configuration.md). For the rows of the audit log and the lines of the usage log, see [Logs](../reference/logs.md).
+
 ## For the app developer
 
 The app developer embeds the trust store and the client.
@@ -76,6 +78,8 @@ The customer's administrator runs `elm-server`.
 - **The data folder is closed to other users.** On Windows it allows only Administrators, SYSTEM, and the user who created it; on Linux and macOS its mode is `0700`. The server will not use a folder that another user created first.
 - **Edits to the usage log are found.** The log is signed in blocks with the server's key and each file is chained to the previous one, so `elm log verify` finds edited, missing, and cut-off files.
 - **Floods are limited.** Requests are limited per source IP (`rateLimit.perIp`, 20 per second by default).
+
+For every setting of `elm-server`, see [elm-server configuration](../reference/server-configuration.md). For the usage log and the borrow record, see [Logs](../reference/logs.md).
 
 ## Checking what you download
 

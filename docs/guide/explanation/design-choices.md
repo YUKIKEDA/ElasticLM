@@ -130,6 +130,8 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Cost.** The customer's administrator owns the machine and can delete the record or set the clock forward. ElasticLM accepts this: the damage ends when the borrow would have ended, and the usage log keeps a trace.
 
+For the record's files, lines, and how to verify it, see [Logs](../reference/logs.md).
+
 ## No high-availability pair for elm-server
 
 **Choice.** v1 has no redundant `elm-server` setup. The operating system's service manager restarts the server.

@@ -189,6 +189,8 @@ Some rules make the exchange safe to repeat:
 
 A client created without a service URL works only offline and sets no refresh timer; the app decides when to ask for a refresh request from the license's `ExpiresAt` and `RefreshWindow`.
 
+For the options of `elm offline process` and `elm admin login`, see the [elm command reference](../reference/elm-cli.md).
+
 ## Trials
 
 A trial lets a device use the product for a limited time without a key. The app calls `StartTrialAsync`, which sends `POST /v1/trials` with the product's code, the fingerprints, and a proof with the public key. Trials are online only.
@@ -242,3 +244,5 @@ In the last row the service has already moved `seq` forward, so the next request
 - **An old offline request file handed in after a newer one looks like a clone.** The service keeps only the latest offline response per activation, so an old request is taken as two steps behind, and with `deny` the activation is stopped. Users must throw away old request files once they make a new one; the app is told when a pending request was replaced (`Replaced`). Mixing online and offline refreshes on one device needs the same care.
 - **A damaged `activation.json` or a stopped activation.** `Check` returns `ELM_MALFORMED` for a damaged file, and activating again cannot send the last `seq`, which looks like a clone. After `ELM_CLONE_DETECTED` with `deny`, the copy that is behind cannot recover by itself. In both cases an administrator deactivates the old activation and the user activates again. Check the audit log for `activation.clone` rows first: they name the key thumbprint, the `seq` sent, and the last issued `seq`.
 - **Containers.** A container without a machine ID gets `ELM_FINGERPRINT_UNAVAILABLE`, and one that loses its key folder on every restart uses a new activation each time. See [Devices and proofs](devices-and-proofs.md).
+
+For every error code and what to do about it, see [Error codes](../reference/error-codes.md). For the audit log's rows and actions, such as `activation.clone`, see [Logs](../reference/logs.md).

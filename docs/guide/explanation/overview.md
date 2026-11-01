@@ -46,6 +46,8 @@ The executables run with no files beside them; a settings file is optional. They
 
 The app embeds only `ElasticLM.Licensing` and `ElasticLM.Client`, or `libelasticlm`. The code that signs licenses lives only in `elm`, `elm-server`, and `elm-service`, and never ships inside the app.
 
+For the exact commands and settings of the three executables, see the [elm command reference](../reference/elm-cli.md), [elm-server configuration](../reference/server-configuration.md), and [elm-service configuration](../reference/service-configuration.md).
+
 ## The core idea: a signed license, checked offline
 
 Everything else is built on one mechanism. A **license token** is a small JSON document that says which product, which features, until when, and, if the license is node-locked, which device. The vendor signs it with ECDSA P-256 (ES256). A **license file** (`.elmlic`) holds the license token and the key certificate needed to check it.

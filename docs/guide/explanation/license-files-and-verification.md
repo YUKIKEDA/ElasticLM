@@ -18,6 +18,8 @@ The file can come from three places:
 
 All three produce the same format, and the app verifies them the same way.
 
+For the options of `elm license issue`, and of `elm license inspect` and `elm license verify`, which read a file, see the [elm command reference](../reference/elm-cli.md).
+
 ## The license token
 
 A license token is a JWS in compact form: three base64url parts separated by `.`, holding a header, a JSON payload, and a signature. ElasticLM uses a narrowed form of JWS, not JOSE in general.
@@ -209,6 +211,8 @@ The verifier does not decide what the app does. On `Invalid`, the app chooses wh
 | `ELM_FINGERPRINT_UNAVAILABLE` | The machine yields no fingerprint, often a container without `/etc/machine-id` | Mount the host's `/etc/machine-id` read-only, or use a policy with `fingerprintMatching` set to `ignore` |
 | `ELM_EXPIRED` | Past `exp + grace` | Refresh online, or bring a new file by offline refresh |
 | `ELM_FEATURE_NOT_LICENSED`, `ELM_FEATURE_VERSION_NOT_LICENSED`, `ELM_FEATURE_EXPIRED` | The license does not cover this feature or version, or the feature has ended | Issue a license with the feature, the range, or a later feature expiry |
+
+For every error code, with its number and the HTTP status the servers send, see [Error codes](../reference/error-codes.md).
 
 What each role must do:
 

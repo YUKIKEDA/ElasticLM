@@ -57,6 +57,8 @@ sidebar_position: 7
 
 **リソースの上限。** 入力のサイズ、深さ、個数には上限がある。`elm-service` は、デバイスからのリクエストを、送信元の IP ごと（`rateLimit.clientPerIp`、既定は毎秒 20）とインストール鍵ごと（`rateLimit.clientPerKey`、毎秒 2）に制限する。管理 API へのリクエストは、送信元の IP ごと（`rateLimit.perIp`、毎秒 20）と、API キーまたは管理者ごと（`rateLimit.perKey`、毎秒 10）に制限する。デバイスと管理の通信には別々の上限を使うので、1 つのアドレスの後ろに多数のデバイスがあっても、管理者が締め出されることはない。`usageLog.directory` を設定すると、サービスはリースと借用を署名付きの利用ログにも書き込む。利用ログのファイルのチェーンは、ノードごとに 1 本だ。
 
+`elm-service` のすべての設定は、[elm-service の設定](../reference/service-configuration.md)を参照。監査ログの行と利用ログの行は、[ログ](../reference/logs.md)を参照。
+
 ## アプリ開発者向け
 
 アプリ開発者は、トラストストアとクライアントをアプリに組み込む。
@@ -76,6 +78,8 @@ sidebar_position: 7
 - **データフォルダーには、ほかのユーザーはアクセスできない。** Windows では Administrators、SYSTEM、フォルダーを作ったユーザーにだけアクセスを許す。Linux と macOS ではモードを `0700` にする。ほかのユーザーが先に作ったフォルダーは、サーバーは使わない。
 - **利用ログの改ざんは見つかる。** ログはブロックごとにサーバーの鍵で署名され、各ファイルは前のファイルとチェーンでつながっている。そのため、改ざんされたファイル、欠けたファイル、途中で切られたファイルを `elm log verify` で見つけられる。
 - **大量のリクエストは制限される。** リクエストは送信元の IP ごとに制限される（`rateLimit.perIp`、既定は毎秒 20）。
+
+`elm-server` のすべての設定は、[elm-server の設定](../reference/server-configuration.md)を参照。利用ログと借用の記録は、[ログ](../reference/logs.md)を参照。
 
 ## ダウンロードしたファイルの検証
 
