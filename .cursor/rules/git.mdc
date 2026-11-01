@@ -16,7 +16,7 @@ When asked about such an operation, answer with the current `HEAD` SHA, the targ
 - This covers the Issue's own branch only. Never commit to `main` or push to it, and never merge.
 - `git branch --show-current` is part of the command that commits. A chain that creates a branch can fail before it does, and the commit then lands on `main`.
 - A push that follows a test is chained to it so that a failed test stops the push (`./build.ps1; if ($LASTEXITCODE -eq 0) { git push }`).
-- Read `gh pr view <n> --json state` before pushing to a branch that has a PR. A push to the branch of a merged PR recreates the deleted branch and reaches nothing.
+- Read `gh pr view <n> --json state` before pushing to a branch that has a PR, and before editing its body. A push to the branch of a merged PR recreates the deleted branch and reaches nothing; an edited body no longer matches what was merged. After PR #201 merged, a second commit was pushed and the body edited to describe it; the commit moved to the next PR and the body was restored.
 - If history was rewritten, put the SHA from before the rewrite on the first line of the reply.
 - Never skip hooks (`--no-verify`) or signing unless the owner orders it.
 - Never commit key material, a real license token, or a secret, test fixtures included (`.cursor/rules/security.mdc`). Read `git status --short` and the staged file list before each commit.
