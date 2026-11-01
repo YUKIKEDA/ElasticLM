@@ -211,7 +211,7 @@ public static unsafe partial class Exports
     /// <summary><c>elm_activation_create_deactivation_proof</c>: makes an offline deactivation proof.</summary>
     /// <param name="activation">The handle.</param>
     /// <param name="result">Receives the proof's text, freed with <c>elm_string_free</c>.</param>
-    /// <param name="replaced">Receives 1 when a kept proof was replaced.</param>
+    /// <param name="replaced">Receives 0 always; a kept proof is returned again, not replaced.</param>
     /// <returns>A design §19 number; 0 on success.</returns>
     [UnmanagedCallersOnly(EntryPoint = "elm_activation_create_deactivation_proof")]
     public static int ActivationCreateDeactivationProof(nint activation, nint* result, int* replaced) =>

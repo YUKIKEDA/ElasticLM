@@ -11,6 +11,8 @@
     <ProjectReference Include="..\..\src\ElasticLM.Native\ElasticLM.Native.csproj" />
     <!-- The licenses are made with the Licensing tests' issuer: keys generated at run time (.cursor/rules/testing.mdc). -->
     <Compile Include="..\ElasticLM.Licensing.Tests\TestIssuer.cs" Link="TestIssuer.cs" />
+    <!-- design §20.7, V1c2c: the functions of include/elasticlm.h are compared with the C API reference page. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <!-- design §17.5: the activation tests run against a real elm-service on loopback, as ElasticLM.Client.Tests do. -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />

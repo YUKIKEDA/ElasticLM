@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Floating licenses
 
-This page is for vendors who sell concurrent seats, app developers who embed `ElasticLM.Client` or `libelasticlm` to borrow seats, and the customer's administrators who run `elm-server`. It explains how a seat is lent, kept, returned, and recovered, on an on-premises license server and on the hosted activation service. You can read it first. It needs three terms: a signed token is data with the vendor's or the server's signature, which anyone can check but nobody can change (see [the trust chain](trust-chain.md)); the installation key is a key pair the app makes on each device, which is the device's identity; and a proof is a signature made with that key on each request, so the server knows which device sent it (both in [devices and proofs](devices-and-proofs.md)).
+This page is for vendors who sell concurrent seats, app developers who embed `ElasticLM.Client` or `libelasticlm` to borrow seats (see [.NET API](../reference/dotnet-api.md#licenseclient) and [C API](../reference/c-api.md#client-and-leases)), and the customer's administrators who run `elm-server`. It explains how a seat is lent, kept, returned, and recovered, on an on-premises license server and on the hosted activation service. You can read it first. It needs three terms: a signed token is data with the vendor's or the server's signature, which anyone can check but nobody can change (see [the trust chain](trust-chain.md)); the installation key is a key pair the app makes on each device, which is the device's identity; and a proof is a signature made with that key on each request, so the server knows which device sent it (both in [devices and proofs](devices-and-proofs.md)).
 
 ## What a floating license is for
 
@@ -23,7 +23,7 @@ Either way, a customer cannot use more seats than they bought, forge or replay a
 
 A lease is one or more seats of one feature, lent for a limited time to one installation key. The app makes its installation key the first time it needs one: at the first activation, the first lease, or the first trial.
 
-The server gives each lease as a lease token (type `elm-lease+jws`), signed by the server. It names the lease (`lse`), the product, license, and feature (`prd`, `lic`, `feat`), the number of seats (`n`), the installation key that holds it (`cnf.jkt`, the key's thumbprint), whether it is a borrow (`brw`), the issuing server and, on premises, its server license (`srv`, `slic`), a sequence number that goes up at every renewal (`seq`), and when it was issued and expires (`iat`, `exp`).
+The server gives each lease as a lease token (type `elm-lease+jws`), signed by the server. It names the lease (`lse`), the product, license, and feature (`prd`, `lic`, `feat`), the number of seats (`n`), the installation key that holds it (`cnf.jkt`, the key's thumbprint), whether it is a borrow (`brw`), the issuing server and, on premises, its server license (`srv`, `slic`), a sequence number that goes up at every renewal (`seq`), and when it was issued and expires (`iat`, `exp`). [Token and file formats](../reference/formats.md#lease-token-elm-leasejws) lists every claim with its type and range.
 
 Because the token is signed, the app can check it without asking anyone. Because `cnf.jkt` names one key, a token copied to another machine is of no use there: every renewal and return needs a proof made with that key.
 
@@ -105,7 +105,7 @@ If a check fails, the lease is not used (`ELM_LEASE_OUT_OF_BOUNDS` or the error 
 
 ## The server license: how the client trusts an on-premises server
 
-`elm-server` is a generic binary. What makes it a server for one vendor's product is its server license: a license token with `kind: server`, signed by the vendor. It names the server's installation key and machine fingerprint (`cnf.jkt`, `fp`), so it works only on that machine; the features and their seats (`feat`); the lease time, longest borrow (0 means none), overage percentage, early borrow returns allowed in 30 days, and what to do with a clone (`lease`, `borrow`, `overage`, `brl`, `clone`); and its expiry and grace period (`exp`, `grace`), by default 30 days after issue from the server policy's `tokenLifetime`.
+`elm-server` is a generic binary. What makes it a server for one vendor's product is its server license: a license token with `kind: server`, signed by the vendor. It names the server's installation key and machine fingerprint (`cnf.jkt`, `fp`), so it works only on that machine; the features and their seats (`feat`); the lease time, longest borrow (0 means none), overage percentage, early borrow returns allowed in 30 days, and what to do with a clone (`lease`, `borrow`, `overage`, `brl`, `clone`); and its expiry and grace period (`exp`, `grace`), by default 30 days after issue from the server policy's `tokenLifetime`. The claims a server license must have, and the answer of `GET /v1/server/license`, are in [Token and file formats](../reference/formats.md#server-license).
 
 Before the client takes any lease from a server, it checks the server:
 
@@ -171,7 +171,7 @@ Because clients renew at one third of the lease time, a lease has at least two t
 
 A borrow is a long lease that the app can use away from the network, for example on a laptop taken on a trip. The app calls `BorrowLeaseAsync` with a period (C: `elm_client_borrow_lease`); the token has `brw: true`.
 
-A borrow is not renewed and is valid until its `exp`. The client saves it next to the installation key with what verifies it, and `GetBorrowedLeases` reads and checks these files again after the app restarts, without asking the server. If the file cannot be saved, the borrow fails with `ELM_INTERNAL_ERROR` and the seat stays used until the borrow's expiry. No event is raised when a borrow expires and the state stays `Held`, so the app must compare `ExpiresAt` (C: `elm_lease_expires_at`) with the time before it relies on one. Disposing the client does not return a borrow. The request must include a machine fingerprint (otherwise `400` and `ELM_FINGERPRINT_UNAVAILABLE`).
+A borrow is not renewed and is valid until its `exp`. The client saves it next to the installation key with what verifies it (see [Files the client keeps](../reference/formats.md#files-the-client-keeps)), and `GetBorrowedLeases` reads and checks these files again after the app restarts, without asking the server. If the file cannot be saved, the borrow fails with `ELM_INTERNAL_ERROR` and the seat stays used until the borrow's expiry. No event is raised when a borrow expires and the state stays `Held`, so the app must compare `ExpiresAt` (C: `elm_lease_expires_at`) with the time before it relies on one. Disposing the client does not return a borrow. The request must include a machine fingerprint (otherwise `400` and `ELM_FINGERPRINT_UNAVAILABLE`).
 
 ### The three limits
 

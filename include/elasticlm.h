@@ -244,7 +244,7 @@ typedef struct {
     int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
     const char* app_version;              /* NULL, or at most 64 bytes */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
-    int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
+    int32_t reject_trial_as_standard;     /* 0 or 1; no effect: a client verifies only server licenses and leases */
     elm_lease_callback on_lease;          /* NULL, or the lease callback */
     void* user;                           /* passed to on_lease; keep it valid until elm_client_destroy returns */
 } elm_client_options;
@@ -296,8 +296,8 @@ ELM_FUNCTION(int32_t, elm_activation_check, (elm_activation* activation, const c
 
 /*
  * Offline files (design §12.8). *out is the file's text; free it with elm_string_free, which clears it first. An
- * activation request holds the license key: keep it as you keep the key. *replaced is 1 when a waiting request or a kept
- * proof was replaced. renew is 0 or 1.
+ * activation request holds the license key: keep it as you keep the key. *replaced is 1 when a waiting request was
+ * replaced, otherwise 0; elm_activation_create_deactivation_proof always sets it to 0. renew is 0 or 1.
  */
 ELM_FUNCTION(int32_t, elm_activation_create_activation_request, (elm_activation* activation, const char* license_key, int32_t renew, char** out, int32_t* replaced))
 ELM_FUNCTION(int32_t, elm_activation_create_refresh_request, (elm_activation* activation, int32_t renew, char** out, int32_t* replaced))
@@ -365,7 +365,8 @@ ELM_FUNCTION(int32_t, elm_lease_seats, (const elm_lease* lease)) /* -1 for NULL 
 ELM_FUNCTION(int32_t, elm_lease_is_borrow, (const elm_lease* lease)) /* 1 or 0, -1 for NULL */
 ELM_FUNCTION(int32_t, elm_lease_state, (const elm_lease* lease)) /* ELM_LEASE_*, -1 for NULL */
 
-/* The number of the last failed renewal, reclaim, or release (0 when none, -1 for NULL); it stays after a recovery. */
+/* The number of the last failed renewal or reclaim, or of a return the server did not confirm (0 when none, -1 for NULL);
+ * it stays after a recovery. A borrow the server does not take back keeps its earlier number. */
 ELM_FUNCTION(int32_t, elm_lease_last_error, (const elm_lease* lease))
 
 /* The message of the last function on this thread that returns a number: empty after a success, and valid until the next

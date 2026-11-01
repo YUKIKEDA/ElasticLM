@@ -1,7 +1,11 @@
+using System.Reflection;
+using System.Text.Json.Serialization;
+
 namespace ElasticLM.Licensing.Tests;
 
 /// <summary>
-/// Tests of the small parts: <see cref="Base64UrlCodec"/>, <see cref="ErrorCodes"/>, and <see cref="TrustStore"/>.
+/// Tests of the small parts: <see cref="Base64UrlCodec"/>, <see cref="ErrorCodes"/>, and <see cref="TrustStore"/>; and of the
+/// reference pages for the package's public types and its token formats.
 /// </summary>
 public sealed class SmallPartsTests
 {
@@ -131,4 +135,150 @@ public sealed class SmallPartsTests
         Assert.Throws<ArgumentException>(() => TrustStore.Create([publicPem, publicPem], []));
         Assert.Single(TrustStore.Create([publicPem], []).RootKeyIds);
     }
+
+    /// <summary>
+    /// The .NET API reference lists every public top-level type of ElasticLM.Licensing in the package's section (design §20.7,
+    /// V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/dotnet-api.md and docs/guide.ja/reference/dotnet-api.md under the repository root.
+    ///
+    /// Steps:
+    /// - Take the exported types of the assembly of <see cref="LicenseVerifier"/> that are not nested, without the generic arity
+    ///   suffix.
+    /// - Look for them in the section whose level-2 heading holds `ElasticLM.Licensing`.
+    ///
+    /// Expected:
+    /// - The assembly has types.
+    /// - On both pages, a code span in the section is each type's name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void PublicTypes_AllTopLevel_AppearInPackageSection()
+    {
+        IReadOnlyList<string> types = ReferencePages.TypeNames(typeof(LicenseVerifier).Assembly);
+        Assert.NotEmpty(types);
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingInSections(
+            "dotnet-api.md",
+            2,
+            new Dictionary<string, IReadOnlyList<string>> { ["ElasticLM.Licensing"] = types }
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The .NET API reference gives each entry type of ElasticLM.Licensing every public method and every property of its options
+    /// type (design §20.7, V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/dotnet-api.md and docs/guide.ja/reference/dotnet-api.md under the repository root.
+    /// - The entry types and their options types: <see cref="TrustStore"/> with none, <see cref="LicenseVerifier"/> and
+    ///   <see cref="LeaseVerifier"/> with <see cref="LicenseVerifierOptions"/>, which both constructors take.
+    ///
+    /// Steps:
+    /// - Take the public methods each entry type declares, static ones included, without property accessors, event add and
+    ///   remove, operators, members the compiler makes, and overrides of object's methods; and the public properties of its
+    ///   options type.
+    /// - Look for them in the section whose level-3 heading holds the entry type's name.
+    ///
+    /// Expected:
+    /// - Each entry type has methods.
+    /// - On both pages, a code span in each section is each name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void EntryTypes_MethodsAndOptions_AppearInTheirSections()
+    {
+        (Type Entry, Type? Options)[] entries =
+        [
+            (typeof(TrustStore), null),
+            (typeof(LicenseVerifier), typeof(LicenseVerifierOptions)),
+            (typeof(LeaseVerifier), typeof(LicenseVerifierOptions)),
+        ];
+        Assert.All(entries, entry => Assert.NotEmpty(ReferencePages.MethodNames(entry.Entry)));
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingInSections(
+            "dotnet-api.md",
+            3,
+            entries.ToDictionary(entry => entry.Entry.Name, entry => ReferencePages.EntryNames(entry.Entry, entry.Options))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The formats reference lists every token type (design §8.6, §20.7, V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/formats.md and docs/guide.ja/reference/formats.md under the repository root.
+    ///
+    /// Steps:
+    /// - Take the values of the constants of <see cref="TokenTypes"/>, such as elm-license+jws, and look for them on both pages.
+    ///
+    /// Expected:
+    /// - <see cref="TokenTypes"/> has values.
+    /// - On both pages, a code span is each value exactly; the message lists every value that is not.
+    /// </remarks>
+    [Fact]
+    public void TokenTypes_AllValues_AppearOnFormatsPage()
+    {
+        string[] types =
+        [
+            .. typeof(TokenTypes)
+                .GetFields(BindingFlags.Public | BindingFlags.Static)
+                .Where(field => field.IsLiteral)
+                .Select(field => (string)field.GetRawConstantValue()!),
+        ];
+        Assert.NotEmpty(types);
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingOnPage("formats.md", types);
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The formats reference lists every member of each payload in its format's section (design §7, §8, §20.7, V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/formats.md and docs/guide.ja/reference/formats.md under the repository root.
+    /// - The payload types and the code span of the level-2 heading of their format: <see cref="KeyCertificatePayload"/> and
+    ///   elm-cert+jws, <see cref="LicensePayload"/> and elm-license+jws (a server license is a license token too),
+    ///   <see cref="LicenseFileEnvelope"/> and .elmlic, <see cref="LeasePayload"/> and elm-lease+jws. The offline request and
+    ///   deactivation proof have no payload type: the client writes them member by member.
+    /// - Only the payloads' own members count. The members of the objects inside them (the items of feat, cnf, jwk) are not
+    ///   compared, since the page may name them by a path such as cnf.jkt.
+    ///
+    /// Steps:
+    /// - Take the JSON names of the public properties of each payload type, such as lic and feat.
+    /// - Look for them in the section whose level-2 heading holds the format's code span.
+    ///
+    /// Expected:
+    /// - On both pages, a code span in each section is each JSON name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void Payloads_AllMembers_AppearInTheirFormatSections()
+    {
+        (string Format, Type Payload)[] payloads =
+        [
+            (TokenTypes.KeyCertificate, typeof(KeyCertificatePayload)),
+            (TokenTypes.License, typeof(LicensePayload)),
+            (".elmlic", typeof(LicenseFileEnvelope)),
+            (TokenTypes.Lease, typeof(LeasePayload)),
+        ];
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingInSections(
+            "formats.md",
+            2,
+            payloads.ToDictionary(payload => payload.Format, payload => JsonNames(payload.Payload))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    private static IReadOnlyList<string> JsonNames(Type type) =>
+        [.. type.GetProperties().Select(property => property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name)];
 }

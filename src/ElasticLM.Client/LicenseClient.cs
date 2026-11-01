@@ -14,8 +14,8 @@ namespace ElasticLM.Client;
 /// and its pin, acquires leases, renews them every third of their duration, reclaims them after a server restart, and
 /// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead (design
 /// §12.7.6, decision 0.94): TLS is checked with the OS's trust, leases with the service's certificates, and a lease the
-/// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI (design §17.2):
-/// <see cref="DisposeAsync"/> stops the timers and returns the leases it holds.
+/// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI: <see cref="DisposeAsync"/> stops the
+/// timers and returns the leases it holds that are not borrows.
 /// </summary>
 /// <remarks>
 /// The methods may be called from several threads; requests to the server are made one at a time. <see cref="LeaseStateChanged"/>
@@ -112,6 +112,8 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="client">The client, or <see langword="null"/> on failure.</param>
     /// <param name="error">Why it failed: <c>ELM_INSTALLATION_KEY_UNREADABLE</c>.</param>
     /// <returns><see langword="true"/> when the client was created.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/>, its server URL, its trust store, or its time
+    /// provider is <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The product ID is not valid; the server URL is not an absolute https URL (or, with
     /// a license key, http on a loopback address); the license key is empty or comes with an expected server license ID; or
     /// the app version is longer than 64 bytes.</exception>
@@ -378,11 +380,12 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     /// <summary>
-    /// Stops the renewal timers, returns every lease the client holds (failures are ignored), and releases the key and the
-    /// connections. No new event starts once it has begun; an event already being raised may still run around the time it
-    /// returns (design §17.6).
+    /// Stops the renewal timers, returns the leases the client holds that are not borrows, and releases the key and the
+    /// connections. It gives up returning after 5 seconds and ignores failures; the server drops a lease not returned at its expiry, and
+    /// a borrow stays valid and on the disk. No new event starts once it has begun; an event already being raised may still
+    /// run around the time it returns (design §17.6).
     /// </summary>
-    /// <returns>A task that completes when the leases are returned.</returns>
+    /// <returns>A task that completes when the leases are returned or the 5 seconds have passed.</returns>
     public async ValueTask DisposeAsync()
     {
         await _gate.WaitAsync().ConfigureAwait(false);

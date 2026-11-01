@@ -42,6 +42,8 @@ The rest of the guide uses these names.
 | `elm-service` | Single binary and container image | The vendor | The hosted activation service: license keys, activations, trials, cloud leases, the administration API, and the admin UI. |
 | `elm` | Single binary (CLI) | The vendor and the customer's administrator | Creates keys and key certificates, issues and inspects license files, verifies logs, calls the administration API, and administers a local `elm-server`. |
 
+[.NET API](../reference/dotnet-api.md) lists the types of the two packages, and [C API](../reference/c-api.md) the functions of `libelasticlm` and how to link it.
+
 The executables run with no files beside them; a settings file is optional. They are built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`, and `libelasticlm` for the same targets. The NuGet packages are AOT-compatible, so an app that embeds them can itself be published with NativeAOT without warnings.
 
 The app embeds only `ElasticLM.Licensing` and `ElasticLM.Client`, or `libelasticlm`. The code that signs licenses lives only in `elm`, `elm-server`, and `elm-service`, and never ships inside the app.

@@ -1332,7 +1332,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 権限: `license.file`。
 
-`200` でライセンスファイルを返す（`application/json` で、`Content-Disposition: attachment; filename="<license ID>.elmlic"` が付く）。その形式は[ライセンスファイルと検証](../explanation/license-files-and-verification.md#ライセンスファイル)で説明している。
+`200` でライセンスファイルを返す（`application/json` で、`Content-Disposition: attachment; filename="<license ID>.elmlic"` が付く）。そのメンバーは[トークンとファイルの形式](formats.md#ライセンスファイル-elmlic)に挙げ、何のためのファイルかは[ライセンスファイルと検証](../explanation/license-files-and-verification.md#ライセンスファイル)で説明している。
 
 ```json
 {
@@ -1458,7 +1458,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 #### `POST /v1/admin/offline`
 
-デバイスがサービスに接続できない顧客のために、オフラインのリクエストファイルを処理する。ファイルは、アクティベーションかトークンの更新のリクエスト（`.elmreq`）か、アクティベーション解除のプルーフ（`.elmdeact`）だ。サービスは、デバイス自身のオンラインのリクエストと同じ確認をし、資格情報の要らない公開のルート [`POST /v1/offline`](device-protocol.md#post-v1offline) と同じレスポンスを返す。同じファイルをもう一度送っても、ライセンスとアクティベーションがまだそれを許すあいだは、同じレスポンスになる。オフラインのアクティベーションの仕組みは[アクティベーション](../explanation/activation.md#ファイルの受け渡しによるオフラインのアクティベーション)にある。
+デバイスがサービスに接続できない顧客のために、オフラインのリクエストファイルを処理する。ファイルは、アクティベーションかトークンの更新のリクエスト（`.elmreq`）か、アクティベーション解除のプルーフ（`.elmdeact`）だ。サービスは、デバイス自身のオンラインのリクエストと同じ確認をし、資格情報の要らない公開のルート [`POST /v1/offline`](device-protocol.md#post-v1offline) と同じレスポンスを返す。同じファイルをもう一度送っても、ライセンスとアクティベーションがまだそれを許すあいだは、同じレスポンスになる。オフラインのアクティベーションの仕組みは[アクティベーション](../explanation/activation.md#ファイルの受け渡しによるオフラインのアクティベーション)に、ファイルの形式は[トークンとファイルの形式](formats.md#オフラインのリクエスト-elm-actreqjws)にある。
 
 権限: `activation.offline`。インストール鍵ごとのレート制限は適用しない。
 

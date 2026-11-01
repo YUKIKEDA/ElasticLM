@@ -400,12 +400,14 @@ public sealed class ElmServiceTests
 
         IReadOnlyList<string> missing =
         [
-            .. ReferencePages.FindMissingRoutes(
+            .. ReferencePages.FindMissingInSections(
                 "administration-api.md",
+                2,
                 new Dictionary<string, IReadOnlyList<string>> { ["elm-service"] = [.. routes[true]] }
             ),
-            .. ReferencePages.FindMissingRoutes(
+            .. ReferencePages.FindMissingInSections(
                 "device-protocol.md",
+                2,
                 new Dictionary<string, IReadOnlyList<string>> { ["elm-service"] = [.. routes[false]] }
             ),
         ];

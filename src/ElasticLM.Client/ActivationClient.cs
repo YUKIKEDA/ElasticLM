@@ -46,7 +46,8 @@ public sealed class ActivationStateChangedEventArgs(ActivationState previous, Ac
 }
 
 /// <summary>
-/// The result of an activation, a trial, or a refresh: <see cref="Activated"/> or <see cref="Failed"/>.
+/// The result of an activation, a trial, a refresh, or an imported offline answer (<see cref="ActivationClient.ImportResponseAsync"/>):
+/// <see cref="Activated"/> or <see cref="Failed"/>.
 /// </summary>
 public abstract record ActivationResult
 {
@@ -80,8 +81,8 @@ public abstract record OfflineRequestResult
     /// <summary>The file to carry to the service: an <c>elm-actreq+jws</c> (<c>.elmreq</c>) or <c>elm-deact+jws</c>
     /// (<c>.elmdeact</c>).</summary>
     /// <param name="File">The file's text. An activation request holds the license key: keep it where others cannot read it.</param>
-    /// <param name="Replaced">Whether a request that had waited past its expiry, or one for another key, was replaced: tell the
-    /// user to discard the earlier file, which the service would take for a clone after this one (design §5.4).</param>
+    /// <param name="Replaced">Whether a waiting request was replaced: tell the user to discard the earlier file, which the
+    /// service would take for a clone after this one. Always <see langword="false"/> for a deactivation proof.</param>
     public sealed record Created(string File, bool Replaced) : OfflineRequestResult;
 
     /// <summary>Nothing was made.</summary>
@@ -198,6 +199,8 @@ public sealed class ActivationClient : IAsyncDisposable
     /// <param name="client">The client, or <see langword="null"/> on failure.</param>
     /// <param name="error">Why it failed: <c>ELM_INSTALLATION_KEY_UNREADABLE</c>.</param>
     /// <returns><see langword="true"/> when the client was created.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="options"/>, its trust store, or its time provider is
+    /// <see langword="null"/>.</exception>
     /// <exception cref="ArgumentException">The product ID is not valid, the service URL is neither https nor http on a loopback
     /// address, or the app version is longer than 64 bytes.</exception>
     public static bool TryCreate(ActivationClientOptions options, out ActivationClient? client, out LicenseError? error)

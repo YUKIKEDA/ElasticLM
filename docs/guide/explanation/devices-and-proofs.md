@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Devices and proofs
 
-This page is for app developers who embed `ElasticLM.Client` or `libelasticlm`, for vendors who decide how licenses are bound to devices, and for customers' administrators who run `elm-server` or keep apps running in containers. It explains how ElasticLM tells one device from another, and how a server knows that a request really comes from that device. Read [Trust chain](trust-chain.md) and [License files and verification](license-files-and-verification.md) first: this page assumes you know that a license token is signed by the vendor and checked offline by the app.
+This page is for app developers who embed `ElasticLM.Client` or `libelasticlm` ([.NET API](../reference/dotnet-api.md), [C API](../reference/c-api.md)), for vendors who decide how licenses are bound to devices, and for customers' administrators who run `elm-server` or keep apps running in containers. It explains how ElasticLM tells one device from another, and how a server knows that a request really comes from that device. Read [Trust chain](trust-chain.md) and [License files and verification](license-files-and-verification.md) first: this page assumes you know that a license token is signed by the vendor and checked offline by the app.
 
 ## What device identity is for
 
@@ -21,7 +21,7 @@ The operating system's machine ID is not the identity because it does not tell d
 
 The installation key is an ECDSA P-256 key pair. The app makes it at the first activation, lease, or trial. The private key never leaves the device. The public key is sent to the server inside the first signed request that needs it, and the server keeps it.
 
-The key's identifier is its thumbprint: the JWK thumbprint of the public key (RFC 7638, SHA-256, base64url). Anyone can compute it from the public key, so a request that claims a thumbprint but carries a different key is caught by comparing the two. A license token bound to a device carries the thumbprint in its `cnf.jkt` claim, and verification fails with `ELM_WRONG_INSTALLATION` when the app's own key has a different thumbprint.
+The key's identifier is its thumbprint: the JWK thumbprint of the public key (RFC 7638, SHA-256, base64url; see [Key IDs](../reference/formats.md#key-ids)). Anyone can compute it from the public key, so a request that claims a thumbprint but carries a different key is caught by comparing the two. A license token bound to a device carries the thumbprint in its `cnf.jkt` claim, and verification fails with `ELM_WRONG_INSTALLATION` when the app's own key has a different thumbprint.
 
 ### Where the key is stored
 
@@ -37,7 +37,7 @@ The app chooses one of two scopes in its client settings (`KeyScope` in `Elastic
 
 The machine scope needs more care, because every user of a device can read `%ProgramData%` and open DPAPI's machine scope, and any user can create a folder there before the app first runs. So on Windows the client creates the machine-scope folder with an access list that allows only Administrators, SYSTEM, and the user who made it. Before it uses an existing machine-scope folder, on any OS, it checks that no other user owns it or may write to it, and stops with `ELM_INSTALLATION_KEY_UNREADABLE` if one can. The user scope is not checked, because the user's own profile already limits access.
 
-The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token.
+The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token. [Files the client keeps](../reference/formats.md#files-the-client-keeps) lists the client's files, with whether each may be copied or deleted.
 
 ### When the key cannot be read
 
@@ -112,7 +112,7 @@ A nonce is a short value the server hands out so that a proof cannot be made in 
 - **How replay is stopped.** The server keeps each used `jti` for as long as its nonce can be valid (`elm-service` adds 60 seconds for clock differences between nodes). After that, the nonce inside the old proof has expired, so the proof is refused anyway.
 - **The secret.** `elm-service` reads it from `ELM_NONCE_SECRET` (base64) or from the file named by `nonce.secretFile`, at least 32 bytes, and does not start without one, because all nodes of a multi-node service must accept each other's nonces. `elm-server` makes a new secret at every start, because its record of used `jti` values lives only in memory; a restart invalidates old nonces along with that record.
 
-Offline request files (see [Activation](activation.md)) cannot use a server nonce, because there is no round trip. They carry the public key, their own random `nonce`, and expire after 7 days.
+Offline request files (see [Activation](activation.md)) cannot use a server nonce, because there is no round trip. They carry the public key, their own random `nonce`, and expire after 7 days. Their claims are listed in [Token and file formats](../reference/formats.md#offline-request-elm-actreqjws).
 
 For how to give `elm-service` the nonce secret, see [elm-service configuration](../reference/service-configuration.md).
 

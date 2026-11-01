@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Time.Testing;
@@ -12,7 +13,7 @@ namespace ElasticLM.Native.Tests;
 /// them. They share the verifiers' clock (<see cref="Exports.Time"/>), so they run one at a time in this class.
 /// </summary>
 [Collection(NativeClock.Name)]
-public sealed unsafe class ExportsTests : IDisposable
+public sealed unsafe partial class ExportsTests : IDisposable
 {
     private readonly TestIssuer _issuer = new();
     private readonly NativeApi _api = new();
@@ -52,6 +53,50 @@ public sealed unsafe class ExportsTests : IDisposable
     public void Structs_HaveTheHeadersSizes()
     {
         Assert.Equal([40, 64, 48, 48], new[] { sizeof(InstallationOptions), sizeof(VerifierOptions), sizeof(Requirement), sizeof(Feature) });
+    }
+
+    /// <summary>
+    /// The C API reference lists every function of include/elasticlm.h (design §17.3, §20.7, V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - include/elasticlm.h, docs/guide/reference/c-api.md, and docs/guide.ja/reference/c-api.md under the repository root.
+    ///
+    /// Steps:
+    /// - Take every line of the header that holds ELM_FUNCTION and is not a #define, and match it against
+    ///   ^ELM_FUNCTION\(\s*[^,]+,\s*(\w+)\s*, to take the function's name from its second argument.
+    /// - Look for the names on both pages.
+    ///
+    /// Expected:
+    /// - Every such line matches; the message names the line numbers of those that do not, so that a declaration of another
+    ///   shape cannot be skipped.
+    /// - The header has functions.
+    /// - On both pages, a code span is each name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void Header_AllFunctions_AppearOnReferencePage()
+    {
+        string[] lines = File.ReadAllLines(ReferencePages.RepositoryFile("include/elasticlm.h"));
+        (int Number, Match Match)[] declarations =
+        [
+            .. lines
+                .Select((line, index) => (Number: index + 1, Line: line))
+                .Where(line => line.Line.Contains("ELM_FUNCTION", StringComparison.Ordinal) && !Define().IsMatch(line.Line))
+                .Select(line => (line.Number, FunctionDeclaration().Match(line.Line))),
+        ];
+        int[] malformed = [.. declarations.Where(declaration => !declaration.Match.Success).Select(declaration => declaration.Number)];
+        Assert.True(
+            malformed.Length == 0,
+            "include/elasticlm.h: lines that hold ELM_FUNCTION but are not a declaration: " + string.Join(", ", malformed)
+        );
+        Assert.NotEmpty(declarations);
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingOnPage(
+            "c-api.md",
+            declarations.Select(declaration => declaration.Match.Groups[1].Value)
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
 
     /// <summary>
@@ -855,4 +900,10 @@ public sealed unsafe class ExportsTests : IDisposable
         payload.Remove("fpm");
         return payload;
     }
+
+    [GeneratedRegex(@"^\s*#\s*define\b")]
+    private static partial Regex Define();
+
+    [GeneratedRegex(@"^ELM_FUNCTION\(\s*[^,]+,\s*(\w+)\s*,")]
+    private static partial Regex FunctionDeclaration();
 }

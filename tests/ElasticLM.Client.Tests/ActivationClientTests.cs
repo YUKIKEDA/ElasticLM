@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 using ElasticLM.Service;
 using ElasticLM.Service.Tests;
 
@@ -8,11 +9,83 @@ namespace ElasticLM.Client.Tests;
 
 /// <summary>
 /// <see cref="ActivationClient"/> (design §12.6.2) against a real <c>elm-service</c> on loopback, on SQLite: activation,
-/// refresh, deactivation, trials, lost answers, the lock file, refusals, and the kept file.
+/// refresh, deactivation, trials, lost answers, the lock file, refusals, and the kept file; and the .NET API reference page for
+/// the package's public types.
 /// </summary>
 public sealed partial class ActivationClientTests
 {
     private const string Product = "app";
+
+    /// <summary>
+    /// The .NET API reference lists every public top-level type of ElasticLM.Client in the package's section (design §20.7,
+    /// V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/dotnet-api.md and docs/guide.ja/reference/dotnet-api.md under the repository root.
+    ///
+    /// Steps:
+    /// - Take the exported types of the assembly of <see cref="LicenseClient"/> that are not nested, without the generic arity
+    ///   suffix.
+    /// - Look for them in the section whose level-2 heading holds `ElasticLM.Client`.
+    ///
+    /// Expected:
+    /// - The assembly has types.
+    /// - On both pages, a code span in the section is each type's name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void PublicTypes_AllTopLevel_AppearInPackageSection()
+    {
+        IReadOnlyList<string> types = ReferencePages.TypeNames(typeof(LicenseClient).Assembly);
+        Assert.NotEmpty(types);
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingInSections(
+            "dotnet-api.md",
+            2,
+            new Dictionary<string, IReadOnlyList<string>> { ["ElasticLM.Client"] = types }
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The .NET API reference gives each entry type of ElasticLM.Client every public method and every property of its options
+    /// type (design §20.7, V1c2c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - docs/guide/reference/dotnet-api.md and docs/guide.ja/reference/dotnet-api.md under the repository root.
+    /// - The entry types and their options types: <see cref="ActivationClient"/> with <see cref="ActivationClientOptions"/>,
+    ///   <see cref="LicenseClient"/> with <see cref="LicenseClientOptions"/>.
+    ///
+    /// Steps:
+    /// - Take the public methods each entry type declares, static ones included, without property accessors, event add and
+    ///   remove, operators, members the compiler makes, and overrides of object's methods; and the public properties of its
+    ///   options type.
+    /// - Look for them in the section whose level-3 heading holds the entry type's name.
+    ///
+    /// Expected:
+    /// - Each entry type has methods.
+    /// - On both pages, a code span in each section is each name exactly; the message lists every name that is not.
+    /// </remarks>
+    [Fact]
+    public void EntryTypes_MethodsAndOptions_AppearInTheirSections()
+    {
+        (Type Entry, Type Options)[] entries =
+        [
+            (typeof(ActivationClient), typeof(ActivationClientOptions)),
+            (typeof(LicenseClient), typeof(LicenseClientOptions)),
+        ];
+        Assert.All(entries, entry => Assert.NotEmpty(ReferencePages.MethodNames(entry.Entry)));
+
+        IReadOnlyList<string> missing = ReferencePages.FindMissingInSections(
+            "dotnet-api.md",
+            3,
+            entries.ToDictionary(entry => entry.Entry.Name, entry => ReferencePages.EntryNames(entry.Entry, entry.Options))
+        );
+
+        Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
 
     /// <summary>
     /// A license key activates the installation; the kept file checks offline; a refresh moves the sequence number; another

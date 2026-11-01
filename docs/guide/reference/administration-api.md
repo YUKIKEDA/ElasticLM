@@ -1332,7 +1332,7 @@ Signs and returns a license file for a license whose policy has `binding` `unbou
 
 Permission: `license.file`.
 
-Answers `200` with the license file (`application/json`, with `Content-Disposition: attachment; filename="<license ID>.elmlic"`). Its format is described in [License files and verification](../explanation/license-files-and-verification.md#the-license-file).
+Answers `200` with the license file (`application/json`, with `Content-Disposition: attachment; filename="<license ID>.elmlic"`). Its members are listed in [Token and file formats](formats.md#license-file-elmlic), and what it is for in [License files and verification](../explanation/license-files-and-verification.md#the-license-file).
 
 ```json
 {
@@ -1458,7 +1458,7 @@ Audit action: `trial.delete`.
 
 #### `POST /v1/admin/offline`
 
-Processes an offline request file for a customer whose device cannot reach the service: an activation or refresh request (`.elmreq`) or a deactivation proof (`.elmdeact`). The service runs the same checks as for the device's own online request, and gives the same answers as the public route [`POST /v1/offline`](device-protocol.md#post-v1offline), which takes no credential. The same file sent again gets the same answer while the license and the activation still allow it. How offline activation works is in [Activation](../explanation/activation.md#offline-activation-by-file-exchange).
+Processes an offline request file for a customer whose device cannot reach the service: an activation or refresh request (`.elmreq`) or a deactivation proof (`.elmdeact`). The service runs the same checks as for the device's own online request, and gives the same answers as the public route [`POST /v1/offline`](device-protocol.md#post-v1offline), which takes no credential. The same file sent again gets the same answer while the license and the activation still allow it. How offline activation works is in [Activation](../explanation/activation.md#offline-activation-by-file-exchange), and the formats of the files are in [Token and file formats](formats.md#offline-request-elm-actreqjws).
 
 Permission: `activation.offline`. The rate limit per installation key does not apply.
 

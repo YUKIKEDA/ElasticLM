@@ -299,7 +299,8 @@ public static unsafe partial class Exports
     [UnmanagedCallersOnly(EntryPoint = "elm_lease_state")]
     public static int LeaseStateOf(nint lease) => Guard(() => NativeHandles.Find<NativeLease>(lease) is NativeLease l ? (int)l.Lease.State : -1, -1);
 
-    /// <summary><c>elm_lease_last_error</c>: the number of the last failed renewal, reclaim, or release.</summary>
+    /// <summary><c>elm_lease_last_error</c>: the number of the last failed renewal or reclaim, or of a return the server did not
+    /// confirm.</summary>
     /// <param name="lease">The handle.</param>
     /// <returns>A design §19 number, 0 when none failed, or -1 for a null handle.</returns>
     [UnmanagedCallersOnly(EntryPoint = "elm_lease_last_error")]
@@ -332,8 +333,8 @@ public static unsafe partial class Exports
         });
 
     /// <summary>
-    /// <c>elm_client_destroy</c>: waits for running callbacks, then disposes the client, which returns its leases. Null is
-    /// ignored.
+    /// <c>elm_client_destroy</c>: waits for running callbacks, then disposes the client, which returns its leases that are not
+    /// borrows. Null is ignored.
     /// </summary>
     /// <param name="client">The handle.</param>
     [UnmanagedCallersOnly(EntryPoint = "elm_client_destroy")]
