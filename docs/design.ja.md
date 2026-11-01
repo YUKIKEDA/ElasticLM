@@ -4218,7 +4218,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
 
 #### V1c2 の形
 
-V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b の 2 行に分ける（Q4）。V1c2b の Grill（Issue #202、Q1〜Q8）で、V1c2b の後半の 3 頁を V1c2c に分けた（Q1。V1c2a の 5 頁を 1 つの PR で書いてレビューと訳し直しが重くなり、管理 API だけで 44 の経路があるため）。どの行も英語と日本語で書き、書いた Reference の頁へのリンクを Explanation の頁に足す（両方の言語）。
+V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b の 2 行に分ける（Q4）。V1c2b の Grill（Issue #202、Q1〜Q8）で、V1c2b の後半の 3 頁を V1c2c に分けた（Q1。V1c2a の 5 頁を 1 つの PR で書いてレビューと訳し直しが重くなり、管理 API だけで `/v1/admin/*` の 44 の経路があるため）。どの行も英語と日本語で書き、書いた Reference の頁へのリンクを Explanation の頁に足す（両方の言語）。
 
 - Reference の 10 頁（Q1）。V1c2a は 1〜5、V1c2b は 6〜7、V1c2c は 8〜10。
   1. `elm` のコマンド（`reference/elm-cli.md`）
@@ -4233,9 +4233,9 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
   10. C の API の要点（すべては `elasticlm.h` に任せる）
 - 頁の順は番号の順で、`sidebar_position` に 1〜10 を当てる（R9）。
 - V1c2b の頁の形（V1c2 の Grill の Q3 を、V1c2b の Grill の Q2〜Q4 で細かくした）: 管理 API と端末のプロトコルの頁は、経路ごとに、メソッドと経路、認証と要る許可、本文の表、レスポンスの例、誤りのコードと HTTP の状態を置く。
-  - 管理 API（`reference/administration-api.md`）は 1 頁（Q2）。頭の共通の節に、認証（API キー、OIDC のアクセストークン、画面のセッションと `X-ELM-CSRF`。§14.5、§14.6）、役割ごとの許可の表（`owner`、`admin`、`support`、`viewer`。`Permissions.OfRole`）、ページング（`limit` と `after`）、本文の上限、`application/problem+json`、`Cache-Control: no-store`、頻度の制限、`/health` を置く。そのあと資源ごとの節（API キー、監査、製品と機能、ポリシー、署名鍵、ライセンス、有効化と試用、オフライン、リース、利用ログ、管理者とセッション）に経路を並べ、`elm-server` のローカルの管理 API（§13.7）を最後の節にする。`/auth/*` は `elm-service` の設定の頁（OIDC の URL）へのリンクにする。
+  - 管理 API（`reference/administration-api.md`）は 1 頁（Q2）。頭の共通の節は `elm-service` だけを受け持ち、認証（API キー、OIDC のアクセストークン、画面のセッションと `X-ELM-CSRF`。§14.5、§14.6、§15.3）、役割ごとの許可の表（`owner`、`admin`、`support`、`viewer`。`Permissions.OfRole`）、ページング（`limit` と `after`）、本文の上限と頻度の制限（§14.7）、`application/problem+json`、`/v1/admin/*` の `Cache-Control: no-store`、`/health` を置く。そのあと資源ごとの節（API キー、監査、製品と機能、ポリシー、署名鍵、ライセンス、有効化と試用、オフライン、リース、利用ログ、管理者とセッション）に `/v1/admin/*` の 44 の経路を並べ、`elm-server` のローカルの管理 API（§13.7）を最後の節にする。その節には、`admin.token` の Bearer での認証、ループバックの `admin.listen` だけで受けること、`application/problem+json` を書く（役割とページングはない。設計のレビューの R8）。`/auth/*` は `elm-service` の設定の頁（OIDC の URL）へのリンクにする。
   - 端末のプロトコル（`reference/device-protocol.md`）は 1 頁（Q2）。共通の節（ヘッダー `ELM-Proof`、`ELM-Nonce`、`ELM-Server-License`、証明のクレーム、ノンスと更新番号の規則。§12.1、§12.2）のあと、`elm-service` の経路、`elm-server` の経路の順に並べる。
-  - 本文の表（Q3）は、名前、型、必須か、範囲と意味の 4 列にする。知らない項目の扱いはプログラムで違う（`elm-service` の本文は無視し、`elm-server` の本文は `JsonUnmappedMemberHandling.Disallow` で拒む。本文ごとにコードで確かめる）ので列にせず、各プログラムの共通の節に 1 文で書き、違う本文だけ表の下に書く。`PATCH` の規則（送らない項目は変わらず、`null` で消える。§14.5）も共通の節に書く。いくつもの経路が返す資源の形は「オブジェクト」の節で一度だけ項目の表にし、各経路はそこを指してレスポンスの例を 1 つ置く。
+  - 本文の表（Q3）は、名前、型、必須か、範囲と意味の 4 列にする。知らない項目は、どちらのプログラムの本文でも無視する（版の違うクライアントのため。§12 の本文の規則、§14.5）ので列にせず、各頁の共通の節に 1 文で書く。同じ項目が 2 回あれば `ELM_MALFORMED` になることも同じ節に書く。`PATCH` の規則のうち、送らない項目は変わらないことと、変えられない項目を送ると 400 になることは共通の節に書く。`null` の意味は項目で違う（製品の `trialPolicyId` は外れ、ライセンスの `maxActivations` はポリシーの値に戻り、必須の `name` は `ELM_MALFORMED`。端末の本文では送らないのと同じ）ので、本文の表の「範囲と意味」の列に項目ごとに書く（設計のレビューの R1、R2）。いくつもの経路が返す資源の形は「オブジェクト」の節で一度だけ項目の表にし、各経路はそこを指してレスポンスの例を 1 つ置く。
   - 例の JSON（Q4）は、実際に起動した `elm-service` と `elm-server` のレスポンスを写し、ID、鍵、トークンを作りものの値に置き換える。PR に取り方を書き、使い捨ての鍵はその回のうちに消す。例はテストで確かめない。
 - V1c2c の頁の範囲と載せるもの（V1c2b の Grill の Q5〜Q7）:
   - トークンとファイルの形式（Q5）: 鍵のファイル（暗号化した PKCS#8 の PEM、公開鍵の PEM）と鍵 ID、鍵の証明書、ライセンストークン、ライセンスファイル（`.elmlic`）、リーストークン、証明、オフラインのファイル（`.elmreq`、`.elmdeact`、`.elmresp`）、サーバーライセンスは、ヘッダーとペイロードの表を書く（§7、§8、§12.2、§12.8、§13.5）。利用ログはログの頁を指す。クライアントが手元に持つファイル（インストール鍵、`activation.json`、`borrows/`、`servers/`、時刻の状態、`elm-server` の `admin.token`）は中の形を書かず、場所、何か、写しや消去をしてよいかを 1 つの表に並べる。
@@ -4251,15 +4251,15 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
   - `tests/ElasticLM.Licensing.Tests`: `ErrorCode` のすべての値の通信上の名前が、誤りのコードの頁にあること。名前とその番号が、表の同じ行にあること（番号は公開のあとに変えないので、取り違えを捕まえる。設計のレビューの R10、持ち主の決定）。
   - `tests/ElasticLM.Cli.Tests`: `elm` のコマンドの木（`ElmApp.CreateRoot` に分け、テストから呼べるようにする）のすべてのコマンド、オプションとその別名、位置引数の名前が、コマンドの頁にあること。System.CommandLine の組み込みの `--help` と `--version` は数えない。
   - `tests/ElasticLM.Server.Tests` と `tests/ElasticLM.Service.Tests`: 設定ファイルの型（ソース生成の JSON の型の情報）から取ったすべての項目の名前（入れ子は `rateLimit.perIp` のような点の道。辞書の項目 `oidc.roleMap` はそこで止める）と、その環境変数の名前が、設定の頁にあること。環境変数の名前は規則で作り、規則に従わないものはテストの中の表で項目と対にする。ファイルを指す項目は、環境変数では値そのものを別の名前で受ける（`database.connectionFile` と `ELM_DATABASE_CONNECTION`、`signing.passphraseFile` と `ELM_SIGNING_PASSPHRASE`、`nonce.secretFile` と `ELM_NONCE_SECRET`、`oidc.webClientSecretFile` と `ELM_OIDC_WEBCLIENTSECRET`、`dataProtection.kekFile` と `ELM_DATAPROTECTION_KEK`）。設定ファイルに項目のない環境変数（`ELM_TRUST_ROOT_KEYS`、`elm-server` の `ELM_TLS_PASSWORD`）も、頁にあることを確かめる。名前はコードの定数（`*Variable`）があればそこから取る。
-  - 経路（V1c2b の Grill の Q8）: `tests/ElasticLM.Service.Tests` はテストのサービスの `EndpointDataSource` から、`tests/ElasticLM.Server.Tests` は `ElmServer` に足す `internal` のプロパティから、すべての経路のメソッドとパスを取り、`` `POST /v1/admin/licenses` `` の形のコードの書式で管理 API か端末のプロトコルの頁にあることを確かめる。パスでは `/` も名前の文字に数え、`/v1/admin/licenses` が `/v1/admin/licenses/{id}` の中で見つかったことにしない。画面の経路（`/auth/*`、`/`、`/assets/*`）は数えない。
-  - HTTP の状態（Q8）: `ElmService.StatusOf` と `ElmServer.StatusOf` が状態を決めるすべての誤りのコードについて、誤りのコードの頁の、そのコードの行にその番号があることを確かめる。2 つの表は違う（`ELM_BAD_SIGNATURE` は `elm-server` だけが 401 にする、など）ので、プログラムごとに確かめる。表の外で状態を変える所（オフラインの経路の `ELM_PROOF_INVALID` を 400、`ELM_REPLAYED` を 409、`elm-server` の読み直しの誤りを 409）は、正しさのレビューに任せる。
+  - 経路（V1c2b の Grill の Q8）: `tests/ElasticLM.Service.Tests` と `tests/ElasticLM.Server.Tests` は、それぞれのプログラムの `EndpointDataSource` の `RouteEndpoint`（`RoutePattern.RawText` と `HttpMethodMetadata`）から、すべての経路のメソッドとパスを取る。`ElmServer` には、`ElmService.Services` と同じ `internal IServiceProvider Services => _app.Services;` を足す（設計のレビューの R6）。`MapMethods` で登録した経路も同じ形で取れる。`elm-service` は画面の設定（`web`）なしの既定の設定で起動するので、画面の経路（`GET /auth/login`、`POST /auth/logout`、`GET /`）は現れず、除く規則は置かない。`/assets/*` と `/auth/callback` は経路として登録されない（R7）。パスはコードのとおり（`{id}`、`{featureId}`、`{name}`）に書く。経路ごとに頁を決める（R4、持ち主の決定）: `/v1/admin/*`、`/admin/v1/*`、`/health` は管理 API の頁、それ以外は端末のプロトコルの頁。経路は、その頁の中の、そのプログラムの見出し（`elm-service` か `elm-server`）の節で探す。両方のプログラムにある 4 つの経路（`GET /v1/nonce`、`POST /v1/leases`、`POST /v1/leases/{id}/renew`、`DELETE /v1/leases/{id}`）が片方の節にしかなければ落ちる。経路は、コード片の全体が「メソッド、空白 1 つ、パス」と一致したときだけ見つかったとする。経路のためだけの判定を `ReferencePages` に足し、V1c2a の名前の判定（`IsNameCharacter`）は変えない（R5、持ち主の決定）。
+  - HTTP の状態（Q8、R3 は持ち主の決定）: 製品のコードを次のように変える。`ElmService.StatusOf` と `ElmServer.StatusOf`（どちらも `private` で、表にないコードを 500 にする）を、誤りのコードから状態への `internal` の表に分ける。表にないコードの 500 は表の外の 1 か所に置く。HTTP の答えに届かない分岐（設計のレビューで、`elm-server` の `ELM_BAD_SIGNATURE` と `elm-service` の `ELM_SERVER_BUSY` が挙がった）は、届かないことをコードで確かめて表から消す（`no-dead-code`）。テストは、2 つの表のすべての組について、誤りのコードの頁のそのコードの行の「HTTP の状態」の列（見出しで見つける）のセルに、その番号が数として入っていることを確かめる。2 つの表は違うので、プログラムごとに確かめる。表の外で状態を変える所（オフラインの経路の `ELM_PROOF_INVALID` を 400、`ELM_REPLAYED` を 409、`elm-server` の読み直しの誤りを 409、表にないコードの 500）は、正しさのレビューに任せる。
   - 経路の許可はテストしない。許可は経路の処理の中にしかなく、テストで読むには製品のコードを変える必要があるため。正しさのレビューに任せる（Q8）。
   - V1c2c で、配る 2 つのパッケージのすべての公開の型（テストでのリフレクション。テストは NativeAOT にしない）と、`elasticlm.h` のすべての `ELM_FUNCTION` が頁にあることを確かめるテストを足す（Q8）。
   - 名前があることだけを確かめ、説明の正しさは正しさのレビューに任せる。
 - 入口の頁（`docs/guide/README.md`）からも Reference の頁を指す（設計のレビューの R11、持ち主の決定）。
 - 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）に設計の節番号が入っていることを、V1c2a の頁を書くときに見つけた。直すのは roadmap の V1c6（Issue #198）で、V1d の前に行う。
 - サイドバー: 入口のあとに Reference の区分を、Explanation の前に置く（V1c1 の形の順）。区分の日本語の名前は「リファレンス」。
-- レビュー: `.cursor/rules/user-docs.mdc` のとおり、初見の読み手と正しさの確かめの 2 人と、日本語のレビュー（書き手と別）。
+- レビュー: `.cursor/rules/user-docs.mdc` のとおり、初見の読み手と正しさの確かめの 2 人と、日本語のレビュー（書き手と別）。V1c2b の設計は、Issue #202 の Grill の記録を独立したレビュアーが見た（R1〜R10。R3〜R5 は持ち主の決定）。
 
 ## 21. 依存
 
@@ -4325,7 +4325,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1b | §4.2 の目標の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（決めた形は §20.7 の V1b の形、0.114） | §4.2, §20.7 |
 | V1c1 | 利用者の文書の Explanation、入口の文書、README、Docusaurus のサイトの土台と、`v*` のタグで GitHub Pages に公開するジョブ（決めた形は §20.7 の V1c の形、0.116） | §5.1, §5.2（A15）, §5.3（T28）, §20.5, §20.7, §21 |
 | V1c2a | 利用者の文書の Reference の前半: `elm` のコマンド、`elm-server` と `elm-service` の設定、誤りのコード、ログ（英語と日本語。決めた形は §20.7 の V1c2 の形） | §16, §13.8, §14.8, §18, §19, §20.7 |
-| V1c2b | 利用者の文書の Reference の管理 API と端末のプロトコル、経路と HTTP の状態を頁と比べるテスト（英語と日本語。決めた形は §20.7 の V1c2 の形） | §12, §13.7, §14.5, §14.6, §19, §20.7 |
+| V1c2b | 利用者の文書の Reference の管理 API と端末のプロトコル、経路と HTTP の状態を頁と比べるテスト（英語と日本語。決めた形は §20.7 の V1c2 の形） | §12, §13.7, §14.5, §14.6, §14.7, §15.3, §19, §20.7 |
 | V1c2c | 利用者の文書の Reference のトークンとファイルの形式、.NET と C の API の要点、公開の型と関数を頁と比べるテスト（英語と日本語。頁の範囲は §20.7 の V1c2 の形、Grill で決める点は §20.7 の表） | §7, §8, §17, §20.7 |
 | V1c3 | 利用者の文書の Tutorials と、足すサンプル。Tutorials の手順を CI で流す（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1c4 | 利用者の文書の How-to guides（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
