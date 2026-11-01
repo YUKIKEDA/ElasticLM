@@ -21,7 +21,7 @@ src/                         出荷するプロジェクト（ElasticLM.*）
 include/                     libelasticlm の C ヘッダー（elasticlm.h。手で書く。design §17.4）
 tests/                       テスト（src/ の各プロジェクトに対応する *.Tests）、端から端までのテスト（tests/ElasticLM.E2E/）、libelasticlm の C のテスト（tests/native/）
 samples/                     利用例と NativeAOT の確認用のアプリ
-tools/                       行が要る道具（tools/ElasticLM.Measure/: §4.2 の参照機での計測）
+tools/                       ロードマップの行が要るときに足す道具（tools/ElasticLM.Measure/: §4.2 の参照機での計測）
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
 eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）

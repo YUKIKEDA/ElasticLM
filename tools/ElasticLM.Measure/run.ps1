@@ -127,7 +127,14 @@ function Measure-Start([string]$path, [string[]]$arguments, [string]$url, [strin
     Wait-Answer $url
     $outside = $clock.Elapsed.TotalMilliseconds
     if (-not $Keep) { Stop-Direct $process }
-    $record = (Select-String -Path $log -Pattern $pattern | Select-Object -First 1).Matches[0].Groups[1].Value
+    # The start record is written after the first answer can arrive, so a kept process may not have written it yet.
+    $match = $null
+    for ($i = 0; $i -lt 100 -and -not $match; $i++) {
+        $match = Select-String -Path $log -Pattern $pattern | Select-Object -First 1
+        if (-not $match) { Start-Sleep -Milliseconds 20 }
+    }
+    if (-not $match) { throw "$log has no start record ($pattern)." }
+    $record = $match.Matches[0].Groups[1].Value
     [pscustomobject]@{ Process = $process; Figure = [ordered]@{ recordMs = [double]$record; outsideMs = [Math]::Round($outside, 1) } }
 }
 
