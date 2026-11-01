@@ -40,12 +40,15 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/admin/.node-version
+          package-manager-cache: false
 
       - name: Install, check, test, and build
         # Corepack checks pnpm's version and hash against packageManager; pnpm-workspace.yaml holds strictDepBuilds and
-        # minimumReleaseAge.
+        # minimumReleaseAge. pnpm audit stands in for Dependabot's alerts, which pnpm 12's lockfile does not get (design §5.4).
         run: |
           corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm audit
           if ($LASTEXITCODE -ne 0) { exit 1 }
           corepack pnpm run typecheck
           if ($LASTEXITCODE -ne 0) { exit 1 }
@@ -202,6 +205,10 @@ jobs:
           finally {
             if ($IsLinux) { docker rm -f elm-e2e-postgres | Out-Null }
           }
+
+      - name: README steps
+        # design §20.7 (V1c1): the commands between the README's markers, run line by line with the published elm.
+        run: ./eng/docs/Test-ReadmeSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
 
       - name: Smoke
         run: |

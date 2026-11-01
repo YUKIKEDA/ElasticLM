@@ -35,3 +35,28 @@ updates:
       interval: weekly
     cooldown:
       default-days: 7
+
+  # design §20.7 (V1c1): version updates of the admin UI and the documentation site. pnpm 12's lockfile gets no Dependabot
+  # alerts, so CI's pnpm audit checks known vulnerabilities instead (design §5.4). Each folder's pnpm-workspace.yaml still
+  # refuses a version younger than a day, and the PR's lockfile diff is read like any other.
+  - package-ecosystem: npm
+    directory: /web/admin
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+
+  - package-ecosystem: npm
+    directory: /website
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      docusaurus:
+        patterns:
+          - "@docusaurus/*"
+      react:
+        patterns:
+          - "react"
+          - "react-dom"

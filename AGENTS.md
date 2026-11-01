@@ -10,6 +10,7 @@ A software licensing platform for .NET: signed license verification, an on-premi
 | Rejected alternatives | `docs/design-decisions.md` |
 | Decisions with a measured or outside reason | `docs/adr/` (one per file) |
 | Order and status of work | `docs/roadmap.md` |
+| User documentation (English, Diátaxis) and its site | `docs/guide/`, `website/` (design §20.7) |
 | Projects, folders, coding conventions | `docs/conventions.md` |
 | Build, format, and test gate | `./build.ps1` |
 | Release path and the owner's release steps | `.github/workflows/release.yml`, `eng/release/`, `docs/releasing.md` |
@@ -49,7 +50,8 @@ Read the rules that match the work before changing anything. `alwaysApply` rules
 | `aot` | No reflection or dynamic code; source-generated JSON; the NativeAOT publish check |
 | `csharp` | Style, naming, types, errors, XML docs (`*.cs`) |
 | `testing` | xUnit v3, fake time, generated keys, test docs, mutation checks (`tests/**`, `tools/**`, the admin UI's Vitest tests) |
-| `dev-docs` | Mermaid, math, and pseudo-code in `docs/` |
+| `dev-docs` | Mermaid, math, and pseudo-code in the design documents |
+| `user-docs` | The user documentation in `docs/guide/`: one Diátaxis kind per page, Markdown that also reads on GitHub, two reviews |
 
 ## Skills
 
@@ -57,13 +59,13 @@ Skills live in `.agents/skills/`. `skills-lock.json` pins the ones that come fro
 
 - `grilling`: when the design branches, before an Issue.
 - `github-closing`: before `gh pr create`, to check that the PR closes only what it finishes.
-- `english-writing`: before writing XML docs, comments, test remarks, or rules.
+- `english-writing`: before writing XML docs, comments, test remarks, rules, or the user documentation.
 - `natural-japanese`: write and check Japanese documents.
 
 ## Environment
 
 - .NET 10 SDK (`global.json`). If `dotnet --list-sdks` shows none, install it; do not stop to ask.
-- Node.js of `web/admin/.node-version` (24) with its Corepack, for the admin UI (`web/admin/`). `./build.ps1` checks the version and runs pnpm through `corepack pnpm`, which checks pnpm's version and hash against `packageManager`. `./build.ps1 -SkipWeb` uses an existing `web/admin/dist` instead (design §15.2).
+- Node.js of `web/admin/.node-version` (24) with its Corepack, for the admin UI (`web/admin/`). `./build.ps1` checks the version and runs pnpm through `corepack pnpm`, which checks pnpm's version and hash against `packageManager`. `./build.ps1 -SkipWeb` uses an existing `web/admin/dist` instead (design §15.2). The documentation site (`website/`) uses the same Node.js and Corepack: `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` there; `release.yml` builds it on every pull request, outside `./build.ps1` (design §20.7).
 - Windows is the primary host. CI runs the same gate on Windows, Linux, and macOS.
 - The agent shell is PowerShell (`.cursor/rules/powershell-shell.mdc`).
 - `libelasticlm` (`src/ElasticLM.Native`, `include/elasticlm.h`): `./build.ps1` runs its .NET tests; its C test runs with `./tests/native/run.ps1 -Publish` (which also publishes `elm-service` and `elm-server`, so `web/admin/dist` must be built; MSVC from Visual Studio's C++ workload on Windows) and in the CI NativeAOT job.

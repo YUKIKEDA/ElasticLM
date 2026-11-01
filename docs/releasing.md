@@ -1,7 +1,7 @@
 # Releasing ElasticLM
 
 This is the owner's guide to the release path of design §20.5 (decision 0.109) and the threats it holds against (§5.3
-T22–T25). `.github/workflows/release.yml` builds, checks, and attests every release; nothing is published without the
+T22–T25, and T28 for the documentation site of §20.7). `.github/workflows/release.yml` builds, checks, and attests every release; nothing is published without the
 owner's approval. Nothing has been published yet: the first release is roadmap row V1e.
 
 ## One-time setup
@@ -47,6 +47,32 @@ Settings → Environments → New environment `release`:
 4. Before V1e, decide whether to reserve the ID prefix `ElasticLM`
    (https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation).
 
+### Documentation site (GitHub Pages)
+
+The `pages` job of `release.yml` publishes the user documentation to `https://yukikeda.github.io/ElasticLM/` after the
+release is published (design §20.7, T28).
+
+1. Settings → Pages → Build and deployment → Source: **GitHub Actions**
+   (https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
+   Never switch it back to "Deploy from a branch": a branch source publishes on a push, without the workflow and its
+   checks.
+2. Settings → Environments → `github-pages` (GitHub creates it with the Pages source; create it if it is missing):
+   - Required reviewers: the owner. **Prevent self-review**: off.
+   - **Allow administrators to bypass configured protection rules**: off.
+   - Deployment branches and tags: **Selected branches and tags**, with the tag rule `v*` only. Remove any rule GitHub
+     added (it may allow only the default branch, which would refuse a tag's run).
+   - No environment secrets.
+3. Check the settings:
+   - `gh api repos/YUKIKEDA/ElasticLM/pages --jq .build_type` prints `workflow`.
+   - `gh api repos/YUKIKEDA/ElasticLM/environments/github-pages` shows the owner as the required reviewer and
+     `can_admins_bypass` as `false`.
+   - `gh api repos/YUKIKEDA/ElasticLM/environments/github-pages/deployment-branch-policies --jq '.branch_policies[] | [.type, .name]'`
+     prints only `["tag","v*"]`.
+   - Once the site is published, open it: GitHub serves `github.io` sites over HTTPS
+     (https://docs.github.com/en/pages/getting-started-with-github-pages/securing-your-github-pages-site-with-https).
+4. Do not create a repository named `yukikeda.github.io`. A user site there would share the documentation's origin and
+   could take over its pages with a service worker (design §5.4).
+
 ## Cutting a release
 
 1. Open a pull request that sets `VersionPrefix` in `Directory.Build.props` and adds a `CHANGELOG.md` section for the
@@ -66,7 +92,10 @@ Settings → Environments → New environment `release`:
 6. Approve the `release` environment in the run. The `publish` job pushes the `.nupkg` and `.snupkg` from the draft to
    nuget.org after checking them against `SHA256SUMS`, and then publishes the release.
 7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
-8. When the candidate is good, tag `v<version>` the same way.
+8. After `publish`, approve the `github-pages` environment in the same run. The `pages` job deploys the site the `site` job
+   built from the tag. The site's artifact is kept for 7 days: approve both environments within that time.
+9. When the candidate is good, tag `v<version>` the same way. Until roadmap row A-6, each tag's site replaces the one
+   before it; that row comes before any tag after `v1.0.0`.
 
 A run that fails before the draft leaves nothing behind. Fix the cause on `main` and release the next version: a tag is
 never moved.

@@ -2,7 +2,7 @@
 name: english-writing
 description: >-
   Write ElasticLM XML docs, inline comments, test names and Preconditions/Steps/Expected remarks,
-  exception messages, rules, and the README in English with the repository's terminology.
+  exception messages, rules, the README, and the user documentation in docs/guide/ in English with the repository's terminology.
   Use when writing or editing any of these, when translating a term from the Japanese design,
   or when a review flags wording.
 ---

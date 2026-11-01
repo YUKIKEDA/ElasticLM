@@ -24,9 +24,12 @@ samples/                     利用例と NativeAOT の確認用のアプリ
 tools/                       ロードマップの行が要るときに足す道具（tools/ElasticLM.Measure/: §4.2 の参照機での計測）
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
 eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
+eng/docs/                    利用者の文書の確かめのスクリプト（README の手順を流す Test-ReadmeSteps.ps1。design §20.7）
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
 web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
+docs/guide/                  利用者の文書（英語、Diátaxis の 4 つ。design §20.7）
+website/                     利用者の文書の Docusaurus のサイト（docs/guide/ を読む。design §20.7）
 .cursor/rules/               エージェント向けの規約
 .agents/skills/              スキル（.claude/skills/ にコピーを置く）
 .github/                     Issue / PR テンプレート、CI、Dependabot
