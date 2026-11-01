@@ -38,11 +38,11 @@ The rest of the guide uses these names.
 | `ElasticLM.Licensing` | NuGet package | The app | Verifies a license file offline. It has no dependency outside the .NET base class library and never touches the network. |
 | `ElasticLM.Client` | NuGet package | The app | Talks to the servers: online and offline activation, refresh, deactivation, trials, leases, and borrowing. It creates and keeps the installation key. |
 | `libelasticlm` | NativeAOT shared library (`.dll`, `.so`, `.dylib`) and the C header `elasticlm.h` | C and C++ apps | The functions of both packages behind a C ABI. |
-
-[.NET API](../reference/dotnet-api.md) lists the types of the two packages, and [C API](../reference/c-api.md) the functions of `libelasticlm` and how to link it.
 | `elm-server` | Single binary | The customer's administrator | The on-premises license server. It lends floating seats inside the customer's network. |
 | `elm-service` | Single binary and container image | The vendor | The hosted activation service: license keys, activations, trials, cloud leases, the administration API, and the admin UI. |
 | `elm` | Single binary (CLI) | The vendor and the customer's administrator | Creates keys and key certificates, issues and inspects license files, verifies logs, calls the administration API, and administers a local `elm-server`. |
+
+[.NET API](../reference/dotnet-api.md) lists the types of the two packages, and [C API](../reference/c-api.md) the functions of `libelasticlm` and how to link it.
 
 The executables run with no files beside them; a settings file is optional. They are built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`, and `libelasticlm` for the same targets. The NuGet packages are AOT-compatible, so an app that embeds them can itself be published with NativeAOT without warnings.
 

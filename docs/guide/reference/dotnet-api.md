@@ -194,7 +194,7 @@ Creates and reads the installation key of a product. `ActivationClient` and `Lic
 
 | Constructor | Parameters |
 | --- | --- |
-| `InstallationKeyStore` | `string productId`, `KeyScope scope = KeyScope.User`, `string? directory = null` (`null` for the [default folder](../explanation/devices-and-proofs.md#where-the-key-is-stored) of the scope). Throws `ArgumentException` when the product ID is not 1 to 64 lowercase letters, digits, and `-`, or the scope is not defined, and `ArgumentNullException` when it is `null`. |
+| `InstallationKeyStore` | `string productId`, `KeyScope scope = KeyScope.User`, `string? directory = null` (`null` for the [default folder](../explanation/devices-and-proofs.md#where-the-key-is-stored) of the scope). Throws `ArgumentException` when the product ID is not 1 to 64 lowercase letters, digits, and `-`, or the scope is not defined, and `ArgumentNullException` when the product ID is `null`. |
 
 | Method | Parameters | Returns | What it does |
 | --- | --- | --- | --- |

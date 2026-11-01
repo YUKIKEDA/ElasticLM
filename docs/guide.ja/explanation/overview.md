@@ -42,6 +42,8 @@ ElasticLM は、アプリのバイナリ自体を書き換えて検証を飛ば�
 | `elm-service` | 単一バイナリとコンテナイメージ | ベンダー | SaaS 型のアクティベーションサービス。ライセンスキー、アクティベーション、トライアル、クラウドのリース、管理 API、管理画面を扱う。 |
 | `elm` | 単一バイナリ（CLI） | ベンダーと顧客の管理者 | 鍵と鍵証明書を作る。ライセンスファイルを発行して中身を確認する。ログを検証する。管理 API を呼び出す。ローカルの `elm-server` を管理する。 |
 
+[.NET API](../reference/dotnet-api.md) には 2 つのパッケージの型を、[C API](../reference/c-api.md) には `libelasticlm` の関数とそのリンクの方法を挙げている。
+
 実行ファイルは、同じ場所にほかのファイルを置かなくても動く。設定ファイルは任意だ。対象のプラットフォームは `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` で、`libelasticlm` も同じ対象向けにビルドする。NuGet パッケージは AOT 互換なので、組み込んだアプリ自体も警告なしに NativeAOT で発行できる。
 
 アプリに組み込むのは、`ElasticLM.Licensing` と `ElasticLM.Client`、または `libelasticlm` だけだ。ライセンスに署名するコードは `elm`、`elm-server`、`elm-service` にしかなく、アプリと一緒に出荷されることはない。

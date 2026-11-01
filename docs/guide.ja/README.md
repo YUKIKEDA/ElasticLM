@@ -2,7 +2,7 @@
 
 ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセンスを発行し、顧客のマシンでそのライセンスを検証し、同時使用数を数えられる。このドキュメントの読者は、ライセンスを発行する人、アプリに検証を組み込む開発者、ライセンスサーバーを運用する管理者だ。自分が使うプラットフォームの知識は前提にするが、設計書を読んでいることは前提にしない。
 
-> **状況:** 1.0 はまだリリースしていない。各ページは `main` ブランチの内容を説明している。チュートリアルとハウツーガイドはまだ執筆中だ。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、エラーコード、ログの部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
+> **状況:** 1.0 はまだリリースしていない。各ページは `main` ブランチの内容を説明している。チュートリアルとハウツーガイドはまだ執筆中だ。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
 
 ## ドキュメントの構成
 
@@ -33,6 +33,7 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 2. [デバイスとプルーフ](explanation/devices-and-proofs.md): デバイスを識別するインストール鍵。
 3. [アクティベーション](explanation/activation.md)か[フローティングライセンス](explanation/floating-licenses.md)のうち、製品で使うほう。
 4. [セキュリティモデル](explanation/security-model.md): アプリが確かめなければならないことと、アプリでは防げないこと。
+5. [.NET API](reference/dotnet-api.md) か [C API](reference/c-api.md): アプリに組み込むライブラリのすべての型、関数、オプション。
 
 **組織のライセンスサーバーを運用する場合（顧客の管理者）。** 組織のシートを貸し出す `elm-server` を運用する。
 
@@ -48,7 +49,7 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 
 ElasticLM がなぜこう作られているのかは、[設計上の選択](explanation/design-choices.md)で説明している。
 
-**リファレンス。** 正確な名前を調べるときは、[elm コマンドリファレンス](reference/elm-cli.md)、[elm-server の設定](reference/server-configuration.md)、[elm-service の設定](reference/service-configuration.md)、[管理 API](reference/administration-api.md)、[デバイスのプロトコル](reference/device-protocol.md)、[エラーコード](reference/error-codes.md)、[ログ](reference/logs.md)を使う。
+**リファレンス。** 正確な名前を調べるときは、[elm コマンドリファレンス](reference/elm-cli.md)、[elm-server の設定](reference/server-configuration.md)、[elm-service の設定](reference/service-configuration.md)、[管理 API](reference/administration-api.md)、[デバイスのプロトコル](reference/device-protocol.md)、[トークンとファイルの形式](reference/formats.md)、[エラーコード](reference/error-codes.md)、[ログ](reference/logs.md)、[.NET API](reference/dotnet-api.md)、[C API](reference/c-api.md) を使う。
 
 ## ほかの資料
 

@@ -86,7 +86,7 @@ Each table lists the functions in the order of the header, and the block under i
 | `elm_installation_open` | Error number | Opens this installation's key for a product, or creates it when `create` is `1` and there is none, and reads the machine fingerprints. With `create` `0`, as in a zero-filled `elm_installation_options`, a missing key is `ELM_INSTALLATION_KEY_UNREADABLE`. When no OS ID can be read, the fingerprint list is empty and licenses with fingerprints fail with `ELM_FINGERPRINT_UNAVAILABLE`. |
 | `elm_installation_thumbprint` | `const char*`; `NULL` for `NULL` | The thumbprint of the installation key. |
 | `elm_verifier_create` | Error number | Makes a verifier from the vendor's root keys, the revoked key IDs, and a clock guard. The installation may be freed right after the call. |
-| `elm_verifier_verify` | Error number | Verifies a license file against an `elm_requirement` and gives a new `elm_license`. A file larger than 65536 bytes is `ELM_MALFORMED`. The library keeps nothing of the file. |
+| `elm_verifier_verify` | Error number | Verifies a license file against an `elm_requirement` and gives a new `elm_license`. A file larger than 65,536 bytes is `ELM_MALFORMED`. The library keeps nothing of the file. |
 
 ```c
 int32_t elm_installation_open(const elm_installation_options* options, elm_installation** out);
@@ -141,7 +141,7 @@ size_t elm_license_meta_count(const elm_license* license);
 | `elm_activation_create_refresh_request` | Error number | Makes the text of an offline refresh request. `*replaced` is `1` when a waiting request was replaced, otherwise `0`. |
 | `elm_activation_create_deactivation_proof` | Error number | Makes the text of an offline deactivation proof. `*replaced` is always `0`. |
 | `elm_activation_forget_deactivation_proof` | Error number | Forgets the kept deactivation proof. |
-| `elm_activation_import_response` | Error number | Keeps the service's answer to the waiting offline request and gives a new `elm_license`. An answer over 262144 bytes is `ELM_MALFORMED`. |
+| `elm_activation_import_response` | Error number | Keeps the service's answer to the waiting offline request and gives a new `elm_license`. An answer over 262,144 bytes is `ELM_MALFORMED`. |
 | `elm_activation_id` | Error number | Copies the current activation ID (empty when none) into your buffer. `*needed` gets the size with the NUL, also when the buffer is too small; then the function returns `ELM_INVALID_ARGUMENT` and leaves the buffer untouched. |
 | `elm_activation_state` | `int32_t`: an `ELM_STATE_*` value; `-1` for `NULL` | The state of the activation. |
 
