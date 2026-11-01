@@ -4046,7 +4046,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 
 ### 20.7 V1 の行（0.112）
 
-V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は、V1c の Grill で V1c1〜V1c4 の 4 行に分け（0.116。形は下の「V1c の形」）、V1c1 で V1c5 を足し、V1c2 はその Grill で V1c2a と V1c2b に分け、V1c2b の Grill で V1c2c を分けた（下の「V1c2 の形」）。各行の中身は、その行の Grill で決める。
+V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は、V1c の Grill で V1c1〜V1c4 の 4 行に分け（0.116。形は下の「V1c の形」）、V1c1 で V1c5 を足し、V1c2 はその Grill で V1c2a と V1c2b に分け、V1c2b の Grill で V1c2c を分けた（下の「V1c2 の形」）。V1c3 はその Grill で V1c3a、V1c3b、V1c3c に分けた（下の「V1c3 の形」）。各行の中身は、その行の Grill で決める。
 
 | 行 | その行の Grill で決める点 |
 | --- | --- |
@@ -4056,10 +4056,12 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c2a | 決めた形は下の「V1c2 の形」（V1c2 の Grill、Issue #197） |
 | V1c2b | 決めた形は下の「V1c2 の形」（V1c2b の Grill、Issue #202） |
 | V1c2c | 決めた形は下の「V1c2 の形」（V1c2b の Grill の Q5〜Q7 と、V1c2c の Grill、Issue #208） |
-| V1c3 | 各 Tutorial の手順（英語と日本語、0.117）と、使うもの（公開したバイナリか `dotnet run` か）、足すサンプルのプロジェクトの名前と置き場所、C のサンプルのビルド（Windows は MSVC、ほかは cc）、Tutorials の手順を流す CI のジョブと OS、手引きのコードをサンプルから引く方法 |
+| V1c3a | 決めた形は下の「V1c3 の形」（V1c3 の Grill、Issue #213） |
+| V1c3b | 決めた形は下の「V1c3 の形」。この行の Grill で決める点: Tutorial 2 と 3 の手順、サンプルの名前、`elm-service` と `elm-server` の設定ファイルの中身、管理 API の呼び方の確かめ（Q7）、試用と借り出しの短い例の置き場所 |
+| V1c3c | 決めた形は下の「V1c3 の形」。V1c8 のあとに置く（Q6）。この行の Grill で決める点: Tutorial 4 の手順、C のサンプルの置き場所とビルド（Windows は MSVC、ほかは cc）、V1c8 で決めたリンクの方法の使い方 |
 | V1c4 | How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか） |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
-| V1e | `-rc.1` で確かめることと正式版に進む条件、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
+| V1e | `-rc.1` で確かめることと正式版に進む条件、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約、Tutorials の「始める前に」の書き換え（ソースから作る手順を、リリースのダウンロードと nuget.org のパッケージに。V1c3 の Grill の Q2） |
 
 行をまたいで決めてあること:
 
@@ -4176,7 +4178,7 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
   - Tutorials（V1c3）: 1. 鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる。2. `elm-service` を立て、アプリをオンラインで有効化する。3. `elm-server` を立て、フローティングのライセンスを使う。4. C のアプリに `libelasticlm` を組み込む。V1c3 は、.NET と C の API の Reference の頁から、ライブラリを順に呼ぶ Tutorials の手順へのリンクを足す（V1c2c の初見の読み手のレビューが呼ぶ順を求めた。Reference の頁は手順を持たない）。
   - How-to guides（V1c4）: 鍵（ルート鍵の保管、署名鍵の交代、失効）、`elm-service`（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限）、ライセンス（ポリシー、試用、オフラインの有効化、端末の解除）、`elm-server`（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ）、アプリ（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行）。
   - README（V1c1）: 何ができるか、配る物、文書のサイトへの入口。`README.ja.md` はその訳で、同じ PR で直す。
-- サンプル（V1c3）: 今の `samples/VerifyLicense` と `samples/PackageConsumer` に、.NET のオンラインの有効化（`ActivationClient`）、フローティングのリース（`LicenseClient` と `elm-server`）、オフラインの有効化（ファイルのやり取り）と、C の検証と有効化（`libelasticlm`）を足す。試用と借り出しは、手引きの中の短い例にする。
+- サンプル（V1c3）: .NET のオフラインの検証、オンラインの有効化（`ActivationClient`）、フローティングのリース（`LicenseClient` と `elm-server`）、オフラインの有効化（ファイルのやり取り）と、C の検証と有効化（`libelasticlm`）のサンプルを足す。試用と借り出しは、手引きの中の短い例にする。サンプルは Tutorial ごとに新しく作り、`samples/VerifyLicense`（配らない `ElasticLM.Issuing` と `ElasticLM.Leasing` も参照し、計測に使う）は Tutorials に使わない（V1c3 の Grill の Q3。下の「V1c3 の形」）。
 - 設計との関係: `docs/design.ja.md` は仕様の正本のまま残す。利用者の文書は設計から書き起こし、訳にはしない。2 つが食い違えば設計が正しく、文書を直す。設計を初めての人が読める形に組み直すのは roadmap の A-5。
 - 古くしない仕組み:
   - サンプルはすべてゲートでビルドする（C のサンプルは C のテストと同じジョブで作る）。
@@ -4209,7 +4211,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
 - 頁の書き方: 「何のためか → 仕組みと流れ（図）→ 何が起こりうるか、利用者がすべきこと」の順。図は、信頼の鎖、検証の順、有効化の sequence 図、リースの state 図、回収の sequence 図、置き方の型。まだない頁（Reference、Tutorials、How-to guides）へはリンクせず、その頁を書く行がリンクを足す。書き方の規則は `.cursor/rules/user-docs.mdc`（頁ごとに Diátaxis の種類を 1 つ、冒頭に読む人と前提、`english-writing` の用語、MDX と JSX を使わない、相対の `.md` のリンク、Mermaid、V1c3 からはコードをサンプルから引く）。
 - 入口（`docs/guide/README.md`）: 読む人ごと（ベンダー、アプリの開発者、利用者の管理者、管理 API を使う人）の読む順。
 - README: 何ができるか、配る物、`elm` の 5 つのコマンド（ルート鍵、署名鍵、署名鍵の証明、ライセンスの発行、確かめ）で通す短い手順、文書への入口。V1e の最初の公開まではサイトがないので、README は GitHub の `docs/guide/` を指し、V1e でサイトの URL に替える。状態の文は「1.0 はまだ出ていない」。`README.ja.md` はその訳。
-- README の手順の確かめ: 手順は README の印（`<!-- readme-steps:start -->` と `<!-- readme-steps:end -->`）で挟んだコードの区画に置き、`eng/docs/Test-ReadmeSteps.ps1` がその区画を読んで、公開した `elm` で行ごとに流す。CI の `aot` ジョブの 3 つの OS で動かす。文書とスクリプトに手順を 2 か所で持たない。
+- README の手順の確かめ: 手順は README の印（`<!-- readme-steps:start -->` と `<!-- readme-steps:end -->`）で挟んだコードの区画に置き、`eng/docs/Test-ReadmeSteps.ps1` がその区画を読んで、公開した `elm` で行ごとに流す。CI の `aot` ジョブの 3 つの OS で動かす。文書とスクリプトに手順を 2 か所で持たない。V1c3a で、このスクリプトを README と Tutorials の両方を流すものに広げる（下の「V1c3 の形」）。
   - 区画の各行は `elm` で始まる 1 つのコマンドで、どのシェルでも同じに打てる形にする（行の続き、変数、引用符の中の空白に頼らない。二重引用符の中は 1 つの引数）。シェルに固有のこと（パスフレーズの環境変数の設定）は、区画の外の文で書く。
   - パスフレーズ: スクリプトは、その実行で作った乱数のパスフレーズを `ELM_KEY_PASSPHRASE` で渡す（README の文と同じ渡し方）。この変数があれば、`elm` は対話で聞かない（`src/ElasticLM.Cli/CliSupport.cs` の `ForNewKey`。変数がなく、入力が対話でなければ誤りで止まる）。
   - スクリプトは一時のフォルダーで流し、終わりに鍵ごと消す。各行は終了コード 0 で成功とし、0 でなければその行のコマンドの最初の 2 語だけを出して落ちる（引数を出さない）。
@@ -4291,6 +4293,29 @@ V1c2 の Grill（Issue #197、Q1〜Q4）で決めた。V1c2 を V1c2a と V1c2b 
 - サイドバー: 入口のあとに Reference の区分を、Explanation の前に置く（V1c1 の形の順）。区分の日本語の名前は「リファレンス」。
 - レビュー: `.cursor/rules/user-docs.mdc` のとおり、初見の読み手と正しさの確かめの 2 人と、日本語のレビュー（書き手と別）。V1c2b の設計は、Issue #202 の Grill の記録を独立したレビュアーが見た（R1〜R10。R3〜R5 は持ち主の決定）。
 
+#### V1c3 の形
+
+V1c3 の Grill（Issue #213、Q1〜Q7）で決めた。持ち主の決定はすべて推奨案。
+
+- 行（Q1）: V1c3 を 3 つに分ける。4 つの Tutorial、サンプル、手順を流す仕組み、コードをサンプルから引く仕組みを 1 つの PR で書くと、V1c2 の 10 頁より重くなるため。
+  - V1c3a: 手順を流す仕組み、コードをサンプルから引く仕組み、サイドバーの Tutorials の区分、Tutorial 1（鍵を作り、ライセンスを出し、.NET のアプリでオフラインで確かめる）。
+  - V1c3b: Tutorial 2（`elm-service` を立て、アプリをオンラインで有効化する）と Tutorial 3（`elm-server` を立て、フローティングのライセンスを使う）。
+  - V1c3c: Tutorial 4（C のアプリに `libelasticlm` を組み込む）。
+- 順（Q6）: V1c3a → V1c3b → V1c8 → V1c3c。C の Tutorial は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書き、普通のリンクの手順を教える。今の、実行時に読み込む方法で先に書くと、V1c8 のあとに書き直すことになる。
+- 公開の前の入手（Q2）: Tutorials の頭に「始める前に」の節を 1 つ置き、ソースから作る手順を書く。`elm`、`elm-service`、`elm-server` は公開の手順（`eng/release/Publish-Rid.ps1`）で作り、.NET のパッケージは `dotnet pack` でローカルのフィードに作って、アプリは `PackageReference` で参照する。公開のあと（V1e）は、この節をリリースからのダウンロードに書き換える（V1e の行）。
+- サンプル（Q3）: Tutorial ごとに新しいサンプルを `samples/` に作る（V1c3a は Tutorial 1 の 1 つ）。csproj は 1 つで 2 通りに参照する。ゲートは `ElasticLM.slnx` からプロジェクト参照でビルドし、手順を流す CI は `dotnet pack` したローカルのパッケージから `PackageReference` でビルドする（今の `samples/PackageConsumer` と同じ形）。`samples/VerifyLicense` は使わない。
+- コードをサンプルから引く（Q4）: サンプルのソースに `// <snippet:名前>` と `// </snippet:名前>` の印を付け、頁のコードブロックの前に、引く元を書いた HTML のコメント（例: `<!-- sample: samples/<名前>/Program.cs#<印の名前> -->`）を置く。テストで、英語と日本語の頁のそのコードブロックが、サンプルの印の間と一字一句同じことを確かめる。.NET の API の頁にある、手で写した `samples/VerifyLicense` の 4 行も、この仕組みにのせる。
+- 手順を流す仕組み（Q5）: `eng/docs/Test-ReadmeSteps.ps1` を広げ、README と Tutorials の両方を流す。
+  - 1 頁にいくつもの手順のブロックを置ける。
+  - `elm` のほかに、`dotnet`、サーバー、サンプルのアプリ、C のコンパイラーを流せる。
+  - サーバーを裏で動かすブロックと、設定ファイルを書くブロックを置ける。
+  - 前の手順の出力の値を、次の手順のプレースホルダー（`<license-key>` など）に入れる。
+  - 頁の手順は、どのシェルでも同じに打てる形にする。環境変数の代わりに設定ファイル（`--config`）を使い、サーバーは「2 つ目の端末で動かす」と書く。パスフレーズの環境変数のように、シェルに固有のことは区画の外の文で書く（README の決まりと同じ）。
+  - 流すのは CI の `aot` ジョブの 3 つの OS で、公開した実行ファイルとローカルのパッケージを使う。
+- 管理 API の呼び方（Q7、V1c3b）: 製品、ポリシー、ライセンスを作る手順は `elm admin request` で呼ぶ。セットアップの API キーを渡せるかは V1c3b の設計でコードを確かめ、渡せなければ本文をファイルに書く手順を置いて `curl` で送る。コマンドの中に JSON を書かない（シェルごとに引用符の書き方が違うため）。
+- リンク: V1c3a は、入口の頁（読む人ごとの道筋）と .NET の API の頁から Tutorial 1 を指す（英語と日本語）。V1c3b と V1c3c も、それぞれの Tutorial へのリンクを足す。
+- レビュー: `.cursor/rules/user-docs.mdc` のとおり、初見の読み手と正しさの確かめの 2 人と、日本語のレビュー（書き手と別）。初見の読み手は、Tutorial の手順を実際に流す。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4357,14 +4382,16 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c2a | 利用者の文書の Reference の前半: `elm` のコマンド、`elm-server` と `elm-service` の設定、誤りのコード、ログ（英語と日本語。決めた形は §20.7 の V1c2 の形） | §16, §13.8, §14.8, §18, §19, §20.7 |
 | V1c2b | 利用者の文書の Reference の管理 API と端末のプロトコル、経路と HTTP の状態を頁と比べるテスト（英語と日本語。決めた形は §20.7 の V1c2 の形） | §12, §13.7, §14.5, §14.6, §14.7, §15.3, §19, §20.7 |
 | V1c2c | 利用者の文書の Reference のトークンとファイルの形式、.NET と C の API の要点、公開の型と関数を頁と比べるテスト（英語と日本語。決めた形は §20.7 の V1c2 の形） | §7, §8, §8.4.6, §10.2, §11.1, §11.4, §12.2, §12.8, §13.5, §17, §20.7 |
-| V1c3 | 利用者の文書の Tutorials と、足すサンプル。Tutorials の手順を CI で流す（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
+| V1c3a | 利用者の文書の Tutorials の土台（手順を CI で流す仕組み、コードをサンプルから引く仕組み、サイドバーの区分）と Tutorial 1（.NET のアプリでオフラインで確かめる）とそのサンプル（英語と日本語。決めた形は §20.7 の V1c3 の形） | §20.7 |
+| V1c3b | 利用者の文書の Tutorial 2（`elm-service` でオンラインの有効化）と Tutorial 3（`elm-server` でフローティングのライセンス）とそのサンプル（英語と日本語。決めた形は §20.7 の V1c3 の形） | §12, §13, §14, §20.7 |
+| V1c3c | 利用者の文書の Tutorial 4（C のアプリに `libelasticlm`）と C のサンプル（英語と日本語。V1c8 のあと。決めた形は §20.7 の V1c3 の形） | §17, §20.7 |
 | V1c4 | 利用者の文書の How-to guides（決めた形は §20.7 の V1c の形、0.116） | §20.7 |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。V1d の前に行う | §20.7 |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンス（`licenseExpires` を書かない状態の応答）で例外になる不具合の修正と、CLI のほかの `GetProperty` の確かめ（Issue #203。V1c2b で見つけた。V1c2c の前） | §13.7 |
 | V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れるか。今のアーカイブはバイナリ、ヘッダー、`LICENSE` だけで、Windows のアプリは実行時に読み込み、ヘッダーの `_fn` 型で呼ぶしかない。NativeAOT が作るかを調べ、入れるなら公開の検査と `Pack-Rid.ps1` を変え、CI で確かめる。Linux と macOS でビルド時にリンクする手順（`-lelasticlm` と実行時の検索パス）も試して C の API の頁に書く（今の C のテストは `dlopen` で読み込むだけ）（Issue #209。V1c2c で見つけた。V1e の前） | §17, §20.5 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
-| V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
+| V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、Tutorials の「始める前に」をソースから作る手順からリリースのダウンロードに書き換える（§20.7 の V1c3 の形）（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 
 ## 23. v1 の範囲外
 

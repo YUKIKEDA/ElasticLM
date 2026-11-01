@@ -834,3 +834,21 @@
 - **決定:** 形式の頁の「クライアントが手元に持つファイル」の表は、端末のアプリが持つファイル（インストール鍵、`activation.json`、`borrows/`、`servers/`、`FileClockGuard` と `InstallationClockGuard` の時刻の状態）に限る。`elm-server` のファイルは、`elm-server` の設定の頁のデータフォルダーの節を指す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c2 の形）。
 - **理由:** `elm-server` のファイルは、設定の頁のデータフォルダーの表にすでにある。2 か所に書くと食い違う。
 - **却下した案:** `admin.token` など `elm-server` のファイルも、形式の頁の表に並べる。
+
+### V1c3 を 1 つの行で書く（V1c3 の Grill、Issue #213）
+
+- **決定:** V1c3 を V1c3a（手順を流す仕組み、コードをサンプルから引く仕組み、Tutorial 1）、V1c3b（Tutorial 2 と 3）、V1c3c（Tutorial 4）に分ける（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** 4 つの Tutorial、サンプル、手順を CI で流す仕組み、コードをサンプルから引く仕組みを 1 つの PR で書くと、V1c2 の 10 頁より重くなる。仕組みを先に 1 つの Tutorial で確かめれば、残りの Tutorial はその上に書ける。
+- **却下した案:** V1c3 を 1 つの行と 1 つの PR で書く。
+
+### Tutorials を公開まで待つ（V1c3 の Grill、Issue #213）
+
+- **決定:** 公開の前に Tutorials を書き、頭の「始める前に」の節で、ソースから作る手順（公開の手順で実行ファイルを、`dotnet pack` でローカルのパッケージを作る）を書く。公開のあと（V1e）、この節をリリースのダウンロードに書き換える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** 公開まで待つと、公開の直前に 4 つの Tutorial をまとめて書き、手順を流す仕組みも同時に作ることになる。手順を CI で流しておけば、公開の前に Tutorial の誤りが見つかる。
+- **却下した案:** リリースのバイナリと nuget.org のパッケージができる V1e まで、Tutorials を書かない。
+
+### C の Tutorial を、実行時に読み込む方法で先に書く（V1c3 の Grill、Issue #213）
+
+- **決定:** C の Tutorial（V1c3c）は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書く。roadmap の順は V1c3a、V1c3b、V1c8、V1c3c（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** C のアプリは、ふつうビルドのときにライブラリをリンクする。今の、実行時に読み込んで関数ポインターで呼ぶ方法で先に書くと、V1c8 のあとに Tutorial とサンプルを書き直すことになる。
+- **却下した案:** V1c3 の中で、今テストされている実行時に読み込む方法（`LoadLibrary` と `dlopen`、ヘッダーの `_fn` 型）で C の Tutorial を書く。
