@@ -660,3 +660,27 @@
 - **決定:** E2E は PR ごとに CI の `aot` ジョブの 3 つの OS で流し、`release.yml` の 7 つの RID では流さない（持ち主の決定。[design.ja.md](./design.ja.md) 0.113）。
 - **理由:** 流れの正しさは RID によらない。RID に固有の問題（ローダー、glibc、ICU、マシン ID）は、7 つの RID で動くいまのスモークと C のテストが見つける。
 - **却下した案:** `release.yml` の各 RID のビルドのジョブでも E2E を流す。
+
+### 参照機での計測を PR ごとに動かす（V1b の Grill、Issue #182）
+
+- **決定:** §4.2 の計測は、`workflow_dispatch` と計測に触れる PR で動くワークフロー `measure.yml` で行い、PR ごとの CI では動かさない（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** リース 10,000 件の計測だけで、起動のあとの回収の 10 分を含めて 20 分かかる。PR ごとに流すと、すべての PR の確かめが遅くなる。§4.2 に関わる PR は、その PR で手で動かす。
+- **却下した案:** `ci.yml` の `aot` ジョブで、PR ごとに計測する。
+
+### リースの負荷を `LicenseClient` で作る（V1b の設計のレビュー、Issue #182）
+
+- **決定:** 計測の道具は、`ElasticLM.Client` の公開の部品（`InstallationKeyStore`、`ProofBuilder`）で要求を自分で作って送り、返ったリースのトークンを時間を測る範囲の外で `LeaseVerifier` で確かめる（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** `LicenseClient` はリースの更新を自分の中で行い、1 件ごとの時間を外に出さない。目標の「更新の p99」を測るには、1 件ごとの時間が要る。
+- **却下した案:** Grill の Q4 のとおり、100 個の `LicenseClient` を動かす。
+
+### メモリの目標を cgroup の `memory.peak` で比べる（V1b の設計のレビュー、Issue #182）
+
+- **決定:** 「メモリ 200 MB 以下」は、プロセスの `VmHWM` を 200,000,000 バイトと比べる。cgroup の `memory.peak` は記録だけにする（持ち主の決定。[design.ja.md](./design.ja.md) 0.114、§20.7）。
+- **理由:** `memory.peak` は、サーバーが更新のたびに書く利用ログのページキャッシュも数える。プロセスが持つメモリの目標とは違うものを含む。
+- **却下した案:** cgroup の `memory.peak` を目標と比べる。
+
+### 有効化の p99 の外れを、SQLite の `synchronous` か目標で直す（V1b の PR、Issue #182）
+
+- **決定:** 製品も §4.2 の目標も変えない。遅い有効化とディスクの書き出しの時刻を計測に記録し、`report` の目標との比べ方はそのままにする（持ち主の決定。[design.ja.md](./design.ja.md) 0.115、§4.2、§20.7）。
+- **理由:** p99 が外れた 2 つのジョブでも p50 は速いままで、記録を足して測り直すと、遅い有効化はディスクの書き出しが止まった時刻に重なった。ディスクの速いランナーでは p99 が 5〜7 ms なので、目標を緩める理由は弱い。`synchronous=NORMAL` にすると、電源が落ちたとき、応答したあとの有効化が戻りうる（https://www.sqlite.org/pragma.html#pragma_synchronous ）。端末が受け取った `seq` をサービスが失えば、複製の検出（§10.4）の前提が崩れる。
+- **却下した案:** SQLite を `synchronous=NORMAL` にする。目標を p99 500 ms 以下などに緩める。

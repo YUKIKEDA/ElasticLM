@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      design §20.7 (V1b): the load is made of the client's public parts (InstallationKeyStore, ProofBuilder), against the
+      published elm-server and elm-service that run.ps1 starts.
+    -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+</Project>
