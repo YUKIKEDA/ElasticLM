@@ -124,7 +124,9 @@ internal static partial class ReferencePages
     /// <summary>
     /// Returns the name and HTTP status pairs that one reference page does not hold, in either language. A page holds a pair when
     /// a table row has the name in a code span as a whole cell, and the row's cell in the column headed "HTTP status" (English)
-    /// or "HTTP の状態" (Japanese) has the status as a whole number: 401 is found in "401; 400 for an offline request file".
+    /// or "HTTP の状態" (Japanese) starts with the status as its first whole number: 401 is found in "401; 400 for an offline
+    /// request file" and in "401（オフラインのリクエストファイルでは 400）", but 400 is not. Only the first number counts, so a
+    /// later number for another route (a license reload's 409) cannot hide a wrong status in the code's table.
     /// </summary>
     /// <param name="page">The page's file name under <c>reference/</c>, such as <c>error-codes.md</c>.</param>
     /// <param name="pairs">The names and the statuses that belong to them.</param>
@@ -174,7 +176,8 @@ internal static partial class ReferencePages
                             row.Status >= 0
                             && row.Status < row.Cells.Length
                             && row.Cells.Contains("`" + pair.Name + "`", StringComparer.Ordinal)
-                            && WholeNumber().Matches(row.Cells[row.Status]).Any(match => match.Value == Number(pair.Status))
+                            && WholeNumber().Match(row.Cells[row.Status]) is { Success: true } first
+                            && first.Value == Number(pair.Status)
                         )
                     )
                     .Select(pair => relative + ": " + pair.Name + " " + Number(pair.Status))

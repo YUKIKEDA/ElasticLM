@@ -14,7 +14,7 @@ sidebar_position: 6
 
 | ルート | 権限 | 内容 |
 | --- | --- | --- |
-| [`GET /health`](#get-health) | なし | サービスとそのデータベースが応答するかを確かめる |
+| [`GET /health`](#get-health) | なし | サービスとそのデータベースが答えるかを確かめる |
 | [`POST /v1/admin/api-keys`](#post-v1adminapi-keys) | `apikey.create` | API キーを作る |
 | [`GET /v1/admin/api-keys`](#get-v1adminapi-keys) | `apikey.read` | API キーを一覧する |
 | [`DELETE /v1/admin/api-keys/{id}`](#delete-v1adminapi-keysid) | `apikey.revoke` | API キーを失効させる |
@@ -193,7 +193,7 @@ sidebar_position: 6
 
 権限: なし。資格情報は要らない。送信元ごとの制限は適用する。
 
-データベースが応答すれば本文のない `200` を、応答しなければ本文のない `503` を返す。レスポンスには `Cache-Control` ヘッダーが付かない。監査ログの行は書かない。
+データベースが答えれば本文のない `200` を、答えなければ本文のない `503` を返す。レスポンスには `Cache-Control` ヘッダーが付かない。監査ログの行は書かない。
 
 ### オブジェクト
 
@@ -1556,7 +1556,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 ### 利用ログのルート
 
-これらのルートは、応答したノードの利用ログを対象にする。ノードとは、実行中の `elm-service` のインスタンス 1 つのことで、`node.name` で名前を付ける（[elm-service の設定](service-configuration.md#node)）。各ノードは自分のファイルを書く。すべてのノードのファイルを集めるのは運用者の役目だ。`usageLog.directory` のないノードでは、3 つのルートはどれも `409` と `ELM_CONFLICT` を返す。ログそのものは[ログ](logs.md#利用ログ)で説明している。
+これらのルートは、リクエストに答えたノードの利用ログを対象にする。ノードとは、実行中の `elm-service` のインスタンス 1 つのことで、`node.name` で名前を付ける（[elm-service の設定](service-configuration.md#node)）。各ノードは自分のファイルを書く。すべてのノードのファイルを集めるのは運用者の役目だ。`usageLog.directory` のないノードでは、3 つのルートはどれも `409` と `ELM_CONFLICT` を返す。ログそのものは[ログ](logs.md#利用ログ)で説明している。
 
 #### `GET /v1/admin/usage-log/files`
 
@@ -1806,7 +1806,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 ## `elm-server` のローカルの管理 API
 
-`elm-server` のローカルの管理 API は、サーバーのマシン上で `elm server` のコマンドが使う。応答するのは `admin.listen` のアドレスだけで、ループバックアドレスの平文の `http` だ。既定は `http://127.0.0.1:7071`（[elm-server の設定](server-configuration.md#admin)を参照）。ここではリースのプロトコルを提供しない。また、サーバーの `https` のアドレスで `/admin/` にリクエストすると、本文のない `404` になる。
+`elm-server` のローカルの管理 API は、サーバーのマシン上で `elm server` のコマンドが使う。答えるのは `admin.listen` のアドレスだけで、ループバックアドレスの平文の `http` だ。既定は `http://127.0.0.1:7071`（[elm-server の設定](server-configuration.md#admin)を参照）。ここではリースのプロトコルを提供しない。また、サーバーの `https` のアドレスで `/admin/` にリクエストすると、本文のない `404` になる。
 
 - 認証: `Authorization: Bearer <token>`。トークンは、サーバーのデータフォルダーの `admin.token` に保存した 32 バイトの乱数を、base64url（43 文字）で書いたものだ。サーバーは最初の起動時にこのファイルを作る。Windows では、ファイルは DPAPI で保護したバイト列を持つ。ほかの OS では、バイト列をそのまま持ち、所有者だけが読み書きできる。ヘッダーは、ここに書いたとおり `Bearer` と 1 つの空白で始まらなければならない。スキーム名は大文字と小文字を区別する。トークンがないか正しくないときは `401` と `ELM_UNAUTHORIZED` になる。このファイルを読める人は、サーバーを管理できる（[elm-server の設定](server-configuration.md#データフォルダー)を参照）。
 - ロールもページングもない。`allow` と `deny` の設定と `rateLimit.perIp` は適用しない。
@@ -1969,7 +1969,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 本文のない `204` を返す。
 
-エラー: `ELM_UNAUTHORIZED`（401）。正しいトークンがなければ、この API のどのルートも次のように応答する。
+エラー: `ELM_UNAUTHORIZED`（401）。正しいトークンがなければ、この API のどのルートも次のレスポンスを返す。
 
 ```json
 {

@@ -587,8 +587,8 @@ public sealed class ElmServiceAdminTests
     ///   span, and read its cell in the column headed "HTTP status" or "HTTP の状態".
     ///
     /// Expected:
-    /// - On both pages, that cell holds the status as a whole number, such as 409 for ELM_TRIAL_USED; the message lists every
-    ///   pair that it does not.
+    /// - On both pages, that cell starts with the status as its first whole number, such as 409 for ELM_TRIAL_USED; the message
+    ///   lists every pair that it does not.
     /// </remarks>
     [Fact]
     public void ErrorStatuses_AllPairs_AppearOnReferencePage()
