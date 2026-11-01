@@ -31,11 +31,13 @@ Test, benchmark, and tool projects may use packages that only those projects ref
 #        no cryptography of its own; row added to the dependency table in docs/design.ja.md
 ```
 
-## npm packages of the admin UI
+## npm packages
 
-The admin UI in `web/admin/` uses npm packages (`docs/design.ja.md` §15.2, decision 0.96). The five points above are about NuGet packages. For npm packages, these apply instead:
+Two folders use npm packages: the admin UI in `web/admin/` (`docs/design.ja.md` §15.2, decision 0.96) and the documentation site in `website/` (§20.7, V1c1). The five points above are about NuGet packages. For npm packages, these apply instead:
 
-- A runtime package (one that ends up in `dist`) runs in the administrator's browser with the administrator's session (threat T21). Add one only through a `design` Issue. Today there is one: `preact`.
-- Versions and integrity hashes are pinned in `pnpm-lock.yaml`, which also lists the transitive packages. Install with `pnpm install --frozen-lockfile`. Keep `strictDepBuilds: true` and `minimumReleaseAge` explicit in `pnpm-workspace.yaml`, and do not add packages to `allowBuilds` without a reason in the PR.
-- Read the `pnpm-lock.yaml` diff of every PR that changes it.
+- Admin UI: a runtime package (one that ends up in `dist`) runs in the administrator's browser with the administrator's session (threat T21). Add one only through a `design` Issue. Today there is one: `preact`.
+- Documentation site: the built site runs Docusaurus, React, and their packages in every reader's browser (threat T28). Its direct dependencies are listed in §21; a new direct dependency goes through a `design` Issue, and the transitive ones are checked in the lockfile diff (Issue #190, Q5). No plugin that sends readers' data anywhere (analytics).
+- Versions and integrity hashes are pinned in each folder's `pnpm-lock.yaml`, which also lists the transitive packages. Install with `pnpm install --frozen-lockfile`. Keep `strictDepBuilds: true` and `minimumReleaseAge` explicit in each `pnpm-workspace.yaml`. A package goes into `allowBuilds` (as `false` when its script is not needed) and an advisory into `auditConfig.ignoreGhsas` only with the reason in a comment beside it and in the PR; an `overrides` entry likewise names the advisory it fixes.
+- `pnpm audit` runs in CI for both folders and fails on any advisory not reviewed. pnpm 12's lockfile gets no Dependabot alerts (§5.4), so this check is the only one.
+- Read the `pnpm-lock.yaml` diff of every PR that changes it, Dependabot's included.
 - Add a row to the dependency table in `docs/design.ja.md` §21, with the license.

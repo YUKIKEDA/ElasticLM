@@ -1,0 +1,29 @@
+# design §20.7 (V1c1, T28): the same guards as the admin UI (T21), stated here, not left to pnpm's defaults.
+# Dependencies' build scripts never run; a dependency that has one fails the install.
+strictDepBuilds: true
+# A version published less than a day ago is refused, strictly (stating the value makes minimumReleaseAgeStrict true).
+minimumReleaseAge: 1440
+# core-js's postinstall only prints a funding message (its postinstall.js), so it is reviewed and stays off.
+allowBuilds:
+  core-js: false
+# Fixed versions for advisories pnpm audit reports in Docusaurus 3.10.2's tree (design §20.7, V1c1). Try to drop both
+# whenever Docusaurus is raised.
+overrides:
+  # GHSA-5c6j-r48x-rmvq, GHSA-qj8w-gfj5-8c6v, GHSA-m5mm-p8h7-m29v: serialize-javascript 6.0.2, which
+  # copy-webpack-plugin and css-minimizer-webpack-plugin use in every build.
+  serialize-javascript: 7.1.4
+  # GHSA-5gmw-xhrv-c9v3, GHSA-85c8-ppgw-ccpr: tinypool 1.1.1. @docusaurus/core loads it only with
+  # future.faster.ssgWorkerThreads (lib/ssg/ssgExecutor.js), which this site does not set; check it again when that is
+  # turned on (roadmap A-9).
+  tinypool: 2.2.0
+# Advisories reviewed and accepted (design §5.4, V1c1): the affected function is never called. An ignored ID applies to
+# every package in the tree, so a lockfile diff that adds another user of these packages is checked again.
+auditConfig:
+  ignoreGhsas:
+    # uuid 8.3.2 under sockjs: the advisory is about v3, v5, and v6 with a buffer; sockjs's lib/transport.js uses only v4.
+    - GHSA-w5hq-g745-h8pq
+    # minimatch 3.1.5 under serve-handler: called only for glob patterns in serve-handler's options
+    # (src/index.js), and Docusaurus's serve.js passes none.
+    - GHSA-g3hv-75wg-m249
+    # deepmerge 4.3.1 under @svgr/plugin-svgo 8.1.0: no fixed version, and the plugin's dist/index.js never calls it.
+    - GHSA-gcqx-w48m-w2h4

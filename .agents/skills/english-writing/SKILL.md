@@ -2,7 +2,7 @@
 name: english-writing
 description: >-
   Write ElasticLM XML docs, inline comments, test names and Preconditions/Steps/Expected remarks,
-  exception messages, rules, and the README in English with the repository's terminology.
+  exception messages, rules, the README, and the user documentation in docs/guide/ in English with the repository's terminology.
   Use when writing or editing any of these, when translating a term from the Japanese design,
   or when a review flags wording.
 ---
@@ -65,10 +65,10 @@ The left column is the term in `docs/design.ja.md`. Write the right column in co
 | フローティング、同時利用数 | floating, concurrent seats |
 | 貸出、リース | lease |
 | 貸出の更新（ハートビート） | lease renewal (heartbeat) |
-| 有効化、無効化 | activation, deactivation |
+| 有効化、解除（無効化） | activation, deactivation |
 | 失効 | revocation |
 | オンプレミスのライセンスサーバー | on-premises license server |
-| SaaS 型の認証サーバー | hosted activation service |
+| SaaS 型の有効化サービス（SaaS 型のサービス） | hosted activation service |
 
 Words to avoid:
 
