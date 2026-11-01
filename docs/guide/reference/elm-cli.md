@@ -508,8 +508,8 @@ These use fake file names, IDs, and keys.
 ```text
 elm key root create --out root.key.pem
 elm key signing create --out signing.key.pem
-elm key certify --root root.key.pem --public signing.key.pem.pub.pem --use license --days 365 --out signing.cert.jws
-elm license issue --signing-key signing.key.pem --certificate signing.cert.jws --trust root.key.pem.pub.pem \
+elm key certify --root root.key.pem --public signing.key.pem.pub.pem --use license --days 365 --out signing.cert
+elm license issue --signing-key signing.key.pem --certificate signing.cert --trust root.key.pem.pub.pem \
   --product example-editor --license-id LIC-0001 --feature "pro;ver=>=1.0 <2.0" --expires 2027-12-31 --out LIC-0001.elmlic
 elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product example-editor --feature pro --version 1.4
 elm server status --product example-editor

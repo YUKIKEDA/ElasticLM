@@ -47,6 +47,8 @@ $commandTimeout = [TimeSpan]::FromMinutes(10)
 if (-not $Page) {
     $Page = @(Join-Path $repoRoot 'README.md') + @(Get-ChildItem (Join-Path $repoRoot 'docs/guide/tutorials') -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object FullName)
 }
+# .NET resolves a relative path against the process's folder, not PowerShell's current location.
+$Page = @($Page | ForEach-Object { (Resolve-Path -LiteralPath $_).Path })
 
 function Get-PageName([string]$path) {
     $full = [IO.Path]::GetFullPath($path)
@@ -123,7 +125,7 @@ function Test-Translation([string]$path, [object[]]$blocks) {
     $next = 0
     foreach ($block in $blocks | Where-Object Marker) {
         $content = $block.Lines -join "`n"
-        while ($next -lt $theirs.Count -and $theirs[$next] -ne $content) { $next++ }
+        while ($next -lt $theirs.Count -and $theirs[$next] -cne $content) { $next++ }
         if ($next -ge $theirs.Count) { throw "$($translated): the code block of $(Get-PageName $path):$($block.Line) is missing, changed, or out of order." }
         $next++
     }
@@ -167,7 +169,7 @@ function Invoke-Page([string]$path) {
                         if ($line.Trim() -eq '') { continue }
                         [string[]]$words = Split-Step $line
                         $shown = ($words | Select-Object -First 2) -join ' '
-                        $file = switch ($words[0]) {
+                        $file = switch -CaseSensitive ($words[0]) {
                             'elm' { $elmPath }
                             'dotnet' { $dotnetPath }
                             'cd' { throw "$($name):$($lineNumber): a step does not change the folder (cd); pass the folder as an argument." }
@@ -183,7 +185,7 @@ function Invoke-Page([string]$path) {
                     if ($ran -eq 0) { throw "$($name):$($block.Line): the steps:run block is empty." }
                 }
                 'file' {
-                    if ($key -ne 'path' -or $value -eq '') { throw "$($name):$($block.Line - 1): steps:file takes path=<relative path>." }
+                    if ($key -cne 'path' -or $value -eq '') { throw "$($name):$($block.Line - 1): steps:file takes path=<relative path>." }
                     if ([IO.Path]::IsPathRooted($value) -or $value.Contains('\') -or ($value -split '/') -contains '..') {
                         throw "$($name):$($block.Line - 1): the path of steps:file is relative to the work folder, with / and without '..'."
                     }
@@ -208,7 +210,7 @@ function Invoke-Page([string]$path) {
                     "ok: $($name):$($block.Line - 1): expect"
                 }
                 'prebuilt' {
-                    if ($key -ne 'name' -or $value -ne 'elm') { throw "$($name):$($block.Line - 1): steps:prebuilt takes name=elm." }
+                    if ($key -cne 'name' -or $value -cne 'elm') { throw "$($name):$($block.Line - 1): steps:prebuilt takes name=elm." }
                     if (@($block.Lines | Where-Object { $_.Trim() -ne '' }).Count -ne 1) { throw "$($name):$($block.Line): the steps:prebuilt block has one line." }
                     "ok: $($name):$($block.Line - 1): prebuilt elm (-Elm)"
                 }

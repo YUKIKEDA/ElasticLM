@@ -91,9 +91,9 @@ The code below is the verifying part of the app that [Issue a license and verify
 
 <!-- sample: samples/VerifyOffline/Program.cs#verify -->
 ```csharp
-TrustStore trust = TrustStore.Create([File.ReadAllText(args[0])], []);
+TrustStore trust = TrustStore.Create([File.ReadAllText(args[0])], revokedKeyIds: []);
 var verifier = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
-var requirement = new LicenseRequirement(ProductId, LicenseKind.Standard, FeatureId, null, null);
+var requirement = new LicenseRequirement(ProductId, LicenseKind.Standard, FeatureId, FeatureVersion: null, Installation: null);
 LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), requirement);
 ```
 
