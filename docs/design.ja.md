@@ -4036,7 +4036,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c3 | 各 Tutorial の手順（英語と日本語、0.117）と、使うもの（公開したバイナリか `dotnet run` か）、足すサンプルのプロジェクトの名前と置き場所、C のサンプルのビルド（Windows は MSVC、ほかは cc）、Tutorials の手順を流す CI のジョブと OS、手引きのコードをサンプルから引く方法 |
 | V1c4 | How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか） |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
-| V1e | `-rc.1` で確かめることと正式版に進む条件、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
+| V1e | `-rc.1` で確かめることと正式版に進む条件、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
 
 行をまたいで決めてあること:
 
@@ -4196,6 +4196,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
   - `@docusaurus/theme-mermaid` 3.10.2 は、任意の peer の `@mermaid-js/layout-elk` を、パッケージがないとき false になる印の内側で `import` する（`lib/client/loadMermaid.js`、`lib/index.js`）が、pnpm では webpack がその `import` を解決しようとして落ちた。ELK の配置は使わないので、クライアントの bundle だけで、その名前を何も指さないようにする（設定の中の小さな plugin。サーバーの bundle で同じことをすると、生成が落ちた）。
   - `core-js` 3.51.0 の `postinstall` は寄付の案内を出すだけ（`postinstall.js`）なので、`allowBuilds` で見たうえで走らせないと書く（`strictDepBuilds` の守り、T28）。
   - 確かめた: `../docs/guide` の読み込み、CommonMark の形（`markdown.format: 'detect'`）での表、リンク、見出しへのリンク、Mermaid（`mermaid` のコンポーネントに変わる）、検索の索引。
+  - V1c の形で V1c1 が確かめるとした点のうち、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則は、持ち主が Pages の source を設定していないので記録できなかった。V1e の持ち主の作業に移す（§20.7 の表の V1e、`docs/releasing.md` の確かめのコマンド）。走らせ直しの戻し方は V1c1 で試した（上の V1c の形）。
   - 頁の 2 つ目以降の flowchart（と state 図）が、サイトでは空になることがあった（headless の Edge。Mermaid 12.2.0 の単体では描ける）。原因は分かっておらず、V1c1 ではその図を消すか番号つきの文に替えた。原因を調べて直すのは roadmap の V1c5（Issue #192）で、V1e の最初の公開の前に行う。それまでは、1 つの頁に flowchart と state 図を合わせて 1 つまでにし、PR で頁ごとに描けた図を数える。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
 - npm の依存（`dependencies.mdc` に書く）: 直接の依存（上の Docusaurus の 3 つ、検索の plugin、React、react-dom、`@mdx-js/react`）を §21 に並べ、直接の依存を足すときだけ設計の Issue にする。推移的な依存は lock の差分のレビューで見る（持ち主の決定、Issue #190 の Q5）。
 - 依存の脆弱性: `pnpm audit` を、CI の管理画面のジョブと、`release.yml` の `site` の PR と `workflow_dispatch` の実行で流し、見つかれば落とす。タグの実行では流さない。そのタグの lock はマージの前の PR で audit を通っており、マージのあとに公表された勧告でタグの実行を落としても、そのタグのサイトがずっと出なくなるだけで、前のサイトは残り、読み手の守りは増えない（持ち主の決定、Issue #190 の R4）。V1c1 の時点で、Docusaurus 3.10.2 の木に 8 件あった。

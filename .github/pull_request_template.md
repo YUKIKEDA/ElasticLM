@@ -39,3 +39,5 @@ N/A
 - [ ] No key material, real license token, or secret in the diff, tests, or logs (`.cursor/rules/security.mdc`)
 - [ ] `docs/`, `.cursor/rules/`, and skills updated when behavior or workflow changed — or N/A
 - [ ] Corrections from the owner written into the file they belong to (`.cursor/rules/record-corrections.mdc`) — or N/A
+- [ ] `docs/roadmap.md`: this row is `done` with its Issue, and **今** points at the next row — or N/A (`.cursor/rules/workflow.mdc`)
+- [ ] Every Done when of the Issue it closes is met in this PR, or moved to a named row first (`github-closing`)

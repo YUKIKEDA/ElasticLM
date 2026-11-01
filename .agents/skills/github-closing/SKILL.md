@@ -31,9 +31,9 @@ Part of #12. The NativeAOT check on #12 is still unmet.
 
 ## Before sending
 
-1. Read the title and the full body. For each issue number, decide whether this PR finishes it.
+1. Read the title and the full body. For each issue number, decide whether this PR finishes it: read the Issue's **Done when** and find each item met in this PR. An item that this PR cannot meet (it waits for the owner, another row, or a release) is moved to a named roadmap row and to that row's design text first, and the Issue's comment says so; only then does the PR close the Issue. PR #191 closed Issue #190 while one item (the Pages environment rules, waiting for the owner) was not met, and the review found it.
 2. If it does not, and a closing verb is the word before the number, rewrite the sentence.
-3. If it finishes the Issue of a roadmap row, read `docs/roadmap.md` in the PR's diff: the row is `done`, **今** names the next row, and **済み** lists the row (`.cursor/rules/workflow.mdc` step 4). PR #47 and PR #71 were called ready without it, and the review found it both times.
+3. If it finishes the Issue of a roadmap row, read `docs/roadmap.md` in the PR's diff: the row is `done`, **今** names the next row, and **済み** lists the row (`.cursor/rules/workflow.mdc` step 4). PR #47 and PR #71 were called ready without it, and the review found it both times; PR #191 was merged without it after three reviews asked.
 4. Run `gh pr create` (or `gh pr edit`).
 5. Run `gh pr view <n> --json closingIssuesReferences` and compare the list with step 1.
 
