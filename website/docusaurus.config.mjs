@@ -71,6 +71,9 @@ const config = {
   ],
   themeConfig: {
     colorMode: { respectPrefersColorScheme: true },
+    // The default Prism languages of prism-react-renderer leave out C#, Bash, and PowerShell, so their code blocks showed
+    // as plain text.
+    prism: { additionalLanguages: ['csharp', 'bash', 'powershell'] },
     navbar: {
       title: 'ElasticLM',
       items: [
