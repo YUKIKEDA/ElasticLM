@@ -15,7 +15,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** V1c（文書とサンプル。V1 の分け方は design.ja.md 0.112）
+- **フェーズ:** V1c1（利用者の文書の Explanation とサイトの土台。V1c の分け方は design.ja.md 0.116）
 - **済み:** F0（[#1](https://github.com/YUKIKEDA/ElasticLM/issues/1)）、D0（[#3](https://github.com/YUKIKEDA/ElasticLM/issues/3)）、M1（[#7](https://github.com/YUKIKEDA/ElasticLM/issues/7)）、M2（[#11](https://github.com/YUKIKEDA/ElasticLM/issues/11)）、M3a（[#15](https://github.com/YUKIKEDA/ElasticLM/issues/15)）、M3b（[#21](https://github.com/YUKIKEDA/ElasticLM/issues/21)）、M3c（[#25](https://github.com/YUKIKEDA/ElasticLM/issues/25)）、M3d（[#28](https://github.com/YUKIKEDA/ElasticLM/issues/28)）、M4a1（[#46](https://github.com/YUKIKEDA/ElasticLM/issues/46)）、M4a2（[#54](https://github.com/YUKIKEDA/ElasticLM/issues/54)）、M4a3（[#58](https://github.com/YUKIKEDA/ElasticLM/issues/58)）、M4b1（[#60](https://github.com/YUKIKEDA/ElasticLM/issues/60)）、M4b2（[#66](https://github.com/YUKIKEDA/ElasticLM/issues/66)）、M4c1（[#70](https://github.com/YUKIKEDA/ElasticLM/issues/70)）、M4c2（[#74](https://github.com/YUKIKEDA/ElasticLM/issues/74)）、M4c3（[#78](https://github.com/YUKIKEDA/ElasticLM/issues/78)）、M4d1（[#82](https://github.com/YUKIKEDA/ElasticLM/issues/82)）、M4d2（[#86](https://github.com/YUKIKEDA/ElasticLM/issues/86)）、M4d3（[#90](https://github.com/YUKIKEDA/ElasticLM/issues/90)）、W0（[#94](https://github.com/YUKIKEDA/ElasticLM/issues/94)）、M5a（[#102](https://github.com/YUKIKEDA/ElasticLM/issues/102)）、M5b（[#109](https://github.com/YUKIKEDA/ElasticLM/issues/109)）、M5c（[#116](https://github.com/YUKIKEDA/ElasticLM/issues/116)）、M5d1（[#125](https://github.com/YUKIKEDA/ElasticLM/issues/125)）、M5d2（[#129](https://github.com/YUKIKEDA/ElasticLM/issues/129)）、M6a（[#137](https://github.com/YUKIKEDA/ElasticLM/issues/137)）、M6b（[#141](https://github.com/YUKIKEDA/ElasticLM/issues/141)）、M6c（[#145](https://github.com/YUKIKEDA/ElasticLM/issues/145)）、F1（[#149](https://github.com/YUKIKEDA/ElasticLM/issues/149)）、F2（[#157](https://github.com/YUKIKEDA/ElasticLM/issues/157)）、V1a（[#178](https://github.com/YUKIKEDA/ElasticLM/issues/178)）、V1b（[#182](https://github.com/YUKIKEDA/ElasticLM/issues/182)）
 
 ## v1 まで
@@ -54,7 +54,10 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | F2  | `elm-service` のコンテナイメージ（ベースの選び方、root でない利用者、データと鍵の渡し方、レジストリへの公開の経路とその脅威、イメージの来歴の証明。決めた形は design.ja.md 0.111） | done        | [#157](https://github.com/YUKIKEDA/ElasticLM/issues/157) |
 | V1a | 端から端までのテスト（`tests/ElasticLM.E2E`。決めた形は design.ja.md 0.113） | done        | [#178](https://github.com/YUKIKEDA/ElasticLM/issues/178) |
 | V1b | §4.2 の参照機（`ubuntu-latest`）での計測と、Windows で測った値の測り直し（決めた形は design.ja.md 0.114、0.115） | done        | [#182](https://github.com/YUKIKEDA/ElasticLM/issues/182) |
-| V1c | 文書とサンプル（Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c1 | 利用者の文書の Explanation（全体の構成、信頼の鎖、認証の仕組みと流れ、安全性のモデル）、入口の文書、README、Docusaurus のサイトの土台と公開のジョブ（決めた形は design.ja.md 0.116、Grill で決める点は §20.7） | not-started | —     |
+| V1c2 | 利用者の文書の Reference（`elm`、設定、管理 API と端末のプロトコル、形式、誤りのコード、ログ、.NET と C の API の要点。Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c3 | 利用者の文書の Tutorials と、足すサンプル（.NET の有効化・リース・オフラインの有効化、C の検証と有効化）。Tutorials の手順を CI で流す（Grill で決める点は design.ja.md §20.7） | not-started | —     |
+| V1c4 | 利用者の文書の How-to guides（鍵、`elm-service` の運用、ライセンス、`elm-server`、アプリ。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e | v1 の公開（`1.0.0-rc.1` から `1.0.0`、持ち主の作業、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 
@@ -68,6 +71,10 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | A-2 | オンプレミスのサーバーの冗長化                                           | not-started | —     |
 | A-3 | ML-DSA への移行（.NET の `MLDsa` が試験扱いでなくなり、3 OS で動いたら） | not-started | —     |
 | A-4 | 鍵管理サービス（KMS）の署名鍵                                            | not-started | —     |
+| A-5 | 設計の文書（`docs/design.ja.md`）を、開発に加わる人が初めて読める形に組み直す（design.ja.md 0.116） | not-started | —     |
+| A-6 | 文書のサイトの版ごとの公開（2 つ目の版を出すとき。design.ja.md 0.116） | not-started | —     |
+| A-7 | 日本語の利用者の文書（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
+| A-8 | .NET の API の参照のサイトと、管理 API の OpenAPI（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
 
 ## Intentionally out of scope
 
