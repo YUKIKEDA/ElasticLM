@@ -756,3 +756,15 @@
 - **決定:** サイトは `https://yukikeda.github.io/ElasticLM/` に置き、持ち主のほかの Pages のサイトと origin を共有することを受け入れる。持ち主はユーザーサイトのリポジトリ（`yukikeda.github.io`）を作らない（持ち主の決定。[design.ja.md](./design.ja.md) 0.116、§5.4）。
 - **理由:** 独自ドメインは、費用と DNS の管理を持ち主の作業に足す。ユーザーサイトを作らなければ、根の service worker で `/ElasticLM/` を横取りされない。要るようになれば行を足す。
 - **却下した案:** 独自ドメインにする。受け入れた脅威に書くだけで、ユーザーサイトを作らない決まりを置かない。
+
+### 文書のサイトのランタイムのパッケージを 1 つずつ設計の Issue にする（V1c1 の Grill、Issue #190）
+
+- **決定:** `website/` の直接の依存を §21 に並べ、直接の依存を足すときだけ設計の Issue にする。推移的な依存は `pnpm-lock.yaml` の差分のレビューで見る（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c1 の形）。
+- **理由:** Docusaurus のサイトは、React など数十のパッケージを読み手のブラウザで動かす。管理画面と同じくランタイムのパッケージごとに設計の Issue にすると、Docusaurus の更新のたびに数十の Issue が要る。
+- **却下した案:** 管理画面と同じく、ランタイムのパッケージごとに設計の Issue にする。
+
+### npm の依存の更新を手でだけ行う（V1c1 の Grill、Issue #190）
+
+- **決定:** Dependabot の `npm` を `website/` と `web/admin/` に `cooldown` 付きで足し、脆弱性は CI の `pnpm audit` で確かめる（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c1 の形、§5.4）。
+- **理由:** pnpm 12 の lock では Dependabot の脆弱性の警告が出ないので、警告に頼れない。版の更新の PR は出せるので、更新を人の記憶に頼らずに済む。
+- **却下した案:** Dependabot を足さず、依存の更新は行の作業のときに手で行う。

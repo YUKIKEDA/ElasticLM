@@ -705,6 +705,7 @@ M3c（Issue #25）の実測（同じ条件）:
 | 文書のサイトが、持ち主のほかの Pages のサイトと origin を共有する（V1c1） | `https://yukikeda.github.io` は、持ち主のすべてのプロジェクトサイトの origin である（今は `github-project-metrics` と `github-project-sample` が Pages を持つ）。そのどれかの依存が乗っ取られると、読み手がそのサイトを開いたとき、同じ origin のスクリプトとして ElasticLM の文書の頁を開いて書き換えられる。独自ドメインは、費用と DNS の管理を持ち主の作業に足す。持ち主はユーザーサイトのリポジトリ（`yukikeda.github.io`）を作らない（その根の service worker は `/ElasticLM/` を横取りできる）。持ち主の決定（Issue #186 の R12） |
 | GitHub とそのランナーのイメージが侵害される（F1） | リリースはすべて GitHub のランナーで作り、来歴の証明も GitHub の仕組みである。GitHub そのものの侵害には、この製品の側で守る手段がない |
 | GHCR のタグは書き換えられる（F2） | 持ち主と、`write:packages` を持つ PAT や `packages: write` を持つワークフローの実行は、`<版>` や `latest` のタグを別のイメージに付け替えられる。GHCR の文書（https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry 、2026-10 に確かめた）は、タグを変えられなくする設定を挙げていない。タグで取る利用者は付け替えに気づけないので、文書はダイジェストで取り、証明を確かめることを勧める（T26）。GHCR が止まるか、イメージが消えたときは、Release の単一バイナリの `elm-service` を使える |
+| 文書のサイトの npm の依存に、Dependabot の脆弱性の警告が出ない（V1c1） | pnpm 12 が版を固定して書く lock（2 つの YAML の文書）では、Dependabot は依存を読めず、警告も修正の PR も出さない（GitHub の文書 Supported ecosystems and repositories）。管理画面の lock も同じである。代わりに、CI と `release.yml` の `pnpm audit` が、PR とリリースのたびに公表された脆弱性で落とす。PR のない間に公表されたものは、次の PR かリリースまで見えない。見たうえで受け入れた 3 件（`uuid`、`minimatch`、`deepmerge`）は、サイトのビルドと CI で動かない道にあるか、直した版がない（§20.7 の V1c1 の形） |
 | ベースのイメージの脆弱性は、次の版まで直らない（F2） | イメージはリリースのときに、固定したダイジェストのベースで作るので、Microsoft がベースを作り直しても、公開済みのイメージの libssl などは変わらない。直すには、ベースのダイジェストを上げた次の版を出す。単一バイナリの `elm-service` を使う利用者は、OS の libssl の更新を受ける |
 | 来歴の証明は、このワークフローがこのコミットから作ったことしか示さない（F1） | 持ち主がマージした悪いコミットも、正しく証明される。ビルドの中で動いた依存や道具の振る舞い（T25）も示さない。リリースの SBOM はリポジトリの依存だけを載せ、イメージのベースの Ubuntu のパッケージ（glibc、libssl など）は載せない。コードの中身の守りは、PR のレビューと CI である |
 
@@ -4167,6 +4168,31 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
   - 最初の公開は V1e の `1.0.0-rc.1`。`1.0.0` までは、あとのタグのサイトが前のサイトを置き換える。版ごとの公開（roadmap の A-6）は、`1.0.0` の次のタグを押す前に入れる。入れずに押すと、正式版の利用者に、出していない機能の手順が見え、古い系統の修正版は新しい文書を置き換える（持ち主の決定、Issue #186 の R5）。
 - 持ち主の作業（V1c1 が `docs/releasing.md` に書く）: Settings → Pages → Build and deployment → Source を GitHub Actions にする（https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site ）。environment `github-pages` の配備できる ref を `v*` のタグだけにし、必須の承認者を持ち主にし、管理者による迂回を切り（R2）、`gh api repos/YUKIKEDA/ElasticLM/environments/github-pages` と `.../deployment-branch-policies` で確かめる。`gh api repos/YUKIKEDA/ElasticLM/pages` の `build_type` が `workflow` であることも確かめる（T28）。HTTPS の強制が入っていることを確かめる（https://docs.github.com/en/pages/getting-started-with-github-pages/securing-your-github-pages-site-with-https ）。
 
+#### V1c1 の形
+
+V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作って確かめた。
+
+- Explanation の頁（`docs/guide/explanation/`）: Overview、Trust chain、License files and verification、Devices and proofs、Activation（オンラインとオフライン、更新、解除、複製の検出）、Floating licenses（取得、更新、返却、回収、借り出し、席の上限。オンプレミスと SaaS 型）、Security model、Design choices の 8 頁。
+- 頁の書き方: 「何のためか → 仕組みと流れ（図）→ 何が起こりうるか、利用者がすべきこと」の順。図は、信頼の鎖、検証の順、有効化の sequence 図、リースの state 図、回収の sequence 図、置き方の型。まだない頁（Reference、Tutorials、How-to guides）へはリンクせず、その頁を書く行がリンクを足す。書き方の規則は `.cursor/rules/user-docs.mdc`（頁ごとに Diátaxis の種類を 1 つ、冒頭に読む人と前提、`english-writing` の用語、MDX と JSX を使わない、相対の `.md` のリンク、Mermaid、V1c3 からはコードをサンプルから引く）。
+- 入口（`docs/guide/README.md`）: 読む人ごと（ベンダー、アプリの開発者、利用者の管理者、管理 API を使う人）の読む順。
+- README: 何ができるか、配る物、`elm` の 5 つのコマンド（ルート鍵、署名鍵、署名鍵の証明、ライセンスの発行、確かめ）で通す短い手順、文書への入口。V1e の最初の公開まではサイトがないので、README は GitHub の `docs/guide/` を指し、V1e でサイトの URL に替える。状態の文は「1.0 はまだ出ていない」。`README.ja.md` はその訳。
+- README の手順の確かめ: 手順は README の印（HTML のコメント）で挟んだコードの区画に置き、`eng/docs/Test-ReadmeSteps.ps1` がその区画を読んで、公開した `elm` で行ごとに流す。CI の `aot` ジョブの 3 つの OS で動かす。文書とスクリプトに手順を 2 か所で持たない。
+- サイト（`website/`）:
+  - Docusaurus 3.10.2、`@docusaurus/preset-classic` の docs だけ（blog と独自の頁は切る）、`@docusaurus/theme-mermaid`、`@easyops-cn/docusaurus-search-local` 0.55.3（テーマとして入れ、`docsDir: '../docs/guide'`）、React 19.3.1。入口の頁を最初の頁にし（`routeBasePath: '/'`）、サイドバーはフォルダーから作る。既定のテーマで、暗い表示は OS に従い、上のバーに GitHub へのリンク。`trailingSlash: true`。
+  - `website/package.json` に `"type": "module"` を置かない。置くと、Docusaurus が生成する `.docusaurus/registry.js` の `require` を webpack が ESM として扱って変換せず、静的な頁の生成が `require.resolveWeak is not a function` で落ちた。設定は `docusaurus.config.mjs` にする。
+  - `@docusaurus/theme-mermaid` 3.10.2 は、任意の peer の `@mermaid-js/layout-elk` を、パッケージがないとき false になる印の内側で `import` する（`lib/client/loadMermaid.js`、`lib/index.js`）が、pnpm では webpack がその `import` を解決しようとして落ちた。ELK の配置は使わないので、クライアントの bundle だけで、その名前を何も指さないようにする（設定の中の小さな plugin。サーバーの bundle で同じことをすると、生成が落ちた）。
+  - `core-js` 3.51.0 の `postinstall` は寄付の案内を出すだけ（`postinstall.js`）なので、`allowBuilds` で見たうえで走らせないと書く（`strictDepBuilds` の守り、T28）。
+  - 確かめた: `../docs/guide` の読み込み、CommonMark の形（`markdown.format: 'detect'`）での表、リンク、見出しへのリンク、Mermaid（`mermaid` のコンポーネントに変わる）、検索の索引。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
+- npm の依存（`dependencies.mdc` に書く）: 直接の依存（上の Docusaurus の 3 つ、検索の plugin、React、react-dom、`@mdx-js/react`）を §21 に並べ、直接の依存を足すときだけ設計の Issue にする。推移的な依存は lock の差分のレビューで見る（持ち主の決定、Issue #190 の Q5）。
+- 依存の脆弱性: `pnpm audit` を、`release.yml` の `site` と CI の管理画面のジョブで流し、見つかれば落とす。V1c1 の時点で、Docusaurus 3.10.2 の木に 8 件あった。
+  - ビルドの道に乗る 2 つは、直した版に上書きする（`overrides`: `serialize-javascript` 7.1.4、`tinypool` 2.2.0）。上書きしてもサイトは作れた。
+  - 残りの 3 件は、見たうえで受け入れる（`auditConfig.ignoreGhsas`、§5.4）。`uuid` 8.3.2（`sockjs` の下。`docusaurus start` の開発用のサーバーだけ）、`minimatch` 3.1.5（`serve-handler` の下。`docusaurus serve` の手元の確かめだけ）、`deepmerge` 4.3.1（`@svgr/plugin-svgo` 8.1.0 の下。直した版がなく、plugin の `dist/index.js` は呼ばない）。どれも CI とサイトのビルドで動かない。
+- 依存の更新: Dependabot の `npm` を `website/` と `web/admin/` に足し、`cooldown` は NuGet と同じ `default-days: 7`。pnpm 12 が版を固定して書く lock（2 つの YAML の文書）では、Dependabot の脆弱性の警告と修正の PR が出ない（GitHub の文書 Supported ecosystems and repositories）。その代わりが上の `pnpm audit` で、警告の出ないことは §5.4 に受け入れる（持ち主の決定、Q6）。
+- `release.yml` のジョブ: `site`（いつも、`contents: read`、`ubuntu-latest`、Node.js は `web/admin/.node-version`）と `pages`（`needs: [site, publish]`。T28）。
+- レビュー: 各行の PR で、初見の読み手（設計を渡さず、文書と README だけ）と、正しさの確かめ（設計とコードを渡す）の 2 人の独立したレビュアーに見せる（Q9）。
+- `docs/container.md` と `SECURITY.md` は今の場所に残し、頁から GitHub のその文書を指す（Q8）。
+- Docusaurus 3.10 は 3 の系統の最後の版で、4 が出ると 3 は重い安全性の修正だけを 3 か月受けて終わる（https://docusaurus.io/community/release-process 、https://docusaurus.io/blog/releases/3.10 ）。4 への移行は roadmap の A-9。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4186,7 +4212,8 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
 | `xunit.v3`, `Microsoft.Extensions.TimeProvider.Testing` | テスト | テスト | 対象外 |
 | `preact` 11（W0 で 11.1.0） | `web/admin/`（管理画面の SPA。ビルド結果が `ElasticLM.Service` に埋め込まれる） | 画面の部品と状態（§15.2、0.96）。MIT。実行時の依存はこれだけで、その先の依存はない | 対象外（ブラウザで動く）。W0 の試作の `dist` は 17,791 バイト（brotli で 6,771）。`elm-service` の大きさの差は M5c で測る |
 | `vite` 8.3.5, `vitest` 4.1.12, `happy-dom` 21.0.4, `@types/node`（MIT）、`typescript` 7.0.2（Apache-2.0） | `web/admin/` のビルドとテストだけ | ビルド、型の確かめ、ブラウザのないテスト。ビルド結果には入らない。推移的な依存は `pnpm-lock.yaml` にある。W0 の試作で、`preact` と合わせて入るパッケージは 56 個（Windows） | 対象外 |
-| Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
+| `@docusaurus/core`・`@docusaurus/preset-classic`・`@docusaurus/theme-mermaid` 3.10.2（MIT）、`@easyops-cn/docusaurus-search-local` 0.55.3（MIT）、`react`・`react-dom` 19.3.1（MIT）、`@mdx-js/react` 3.1.1（MIT） | `website/`（利用者の文書のサイト、V1c1） | 静的なサイトの生成、図、検索（§20.7 の V1c1 の形）。ビルド結果の JavaScript は読み手のブラウザで動く（T28）。推移的な依存は `website/pnpm-lock.yaml` にあり、V1c1 で 1,287 個（Windows）。`serialize-javascript` と `tinypool` は直した版に上書きする。Docusaurus 3 は、4 が出ると重い安全性の修正だけを 3 か月受けて終わる（https://docusaurus.io/community/release-process 。移行は roadmap の A-9） | 対象外（ブラウザとビルド） |
+| Node.js 24（MIT）、pnpm 12（MIT） | `web/admin/` と `website/` のビルドの道具 | 版を固定する（`.node-version`、`packageManager`、§15.2）。pnpm は Node.js に同梱の Corepack で入れる | 対象外 |
 | `almalinux:8`（ダイジェストで固定） | `release.yml` の `linux-x64` と `linux-arm64` のビルドの道具 | glibc 2.28 の上で作る（§4.1、§20.5）。中で `dnf` が AlmaLinux の署名を確かめて clang、zlib-devel、binutils、libicu を入れる。セキュリティサポートは 2029-05-31 まで（https://wiki.almalinux.org/release-notes/ ） | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定） | `elm-service` のコンテナイメージのベース（§20.6） | glibc、libssl、CA の束だけを持つ Microsoft のイメージで、UID 1654 で動く。.NET 10 のサポートは 2028-11-14 まで（https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core ）、Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで（https://ubuntu.com/about/release-cycle ）。ダイジェストは Dependabot が上げる | 対象外（実行の土台） |

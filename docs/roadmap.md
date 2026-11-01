@@ -75,6 +75,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | A-6 | 文書のサイトの版ごとの公開（`1.0.0` の次のタグを押す前。design.ja.md 0.116） | not-started | —     |
 | A-7 | 日本語の利用者の文書（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
 | A-8 | .NET の API の参照のサイトと、管理 API の OpenAPI（要る声が挙がったら。design.ja.md 0.116） | not-started | —     |
+| A-9 | 文書のサイトの Docusaurus 4 への移行（4 が出たら、3 の安全性の修正が終わる 3 か月のうちに。design.ja.md §20.7 の V1c1 の形） | not-started | —     |
 
 ## Intentionally out of scope
 

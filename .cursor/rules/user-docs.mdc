@@ -1,0 +1,47 @@
+---
+description: How the user documentation in docs/guide/ is written
+globs: "docs/guide/**/*.md, README.md, website/**"
+alwaysApply: false
+---
+
+# User documentation
+
+The user documentation lives in `docs/guide/` and is built into the site in `website/` (design §20.7, decision 0.116). `docs/design.ja.md` stays the specification: the guide is written from it, not translated from it, and when the two differ the design is right and the guide is fixed. Before writing, read `.agents/skills/english-writing/SKILL.md`.
+
+## One kind per page
+
+Each page is one of the four Diátaxis kinds (https://diataxis.fr/start-here/) and lives in its folder:
+
+| Folder | Kind | The page |
+| --- | --- | --- |
+| `tutorials/` | Tutorial | A lesson: the reader follows every step and ends with something working. No choices, no background beyond one line. |
+| `how-to/` | How-to guide | Directions for one goal the reader already has. Steps, with the choices the goal needs. |
+| `reference/` | Reference | Facts to look up: every option, field, code, and command, in a fixed order. No steps, no reasons. |
+| `explanation/` | Explanation | Why and how it works: the mechanism, the flows, what can go wrong, and what the reader must do. No steps. |
+
+A page that needs another kind links to it instead of growing a second kind.
+
+## Shape of a page
+
+- The first heading is the page title. Under it, one paragraph says who the page is for and what they should know first.
+- An explanation page goes: what it is for → how it works, with a figure → what can go wrong and what the reader must do.
+- Name the threat when the page says something is safe: who the attacker is, what they hold, and what stops them. Write what the product does not protect against as plainly as what it does.
+- A figure is a fenced `mermaid` block: a sequence diagram for a protocol, a state diagram for a lifecycle, a flowchart for an order of checks. No ASCII art and no images of text.
+- Code in a page is taken from a sample in `samples/`, which the gate builds (from V1c3 on). Commands are given as they are typed, with fake keys and IDs.
+
+## Markdown that works on GitHub and on the site
+
+- Plain CommonMark with GitHub tables and fenced code. No MDX, no JSX, no Docusaurus admonitions (`:::note`), no front matter beyond `sidebar_position` and `title` when the folder order needs them.
+- Links are relative paths to `.md` files (`../explanation/trust-chain.md#rotation`). A link to a page that does not exist yet is not written: the row that writes that page adds the link. The site build fails on a broken link or anchor.
+- A link to a file outside `docs/guide/` (`SECURITY.md`, `docs/container.md`) is a full GitHub URL on the `main` branch.
+
+## Words
+
+- Terms follow the table in `.agents/skills/english-writing/SKILL.md`. The first use of a term on a page says what it is in a few words or links to the page that explains it.
+- Wire names, settings, error codes, and commands are in code spans exactly as the code has them. Check each one in the code before it goes in.
+- A figure (a size, a time, a default) names where it comes from: the design section or the code.
+
+## Checks before a PR
+
+- `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` in `website/` pass.
+- Two independent reviewers read the pages (design §20.7, V1c1): one is given only `docs/guide/` and `README.md` and reports what a first-time reader cannot follow; the other is given the design and the code and reports every statement that differs from them.

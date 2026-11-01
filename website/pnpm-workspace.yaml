@@ -1,0 +1,21 @@
+# design §20.7 (V1c1, T28): the same guards as the admin UI (T21), stated here, not left to pnpm's defaults.
+# Dependencies' build scripts never run; a dependency that has one fails the install.
+strictDepBuilds: true
+# A version published less than a day ago is refused, strictly (stating the value makes minimumReleaseAgeStrict true).
+minimumReleaseAge: 1440
+# core-js's postinstall only prints a funding message (its postinstall.js), so it is reviewed and stays off.
+allowBuilds:
+  core-js: false
+# Fixed versions of two build dependencies that pnpm audit flags in Docusaurus 3.10.2's tree (design §20.7, V1c1).
+overrides:
+  serialize-javascript: 7.1.4
+  tinypool: 2.2.0
+# Advisories reviewed and accepted (design §5.4, V1c1). None is on the path of `docusaurus build`, or no fixed version exists.
+auditConfig:
+  ignoreGhsas:
+    # uuid 8.3.2 under sockjs: the dev server of `docusaurus start` only, which the site build and CI never run.
+    - GHSA-w5hq-g745-h8pq
+    # minimatch 3.1.5 under serve-handler: `docusaurus serve`, a local preview of the built site, never run in CI.
+    - GHSA-g3hv-75wg-m249
+    # deepmerge 4.3.1 under @svgr/plugin-svgo 8.1.0: no fixed version, and the plugin's dist/index.js never calls it.
+    - GHSA-gcqx-w48m-w2h4
