@@ -1,3 +1,5 @@
 node_modules/
 build/
 .docusaurus/
+# Copied from docs/guide.ja/ by sync-guide-ja.mjs before each build.
+i18n/ja/docusaurus-plugin-content-docs/current/

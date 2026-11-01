@@ -42,7 +42,7 @@ elm license verify first.elmlic --trust root.pub.pem --product acme-cad --featur
 
 ## 文書
 
-利用者の文書は [`docs/guide/`](docs/guide/README.md) にある（英語）。ElasticLM の仕組み、部品が互いをどう信頼するか、何から守るかを説明する。1.0 からはサイトとしても公開する。
+利用者の文書は [`docs/guide.ja/`](docs/guide.ja/README.md) にある。英語の正本は [`docs/guide/`](docs/guide/README.md) にある。ElasticLM の仕組み、部品が互いをどう信頼するか、何から守るかを説明する。1.0 からはサイトとしても公開する。
 
 設計は [`docs/design.ja.md`](docs/design.ja.md)、計画は [`docs/roadmap.md`](docs/roadmap.md) にある。脆弱性の報告は [`SECURITY.md`](SECURITY.md) の手順で受け付ける。
 

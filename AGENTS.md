@@ -10,7 +10,7 @@ A software licensing platform for .NET: signed license verification, an on-premi
 | Rejected alternatives | `docs/design-decisions.md` |
 | Decisions with a measured or outside reason | `docs/adr/` (one per file) |
 | Order and status of work | `docs/roadmap.md` |
-| User documentation (English, Diátaxis) and its site | `docs/guide/`, `website/` (design §20.7) |
+| User documentation (English, with its Japanese translation) and its site | `docs/guide/`, `docs/guide.ja/`, `website/` (design §20.7) |
 | Projects, folders, coding conventions | `docs/conventions.md` |
 | Build, format, and test gate | `./build.ps1` |
 | Release path and the owner's release steps | `.github/workflows/release.yml`, `eng/release/`, `docs/releasing.md` |

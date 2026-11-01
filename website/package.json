@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.0.0",
   "scripts": {
-    "build": "docusaurus build",
+    "build": "node sync-guide-ja.mjs && docusaurus build",
+    "start": "node sync-guide-ja.mjs && docusaurus start",
     "serve": "docusaurus serve"
   },
   "dependencies": {

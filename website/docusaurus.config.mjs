@@ -20,7 +20,15 @@ const config = {
       onBrokenMarkdownImages: 'throw',
     },
   },
-  i18n: { defaultLocale: 'en', locales: ['en'] },
+  // English is the source of truth; Japanese is its translation, changed in the same pull request (decision 0.117).
+  i18n: {
+    defaultLocale: 'en',
+    locales: ['en', 'ja'],
+    localeConfigs: {
+      en: { label: 'English', htmlLang: 'en' },
+      ja: { label: '日本語', htmlLang: 'ja' },
+    },
+  },
   presets: [
     [
       'classic',
@@ -46,6 +54,7 @@ const config = {
         docsRouteBasePath: '/',
         indexBlog: false,
         indexPages: false,
+        language: ['en', 'ja'],
         hashed: true,
       },
     ],
@@ -64,7 +73,10 @@ const config = {
     colorMode: { respectPrefersColorScheme: true },
     navbar: {
       title: 'ElasticLM',
-      items: [{ href: 'https://github.com/YUKIKEDA/ElasticLM', label: 'GitHub', position: 'right' }],
+      items: [
+        { type: 'localeDropdown', position: 'right' },
+        { href: 'https://github.com/YUKIKEDA/ElasticLM', label: 'GitHub', position: 'right' },
+      ],
     },
   },
 };

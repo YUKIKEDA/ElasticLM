@@ -65,7 +65,7 @@ The left column is the term in `docs/design.ja.md`. Write the right column in co
 | フローティング、同時利用数 | floating, concurrent seats |
 | 貸出、リース | lease |
 | 貸出の更新（ハートビート） | lease renewal (heartbeat) |
-| 有効化、無効化 | activation, deactivation |
+| 有効化、解除（無効化） | activation, deactivation |
 | 失効 | revocation |
 | オンプレミスのライセンスサーバー | on-premises license server |
 | SaaS 型の認証サーバー | hosted activation service |

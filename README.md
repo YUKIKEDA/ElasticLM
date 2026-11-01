@@ -44,7 +44,7 @@ The root key only certifies signing keys: keep `root.key.pem` offline. Your app 
 
 ## Documentation
 
-The user documentation is in [`docs/guide/`](docs/guide/README.md). It explains how ElasticLM works, how its parts trust each other, and what it protects against. From 1.0 it is also published as a site.
+The user documentation is in [`docs/guide/`](docs/guide/README.md), and in Japanese in [`docs/guide.ja/`](docs/guide.ja/README.md). It explains how ElasticLM works, how its parts trust each other, and what it protects against. From 1.0 it is also published as a site.
 
 The design, in Japanese, is in [`docs/design.ja.md`](docs/design.ja.md), and the plan in [`docs/roadmap.md`](docs/roadmap.md). Security reports go through [`SECURITY.md`](SECURITY.md).
 

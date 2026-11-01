@@ -28,7 +28,8 @@ eng/docs/                    利用者の文書の確かめのスクリプト（
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
 web/admin/                   管理画面の SPA（Preact、TypeScript、Vite。design §15.2）。ビルド結果の dist を elm-service が埋め込む
 docs/                        設計・却下した案・ADR・ロードマップ・規約（本書）
-docs/guide/                  利用者の文書（英語、Diátaxis の 4 つ。design §20.7）
+docs/guide/                  利用者の文書（英語の正本、Diátaxis の 4 つ。design §20.7）
+docs/guide.ja/               利用者の文書の日本語の訳（docs/guide/ と同じフォルダーとファイルの名前、同じ PR で直す。0.117）
 website/                     利用者の文書の Docusaurus のサイト（docs/guide/ を読む。design §20.7）
 .cursor/rules/               エージェント向けの規約
 .agents/skills/              スキル（.claude/skills/ にコピーを置く）
@@ -86,4 +87,4 @@ website/                     利用者の文書の Docusaurus のサイト（doc
 ## 言語
 
 - コード、コメント、ルール、コミットの件名、PR のタイトルと見出し、README.md、利用者の文書（`docs/guide/`、design §20.7）、`docs/releasing.md`、`docs/container.md` は英語。
-- 設計書（上の英語の文書を除く `docs/` 配下）、Issue と PR の本文、README.ja.md は日本語でよい。日本語は常体で書く。
+- 設計書（上の英語の文書を除く `docs/` 配下）、利用者の文書の日本語の訳（`docs/guide.ja/`）、Issue と PR の本文、README.ja.md は日本語でよい。日本語は常体で書く。

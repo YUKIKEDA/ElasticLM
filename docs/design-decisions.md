@@ -715,11 +715,11 @@
 - **理由:** docfx のサイトは道具の依存と公開の経路を増やし、OpenAPI の文書は管理 API の形をもう 1 つ持つことになる。要る声が挙がれば、roadmap の A-8 で足す。
 - **却下した案:** docfx で XML ドキュメントからサイトを作る。管理 API に OpenAPI の文書を足す。
 
-### 利用者の文書を日本語でも書く（V1c の Grill、Issue #186）
+### 利用者の文書を英語だけで書く（V1c の Grill と V1c1 の PR、Issue #186、#190）
 
-- **決定:** 利用者の文書は英語だけで書き、日本語の訳は `README.ja.md` だけにする（持ち主の決定。[design.ja.md](./design.ja.md) 0.116）。
-- **理由:** 英語の正本と訳を同じ PR で直す決まり（`.cursor/rules/language.mdc`）を全部の文書に広げると、保つ手間が倍になる。要る声が挙がれば、roadmap の A-7 で足す。
-- **却下した案:** 利用者の文書をすべて日本語でも書く。
+- **決定:** 利用者の文書は英語を正本とし、日本語の訳を `docs/guide.ja/` に置いて、同じ PR で直す。サイトは英語を `/ElasticLM/`、日本語を `/ElasticLM/ja/` に置き、上のバーで切り替える（持ち主の訂正。[design.ja.md](./design.ja.md) 0.117、§20.7）。V1c の Grill の Q2 では英語だけと決めていたが、V1c1 の PR で持ち主が覆した。
+- **理由:** 日英の両方で読めないと、利用者が使える文書にならない。訳を同じ PR で直す決まりは、`README.ja.md` と同じである。
+- **却下した案:** 利用者の文書を英語だけで書き、日本語は v1 の後の行にする（Grill の Q2 の推奨）。日本語の頁を Docusaurus の決まった場所（`website/i18n/ja/docusaurus-plugin-content-docs/current/`）に置く（GitHub で英語の隣に読めない）。
 
 ### V1c を 1 つの行で行う（V1c の Grill、Issue #186）
 

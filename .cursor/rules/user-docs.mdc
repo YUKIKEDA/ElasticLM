@@ -1,12 +1,12 @@
 ---
 description: How the user documentation in docs/guide/ is written
-globs: "docs/guide/**/*.md, README.md, website/**"
+globs: "docs/guide/**/*.md, docs/guide.ja/**/*.md, README.md, README.ja.md, website/**"
 alwaysApply: false
 ---
 
 # User documentation
 
-The user documentation lives in `docs/guide/` and is built into the site in `website/` (design §20.7, decision 0.116). `docs/design.ja.md` stays the specification: the guide is written from it, not translated from it, and when the two differ the design is right and the guide is fixed. Before writing, read `.agents/skills/english-writing/SKILL.md`.
+The user documentation lives in `docs/guide/` (English, the source of truth) and `docs/guide.ja/` (its Japanese translation, same folders and file names), and is built into the site in `website/` (design §20.7, decisions 0.116 and 0.117). A pull request that adds or changes an English page changes the Japanese page in the same pull request. `docs/design.ja.md` stays the specification: the guide is written from it, not translated from it, and when the two differ the design is right and the guide is fixed. Before writing, read `.agents/skills/english-writing/SKILL.md`.
 
 ## One kind per page
 
@@ -45,7 +45,15 @@ A page that needs another kind links to it instead of growing a second kind.
 - One name for one thing across all pages: "administration API" (not "management API"); policy settings and values as the administration API spells them (`maxActivations`, `cloneStrategy`: `deny`); settings as the configuration file spells them (`rateLimit.clientPerIp`).
 - A caveat that several pages share (revocation reaches a device only when its token expires, a patched app binary is out of scope, offline copies are not detected) is explained once, on the page it belongs to, and the other pages say it in a sentence and link there.
 
+## Japanese pages
+
+- A faithful translation of the English page: the same facts, sections, figures, tables, and links. Nothing added, dropped, strengthened, or weakened. An error found in the English is fixed in the English first.
+- Terms are the design's Japanese terms (the left column of the table in `.agents/skills/english-writing/SKILL.md`), plain form (常体), written and checked with `.agents/skills/natural-japanese/`. Code, commands, settings, wire names, and error codes stay in English.
+- Mermaid labels are translated; node, state, and participant IDs stay ASCII.
+- A link to a heading uses the Japanese page's own heading; the site build checks it.
+
 ## Checks before a PR
 
 - `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` in `website/` pass.
+- A reviewer other than the translator checks the Japanese pages for natural Japanese and for any difference from the English.
 - Two independent reviewers read the pages (design §20.7, V1c1): one is given only `docs/guide/` and `README.md` and reports what a first-time reader cannot follow; the other is given the design and the code and reports every statement that differs from them.

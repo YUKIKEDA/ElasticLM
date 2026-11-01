@@ -6,7 +6,7 @@ ElasticLM lets the vendor of a .NET or C/C++ application issue licenses, check t
 
 ## How the documentation is organized
 
-The pages follow [Diátaxis](https://diataxis.fr/): each page is one of four kinds, so you can pick the kind that fits what you need now.
+Each page is one of four kinds. Pick the kind that fits what you need now.
 
 | Kind | Read it when |
 | --- | --- |

@@ -185,6 +185,7 @@ SaaS 型を v1 に含めたことで、0.6（データベースを持たない�
 | 0.114 | 参照機での計測（V1b） | V1b の Grill（Issue #182、Q1〜Q7）とその設計のレビューで決めた。§4.2 の目標を、`workflow_dispatch` と計測に触れる PR で動くワークフロー `measure.yml` で、公開したバイナリを相手に `ubuntu-latest` の 3 つのジョブで測る。計測するプロセスは CPU 0・1 に、負荷をかける道具 `tools/ElasticLM.Measure` は CPU 2・3 に固定する。リース 10,000 件は 100 個のインストール鍵で毎秒 50 件で取り、更新を 2 巡測る。有効化は毎秒 50 件を 60 秒。M3b・M4a1・M4b1 の値は、JIT の `elm-service` を含めて同じ測り方で測り直す。目標に届かなければジョブを失敗にする。形は §20.7 |
 | 0.115 | 有効化の p99 の外れ（V1b） | V1b の PR の計測で、有効化の p99 が 3 つのうち 2 つのジョブで 200 ms を外れた（350.64 ms と 329.06 ms）。遅い有効化とディスクの書き出しの時刻を記録して測り直すと、3 つとも目標を満たし、遅い 2 件は書き出しが 64.4 ms 止まった時刻に重なった。遅れはランナーのディスクによると見て、SQLite の `synchronous` も目標も変えない（持ち主の決定）。記録は計測に残す。値は §4.2、形は §20.7、退けた案は design-decisions.md |
 | 0.116 | 利用者の文書とそのサイト（V1c） | V1c の Grill（Issue #186、Q1〜Q18）で決めた。利用者の文書を Diátaxis の 4 つ（Tutorials、How-to guides、Reference、Explanation）で、全体の構成、信頼の鎖、認証の仕組みと流れ、安全性のモデル、使い方まで英語で書く（持ち主の訂正）。Markdown は `docs/guide/` に置き、Docusaurus のサイトにして、`v*` のタグで GitHub Pages に公開する（持ち主の訂正）。サイトの書き換えを脅威 T28 と攻撃者 A15 として足す。V1c を V1c1（Explanation、入口、README、サイトの土台）、V1c2（Reference）、V1c3（Tutorials とサンプル）、V1c4（How-to guides）に分ける。設計の文書は正本のまま残し、組み直しは roadmap の A-5。設計のレビュー（R1〜R17）で、サイトの公開にも持ち主の承認を置き、版ごとの公開は `1.0.0` の次のタグの前に入れ、PR の確かめは `release.yml` のジョブで行い、ほかの Pages のサイトとの origin の共有を受け入れた（持ち主の決定）。形は §20.7、退けた案は design-decisions.md |
+| 0.117 | 利用者の文書を日英で | V1c1 の PR で、持ち主が V1c の Grill の Q2（英語だけ）を覆した。利用者の文書は英語を正本とし、日本語の訳を `docs/guide.ja/` に同じフォルダーとファイルの名前で置いて、同じ PR で直す。サイトは Docusaurus の多言語の仕組みで、英語を `/ElasticLM/`、日本語を `/ElasticLM/ja/` に置き、上のバーで切り替え、検索も日本語で引ける。日本語は `natural-japanese` で書き、書き手と別のレビュアーが、自然さと英語との食い違いを確かめる。roadmap の A-7 を消す。形は §20.7 の V1c1 の形、退けた案は design-decisions.md |
 
 ## 1. 目的と利用者
 
@@ -4023,9 +4024,9 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1a | 通す流れ（発行、オンラインとオフラインの有効化、オンプレミスと SaaS 型のリース、借り出し、利用ログの確かめ、失効）、動かす OS と RID、PostgreSQL も通すか、`libelasticlm` を C のテストのプログラムで通すか、CI のどのジョブで動かすか |
 | V1b | 測る §4.2 の目標と、測り直す前の行の値、10,000 件のリースの負荷の作り方、2 vCPU での p99 とメモリの測り方、計測を動かすワークフローとその記録の残し方 |
 | V1c1 | Explanation の頁の割り方と、各頁が書く範囲と深さ、描く図（どの流れを sequence 図にするか）、入口の文書の読む人ごとの道筋、README の中身と、公開の前の状態の書き方、Docusaurus の版と使う plugin、サイトの目次と見た目、CI の文書のジョブ（ランナー、Node.js、どの PR で動くか）、`release.yml` に足すサイトのジョブの名前と順、§21 の依存の表に足す行（Docusaurus 3 の系統の保守の終わり）、`website/` のランタイムのパッケージ（React など、読み手のブラウザで動くもの）を `dependencies.mdc` でどう扱うか、依存の更新の道筋（Dependabot の npm を足すか）、`trailingSlash` の値、手引きの書き方の規則（`dev-docs.mdc` は設計の文書だけを受け持つ）、README の手順を CI で流すスクリプトとジョブ、`docs/container.md` と `SECURITY.md` の確かめの節を手引きとどうつなぐか、`README.md` を「読む人の正本」とする `language.mdc` の文の書き直し、`AGENTS.md`・`docs/conventions.md`・`english-writing` に `docs/guide/` と `website/` を足すこと、初見の読み手のレビューの数と渡し方 |
-| V1c2 | Reference の頁の一覧と、それぞれの正本（コードの何から書くか）、コードと食い違わないための確かめ（設定の表と設定のクラス、誤りのコードの表と `ErrorCode`、`elm` の頁と `--help` の出力を比べるテストか、手で比べるか）、管理 API と端末のプロトコルの頁の形 |
-| V1c3 | 各 Tutorial の手順と、使うもの（公開したバイナリか `dotnet run` か）、足すサンプルのプロジェクトの名前と置き場所、C のサンプルのビルド（Windows は MSVC、ほかは cc）、Tutorials の手順を流す CI のジョブと OS、手引きのコードをサンプルから引く方法 |
-| V1c4 | How-to の頁の一覧と順、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか） |
+| V1c2 | Reference の頁の一覧と（英語と日本語、0.117）、それぞれの正本（コードの何から書くか）、コードと食い違わないための確かめ（設定の表と設定のクラス、誤りのコードの表と `ErrorCode`、`elm` の頁と `--help` の出力を比べるテストか、手で比べるか）、管理 API と端末のプロトコルの頁の形 |
+| V1c3 | 各 Tutorial の手順（英語と日本語、0.117）と、使うもの（公開したバイナリか `dotnet run` か）、足すサンプルのプロジェクトの名前と置き場所、C のサンプルのビルド（Windows は MSVC、ほかは cc）、Tutorials の手順を流す CI のジョブと OS、手引きのコードをサンプルから引く方法 |
+| V1c4 | How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか） |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
 | V1e | `-rc.1` で確かめることと正式版に進む条件、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか、ID の接頭辞の予約 |
 
@@ -4137,7 +4138,7 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
   - How-to guides: 「A how-to guide addresses a real-world goal or problem」。目的の決まった人のための手順。
   - Reference: 「Reference guides contain the technical description」。引くための正確な一覧。
   - Explanation: 「Explanatory guides provide context and background」。仕組みと理由。
-- 置き場所と言語: `docs/guide/` の下に `tutorials/`、`how-to/`、`reference/`、`explanation/` を置き、入口の `docs/guide/README.md` に読む人ごとの道筋を書く。英語だけで書く（`.cursor/rules/language.mdc`。日本語は roadmap の A-7）。図は Mermaid で描く。Markdown は GitHub の表示でも読める形で書き、サイトにしかない書き方は入口の文書だけにする。
+- 置き場所と言語: `docs/guide/` の下に `tutorials/`、`how-to/`、`reference/`、`explanation/` を置き、入口の `docs/guide/README.md` に読む人ごとの道筋を書く。英語を正本とし、日本語の訳を `docs/guide.ja/` に同じフォルダーの形で置いて、同じ PR で直す（`.cursor/rules/language.mdc`、0.117）。図は Mermaid で描く。Markdown は GitHub の表示でも読める形で書き、サイトにしかない書き方は入口の文書だけにする。
 - 中身（行ごと）:
   - Explanation（V1c1）: 全体の構成（6 つの配布物、だれが何を動かすか、置き方の型: オフラインだけ、SaaS 型、オンプレミス、両方）。信頼の鎖（ルート鍵、署名鍵、鍵の証明書、トラストストア、鍵の交代と失効）。ライセンスの検証（ファイルの形、確かめる順、猶予期間、時計の巻き戻しの検出）。端末の認証（インストール鍵、証明、ノンス、マシン指紋。有効化、更新、解除の流れ）。リース（取得、更新、返却、回収、借り出し、席の上限）。複製の検出とオフラインの有効化。安全性のモデル（守る物、攻撃者、守れること、守れないこと、利用者がすべきこと。§5 から書き、受け入れた脅威を含む）。主な設計の選択とその理由。
   - Reference（V1c2）: `elm` のコマンド、`elm-server` と `elm-service` の設定（項目と環境変数）、管理 API と端末のプロトコル、ライセンスファイルとトークンの形式、誤りのコード、監査ログと利用ログの項目、.NET と C の API の要点。.NET の API の正本は NuGet に入れた XML ドキュメント、C の正本は `elasticlm.h` のコメントで、Reference はそこから主な型と関数を指す。docfx のサイトと OpenAPI は作らない（roadmap の A-8）。
@@ -4197,6 +4198,11 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
 - 依存の更新: Dependabot の `npm` を `website/` と `web/admin/` に足し、`cooldown` は NuGet と同じ `default-days: 7`。pnpm 12 が版を固定して書く lock（2 つの YAML の文書）では、Dependabot の脆弱性の警告と修正の PR が出ない（GitHub の文書 Supported ecosystems and repositories）。その代わりが上の `pnpm audit` で、警告の出ないことは §5.4 に受け入れる（持ち主の決定、Q6）。
 - `release.yml` のジョブ: `site`（いつも、`contents: read`、`ubuntu-latest`、Node.js は `web/admin/.node-version`）と `pages`（`needs: [site, publish]`。T28）。
 - レビュー: 各行の PR で、初見の読み手（設計を渡さず、文書と README だけ）と、正しさの確かめ（設計とコードを渡す）の 2 人の独立したレビュアーに見せる（Q9）。
+- 日本語（0.117）:
+  - `docs/guide.ja/` に、`docs/guide/` と同じフォルダーとファイルの名前で訳を置く。英語の頁を足すか直す PR は、同じ PR で日本語の頁も直す。用語は設計の日本語（`english-writing` の用語表の左の列）に合わせ、文は常体で、`natural-japanese` で書く。書き手と別のレビュアーが、自然さと英語との食い違いを確かめる。
+  - サイトは `i18n.locales` に `en` と `ja` を置き、英語を `/ElasticLM/`、日本語を `/ElasticLM/ja/` に出し、上のバーの `localeDropdown` で切り替える。検索の plugin の `language` を `en` と `ja` にし、日本語の索引も作る（V1c1 で確かめた）。
+  - Docusaurus は、言語ごとの文書を `i18n/<言語>/docusaurus-plugin-content-docs/current/` からしか読まない（`@docusaurus/utils` の `getPluginI18nPath`）。設定ではほかの場所を向けられないので、`website/sync-guide-ja.mjs` が、ビルドと `start` の前に `docs/guide.ja/` をそこへ写す。写した先は git に入れない。サイトの区分の名前などの訳は `website/i18n/ja/docusaurus-plugin-content-docs/current.json` に置き、テーマの文言は Docusaurus に入っている日本語を使う。
+  - まだ訳のない英語の頁があると、日本語のサイトで、その頁からのリンクが解決できずにビルドが落ちた。英語と日本語の頁は同じ PR でそろえる。
 - `docs/container.md` と `SECURITY.md` は今の場所に残し、頁から GitHub のその文書を指す（Q8）。リンクは `main` を指す。サイトはタグから作るので、出していない版の手順が見えることがあるが、1.0 まではそれを受け入れ、版を指すリンクは版ごとの公開（roadmap の A-6）で扱う（持ち主の決定、Issue #190 の R7）。
 - Docusaurus 3.10 は 3 の系統の最後の版で、4 が出ると 3 は重い安全性の修正だけを 3 か月受けて終わる（https://docusaurus.io/community/release-process 、https://docusaurus.io/blog/releases/3.10 ）。4 への移行は roadmap の A-9。
 
