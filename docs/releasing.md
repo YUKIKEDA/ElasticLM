@@ -93,7 +93,7 @@ release is published (design §20.7, T28).
    nuget.org after checking them against `SHA256SUMS`, and then publishes the release.
 7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
 8. After `publish`, approve the `github-pages` environment in the same run. The `pages` job deploys the site the `site` job
-   built from the tag. The site's artifact is kept for 7 days: approve both environments within that time.
+   built from the tag. The site's artifact is kept for 7 days: approve both environments within that time. If the `pages` job fails because the artifact expired, re-run the `site` job of the same run: `gh run rerun <run ID> --job <site job ID>` (the job IDs are in `gh run view <run ID> --json jobs`). GitHub runs `site` again from the same tag, then `pages`, which needs the approval again; the jobs `site` does not depend on, `publish` among them, are not run again. A run can be re-run for up to 30 days. The tag's run does not run `pnpm audit`, so an advisory published since the tag does not stop it.
 9. When the candidate is good, tag `v<version>` the same way. Until roadmap row A-6, each tag's site replaces the one
    before it; that row comes before any tag after `v1.0.0`.
 
