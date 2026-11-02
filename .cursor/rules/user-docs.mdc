@@ -30,6 +30,7 @@ A page that needs another kind links to it instead of growing a second kind.
 - A figure is a fenced `mermaid` block: a sequence diagram for a protocol, a state diagram for a lifecycle, a flowchart for an order of checks. No ASCII art and no images of text.
 - Until roadmap row V1c5 (Issue #192) is done, a page has at most one flowchart or state diagram: a second one rendered empty on the site in V1c1, while Mermaid alone drew it. The PR counts the drawn figures of each page in a browser.
 - Code in a page is taken from a sample in `samples/`, which the gate builds (from V1c3 on). Commands are given as they are typed, with fake keys and IDs.
+- A tutorial's sample answers a reader's slip (arguments in the wrong order, a missing file, a file that is not a key) with one line and an exit code, not an unhandled exception. The first V1c3a sample threw `ArgumentException` when the two arguments were swapped, and the page explained the stack trace; the first-time reader review found it (PR #214).
 
 ## Markdown that works on GitHub and on the site
 
