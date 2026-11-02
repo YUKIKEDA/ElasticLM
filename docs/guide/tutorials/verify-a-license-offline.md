@@ -252,7 +252,7 @@ If it prints `invalid:` instead, the code after it says what failed:
 | `ELM_FEATURE_NOT_LICENSED` | The license was issued without `--feature pro`. | Issue the license again with `--feature pro` and `--force`. |
 | `ELM_MALFORMED` | The second argument is not a license file, such as `signing.cert`. | Pass `first.elmlic`. |
 
-If the app prints `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file: check the order of the two arguments. An `error:` line about a file that cannot be found names the path it tried. [Error codes](../reference/error-codes.md) lists every code, and [What can go wrong and what to do](../explanation/license-files-and-verification.md#what-can-go-wrong-and-what-to-do) says what each check needs.
+If the app prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file: check the order of the two arguments. An `error:` line about a file that cannot be found names the path it tried. [Error codes](../reference/error-codes.md) lists every code, and [What can go wrong and what to do](../explanation/license-files-and-verification.md#what-can-go-wrong-and-what-to-do) says what each check needs.
 
 ## What you made
 

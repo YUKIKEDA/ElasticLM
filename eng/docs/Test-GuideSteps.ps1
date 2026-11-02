@@ -17,8 +17,8 @@
                                                             joined by at least one hyphen (server-key), and a page
                                                             captures a name once.
                                         stream=stderr       takes the value from the standard error (default: stdout).
-                                        pattern="<regex>"   the value is group 1 of the first match; without a pattern, it
-                                                            is the whole stream, trimmed.
+                                        pattern="<regex>"   the value is group 1 of the first match, so the pattern needs a
+                                                            group; without a pattern, it is the whole stream, trimmed.
                                       stream and pattern need capture. A value must be one line of at most 256 characters
                                       of A-Za-z0-9._~- and must not be empty.
       steps:background ready=<url>    One line that starts with elm-server, started without waiting, its output read and
@@ -338,11 +338,12 @@ function Start-Background([string]$name, [object]$step, [hashtable]$values, [str
     $info = New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $folder
     try { $process = [Diagnostics.Process]::Start($info) }
     catch { throw "$($at): $($command.Shown) could not be started." }
+    # Set before anything else can fail, so that the end of the page stops the process.
+    $script:background = $process
     $process.StandardInput.Close()
     # Read and drop the output, so that a full pipe never stops the server.
     [void]$process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
     [void]$process.StandardError.BaseStream.CopyToAsync([IO.Stream]::Null)
-    $script:background = $process
     $handler = [Net.Http.HttpClientHandler]::new()
     # Only this probe accepts the server's self-signed certificate; the clients check the server's key against its license
     # (design §13.5).

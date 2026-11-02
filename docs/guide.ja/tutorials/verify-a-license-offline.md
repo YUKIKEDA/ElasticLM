@@ -252,7 +252,7 @@ valid: license first-license, product acme-cad, feature pro
 | `ELM_FEATURE_NOT_LICENSED` | ライセンスを `--feature pro` なしで発行した。 | `--feature pro` と `--force` を付けてライセンスを発行し直す。 |
 | `ELM_MALFORMED` | 2 つ目の引数が、`signing.cert` のような、ライセンスファイルでないものになっている。 | `first.elmlic` を渡す。 |
 
-アプリが `error: A root key is not a P-256 public key in PEM.` と表示したときは、1 つ目の引数が公開鍵のファイルではない。2 つの引数の順序を確かめる。ファイルが見つからないという `error:` の行には、開こうとしたパスが出る。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げてあり、それぞれの確認に何が必要かは[起こりうる問題と対処](../explanation/license-files-and-verification.md#起こりうる問題と対処)に書いてある。
+アプリが `error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、1 つ目の引数が公開鍵のファイルではない。2 つの引数の順序を確かめる。ファイルが見つからないという `error:` の行には、開こうとしたパスが出る。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げてあり、それぞれの確認に何が必要かは[起こりうる問題と対処](../explanation/license-files-and-verification.md#起こりうる問題と対処)に書いてある。
 
 ## 作ったもの
 
