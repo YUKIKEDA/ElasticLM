@@ -82,7 +82,7 @@ You need two keys: a root key, which your app and the server trust, and a signin
 
 `elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
 
-In the outputs below, the key IDs, the token ID, the fingerprints, and the times are fake. On your machine they are different every time.
+In the outputs below, the key IDs, the server's installation key, the token ID, the fingerprints, and the times are fake. On your machine they are different every time.
 
 Create the root key:
 
