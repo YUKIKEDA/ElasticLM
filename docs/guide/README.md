@@ -2,7 +2,7 @@
 
 ElasticLM lets the vendor of a .NET or C/C++ application issue licenses, check them on their customers' machines, and count concurrent use. This documentation is for the people who issue the licenses, the developers who build the checks into an app, and the administrators who run a license server. It assumes you know your own platform; it does not assume you have read the design.
 
-> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials and how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, the logs, the .NET API, and the C API. The explanation pages below explain how ElasticLM works.
+> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials are still being written: the first one, [Issue a license and verify it in a .NET app](tutorials/verify-a-license-offline.md), is ready. The how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, the logs, the .NET API, and the C API. The explanation pages below explain how ElasticLM works.
 
 ## How the documentation is organized
 
@@ -21,19 +21,21 @@ Read [Overview](explanation/overview.md) first, whoever you are. It names the pa
 
 **If you issue licenses (the vendor).** You hold the keys that make every license valid, and you may run the hosted service.
 
-1. [Trust chain](explanation/trust-chain.md): the root key, signing keys, and how to keep them safe.
-2. [License files and verification](explanation/license-files-and-verification.md): what you issue and what an app checks.
-3. [Activation](explanation/activation.md): how the hosted service binds licenses to devices.
-4. [Floating licenses](explanation/floating-licenses.md): seats, leases, and server licenses.
-5. [Security model](explanation/security-model.md): what is protected, what is not, and your duties.
+1. [Issue a license and verify it in a .NET app](tutorials/verify-a-license-offline.md): a tutorial that creates the keys, issues a license, and checks it.
+2. [Trust chain](explanation/trust-chain.md): the root key, signing keys, and how to keep them safe.
+3. [License files and verification](explanation/license-files-and-verification.md): what you issue and what an app checks.
+4. [Activation](explanation/activation.md): how the hosted service binds licenses to devices.
+5. [Floating licenses](explanation/floating-licenses.md): seats, leases, and server licenses.
+6. [Security model](explanation/security-model.md): what is protected, what is not, and your duties.
 
 **If you build ElasticLM into an app (the developer).** Your app embeds the root public keys and checks licenses, activations, or leases.
 
-1. [License files and verification](explanation/license-files-and-verification.md)
-2. [Devices and proofs](explanation/devices-and-proofs.md): the installation key that identifies a device.
-3. [Activation](explanation/activation.md) or [Floating licenses](explanation/floating-licenses.md), whichever your product uses.
-4. [Security model](explanation/security-model.md): what your app must check and what it cannot prevent.
-5. [.NET API](reference/dotnet-api.md) or [C API](reference/c-api.md): every type, function, and option of the library your app embeds.
+1. [Issue a license and verify it in a .NET app](tutorials/verify-a-license-offline.md): a tutorial that builds a .NET app that verifies a license offline.
+2. [License files and verification](explanation/license-files-and-verification.md)
+3. [Devices and proofs](explanation/devices-and-proofs.md): the installation key that identifies a device.
+4. [Activation](explanation/activation.md) or [Floating licenses](explanation/floating-licenses.md), whichever your product uses.
+5. [Security model](explanation/security-model.md): what your app must check and what it cannot prevent.
+6. [.NET API](reference/dotnet-api.md) or [C API](reference/c-api.md): every type, function, and option of the library your app embeds.
 
 **If you run a license server for your organization (the customer's administrator).** You run `elm-server`, which lends your organization's seats.
 

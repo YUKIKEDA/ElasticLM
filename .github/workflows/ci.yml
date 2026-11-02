@@ -206,10 +206,12 @@ jobs:
             if ($IsLinux) { docker rm -f elm-e2e-postgres | Out-Null }
           }
 
-      - name: README steps
-        # design §20.7 (V1c1): the commands between the README's markers, run line by line with the published elm.
+      - name: Guide steps
+        # design §20.7 (V1c1, V1c3a): the marked steps of README.md and of each Tutorial, run with the published elm in a
+        # work folder outside the clone. The Tutorial's own dotnet pack runs here too, and NUGET_PACKAGES points to a new
+        # folder for each page, so the cache above never stands in for the package the page packs.
         run: |
-          ./eng/docs/Test-ReadmeSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
+          ./eng/docs/Test-GuideSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
 
       - name: Smoke
         run: |

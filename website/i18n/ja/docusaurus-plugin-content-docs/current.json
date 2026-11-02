@@ -3,6 +3,10 @@
     "message": "Next",
     "description": "The label for version current"
   },
+  "sidebar.guide.category.Tutorials": {
+    "message": "チュートリアル",
+    "description": "The label for category 'Tutorials' in sidebar 'guide'"
+  },
   "sidebar.guide.category.Reference": {
     "message": "リファレンス",
     "description": "The label for category 'Reference' in sidebar 'guide'"

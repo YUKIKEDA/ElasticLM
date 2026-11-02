@@ -834,3 +834,51 @@
 - **決定:** 形式の頁の「クライアントが手元に持つファイル」の表は、端末のアプリが持つファイル（インストール鍵、`activation.json`、`borrows/`、`servers/`、`FileClockGuard` と `InstallationClockGuard` の時刻の状態）に限る。`elm-server` のファイルは、`elm-server` の設定の頁のデータフォルダーの節を指す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c2 の形）。
 - **理由:** `elm-server` のファイルは、設定の頁のデータフォルダーの表にすでにある。2 か所に書くと食い違う。
 - **却下した案:** `admin.token` など `elm-server` のファイルも、形式の頁の表に並べる。
+
+### V1c3 を 1 つの行で書く（V1c3 の Grill、Issue #213）
+
+- **決定:** V1c3 を V1c3a（手順を流す仕組み、コードをサンプルから引く仕組み、Tutorial 1）、V1c3b（Tutorial 2 と 3）、V1c3c（Tutorial 4）に分ける（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** 4 つの Tutorial、サンプル、手順を CI で流す仕組み、コードをサンプルから引く仕組みを 1 つの PR で書くと、V1c2 の 10 頁より重くなる。仕組みを先に 1 つの Tutorial で確かめれば、残りの Tutorial はその上に書ける。
+- **却下した案:** V1c3 を 1 つの行と 1 つの PR で書く。
+
+### Tutorials を公開まで待つ（V1c3 の Grill、Issue #213）
+
+- **決定:** 公開の前に Tutorials を書き、頭の「始める前に」の節で、ソースから作る手順（`dotnet publish` で `elm` を、`dotnet pack` でローカルのパッケージを作る。設計のレビューの R2 で改めた）を書く。公開のあと（V1e）、この節をリリースのダウンロードに書き換える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** 公開まで待つと、公開の直前に 4 つの Tutorial をまとめて書き、手順を流す仕組みも同時に作ることになる。手順を CI で流しておけば、公開の前に Tutorial の誤りが見つかる。
+- **却下した案:** リリースのバイナリと nuget.org のパッケージができる V1e まで、Tutorials を書かない。
+
+### C の Tutorial を、実行時に読み込む方法で先に書く（V1c3 の Grill、Issue #213）
+
+- **決定:** C の Tutorial（V1c3c）は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書く。roadmap の順は V1c3a、V1c3b、V1c8、V1c3c（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** C のアプリは、ふつうビルドのときにライブラリをリンクする。今の、実行時に読み込んで関数ポインターで呼ぶ方法で先に書くと、V1c8 のあとに Tutorial とサンプルを書き直すことになる。
+- **却下した案:** V1c3 の中で、今テストされている実行時に読み込む方法（`LoadLibrary` と `dlopen`、ヘッダーの `_fn` 型）で C の Tutorial を書く。
+
+### Tutorial のサンプルの csproj を 2 通りに参照する（V1c3 の設計のレビューの R1、Issue #213）
+
+- **決定:** Tutorial のサンプルは `samples/VerifyLicense` と同じくプロジェクト参照だけを持ち、ゲートが `ElasticLM.slnx` からビルドする。パッケージからの組み立ては、頁の手順（`dotnet new console`、`dotnet add … package ElasticLM.Licensing --version …`、サンプルの `Program.cs` と全体が同じ `Program.cs`）を CI がそのまま流して確かめる（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** リポジトリの `Directory.Packages.props` は中央のパッケージ管理を有効にしており、その下で版を書いた `PackageReference` は NU1008 で落ちる。Grill が倣うとした `samples/PackageConsumer` は版の参照だけを持ち、ソリューションの外で自前の props を持つので、1 つの csproj で 2 通りに参照する形ではなかった。頁の手順を流せば、読み手が打つものと同じものを確かめられる。
+- **却下した案:** 1 つの csproj にプロジェクト参照と版つきの `PackageReference` の両方を持たせ、ゲートと手順の CI で切り替える。
+
+### 「始める前に」で公開のスクリプトを使う（V1c3 の設計のレビューの R2、Issue #213）
+
+- **決定:** Tutorial 1 の「始める前に」は、要るものだけを `dotnet` で作る。`elm` は `dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools`（`-r` なしで、SDK が手元の RID を入れ、NativeAOT で作る）、パッケージは `dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed`。CI は `elm` の行をジョブが発行した `elm` で置き換え、pack の行は書いてあるとおりに流す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** `eng/release/Publish-Rid.ps1` は RID を引数に取り、4 つの実行ファイルとライブラリをまとめて作る、リリースのためのスクリプトで、Tutorial 1 には要らない `elm-service`（`web/admin/dist` を要る）も作る。読み手が打つのは、どの OS でも同じ `dotnet` のコマンドのほうが分かりやすい。
+- **却下した案:** 「始める前に」で `eng/release/Publish-Rid.ps1` を使って実行ファイルを作る。
+
+### 手順を流す仕組みを V1c3a でまとめて作る（V1c3 の設計のレビューの R6、Issue #213）
+
+- **決定:** V1c3a は、手順を流す仕組みのうち README と Tutorial 1 が使う分（`elm`、`dotnet`、ファイルのブロック、アプリの実行、出力の確かめ）だけを作る。裏で動かすサーバーと、出力の値を次の手順に渡すことは V1c3b、C のコンパイラーは V1c3c で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** 使う頁のない機能は、その行の PR で確かめられず、使う頁を書くときに形が合わないと分かれば作り直しになる。それぞれの機能は、それを使う Tutorial とともに作れば、その頁の手順で確かめられる。
+- **却下した案:** Grill の Q5 の機能（サーバー、値の受け渡し、C のコンパイラーを含む）を、すべて V1c3a で作る。
+
+### .NET の API の頁の抜き出しを `samples/VerifyLicense` から引く（V1c3 の設計のレビューの R9、Issue #213）
+
+- **決定:** .NET の API の頁のコードの抜き出しは、Tutorial 1 のサンプル（`samples/VerifyOffline`）から引き、その前の文も英語と日本語でそのサンプルを指す文に替える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **理由:** `samples/VerifyLicense` は配らない `ElasticLM.Issuing` と `ElasticLM.Leasing` も参照する計測のためのアプリで、Tutorials には使わないと決めた。読み手が Tutorial で書くのと同じコードを Reference にも載せれば、2 つの頁が同じアプリを指す。
+- **却下した案:** 抜き出しを、引く仕組みにのせたうえで `samples/VerifyLicense` から引き続ける。
+
+### オフラインの有効化のサンプルを V1c3 で足す（V1c3 の設計のレビューの R13、Issue #213）
+
+- **決定:** オフラインの有効化（ファイルのやり取り）のサンプルは、How-to の「オフラインの有効化」の頁とともに V1c4 で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c の形と V1c4 の行）。
+- **理由:** 4 つの Tutorial のどれもオフラインの有効化を扱わないので、V1c3 で足すと、それを引く頁がなく、コードをサンプルから引く仕組みでも、手順を流す仕組みでも確かめられない。
+- **却下した案:** V1c3 で、Tutorial から引かれないオフラインの有効化のサンプルを足す。

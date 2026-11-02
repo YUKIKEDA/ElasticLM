@@ -1,6 +1,7 @@
 <Solution>
   <Folder Name="/samples/">
     <Project Path="samples/VerifyLicense/VerifyLicense.csproj" />
+    <Project Path="samples/VerifyOffline/VerifyOffline.csproj" />
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/ElasticLM.Cli/ElasticLM.Cli.csproj" />

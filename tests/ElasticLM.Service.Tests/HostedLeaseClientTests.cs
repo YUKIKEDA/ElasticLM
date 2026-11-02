@@ -108,12 +108,17 @@ public sealed class HostedLeaseClientTests
         }
 
         test.Time.Advance(TimeSpan.FromSeconds(200));
-        await TestService.WaitForAsync(() => Task.FromResult(a.State == LeaseState.Lost));
-        Assert.Equal(ErrorCode.UnknownLease, a.LastError?.Code);
-        lock (changes)
+
+        // The state is set before the event is raised, outside the client's lock: wait for the event, not for the state.
+        await TestService.WaitForAsync(() =>
         {
-            Assert.Contains(changes, e => e.Lease == a && e.Previous == LeaseState.Held && e.Current == LeaseState.Lost);
-        }
+            lock (changes)
+            {
+                return Task.FromResult(changes.Exists(e => e.Lease == a && e.Previous == LeaseState.Held && e.Current == LeaseState.Lost));
+            }
+        });
+        Assert.Equal(LeaseState.Lost, a.State);
+        Assert.Equal(ErrorCode.UnknownLease, a.LastError?.Code);
 
         Lease b = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: cancel));
         using (var copy = TestDevice.Create(test, service, folder))

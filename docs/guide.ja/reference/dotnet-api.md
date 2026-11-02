@@ -87,13 +87,14 @@ sidebar_position: 9
 | `ClockSkew` | `TimeSpan` | 5 分 | いいえ | このマシンと発行元のあいだで許す時刻のずれ。0 から `LicenseVerifierOptions.MaxClockSkew`（1 時間）まで。コンストラクターが確かめる。 |
 | `AcceptTrialAsStandard` | `bool` | `true` | いいえ | `LicenseKind.Standard` を求めたときに、トライアルのライセンスも受け入れるかどうか。 |
 
-下のコードは、サンプルプログラム `VerifyLicense` のうち検証する部分だ。このプログラムは、ルート鍵のファイル、ライセンスファイル、製品 ID と、必要なら機能とそのバージョンをコマンドラインで受け取る。
+下のコードは、[ライセンスを発行して .NET のアプリで確かめる](../tutorials/verify-a-license-offline.md)で作るアプリのうち検証する部分で、アプリが呼ぶ順に並んでいる。このアプリは、ルート公開鍵のファイルとライセンスファイルをコマンドラインで受け取り、製品 `acme-cad` とその機能 `pro` を求める。製品と機能は、定数 `ProductId` と `FeatureId` に持っている。
 
+<!-- sample: samples/VerifyOffline/Program.cs#verify -->
 ```csharp
-TrustStore trust = TrustStore.Create([File.ReadAllText(args[0])], []);
+TrustStore trust = TrustStore.Create([File.ReadAllText(args[0])], revokedKeyIds: []);
 var verifier = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
-var requirement = new LicenseRequirement(args[2], LicenseKind.Standard, args.Length > 3 ? args[3] : null, args.Length > 4 ? args[4] : null, null);
-return Report(verifier.Verify(File.ReadAllBytes(args[1]), requirement));
+var requirement = new LicenseRequirement(ProductId, LicenseKind.Standard, FeatureId, FeatureVersion: null, Installation: null);
+LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), requirement);
 ```
 
 このサンプルは `StatelessClockGuard` を渡している。これは状態を持たないので、時計を戻しても検出しない。状態を持つ時刻巻き戻し対策（`FileClockGuard` か `InstallationClockGuard`）が何を検出し、何を検出しないかは、[時刻巻き戻しの検出と、その限界](../explanation/license-files-and-verification.md#時刻巻き戻しの検出とその限界)で説明している。
