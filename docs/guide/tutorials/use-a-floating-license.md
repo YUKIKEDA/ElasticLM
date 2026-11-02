@@ -40,6 +40,8 @@ dotnet publish <repo>/src/ElasticLM.Server -c Release -o tools
 
 If a build prints that `vswhere.exe` is not recognized, or stops with an `MSB3073` error that names `link.exe`, check the [prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) and the `PATH` line above.
 
+On Windows, `tools` also holds a `.pdb` file for each program, its debug symbols, which you do not need.
+
 Add the `tools` folder to your `PATH` in this terminal, so that the commands `elm` and `elm-server` run the programs in it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
 Build the packages, version 0.1.0, into the folder `feed`. Your app uses `ElasticLM.Client`, which depends on `ElasticLM.Licensing`, so you build both:
@@ -78,7 +80,7 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 
 You need two keys: a root key, which your app and the server trust, and a signing key, which signs licenses. The root key certifies the signing key, so that what the signing key signs is accepted.
 
-`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, which is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
+`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
 
 In the outputs below, the key IDs, the token ID, the fingerprints, and the times are fake. On your machine they are different every time.
 
@@ -134,7 +136,7 @@ uses: license
 valid: 2026-01-15 09:30:00Z to 2027-01-15 09:30:00Z
 ```
 
-`signing.cert` is the key certificate. [Trust chain](../explanation/trust-chain.md) explains the keys and the certificate.
+`signing.cert` is the key certificate. It is valid for one year: during that time the signing key may sign new licenses. The dates do not limit how long the licenses it signed stay valid, so a license may expire much later; [Key certificates](../explanation/trust-chain.md#key-certificates) explains this under "Validity and the issue time".
 
 ## Set up the server
 
@@ -174,11 +176,11 @@ The server stops at once with exit code 1, because it has no server license yet,
 error: The server license 'server.elmlic' does not exist. Ask the vendor for a server license bound to this server: installation key FAKE-SERVER-KEY-00000000000000000000000000K, fingerprints 00000000000000000000000000000001, 00000000000000000000000000000002. Or activate one with elm server activate, or elm server activate-request offline.
 ```
 
-The value after `installation key` is the thumbprint. The key itself stays in `server-data`. In real use, the customer's administrator sends this thumbprint to the vendor, who issues the server license.
+The value after `installation key` is the thumbprint: 43 characters, which may include `-` and `_`. The key itself stays in `server-data`. The values after `fingerprints` are the machine fingerprints of your machine: a license issued with `--fingerprint` would be bound to the machine as well, and this tutorial does not use them. In real use, the customer's administrator sends this thumbprint to the vendor, who issues the server license.
 
 On Linux and macOS, if the tutorial folder is writable by your group or by others, the server instead prints `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.`, followed by one more sentence, and also ends with exit code 1. Type `chmod go-w .` in the tutorial folder, then the same `elm-server` command again. You do not need to delete `server-data` first.
 
-Issue the server license: two seats of the feature `pro`, bound to the server's key. Replace `<server-key>` with the thumbprint that the server printed:
+Issue the server license: two seats of the feature `pro`, bound to the server's key. Replace `<server-key>` with the thumbprint that the server printed, all 43 characters exactly:
 
 <!-- steps:run -->
 ```shell
@@ -196,9 +198,11 @@ token ID: FAKEjti000000000000002
 
 - `--kind server` makes a server license, which only an `elm-server` uses.
 - `--feature "pro;seats=2"` grants the feature `pro` with two seats: at most two copies of the app can hold it at the same time.
+- `--expires` sets when the license expires: 00:00 UTC on 31 December 2099. The key certificate's one year does not limit it, as explained above.
 - `--bind-key` binds the license to the server's installation key, so it is valid on that server only.
 - `--lease-minutes 1` makes each lease last one minute. The default is 10 minutes; this tutorial uses one minute so that you wait less, as the next section explains.
 - `--borrow-days 1` lets an app borrow a seat for up to one day. Without it, borrowing is not allowed.
+- `--trust root.pub.pem` makes `elm` verify the new license against the root public key and write the file only if it passes, so a command that ends without an error made a license that verifies.
 
 ## Start the server
 
@@ -209,12 +213,14 @@ Open a second terminal in the tutorial folder, and add the `tools` folder to its
 elm-server --config server.json
 ```
 
-The server keeps running and prints log lines. One of them says that it started:
+The server keeps running and prints its log. Each entry is a line that starts with `info:` and names where the entry comes from, followed by the message, indented. The first entries come from the web host the server runs in: the two addresses it listens on, `Application started. Press Ctrl+C to shut down.`, the hosting environment, and a `Content root path`, which is the folder of the `elm-server` executable and has nothing to do with the paths in `server.json`. The line to look for is `server.started`, which says that the server started:
 
 ```text
 info: elm-server[1]
       server.started: listening on port 7070 as https://127.0.0.1:7070/, key FAKE-SERVER-KEY-00000000000000000000000000K, license floating-server, in 68 ms; reclaim window until 2026-01-15T09:41:00.0000000+00:00
 ```
+
+The time at the end is in UTC, as `+00:00` shows.
 
 For the first lease duration after it starts, one minute with this license, the server refuses new leases: after a restart, apps that held leases before it need that time to reclaim their seats. Leave the server running, and go back to the first terminal for the rest of the tutorial. While you create the app, most of that minute passes.
 
@@ -332,7 +338,7 @@ The app reads the root public key into a trust store, the set of root keys it tr
 
 The app then makes three requests, each through `WithRetryAsync`, which waits and asks again while the server is still in the minute after its start:
 
-1. `AcquireLeaseAsync` leases one seat of `pro`. On the first request, the client also fetches the server license and checks it against the root public key: the server proves that the vendor gave it the seats. The client renews a lease in the background until it is returned.
+1. `AcquireLeaseAsync` leases one seat of `pro`. On the first request, the client also fetches the server license and checks it against the root public key: the server proves that the vendor gave it the seats. The connection is HTTPS with a self-signed certificate that the server makes from its installation key, and the client accepts it because the server license names that key; [TLS](../explanation/floating-licenses.md#tls) explains this. The client renews a lease in the background until it is returned.
 2. `ReleaseLeaseAsync` returns the lease, so the seat is free again.
 3. `BorrowLeaseAsync` borrows a seat for one hour. A borrow is not renewed: it is valid until it expires, even with no network, and the client saves it in the data folder.
 
@@ -347,7 +353,7 @@ Run the app with the root public key and the data folder `client-data`, which th
 dotnet run --project app -- root.pub.pem client-data
 ```
 
-If the server started less than a minute ago, the app first prints a line such as `waiting 48 s: the server is reclaiming leases after its start`, and waits. Then it prints:
+The first `dotnet run` builds the app, which takes some seconds with no output. If the server started less than a minute ago, the app then prints a line such as `waiting 48 s: the server is reclaiming leases after its start`, and waits. Then it prints:
 
 <!-- steps:expect -->
 ```text
@@ -355,12 +361,24 @@ leased: pro
 borrowed: pro for 1 hour
 ```
 
-If it prints an error code instead, the code says what failed:
+Meanwhile, the server terminal shows the requests. The web host adds a few `info:` entries for each request, from `Request starting` to `Request finished` with the HTTP status. Among them are these lines, here with the other lines left out and with fake IDs:
+
+```text
+      Request finished HTTP/1.1 POST https://127.0.0.1:7070/v1/leases - 503 - application/problem+json 0.9008ms
+      lease.acquired: FAKE-LEASE-ID-00000001 pro x1 for key FAKE-APP-KEY-00000000000000000000000000000A
+      lease.released: FAKE-LEASE-ID-00000001
+      lease.acquired: FAKE-LEASE-ID-00000002 pro x1 for key FAKE-APP-KEY-00000000000000000000000000000A
+```
+
+The first request for a lease finished with status 503, because the server was still reclaiming; this is the wait the app printed. Then the server lent the lease, the app returned it, and the server lent the borrow, which the log also calls `lease.acquired`. The key at the end is the app's installation key. If the app did not have to wait, the 503 line is not there.
+
+If the app prints an error code instead, the code says what failed:
 
 | Code | Likely cause in this tutorial | What to do |
 | --- | --- | --- |
 | `ELM_NETWORK_ERROR` | The server is not running, or it listens on another address. | Start the server in the second terminal as in [Start the server](#start-the-server), and check that `listen` in `server.json` is `https://127.0.0.1:7070`. |
 | `ELM_NO_SEATS` | Both seats are borrowed, because you ran the app more than once within an hour. | See the next section. |
+| `ELM_SERVER_PIN_MISMATCH` | `server-data` was deleted after an earlier run, so the server has a new installation key, while `client-data` still holds the key of the old one. | Start again as described at the end of [Check the server](#check-the-server). |
 | `ELM_UNTRUSTED_KEY` | The first argument is a public key other than `root.pub.pem`, such as `signing.pub.pem`. | Pass `root.pub.pem`. |
 
 If the app prints `usage: app <root-public-key.pem> <data-folder>`, it did not get exactly two arguments. If it prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file. An `error:` line about a file that cannot be found names the path it tried, and one that says access is denied usually means the two arguments are in the wrong order. [Error codes](../reference/error-codes.md) lists every code.
@@ -385,9 +403,13 @@ leases: 1
 
 Before these lines, it prints the product, the server license's ID and token ID, its expiry, and the server's key. `serving` says that the minute after the start is over. The lease the app returned is gone; the one lease left is the borrow, which uses one of the two seats until it expires an hour later. The license allows no seats over its limit, so the limit with overage is also 2.
 
-Each run of the app within that hour borrows one more seat. A second run leaves both seats borrowed, and a third one prints `ELM_NO_SEATS: No seats are free for the feature.` and ends with exit code 1, because borrowed seats count as used. To start again from the beginning, stop the server and delete the whole tutorial folder: that removes both the server's record of the borrows in `server-data` and the app's borrow files in `client-data`.
+Each run of the app within that hour borrows one more seat. A second run leaves both seats borrowed, and a third one prints `ELM_NO_SEATS: No seats are free for the feature.` and ends with exit code 1, because borrowed seats count as used.
 
-Stop the server: press Ctrl+C in the second terminal.
+Stop the server: press Ctrl+C in the second terminal. It prints `Application is shutting down...` and `server.stopped: 1 leases were not returned`, and ends. The one lease is the borrow. The server keeps its record of the borrows in `server-data`, so when it starts again, it still counts the borrow until the borrow expires.
+
+To start again from the beginning, delete the whole tutorial folder with the server stopped: that removes both the server's record of the borrows in `server-data` and the app's borrow files in `client-data`. Then start again from [Before you start](#before-you-start), including the builds of `tools` and `feed`. Do not delete only `server-data`: the server then makes a new installation key and needs a new server license, and the app with the old `client-data` refuses the new server with `ELM_SERVER_PIN_MISMATCH`, because the client keeps the key of the server it checked first.
+
+If you change the ElasticLM source and pack version 0.1.0 again, your app still gets the 0.1.0 packages that NuGet saved the first time in its global packages folder, such as `~/.nuget/packages` or `%USERPROFILE%\.nuget\packages`, and not the new ones in `feed`. `dotnet nuget locals global-packages --list` shows where the folder is. Delete its folders `elasticlm.client` and `elasticlm.licensing`, or clear the whole folder with `dotnet nuget locals global-packages --clear`, before the next `dotnet add` or `dotnet run`.
 
 ## What you made
 

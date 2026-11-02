@@ -49,6 +49,7 @@ Exit code 1 means, for example:
 - Without `--config`, `elm-server` reads environment variables only.
 - An environment variable overrides the same setting in the file. An environment variable that is set to an empty value counts as not set. The one exception is `ELM_TLS_PASSWORD`: an empty value is used as an empty password.
 - The file is at most 64 KiB. A key that the file does not know (for example a misspelt one) is an error. Key names are case-sensitive.
+- A relative path, in `--config` or in a setting (`license`, `dataDirectory`, `trust.rootKeys`, `tls.certificate`, `tls.key`), is relative to the working folder of the `elm-server` process: the folder it is started in. It is not relative to the folder of the configuration file or of the executable. The one exception is `log.usage`, whose relative path is under `dataDirectory`.
 - A setting error stops `elm-server` before it starts: it prints `error:` and the reason. The exit codes are in [Command line and exit codes](#command-line-and-exit-codes).
 - The server reads its settings only when it starts. [`elm server reload`](elm-cli.md#elm-server-reload) makes a running server read the server license file again, from the same `license` path, and nothing else. A change to any setting takes effect at the next start.
 - A duration, such as `borrow.maxDuration`, has the form `d.hh:mm:ss`: days, a dot, then hours, minutes, and seconds. `7.00:00:00` is 7 days, and `0.12:00:00` is 12 hours. The days may be left out: `12:00:00` is also 12 hours.
