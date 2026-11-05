@@ -252,13 +252,13 @@ If it prints `invalid:` instead, the code after it says what failed:
 | `ELM_FEATURE_NOT_LICENSED` | The license was issued without `--feature pro`. | Issue the license again with `--feature pro` and `--force`. |
 | `ELM_MALFORMED` | The second argument is not a license file, such as `signing.cert`. | Pass `first.elmlic`. |
 
-If the app prints `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file: check the order of the two arguments. An `error:` line about a file that cannot be found names the path it tried. [Error codes](../reference/error-codes.md) lists every code, and [What can go wrong and what to do](../explanation/license-files-and-verification.md#what-can-go-wrong-and-what-to-do) says what each check needs.
+If the app prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file: check the order of the two arguments. An `error:` line about a file that cannot be found names the path it tried. [Error codes](../reference/error-codes.md) lists every code, and [What can go wrong and what to do](../explanation/license-files-and-verification.md#what-can-go-wrong-and-what-to-do) says what each check needs.
 
 ## What you made
 
 You created a root key and a signing key, certified the signing key, issued a license, and verified it offline in a .NET app. Keep `root.key.pem` offline in a real product: it only certifies signing keys, and anyone who holds it can make licenses that your app accepts.
 
-More tutorials, which activate a device online and use a floating license, are being written.
+In [Run a license server and lease a floating license in a .NET app](use-a-floating-license.md), you lend seats of a feature from a license server to an app. A tutorial that activates a device online is being written.
 
 To learn more:
 

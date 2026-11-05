@@ -837,7 +837,7 @@
 
 ### V1c3 を 1 つの行で書く（V1c3 の Grill、Issue #213）
 
-- **決定:** V1c3 を V1c3a（手順を流す仕組み、コードをサンプルから引く仕組み、Tutorial 1）、V1c3b（Tutorial 2 と 3）、V1c3c（Tutorial 4）に分ける（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **決定:** V1c3 を V1c3a（手順を流す仕組み、コードをサンプルから引く仕組み、Tutorial 1）、V1c3b（Tutorial 2 と 3）、V1c3c（Tutorial 4）に分ける（V1c3b の Grill の Q1 で、Tutorial 2 を V1c3d に分けた。持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
 - **理由:** 4 つの Tutorial、サンプル、手順を CI で流す仕組み、コードをサンプルから引く仕組みを 1 つの PR で書くと、V1c2 の 10 頁より重くなる。仕組みを先に 1 つの Tutorial で確かめれば、残りの Tutorial はその上に書ける。
 - **却下した案:** V1c3 を 1 つの行と 1 つの PR で書く。
 
@@ -849,7 +849,7 @@
 
 ### C の Tutorial を、実行時に読み込む方法で先に書く（V1c3 の Grill、Issue #213）
 
-- **決定:** C の Tutorial（V1c3c）は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書く。roadmap の順は V1c3a、V1c3b、V1c8、V1c3c（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **決定:** C の Tutorial（V1c3c）は、V1c8 でリンクの方法（Windows のインポートライブラリ、Linux と macOS のビルド時のリンク）が決まってから書く。roadmap の順は V1c3a、V1c3b、V1c8、V1c3c（V1c3b の Grill の Q1 で、V1c3b と V1c8 の間に V1c3d を置いた。持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
 - **理由:** C のアプリは、ふつうビルドのときにライブラリをリンクする。今の、実行時に読み込んで関数ポインターで呼ぶ方法で先に書くと、V1c8 のあとに Tutorial とサンプルを書き直すことになる。
 - **却下した案:** V1c3 の中で、今テストされている実行時に読み込む方法（`LoadLibrary` と `dlopen`、ヘッダーの `_fn` 型）で C の Tutorial を書く。
 
@@ -867,7 +867,7 @@
 
 ### 手順を流す仕組みを V1c3a でまとめて作る（V1c3 の設計のレビューの R6、Issue #213）
 
-- **決定:** V1c3a は、手順を流す仕組みのうち README と Tutorial 1 が使う分（`elm`、`dotnet`、ファイルのブロック、アプリの実行、出力の確かめ）だけを作る。裏で動かすサーバーと、出力の値を次の手順に渡すことは V1c3b、C のコンパイラーは V1c3c で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
+- **決定:** V1c3a は、手順を流す仕組みのうち README と Tutorial 1 が使う分（`elm`、`dotnet`、ファイルのブロック、アプリの実行、出力の確かめ）だけを作る。裏で動かすサーバーと、出力の値を次の手順に渡すこと（`steps:run` の行の分は V1c3b、`steps:file` の中身の分は V1c3d。V1c3b の設計のレビューの R1）、C のコンパイラーは V1c3c で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
 - **理由:** 使う頁のない機能は、その行の PR で確かめられず、使う頁を書くときに形が合わないと分かれば作り直しになる。それぞれの機能は、それを使う Tutorial とともに作れば、その頁の手順で確かめられる。
 - **却下した案:** Grill の Q5 の機能（サーバー、値の受け渡し、C のコンパイラーを含む）を、すべて V1c3a で作る。
 
@@ -882,3 +882,49 @@
 - **決定:** オフラインの有効化（ファイルのやり取り）のサンプルは、How-to の「オフラインの有効化」の頁とともに V1c4 で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c の形と V1c4 の行）。
 - **理由:** 4 つの Tutorial のどれもオフラインの有効化を扱わないので、V1c3 で足すと、それを引く頁がなく、コードをサンプルから引く仕組みでも、手順を流す仕組みでも確かめられない。
 - **却下した案:** V1c3 で、Tutorial から引かれないオフラインの有効化のサンプルを足す。
+
+### Tutorial 2 と 3 を 1 つの行で書く（V1c3b の Grill の Q1、Issue #217）
+
+- **決定:** V1c3b は Tutorial 3（`elm-server`）と、手順を流す仕組みに足す機能（裏で動かすサーバー、値を取る印、0 でない終了コード）にする。Tutorial 2（`elm-service`）は新しい行 V1c3d に分け、V1c3b のあとに置く。順は V1c3a、V1c3b、V1c3d、V1c8、V1c3c で、Tutorial の番号は変えない（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」）。
+- **理由:** Tutorial 2 は、`elm-service` の入手（`web/admin/` のビルド）、管理 API の API キー、ノンスの秘密を作るコマンドと、Tutorial 3 にない問いを抱える。2 つを 1 つの PR で書くと、仕組みの新しい機能と 2 つのサーバーの手順を同時に確かめることになる。`elm-server` は .NET だけで作れ、仕組みの新しい機能をすべて使うので、先に Tutorial 3 で機能を確かめれば、V1c3d はその上に `elm-service` に固有のものだけを足せる。
+- **却下した案:** V1c3b の 1 つの行と 1 つの PR で、Tutorial 2 と 3 の両方を書く。
+
+### Tutorial 2 を公開まで待つ（V1c3b の Grill の Q2、Issue #217）
+
+- **決定:** Tutorial 2 の「始める前に」に、`elm-service` をソースから作る手順を本文として書く。前提は Node.js 24、Corepack、Windows の PowerShell 7、Linux と macOS の `clang`。CI は、`steps:prebuilt name=elm-service` のブロックを流さず、ジョブが発行した `elm-service` で置き換える。公開のあと（V1e）は、ダウンロードに書き換える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」）。
+- **理由:** Tutorial 1 と同じく、公開の前に Tutorial を書いて手順を CI で流せば、公開の前に誤りが見つかる。`elm-service` だけ公開を待つと、V1e の直前に Tutorial 2 と仕組みの残りを急いで書くことになる。ソースから作る手順は前提が増えるが、V1e で書き換える 1 つの節に収まる。
+- **却下した案:** リリースのバイナリができる V1e まで、Tutorial 2 を書かない。
+
+### 管理 API の API キーの渡し方（V1c3b の Grill の Q3、Issue #217）
+
+- **決定:** `elm admin request` は今のまま、API キーを環境変数 `ELM_API_KEY` からだけ受け取る（`src/ElasticLM.Cli/AdminCredentials.cs`）。頁はコードブロックの外の文でシェルごとに `ELM_API_KEY` を設定する書き方を示し、CI では仕組みが `elm-service setup` の出力から取ったキーを頁の外で設定する。製品のコードは変えない（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」）。
+- **理由:** `elm admin request` は本文のファイル（`--body`）とキーの環境変数をすでに持ち、Tutorial のために製品の入口を増やす理由がない。`curl` は、本文に加えて認証のヘッダーとシェルごとに違う引用符を読み手に打たせ、手順を流す仕組みにも `elm` と別のコマンドを許すことになる。キーを引数やファイルで渡す入口は、プロセスの一覧やディスクにキーを残す道を足す。
+- **却下した案:** 本文をファイルに書き、`curl` で管理 API に送る。
+- **却下した案:** `elm admin request` に、キーのファイルを読む `--api-key-file` のオプションを足す。
+
+### ノンスの秘密の作り方（V1c3b の Grill の Q4、Issue #217）
+
+- **決定:** `elm` に、ランダムな秘密のファイルを作る小さなコマンドを足す（例: `elm secret create --out nonce.secret`）。形は V1c3d の Grill で決める（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」と V1c3d の行）。
+- **理由:** 頁に決まった秘密を載せると、読み手がそれを写して本番でも使うおそれがあり、秘密がだれにでも知られた値になる。シェルごとのコマンド（PowerShell の乱数、`openssl rand`）は、どのシェルでも同じに打てる手順という決まりに反し、手順を流す仕組みでも流せない。`elm` のコマンドなら、3 つの OS で同じ 1 行になり、CI でも流せる。
+- **却下した案:** 頁に、例として決まったノンスの秘密を載せる。
+- **却下した案:** シェルごとのコマンドで乱数のファイルを作る手順を、コードブロックの外の文で示す。
+
+### `elm-server` の起動直後の待ちの長さ（V1c3b の Grill の Q5、Issue #217）
+
+- **決定:** Tutorial 3 は、サーバーライセンスを `--lease-minutes 1` で出す。サンプルのアプリは、`ELM_SERVER_RECOVERING` と `RetryAfter` を受けたら、その時間だけ待って取り直す。頁には待ちの理由を 1 文で書く（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」）。
+- **理由:** 新しい `elm-server` は、初めての起動でもリースの長さ 1 つ分のあいだ新しいリースを断る（`src/ElasticLM.Leasing/LeaseEngine.cs`）。1 分なら、頁と CI の待ちは 60 秒以内に収まり、`elm license issue` の値として読み手にも分かりやすい。待ちを受けて取り直すコードは、本物のアプリにも要る形で、読み手に見せる価値がある。
+- **却下した案:** 端から端までのテストと同じく `--lease-minutes 0.25`（15 秒）にする。待ちは短いが、15 秒のリースは試験のための値で、読み手が写す Tutorial の値として本番の目安から離れすぎる。
+- **却下した案:** 既定の 10 分のままにする。頁と CI が 10 分待つことになる。
+
+### 取った値を `steps:file` の中身にも V1c3b で入れる（V1c3b の設計のレビューの R1、Issue #217）
+
+- **決定:** 出力から取った値で埋めるのは、V1c3b では `steps:run` と `steps:background` の行だけにする。`steps:file` の中身を埋める機能は、それを使う Tutorial 2（管理 API の本文に、前の応答から取った ID を入れる）を書く V1c3d で足す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」と V1c3d の行）。
+- **理由:** Tutorial 3 は `steps:file` の中身に取った値を入れない（サーバーの設定ファイルとアプリの `Program.cs` は決まった中身）。使う頁のない機能はその行の PR で確かめられず、使う頁を書くときに形が合わなければ作り直しになる（V1c3 の設計のレビューの R6 と同じ）。
+- **却下した案:** Grill の Q6 が最初に決めたとおり、`steps:run` の行と `steps:file` の中身の両方を V1c3b で埋める。
+
+### アプリの実行ファイルで始まる行（V1c3b の設計のレビューの R2、Issue #217）
+
+- **決定:** ビルドしたアプリの実行ファイルで始まる手順の行は、ビルドした C のアプリを動かす Tutorial 4 を書く V1c3c で足す。その行の書き方と流し方は V1c3c の Grill で決める（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形と V1c3c の行）。
+- **理由:** Tutorial 1 と 3 のアプリは `dotnet run` で動かすので、V1c3b にこの行を使う頁はない。一方、Tutorial 4 はビルドした C のアプリを動かすので、この行が要る。
+- **却下した案:** V1c3 の設計のレビューの R6 のとおり、使う頁のない V1c3b で作る。
+- **却下した案:** この行を作らない（V1c3b の Grill の記録が「外した」とした形）。Tutorial 4 の手順を流せなくなる。

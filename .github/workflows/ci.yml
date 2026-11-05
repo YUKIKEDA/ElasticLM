@@ -207,11 +207,13 @@ jobs:
           }
 
       - name: Guide steps
-        # design §20.7 (V1c1, V1c3a): the marked steps of README.md and of each Tutorial, run with the published elm in a
-        # work folder outside the clone. The Tutorial's own dotnet pack runs here too, and NUGET_PACKAGES points to a new
-        # folder for each page, so the cache above never stands in for the package the page packs.
+        # design §20.7 (V1c1, V1c3a, V1c3b): the marked steps of README.md and of each Tutorial, run with the published elm
+        # and elm-server in a work folder outside the clone. The Tutorial's own dotnet pack runs here too, and
+        # NUGET_PACKAGES points to a new folder for each page, so the cache above never stands in for the package the page
+        # packs. A page's steps:background block runs elm-server in the background, without any ELM_ variable, and the
+        # script stops its process tree at the end of the page.
         run: |
-          ./eng/docs/Test-GuideSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm'))
+          ./eng/docs/Test-GuideSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')) -ElmServer (Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server'))
 
       - name: Smoke
         run: |

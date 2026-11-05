@@ -27,7 +27,7 @@ The server gives each lease as a lease token (type `elm-lease+jws`), signed by t
 
 Because the token is signed, the app can check it without asking anyone. Because `cnf.jkt` names one key, a token copied to another machine is of no use there: every renewal and return needs a proof made with that key.
 
-The lease time is the policy's `leaseDuration`: 10 minutes by default, from 2 minutes to 24 hours.
+Where the lease time comes from depends on the server. On `elm-service`, it is the policy's `leaseDuration`: 10 minutes by default, from 2 minutes to 24 hours. On `elm-server`, it is the lease duration in the server license. A server license that `elm-service` issues holds the policy's `leaseDuration`. One that `elm license issue` makes holds the value of `--lease-minutes`, 10 minutes by default; it must be at least one second, so it can be shorter than 2 minutes (see [`elm license issue`](../reference/elm-cli.md#elm-license-issue)).
 
 ## How seats are counted
 

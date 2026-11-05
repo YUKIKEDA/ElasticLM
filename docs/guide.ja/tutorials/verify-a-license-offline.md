@@ -252,13 +252,13 @@ valid: license first-license, product acme-cad, feature pro
 | `ELM_FEATURE_NOT_LICENSED` | ライセンスを `--feature pro` なしで発行した。 | `--feature pro` と `--force` を付けてライセンスを発行し直す。 |
 | `ELM_MALFORMED` | 2 つ目の引数が、`signing.cert` のような、ライセンスファイルでないものになっている。 | `first.elmlic` を渡す。 |
 
-アプリが `error: A root key is not a P-256 public key in PEM.` と表示したときは、1 つ目の引数が公開鍵のファイルではない。2 つの引数の順序を確かめる。ファイルが見つからないという `error:` の行には、開こうとしたパスが出る。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げてあり、それぞれの確認に何が必要かは[起こりうる問題と対処](../explanation/license-files-and-verification.md#起こりうる問題と対処)に書いてある。
+アプリが `error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、1 つ目の引数が公開鍵のファイルではない。2 つの引数の順序を確かめる。ファイルが見つからないという `error:` の行には、開こうとしたパスが出る。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げてあり、それぞれの確認に何が必要かは[起こりうる問題と対処](../explanation/license-files-and-verification.md#起こりうる問題と対処)に書いてある。
 
 ## 作ったもの
 
 ルート鍵と署名鍵を作り、署名鍵を証明し、ライセンスを発行して、.NET のアプリでオフラインで検証した。実際の製品では、`root.key.pem` をオフラインに置く。この鍵は署名鍵を証明するためだけに使い、これを持つ人は誰でも、アプリが受け入れるライセンスを作れるからだ。
 
-デバイスをオンラインでアクティベーションするチュートリアルと、フローティングライセンスを使うチュートリアルを執筆中だ。
+[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](use-a-floating-license.md)では、ライセンスサーバーからアプリに機能のシートを貸し出す。デバイスをオンラインでアクティベーションするチュートリアルは執筆中だ。
 
 さらに知るには、次のページを読む。
 
