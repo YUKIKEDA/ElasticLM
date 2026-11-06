@@ -37,6 +37,7 @@ internal static class ElmApp
         root.Subcommands.Add(LicenseCommands.Create(host));
         root.Subcommands.Add(LogCommands.Create(host));
         root.Subcommands.Add(OfflineCommands.Create(host));
+        root.Subcommands.Add(SecretCommands.Create(host));
         root.Subcommands.Add(ServerCommands.Create(host));
         return root;
     }

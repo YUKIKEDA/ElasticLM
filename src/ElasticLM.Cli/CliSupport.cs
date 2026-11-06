@@ -85,6 +85,14 @@ internal static class CliFiles
         try
         {
             using var stream = new FileStream(path, options);
+            if (secret && !OperatingSystem.IsWindows())
+            {
+                // UnixCreateMode applies only to a new file: an existing file that --force overwrites keeps its mode, such as
+                // 0644. Set the mode on the open handle before the secret is written, so that it is never in a wider file
+                // (design §16).
+                File.SetUnixFileMode(stream.SafeFileHandle, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+            }
+
             stream.Write(bytes);
         }
         catch (IOException) when (!force && File.Exists(path))

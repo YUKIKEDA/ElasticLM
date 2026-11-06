@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # elm command reference
 
-This page lists every command and option of `elm`, the command line tool for vendors and administrators: it creates and certifies keys, issues and verifies license files, administers an on-premises license server on its own machine, calls the administration API of `elm-service`, passes offline request files to the service, and verifies signed logs. It is for looking up a command you already know you need. For what keys, certificates, license files, and servers are, read the [Overview](../explanation/overview.md) and the [Trust chain](../explanation/trust-chain.md) first.
+This page lists every command and option of `elm`, the command line tool for vendors and administrators: it creates and certifies keys, issues and verifies license files, administers an on-premises license server on its own machine, calls the administration API of `elm-service`, passes offline request files to the service, creates the nonce secret of `elm-service`, and verifies signed logs. It is for looking up a command you already know you need. For what keys, certificates, license files, and servers are, read the [Overview](../explanation/overview.md) and the [Trust chain](../explanation/trust-chain.md) first.
 
 ## Common behavior
 
@@ -14,7 +14,7 @@ This page lists every command and option of `elm`, the command line tool for ven
 elm <group> <command> [arguments] [options]
 ```
 
-The groups are `key`, `license`, `server`, `admin`, `offline`, and `log`. Options may come in any order after the command. An option that takes several values is repeated (`--feature A --feature B`); `elm key certify --use` also takes a comma-separated list.
+The groups are `key`, `license`, `server`, `admin`, `offline`, `secret`, and `log`. Options may come in any order after the command. An option that takes several values is repeated (`--feature A --feature B`); `elm key certify --use` also takes a comma-separated list.
 
 Every command takes `--help` (also `-h` or `-?`), which prints its usage. `elm --version` prints the version of `elm`.
 
@@ -26,15 +26,15 @@ Errors are written to standard error as one line that starts with `error:`; warn
 
 ### `--json`
 
-Writes the result to standard output as JSON instead of text. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm license inspect`, `elm license verify`, `elm server status`, `elm server leases`, `elm server reload`, `elm server seal`, `elm server release`, `elm offline process`, and `elm log verify`. The `elm server` commands write the administration API's answer as it came.
+Writes the result to standard output as JSON instead of text. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm license inspect`, `elm license verify`, `elm server status`, `elm server leases`, `elm server reload`, `elm server seal`, `elm server release`, `elm offline process`, `elm secret create`, and `elm log verify`. The `elm server` commands write the administration API's answer as it came.
 
 ### `--force`
 
-Overwrites an output file that exists. Without it, a command that would overwrite a file stops with exit code 2 and writes nothing. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm server activate-request`, `elm server refresh-request`, `elm server deactivate-proof`, and `elm offline process`.
+Overwrites an output file that exists. Without it, a command that would overwrite a file stops with exit code 2 and writes nothing. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm server activate-request`, `elm server refresh-request`, `elm server deactivate-proof`, `elm offline process`, and `elm secret create`.
 
 ### Passphrases
 
-Every private key that `elm` writes is a PKCS#8 PEM file encrypted with a passphrase. On Linux and macOS a private key file is created with mode `0600`; on Windows it takes the access rules of its folder.
+Every private key that `elm` writes is a PKCS#8 PEM file encrypted with a passphrase. On Linux and macOS a private key file is written with mode `0600`, also when `--force` overwrites a file that had another mode; on Windows it takes the access rules of its folder.
 
 The commands that read or write a private key (`elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`) take the passphrase from an environment variable:
 
@@ -481,6 +481,22 @@ Sends an offline activation request, refresh request, or deactivation proof to `
 
 With `ELM_API_KEY`, or a saved `elm admin login` for the same origin as `--url`, the file is sent to the service's administration entry; otherwise it is sent to the public entry. Redirects are not followed, and the request times out after 30 seconds.
 
+## elm secret
+
+### elm secret create
+
+```text
+elm secret create --out <file> [options]
+```
+
+Writes the nonce secret of `elm-service`, which the service's setting [`nonce.secretFile`](service-configuration.md#nonce) names: 32 random bytes in base64, on one line. It prints `secret file: <file>`, and with `--json` an object whose `file` is the path. The secret itself is never written to standard output or standard error. On Linux and macOS the file is written with mode `0600`, also when `--force` overwrites a file that had another mode; on Windows it takes the access rules of its folder.
+
+| Option | Value | Default | Required | Meaning |
+| --- | --- | --- | --- | --- |
+| `--out` | File path | — | Yes | The secret file to write. |
+| `--force` | — | Off | No | Overwrite the file if it exists. |
+| `--json` | — | Off | No | Write the result as JSON. |
+
 ## elm log
 
 ### elm log verify
@@ -515,5 +531,6 @@ elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product exampl
 elm server status --product example-editor
 elm admin request GET /v1/admin/licenses --url https://licensing.example.com
 elm offline process --url https://licensing.example.com --in server.elmreq --out server.elmresp
+elm secret create --out nonce.secret
 elm log verify ./usage --product example-editor --trust root.key.pem.pub.pem
 ```

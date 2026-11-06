@@ -16,6 +16,8 @@ internal sealed record CertificateOutput(
 
 internal sealed record IssueOutput(string File, string LicenseId, string TokenId, string[] Warnings);
 
+internal sealed record SecretOutput(string File);
+
 internal sealed record TokenView(JsonElement Header, JsonElement Payload);
 
 internal sealed record InspectOutput(bool Verified, TokenView License, TokenView[] Certificates);
@@ -49,6 +51,7 @@ internal sealed record OfflineOutput(bool Deactivated, string? ActivationId, str
 [JsonSerializable(typeof(KeyOutput))]
 [JsonSerializable(typeof(CertificateOutput))]
 [JsonSerializable(typeof(IssueOutput))]
+[JsonSerializable(typeof(SecretOutput))]
 [JsonSerializable(typeof(InspectOutput))]
 [JsonSerializable(typeof(VerifyOutput))]
 [JsonSerializable(typeof(LogVerifyOutput))]

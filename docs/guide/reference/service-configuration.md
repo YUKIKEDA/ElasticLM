@@ -130,7 +130,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `nonce.secretFile` | `ELM_NONCE_SECRET` | file path | none (required; `setup` does not need it) | The file that holds the nonce secret: at least 32 random bytes in base64. Every node holds the same value. There is no default and the service does not make one. A secret: see [Secrets](#secrets). |
+| `nonce.secretFile` | `ELM_NONCE_SECRET` | file path | none (required; `setup` does not need it) | The file that holds the nonce secret: at least 32 random bytes in base64. Every node holds the same value. There is no default and the service does not make one; [`elm secret create`](elm-cli.md#elm-secret-create) makes such a file. A secret: see [Secrets](#secrets). |
 
 ## `rateLimit`
 
