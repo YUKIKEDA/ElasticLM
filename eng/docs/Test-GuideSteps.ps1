@@ -33,9 +33,10 @@
                                       marker between them does not count, since it runs nothing.
 
     Other comment lines, such as the sample comment of the code test (GuideSamplesTests), may stand above the marker. A
-    block without a marker is not run. In each argument of a steps:run or steps:background line (after the split), <name>
-    becomes the value captured under that name earlier on the page; any other <name> left in a line fails. steps:file and
-    steps:expect blocks are used as written.
+    block without a marker is not run, and a steps marker inside a code block fails. In each argument of a steps:run or
+    steps:background line (after the split), <name> becomes the value captured under that name earlier on the page; any
+    other <name> left in a line, such as <repo>, fails before anything runs. steps:file and steps:expect blocks are used
+    as written.
 
     <!-- steps:prebuilt name=<name> --> stands on a line of its own, from the start of the line, after the paragraph that
     tells the reader to download what it names. It fails when the next line that is not blank is a code block's opening
@@ -43,7 +44,7 @@
       elm           The page's elm lines run -Elm. An elm line needs no marker.
       elm-server    The page's elm-server lines run -ElmServer. An elm-server line needs this marker before it.
       packages      Creates the folder packages in the work folder and copies every *.nupkg of -Feed into it (no
-                    .snupkg). A dotnet add ... package line needs this marker before it.
+                    .snupkg). A dotnet add ... package or dotnet package add line needs this marker before it.
 
     elm-server runs with -ElmServer and gets no environment variable whose name starts with ELM_ (in any case), so that a
     variable left in the shell cannot override the page's settings file. elm and dotnet get the environment as it is.
@@ -69,7 +70,7 @@
 
 .PARAMETER Feed
     The folder of the ElasticLM packages (.nupkg) for steps:prebuilt name=packages. A page with that marker or a
-    dotnet add ... package line fails without it.
+    dotnet add ... package or dotnet package add line fails without it.
 
 .PARAMETER Page
     The pages to run. Default: README.md and docs/guide/tutorials/*.md at the repository root.
@@ -124,15 +125,20 @@ $prebuiltMarker = '<!--\s*steps:prebuilt(\s|-->)'
 function Get-Page([string]$path) {
     $lines = [IO.File]::ReadAllLines($path)
     $blocks = [Collections.Generic.List[object]]::new()
+    # The 0-based indexes of the opening lines, and of every line from an opening line to its closing line.
+    $openings = [Collections.Generic.HashSet[int]]::new()
+    $inBlock = [Collections.Generic.HashSet[int]]::new()
     for ($i = 0; $i -lt $lines.Length; $i++) {
         $open = [regex]::Match($lines[$i], $fenceOpen)
         if (-not $open.Success) { continue }
         $fence = $open.Groups['fence'].Value
         $close = '^ {0,3}' + [regex]::Escape($fence[0]) + '{' + $fence.Length + ',}\s*$'
         $marker = $i -gt 0 ? $lines[$i - 1].Trim() : ''
+        [void]$openings.Add($i)
         $start = $i + 1
         for ($i = $start; $i -lt $lines.Length -and $lines[$i] -notmatch $close; $i++) { }
         if ($i -ge $lines.Length) { throw "$(Get-PageName $path):$($start): the code block is not closed." }
+        for ($k = $start - 1; $k -le $i; $k++) { [void]$inBlock.Add($k) }
         $blocks.Add([pscustomobject]@{
             Marker = ($marker -match '^<!--\s*steps:' -and $marker -notmatch $prebuiltMarker) ? $marker : $null
             Line = $start
@@ -142,14 +148,21 @@ function Get-Page([string]$path) {
     }
     $prebuilt = [Collections.Generic.List[object]]::new()
     for ($j = 0; $j -lt $lines.Length; $j++) {
+        # A marker's text inside a code block is neither a marker nor shown text a step can rely on: it fails, whatever its
+        # kind, so that a page never runs differently from how it reads.
+        if ($inBlock.Contains($j)) {
+            if ($lines[$j] -match '<!--\s*steps:') { throw "$(Get-PageName $path):$($j + 1): a steps marker cannot stand inside a code block." }
+            continue
+        }
         if ($lines[$j] -match $prebuiltMarker) {
-            # The next line that is not blank, as the check of a steps:prebuilt marker needs it.
+            # The next line that is not blank, as the check of a steps:prebuilt marker needs it; only an opening line
+            # counts, never the closing line of a block.
             $next = $j + 1
             while ($next -lt $lines.Length -and $lines[$next].Trim() -eq '') { $next++ }
             $prebuilt.Add([pscustomobject]@{
                 Text = $lines[$j]
                 Order = $j + 1
-                BeforeFence = $next -lt $lines.Length -and $lines[$next] -match $fenceOpen
+                BeforeFence = $openings.Contains($next)
             })
         }
         # Any other steps marker must stand right before a code block.
@@ -201,9 +214,13 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
         switch -CaseSensitive ($words[0]) {
             'elm' { }
             'dotnet' {
-                # dotnet add <project> package <id>, or dotnet add package <id> in the project's folder.
-                if ($words.Count -gt 2 -and $words[1] -ceq 'add' -and ($words[2] -ceq 'package' -or ($words.Count -gt 3 -and $words[3] -ceq 'package')) -and -not $prebuilt.Contains('packages')) {
-                    throw "$($name):$($lineNumber): a dotnet add package line needs a steps:prebuilt name=packages marker before it."
+                # dotnet add <project> package <id>, dotnet add package <id> in the project's folder, and the newer
+                # dotnet package add <id>.
+                $addsPackage = $words.Count -gt 2 -and (
+                    ($words[1] -ceq 'add' -and ($words[2] -ceq 'package' -or ($words.Count -gt 3 -and $words[3] -ceq 'package'))) -or
+                    ($words[1] -ceq 'package' -and $words[2] -ceq 'add'))
+                if ($addsPackage -and -not $prebuilt.Contains('packages')) {
+                    throw "$($name):$($lineNumber): a dotnet add package or dotnet package add line needs a steps:prebuilt name=packages marker before it."
                 }
             }
             'elm-server' {
@@ -212,8 +229,10 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
             'cd' { throw "$($name):$($lineNumber): a step does not change the folder (cd); pass the folder as an argument." }
             default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, or elm-server, not $($words[0])." }
         }
+        # Any <name> in an argument, a single word such as <repo> or <RID> included, is a placeholder, and only a name
+        # captured earlier on the page fills one; a name that cannot be captured is never filled.
         foreach ($word in $words | Select-Object -Skip 1) {
-            foreach ($placeholder in [regex]::Matches($word, "<($captureName)>")) {
+            foreach ($placeholder in [regex]::Matches($word, '<([A-Za-z][A-Za-z0-9._-]*)>')) {
                 if (-not $captured.Contains($placeholder.Groups[1].Value)) {
                     throw "$($name):$($lineNumber): $($placeholder.Value) is not a value captured before this line."
                 }
