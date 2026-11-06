@@ -2,16 +2,16 @@
 sidebar_position: 2
 ---
 
-# SaaS 型のサービスを動かして .NET のアプリをオンラインでアクティベーションする
+# SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする
 
-このチュートリアルでは、ベンダーが運用する SaaS 型のサービス `elm-service` を動かし、その管理 API で、トライアルとライセンスを持つ製品を作る。そして、自分のマシンでトライアルを始め、そのあとライセンスのキーでアクティベーションする小さな .NET のコンソールアプリを書く。アクティベーションは、ライセンスを 1 台のデバイスに紐付ける。紐付いたデバイスは、サービスから受け取ったライセンスファイルを保存する。詳しくは[アクティベーション](../explanation/activation.md)で説明している。ElasticLM を初めて使う人のうち、ターミナルと `dotnet` コマンドを使える人に向けている。このチュートリアルは単独で進められるので、ほかのチュートリアルを先に終えておく必要はない。
+このチュートリアルでは、ベンダーが運用する SaaS 型のアクティベーションサービス `elm-service` を動かし、その管理 API で、トライアルとライセンスを持つ製品を作る。そして、自分のマシンでトライアルを始め、そのあとライセンスキーでアクティベーションする小さな .NET のコンソールアプリを書く。アクティベーションは、ライセンスを 1 台のデバイスに紐付ける。紐付いたデバイスは、サービスから受け取ったライセンスファイルを保存する。詳しくは[アクティベーション](../explanation/activation.md)で説明している。ElasticLM を初めて使う人のうち、ターミナルと `dotnet` コマンドを使える人に向けている。このチュートリアルは単独で進められるので、ほかのチュートリアルを先に終えておく必要はない。
 
 ## 始める前に
 
 次のものが要る。
 
 - .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
-- マシンのポート 8080 が空いていること。サービスはこのポートで待ち受ける。
+- マシンのポート 8080 が空いていること。サービスはこのポートで待ち受ける。ポートが空いていれば、PowerShell の `Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue` も、Linux と macOS の `lsof -i :8080` も、何も表示しない。
 - ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 - Windows では PowerShell 7.1 以降。このチュートリアルでは、秘密の値を表示せずに読み込むために使う。バージョンは `$PSVersionTable.PSVersion` で表示できる。
 
@@ -34,7 +34,7 @@ sidebar_position: 2
 
 `elm` と `elm-service` というコマンドで `tools` の中のプログラムが動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
+2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages | Out-Null` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
 
 <!-- steps:prebuilt name=packages -->
 
@@ -62,7 +62,7 @@ sidebar_position: 2
 
 ## 鍵を作る
 
-鍵は 2 つ要る。アプリが信頼するルート鍵と、サービスが発行するライセンスファイルに署名する署名鍵だ。アプリが署名鍵の署名したものを受け入れるように、ルート鍵が署名鍵を証明する。
+鍵は 2 つ要る。アプリが信頼するルート鍵と、サービスが発行するライセンスファイルに署名する署名鍵だ。署名鍵が署名したものをアプリが受け入れるように、ルート鍵が署名鍵を証明する。
 
 `elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。このターミナルで設定するには、PowerShell では `$env:ELM_KEY_PASSPHRASE = '<passphrase>'`、Bash か zsh では `export ELM_KEY_PASSPHRASE='<passphrase>'` と打つ。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
 
@@ -124,7 +124,7 @@ valid: 2026-01-15 09:30:00Z to 2027-01-15 09:30:00Z
 
 ## サービスを準備する
 
-アプリがサービスに送る各リクエストには、ノンスが入っている。ノンスは、サービスが少し前に渡した 1 回限りの値で、写したリクエストをもう一度送れないようにするためのものだ。詳しくは[デバイスとプルーフ](../explanation/devices-and-proofs.md)で説明している。サービスは、シークレットを使ってノンスを作り、確かめる。新しいランダムなシークレットを入れたファイルを作る。
+アプリがサービスに送る各リクエストには、ノンスが入っている。ノンスは、サービスが少し前に渡した 1 回限りの値で、コピーしたリクエストをもう一度送れないようにするためのものだ。詳しくは[デバイスとプルーフ](../explanation/devices-and-proofs.md)で説明している。サービスは、シークレットを使ってノンスを作り、確かめる。新しいランダムなシークレットを入れたファイルを作る。
 
 <!-- steps:run -->
 ```shell
@@ -170,13 +170,13 @@ Data Source=service.db
 }
 ```
 
-- `database` は、使うデータベースだ。SQLite で、接続文字列は `database.connection` にある。
-- `signing` は、署名鍵とその鍵証明書だ。サービスはこの鍵でライセンスファイルに署名する。
-- `trust.rootKeys` は、署名鍵の鍵証明書を確かめるルート公開鍵の一覧だ。
-- `nonce.secretFile` は、上で作ったシークレットのファイルだ。
-- `bootstrapOwner` は、サービスの最初の管理者だ。ここでのように ID プロバイダーによるサインイン（OIDC）がなければ、下で作る API キーの持ち主を示すだけで、この名前でサインインする人はいない。あとで OIDC を足すときは、`iss` を設定 `oidc.issuer` と同じ値にしなければ、サービスは起動しない。
+- `database` は、使うデータベースを指定する。SQLite で、接続文字列は `database.connection` にある。
+- `signing` は、署名鍵とその鍵証明書を指定する。サービスはこの鍵でライセンスファイルに署名する。
+- `trust.rootKeys` は、署名鍵の鍵証明書を確かめるルート公開鍵の一覧を指定する。
+- `nonce.secretFile` は、上で作ったシークレットのファイルを指定する。
+- `bootstrapOwner` は、サービスの最初の管理者を指定する。この例のように ID プロバイダーによるサインイン（OIDC）を使わないときは、下で作る API キーの持ち主を示すだけで、この名前でサインインする人はいない。あとで OIDC を足すときは、`iss` を設定 `oidc.issuer` と同じ値にしなければ、サービスは起動しない。
 
-パスは、サービスを起動したフォルダーからの相対パスだ。接続文字列、ノンスのシークレット、署名鍵のパスフレーズはシークレットなので、設定にはそれを入れたファイルか変数を書き、値そのものは書かない。サービスは既定の `http://127.0.0.1:8080` で待ち受けるので、この設定は要らない。本番では、代わりに https で動かす。`tls` を含むすべての設定は [elm-service の設定](../reference/service-configuration.md)に挙げている。
+パスは、サービスを起動したフォルダーからの相対パスだ。接続文字列、ノンスのシークレット、署名鍵のパスフレーズはシークレットなので、設定にはそれを入れたファイルか変数を書き、値そのものは書かない。サービスは既定で `http://127.0.0.1:8080` で待ち受けるので、待ち受けるアドレスを設定する必要はない。本番では、代わりに https で動かす。`tls` を含むすべての設定は [elm-service の設定](../reference/service-configuration.md)に挙げている。
 
 データベースを準備し、最初の API キーを作る。API キーは、`elm` が管理 API を呼び出すときに使うキーだ。
 
@@ -207,12 +207,14 @@ API key 01960000-0000-7000-8000-000000000001 (elm_FAKE…) for https://idp.examp
 elm-service --config service.json
 ```
 
-サービスは動き続け、ログを表示する。各エントリーは、`info:` で始まってエントリーの出どころを示す行と、そのあとにインデントして続くメッセージからなる。最初のいくつかのエントリーは、サービスが動く Web ホストが出す。待ち受けるアドレス、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、`Content root path` だ。`Content root path` は `elm-service` の実行ファイルがあるフォルダーで、`service.json` の中のパスとは関係ない。探す行は `service.started` で、サービスが起動したことを示す。
+サービスは動き続け、ログを表示する。各エントリーは、`info:` で始まってエントリーの出どころを示す行と、そのあとにインデントして続くメッセージからなる。最初のいくつかのエントリーは、サービスが動く Web ホストが出す。待ち受けるアドレス、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、`Content root path` だ。`Content root path` は `elm-service` の実行ファイルがあるフォルダーで、`service.json` の中のパスとは関係ない。続いてサービスは `usage log: not written (usageLog.directory is not set)` と表示する。このチュートリアルでは利用ログを残さないからだ。探す行は `service.started` で、サービスが起動したことを示す。
 
 ```text
 info: elm-service[1]
       service.started: listening on http://127.0.0.1:8080/, database Sqlite, signing key FAKE-SIGNING-KEY-ID-000000000000000000000S1 (certificates until 01/15/2027 09:30:00 +00:00), in 223 ms
 ```
+
+ポート 8080 がふさがっていると、サービスは代わりに長いエラーを表示し、終了コード 1 で終わる。その最後の行は `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.` だ。そのポートを使っているプログラムを止めてから、サービスをもう一度起動する。
 
 サービスは動かしたままにして、残りの手順は 1 つ目のターミナルで進める。下の URL には `localhost` ではなく `127.0.0.1` と打つ。アプリのリクエストには、送り先の URL が入る。サービスは自分のアドレス `http://127.0.0.1:8080` へのリクエストだけを受け付け、`http://localhost:8080` へ送ったリクエストは `ELM_PROOF_INVALID` で拒否する。
 
@@ -268,7 +270,7 @@ elm admin request POST /v1/admin/policies --body trial-policy.json --url http://
 {"id":"01960000-0000-7000-8000-000000000201","productId":"01960000-0000-7000-8000-000000000101","name":"Trial","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
 ```
 
-`id` が、下の `<trial-policy-id>` だ。製品がトライアルを提供するのは、トライアルのポリシーを指したときだけなので、製品の `trialPolicyId` を設定する。
+`id` が、下の `<trial-policy-id>` だ。製品は、トライアルのポリシーを指定しているときだけトライアルを提供するので、製品の `trialPolicyId` を設定する。
 
 <!-- steps:file path=product-trial.json -->
 ```json
@@ -322,7 +324,7 @@ dotnet new console -o app
 dotnet add app package ElasticLM.Client --prerelease --source packages
 ```
 
-`app/Program.cs` の内容を、次のコードに置き換える。
+`app/Program.cs` の中身を、次のコードに置き換える。
 
 <!-- sample: samples/ActivateOnline/Program.cs -->
 <!-- steps:file path=app/Program.cs -->
@@ -389,13 +391,13 @@ try
 }
 catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or UriFormatException)
 {
-    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is not an
-    // https URL, or an http URL on a loopback address.
+    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is neither an
+    // https URL nor an http URL on a loopback address.
     Console.Error.WriteLine($"error: {e.Message}");
     return 2;
 }
 
-// The service or the check refused: print the error code and the reason.
+// The client, the service, or the check refused: print the error code and the reason.
 static int Refused(LicenseError error)
 {
     Console.WriteLine($"{error.WireName}: {error.Message}");
@@ -439,11 +441,11 @@ dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem client-data <lice
 activated: pro
 ```
 
-2 行目はライセンスの ID で、ライセンスのレスポンスの `id` と同じだ。たとえば `license: 01960000-0000-7000-8000-000000000301` のようになる。`client-data` では、アクティベーションがトライアルに置き換わった。この順序には意味がある。クライアントは、アクティベーションを保存していないときにだけトライアルを始め、アクティベーションは保存したトライアルを置き換えるからだ。
+2 行目はライセンスの ID で、ライセンスのレスポンスの `id` と同じだ。たとえば `license: 01960000-0000-7000-8000-000000000301` のようになる。`client-data` では、トライアルがアクティベーションに置き換わった。この順序が大事だ。クライアントは、アクティベーションを保存していないときにだけトライアルを始め、アクティベーションは保存したトライアルを置き換えるからだ。
 
 ## サービスが拒否したとき
 
-サービスか、保存したファイルの確認が拒否すると、アプリはエラーコードと理由を表示し、終了コード 1 で終わる。この節のコマンドは、どれもわざとそのように終わる。どのコマンドも 2 つ目のデータフォルダー `other-data` を使う。クライアントは、`client-data` と同じくこのフォルダーも作る。サービスから見ると、同じマシンにあるアプリの別のインストールだ。
+クライアント、サービス、保存したファイルの確認のどれかが拒否すると、アプリはエラーコードと理由を表示し、終了コード 1 で終わる。この節でアプリを動かすと、どれもわざとそのように終わる。そのほとんどは 2 つ目のデータフォルダー `other-data` を使う。クライアントは、`client-data` と同じくこのフォルダーも作る。サービスから見ると、同じマシンにあるアプリの別のインストールだ。
 
 `other-data` でトライアルを始める。
 
@@ -471,7 +473,7 @@ ELM_INVALID_STATE: An activation is kept; deactivate it before activating anothe
 
 クライアントは `client-data` のアクティベーションを保存しているので、サービスに何も送らずに拒否する。
 
-1 文字間違えたキーで `other-data` をアクティベーションする。次のような、サービスが発行したことのないキーも、同じレスポンスになる。
+次のような、サービスが発行したことのないキーで `other-data` をアクティベーションする。1 文字だけ間違えたキーでも、同じレスポンスになる。
 
 <!-- steps:run exit=1 -->
 ```shell
@@ -524,15 +526,15 @@ ELM_TRIAL_NOT_OFFERED: The product does not offer a trial.
 | `ELM_INVALID_STATE` | データフォルダーにアクティベーションが保存されているので、クライアントはもう一度アクティベーションしない。 | 何もしなくてよい。アプリはアクティベーション済みで、起動のたびに `Check` で確かめる。 |
 | `ELM_LICENSE_NOT_FOUND` | サービスに、このキーのライセンスがない。 | ライセンスのレスポンスから、キーをコピーし直す。 |
 | `ELM_NETWORK_ERROR` | サービスに接続できない。サービスが動いていないか、URL が間違っている。メッセージは `The service cannot be reached:` で始まる。 | [サービスを起動する](#サービスを起動する)のとおりにサービスを起動し、`http://127.0.0.1:8080` を渡す。 |
-| `ELM_TRIAL_NOT_OFFERED` | 製品がトライアルのポリシーを指していない。 | [製品とライセンスを作る](#製品とライセンスを作る)のとおりに、製品の `trialPolicyId` を設定する。 |
+| `ELM_TRIAL_NOT_OFFERED` | 製品にトライアルのポリシーが指定されていない。 | [製品とライセンスを作る](#製品とライセンスを作る)のとおりに、製品の `trialPolicyId` を設定する。 |
 
-トライアルには、マシンフィンガープリントも 1 つ以上要る。`/etc/machine-id` のない Linux のコンテナーのように、マシンフィンガープリントを読めない場所では、サービスはトライアルを `ELM_FINGERPRINT_UNAVAILABLE` で拒否する。アプリが `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]` と表示したときは、引数が 3 つでも 4 つでもなかった。`error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、2 つ目の引数が公開鍵のファイルではない。`error: Invalid URI` は、1 つ目の引数が URL ではないことを示す。どちらの場合も、引数の順序を確かめる。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。
+トライアルには、マシンフィンガープリントも 1 つ以上要る。`/etc/machine-id` のない Linux のコンテナーのように、マシンフィンガープリントを読めない場所では、サービスはトライアルを `ELM_FINGERPRINT_UNAVAILABLE` で拒否する。アプリが `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]` と表示したときは、引数が 3 つでも 4 つでもなかった。`error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、2 つ目の引数が公開鍵のファイルではない。`error: Invalid URI` は、1 つ目の引数が URL ではないことを示し、`error: The service URL must be an absolute https URL, or http on a loopback address. (Parameter 'options')` は、ループバックでないホストへの http の URL であることを示す。どの場合も、引数の順序と URL を確かめる。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。
 
 ## サービスを止める
 
 2 つ目のターミナルで Ctrl+C を押して、サービスを止める。そのあと、両方のターミナルを閉じる。`ELM_API_KEY` と `ELM_SIGNING_PASSPHRASE` はそのターミナルの中にしかないので、これで消える。
 
-最初からやり直すには、サービスを止めてから、`service.db` と、その隣にある名前が `service.db` で始まるファイル、フォルダー `client-data` と `other-data` を消す。これで、サービスはトライアルとアクティベーションを忘れ、クライアントは自分のアクティベーションと鍵を忘れる。そのあと、新しいターミナルで、[サービスを準備する](#サービスを準備する)の `elm-service setup` のコマンドから、このページをもう一度たどる。
+最初からやり直すには、サービスを止めた状態で、チュートリアルのフォルダーを丸ごと消す。そうすれば、`service.db` にあるサービスのトライアルとアクティベーションの記録と、`client-data` と `other-data` にあるクライアントのアクティベーションと鍵の両方が消える。そのあと、`tools` と `packages` へのダウンロードも含めて、[始める前に](#始める前に)からやり直す。
 
 ## 作ったもの
 

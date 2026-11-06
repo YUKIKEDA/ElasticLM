@@ -18,15 +18,25 @@ provenance attestation made by the release workflow (design §20.5). To check a 
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
-  --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml \
-  --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
 
-Run both in the folder that holds the downloaded files and `SHA256SUMS`. Where `sha256sum` is missing, as in
-PowerShell on Windows, compute the hash of each file with `(Get-FileHash <file> -Algorithm SHA256).Hash` and compare
-it with the hash on the file's line in `SHA256SUMS`, ignoring case: PowerShell prints it in upper case, and
-`SHA256SUMS` holds it in lower case.
+```text
+gh attestation verify <file> --repo YUKIKEDA/ElasticLM --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml --source-ref refs/tags/v<version> --deny-self-hosted-runners
+```
+
+Run them in the folder that holds the downloaded files and `SHA256SUMS`, and run `gh attestation verify` once for each
+file. `<version>` is the release's tag without its leading `v`, as in the file names: for the tag `v1.0.0-rc.1`, the
+version is `1.0.0-rc.1` and the option is `--source-ref refs/tags/v1.0.0-rc.1`. The `gh attestation verify` line works
+the same in PowerShell, Bash, and zsh.
+
+PowerShell on Windows has no `sha256sum`. This line checks every archive and package in the folder against
+`SHA256SUMS`, and prints `OK` or `FAILED` with each file's name:
+
+```powershell
+Get-ChildItem *.zip, *.tar.gz, *.nupkg | ForEach-Object { $h = (Get-FileHash $_ -Algorithm SHA256).Hash.ToLower(); if (Select-String -SimpleMatch -Quiet "$h  $($_.Name)" SHA256SUMS) { "OK $($_.Name)" } else { "FAILED $($_.Name)" } }
+```
+
+It lowers the case of the hash, because PowerShell prints it in upper case and `SHA256SUMS` holds it in lower case.
 `gh attestation verify` needs the GitHub CLI (https://cli.github.com/).
 
 `--repo` alone does not check which workflow signed the file; keep the other options

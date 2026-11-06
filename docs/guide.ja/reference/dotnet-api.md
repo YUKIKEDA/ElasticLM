@@ -221,7 +221,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 
 ### `ActivationClient`
 
-ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに接続できないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。[SaaS 型のサービスを動かして .NET のアプリをオンラインでアクティベーションする](../tutorials/activate-an-app-online.md)では、`TryCreate` を呼び、次に `StartTrialAsync` か `ActivateAsync` を呼び、最後に `Check` を呼ぶアプリを作る。
+ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに接続できないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](../tutorials/activate-an-app-online.md)では、`TryCreate` を呼び、次に `StartTrialAsync` か `ActivateAsync` を呼び、最後に `Check` を呼ぶアプリを作る。
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |

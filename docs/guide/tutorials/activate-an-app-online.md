@@ -11,7 +11,7 @@ In this tutorial you run `elm-service`, the hosted activation service that the v
 You need:
 
 - The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- The port 8080 free on your machine: the service listens on it.
+- The port 8080 free on your machine: the service listens on it. In PowerShell, `Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue` prints nothing when the port is free; on Linux and macOS, `lsof -i :8080` prints nothing.
 - The [GitHub CLI](https://cli.github.com/), `gh`, to check the files you download; nothing else in this tutorial uses it.
 - On Windows, PowerShell 7.1 or later, which the tutorial uses to read secret values without showing them. `$PSVersionTable.PSVersion` shows the version.
 
@@ -34,7 +34,7 @@ Extract both archives into a folder named `tools`. In PowerShell on Windows, typ
 
 Add the `tools` folder to your `PATH` in this terminal, so that the commands `elm` and `elm-service` run the programs in it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Move the two packages into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.*.nupkg packages/`.
+Move the two packages into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages | Out-Null` and then `Move-Item ElasticLM.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
 
@@ -207,12 +207,14 @@ Start the service in the second terminal:
 elm-service --config service.json
 ```
 
-The service keeps running and prints its log. Each entry is a line that starts with `info:` and names where the entry comes from, followed by the message, indented. The first entries come from the web host the service runs in: the address it listens on, `Application started. Press Ctrl+C to shut down.`, the hosting environment, and a `Content root path`, which is the folder of the `elm-service` executable and has nothing to do with the paths in `service.json`. The line to look for is `service.started`, which says that the service started:
+The service keeps running and prints its log. Each entry is a line that starts with `info:` and names where the entry comes from, followed by the message, indented. The first entries come from the web host the service runs in: the address it listens on, `Application started. Press Ctrl+C to shut down.`, the hosting environment, and a `Content root path`, which is the folder of the `elm-service` executable and has nothing to do with the paths in `service.json`. Then the service says `usage log: not written (usageLog.directory is not set)`: this tutorial keeps no usage log. The line to look for is `service.started`, which says that the service started:
 
 ```text
 info: elm-service[1]
       service.started: listening on http://127.0.0.1:8080/, database Sqlite, signing key FAKE-SIGNING-KEY-ID-000000000000000000000S1 (certificates until 01/15/2027 09:30:00 +00:00), in 223 ms
 ```
+
+If the port 8080 is taken, the service instead prints a long error, ends with exit code 1, and its last line is `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.`; stop the program that uses the port, and start the service again.
 
 Leave the service running, and go back to the first terminal for the rest of the tutorial. Type `127.0.0.1` in the URLs below, not `localhost`: an app's request names the URL it was sent to, and the service accepts only its own address, `http://127.0.0.1:8080`, and refuses a request sent to `http://localhost:8080` with `ELM_PROOF_INVALID`.
 
@@ -389,13 +391,13 @@ try
 }
 catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or UriFormatException)
 {
-    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is not an
-    // https URL, or an http URL on a loopback address.
+    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is neither an
+    // https URL nor an http URL on a loopback address.
     Console.Error.WriteLine($"error: {e.Message}");
     return 2;
 }
 
-// The service or the check refused: print the error code and the reason.
+// The client, the service, or the check refused: print the error code and the reason.
 static int Refused(LicenseError error)
 {
     Console.WriteLine($"{error.WireName}: {error.Message}");
@@ -443,7 +445,7 @@ The second line is the license's ID, the `id` of the license's answer, such as `
 
 ## When the service refuses
 
-When the service or the check refuses, the app prints an error code and the reason, and ends with exit code 1. Each command in this section ends that way on purpose. They use a second data folder, `other-data`, which the client creates as it does `client-data`: to the service, it is another installation of the app on the same machine.
+When the client, the service, or the check refuses, the app prints an error code and the reason, and ends with exit code 1. Each run of the app in this section ends that way on purpose. Most of them use a second data folder, `other-data`, which the client creates as it does `client-data`: to the service, it is another installation of the app on the same machine.
 
 Start a trial with `other-data`:
 
@@ -471,7 +473,7 @@ ELM_INVALID_STATE: An activation is kept; deactivate it before activating anothe
 
 The client keeps the activation of `client-data`, and refuses before it sends anything to the service.
 
-Activate `other-data` with a key that has a wrong character. A key the service never issued, such as this one, gives the same answer:
+Activate `other-data` with a key that the service never issued, such as this one. A key with one wrong character gives the same answer:
 
 <!-- steps:run exit=1 -->
 ```shell
@@ -526,13 +528,13 @@ The service refuses before it looks at the machine's fingerprints, so this code 
 | `ELM_NETWORK_ERROR` | The service cannot be reached: it is not running, or the URL is wrong. The message starts with `The service cannot be reached:`. | Start the service as in [Start the service](#start-the-service), and pass `http://127.0.0.1:8080`. |
 | `ELM_TRIAL_NOT_OFFERED` | The product names no trial policy. | Set the product's `trialPolicyId` as in [Create a product and a license](#create-a-product-and-a-license). |
 
-A trial also needs at least one fingerprint of the machine: where none can be read, such as in a Linux container without `/etc/machine-id`, the service refuses the trial with `ELM_FINGERPRINT_UNAVAILABLE`. If the app prints `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]`, it got neither three nor four arguments. If it prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the second argument is not a public key file, and `error: Invalid URI` means that the first argument is not a URL: check the order of the arguments. [Error codes](../reference/error-codes.md) lists every code.
+A trial also needs at least one fingerprint of the machine: where none can be read, such as in a Linux container without `/etc/machine-id`, the service refuses the trial with `ELM_FINGERPRINT_UNAVAILABLE`. If the app prints `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]`, it got neither three nor four arguments. If it prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the second argument is not a public key file, `error: Invalid URI` means that the first argument is not a URL, and `error: The service URL must be an absolute https URL, or http on a loopback address. (Parameter 'options')` that it is an http URL on another host: check the order of the arguments, and the URL. [Error codes](../reference/error-codes.md) lists every code.
 
 ## Stop the service
 
 Press Ctrl+C in the second terminal to stop the service. Then close both terminals: that removes `ELM_API_KEY` and `ELM_SIGNING_PASSPHRASE`, which live only in them.
 
-To start again from the beginning, stop the service and delete `service.db` with the files beside it whose names start with `service.db`, and the folders `client-data` and `other-data`: the service then forgets the trial and the activation, and the client forgets its activation and its key. Then follow this page again from the `elm-service setup` command in [Set up the service](#set-up-the-service), in new terminals.
+To start again from the beginning, delete the whole tutorial folder with the service stopped: that removes the service's records of the trial and the activation in `service.db`, and the client's activation and key in `client-data` and `other-data`. Then start again from [Before you start](#before-you-start), including the downloads into `tools` and `packages`.
 
 ## What you made
 

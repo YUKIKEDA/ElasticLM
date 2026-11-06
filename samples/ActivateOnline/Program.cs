@@ -60,13 +60,13 @@ try
 }
 catch (Exception e) when (e is ArgumentException or IOException or UnauthorizedAccessException or UriFormatException)
 {
-    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is not an
-    // https URL, or an http URL on a loopback address.
+    // A file that cannot be read, a second argument that is not a public key in PEM, or a first argument that is neither an
+    // https URL nor an http URL on a loopback address.
     Console.Error.WriteLine($"error: {e.Message}");
     return 2;
 }
 
-// The service or the check refused: print the error code and the reason.
+// The client, the service, or the check refused: print the error code and the reason.
 static int Refused(LicenseError error)
 {
     Console.WriteLine($"{error.WireName}: {error.Message}");

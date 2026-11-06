@@ -28,7 +28,7 @@ Extract the archive into a folder named `tools`. In PowerShell on Windows, type 
 
 Add the `tools` folder to your `PATH` in this terminal, so that the command `elm` runs it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
+Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages | Out-Null` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
 

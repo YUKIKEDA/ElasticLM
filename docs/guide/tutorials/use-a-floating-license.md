@@ -11,7 +11,7 @@ In this tutorial you run `elm-server`, the license server that a customer runs o
 You need:
 
 - The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- The ports 7070 and 7071 free on your machine: the server listens on both.
+- The ports 7070 and 7071 free on your machine: the server listens on both. In PowerShell, `Get-NetTCPConnection -LocalPort 7070,7071 -ErrorAction SilentlyContinue` prints nothing when both are free; on Linux and macOS, `lsof -i :7070 -i :7071` prints nothing.
 - The [GitHub CLI](https://cli.github.com/), `gh`, to check the files you download; nothing else in this tutorial uses it.
 
 Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
@@ -35,7 +35,7 @@ Extract both archives into a folder named `tools`. In PowerShell on Windows, typ
 
 Add the `tools` folder to your `PATH` in this terminal, so that the commands `elm` and `elm-server` run the programs in it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Move the two packages into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.*.nupkg packages/`.
+Move the two packages into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages | Out-Null` and then `Move-Item ElasticLM.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
 
@@ -206,6 +206,8 @@ info: elm-server[1]
 ```
 
 The time at the end is in UTC, as `+00:00` shows.
+
+If the port 7070 or 7071 is taken, the server instead stops at once with a long error that starts with `Unhandled exception. System.IO.IOException: Failed to bind to address https://127.0.0.1:7070: address already in use.` (or `http://127.0.0.1:7071`). Stop the program that uses the port, and start the server again.
 
 For the first lease duration after it starts, one minute with this license, the server refuses new leases: after a restart, apps that held leases before it need that time to reclaim their seats. Leave the server running, and go back to the first terminal for the rest of the tutorial. While you create the app, most of that minute passes.
 
