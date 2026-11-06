@@ -13,6 +13,7 @@ ElasticLM decides whether software may run. The threat model and the properties 
 - A verifier holds only verification (public) keys. Code that needs a private key runs only in the issuer's tools and services, and reads the key from a location the operator gives (a file, an environment variable, a key management service), never from a resource or a constant.
 - A shared symmetric secret that every client holds is not an authentication mechanism. Do not design one.
 - Key material in memory is held in the narrowest scope and cleared (`CryptographicOperations.ZeroMemory`) when the design says so.
+- A file that holds a secret is replaced through a new file: create it with `CreateNew` in the same folder (`UnixCreateMode` 0600 on Unix), write it, then `File.Move(…, overwrite: true)`. Opening the old file with `FileMode.Create` keeps its Windows access rules, and a process that opened it before can read the new secret, whatever mode the handle is given. Before choosing such a mechanism, search the repository for the same problem already solved. In V1c3d the design review fixed `--force` by setting the open handle to 0600; the accuracy review found both faults, while `AdminLogin.cs` already replaced its file through a new one (PR #224).
 
 ## Cryptography
 
