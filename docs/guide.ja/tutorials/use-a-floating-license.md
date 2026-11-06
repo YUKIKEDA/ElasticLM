@@ -11,7 +11,7 @@ sidebar_position: 3
 次のものが要る。
 
 - .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
-- マシンのポート 7070 と 7071 が空いていること。サーバーはこの両方で待ち受ける。
+- マシンのポート 7070 と 7071 が空いていること。サーバーはこの両方で待ち受ける。両方が空いていれば、PowerShell の `Get-NetTCPConnection -LocalPort 7070,7071 -ErrorAction SilentlyContinue` も、Linux と macOS の `lsof -i :7070 -i :7071` も、何も表示しない。
 - ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 
 このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
@@ -35,7 +35,7 @@ Linux と macOS では、このフォルダーにグループやほかのユー�
 
 `elm` と `elm-server` というコマンドで `tools` の中のプログラムが動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
+2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages | Out-Null` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
 
 <!-- steps:prebuilt name=packages -->
 
@@ -206,6 +206,8 @@ info: elm-server[1]
 ```
 
 最後の時刻は、`+00:00` が示すとおり UTC だ。
+
+ポート 7070 か 7071 がふさがっていると、サーバーは代わりに、`Unhandled exception. System.IO.IOException: Failed to bind to address https://127.0.0.1:7070: address already in use.`（または `http://127.0.0.1:7071`）で始まる長いエラーを表示して、すぐに止まる。そのポートを使っているプログラムを止めてから、サーバーをもう一度起動する。
 
 起動してから最初のリースの期間（このライセンスでは 1 分）のあいだ、サーバーは新しいリースを拒否する。再起動のあと、それまでリースを保持していたアプリがリースを再登録するのに、その時間が要るからだ。サーバーは動かしたままにして、残りの手順は 1 つ目のターミナルで進める。アプリを作るあいだに、この 1 分のほとんどが過ぎる。
 

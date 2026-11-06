@@ -274,9 +274,18 @@ internal static class AdminCommands
                 using var reader = new StreamReader(stream, Encoding.UTF8);
                 char[] chunk = new char[8192];
                 int read;
+                char last = '\n';
                 while ((read = reader.Read(chunk)) > 0)
                 {
                     host.Out.Write(chunk, 0, read);
+                    last = chunk[read - 1];
+                }
+
+                // design §16: a body that does not end with a line break gets one, so that the shell's prompt or the next
+                // output starts on a line of its own. An empty body writes nothing.
+                if (last != '\n')
+                {
+                    host.Out.WriteLine();
                 }
 
                 return ExitCodes.Success;

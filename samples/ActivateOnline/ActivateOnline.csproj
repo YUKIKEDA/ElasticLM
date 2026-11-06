@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The second tutorial's app. Its Program.cs is the whole file that the tutorial shows; the tutorial's reader references
+         the ElasticLM.Client package instead of this project, and gets ElasticLM.Licensing as its dependency. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+</Project>

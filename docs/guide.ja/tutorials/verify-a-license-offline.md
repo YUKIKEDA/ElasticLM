@@ -28,7 +28,7 @@ sidebar_position: 1
 
 `elm` と打つだけで動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-パッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.Licensing.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.Licensing.*.nupkg packages/` と打つ。
+パッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages | Out-Null` と打ってから `Move-Item ElasticLM.Licensing.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.Licensing.*.nupkg packages/` と打つ。
 
 <!-- steps:prebuilt name=packages -->
 
@@ -247,7 +247,7 @@ valid: license first-license, product acme-cad, feature pro
 
 ルート鍵と署名鍵を作り、署名鍵を証明し、ライセンスを発行して、.NET のアプリでオフラインで検証した。実際の製品では、`root.key.pem` をオフラインに置く。この鍵は署名鍵を証明するためだけに使い、これを持つ人は誰でも、アプリが受け入れるライセンスを作れるからだ。
 
-[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](use-a-floating-license.md)では、ライセンスサーバーからアプリに機能のシートを貸し出す。デバイスをオンラインでアクティベーションするチュートリアルは執筆中だ。
+[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](use-a-floating-license.md)では、ライセンスサーバーからアプリに機能のシートを貸し出す。[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](activate-an-app-online.md)では、デバイスをアクティベーションするサービスを動かし、アプリでトライアルを始めてから、ライセンスキーでアクティベーションする。
 
 さらに知るには、次のページを読む。
 

@@ -2,7 +2,7 @@
 
 ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセンスを発行し、顧客のマシンでそのライセンスを検証し、同時使用数を数えられる。このドキュメントの読者は、ライセンスを発行する人、アプリに検証を組み込む開発者、ライセンスサーバーを運用する管理者だ。自分が使うプラットフォームの知識は前提にするが、設計書を読んでいることは前提にしない。
 
-> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)と[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)は書き終えている。ハウツーガイドはまだ執筆中だ。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
+> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md)、[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)は書き終えている。ハウツーガイドはまだ執筆中だ。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
 
 ## ドキュメントの構成
 
@@ -22,22 +22,24 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 **ライセンスを発行する場合（ベンダー）。** すべてのライセンスを有効にする鍵を持ち、SaaS 型のサービスを運用することもある。
 
 1. [ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md): 鍵を作り、ライセンスを発行して確かめるチュートリアル。
-2. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): シートを含むサーバーライセンスを発行し、そのシートを貸し出すサーバーを動かすチュートリアル。
-3. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
-4. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
-5. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
-6. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
-7. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
+2. [SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md): `elm-service` を動かし、そこに製品、トライアル、ライセンスを作るチュートリアル。
+3. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): シートを含むサーバーライセンスを発行し、そのシートを貸し出すサーバーを動かすチュートリアル。
+4. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
+5. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
+6. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
+7. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
+8. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
 
 **ElasticLM をアプリに組み込む場合（開発者）。** アプリにルート公開鍵を組み込み、ライセンス、アクティベーション、リースを確かめる。
 
 1. [ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md): ライセンスをオフラインで検証する .NET のアプリを作るチュートリアル。
-2. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): ライセンスサーバーからシートのリースを受け、シートを借用する .NET のアプリを作るチュートリアル。
-3. [ライセンスファイルと検証](explanation/license-files-and-verification.md)
-4. [デバイスとプルーフ](explanation/devices-and-proofs.md): デバイスを識別するインストール鍵。
-5. [アクティベーション](explanation/activation.md)か[フローティングライセンス](explanation/floating-licenses.md)のうち、製品で使うほう。
-6. [セキュリティモデル](explanation/security-model.md): アプリが確かめなければならないことと、アプリでは防げないこと。
-7. [.NET API](reference/dotnet-api.md) か [C API](reference/c-api.md): アプリに組み込むライブラリのすべての型、関数、オプション。
+2. [SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md): トライアルを始め、ライセンスキーでアクティベーションする .NET のアプリを作るチュートリアル。
+3. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): ライセンスサーバーからシートのリースを受け、シートを借用する .NET のアプリを作るチュートリアル。
+4. [ライセンスファイルと検証](explanation/license-files-and-verification.md)
+5. [デバイスとプルーフ](explanation/devices-and-proofs.md): デバイスを識別するインストール鍵。
+6. [アクティベーション](explanation/activation.md)か[フローティングライセンス](explanation/floating-licenses.md)のうち、製品で使うほう。
+7. [セキュリティモデル](explanation/security-model.md): アプリが確かめなければならないことと、アプリでは防げないこと。
+8. [.NET API](reference/dotnet-api.md) か [C API](reference/c-api.md): アプリに組み込むライブラリのすべての型、関数、オプション。
 
 **組織のライセンスサーバーを運用する場合（顧客の管理者）。** 組織のシートを貸し出す `elm-server` を運用する。
 
@@ -48,9 +50,10 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 
 **販売や課金のシステムを連携する場合（ベンダーのシステム）。** システムは API キーを使って、SaaS 型のサービスの管理 API を呼び出す。
 
-1. [アクティベーション](explanation/activation.md): サービスから見た製品、ポリシー、ライセンス、デバイス。
-2. [セキュリティモデル](explanation/security-model.md): API キー、ロール、監査ログ。
-3. [管理 API](reference/administration-api.md): システムが呼び出すすべてのルートと、そのリクエストとレスポンス。
+1. [SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md): API キーを使い、管理 API で製品、そのポリシー、ライセンスを作るチュートリアル。
+2. [アクティベーション](explanation/activation.md): サービスから見た製品、ポリシー、ライセンス、デバイス。
+3. [セキュリティモデル](explanation/security-model.md): API キー、ロール、監査ログ。
+4. [管理 API](reference/administration-api.md): システムが呼び出すすべてのルートと、そのリクエストとレスポンス。
 
 ElasticLM がなぜこう作られているのかは、[設計上の選択](explanation/design-choices.md)で説明している。
 

@@ -28,7 +28,7 @@ Extract the archive into a folder named `tools`. In PowerShell on Windows, type 
 
 Add the `tools` folder to your `PATH` in this terminal, so that the command `elm` runs it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
+Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages | Out-Null` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
 
@@ -247,7 +247,7 @@ If the app prints a line that starts with `error: A root key is not a P-256 publ
 
 You created a root key and a signing key, certified the signing key, issued a license, and verified it offline in a .NET app. Keep `root.key.pem` offline in a real product: it only certifies signing keys, and anyone who holds it can make licenses that your app accepts.
 
-In [Run a license server and lease a floating license in a .NET app](use-a-floating-license.md), you lend seats of a feature from a license server to an app. A tutorial that activates a device online is being written.
+In [Run a license server and lease a floating license in a .NET app](use-a-floating-license.md), you lend seats of a feature from a license server to an app. In [Run the hosted activation service and activate a .NET app online](activate-an-app-online.md), you run the service that activates devices, and an app starts a trial and then activates with a license key.
 
 To learn more:
 

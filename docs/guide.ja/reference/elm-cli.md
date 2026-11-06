@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # elm コマンドリファレンス
 
-このページは、ベンダーと管理者が使うコマンドラインツール `elm` の、すべてのコマンドとオプションをまとめたものだ。`elm` は、鍵を作って証明し、ライセンスファイルを発行・検証し、同じマシン上のオンプレミスのライセンスサーバーを管理し、`elm-service` の管理 API を呼び出し、オフラインのリクエストファイルをサービスに渡し、署名付きのログを検証する。使うコマンドがすでにわかっているときに調べるためのページだ。鍵、証明書、ライセンスファイル、サーバーとは何かについては、先に[概要](../explanation/overview.md)と[トラストチェーン](../explanation/trust-chain.md)を読むこと。
+このページは、ベンダーと管理者が使うコマンドラインツール `elm` の、すべてのコマンドとオプションをまとめたものだ。`elm` は、鍵を作って証明し、ライセンスファイルを発行・検証し、同じマシン上のオンプレミスのライセンスサーバーを管理し、`elm-service` の管理 API を呼び出し、オフラインのリクエストファイルをサービスに渡し、`elm-service` のノンスのシークレットを作り、署名付きのログを検証する。使うコマンドがすでにわかっているときに調べるためのページだ。鍵、証明書、ライセンスファイル、サーバーとは何かについては、先に[概要](../explanation/overview.md)と[トラストチェーン](../explanation/trust-chain.md)を読むこと。
 
 ## 共通の動作
 
@@ -14,7 +14,7 @@ sidebar_position: 1
 elm <group> <command> [arguments] [options]
 ```
 
-グループは `key`、`license`、`server`、`admin`、`offline`、`log` だ。オプションは、コマンドのあとにどの順で書いてもよい。複数の値をとるオプションは繰り返して書く（`--feature A --feature B`）。`elm key certify --use` は、カンマ区切りのリストも受け付ける。
+グループは `key`、`license`、`server`、`admin`、`offline`、`secret`、`log` だ。オプションは、コマンドのあとにどの順で書いてもよい。複数の値をとるオプションは繰り返して書く（`--feature A --feature B`）。`elm key certify --use` は、カンマ区切りのリストも受け付ける。
 
 どのコマンドも `--help`（`-h` または `-?` でもよい）を受け付け、使い方を表示する。`elm --version` は `elm` のバージョンを表示する。
 
@@ -26,15 +26,15 @@ elm <group> <command> [arguments] [options]
 
 ### `--json`
 
-結果を、テキストではなく JSON で標準出力に書く。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm license inspect`、`elm license verify`、`elm server status`、`elm server leases`、`elm server reload`、`elm server seal`、`elm server release`、`elm offline process`、`elm log verify` だ。`elm server` のコマンドは、管理 API のレスポンスを受け取ったまま書く。
+結果を、テキストではなく JSON で標準出力に書く。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm license inspect`、`elm license verify`、`elm server status`、`elm server leases`、`elm server reload`、`elm server seal`、`elm server release`、`elm offline process`、`elm secret create`、`elm log verify` だ。`elm server` のコマンドは、管理 API のレスポンスを受け取ったまま書く。
 
 ### `--force`
 
-出力先のファイルがすでにあれば上書きする。このオプションがないと、ファイルを上書きすることになるコマンドは終了コード 2 で止まり、何も書かない。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm server activate-request`、`elm server refresh-request`、`elm server deactivate-proof`、`elm offline process` だ。
+出力先のファイルがすでにあれば上書きする。このオプションがないと、ファイルを上書きすることになるコマンドは終了コード 2 で止まり、何も書かない。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm server activate-request`、`elm server refresh-request`、`elm server deactivate-proof`、`elm offline process`、`elm secret create` だ。
 
 ### パスフレーズ
 
-`elm` が書く秘密鍵は、どれもパスフレーズで暗号化した PKCS#8 の PEM ファイルだ。Linux と macOS では、秘密鍵のファイルをモード `0600` で作る。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。
+`elm` が書く秘密鍵は、どれもパスフレーズで暗号化した PKCS#8 の PEM ファイルだ。Linux と macOS では、秘密鍵のファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、前のファイルに書き込まずに、新しいファイルで置き換える。そのため、前のファイルのモードやアクセス権は残らず、前のファイルを開いていたプログラムにも新しい中身は見えない。
 
 秘密鍵を読み書きするコマンド（`elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`）は、パスフレーズを環境変数から読む。
 
@@ -450,7 +450,7 @@ elm admin logout
 elm admin request <METHOD> <path> [--body <file>] [--url <url>]
 ```
 
-管理 API を 1 回呼び出し、成功したレスポンスの本文を標準出力に書く。それ以外のレスポンスの本文は標準エラー出力に書き、終了コード 1 で終わる。
+管理 API を 1 回呼び出し、成功したレスポンスの本文を標準出力に書く。本文が改行で終わらなければ、最後に改行を書く（空の本文では何も書かない）。それ以外のレスポンスの本文は標準エラー出力に書き、終了コード 1 で終わる。
 
 | オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
@@ -480,6 +480,22 @@ elm offline process --url <url> --in <file> [--out <file>] [options]
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
 `ELM_API_KEY` があるか、`--url` と同じオリジンへの `elm admin login` を保存してあれば、ファイルはサービスの管理用の窓口に送る。そうでなければ公開の窓口に送る。リダイレクトはたどらず、リクエストは 30 秒でタイムアウトする。
+
+## elm secret
+
+### elm secret create
+
+```text
+elm secret create --out <file> [options]
+```
+
+`elm-service` のノンスのシークレットを書く。サービスの設定 [`nonce.secretFile`](service-configuration.md#nonce) でこのファイルを指定する。中身は 32 バイトの乱数を base64 で書いた 1 行だ。`secret file: <file>` を表示する。`--json` を付けると、`file` にファイルのパスを入れたオブジェクトを書く。シークレットそのものは、標準出力にも標準エラー出力にも書かない。Linux と macOS では、ファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、秘密鍵と同じく、新しいファイルで前のファイルを置き換える。
+
+| オプション | 値 | 既定 | 必須 | 意味 |
+| --- | --- | --- | --- | --- |
+| `--out` | ファイルのパス | — | はい | 書き出すシークレットのファイル |
+| `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
+| `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
 ## elm log
 
@@ -515,5 +531,6 @@ elm license verify LIC-0001.elmlic --trust root.key.pem.pub.pem --product exampl
 elm server status --product example-editor
 elm admin request GET /v1/admin/licenses --url https://licensing.example.com
 elm offline process --url https://licensing.example.com --in server.elmreq --out server.elmresp
+elm secret create --out nonce.secret
 elm log verify ./usage --product example-editor --trust root.key.pem.pub.pem
 ```

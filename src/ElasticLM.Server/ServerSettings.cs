@@ -219,7 +219,8 @@ internal sealed partial record ServerSettings
         return uri;
     }
 
-    // design §13.8: https, or http on a loopback address for tests, as ActivationClient takes it.
+    // design §13.8: https, or http on a loopback address for tests and for trying it out locally (production uses https), as
+    // ActivationClient takes it.
     private static Uri ParseService(string text) =>
         Uri.TryCreate(text, UriKind.Absolute, out Uri? uri)
         && (uri.Scheme == Uri.UriSchemeHttps || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))

@@ -12,7 +12,8 @@ public sealed class LicenseClientOptions
 
     /// <summary>
     /// Gets the URL of the on-premises license server, for example <c>https://licenses.example:7070/</c>; or, with
-    /// <see cref="LicenseKey"/>, of <c>elm-service</c> (https, or http on a loopback address only, for tests).
+    /// <see cref="LicenseKey"/>, of <c>elm-service</c> (https, or http on a loopback address only, for tests and for trying it
+    /// out locally; production uses https).
     /// </summary>
     public required Uri ServerUrl { get; init; }
 

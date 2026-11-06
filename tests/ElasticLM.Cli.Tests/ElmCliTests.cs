@@ -407,6 +407,265 @@ public sealed class ElmCliTests : IDisposable
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(P("owner.key.pem")));
     }
 
+    /// <summary>
+    /// secret create writes 32 random bytes in base64 on one line, and prints only the file's path.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty folder.
+    ///
+    /// Steps:
+    /// - secret create --out first.secret, then --out second.secret.
+    ///
+    /// Expected:
+    /// - Exit 0 and the standard output "secret file: &lt;path&gt;" alone, with nothing on the standard error. Each file is
+    ///   one base64 line and a line break, which decodes to 32 bytes (the service's minimum, design §14.8). The two secrets
+    ///   differ, and no output holds the secret.
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_WritesBase64Of32Bytes_AndPrintsOnlyThePath()
+    {
+        (int code, string output, string error) = Run("secret", "create", "--out", P("first.secret"));
+        (int secondCode, string secondOutput, _) = Run("secret", "create", "--out", P("second.secret"));
+
+        Assert.Equal(0, code);
+        Assert.Equal(0, secondCode);
+        Assert.Equal($"secret file: {P("first.secret")}{Environment.NewLine}", output);
+        Assert.Equal(string.Empty, error);
+        string first = File.ReadAllText(P("first.secret"));
+        string second = File.ReadAllText(P("second.secret"));
+        Assert.EndsWith("\n", first, StringComparison.Ordinal);
+        Assert.Single(first.Split('\n', StringSplitOptions.RemoveEmptyEntries));
+        Assert.Equal(32, Convert.FromBase64String(first.TrimEnd('\n')).Length);
+        Assert.Equal(32, Convert.FromBase64String(second.TrimEnd('\n')).Length);
+        Assert.NotEqual(first, second);
+        Assert.DoesNotContain(first.TrimEnd('\n'), output, StringComparison.Ordinal);
+        Assert.DoesNotContain(second.TrimEnd('\n'), secondOutput, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// secret create --json writes an object with the file's path only, never the secret.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty folder.
+    ///
+    /// Steps:
+    /// - secret create --out json.secret --json.
+    ///
+    /// Expected:
+    /// - Exit 0; the output is a JSON object whose only property is "file" with the path; it does not hold the secret.
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_Json_WritesTheFileOnly()
+    {
+        (int code, string output, _) = Run("secret", "create", "--out", P("json.secret"), "--json");
+
+        Assert.Equal(0, code);
+        using JsonDocument document = JsonDocument.Parse(output);
+        JsonProperty property = Assert.Single(document.RootElement.EnumerateObject());
+        Assert.Equal("file", property.Name);
+        Assert.Equal(P("json.secret"), property.Value.GetString());
+        Assert.DoesNotContain(File.ReadAllText(P("json.secret")).TrimEnd('\n'), output, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// secret create refuses a file that exists, and overwrites it with --force.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A file "old" at the output path.
+    ///
+    /// Steps:
+    /// - secret create without --force, then with --force.
+    ///
+    /// Expected:
+    /// - Exit 2 with "exists. Pass --force", nothing on the standard output, and the file unchanged; then exit 0 and a new
+    ///   32-byte secret in the file.
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_ExistingFile_RefusedWithoutForce()
+    {
+        File.WriteAllText(P("taken.secret"), "old");
+
+        (int code, string output, string error) = Run("secret", "create", "--out", P("taken.secret"));
+        AssertInputError((code, output, error), "exists. Pass --force to overwrite it.");
+        Assert.Equal(string.Empty, output);
+        Assert.Equal("old", File.ReadAllText(P("taken.secret")));
+
+        Assert.Equal(0, Run("secret", "create", "--out", P("taken.secret"), "--force").Code);
+        Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(P("taken.secret")).TrimEnd('\n')).Length);
+    }
+
+    /// <summary>
+    /// On Linux and macOS a secret file is created with owner-only access.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A non-Windows machine.
+    ///
+    /// Steps:
+    /// - secret create into a new file.
+    ///
+    /// Expected:
+    /// - The file mode is 0600.
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_NewFile_IsOwnerOnly()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Windows uses access rules inherited from the folder.");
+            return;
+        }
+
+        Assert.Equal(0, Run("secret", "create", "--out", P("owner.secret")).Code);
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(P("owner.secret")));
+    }
+
+    /// <summary>
+    /// On Linux and macOS, a secret written over an existing 0644 file with --force leaves the file at 0600.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A non-Windows machine; a file with mode 0644 at the output path (the mode a new file gets under umask 022).
+    ///
+    /// Steps:
+    /// - Cases: secret create --force, and key root create --force (the private key file); both write through the same
+    ///   file writer (design §16).
+    ///
+    /// Expected:
+    /// - Exit 0 and the file mode 0600: the mode of the file that was there does not stay.
+    /// </remarks>
+    /// <param name="command">The command that writes a secret file.</param>
+    [Theory]
+    [InlineData("secret")]
+    [InlineData("key")]
+    public void SecretFile_ForceOverExistingFile_BecomesOwnerOnly(string command)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Windows uses access rules inherited from the folder.");
+            return;
+        }
+
+        string path = P("existing.pem");
+        File.WriteAllText(path, "old");
+        const UnixFileMode Wide = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+        File.SetUnixFileMode(path, Wide);
+        Assert.Equal(Wide, File.GetUnixFileMode(path));
+
+        (int code, _, string error) =
+            command == "secret"
+                ? Run("secret", "create", "--out", path, "--force")
+                : Run("key", "root", "create", "--out", path, "--public-out", P("existing.pub.pem"), "--force");
+
+        Assert.True(code == 0, error);
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
+    }
+
+    /// <summary>
+    /// On Windows, a secret written over an existing file with --force does not keep the explicit access rules of that file.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; a file at the output path with an explicit rule that lets Everyone read it.
+    ///
+    /// Steps:
+    /// - secret create --force over the file.
+    ///
+    /// Expected:
+    /// - Exit 0, a new secret in the file, and no explicit rule for Everyone: the file has only the rules of its folder
+    ///   (design §16).
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_ForceOverFileWithExplicitRule_DropsTheRule()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Explicit access rules are a Windows matter; Linux and macOS have the mode tests.");
+            return;
+        }
+
+        string path = P("shared.secret");
+        File.WriteAllText(path, "old");
+        var everyone = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null);
+        var info = new FileInfo(path);
+        System.Security.AccessControl.FileSecurity security = info.GetAccessControl();
+        security.AddAccessRule(
+            new System.Security.AccessControl.FileSystemAccessRule(
+                everyone,
+                System.Security.AccessControl.FileSystemRights.Read,
+                System.Security.AccessControl.AccessControlType.Allow
+            )
+        );
+        info.SetAccessControl(security);
+        Assert.Contains(everyone.Value, ExplicitRuleSids(path));
+
+        (int code, _, string error) = Run("secret", "create", "--out", path, "--force");
+
+        Assert.True(code == 0, error);
+        Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(path).TrimEnd('\n')).Length);
+        Assert.DoesNotContain(everyone.Value, ExplicitRuleSids(path));
+
+        // The SIDs of the rules set on the file itself, not inherited from its folder.
+        static string[] ExplicitRuleSids(string file)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return [];
+            }
+
+            var sids = new List<string>();
+            foreach (
+                System.Security.AccessControl.FileSystemAccessRule rule in new FileInfo(file)
+                    .GetAccessControl()
+                    .GetAccessRules(includeExplicit: true, includeInherited: false, typeof(System.Security.Principal.SecurityIdentifier))
+            )
+            {
+                sids.Add(rule.IdentityReference.Value);
+            }
+
+            return [.. sids];
+        }
+    }
+
+    /// <summary>
+    /// On Linux and macOS, a process that opened the old file before --force does not read the new secret through it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A non-Windows machine; a file "old" at the output path, opened for reading by the test.
+    ///
+    /// Steps:
+    /// - secret create --force over the file; read the open handle from its start; read the path.
+    ///
+    /// Expected:
+    /// - Exit 0; the open handle still reads "old"; the path reads the new 32-byte secret (design §16).
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_ForceWhileOldFileIsOpen_OldHandleKeepsOldContent()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("A file that another process holds open is a Linux and macOS matter here; Windows has the access rule test.");
+            return;
+        }
+
+        string path = P("open.secret");
+        File.WriteAllText(path, "old");
+        using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        (int code, _, string error) = Run("secret", "create", "--out", path, "--force");
+
+        Assert.True(code == 0, error);
+        held.Position = 0;
+        using var reader = new StreamReader(held);
+        Assert.Equal("old", reader.ReadToEnd());
+        Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(path).TrimEnd('\n')).Length);
+    }
+
     private string P(string name) => Path.Combine(_dir, name);
 
     private static void AssertInputError((int Code, string Out, string Error) result, string expected)

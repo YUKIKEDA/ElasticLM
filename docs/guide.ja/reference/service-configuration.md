@@ -130,7 +130,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `nonce.secretFile` | `ELM_NONCE_SECRET` | ファイルのパス | なし（必須。`setup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。シークレットだ。[シークレット](#シークレット)を参照 |
+| `nonce.secretFile` | `ELM_NONCE_SECRET` | ファイルのパス | なし（必須。`setup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。[`elm secret create`](elm-cli.md#elm-secret-create) でこの形のファイルを作れる。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `rateLimit`
 
