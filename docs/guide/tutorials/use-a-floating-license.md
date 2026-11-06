@@ -12,6 +12,7 @@ You need:
 
 - The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
 - The ports 7070 and 7071 free on your machine: the server listens on both.
+- The [GitHub CLI](https://cli.github.com/), `gh`, to check the files you download; nothing else in this tutorial uses it.
 
 Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
 
@@ -19,18 +20,24 @@ On Linux and macOS, the folder must not be writable by your group or by others, 
 
 You download the `elm` tool, `elm-server`, and the `ElasticLM.Licensing` and `ElasticLM.Client` packages from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
-From the release's Assets, download the archives `elm-<version>-<RID>` and `elm-server-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. They are `.zip` files for Windows and `.tar.gz` files for the others. Take the archives whose names do not end in `-symbols`: those hold only debug symbols. Extract both archives into a folder named `tools` in the tutorial folder. Each archive holds the same `LICENSE` file, so you can let the second one overwrite it. `tools` then holds `elm` and `elm-server` (`elm.exe` and `elm-server.exe` on Windows): `elm` is the command-line tool that creates keys and issues licenses, and `elm-server` is the license server.
+From the release's Assets, save these files in the tutorial folder:
+
+- The archives `elm-<version>-<RID>` and `elm-server-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. They are `.zip` files for Windows and `.tar.gz` files for the others. Take the archives whose names do not end in `-symbols`: those hold only debug symbols.
+- `ElasticLM.Client.<version>.nupkg` and `ElasticLM.Licensing.<version>.nupkg`. Your app uses `ElasticLM.Client`, which depends on `ElasticLM.Licensing`, so you need both. You do not need the `.snupkg` files of the same names, which hold the packages' debug symbols.
+- `SHA256SUMS`, the list of the files' hashes.
+
+Before you extract or use anything, check the archives and the packages in the tutorial folder as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
+
+Extract both archives into a folder named `tools`. In PowerShell on Windows, type `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools` and then `Expand-Archive elm-server-<version>-<RID>.zip -DestinationPath tools -Force`: each archive holds the same `LICENSE` file, and `-Force` lets the second one overwrite it. On Linux and macOS, type `mkdir -p tools`, then `tar -xzf elm-<version>-<RID>.tar.gz -C tools` and `tar -xzf elm-server-<version>-<RID>.tar.gz -C tools`. `tools` then holds `elm` and `elm-server` (`elm.exe` and `elm-server.exe` on Windows): `elm` is the command-line tool that creates keys and issues licenses, and `elm-server` is the license server.
 
 <!-- steps:prebuilt name=elm -->
 <!-- steps:prebuilt name=elm-server -->
 
 Add the `tools` folder to your `PATH` in this terminal, so that the commands `elm` and `elm-server` run the programs in it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-From the same release, download `ElasticLM.Client.<version>.nupkg` and `ElasticLM.Licensing.<version>.nupkg` into a folder named `packages` in the tutorial folder. Your app uses `ElasticLM.Client`, which depends on `ElasticLM.Licensing`, so you need both. You do not need the `.snupkg` files of the same names, which hold the packages' debug symbols.
+Move the two packages into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
-
-Before you use what you downloaded, check it as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
 
 Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `packages` only, and every other package from nuget.org. The path `packages` is relative to the folder of `nuget.config`. The ElasticLM packages you use come from the GitHub prerelease, and a package of the same name on nuget.org would not be ElasticLM's; the mapping makes sure such a package is never used.
 
@@ -58,7 +65,7 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 
 You need two keys: a root key, which your app and the server trust, and a signing key, which signs licenses. The root key certifies the signing key, so that what the signing key signs is accepted.
 
-`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
+`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. To set it in this terminal, type `$env:ELM_KEY_PASSPHRASE = '<passphrase>'` in PowerShell, or `export ELM_KEY_PASSPHRASE='<passphrase>'` in Bash or zsh. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
 
 In the outputs below, the key IDs, the server's installation key, the token ID, the fingerprints, and the times are fake. On your machine they are different every time.
 
@@ -379,7 +386,7 @@ leases: 1
   pro: 1 of 2 seats in use (2 with overage, 1 borrowed)
 ```
 
-Before these lines, it prints the product, the server license's ID and token ID, its expiry, and the server's key. `serving` says that the minute after the start is over. The lease the app returned is gone; the one lease left is the borrow, which uses one of the two seats until it expires an hour later. The license allows no seats over its limit, so the limit with overage is also 2.
+Before these lines, it prints the product, the server license's ID and token ID, its expiry, and the server's key. `serving` says that the server is no longer reclaiming leases: the minute after the start is over, or the leases reclaimed before it ended already use every seat. The lease the app returned is gone; the one lease left is the borrow, which uses one of the two seats until it expires an hour later. The license allows no seats over its limit, so the limit with overage is also 2.
 
 Each run of the app within that hour borrows one more seat. A second run leaves both seats borrowed, and a third one prints `ELM_NO_SEATS: No seats are free for the feature.` and ends with exit code 1, because borrowed seats count as used.
 

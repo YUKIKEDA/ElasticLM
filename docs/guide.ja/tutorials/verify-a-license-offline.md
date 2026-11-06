@@ -8,25 +8,31 @@ sidebar_position: 1
 
 ## 始める前に
 
-.NET 10 SDK が要る。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
+.NET 10 SDK が要る。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。ダウンロードしたファイルを確かめるには、[GitHub CLI](https://cli.github.com/)（`gh`）も要る。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 
 このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
 
-`elm` ツールと `ElasticLM.Licensing` パッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」の印が付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」の印を付けるリリースはプレリリースにはならないので、その印を目安にしない。
+`elm` ツールと `ElasticLM.Licensing` パッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」のラベルが付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」のラベルを付けるのはプレリリースでないリリースだけなので、そのラベルを目安にしない。
 
-リリースの Assets から、自分のシステムに合うアーカイブ `elm-<version>-<RID>` をダウンロードする。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブはデバッグシンボルだけなので、そうでないほうを取る。アーカイブを、チュートリアルのフォルダーの中の `tools` という名前のフォルダーに展開する。これで `tools` には、鍵を作り、ライセンスを発行するコマンドラインツール `elm`（Windows では `elm.exe`）と、`LICENSE` が入る。
+リリースの Assets から、次の 3 つのファイルをチュートリアルのフォルダーに保存する。
+
+- 自分のシステムに合うアーカイブ `elm-<version>-<RID>`。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブにはデバッグシンボルしか入っていないので、そうでないほうを取る。
+- アプリが使うパッケージ `ElasticLM.Licensing.<version>.nupkg`。隣にある `ElasticLM.Licensing.<version>.snupkg` は、パッケージのデバッグシンボルなので要らない。
+- ファイルのハッシュの一覧 `SHA256SUMS`。
+
+展開したり使ったりする前に、チュートリアルのフォルダーにあるアーカイブとパッケージを、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムに必要な Linux と macOS のバージョンも書いてある。
+
+アーカイブを `tools` という名前のフォルダーに展開する。Windows の PowerShell では `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools` と打つ。Linux と macOS では `mkdir -p tools` と打ってから `tar -xzf elm-<version>-<RID>.tar.gz -C tools` と打つ。これで `tools` には、鍵を作り、ライセンスを発行するコマンドラインツール `elm`（Windows では `elm.exe`）と、`LICENSE` が入る。
 
 <!-- steps:prebuilt name=elm -->
 
 `elm` と打つだけで動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-同じリリースから、アプリが使うパッケージ `ElasticLM.Licensing.<version>.nupkg` を、チュートリアルのフォルダーの中の `packages` という名前のフォルダーにダウンロードする。隣にある `ElasticLM.Licensing.<version>.snupkg` は、パッケージのデバッグシンボルなので要らない。
+パッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.Licensing.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.Licensing.*.nupkg packages/` と打つ。
 
 <!-- steps:prebuilt name=packages -->
 
-ダウンロードしたものを使う前に、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムが動く Linux と macOS のバージョンも書いてある。
-
-チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
+チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。このチュートリアルで使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -52,7 +58,7 @@ sidebar_position: 1
 
 鍵は 2 つ要る。アプリが信頼するルート鍵と、ライセンスに署名する署名鍵だ。署名鍵が署名したものをアプリが受け入れるように、ルート鍵が署名鍵を証明する。
 
-`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
+`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。このターミナルで設定するには、PowerShell では `$env:ELM_KEY_PASSPHRASE = '<passphrase>'`、Bash か zsh では `export ELM_KEY_PASSPHRASE='<passphrase>'` と打つ。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
 
 下の出力にある鍵 ID、トークン ID、日時は架空の値だ。手元のマシンでは毎回違う値になる。
 

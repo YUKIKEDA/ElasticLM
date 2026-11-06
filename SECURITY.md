@@ -23,6 +23,12 @@ gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
   --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
 
+Run both in the folder that holds the downloaded files and `SHA256SUMS`. Where `sha256sum` is missing, as in
+PowerShell on Windows, compute the hash of each file with `(Get-FileHash <file> -Algorithm SHA256).Hash` and compare
+it with the hash on the file's line in `SHA256SUMS`, ignoring case: PowerShell prints it in upper case, and
+`SHA256SUMS` holds it in lower case.
+`gh attestation verify` needs the GitHub CLI (https://cli.github.com/).
+
 `--repo` alone does not check which workflow signed the file; keep the other options
 (https://cli.github.com/manual/gh_attestation_verify). The attestation shows that the release workflow built the file
 from that tag. It does not show that the code is free of defects.

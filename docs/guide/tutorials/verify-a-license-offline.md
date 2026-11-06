@@ -8,23 +8,29 @@ In this tutorial you create a vendor's keys, issue a license with them, and writ
 
 ## Before you start
 
-You need the .NET 10 SDK: `dotnet --list-sdks` must list a version that starts with `10.`.
+You need the .NET 10 SDK: `dotnet --list-sdks` must list a version that starts with `10.`. To check the files you download, you also need the [GitHub CLI](https://cli.github.com/), `gh`; nothing else in this tutorial uses it.
 
 Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
 
 You download the `elm` tool and the `ElasticLM.Licensing` package from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
-From the release's Assets, download the archive `elm-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. It is a `.zip` file for Windows and a `.tar.gz` file for the others. Take the archive whose name does not end in `-symbols`: that one holds only debug symbols. Extract the archive into a folder named `tools` in the tutorial folder. `tools` then holds `elm` (`elm.exe` on Windows), the command-line tool that creates keys and issues licenses, and `LICENSE`.
+From the release's Assets, save these three files in the tutorial folder:
+
+- The archive `elm-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. It is a `.zip` file for Windows and a `.tar.gz` file for the others. Take the archive whose name does not end in `-symbols`: that one holds only debug symbols.
+- `ElasticLM.Licensing.<version>.nupkg`, the package your app uses. You do not need `ElasticLM.Licensing.<version>.snupkg` beside it, which holds the package's debug symbols.
+- `SHA256SUMS`, the list of the files' hashes.
+
+Before you extract or use anything, check the archive and the package in the tutorial folder as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
+
+Extract the archive into a folder named `tools`. In PowerShell on Windows, type `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools`; on Linux and macOS, type `mkdir -p tools` and then `tar -xzf elm-<version>-<RID>.tar.gz -C tools`. `tools` then holds `elm` (`elm.exe` on Windows), the command-line tool that creates keys and issues licenses, and `LICENSE`.
 
 <!-- steps:prebuilt name=elm -->
 
 Add the `tools` folder to your `PATH` in this terminal, so that the command `elm` runs it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-From the same release, download `ElasticLM.Licensing.<version>.nupkg`, the package your app uses, into a folder named `packages` in the tutorial folder. You do not need `ElasticLM.Licensing.<version>.snupkg` beside it, which holds the package's debug symbols.
+Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
 
 <!-- steps:prebuilt name=packages -->
-
-Before you use what you downloaded, check it as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
 
 Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `packages` only, and every other package from nuget.org. The path `packages` is relative to the folder of `nuget.config`. The ElasticLM packages you use come from the GitHub prerelease, and a package of the same name on nuget.org would not be ElasticLM's; the mapping makes sure such a package is never used.
 
@@ -52,7 +58,7 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 
 You need two keys: a root key, which your app trusts, and a signing key, which signs licenses. The root key certifies the signing key, so that your app accepts what the signing key signs.
 
-`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, which is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
+`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. To set it in this terminal, type `$env:ELM_KEY_PASSPHRASE = '<passphrase>'` in PowerShell, or `export ELM_KEY_PASSPHRASE='<passphrase>'` in Bash or zsh. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
 
 In the outputs below, the key IDs, the token ID, and the dates are fake. On your machine they are different every time.
 

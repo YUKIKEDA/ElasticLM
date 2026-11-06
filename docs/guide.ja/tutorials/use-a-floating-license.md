@@ -12,27 +12,34 @@ sidebar_position: 3
 
 - .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
 - マシンのポート 7070 と 7071 が空いていること。サーバーはこの両方で待ち受ける。
+- ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 
 このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
 
 Linux と macOS では、このフォルダーにグループやほかのユーザーが書き込めてはならない。サーバーが自分の秘密鍵を、この中のフォルダーに置くからだ。そのフォルダーで `chmod go-w .` と打てば、グループとほかのユーザーは確実に書き込めなくなる。
 
-`elm` ツール、`elm-server`、`ElasticLM.Licensing` と `ElasticLM.Client` のパッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」の印が付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」の印を付けるリリースはプレリリースにはならないので、その印を目安にしない。
+`elm` ツール、`elm-server`、`ElasticLM.Licensing` と `ElasticLM.Client` のパッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」のラベルが付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」のラベルを付けるのはプレリリースでないリリースだけなので、そのラベルを目安にしない。
 
-リリースの Assets から、自分のシステムに合うアーカイブ `elm-<version>-<RID>` と `elm-server-<version>-<RID>` をダウンロードする。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブはデバッグシンボルだけなので、そうでないほうを取る。2 つのアーカイブを、チュートリアルのフォルダーの中の `tools` という名前のフォルダーに展開する。どちらのアーカイブにも同じ `LICENSE` ファイルが入っているので、2 つ目で上書きしてかまわない。これで `tools` には `elm` と `elm-server`（Windows では `elm.exe` と `elm-server.exe`）が入る。`elm` は鍵を作りライセンスを発行するコマンドラインツールで、`elm-server` はライセンスサーバーだ。
+リリースの Assets から、次のファイルをチュートリアルのフォルダーに保存する。
+
+- 自分のシステムに合うアーカイブ `elm-<version>-<RID>` と `elm-server-<version>-<RID>`。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブにはデバッグシンボルしか入っていないので、そうでないほうを取る。
+- `ElasticLM.Client.<version>.nupkg` と `ElasticLM.Licensing.<version>.nupkg`。アプリは `ElasticLM.Client` を使い、`ElasticLM.Client` は `ElasticLM.Licensing` に依存するので、両方が要る。同じ名前の `.snupkg` ファイルは、パッケージのデバッグシンボルなので要らない。
+- ファイルのハッシュの一覧 `SHA256SUMS`。
+
+展開したり使ったりする前に、チュートリアルのフォルダーにあるアーカイブとパッケージを、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムに必要な Linux と macOS のバージョンも書いてある。
+
+2 つのアーカイブを `tools` という名前のフォルダーに展開する。Windows の PowerShell では `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools` と打ってから `Expand-Archive elm-server-<version>-<RID>.zip -DestinationPath tools -Force` と打つ。どちらのアーカイブにも同じ `LICENSE` ファイルが入っていて、`-Force` を付けると 2 つ目で上書きできる。Linux と macOS では `mkdir -p tools` と打ってから、`tar -xzf elm-<version>-<RID>.tar.gz -C tools` と `tar -xzf elm-server-<version>-<RID>.tar.gz -C tools` を打つ。これで `tools` には `elm` と `elm-server`（Windows では `elm.exe` と `elm-server.exe`）が入る。`elm` は鍵を作りライセンスを発行するコマンドラインツールで、`elm-server` はライセンスサーバーだ。
 
 <!-- steps:prebuilt name=elm -->
 <!-- steps:prebuilt name=elm-server -->
 
 `elm` と `elm-server` というコマンドで `tools` の中のプログラムが動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-同じリリースから、`ElasticLM.Client.<version>.nupkg` と `ElasticLM.Licensing.<version>.nupkg` を、チュートリアルのフォルダーの中の `packages` という名前のフォルダーにダウンロードする。アプリは `ElasticLM.Client` を使い、`ElasticLM.Client` は `ElasticLM.Licensing` に依存するので、両方が要る。同じ名前の `.snupkg` ファイルは、パッケージのデバッグシンボルなので要らない。
+2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
 
 <!-- steps:prebuilt name=packages -->
 
-ダウンロードしたものを使う前に、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムが動く Linux と macOS のバージョンも書いてある。
-
-チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
+チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。このチュートリアルで使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -58,7 +65,7 @@ Linux と macOS では、このフォルダーにグループやほかのユー�
 
 鍵は 2 つ要る。アプリとサーバーが信頼するルート鍵と、ライセンスに署名する署名鍵だ。署名鍵が署名したものが受け入れられるように、ルート鍵が署名鍵を証明する。
 
-`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
+`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。このターミナルで設定するには、PowerShell では `$env:ELM_KEY_PASSPHRASE = '<passphrase>'`、Bash か zsh では `export ELM_KEY_PASSPHRASE='<passphrase>'` と打つ。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
 
 下の出力にある鍵 ID、サーバーのインストール鍵、トークン ID、マシンフィンガープリント、日時は架空の値だ。手元のマシンでは毎回違う値になる。
 
@@ -379,7 +386,7 @@ leases: 1
   pro: 1 of 2 seats in use (2 with overage, 1 borrowed)
 ```
 
-これらの行の前には、製品、サーバーライセンスの ID とトークン ID、その有効期限、サーバーの鍵を表示する。`serving` は、起動後の 1 分が終わったことを示す。アプリが返却したリースはもうない。残っている 1 つのリースは借用で、1 時間後に期限が切れるまで、2 つのシートのうち 1 つを使う。ライセンスは上限を超えるシートを認めていないので、超過分を含めた上限も 2 だ。
+これらの行の前には、製品、サーバーライセンスの ID とトークン ID、その有効期限、サーバーの鍵を表示する。`serving` は、サーバーがもうリースを再登録していないことを示す。起動後の 1 分が終わったか、それより前に再登録されたリースですべてのシートが埋まったかのどちらかだ。アプリが返却したリースはもうない。残っている 1 つのリースは借用で、1 時間後に期限が切れるまで、2 つのシートのうち 1 つを使う。ライセンスは上限を超えるシートを認めていないので、超過分を含めた上限も 2 だ。
 
 その 1 時間のうちにアプリを動かすたびに、借用するシートが 1 つ増える。2 回目で両方のシートが借用され、3 回目は `ELM_NO_SEATS: No seats are free for the feature.` と表示して終了コード 1 で終わる。借用したシートも使用中と数えるからだ。
 
