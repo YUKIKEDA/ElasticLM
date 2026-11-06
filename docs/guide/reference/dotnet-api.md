@@ -221,7 +221,7 @@ The installation key, read or created by `InstallationKeyStore`. It has no publi
 
 ### `ActivationClient`
 
-Activates this installation with a license key or starts a trial, keeps the license file beside the installation key, refreshes it while the app runs, deactivates it, and checks it offline. A device that cannot reach the service makes request files and imports their answers instead. When the kept activation file is damaged, the offline methods (from `CreateActivationRequestAsync` to `ForgetDeactivationProofAsync`) and `Check` answer `ELM_MALFORMED`. [Activation](../explanation/activation.md) explains the flows. The methods may be called from several threads; the calls of one client run one at a time, and the requests of one device are sent one at a time across its processes. The service's TLS certificate is checked by the operating system. There is no public constructor; create a client with `TryCreate` and dispose it with `DisposeAsync`.
+Activates this installation with a license key or starts a trial, keeps the license file beside the installation key, refreshes it while the app runs, deactivates it, and checks it offline. A device that cannot reach the service makes request files and imports their answers instead. When the kept activation file is damaged, the offline methods (from `CreateActivationRequestAsync` to `ForgetDeactivationProofAsync`) and `Check` answer `ELM_MALFORMED`. [Activation](../explanation/activation.md) explains the flows. The methods may be called from several threads; the calls of one client run one at a time, and the requests of one device are sent one at a time across its processes. The service's TLS certificate is checked by the operating system. There is no public constructor; create a client with `TryCreate` and dispose it with `DisposeAsync`. [Run the hosted activation service and activate a .NET app online](../tutorials/activate-an-app-online.md) builds an app that calls `TryCreate`, then `StartTrialAsync` or `ActivateAsync`, then `Check`.
 
 | Method | Parameters | Returns | What it does |
 | --- | --- | --- | --- |
@@ -249,7 +249,7 @@ The settings, `ActivationClientOptions` (each property has an `init` accessor, s
 | Property | Type | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
 | `ProductId` | `string` | none | Yes | The product's `code`: 1 to 64 lowercase letters, digits, and `-`. It also names the installation key's folder. |
-| `ServiceUrl` | `Uri?` | `null` | No | The URL of `elm-service`: https, or http on a loopback address for tests. `null` is for a device that never reaches the service and uses only offline files; the online operations then answer `ELM_INVALID_STATE` and nothing is refreshed on its own. |
+| `ServiceUrl` | `Uri?` | `null` | No | The URL of `elm-service`: https, or http on a loopback address for tests and for trying it out locally (production uses https). `null` is for a device that never reaches the service and uses only offline files; the online operations then answer `ELM_INVALID_STATE` and nothing is refreshed on its own. |
 | `Trust` | `TrustStore` | none | Yes | The vendor's root keys, which the license files are checked against. |
 | `KeyScope` | `KeyScope` | `KeyScope.User` | No | Where the installation key and the activation are kept. |
 | `DataDirectory` | `string?` | `null` | No | The folder of the installation key and the activation, or `null` for the default folder of the scope ([Where the key is stored](../explanation/devices-and-proofs.md#where-the-key-is-stored)). |
@@ -283,7 +283,7 @@ The settings, `LicenseClientOptions` (each property has an `init` accessor, so i
 | Property | Type | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
 | `ProductId` | `string` | none | Yes | The app's product ID: 1 to 64 lowercase letters, digits, and `-`. |
-| `ServerUrl` | `Uri` | none | Yes | The URL of the on-premises license server, which must be https (for example `https://licenses.example:7070/`); with `LicenseKey`, the URL of `elm-service` (https, or http on a loopback address for tests). |
+| `ServerUrl` | `Uri` | none | Yes | The URL of the on-premises license server, which must be https (for example `https://licenses.example:7070/`); with `LicenseKey`, the URL of `elm-service` (https, or http on a loopback address for tests and for trying it out locally; production uses https). |
 | `LicenseKey` | `string?` | `null` | No | The license key to lease from `elm-service`, or `null` for an on-premises server. With a key, the client keeps no server pin. The key is held in memory only and sent only when a lease is acquired. |
 | `Trust` | `TrustStore` | none | Yes | The vendor's trust store, which verifies the server license, or with `LicenseKey` the certificates of the service's leases. |
 | `ExpectedServerLicenseId` | `string?` | `null` | No | The server license ID the server must hold, or `null` to accept the first one seen and require it afterwards. With an ID, a server moved to another machine is accepted under the same ID. Not allowed with `LicenseKey`. |

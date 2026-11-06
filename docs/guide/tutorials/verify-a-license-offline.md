@@ -247,7 +247,7 @@ If the app prints a line that starts with `error: A root key is not a P-256 publ
 
 You created a root key and a signing key, certified the signing key, issued a license, and verified it offline in a .NET app. Keep `root.key.pem` offline in a real product: it only certifies signing keys, and anyone who holds it can make licenses that your app accepts.
 
-In [Run a license server and lease a floating license in a .NET app](use-a-floating-license.md), you lend seats of a feature from a license server to an app. A tutorial that activates a device online is being written.
+In [Run a license server and lease a floating license in a .NET app](use-a-floating-license.md), you lend seats of a feature from a license server to an app. In [Run the hosted activation service and activate a .NET app online](activate-an-app-online.md), you run the service that activates devices, and an app starts a trial and then activates with a license key.
 
 To learn more:
 

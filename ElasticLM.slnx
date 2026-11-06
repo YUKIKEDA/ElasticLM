@@ -1,5 +1,6 @@
 <Solution>
   <Folder Name="/samples/">
+    <Project Path="samples/ActivateOnline/ActivateOnline.csproj" />
     <Project Path="samples/FloatingLease/FloatingLease.csproj" />
     <Project Path="samples/VerifyLicense/VerifyLicense.csproj" />
     <Project Path="samples/VerifyOffline/VerifyOffline.csproj" />

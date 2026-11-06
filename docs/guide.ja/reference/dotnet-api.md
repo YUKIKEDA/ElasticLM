@@ -221,7 +221,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 
 ### `ActivationClient`
 
-ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに接続できないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。
+ライセンスキーでこのインストールをアクティベーションするか、トライアルを始める。ライセンスファイルをインストール鍵の隣に保存し、アプリが動いているあいだトークンを更新し、アクティベーションを解除し、オフラインで確かめる。サービスに接続できないデバイスは、代わりにリクエストのファイルを作り、そのレスポンスをインポートする。保存したアクティベーションファイルが壊れているときは、オフラインのメソッド（`CreateActivationRequestAsync` から `ForgetDeactivationProofAsync` まで）と `Check` は `ELM_MALFORMED` を返す。流れは[アクティベーション](../explanation/activation.md)で説明している。メソッドは複数のスレッドから呼んでよい。1 つのクライアントの呼び出しは 1 つずつ実行し、1 台のデバイスのリクエストは、プロセスをまたいで 1 つずつ送る。サービスの TLS 証明書は OS が確かめる。公開のコンストラクターはない。クライアントは `TryCreate` で作り、`DisposeAsync` で破棄する。[SaaS 型のサービスを動かして .NET のアプリをオンラインでアクティベーションする](../tutorials/activate-an-app-online.md)では、`TryCreate` を呼び、次に `StartTrialAsync` か `ActivateAsync` を呼び、最後に `Check` を呼ぶアプリを作る。
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
@@ -249,7 +249,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | プロパティ | 型 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `ProductId` | `string` | なし | はい | 製品の `code`。1 から 64 文字の小文字、数字、`-`。インストール鍵のフォルダーの名前にもなる。 |
-| `ServiceUrl` | `Uri?` | `null` | いいえ | `elm-service` の URL。https か、テスト用にループバックアドレスへの http。`null` は、サービスに一度もつながらず、オフラインのファイルだけを使うデバイス向けだ。このときオンラインの操作は `ELM_INVALID_STATE` を返し、自動ではトークンを更新しない。 |
+| `ServiceUrl` | `Uri?` | `null` | いいえ | `elm-service` の URL。https か、テストと手元で試すためにループバックアドレスへの http（本番では https）。`null` は、サービスに一度もつながらず、オフラインのファイルだけを使うデバイス向けだ。このときオンラインの操作は `ELM_INVALID_STATE` を返し、自動ではトークンを更新しない。 |
 | `Trust` | `TrustStore` | なし | はい | ベンダーのルート鍵。ライセンスファイルはこれに照らして確かめる。 |
 | `KeyScope` | `KeyScope` | `KeyScope.User` | いいえ | インストール鍵とアクティベーションを保存する場所。 |
 | `DataDirectory` | `string?` | `null` | いいえ | インストール鍵とアクティベーションを置くフォルダー。`null` ならスコープの既定のフォルダー（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)）。 |
@@ -283,7 +283,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | プロパティ | 型 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
 | `ProductId` | `string` | なし | はい | アプリの製品 ID。1 から 64 文字の小文字、数字、`-`。 |
-| `ServerUrl` | `Uri` | なし | はい | オンプレミスのライセンスサーバーの URL。https でなければならない（たとえば `https://licenses.example:7070/`）。`LicenseKey` があるときは、`elm-service` の URL（https か、テスト用にループバックアドレスへの http）。 |
+| `ServerUrl` | `Uri` | なし | はい | オンプレミスのライセンスサーバーの URL。https でなければならない（たとえば `https://licenses.example:7070/`）。`LicenseKey` があるときは、`elm-service` の URL（https か、テストと手元で試すためにループバックアドレスへの http。本番では https）。 |
 | `LicenseKey` | `string?` | `null` | いいえ | `elm-service` からリースを受けるためのライセンスキー。オンプレミスのサーバーなら `null`。キーがあるとき、クライアントはサーバーのピンを保存しない。キーはメモリにだけ持ち、リースを取得するときにだけ送る。 |
 | `Trust` | `TrustStore` | なし | はい | ベンダーのトラストストア。サーバーライセンスを、`LicenseKey` があるときはサービスのリースの鍵証明書を、これで検証する。 |
 | `ExpectedServerLicenseId` | `string?` | `null` | いいえ | サーバーが持っていなければならないサーバーライセンスの ID。`null` なら最初に見たものを受け入れ、以降はそれを求める。ID を指定すると、別のマシンに移したサーバーも、同じ ID なら受け入れる。`LicenseKey` と一緒には指定できない。 |
