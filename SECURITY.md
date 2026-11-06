@@ -28,7 +28,9 @@ gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
 from that tag. It does not show that the code is free of defects.
 
 The NuGet packages are signed by nuget.org when they are pushed, which changes their bytes: check a package you got from
-nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`.
+nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`. A `.nupkg` file you download from a GitHub prerelease
+has no nuget.org repository signature, and its bytes are those the release workflow attached to the release: check it
+like the other files, against `SHA256SUMS` and with `gh attestation verify`.
 
 The executables and `libelasticlm` are not code-signed. Windows SmartScreen may warn when you run them. macOS Gatekeeper
 does not open downloaded software that is not notarized; after checking the file as above, remove the quarantine

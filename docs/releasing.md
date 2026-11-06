@@ -44,7 +44,8 @@ Settings → Environments → New environment `release`:
    - Packages: `ElasticLM.*`.
    - The first release creates the two packages, so the policy needs the scope that allows new packages. After the first
      release, narrow it to new versions of existing packages.
-4. Before V1e, decide whether to reserve the ID prefix `ElasticLM`
+4. In V1e, before the pull request that switches the user documentation to nuget.org, decide whether to reserve the ID
+   prefix `ElasticLM.` or to publish first and so take the names
    (https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation).
 
 ### Documentation site (GitHub Pages)
