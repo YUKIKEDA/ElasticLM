@@ -563,6 +563,7 @@ function Invoke-Page([string]$path) {
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
     $left = @()
+    $completed = $false
     try {
         $lastOutput = $null
         $values = @{}
@@ -637,18 +638,24 @@ function Invoke-Page([string]$path) {
                 }
             }
         }
+        $completed = $true
     }
     finally {
         Stop-Background
         $script:passphrase = $null
         foreach ($variable in $saved.Keys) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
         Remove-Item -Recurse -Force -LiteralPath $work, $packages -ErrorAction Continue
-        # A folder that is still there, such as one a process still holds open, would keep keys and secrets: name it here,
-        # also when a step failed before, and fail the page below.
+        # A folder that is still there, such as one a process still holds open, would keep keys and secrets. When a step
+        # failed, its error is the one that ends the run, so the folders are named here; otherwise the error below names them.
         $left = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
-        foreach ($folder in $left) { Write-Host "::error::$($name): the folder $folder was not removed." }
+        if (-not $completed -and $left) { Write-Host "::error::$(Get-LeftMessage $name $left)" }
     }
-    if ($left) { throw "$($name): the folder $($left -join ' and ') was not removed." }
+    if ($left) { throw (Get-LeftMessage $name $left) }
+}
+
+# The error for the work folders that were not removed, in the singular or the plural.
+function Get-LeftMessage([string]$name, [string[]]$folders) {
+    return $folders.Count -eq 1 ? "$($name): the folder $($folders[0]) was not removed." : "$($name): the folders $($folders -join ' and ') were not removed."
 }
 
 $script:background = $null
