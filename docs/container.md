@@ -1,7 +1,8 @@
 # Running elm-service in a container
 
 `ghcr.io/yukikeda/elm-service` is the hosted activation service as a container image (design §20.6). Nothing has been
-published yet: the first image comes with the first release (roadmap row V1e).
+published yet: the first image comes with the first release that is not a prerelease, such as `v1.0.0`; a prerelease
+such as `v1.0.0-rc.1` pushes no image (roadmap row V1e, design §20.5).
 
 ## What the image holds
 

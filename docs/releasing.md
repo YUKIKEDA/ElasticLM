@@ -85,7 +85,10 @@ release is published (design §20.7, T28).
    example with `docker buildx imagetools inspect <image>`), and update them in a pull request if they changed. Raising
    `DOTNET_SDK_VERSION` always changes the Alpine image's tag and digest. The base of the `elm-service` image, in
    `eng/container/Dockerfile`, is raised by Dependabot's pull requests; merge the open one before the release.
-3. Release a candidate first: tag the merge commit on `main` with `v<version>-rc.1` and push the tag.
+3. Release a candidate first: tag the merge commit on `main` with `v<version>-rc.1` and push the tag. Do not push any
+   `v*` tag, an rc tag included, before V1e's change to `release.yml` has merged (design §20.5, "V1e で変えること"): until then, `publish`
+   runs on every `v*` tag and would push the rc's packages to nuget.org and its image to GHCR, while the user
+   documentation says that a prerelease pushes neither.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release.
