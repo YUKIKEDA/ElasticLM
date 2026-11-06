@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Runs the marked steps of README.md and of every Tutorial page with a given elm, elm-server, and package folder (design
-    §20.7, V1c1, V1c3a, V1c3b, and V1c3e).
+    Runs the marked steps of README.md and of every Tutorial page with a given elm, elm-server, elm-service, and package
+    folder (design §20.7, V1c1, V1c3a, V1c3b, V1c3e, and V1c3d).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
@@ -9,10 +9,10 @@
     a key the kind does not take, and '-->' inside a value fail. The one marker that stands on a line of its own, with no
     code block, is steps:prebuilt (below).
 
-      steps:run                       Each line is one command, run in order. A line starts with elm, dotnet, or
-                                      elm-server and never with cd; the rest is split on spaces, and a double-quoted part
-                                      is one argument. Each line must exit with 0. Optional keys, about the block's last
-                                      command:
+      steps:run                       Each line is one command, run in order. A line starts with elm, dotnet, elm-server,
+                                      or elm-service and never with cd; the rest is split on spaces, and a double-quoted
+                                      part is one argument. Each line must exit with 0. Optional keys, about the block's
+                                      last command:
                                         exit=<0-255>        the exit code it must end with instead of 0.
                                         capture=<name>      takes a value from its output. The name is lowercase words
                                                             joined by at least one hyphen (server-key), and a page
@@ -20,14 +20,21 @@
                                         stream=stderr       takes the value from the standard error (default: stdout).
                                         pattern="<regex>"   the value is group 1 of the first match, so the pattern needs a
                                                             group; without a pattern, it is the whole stream, trimmed.
-                                      stream and pattern need capture. A value must be one line of at most 256 characters
-                                      of A-Za-z0-9._~- and must not be empty.
-      steps:background ready=<url>    One line that starts with elm-server, started without waiting, its output read and
-                                      dropped. The step is done when a GET of the ready URL (https on 127.0.0.1,
-                                      localhost, or [::1], with the server's self-signed certificate accepted) answers
-                                      200; the GETs come every 0.5 s with a 5 s limit each, for at most 60 s. A page has
-                                      at most one. The process tree is stopped at the end of the page.
-      steps:file path=<path>          The block's content is written to that path, relative to the work folder.
+                                        env=ELM_API_KEY     the value goes into ELM_API_KEY of the page's later elm lines
+                                                            only, never into a placeholder, a file, another program, or
+                                                            this script's own environment. No other name is taken.
+                                      stream, pattern, and env need capture. A value must be one line of at most 256
+                                      characters of A-Za-z0-9._~- and must not be empty.
+      steps:background ready=<url>    One line that starts with elm-server or elm-service, started without waiting, its
+                                      output read and dropped. The step is done when a GET of the ready URL answers 200;
+                                      the GETs come every 0.5 s with a 5 s limit each, for at most 60 s. The URL's host is
+                                      127.0.0.1, localhost, or [::1]: https for elm-server, with the server's self-signed
+                                      certificate accepted; https or http for elm-service. A page has at most one. The
+                                      process tree is stopped at the end of the page.
+      steps:file path=<path>          The block's content is written to that path, relative to the work folder, with each
+                                      <name> captured earlier on the page replaced by its value. A <name> that the page
+                                      captures later, or captures with env, fails before anything runs; any other <...>
+                                      stays as written.
       steps:expect                    Each line must appear, in order and as a whole line, in the standard output of the
                                       last command of the steps:run block right before this block. A steps:prebuilt
                                       marker between them does not count, since it runs nothing.
@@ -35,25 +42,29 @@
     Other comment lines, such as the sample comment of the code test (GuideSamplesTests), may stand above the marker. A
     block without a marker is not run, and a steps marker inside a code block fails. In each argument of a steps:run or
     steps:background line (after the split), <name> becomes the value captured under that name earlier on the page; any
-    other <name> left in a line, such as <repo>, fails before anything runs. steps:file and steps:expect blocks are used
-    as written.
+    other <name> left in a line, such as <repo>, fails before anything runs. steps:expect blocks are used as written. A
+    name captured with env fills no placeholder: a line or a steps:file block that holds it fails.
 
     <!-- steps:prebuilt name=<name> --> stands on a line of its own, from the start of the line, after the paragraph that
     tells the reader to download what it names. It fails when the next line that is not blank is a code block's opening
     line, when it is indented, without name, with a name other than these, and when a page names the same name twice:
       elm           The page's elm lines run -Elm. An elm line needs no marker.
       elm-server    The page's elm-server lines run -ElmServer. An elm-server line needs this marker before it.
+      elm-service   The page's elm-service lines run -ElmService. An elm-service line needs this marker before it.
       packages      Creates the folder packages in the work folder and copies every *.nupkg of -Feed into it (no
                     .snupkg). A dotnet add ... package or dotnet package add line needs this marker before it.
 
-    elm-server runs with -ElmServer and gets no environment variable whose name starts with ELM_ (in any case), so that a
-    variable left in the shell cannot override the page's settings file. elm and dotnet get the environment as it is.
+    elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
+    ELM_ (in any case), so that a variable left in the shell cannot override the page's settings file. The one exception
+    is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. elm and
+    dotnet get the environment as it is, and elm lines also ELM_API_KEY once a block captured it with env.
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
     packed again under the same version never comes from an older copy in the global packages folder, and so that the
     job's package cache never holds the packages of one run. Both folders are removed at the end, also on failure, after
-    the background process has stopped.
+    the background process has stopped; a folder that is still there fails the page, so that keys and secrets are never
+    left behind unnoticed.
 
     The page's translation (README.ja.md, or the same file under docs/guide.ja/) must hold the content of each marked
     block of the English page as fenced code blocks of its own, and each steps:prebuilt marker as a line of its own that
@@ -68,6 +79,10 @@
 .PARAMETER ElmServer
     The elm-server executable. A page with an elm-server line or a steps:prebuilt name=elm-server marker fails without it.
 
+.PARAMETER ElmService
+    The elm-service executable. A page with an elm-service line or a steps:prebuilt name=elm-service marker fails without
+    it.
+
 .PARAMETER Feed
     The folder of the ElasticLM packages (.nupkg) for steps:prebuilt name=packages. A page with that marker or a
     dotnet add ... package or dotnet package add line fails without it.
@@ -79,6 +94,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Elm,
     [string]$ElmServer,
+    [string]$ElmService,
     [string]$Feed,
     [string[]]$Page
 )
@@ -87,8 +103,10 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
 $elmPath = (Resolve-Path $Elm).Path
 $elmServerPath = $ElmServer ? (Resolve-Path $ElmServer).Path : $null
+$elmServicePath = $ElmService ? (Resolve-Path $ElmService).Path : $null
 $feedPath = $Feed ? (Resolve-Path $Feed).Path : $null
-$prebuiltNames = @('elm', 'elm-server', 'packages')
+$prebuiltNames = @('elm', 'elm-server', 'elm-service', 'packages')
+$apiKeyVariable = 'ELM_API_KEY'
 $dotnetPath = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $commandTimeout = [TimeSpan]::FromMinutes(10)
 $readyTimeout = [TimeSpan]::FromSeconds(60)
@@ -97,7 +115,7 @@ $probeInterval = 500
 $captureName = '[a-z][a-z0-9]*(?:-[a-z0-9]+)+'
 $valueLimit = 256
 $markerKeys = @{
-    run = @('capture', 'stream', 'pattern', 'exit')
+    run = @('capture', 'stream', 'pattern', 'exit', 'env')
     background = @('ready')
     file = @('path')
     expect = @()
@@ -205,7 +223,7 @@ function Split-Step([string]$line) {
 }
 
 # The commands of a steps:run or steps:background block, checked before anything runs.
-function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$prebuilt) {
+function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$hidden, [Collections.Generic.HashSet[string]]$prebuilt) {
     $lineNumber = $block.Line
     foreach ($line in $block.Lines) {
         $lineNumber++
@@ -226,13 +244,19 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
             'elm-server' {
                 if (-not $prebuilt.Contains('elm-server')) { throw "$($name):$($lineNumber): an elm-server line needs a steps:prebuilt name=elm-server marker before it." }
             }
+            'elm-service' {
+                if (-not $prebuilt.Contains('elm-service')) { throw "$($name):$($lineNumber): an elm-service line needs a steps:prebuilt name=elm-service marker before it." }
+            }
             'cd' { throw "$($name):$($lineNumber): a step does not change the folder (cd); pass the folder as an argument." }
-            default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, or elm-server, not $($words[0])." }
+            default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, elm-server, or elm-service, not $($words[0])." }
         }
         # Any <name> in an argument, a single word such as <repo> or <RID> included, is a placeholder, and only a name
         # captured earlier on the page fills one; a name that cannot be captured is never filled.
         foreach ($word in $words | Select-Object -Skip 1) {
             foreach ($placeholder in [regex]::Matches($word, '<([A-Za-z][A-Za-z0-9._-]*)>')) {
+                if ($hidden.Contains($placeholder.Groups[1].Value)) {
+                    throw "$($name):$($lineNumber): $($placeholder.Value) was captured for $apiKeyVariable only and fills no placeholder."
+                }
                 if (-not $captured.Contains($placeholder.Groups[1].Value)) {
                     throw "$($name):$($lineNumber): $($placeholder.Value) is not a value captured before this line."
                 }
@@ -250,7 +274,12 @@ function Get-Marked([object]$parsed) {
 # Checks every marker and line of a page before anything runs; returns the steps.
 function Read-Plan([string]$name, [object]$parsed) {
     $captured = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # The names captured with env: their values go into ELM_API_KEY only, never into a placeholder.
+    $hidden = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $prebuilt = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # Every name a steps:run marker of the page captures, so that a steps:file block can tell a name captured later from
+    # text such as a usage line's <data-folder>.
+    $pageCaptures = @($parsed.Blocks | Where-Object Marker | ForEach-Object { [regex]::Match($_.Marker, '\scapture=([^\s"]+)').Groups[1].Value } | Where-Object { $_ })
     $plan = [Collections.Generic.List[object]]::new()
     $previous = $null
     foreach ($block in Get-Marked $parsed) {
@@ -269,15 +298,16 @@ function Read-Plan([string]$name, [object]$parsed) {
         switch ($marker.Kind) {
             'run' {
                 $capture = $attributes.ContainsKey('capture') ? $attributes['capture'] : $null
-                if (-not $capture -and ($attributes.ContainsKey('stream') -or $attributes.ContainsKey('pattern'))) {
-                    throw "$($at): stream and pattern need capture."
+                if (-not $capture -and ($attributes.ContainsKey('stream') -or $attributes.ContainsKey('pattern') -or $attributes.ContainsKey('env'))) {
+                    throw "$($at): stream, pattern, and env need capture."
                 }
                 if ($null -ne $capture) {
                     if ($capture -cnotmatch "^$captureName$") {
                         throw "$($at): a captured name is lowercase words joined by hyphens, such as server-key."
                     }
-                    if ($captured.Contains($capture)) { throw "$($at): $capture is captured twice on the page." }
+                    if ($captured.Contains($capture) -or $hidden.Contains($capture)) { throw "$($at): $capture is captured twice on the page." }
                 }
+                if ($attributes.ContainsKey('env') -and $attributes['env'] -cne $apiKeyVariable) { throw "$($at): env takes $apiKeyVariable only." }
                 if ($attributes.ContainsKey('stream') -and $attributes['stream'] -cnotin 'stdout', 'stderr') { throw "$($at): stream is stdout or stderr." }
                 if ($attributes.ContainsKey('pattern')) {
                     try {
@@ -292,23 +322,29 @@ function Read-Plan([string]$name, [object]$parsed) {
                     if ($attributes['exit'] -cnotmatch '^(0|[1-9][0-9]{0,2})$' -or [int]$attributes['exit'] -gt 255) { throw "$($at): exit is an integer from 0 to 255." }
                     $step.Exit = [int]$attributes['exit']
                 }
-                $step.Commands = @(Read-Command $name $block $captured $prebuilt)
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt)
                 if ($step.Commands.Count -eq 0) { throw "$($name):$($block.Line): the steps:run block is empty." }
-                if ($null -ne $capture) { [void]$captured.Add($capture) }
+                if ($null -ne $capture) {
+                    if ($attributes.ContainsKey('env')) { [void]$hidden.Add($capture) } else { [void]$captured.Add($capture) }
+                }
             }
             'background' {
                 if (-not $attributes.ContainsKey('ready')) { throw "$($at): steps:background takes ready=<url>." }
                 if ($plan | Where-Object Kind -EQ 'background') { throw "$($at): a page has at most one steps:background block." }
-                $ready = $null
-                if ($attributes['ready'] -cnotmatch '^https://(127\.0\.0\.1|localhost|\[::1\])([:/?#]|$)' -or
-                    -not [Uri]::TryCreate($attributes['ready'], [UriKind]::Absolute, [ref]$ready) -or $ready.Host -cnotin '127.0.0.1', 'localhost', '[::1]') {
-                    throw "$($at): ready is an https URL on 127.0.0.1, localhost, or [::1]."
-                }
-                $step.Ready = $ready
                 $lines = @($block.Lines | Where-Object { $_.Trim() -ne '' })
                 if ($lines.Count -ne 1) { throw "$($name):$($block.Line): the steps:background block has one line." }
-                if ((Split-Step $lines[0])[0] -cne 'elm-server') { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a steps:background line starts with elm-server." }
-                $step.Commands = @(Read-Command $name $block $captured $prebuilt)
+                $program = (Split-Step $lines[0])[0]
+                if ($program -cnotin 'elm-server', 'elm-service') { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a steps:background line starts with elm-server or elm-service." }
+                # elm-server always serves https, with a certificate of its own key; elm-service serves http unless it is
+                # given a certificate, and http on a loopback address is what its clients take outside production.
+                $ready = $null
+                $schemes = $program -ceq 'elm-service' ? 'https?' : 'https'
+                if ($attributes['ready'] -cnotmatch "^${schemes}://(127\.0\.0\.1|localhost|\[::1\])([:/?#]|$)" -or
+                    -not [Uri]::TryCreate($attributes['ready'], [UriKind]::Absolute, [ref]$ready) -or $ready.Host -cnotin '127.0.0.1', 'localhost', '[::1]') {
+                    throw "$($at): ready of $program is $($program -ceq 'elm-service' ? 'an http or https' : 'an https') URL on 127.0.0.1, localhost, or [::1]."
+                }
+                $step.Ready = $ready
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt)
             }
             'file' {
                 $value = $attributes.ContainsKey('path') ? $attributes['path'] : ''
@@ -316,12 +352,27 @@ function Read-Plan([string]$name, [object]$parsed) {
                 if ([IO.Path]::IsPathRooted($value) -or $value.Contains('\') -or ($value -split '/') -contains '..') {
                     throw "$($at): the path of steps:file is relative to the work folder, with / and without '..'."
                 }
+                # Only the names that the page captures are placeholders, so that a sample's usage line (<data-folder>),
+                # <configuration>, or List<string> stay as written. A mistyped name stays too; the request that sends the
+                # file then fails (design §20.7, V1c3d, the owner's decision D1).
+                $lineNumber = $block.Line
+                foreach ($line in $block.Lines) {
+                    $lineNumber++
+                    foreach ($placeholder in [regex]::Matches($line, "<($captureName)>")) {
+                        if ($hidden.Contains($placeholder.Groups[1].Value)) {
+                            throw "$($name):$($lineNumber): $($placeholder.Value) was captured for $apiKeyVariable only and fills no placeholder."
+                        }
+                        if (-not $captured.Contains($placeholder.Groups[1].Value) -and $pageCaptures -ccontains $placeholder.Groups[1].Value) {
+                            throw "$($name):$($lineNumber): $($placeholder.Value) is captured only after this block."
+                        }
+                    }
+                }
             }
             'expect' {
                 if ($previous -ne 'run') { throw "$($at): steps:expect must follow a steps:run block." }
             }
             'prebuilt' {
-                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, or name=packages." }
+                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, name=elm-service, or name=packages." }
                 if (-not $prebuilt.Add($attributes['name'])) { throw "$($at): steps:prebuilt name=$($attributes['name']) is given twice on the page." }
             }
         }
@@ -331,13 +382,16 @@ function Read-Plan([string]$name, [object]$parsed) {
     }
     if ($plan.Count -eq 0) { throw "$name has no steps." }
     if (-not $elmServerPath -and $prebuilt.Contains('elm-server')) { throw "$name needs -ElmServer: it runs elm-server." }
+    if (-not $elmServicePath -and $prebuilt.Contains('elm-service')) { throw "$name needs -ElmService: it runs elm-service." }
     if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
     return $plan
 }
 
 # A process in the work folder. elm-server gets no ELM_ variable: it reads ELM_<KEY> before its settings file.
-function New-StartInfo([string]$program, [string[]]$arguments, [string]$folder) {
-    $file = switch -CaseSensitive ($program) { 'elm' { $elmPath } 'dotnet' { $dotnetPath } 'elm-server' { $elmServerPath } }
+# elm-service likewise, except that the background elm-service gets the run's passphrase for its signing key. An elm line
+# gets the API key captured with env; no other program gets it, and this script's own environment never holds it.
+function New-StartInfo([string]$program, [string[]]$arguments, [string]$folder, [string]$apiKey, [switch]$Background) {
+    $file = switch -CaseSensitive ($program) { 'elm' { $elmPath } 'dotnet' { $dotnetPath } 'elm-server' { $elmServerPath } 'elm-service' { $elmServicePath } }
     $info = [Diagnostics.ProcessStartInfo]::new($file)
     foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
     $info.WorkingDirectory = $folder
@@ -345,11 +399,13 @@ function New-StartInfo([string]$program, [string[]]$arguments, [string]$folder) 
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    if ($program -ceq 'elm-server') {
+    if ($program -cin 'elm-server', 'elm-service') {
         foreach ($variable in @($info.Environment.Keys)) {
             if ($variable.StartsWith('ELM_', [StringComparison]::OrdinalIgnoreCase)) { [void]$info.Environment.Remove($variable) }
         }
     }
+    if ($program -ceq 'elm-service' -and $Background) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
+    if ($program -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }
     return $info
 }
 
@@ -407,7 +463,7 @@ function Get-CapturedValue([string]$at, [object]$step, [object]$result) {
 function Start-Background([string]$name, [object]$step, [hashtable]$values, [string]$folder) {
     $command = $step.Commands[0]
     $at = "$($name):$($command.Line)"
-    $info = New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $folder
+    $info = New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $folder -Background
     try { $process = [Diagnostics.Process]::Start($info) }
     catch { throw "$($at): $($command.Shown) could not be started." }
     # Set before anything else can fail, so that the end of the page stops the process.
@@ -499,15 +555,19 @@ function Invoke-Page([string]$path) {
     foreach ($variable in 'ELM_KEY_PASSPHRASE', 'NUGET_PACKAGES', 'MSBUILDDISABLENODEREUSE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_NOLOGO') {
         $saved[$variable] = [Environment]::GetEnvironmentVariable($variable)
     }
-    $env:ELM_KEY_PASSPHRASE = 'steps ' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(8))
+    $script:passphrase = 'steps ' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(8))
+    $env:ELM_KEY_PASSPHRASE = $script:passphrase
     $env:NUGET_PACKAGES = $packages
     # A build node that outlives the run would hold files in the work folder.
     $env:MSBUILDDISABLENODEREUSE = '1'
     $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
     $env:DOTNET_NOLOGO = '1'
+    $left = @()
     try {
         $lastOutput = $null
         $values = @{}
+        # The value captured with env, for the elm lines after it; a local of the page, so the next page never gets it.
+        $apiKey = $null
         foreach ($step in $plan) {
             $block = $step.Block
             switch ($step.Kind) {
@@ -515,7 +575,7 @@ function Invoke-Page([string]$path) {
                     $last = $step.Commands[-1]
                     foreach ($command in $step.Commands) {
                         $expected = $command.Line -eq $last.Line ? $step.Exit : 0
-                        try { $result = Invoke-Step (New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $work) }
+                        try { $result = Invoke-Step (New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $work $apiKey) }
                         catch { throw "$($name):$($command.Line): $($command.Shown) could not be run." }
                         if ($result.ExitCode -ne $expected) {
                             throw "$($name):$($command.Line): $($command.Shown) exited with $($result.ExitCode)$($expected -ne 0 ? ", not $expected" : '')."
@@ -525,8 +585,15 @@ function Invoke-Page([string]$path) {
                     }
                     if ($step.Attributes.ContainsKey('capture')) {
                         $capture = $step.Attributes['capture']
-                        $values[$capture] = Get-CapturedValue "$($name):$($last.Line)" $step $result
-                        "ok: $($name):$($last.Line): captured $capture"
+                        $captured = Get-CapturedValue "$($name):$($last.Line)" $step $result
+                        if ($step.Attributes.ContainsKey('env')) {
+                            $apiKey = $captured
+                            "ok: $($name):$($last.Line): captured $capture for $apiKeyVariable"
+                        }
+                        else {
+                            $values[$capture] = $captured
+                            "ok: $($name):$($last.Line): captured $capture"
+                        }
                     }
                 }
                 'background' {
@@ -536,7 +603,10 @@ function Invoke-Page([string]$path) {
                     $value = $step.Attributes['path']
                     $target = Join-Path $work $value
                     New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
-                    [IO.File]::WriteAllText($target, ($block.Lines -join "`n") + "`n", [Text.UTF8Encoding]::new($false))
+                    # A value is only A-Za-z0-9._~-, so it needs no escaping inside a JSON string or XML text.
+                    $content = ($block.Lines -join "`n") + "`n"
+                    foreach ($valueName in $values.Keys) { $content = $content.Replace("<$valueName>", $values[$valueName]) }
+                    [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
                     "ok: $($name):$($block.Line - 1): file $value"
                 }
                 'expect' {
@@ -562,7 +632,7 @@ function Invoke-Page([string]$path) {
                         if ($nupkgs.Count -eq 0) { throw "$($name):$($block.Order): -Feed holds no .nupkg file." }
                         foreach ($nupkg in $nupkgs) { Copy-Item -LiteralPath $nupkg.FullName -Destination $target }
                     }
-                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'packages' { '-Feed' } }
+                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } }
                     "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
                 }
             }
@@ -570,12 +640,21 @@ function Invoke-Page([string]$path) {
     }
     finally {
         Stop-Background
+        $script:passphrase = $null
         foreach ($variable in $saved.Keys) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
         Remove-Item -Recurse -Force -LiteralPath $work, $packages -ErrorAction Continue
+        # A folder that is still there, such as one a process still holds open, would keep keys and secrets: name it here,
+        # also when a step failed before, and fail the page below.
+        $left = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
+        foreach ($folder in $left) { Write-Host "::error::$($name): the folder $folder was not removed." }
     }
+    if ($left) { throw "$($name): the folder $($left -join ' and ') was not removed." }
 }
 
 $script:background = $null
+# The run's passphrase of the page that runs: ELM_KEY_PASSPHRASE of its elm lines, and the background elm-service's
+# ELM_SIGNING_PASSPHRASE.
+$script:passphrase = $null
 try {
     foreach ($path in $Page) { Invoke-Page $path }
 }
