@@ -1017,3 +1017,16 @@
 - **決定:** 方針を「利用者の文書は、試しの期間の読み手、つまり GitHub のプレリリースを手に入れた読み手がすることを書く」と言い直す。入口の頁の試しの期間の文は、最初の rc より前にも正しいように、試しの期間の配り方として書き（英語の例「During the trial, ElasticLM is distributed as GitHub prereleases.」）、プレリリースがまだなければ `CONTRIBUTING.md` の新しい「Build from source」の節で作れると続ける。PR #218 の振り返りの教訓 2 も同じ言い方で規則に入れる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」の方針と Q4）。
 - **理由:** V1c3e の頁は、最初の rc（V1e）より前に `main` に入る。そのあいだ手に入るプレリリースはなく、「今手に入れられるもの」を書くという方針は、それで書いた頁自体に当てはまらない。また、入口の頁の「GitHub のプレリリースとして配っている」は、最初の rc までは事実でない。読み手を「Build from source」に送れば、最初の rc より前の読み手も頁の手順を進められる。
 - **却下した案:** 方針の言い方をそのままにし、最初の rc より前に頁の手順を始められないことを受け入れる（記録の途中の「V1e の最初の rc より前」の受け入れ）。
+
+### `elm-service` を自己署名の証明書の https で動かし、証明書を OS の信頼に入れる（V1c3d の Grill の Q1、Issue #223）
+
+- **決定:** Tutorial 2 は `elm-service` を既定の `http://127.0.0.1:8080` で動かす。ループバックの http は `ActivationClient` と `elm admin request` が受け入れる。頁は、本番では https にすることを 1 文で書き、サービスの設定の Reference の頁を指す。手順を流す仕組みの `steps:background` は、`elm-service` に限ってループバックの http の `ready`（`http://127.0.0.1:8080/health`）も受け入れる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3d の Grill」）。
+- **理由:** `elm-service` は `elm-server` と違って自己署名の証明書を作らず、`ActivationClient` と `elm admin request` は TLS のピンを持たず OS の信頼で確かめる。https で動かすには、読み手が自己署名の証明書を作って OS の信頼に入れることになり、その手順は重く、OS ごとに違う。
+- **却下した案:** 自己署名の証明書を作って OS の信頼に入れ、`elm-service` を https で動かす。
+
+### 署名鍵のパスフレーズを `elm` のファイルか、頁の決まった値で渡す（V1c3d の Grill の Q2、Issue #223）
+
+- **決定:** 読み手は、`elm-service` を動かす 2 つ目の端末で `ELM_SIGNING_PASSPHRASE` に署名鍵のパスフレーズを入れる。書き方は `ELM_API_KEY` と同じく、コードブロックの外の文でシェルごとに示す。CI では、仕組みが自分のランダムなパスフレーズを、頁の外で `elm-service` のプロセスにだけ `ELM_SIGNING_PASSPHRASE` として渡し、ほかの `ELM_` の変数は渡さない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3d の Grill」の Q2）。
+- **理由:** `elm-service` は既にパスフレーズを `ELM_SIGNING_PASSPHRASE` か `signing.passphraseFile` から読み（`ElmService.ReadSigningKey`）、`elm` は鍵を作るときにパスフレーズを `ELM_KEY_PASSPHRASE` から読むか、対話で尋ねる（§16）。`ELM_API_KEY` と同じ扱い（V1c3b の Grill の Q3）にすれば、製品に Tutorial のための入口を足さずに済む。`--passphrase-file` は、鍵を開ける値を平文のファイルにして暗号化した鍵の隣に置く道を `elm` に足すことになる（V1c3b の Grill の Q3 が `--api-key-file` を退けたのと同じ）。頁に決まったパスフレーズを書けば、読み手がそれを写して本番の鍵にも使うおそれがある（V1c3b の Grill の Q4 が決まったノンスの秘密を退けたのと同じ）。
+- **却下した案:** `elm` に `--passphrase-file` を足し、パスフレーズをファイルで渡す。
+- **却下した案:** 頁に決まったパスフレーズを書く。
