@@ -4,7 +4,7 @@ sidebar_position: 9
 
 # .NET API
 
-このページは、.NET のアプリに組み込む 2 つの NuGet パッケージの公開 API をまとめたものだ。`ElasticLM.Licensing` は、ライセンスファイルとリーストークンをオフラインで検証する。`ElasticLM.Client` は、`elm-service` でデバイスをアクティベーションし、そのライセンスファイルを保存し、`elm-server` か `elm-service` からシートのリースを受ける。型、メソッド、オプションを調べるアプリ開発者に向けている。リリースのたびに、両方のパッケージを nuget.org に公開する。1.0 はまだリリースしていないので、このページは `main` ブランチの API を説明している。すべての型とメンバーに XML ドキュメントがあり、パッケージに含まれていて IDE に表示される。このページでは各型を 1 行で説明し、入り口になる型はもっと詳しく説明する。どんな確認をなぜするのかは、[ライセンスファイルと検証](../explanation/license-files-and-verification.md)、[アクティベーション](../explanation/activation.md)、[フローティングライセンス](../explanation/floating-licenses.md)で説明している。
+このページは、.NET のアプリに組み込む 2 つの NuGet パッケージの公開 API をまとめたものだ。`ElasticLM.Licensing` は、ライセンスファイルとリーストークンをオフラインで検証する。`ElasticLM.Client` は、`elm-service` でデバイスをアクティベーションし、そのライセンスファイルを保存し、`elm-server` か `elm-service` からシートのリースを受ける。型、メソッド、オプションを調べるアプリ開発者に向けている。パッケージの入手方法は、最初のチュートリアルの[始める前に](../tutorials/verify-a-license-offline.md#始める前に)にある。すべての型とメンバーに XML ドキュメントがあり、パッケージに含まれていて IDE に表示される。このページでは各型を 1 行で説明し、入り口になる型はもっと詳しく説明する。どんな確認をなぜするのかは、[ライセンスファイルと検証](../explanation/license-files-and-verification.md)、[アクティベーション](../explanation/activation.md)、[フローティングライセンス](../explanation/floating-licenses.md)で説明している。
 
 ## 失敗の伝え方
 

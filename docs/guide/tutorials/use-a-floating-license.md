@@ -8,53 +8,31 @@ In this tutorial you run `elm-server`, the license server that a customer runs o
 
 ## Before you start
 
-1.0 is not released yet, so you build the `elm` tool, `elm-server`, and the `ElasticLM.Licensing` and `ElasticLM.Client` packages from the source. You need:
+You need:
 
-- A clone of the [ElasticLM repository](https://github.com/YUKIKEDA/ElasticLM).
 - The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- What .NET needs to build a native executable on your system, listed under [Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) in Microsoft's Native AOT deployment page:
-  - Windows: Visual Studio with the "Desktop development with C++" workload.
-  - Ubuntu: the packages `clang` and `zlib1g-dev`.
-  - macOS: the Xcode Command Line Tools.
 - The ports 7070 and 7071 free on your machine: the server listens on both.
 
-Create an empty folder outside the clone for this tutorial. Open a terminal in that folder and type every command of this page there. Inside the clone, the repository's own build settings, such as warnings as errors and central package versions, would also apply to your app.
+Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
 
 On Linux and macOS, the folder must not be writable by your group or by others, because the server keeps its private key in a folder inside it. `chmod go-w .` in the folder makes sure of that.
 
-In the commands, replace `<repo>` with the path of your clone, written with `/`, such as `C:/src/ElasticLM` or `/home/me/src/ElasticLM`.
+You download the `elm` tool, `elm-server`, and the `ElasticLM.Licensing` and `ElasticLM.Client` packages from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
-Build `elm`, the command-line tool that creates keys and issues licenses, and `elm-server`, the license server, into the folder `tools`. Both are built as native executables, the single files they ship as, which is why the build needs the tools above.
-
-On Windows, first add the Visual Studio Installer folder to your `PATH` in this terminal, because Visual Studio's scripts, which the build runs, call `vswhere.exe` by name. In PowerShell, type `$env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"`.
+From the release's Assets, download the archives `elm-<version>-<RID>` and `elm-server-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. They are `.zip` files for Windows and `.tar.gz` files for the others. Take the archives whose names do not end in `-symbols`: those hold only debug symbols. Extract both archives into a folder named `tools` in the tutorial folder. Each archive holds the same `LICENSE` file, so you can let the second one overwrite it. `tools` then holds `elm` and `elm-server` (`elm.exe` and `elm-server.exe` on Windows): `elm` is the command-line tool that creates keys and issues licenses, and `elm-server` is the license server.
 
 <!-- steps:prebuilt name=elm -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools
-```
-
 <!-- steps:prebuilt name=elm-server -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Server -c Release -o tools
-```
-
-If a build prints that `vswhere.exe` is not recognized, or stops with an `MSB3073` error that names `link.exe`, check the [prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) and the `PATH` line above.
-
-On Windows, `tools` also holds a `.pdb` file for each program, its debug symbols, which you do not need.
 
 Add the `tools` folder to your `PATH` in this terminal, so that the commands `elm` and `elm-server` run the programs in it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Build the packages, version 0.1.0, into the folder `feed`. Your app uses `ElasticLM.Client`, which depends on `ElasticLM.Licensing`, so you build both:
+From the same release, download `ElasticLM.Client.<version>.nupkg` and `ElasticLM.Licensing.<version>.nupkg` into a folder named `packages` in the tutorial folder. Your app uses `ElasticLM.Client`, which depends on `ElasticLM.Licensing`, so you need both. You do not need the `.snupkg` files of the same names, which hold the packages' debug symbols.
 
-<!-- steps:run -->
-```shell
-dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
-dotnet pack <repo>/src/ElasticLM.Client -c Release -o feed
-```
+<!-- steps:prebuilt name=packages -->
 
-`feed` now holds a `.nupkg` file, the package, and a `.snupkg` file, its symbols package for debuggers, for each of the two. You do not need to do anything with the `.snupkg` files.
+Before you use what you downloaded, check it as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
 
-Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `feed` only, and every other package from nuget.org. The path `feed` is relative to the folder of `nuget.config`. The ElasticLM packages are not on nuget.org yet, so someone else could put a package of the same name there; the mapping makes sure such a package is never used.
+Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `packages` only, and every other package from nuget.org. The path `packages` is relative to the folder of `nuget.config`. The ElasticLM packages you use come from the GitHub prerelease, and a package of the same name on nuget.org would not be ElasticLM's; the mapping makes sure such a package is never used.
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -62,11 +40,11 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 <configuration>
   <packageSources>
     <clear />
-    <add key="feed" value="feed" />
+    <add key="packages" value="packages" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <packageSource key="feed">
+    <packageSource key="packages">
       <package pattern="ElasticLM.*" />
     </packageSource>
     <packageSource key="nuget.org">
@@ -226,12 +204,12 @@ For the first lease duration after it starts, one minute with this license, the 
 
 ## Create the app
 
-Create a console app in the folder `app`, and add the `ElasticLM.Client` package to it. `ElasticLM.Licensing` comes with it:
+Create a console app in the folder `app`, and add the `ElasticLM.Client` package to it from `packages`. `ElasticLM.Licensing` comes with it. `--prerelease` lets `dotnet add` take a prerelease version, the only kind in `packages`, and `--source packages` makes it look for the version in `packages` only:
 
 <!-- steps:run -->
 ```shell
 dotnet new console -o app
-dotnet add app package ElasticLM.Client --version 0.1.0
+dotnet add app package ElasticLM.Client --prerelease --source packages
 ```
 
 Replace the content of `app/Program.cs` with this code:
@@ -407,9 +385,7 @@ Each run of the app within that hour borrows one more seat. A second run leaves 
 
 Stop the server: press Ctrl+C in the second terminal. It prints `Application is shutting down...` and `server.stopped: 1 leases were not returned`, and ends. The one lease is the borrow. The server keeps its record of the borrows in `server-data`, so when it starts again, it still counts the borrow until the borrow expires.
 
-To start again from the beginning, delete the whole tutorial folder with the server stopped: that removes both the server's record of the borrows in `server-data` and the app's borrow files in `client-data`. Then start again from [Before you start](#before-you-start), including the builds of `tools` and `feed`. Do not delete only `server-data`: the server then makes a new installation key and needs a new server license, and the app with the old `client-data` refuses the new server with `ELM_SERVER_PIN_MISMATCH`, because the client keeps the key of the server it checked first.
-
-If you change the ElasticLM source and pack version 0.1.0 again, your app still gets the 0.1.0 packages that NuGet saved the first time in its global packages folder, such as `~/.nuget/packages` or `%USERPROFILE%\.nuget\packages`, and not the new ones in `feed`. `dotnet nuget locals global-packages --list` shows where the folder is. Delete its folders `elasticlm.client` and `elasticlm.licensing`, or clear the whole folder with `dotnet nuget locals global-packages --clear`, before the next `dotnet add` or `dotnet run`.
+To start again from the beginning, delete the whole tutorial folder with the server stopped: that removes both the server's record of the borrows in `server-data` and the app's borrow files in `client-data`. Then start again from [Before you start](#before-you-start), including the downloads into `tools` and `packages`. Do not delete only `server-data`: the server then makes a new installation key and needs a new server license, and the app with the old `client-data` refuses the new server with `ELM_SERVER_PIN_MISMATCH`, because the client keeps the key of the server it checked first.
 
 ## What you made
 

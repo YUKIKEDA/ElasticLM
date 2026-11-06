@@ -8,7 +8,7 @@ This page is for everyone who meets ElasticLM for the first time: vendors who is
 
 ## What ElasticLM is for
 
-ElasticLM lets the vendor of a .NET or C/C++ app issue licenses for its products, check those licenses on the customer's machines, and count how many people use the product at the same time. It is open source (MIT) and ships as NativeAOT single binaries and NuGet packages. Nothing has been released yet; 1.0 is coming.
+ElasticLM lets the vendor of a .NET or C/C++ app issue licenses for its products, check those licenses on the customer's machines, and count how many people use the product at the same time. It is open source (MIT) and ships as NativeAOT single binaries and NuGet packages.
 
 ElasticLM puts one goal first: stop three kinds of abuse with cryptography rather than with secrecy.
 

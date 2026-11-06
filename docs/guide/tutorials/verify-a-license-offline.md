@@ -8,42 +8,25 @@ In this tutorial you create a vendor's keys, issue a license with them, and writ
 
 ## Before you start
 
-1.0 is not released yet, so you build the `elm` tool and the `ElasticLM.Licensing` package from the source. You need:
+You need the .NET 10 SDK: `dotnet --list-sdks` must list a version that starts with `10.`.
 
-- A clone of the [ElasticLM repository](https://github.com/YUKIKEDA/ElasticLM).
-- The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- What .NET needs to build a native executable on your system, listed under [Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) in Microsoft's Native AOT deployment page:
-  - Windows: Visual Studio with the "Desktop development with C++" workload.
-  - Ubuntu: the packages `clang` and `zlib1g-dev`.
-  - macOS: the Xcode Command Line Tools.
+Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
 
-Create an empty folder outside the clone for this tutorial. Open a terminal in that folder and type every command of this page there. Inside the clone, the repository's own build settings, such as warnings as errors and central package versions, would also apply to your app.
+You download the `elm` tool and the `ElasticLM.Licensing` package from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
-In the commands, replace `<repo>` with the path of your clone, written with `/`, such as `C:/src/ElasticLM` or `/home/me/src/ElasticLM`.
-
-Build `elm`, the command-line tool that creates keys and issues licenses, into the folder `tools`. `elm` is built as a native executable, the single file it ships as, which is why the build needs the tools above.
-
-On Windows, first add the Visual Studio Installer folder to your `PATH` in this terminal, because Visual Studio's scripts, which the build runs, call `vswhere.exe` by name. In PowerShell, type `$env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"`.
+From the release's Assets, download the archive `elm-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. It is a `.zip` file for Windows and a `.tar.gz` file for the others. Take the archive whose name does not end in `-symbols`: that one holds only debug symbols. Extract the archive into a folder named `tools` in the tutorial folder. `tools` then holds `elm` (`elm.exe` on Windows), the command-line tool that creates keys and issues licenses, and `LICENSE`.
 
 <!-- steps:prebuilt name=elm -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools
-```
-
-If the build prints that `vswhere.exe` is not recognized, or stops with an `MSB3073` error that names `link.exe`, check the [prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) and the `PATH` line above.
 
 Add the `tools` folder to your `PATH` in this terminal, so that the command `elm` runs it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Build the `ElasticLM.Licensing` package, version 0.1.0, into the folder `feed`:
+From the same release, download `ElasticLM.Licensing.<version>.nupkg`, the package your app uses, into a folder named `packages` in the tutorial folder. You do not need `ElasticLM.Licensing.<version>.snupkg` beside it, which holds the package's debug symbols.
 
-<!-- steps:run -->
-```shell
-dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
-```
+<!-- steps:prebuilt name=packages -->
 
-`feed` now holds `ElasticLM.Licensing.0.1.0.nupkg`, the package, and `ElasticLM.Licensing.0.1.0.snupkg`, its symbols package for debuggers. You do not need to do anything with the `.snupkg` file.
+Before you use what you downloaded, check it as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
 
-Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `feed` only, and every other package from nuget.org. The path `feed` is relative to the folder of `nuget.config`. The ElasticLM packages are not on nuget.org yet, so someone else could put a package of the same name there; the mapping makes sure such a package is never used.
+Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `packages` only, and every other package from nuget.org. The path `packages` is relative to the folder of `nuget.config`. The ElasticLM packages you use come from the GitHub prerelease, and a package of the same name on nuget.org would not be ElasticLM's; the mapping makes sure such a package is never used.
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -51,11 +34,11 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 <configuration>
   <packageSources>
     <clear />
-    <add key="feed" value="feed" />
+    <add key="packages" value="packages" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <packageSource key="feed">
+    <packageSource key="packages">
       <package pattern="ElasticLM.*" />
     </packageSource>
     <packageSource key="nuget.org">
@@ -167,12 +150,12 @@ features: pro
 
 ## Create the app
 
-Create a console app in the folder `app`, and add the `ElasticLM.Licensing` package to it:
+Create a console app in the folder `app`, and add the `ElasticLM.Licensing` package to it from `packages`. `--prerelease` lets `dotnet add` take a prerelease version, the only kind in `packages`, and `--source packages` makes it look for the version in `packages` only:
 
 <!-- steps:run -->
 ```shell
 dotnet new console -o app
-dotnet add app package ElasticLM.Licensing --version 0.1.0
+dotnet add app package ElasticLM.Licensing --prerelease --source packages
 ```
 
 Replace the content of `app/Program.cs` with this code:

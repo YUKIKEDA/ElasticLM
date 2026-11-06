@@ -8,42 +8,25 @@ sidebar_position: 1
 
 ## 始める前に
 
-1.0 はまだリリースしていないので、`elm` ツールと `ElasticLM.Licensing` パッケージはソースからビルドする。次のものが要る。
+.NET 10 SDK が要る。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
 
-- [ElasticLM のリポジトリ](https://github.com/YUKIKEDA/ElasticLM)のクローン。
-- .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
-- .NET がこのシステムでネイティブの実行ファイルをビルドするのに必要なもの。Microsoft の Native AOT 展開のページで、[Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) に挙がっている。
-  - Windows: 「Desktop development with C++」ワークロードを入れた Visual Studio。
-  - Ubuntu: パッケージ `clang` と `zlib1g-dev`。
-  - macOS: Xcode Command Line Tools。
+このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
 
-このチュートリアル用に、クローンの外に空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。クローンの中で打つと、警告をエラーとして扱う設定や、パッケージのバージョンを一か所で管理する設定のような、リポジトリ自身のビルド設定がアプリにも効いてしまう。
+`elm` ツールと `ElasticLM.Licensing` パッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」の印が付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」の印を付けるリリースはプレリリースにはならないので、その印を目安にしない。
 
-コマンドの中の `<repo>` は、自分のクローンのパスに置き換える。`C:/src/ElasticLM` や `/home/me/src/ElasticLM` のように、区切りには `/` を使う。
-
-鍵を作り、ライセンスを発行するコマンドラインツール `elm` を、フォルダー `tools` にビルドする。`elm` は、配布される形と同じく 1 つのファイルからなるネイティブの実行ファイルとしてビルドされる。ビルドに上のツールが要るのはそのためだ。
-
-Windows では、まずこのターミナルで Visual Studio Installer のフォルダーを `PATH` に足す。ビルドが実行する Visual Studio のスクリプトが、`vswhere.exe` を名前だけで呼ぶためだ。PowerShell では `$env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"` と打つ。
+リリースの Assets から、自分のシステムに合うアーカイブ `elm-<version>-<RID>` をダウンロードする。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブはデバッグシンボルだけなので、そうでないほうを取る。アーカイブを、チュートリアルのフォルダーの中の `tools` という名前のフォルダーに展開する。これで `tools` には、鍵を作り、ライセンスを発行するコマンドラインツール `elm`（Windows では `elm.exe`）と、`LICENSE` が入る。
 
 <!-- steps:prebuilt name=elm -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools
-```
-
-ビルドが `vswhere.exe` を認識できないと表示したときや、`link.exe` の名前を含む `MSB3073` のエラーで止まったときは、[前提条件](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites)と、上の `PATH` の行を確かめる。
 
 `elm` と打つだけで動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-`ElasticLM.Licensing` パッケージのバージョン 0.1.0 を、フォルダー `feed` にビルドする。
+同じリリースから、アプリが使うパッケージ `ElasticLM.Licensing.<version>.nupkg` を、チュートリアルのフォルダーの中の `packages` という名前のフォルダーにダウンロードする。隣にある `ElasticLM.Licensing.<version>.snupkg` は、パッケージのデバッグシンボルなので要らない。
 
-<!-- steps:run -->
-```shell
-dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
-```
+<!-- steps:prebuilt name=packages -->
 
-これで `feed` に、パッケージ本体の `ElasticLM.Licensing.0.1.0.nupkg` と、デバッガー向けのシンボルパッケージ `ElasticLM.Licensing.0.1.0.snupkg` ができる。`.snupkg` ファイルについては何もしなくてよい。
+ダウンロードしたものを使う前に、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムが動く Linux と macOS のバージョンも書いてある。
 
-チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `feed` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `feed` は、`nuget.config` があるフォルダーからの相対パスだ。ElasticLM のパッケージはまだ nuget.org にないので、ほかの誰かが同じ名前のパッケージをそこに置けてしまう。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
+チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -51,11 +34,11 @@ dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
 <configuration>
   <packageSources>
     <clear />
-    <add key="feed" value="feed" />
+    <add key="packages" value="packages" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <packageSource key="feed">
+    <packageSource key="packages">
       <package pattern="ElasticLM.*" />
     </packageSource>
     <packageSource key="nuget.org">
@@ -167,12 +150,12 @@ features: pro
 
 ## アプリを作る
 
-フォルダー `app` にコンソールアプリを作り、`ElasticLM.Licensing` パッケージを追加する。
+フォルダー `app` にコンソールアプリを作り、`packages` から `ElasticLM.Licensing` パッケージを追加する。`packages` にあるのはプレリリースのバージョンだけなので、`--prerelease` を付けてプレリリースのバージョンも選べるようにする。`--source packages` を付けると、`dotnet add` はバージョンを `packages` の中だけで探す。
 
 <!-- steps:run -->
 ```shell
 dotnet new console -o app
-dotnet add app package ElasticLM.Licensing --version 0.1.0
+dotnet add app package ElasticLM.Licensing --prerelease --source packages
 ```
 
 `app/Program.cs` の中身を、次のコードに置き換える。

@@ -2,7 +2,7 @@
 
 ElasticLM lets the vendor of a .NET or C/C++ application issue licenses, check them on their customers' machines, and count concurrent use. This documentation is for the people who issue the licenses, the developers who build the checks into an app, and the administrators who run a license server. It assumes you know your own platform; it does not assume you have read the design.
 
-> **Status:** 1.0 is not released yet. These pages describe the `main` branch. The tutorials are still being written: [Issue a license and verify it in a .NET app](tutorials/verify-a-license-offline.md) and [Run a license server and lease a floating license in a .NET app](tutorials/use-a-floating-license.md) are ready. The how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, the logs, the .NET API, and the C API. The explanation pages below explain how ElasticLM works.
+> **Status:** During the trial, ElasticLM is distributed as GitHub prereleases on the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases). If no prerelease is there yet, you can build the programs and packages that the tutorials download by following [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) in `CONTRIBUTING.md`. These pages describe the `main` branch. The tutorials are still being written: [Issue a license and verify it in a .NET app](tutorials/verify-a-license-offline.md) and [Run a license server and lease a floating license in a .NET app](tutorials/use-a-floating-license.md) are ready. The how-to guides are still being written. The reference is partly written: the `elm` commands, the configuration of `elm-server` and `elm-service`, the administration API, the device protocol, the token and file formats, the error codes, the logs, the .NET API, and the C API. The explanation pages below explain how ElasticLM works.
 
 ## How the documentation is organized
 
@@ -59,5 +59,5 @@ To understand why ElasticLM is built the way it is, read [Design choices](explan
 ## Elsewhere
 
 - Reporting a vulnerability, and checking the files you download: [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md).
-- Running the `elm-service` container image: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md).
+- Running the `elm-service` container image, which is published from the first release that is not a prerelease: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md).
 - The design, in Japanese: [docs/design.ja.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/design.ja.md).
