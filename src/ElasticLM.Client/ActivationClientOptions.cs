@@ -11,9 +11,10 @@ public sealed class ActivationClientOptions
     public required string ProductId { get; init; }
 
     /// <summary>
-    /// Gets the URL of <c>elm-service</c>: https, or http on a loopback address only, for tests; or <see langword="null"/> for a
-    /// device that never reaches the service, which activates, refreshes, and deactivates by offline files only (design
-    /// §12.8.5). Without it the online operations answer <c>ELM_INVALID_STATE</c> and nothing is refreshed on its own.
+    /// Gets the URL of <c>elm-service</c>: https, or http on a loopback address only, for tests and for trying it out locally
+    /// (production uses https); or <see langword="null"/> for a device that never reaches the service, which activates,
+    /// refreshes, and deactivates by offline files only (design §12.8.5). Without it the online operations answer
+    /// <c>ELM_INVALID_STATE</c> and nothing is refreshed on its own.
     /// </summary>
     public Uri? ServiceUrl { get; init; }
 
