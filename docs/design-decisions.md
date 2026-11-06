@@ -1073,3 +1073,34 @@
 - **決定:** `CliFiles.Write` は `--force` のとき、同じフォルダーに一時のファイルを `CreateNew`（Linux と macOS は `UnixCreateMode` の `0600`）で作って中身を書き、`File.Move(..., overwrite: true)` で前のファイルに置き換える。書けなければ一時のファイルを消す。`--force` のないときは出力先を `CreateNew` で作る（[design.ja.md](./design.ja.md) §16、§20.7 の V1c3 の形の「V1c3d の Grill」の Q3）。
 - **理由:** 前のファイルに書き込むと、そのファイルが持っていたものが残る。Windows では `FileMode.Create` が前のファイルの明示のアクセス規則を残し、`Everyone:(R)` の規則が `elm secret create --force` のあとも残ることを測った。Linux と macOS では、前のファイルを開いていたプロセスが、そのハンドルから新しい秘密を読める。置き換えなら、新しいファイルは一時のファイルのとおりの規則とモードを持ち、前のハンドルは前の中身を指したままになる。消してから作り直す形と違い、パスが空く間もない。`elm admin login` のログインのファイル（`AdminLogin.cs`）も同じ形で書く。
 - **却下した案:** 開いたハンドルに `File.SetUnixFileMode` で `0600` を設定してから前のファイルに書く（V1c3d の設計のレビューの R5 の形。Unix のモードは直るが、Windows のアクセス規則と、前のファイルを開いたハンドルが残る）。
+
+### Windows の `libelasticlm` にインポートライブラリ `elasticlm.lib` を配らない（F1 の Grill の Q14、V1c8 の Grill で改めた、Issue #209）
+
+- **決定:** `win-*` の `libelasticlm` の本体の圧縮ファイルに、`elasticlm.dll`、`include/elasticlm.h`、`LICENSE` と並べて `elasticlm.lib` を入れる。`ElasticLM.Native.csproj` が `win-*` の発行のあとに `.lib` を発行のフォルダーへ写し、`Test-Publish.ps1` は `win-*` の `libelasticlm` に限って受け入れ、`Pack-Rid.ps1` は本体の圧縮ファイルに入れて `-symbols` から除く。`.exp` は配らない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q1、Q2）。
+- **理由:** C のアプリは、ふつうビルドのときにライブラリをリンクする。Windows のヘッダーでは `ELM_API` が `__declspec(dllimport)` なので、関数を直接呼ぶプログラムのリンクには `.lib` が要る。NativeAOT の発行はすでに `.lib`（`win-x64` で 14,118 バイト、取り込みの入口だけ）を作っており、その `.lib` で `cl /W4 /WX` でリンクして `elm_version` が動いた（2026-11-07、SDK 10.0.403、ILCompiler 10.0.14）。
+- **却下した案:** `elasticlm.lib` を配らず、Windows のアプリは `LoadLibrary` で読み込んでヘッダーの `_fn` の型で呼ぶ（F1 のあとの §20.5 の形）。
+- **改めた:** F1 の Grill の Q14 は、`libelasticlm` の圧縮ファイルの中身を「ライブラリと `elasticlm.h`」としただけで、§20.5 の単一バイナリの検査はそこから「`elasticlm.lib` は配らない。§17.4 は実行時に読み込む形を前提にしている」と書いていた。V1c8 で調べると、`.lib` が発行のフォルダーになかったのは、ILCompiler の `CopyNativeBinary` が `.dll` だけを写すため（`microsoft.dotnet.ilcompiler` 10.0.14 の `build/Microsoft.NETCore.Native.Publish.targets` の 88〜92 行）で、検査が退けていたからではなかった。V1c8 の Grill の Q1 で配る形に改めた。
+
+### 利用者が `lib /def` で `elasticlm.lib` を作る（V1c8 の Grill の Q1、Issue #209）
+
+- **決定:** 発行が作る `elasticlm.lib` を、`win-*` の本体の圧縮ファイルに入れて配る（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q1）。
+- **理由:** 発行がすでに作る `.lib` を配れば、利用者は何も作らずにリンクできる。`lib /def` で作るには、利用者が公開する関数の一覧（`.def`）を書き、ライブラリの版が変わるたびに合わせることになる。
+- **却下した案:** `.lib` を配らず、C の API の頁に、利用者が `.def` を書いて `lib /def` で `.lib` を作る手順を書く。
+
+### `elasticlm.lib` を `-symbols` の圧縮ファイルに入れる（V1c8 の Grill の Q1、Issue #209）
+
+- **決定:** `elasticlm.lib` は本体の圧縮ファイルに入れ、`-symbols` から除く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q1、Q2）。
+- **理由:** `.lib` はリンクに要るもので、デバッグのためのものではない。`-symbols` はデバッグシンボルの圧縮ファイル（§20.5）なので、そこに入れると、ビルドする利用者はみな `-symbols` も取ることになる。
+- **却下した案:** `.lib` を、今の `Pack-Rid.ps1` のとおり本体のほかのファイルとして `-symbols` の圧縮ファイルに入れる。
+
+### C のテストをビルド時のリンクに書き直す（V1c8 の Grill の Q3、Issue #209）
+
+- **決定:** 今の C のテスト（`tests/native/test_elasticlm.c`、実行時に読み込む）は残し、`elm_version` を呼ぶ小さなプログラムをビルド時にリンクして動かす試験を足す。`tests/native/run.ps1`、CI の `aot` ジョブの 3 つの OS、`release.yml` のすべての RID で流し、Windows では zip に `elasticlm.lib` があることも確かめる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§17.4、§20.5 の「V1c8 の Grill」の Q3）。
+- **理由:** 今の C のテストは、公開するすべての関数をヘッダーの型の関数ポインターに入れて呼び、関数の型を確かめている（§17.3）。実行時に読み込む形は C の API の頁でもう 1 つの道として残る（Q5）ので、その道の試験も要る。ビルド時のリンクで確かめるのはリンクの手順で、それには関数を 1 つ呼べば足りる。
+- **却下した案:** 今の `test_elasticlm.c` を、ビルド時にリンクする形に書き直す。
+
+### Linux の `libelasticlm.so` に SONAME を付ける（V1c8 の Grill の Q4、Issue #209）
+
+- **決定:** SONAME は付けない。C の API の頁は、`-L. -lelasticlm` の形でリンクすると書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q4）。
+- **理由:** SONAME のないライブラリにリンクしたプログラムは、リンカーに渡したファイルの名前で読み込む（GNU ld の `-soname` の説明。https://sourceware.org/binutils/docs/ld/Options.html ）。`-L. -lelasticlm -Wl,-rpath,'$ORIGIN'` でリンクしたプログラムは、WSL の gcc で動いた。ライブラリはアプリと一緒に配る（[design.ja.md](./design.ja.md) §17.3）ので、版の違うライブラリをシステムの共有の場所に並べるための SONAME は要らない。
+- **却下した案:** 発行で `libelasticlm.so` に SONAME を付ける。
