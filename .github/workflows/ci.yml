@@ -207,13 +207,20 @@ jobs:
           }
 
       - name: Guide steps
-        # design §20.7 (V1c1, V1c3a, V1c3b): the marked steps of README.md and of each Tutorial, run with the published elm
-        # and elm-server in a work folder outside the clone. The Tutorial's own dotnet pack runs here too, and
-        # NUGET_PACKAGES points to a new folder for each page, so the cache above never stands in for the package the page
-        # packs. A page's steps:background block runs elm-server in the background, without any ELM_ variable, and the
-        # script stops its process tree at the end of the page.
+        # design §20.7 (V1c1, V1c3a, V1c3b, V1c3e): the marked steps of README.md and of each Tutorial, run in a work folder
+        # outside the clone. Where a page has the reader download from a GitHub prerelease, its steps:prebuilt marker puts
+        # the published elm and elm-server, and the packages packed here, in their place. The packages get a prerelease
+        # version, as release.yml gives a pull request's run, so that the page's dotnet add --prerelease finds only
+        # prerelease versions in its packages folder, as a reader of a prerelease does. NUGET_PACKAGES points to a new folder
+        # for each page, so the cache above never holds the packages of one run. A page's steps:background block runs
+        # elm-server in the background, without any ELM_ variable, and the script stops its process tree at the end of the
+        # page.
         run: |
-          ./eng/docs/Test-GuideSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')) -ElmServer (Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server'))
+          foreach ($project in 'src/ElasticLM.Licensing', 'src/ElasticLM.Client') {
+            dotnet pack $project -c Release -o guide-feed -nologo "-p:VersionSuffix=ci.$env:GITHUB_RUN_NUMBER"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+          ./eng/docs/Test-GuideSteps.ps1 -Elm (Join-Path publish/elm ($IsWindows ? 'elm.exe' : 'elm')) -ElmServer (Join-Path publish/elm-server ($IsWindows ? 'elm-server.exe' : 'elm-server')) -Feed guide-feed
 
       - name: Smoke
         run: |

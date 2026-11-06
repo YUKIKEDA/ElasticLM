@@ -1,12 +1,13 @@
 <#
 .SYNOPSIS
-    Runs the marked steps of README.md and of every Tutorial page with a given elm and elm-server (design §20.7, V1c1,
-    V1c3a, and V1c3b).
+    Runs the marked steps of README.md and of every Tutorial page with a given elm, elm-server, and package folder (design
+    §20.7, V1c1, V1c3a, V1c3b, and V1c3e).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
     value is a word without spaces and double quotes, or a double-quoted string without double quotes. A key given twice,
-    a key the kind does not take, and '-->' inside a value fail.
+    a key the kind does not take, and '-->' inside a value fail. The one marker that stands on a line of its own, with no
+    code block, is steps:prebuilt (below).
 
       steps:run                       Each line is one command, run in order. A line starts with elm, dotnet, or
                                       elm-server and never with cd; the rest is split on spaces, and a double-quoted part
@@ -28,24 +29,34 @@
                                       at most one. The process tree is stopped at the end of the page.
       steps:file path=<path>          The block's content is written to that path, relative to the work folder.
       steps:expect                    Each line must appear, in order and as a whole line, in the standard output of the
-                                      last command of the steps:run block right before this block.
-      steps:prebuilt name=<program>   The one-line block that publishes elm or elm-server is not run: -Elm or -ElmServer
-                                      takes its place. An elm-server line needs this block for elm-server before it.
+                                      last command of the steps:run block right before this block. A steps:prebuilt
+                                      marker between them does not count, since it runs nothing.
 
     Other comment lines, such as the sample comment of the code test (GuideSamplesTests), may stand above the marker. A
-    block without a marker is not run. In each argument of a steps:run or steps:background line (after the split), <repo>
-    becomes the repository root with / as the separator, and <name> becomes the value captured under that name earlier on
-    the page; any other <name> left in a line fails. steps:file and steps:expect blocks are used as written.
+    block without a marker is not run. In each argument of a steps:run or steps:background line (after the split), <name>
+    becomes the value captured under that name earlier on the page; any other <name> left in a line fails. steps:file and
+    steps:expect blocks are used as written.
+
+    <!-- steps:prebuilt name=<name> --> stands on a line of its own, from the start of the line, after the paragraph that
+    tells the reader to download what it names. It fails when the next line that is not blank is a code block's opening
+    line, when it is indented, without name, with a name other than these, and when a page names the same name twice:
+      elm           The page's elm lines run -Elm. An elm line needs no marker.
+      elm-server    The page's elm-server lines run -ElmServer. An elm-server line needs this marker before it.
+      packages      Creates the folder packages in the work folder and copies every *.nupkg of -Feed into it (no
+                    .snupkg). A dotnet add ... package line needs this marker before it.
 
     elm-server runs with -ElmServer and gets no environment variable whose name starts with ELM_ (in any case), so that a
     variable left in the shell cannot override the page's settings file. elm and dotnet get the environment as it is.
 
-    Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own (so that a
-    package cache never stands in for the package the page packs) and ELM_KEY_PASSPHRASE set to a passphrase made for the
-    run. Both folders are removed at the end, also on failure, after the background process has stopped.
+    Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
+    ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
+    packed again under the same version never comes from an older copy in the global packages folder, and so that the
+    job's package cache never holds the packages of one run. Both folders are removed at the end, also on failure, after
+    the background process has stopped.
 
     The page's translation (README.ja.md, or the same file under docs/guide.ja/) must hold the content of each marked
-    block of the English page, in the same order, as fenced code blocks of its own.
+    block of the English page as fenced code blocks of its own, and each steps:prebuilt marker as a line of its own that
+    is the same apart from the spaces around it, all in the same order.
 
     A failing step stops the run with exit code 1. Only the page, the line, and the command's first two words are
     printed: arguments, output, and captured values are not.
@@ -54,7 +65,11 @@
     The elm executable to run the steps with.
 
 .PARAMETER ElmServer
-    The elm-server executable. A page with an elm-server line or a steps:prebuilt name=elm-server block fails without it.
+    The elm-server executable. A page with an elm-server line or a steps:prebuilt name=elm-server marker fails without it.
+
+.PARAMETER Feed
+    The folder of the ElasticLM packages (.nupkg) for steps:prebuilt name=packages. A page with that marker or a
+    dotnet add ... package line fails without it.
 
 .PARAMETER Page
     The pages to run. Default: README.md and docs/guide/tutorials/*.md at the repository root.
@@ -63,14 +78,16 @@
 param(
     [Parameter(Mandatory = $true)][string]$Elm,
     [string]$ElmServer,
+    [string]$Feed,
     [string[]]$Page
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../..'))
-$repoForSteps = $repoRoot.TrimEnd('\', '/').Replace('\', '/')
 $elmPath = (Resolve-Path $Elm).Path
 $elmServerPath = $ElmServer ? (Resolve-Path $ElmServer).Path : $null
+$feedPath = $Feed ? (Resolve-Path $Feed).Path : $null
+$prebuiltNames = @('elm', 'elm-server', 'packages')
 $dotnetPath = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $commandTimeout = [TimeSpan]::FromMinutes(10)
 $readyTimeout = [TimeSpan]::FromSeconds(60)
@@ -98,12 +115,17 @@ function Get-PageName([string]$path) {
     return ($relative.StartsWith('..') ? $full : $relative).Replace('\', '/')
 }
 
-# The fenced code blocks of a Markdown file, each with the marker on the line right before its opening line (or none).
-function Get-Block([string]$path) {
+$fenceOpen = '^ {0,3}(?<fence>`{3,}|~{3,})'
+$prebuiltMarker = '<!--\s*steps:prebuilt(\s|-->)'
+
+# The fenced code blocks of a Markdown file, each with the marker on the line right before its opening line (or none), and
+# the steps:prebuilt markers, each on a line of its own. Each item has the line number of its marker (Order), so that the
+# two lists can be merged in the page's order.
+function Get-Page([string]$path) {
     $lines = [IO.File]::ReadAllLines($path)
     $blocks = [Collections.Generic.List[object]]::new()
     for ($i = 0; $i -lt $lines.Length; $i++) {
-        $open = [regex]::Match($lines[$i], '^ {0,3}(?<fence>`{3,}|~{3,})')
+        $open = [regex]::Match($lines[$i], $fenceOpen)
         if (-not $open.Success) { continue }
         $fence = $open.Groups['fence'].Value
         $close = '^ {0,3}' + [regex]::Escape($fence[0]) + '{' + $fence.Length + ',}\s*$'
@@ -112,24 +134,35 @@ function Get-Block([string]$path) {
         for ($i = $start; $i -lt $lines.Length -and $lines[$i] -notmatch $close; $i++) { }
         if ($i -ge $lines.Length) { throw "$(Get-PageName $path):$($start): the code block is not closed." }
         $blocks.Add([pscustomobject]@{
-            Marker = $marker -match '^<!--\s*steps:' ? $marker : $null
+            Marker = ($marker -match '^<!--\s*steps:' -and $marker -notmatch $prebuiltMarker) ? $marker : $null
             Line = $start
+            Order = $start - 1
             Lines = @(if ($i -gt $start) { $lines[$start..($i - 1)] })
         })
     }
-    # A steps marker must stand right before a code block.
+    $prebuilt = [Collections.Generic.List[object]]::new()
     for ($j = 0; $j -lt $lines.Length; $j++) {
-        if ($lines[$j] -match '<!--\s*steps:' -and -not ($blocks | Where-Object { $_.Line -eq $j + 2 -and $_.Marker })) {
+        if ($lines[$j] -match $prebuiltMarker) {
+            # The next line that is not blank, as the check of a steps:prebuilt marker needs it.
+            $next = $j + 1
+            while ($next -lt $lines.Length -and $lines[$next].Trim() -eq '') { $next++ }
+            $prebuilt.Add([pscustomobject]@{
+                Text = $lines[$j]
+                Order = $j + 1
+                BeforeFence = $next -lt $lines.Length -and $lines[$next] -match $fenceOpen
+            })
+        }
+        # Any other steps marker must stand right before a code block.
+        elseif ($lines[$j] -match '<!--\s*steps:' -and -not ($blocks | Where-Object { $_.Line -eq $j + 2 -and $_.Marker })) {
             throw "$(Get-PageName $path):$($j + 1): a steps marker must be the line right before a code block's opening line."
         }
     }
-    return $blocks
+    return [pscustomobject]@{ Blocks = $blocks; Prebuilt = $prebuilt }
 }
 
-# The kind and the key=value attributes of a block's marker.
-function Read-Marker([string]$name, [object]$block) {
-    $at = "$($name):$($block.Line - 1)"
-    $marker = [regex]::Match($block.Marker, '^<!--\s*steps:(?<kind>[a-z]+)(?<rest>.*?)\s*-->$')
+# The kind and the key=value attributes of a marker; $at names its page and line.
+function Read-Marker([string]$at, [string]$text) {
+    $marker = [regex]::Match($text, '^<!--\s*steps:(?<kind>[a-z]+)(?<rest>.*?)\s*-->$')
     $kind = $marker.Groups['kind'].Value
     if (-not $marker.Success -or -not $markerKeys.ContainsKey($kind)) {
         throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, or steps:prebuilt."
@@ -166,9 +199,15 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
         if ($line.Trim() -eq '') { continue }
         [string[]]$words = Split-Step $line
         switch -CaseSensitive ($words[0]) {
-            { $_ -in 'elm', 'dotnet' } { }
+            'elm' { }
+            'dotnet' {
+                # dotnet add <project> package <id>, or dotnet add package <id> in the project's folder.
+                if ($words.Count -gt 2 -and $words[1] -ceq 'add' -and ($words[2] -ceq 'package' -or ($words.Count -gt 3 -and $words[3] -ceq 'package')) -and -not $prebuilt.Contains('packages')) {
+                    throw "$($name):$($lineNumber): a dotnet add package line needs a steps:prebuilt name=packages marker before it."
+                }
+            }
             'elm-server' {
-                if (-not $prebuilt.Contains('elm-server')) { throw "$($name):$($lineNumber): an elm-server line needs a steps:prebuilt name=elm-server block before it." }
+                if (-not $prebuilt.Contains('elm-server')) { throw "$($name):$($lineNumber): an elm-server line needs a steps:prebuilt name=elm-server marker before it." }
             }
             'cd' { throw "$($name):$($lineNumber): a step does not change the folder (cd); pass the folder as an argument." }
             default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, or elm-server, not $($words[0])." }
@@ -184,16 +223,29 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
     }
 }
 
+# The marked blocks and the steps:prebuilt markers of a page, in the page's order.
+function Get-Marked([object]$parsed) {
+    return @(@($parsed.Blocks | Where-Object Marker) + @($parsed.Prebuilt) | Sort-Object Order)
+}
+
 # Checks every marker and line of a page before anything runs; returns the steps.
-function Read-Plan([string]$name, [object[]]$blocks) {
+function Read-Plan([string]$name, [object]$parsed) {
     $captured = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $prebuilt = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $plan = [Collections.Generic.List[object]]::new()
     $previous = $null
-    foreach ($block in $blocks | Where-Object Marker) {
-        $marker = Read-Marker $name $block
+    foreach ($block in Get-Marked $parsed) {
+        $at = "$($name):$($block.Order)"
+        if ($block.PSObject.Properties['Text']) {
+            # A steps:prebuilt marker: a line of its own, from the start of the line, not attached to a code block.
+            if ($block.Text -cne $block.Text.TrimStart()) { throw "$($at): a steps:prebuilt marker starts at the beginning of its line." }
+            if ($block.BeforeFence) { throw "$($at): a steps:prebuilt marker stands on a line of its own; the next line that is not blank must not open a code block." }
+            $marker = Read-Marker $at $block.Text.TrimEnd()
+        }
+        else {
+            $marker = Read-Marker $at $block.Marker
+        }
         $attributes = $marker.Attributes
-        $at = "$($name):$($block.Line - 1)"
         $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null }
         switch ($marker.Kind) {
             'run' {
@@ -202,7 +254,7 @@ function Read-Plan([string]$name, [object[]]$blocks) {
                     throw "$($at): stream and pattern need capture."
                 }
                 if ($null -ne $capture) {
-                    if ($capture -cnotmatch "^$captureName$" -or $capture -ceq 'repo') {
+                    if ($capture -cnotmatch "^$captureName$") {
                         throw "$($at): a captured name is lowercase words joined by hyphens, such as server-key."
                     }
                     if ($captured.Contains($capture)) { throw "$($at): $capture is captured twice on the page." }
@@ -250,16 +302,17 @@ function Read-Plan([string]$name, [object[]]$blocks) {
                 if ($previous -ne 'run') { throw "$($at): steps:expect must follow a steps:run block." }
             }
             'prebuilt' {
-                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin 'elm', 'elm-server') { throw "$($at): steps:prebuilt takes name=elm or name=elm-server." }
-                if (@($block.Lines | Where-Object { $_.Trim() -ne '' }).Count -ne 1) { throw "$($name):$($block.Line): the steps:prebuilt block has one line." }
-                [void]$prebuilt.Add($attributes['name'])
+                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, or name=packages." }
+                if (-not $prebuilt.Add($attributes['name'])) { throw "$($at): steps:prebuilt name=$($attributes['name']) is given twice on the page." }
             }
         }
         $plan.Add($step)
-        $previous = $marker.Kind
+        # A steps:prebuilt marker runs nothing, so a steps:expect after it still checks the steps:run block before it.
+        if ($marker.Kind -cne 'prebuilt') { $previous = $marker.Kind }
     }
     if ($plan.Count -eq 0) { throw "$name has no steps." }
     if (-not $elmServerPath -and $prebuilt.Contains('elm-server')) { throw "$name needs -ElmServer: it runs elm-server." }
+    if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
     return $plan
 }
 
@@ -300,10 +353,10 @@ function Invoke-Step([Diagnostics.ProcessStartInfo]$info) {
     }
 }
 
-# Substitutes <repo> and the captured values in each argument (after the split, so a value never adds an argument).
+# Substitutes the captured values in each argument (after the split, so a value never adds an argument).
 function Resolve-Argument([string[]]$words, [hashtable]$values) {
     [string[]]$arguments = @($words | Select-Object -Skip 1 | ForEach-Object {
-            $argument = $_.Replace('<repo>', $repoForSteps)
+            $argument = $_
             foreach ($valueName in $values.Keys) { $argument = $argument.Replace("<$valueName>", $values[$valueName]) }
             $argument
         })
@@ -387,28 +440,37 @@ function Stop-Background {
     }
 }
 
-function Test-Translation([string]$path, [object[]]$blocks) {
+# A marked block becomes its content, and a steps:prebuilt marker its line without the spaces around it.
+function Get-TranslationItem([object]$item) {
+    return $item.PSObject.Properties['Text'] ? "prebuilt`n" + $item.Text.Trim() : "block`n" + ($item.Lines -join "`n")
+}
+
+function Test-Translation([string]$path, [object]$parsed) {
     $relative = [IO.Path]::GetRelativePath($repoRoot, [IO.Path]::GetFullPath($path)).Replace('\', '/')
     $translated = $relative -eq 'README.md' ? 'README.ja.md' : ($relative -replace '^docs/guide/', 'docs/guide.ja/')
     if ($translated -eq $relative) { return }
     $translatedPath = Join-Path $repoRoot $translated
     if (-not (Test-Path $translatedPath)) { throw "$(Get-PageName $path) has no translation at $translated." }
-    $theirs = @(Get-Block $translatedPath | ForEach-Object { $_.Lines -join "`n" })
+    $translation = Get-Page $translatedPath
+    $theirs = @(@($translation.Blocks) + @($translation.Prebuilt) | Sort-Object Order | ForEach-Object { Get-TranslationItem $_ })
     $next = 0
-    foreach ($block in $blocks | Where-Object Marker) {
-        $content = $block.Lines -join "`n"
+    foreach ($item in Get-Marked $parsed) {
+        $content = Get-TranslationItem $item
         while ($next -lt $theirs.Count -and $theirs[$next] -cne $content) { $next++ }
-        if ($next -ge $theirs.Count) { throw "$($translated): the code block of $(Get-PageName $path):$($block.Line) is missing, changed, or out of order." }
+        if ($next -ge $theirs.Count) {
+            $what = $item.PSObject.Properties['Text'] ? 'steps:prebuilt marker' : 'code block'
+            throw "$($translated): the $what of $(Get-PageName $path):$($item.Order) is missing, changed, or out of order."
+        }
         $next++
     }
 }
 
 function Invoke-Page([string]$path) {
     $name = Get-PageName $path
-    $blocks = @(Get-Block $path)
-    if (-not ($blocks | Where-Object Marker)) { throw "$name has no steps." }
-    $plan = Read-Plan $name $blocks
-    Test-Translation $path $blocks
+    $parsed = Get-Page $path
+    if (-not (Get-Marked $parsed)) { throw "$name has no steps." }
+    $plan = Read-Plan $name $parsed
+    Test-Translation $path $parsed
 
     $suffix = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6))
     $work = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-$suffix"
@@ -472,8 +534,17 @@ function Invoke-Page([string]$path) {
                     "ok: $($name):$($block.Line - 1): expect"
                 }
                 'prebuilt' {
-                    $program = $step.Attributes['name']
-                    "ok: $($name):$($block.Line - 1): prebuilt $program ($($program -ceq 'elm' ? '-Elm' : '-ElmServer'))"
+                    $prebuiltName = $step.Attributes['name']
+                    if ($prebuiltName -ceq 'packages') {
+                        $target = Join-Path $work 'packages'
+                        New-Item -ItemType Directory -Force $target | Out-Null
+                        # The page does not have the reader download the symbols packages (.snupkg).
+                        $nupkgs = @(Get-ChildItem -LiteralPath $feedPath -File | Where-Object Extension -EQ '.nupkg')
+                        if ($nupkgs.Count -eq 0) { throw "$($name):$($block.Order): -Feed holds no .nupkg file." }
+                        foreach ($nupkg in $nupkgs) { Copy-Item -LiteralPath $nupkg.FullName -Destination $target }
+                    }
+                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'packages' { '-Feed' } }
+                    "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
                 }
             }
         }
