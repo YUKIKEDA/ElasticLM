@@ -8,42 +8,31 @@ In this tutorial you create a vendor's keys, issue a license with them, and writ
 
 ## Before you start
 
-1.0 is not released yet, so you build the `elm` tool and the `ElasticLM.Licensing` package from the source. You need:
+You need the .NET 10 SDK: `dotnet --list-sdks` must list a version that starts with `10.`. To check the files you download, you also need the [GitHub CLI](https://cli.github.com/), `gh`; nothing else in this tutorial uses it.
 
-- A clone of the [ElasticLM repository](https://github.com/YUKIKEDA/ElasticLM).
-- The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- What .NET needs to build a native executable on your system, listed under [Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) in Microsoft's Native AOT deployment page:
-  - Windows: Visual Studio with the "Desktop development with C++" workload.
-  - Ubuntu: the packages `clang` and `zlib1g-dev`.
-  - macOS: the Xcode Command Line Tools.
+Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
 
-Create an empty folder outside the clone for this tutorial. Open a terminal in that folder and type every command of this page there. Inside the clone, the repository's own build settings, such as warnings as errors and central package versions, would also apply to your app.
+You download the `elm` tool and the `ElasticLM.Licensing` package from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
-In the commands, replace `<repo>` with the path of your clone, written with `/`, such as `C:/src/ElasticLM` or `/home/me/src/ElasticLM`.
+From the release's Assets, save these three files in the tutorial folder:
 
-Build `elm`, the command-line tool that creates keys and issues licenses, into the folder `tools`. `elm` is built as a native executable, the single file it ships as, which is why the build needs the tools above.
+- The archive `elm-<version>-<RID>` for your system, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. It is a `.zip` file for Windows and a `.tar.gz` file for the others. Take the archive whose name does not end in `-symbols`: that one holds only debug symbols.
+- `ElasticLM.Licensing.<version>.nupkg`, the package your app uses. You do not need `ElasticLM.Licensing.<version>.snupkg` beside it, which holds the package's debug symbols.
+- `SHA256SUMS`, the list of the files' hashes.
 
-On Windows, first add the Visual Studio Installer folder to your `PATH` in this terminal, because Visual Studio's scripts, which the build runs, call `vswhere.exe` by name. In PowerShell, type `$env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"`.
+Before you extract or use anything, check the archive and the package in the tutorial folder as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says how to run a downloaded program on macOS, and which Linux and macOS versions the programs need.
+
+Extract the archive into a folder named `tools`. In PowerShell on Windows, type `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools`; on Linux and macOS, type `mkdir -p tools` and then `tar -xzf elm-<version>-<RID>.tar.gz -C tools`. `tools` then holds `elm` (`elm.exe` on Windows), the command-line tool that creates keys and issues licenses, and `LICENSE`.
 
 <!-- steps:prebuilt name=elm -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools
-```
-
-If the build prints that `vswhere.exe` is not recognized, or stops with an `MSB3073` error that names `link.exe`, check the [prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) and the `PATH` line above.
 
 Add the `tools` folder to your `PATH` in this terminal, so that the command `elm` runs it. In PowerShell on Windows, type `$env:PATH = "$PWD/tools;$env:PATH"`; in Bash or zsh, type `export PATH="$PWD/tools:$PATH"`.
 
-Build the `ElasticLM.Licensing` package, version 0.1.0, into the folder `feed`:
+Move the package into a folder named `packages`. In PowerShell, type `New-Item -ItemType Directory packages` and then `Move-Item ElasticLM.Licensing.*.nupkg packages`; in Bash or zsh, type `mkdir -p packages` and then `mv ElasticLM.Licensing.*.nupkg packages/`.
 
-<!-- steps:run -->
-```shell
-dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
-```
+<!-- steps:prebuilt name=packages -->
 
-`feed` now holds `ElasticLM.Licensing.0.1.0.nupkg`, the package, and `ElasticLM.Licensing.0.1.0.snupkg`, its symbols package for debuggers. You do not need to do anything with the `.snupkg` file.
-
-Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `feed` only, and every other package from nuget.org. The path `feed` is relative to the folder of `nuget.config`. The ElasticLM packages are not on nuget.org yet, so someone else could put a package of the same name there; the mapping makes sure such a package is never used.
+Create a file named `nuget.config` in the tutorial folder with this content. It makes your app take the packages whose names start with `ElasticLM.` from `packages` only, and every other package from nuget.org. The path `packages` is relative to the folder of `nuget.config`. The ElasticLM packages you use come from the GitHub prerelease, and a package of the same name on nuget.org would not be ElasticLM's; the mapping makes sure such a package is never used.
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -51,11 +40,11 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 <configuration>
   <packageSources>
     <clear />
-    <add key="feed" value="feed" />
+    <add key="packages" value="packages" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <packageSource key="feed">
+    <packageSource key="packages">
       <package pattern="ElasticLM.*" />
     </packageSource>
     <packageSource key="nuget.org">
@@ -69,7 +58,7 @@ Create a file named `nuget.config` in the tutorial folder with this content. It 
 
 You need two keys: a root key, which your app trusts, and a signing key, which signs licenses. The root key certifies the signing key, so that your app accepts what the signing key signs.
 
-`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, which is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
+`elm` keeps each private key in a file encrypted with a passphrase. When it creates a key, it asks for a new passphrase, at least 12 characters long, and asks you to repeat it. When a later command uses the key, it asks for that passphrase again. Nothing is shown while you type it. Use the same passphrase for both keys in this tutorial. If the environment variable `ELM_KEY_PASSPHRASE` is set, `elm` takes the passphrase from it and does not ask, so the lines that ask for it in the outputs below do not appear. To set it in this terminal, type `$env:ELM_KEY_PASSPHRASE = '<passphrase>'` in PowerShell, or `export ELM_KEY_PASSPHRASE='<passphrase>'` in Bash or zsh. This is for scripts and terminals where nobody can type; in real use, do not keep a passphrase in a script. See [Passphrases](../reference/elm-cli.md#passphrases) in the `elm` reference.
 
 In the outputs below, the key IDs, the token ID, and the dates are fake. On your machine they are different every time.
 
@@ -167,12 +156,12 @@ features: pro
 
 ## Create the app
 
-Create a console app in the folder `app`, and add the `ElasticLM.Licensing` package to it:
+Create a console app in the folder `app`, and add the `ElasticLM.Licensing` package to it from `packages`. `--prerelease` lets `dotnet add` take a prerelease version, the only kind in `packages`, and `--source packages` makes it look for the version in `packages` only:
 
 <!-- steps:run -->
 ```shell
 dotnet new console -o app
-dotnet add app package ElasticLM.Licensing --version 0.1.0
+dotnet add app package ElasticLM.Licensing --prerelease --source packages
 ```
 
 Replace the content of `app/Program.cs` with this code:

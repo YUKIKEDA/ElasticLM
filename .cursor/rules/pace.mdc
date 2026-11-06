@@ -47,7 +47,7 @@ Within a class, work whose result can change how existing code is built (a spike
 
 A NativeAOT publish, a benchmark, or an end-to-end run keeps the tree busy for minutes.
 
-- Run it in the background, never in the foreground with a wait loop.
+- Run it in the background, never in the foreground with a wait loop. Its whole output goes to a file, not only its last lines, and the file is kept until the run passes (`.cursor/rules/testing.mdc`, the gate's output).
 - Run it on a copy of the tree (`git worktree add` for a committed state) with its own `bin/` and `obj/`. Two worktrees never share build output.
 - While it runs, do what does not depend on its result. Name that work before starting the run.
 - Before a long run, a short one: run the script on one case, and look at the output of a background run within its first minute.

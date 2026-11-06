@@ -23,12 +23,20 @@ gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
   --source-ref refs/tags/v<version> --deny-self-hosted-runners
 ```
 
+Run both in the folder that holds the downloaded files and `SHA256SUMS`. Where `sha256sum` is missing, as in
+PowerShell on Windows, compute the hash of each file with `(Get-FileHash <file> -Algorithm SHA256).Hash` and compare
+it with the hash on the file's line in `SHA256SUMS`, ignoring case: PowerShell prints it in upper case, and
+`SHA256SUMS` holds it in lower case.
+`gh attestation verify` needs the GitHub CLI (https://cli.github.com/).
+
 `--repo` alone does not check which workflow signed the file; keep the other options
 (https://cli.github.com/manual/gh_attestation_verify). The attestation shows that the release workflow built the file
 from that tag. It does not show that the code is free of defects.
 
 The NuGet packages are signed by nuget.org when they are pushed, which changes their bytes: check a package you got from
-nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`.
+nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`. A `.nupkg` file you download from a GitHub prerelease
+has no nuget.org repository signature, and its bytes are those the release workflow attached to the release: check it
+like the other files, against `SHA256SUMS` and with `gh attestation verify`.
 
 The executables and `libelasticlm` are not code-signed. Windows SmartScreen may warn when you run them. macOS Gatekeeper
 does not open downloaded software that is not notarized; after checking the file as above, remove the quarantine

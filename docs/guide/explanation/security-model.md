@@ -94,7 +94,7 @@ gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
 
 Keep all the options. `--repo` alone does not check which workflow signed the file, and `--source-ref` makes sure the file came from the version you meant. The attestation shows that ElasticLM's release workflow built the file from that tag; it does not show that the code is free of defects. NuGet packages are signed again by nuget.org, which changes their bytes: check a package from nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`.
 
-The container image `ghcr.io/yukikeda/elm-service` is not published yet. The command to verify it will be added to `SECURITY.md` with the first release that publishes it. When it is published, pull it by the digest you verified, not by a tag such as `latest`, which can be moved to another image, and trust only that image name, not a label that claims this repository.
+The container image `ghcr.io/yukikeda/elm-service` is pushed only by a release that is not a prerelease, such as `v1.0.0`; a prerelease such as `v1.0.0-rc.1` pushes no image. The command to verify the image is added to `SECURITY.md` with the first release that pushes it. Pull the image by the digest you verified, not by a tag such as `latest`, which can be moved to another image, and trust only that image name, not a label that claims this repository.
 
 What stands behind a release:
 

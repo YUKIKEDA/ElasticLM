@@ -19,7 +19,7 @@ The test layers are in `docs/design.ja.md`. This rule is how a test is written.
 - Keys are generated in the test or in a fixture shared by one test class, at run time. A test never reads a key or a token from the repository.
 - A file a test writes for the product to read has the form the product's own tools write: the same line ends and the trailing line break. In M4d3 the test helper wrote certificate files without the line break that `elm key certify` adds, and the cloud leases, which failed on real files since M4d1, passed every test (PR #91, design review R1).
 - A server test runs the server in process on a loopback port the OS picks, and stops it in the test's cleanup. An end-to-end test starts the published binary as a process on such a port, and stops the process in its cleanup.
-- Every run of `./build.ps1` writes its output to a file in the scratchpad, so that a failure seen once can be named.
+- Every run of `./build.ps1` writes its whole output to a file in the scratchpad, so that a failure seen once can be named. This holds for a run in the background too, and the file is kept until the gate passes: a few lines from the end of the output do not name a failed test. In the first gate of PR #218 one test of `ElasticLM.Client.Tests` (Debug) failed, only the last three lines of the output were kept, and its name stayed unknown; 26 more runs did not bring it back.
 
 ## Structure
 

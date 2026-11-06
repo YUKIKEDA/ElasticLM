@@ -642,6 +642,7 @@
 - **決定:** 最初の正式版は `1.0.0` で、先に `1.0.0-rc.1` を出して公開の経路を確かめる（持ち主の決定。[design.ja.md](./design.ja.md) 0.112、§20.5）。
 - **理由:** 誤りの番号とコードは公開のあとに変えない（§19）。`CONTRIBUTING.md` と `CHANGELOG.md` の「0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい」は、持ち主が退けた自由そのもので、V1e で外す（§20.7）。`0.x` は変える余地を示す版で、その前提と合わない。
 - **却下した案:** `0.1.0` などの `0.x` で出し、`1.0.0` は後にする。
+- **改めた:** V1c3e の記録の途中の持ち主の決定 D2（Issue #219）で、V1e から rc のタグは GitHub のプレリリースだけを出し、nuget.org と GHCR への push は `1.0.0` で初めて行う形にした（下の「rc のパッケージを nuget.org に、rc のイメージを GHCR に push する」）。先に rc を出すことは変わらないが、rc で確かめられる「公開の経路」は GitHub のプレリリースまでになり、Trusted Publishing のログイン、`dotnet nuget push`、GHCR への skopeo の push と `latest` のタグ、イメージの証明、GHCR の package を public にすることは、正式版のタグで初めて動く。それを正式版のタグの前にどう確かめるかは V1e で決める（V1c3e の設計のレビューの R1。下の「rc が通さない公開の段を V1c3e で書かずにおく」）。
 
 ### 公開するバイナリに、テストのための時計の入口を作る（V1a の Grill、Issue #178）
 
@@ -846,6 +847,7 @@
 - **決定:** 公開の前に Tutorials を書き、頭の「始める前に」の節で、ソースから作る手順（`dotnet publish` で `elm` を、`dotnet pack` でローカルのパッケージを作る。設計のレビューの R2 で改めた）を書く。公開のあと（V1e）、この節をリリースのダウンロードに書き換える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
 - **理由:** 公開まで待つと、公開の直前に 4 つの Tutorial をまとめて書き、手順を流す仕組みも同時に作ることになる。手順を CI で流しておけば、公開の前に Tutorial の誤りが見つかる。
 - **却下した案:** リリースのバイナリと nuget.org のパッケージができる V1e まで、Tutorials を書かない。
+- **改めた:** V1c3e の Grill（Issue #219）と持ち主の決定 P1 で、ソースから作る「始める前に」をやめ、Tutorials を、試しの期間の読み手（GitHub のプレリリースを手に入れた読み手）がすることで書く形に改めた（下の「Tutorials を公開まではソースから作る形で書く」と「試しの期間の頁を nuget.org の形で書く」と「方針を「読み手が今手に入れられるものを書く」と言う」）。最初の rc より前にソースから作る手順は、`CONTRIBUTING.md` の「Build from source」の節に移る。nuget.org の形への書き換えは V1e で行う（P3）。Tutorials を公開の前に書き、CI で流すことは変わらない。
 
 ### C の Tutorial を、実行時に読み込む方法で先に書く（V1c3 の Grill、Issue #213）
 
@@ -864,6 +866,7 @@
 - **決定:** Tutorial 1 の「始める前に」は、要るものだけを `dotnet` で作る。`elm` は `dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools`（`-r` なしで、SDK が手元の RID を入れ、NativeAOT で作る）、パッケージは `dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed`。CI は `elm` の行をジョブが発行した `elm` で置き換え、pack の行は書いてあるとおりに流す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形）。
 - **理由:** `eng/release/Publish-Rid.ps1` は RID を引数に取り、4 つの実行ファイルとライブラリをまとめて作る、リリースのためのスクリプトで、Tutorial 1 には要らない `elm-service`（`web/admin/dist` を要る）も作る。読み手が打つのは、どの OS でも同じ `dotnet` のコマンドのほうが分かりやすい。
 - **却下した案:** 「始める前に」で `eng/release/Publish-Rid.ps1` を使って実行ファイルを作る。
+- **改めた:** V1c3e の Grill（Issue #219）と持ち主の決定 P1 で、頁から `dotnet publish` と `dotnet pack` を外し、実行ファイルは GitHub のプレリリースの圧縮ファイルから、パッケージはプレリリースの `.nupkg` を作業フォルダーの `packages` に置き、頁の `nuget.config` で割り当てて入れる形に改めた（下の「Tutorials を公開まではソースから作る形で書く」と「試しの期間の頁を nuget.org の形で書く」）。`Publish-Rid.ps1` を頁で使わないことは変わらない。
 
 ### 手順を流す仕組みを V1c3a でまとめて作る（V1c3 の設計のレビューの R6、Issue #213）
 
@@ -894,6 +897,7 @@
 - **決定:** Tutorial 2 の「始める前に」に、`elm-service` をソースから作る手順を本文として書く。前提は Node.js 24、Corepack、Windows の PowerShell 7、Linux と macOS の `clang`。CI は、`steps:prebuilt name=elm-service` のブロックを流さず、ジョブが発行した `elm-service` で置き換える。公開のあと（V1e）は、ダウンロードに書き換える（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3b の Grill」）。
 - **理由:** Tutorial 1 と同じく、公開の前に Tutorial を書いて手順を CI で流せば、公開の前に誤りが見つかる。`elm-service` だけ公開を待つと、V1e の直前に Tutorial 2 と仕組みの残りを急いで書くことになる。ソースから作る手順は前提が増えるが、V1e で書き換える 1 つの節に収まる。
 - **却下した案:** リリースのバイナリができる V1e まで、Tutorial 2 を書かない。
+- **改めた:** V1c3e の Grill（Issue #219）で、Tutorial 2 は `elm-service` をソースから作らず、GitHub のプレリリースの圧縮ファイルから入れる形で書くことにした（持ち主の決定 P1。rc のタグはコンテナイメージを push しない（D2）ので、試しの期間にイメージはない）。Tutorial 2 を公開の前に書き、CI では `steps:prebuilt name=elm-service` でジョブの `elm-service` に置き換えることは変わらない（下の「Tutorials を公開まではソースから作る形で書く」）。
 
 ### 管理 API の API キーの渡し方（V1c3b の Grill の Q3、Issue #217）
 
@@ -928,3 +932,88 @@
 - **理由:** Tutorial 1 と 3 のアプリは `dotnet run` で動かすので、V1c3b にこの行を使う頁はない。一方、Tutorial 4 はビルドした C のアプリを動かすので、この行が要る。
 - **却下した案:** V1c3 の設計のレビューの R6 のとおり、使う頁のない V1c3b で作る。
 - **却下した案:** この行を作らない（V1c3b の Grill の記録が「外した」とした形）。Tutorial 4 の手順を流せなくなる。
+
+### Tutorials を公開まではソースから作る形で書く（V1c3e の Grill の方針、Issue #219）
+
+- **決定:** 利用者の文書を、リリースした製品として書く。読み手が実際に打つとおりに、実行ファイルは GitHub の Releases の成果物から、パッケージは nuget.org から入れる形にし、CI では手順を流す仕組みが頁の外でジョブの成果物とローカルのフィードに置き換える。V1c3 の Grill の Q2（「始める前に」にソースから作る手順を書き、V1e で書き換える）、V1c3 の設計のレビューの R2 と R4（頁の `dotnet publish`、`dotnet pack`、`nuget.config`）、V1c3b の Grill の Q2（`elm-service` をソースから作る）を改める。新しい行 V1c3e を V1c3d の前に置く（持ち主の指摘と決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** 持ち主の指摘（PR #218 のレビュー中の会話）。ソースから作る形で書くと、公開の直前にすべての Tutorial を書き直すことになり、文書を確かめ終える時点がなくなる。リリースした製品として書けば、頁は公開のあとも変えずに済み、CI の置き換えは頁の外の 1 か所に収まる。読み手にとっても、NativeAOT の道具やクローンの前提がなくなる。
+- **却下した案:** V1e まで、頁ではソースから作る手順を書き、V1e でリリースのダウンロードと nuget.org のパッケージに書き換える（V1c3 の Grill の Q2 と V1c3a の R2 の形）。
+- **改めた:** V1c3e の記録の途中の持ち主の決定 P1 で、頁は読み手が今手に入れられるものを書くとし（V1c3e の設計のレビューの R3 で「試しの期間の読み手がすることを書く」と言い直した。下の「方針を「読み手が今手に入れられるものを書く」と言う」）、試しの期間は GitHub のプレリリースの圧縮ファイルと `.nupkg` から入れる形にした。V1c3 の設計のレビューの R4（頁の `nuget.config`）は、`feed` を `packages` にして残る。nuget.org の形への切り替えは V1e の 1 つの PR（P3）。ソースから作る手順を頁に書かないことは変わらない（下の「試しの期間の頁を nuget.org の形で書く」）。
+
+### 成果物の名前から版を外す（V1c3e の Grill の Q2、Issue #219）
+
+- **決定:** 頁は、GitHub の Releases の頁の最新のリリースから、自分の OS の `elm-<版>-<RID>` の圧縮ファイルを取り、展開して PATH に足すと本文で書く。展開のコマンドはシェルと OS で違うので手順のブロックにせず、確かめ方は `SECURITY.md` の節へのリンクで示す。CI では独立の行の `steps:prebuilt` の印で、ジョブが作った実行ファイルに置き換える。成果物の名前は今の `<名前>-<版>-<RID>` のまま（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** 版を外せば `/releases/latest/download/<名前>` の決まった URL で最新を取れるが、取ったファイルの名前から版が分からなくなり、`SHA256SUMS` と証明の確かめで、どの版のファイルかを名前で見られなくなる。また、GitHub の `latest` はプレリリースを除くので、`1.0.0-rc.1` のあいだは指す先がない。展開とコマンドがシェルごとに違う以上、決まった URL があっても頁は手順のブロックにできない。
+- **却下した案:** 成果物の名前から版を外し、`/releases/latest/download/` の決まった URL で最新を取れるようにする。
+- **改めた:** 持ち主の決定 P1 で、頁が指すのは「Pre-release」の印が付いたうちの最も新しいリリースになり、頁は GitHub の「Latest」がプレリリースを指さないことも書く（下の「試しの期間の頁を nuget.org の形で書く」）。成果物の名前と、決まった URL を使わないことは変わらない。
+
+### 頁で版を `--version` に固定する（V1c3e の Grill の Q3、Issue #219）
+
+- **決定:** 頁は `--version` を書かずに `dotnet add app package ElasticLM.Client` とし、最新を入れる。頁から `dotnet pack` と `nuget.config` の手順を外す。CI では、`aot` ジョブが `ElasticLM.Licensing` と `ElasticLM.Client` を pack してスクリプトに `-Feed` で渡し、スクリプトが頁の外で、`ElasticLM.*` をそのフィードに割り当てる `nuget.config` を作業フォルダーに置く（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** 版を頁に書けば、版を上げるたびにすべての頁を直すことになり、直し忘れれば CI の復元が落ちる。`--version` がなければ、読み手は公開した最新を入れ、CI では割り当てたフィードにある版（ジョブが今 pack した版）だけが選ばれるので、頁は版によらない。
+- **却下した案:** 頁に `--version <版>` を書き、公開のたびに頁を直す。
+- **改めた:** 持ち主の決定 P1 で、試しの期間の頁は `nuget.config`（`ElasticLM.*` を作業フォルダーの `packages` だけに割り当てる）を自分で書き、`dotnet add app package <パッケージ> --prerelease` と打つ形にした（V1c3e の設計のレビューの R2 で `--source packages` を足した。下の「頁の `dotnet add` に `--source` を書かず、nuget.org の同じ名前のパッケージで頁の行が落ちることを受け入れる」）。スクリプトが頁の外で `nuget.config` を書く形はやめ、ジョブがプレリリースの版で pack したパッケージを、スクリプトが `steps:prebuilt name=packages` の印のところで `packages` に写す（下の「試しの期間の頁を nuget.org の形で書く」）。`--version` を書かないことは変わらない。
+
+### NuGet のパッケージを GitHub Packages に置く（V1c3e の記録の途中の持ち主の決定 D1、Issue #219）
+
+- **決定:** パッケージは、公開でも nuget.org に置く（持ち主の決定。[design.ja.md](./design.ja.md) §20.5 の「V1e で変えること」、§20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** GitHub Packages の NuGet の登録所は、公開のパッケージを入れるのにも personal access token（classic）を求める（「You need an access token to publish, install, and delete private, internal, and public packages.」。https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-nuget-registry ）。利用者のすべての開発者とその CI が、範囲の広い classic のトークンを持つことになる。nuget.org は、トークンなしで入れられ、`dotnet` の既定の源でもある。
+- **却下した案:** NuGet のパッケージを GitHub Packages に置く。
+
+### rc のパッケージを nuget.org に、rc のイメージを GHCR に push する（V1c3e の記録の途中の持ち主の決定 D2、Issue #219）
+
+- **決定:** V1e から、rc のタグ（`v1.0.0-rc.N`）は、すべてのファイル（実行ファイルと `libelasticlm`、`.nupkg` と `.snupkg`、`SHA256SUMS`、来歴の証明など）を付けた GitHub のプレリリースだけを出し、nuget.org にもコンテナのレジストリにも push しない。`release.yml` の `publish` は、プレリリースの後ろのない版のタグだけで動く。rc を試す人は、プレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れ、その手順は `docs/releasing.md` に書く。`release.yml` と `docs/releasing.md` の変更は V1e で行う（持ち主の決定。[design.ja.md](./design.ja.md) §20.5 の「V1e で変えること」、§20.7 の V1e の行）。
+- **理由:** nuget.org と GHCR に置いた版は取り消せない（nuget.org はパッケージを消せず、隠すだけで、隠した版も版を指せば入れられる。https://learn.microsoft.com/en-us/nuget/nuget-org/policies/deleting-packages 。GHCR の package を public にする操作も取り消せない。[design.ja.md](./design.ja.md) T26）。rc を nuget.org に置くと、プレリリースの版だけがあるあいだ、頁の `--version` のない `dotnet add package` が何をするかが .NET の文書に書かれていない状態に頼ることになる。rc を GitHub のプレリリースに限れば、公開の前の試しを、取り消せない場所を使わずにでき、nuget.org の最初の版は正式版になる。ローカルのフォルダーのフィードなら、試す人にトークンも要らない。
+- **却下した案:** 今の `release.yml` のとおり、rc のパッケージも nuget.org に、rc のイメージも GHCR に push する。
+
+### ID の接頭辞の予約を V1e で行う（V1c3e の記録の途中の持ち主の決定 D3、Issue #219）
+
+- **結論（この項は改めた決定の記録）:** この項の決定は持ち主が改めた。今の決定は、V1c3e では予約せず、予約するか先に公開して名前を取るかを V1e で切り替えの PR の前に決める、で、下の「ID の接頭辞を今予約し、V1c3e の PR のマージの条件にする」にある（V1c3e の設計のレビューの R13）。この項は、記録の途中の決定とその理由を残すためだけにある。
+- **決定（記録の途中。改めた）:** nuget.org の ID の接頭辞 `ElasticLM.` を、持ち主が V1c3e の PR のマージの前に予約し、予約が受けられてからその PR をマージする。V1e の行から接頭辞の予約を外す（持ち主の決定。[design.ja.md](./design.ja.md) §20.5 の持ち主の作業、§20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** V1c3e で、頁から `nuget.config`（`ElasticLM.*` をローカルのフィードだけに割り当てていた）が外れ、頁は `--version` のない `dotnet add package ElasticLM.Client` を書く。`main` の頁は公開の前から GitHub で読めるので、予約がなければ、だれかが同じ名前のパッケージを nuget.org に置いたとき、頁のとおり打った読み手がそれを入れる。予約した接頭辞に合う ID のパッケージは、予約した持ち主のほかから送られれば nuget.org が断る（https://learn.microsoft.com/en-us/nuget/nuget-org/id-prefix-reservation ）。
+- **却下した案:** 接頭辞の予約は V1e で行い、それまでのこの道を、README の Status の 1 行のほかに守りのない受け入れたリスクとする。
+- **改めた:** 持ち主はこの決定を改め、V1c3e では予約しないとした（下の「ID の接頭辞を今予約し、V1c3e の PR のマージの条件にする」）。前提だった「頁から `nuget.config` が外れる」も、P1 で頁が `nuget.config` を持つ形に戻ったので成り立たない。
+
+### 試しの期間の頁を nuget.org の形で書く（V1c3e の記録の途中の持ち主の決定 P1、Issue #219）
+
+- **決定:** 利用者の文書は、読み手が今実際に手に入れられるものを書く。試しの期間（V1e の rc のプレリリースによる試しの公開のあと、正式版を出すかの判断まで）は GitHub のプレリリースなので、頁は、実行ファイルを「Pre-release」の印が付いたうちの最も新しいリリースの圧縮ファイルから入れ（GitHub の「Latest」はプレリリースを指さないと頁に書く）、パッケージはそのプレリリースの `.nupkg` を作業フォルダーの `packages` に置き、頁の `nuget.config`（`<clear/>`、相対の `packages` と nuget.org、`packageSourceMapping` で `ElasticLM.*` を `packages` だけに）と `dotnet add app package <パッケージ> --prerelease`（`--version` なし）で入れる。CI は、`steps:prebuilt name=elm` などで実行ファイルを、`steps:prebuilt name=packages` で `packages` の中身を、ジョブが作ったもの（パッケージは `-p:VersionSuffix=ci.<実行の番号>` で pack したプレリリースの版）に置き換え、頁の `nuget.config` のブロックと `dotnet add` の行は書いてあるとおりに流す（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** D2 で、正式版を出すまで nuget.org に `ElasticLM.*` は置かれない。頁を nuget.org の形で書くと、試しの期間の読み手が頁のとおり打っても入らず、持ち主の試しも頁と違う手順になる。プレリリースの形なら、頁の手順そのものが試しの期間に動き、CI も頁の `nuget.config` と `--prerelease` の行を書いてあるとおりに流せる。頁の割り当ては、`ElasticLM.*` を `packages` からだけ取らせるので、同じ名前のパッケージが nuget.org に置かれても入らない（SDK 10.0.402 で、より高い版を割り当てのない源に置いて試すと、`dotnet add` はその版を選び、復元は NU1102 で落ち、その版は入らなかった）。
+- **却下した案:** 記録の途中の V1c3e の Q3 のとおり、頁を今から nuget.org の形（`nuget.config` も `--prerelease` もない `dotnet add package`）で書き、CI ではスクリプトが頁の外で `nuget.config` を書いてジョブのフィードに割り当てる。
+- **改めた:** V1c3e の設計のレビューで、持ち主の決定（推奨案）により 2 点を改めた。R2 で頁の `dotnet add` の行に `--source packages` を足した（理由の「その版は入らなかった」のとき、頁の行と CI は落ちていた。下の「頁の `dotnet add` に `--source` を書かず、nuget.org の同じ名前のパッケージで頁の行が落ちることを受け入れる」）。R3 で、方針を「試しの期間の読み手がすることを書く」と言い直した（下の「方針を「読み手が今手に入れられるものを書く」と言う」）。頁の形は変わらない。
+
+### 入手の手順を 1 つの頁にまとめる（V1c3e の記録の途中の持ち主の決定 P2、Issue #219）
+
+- **決定:** 実行ファイルとパッケージの入手の手順は、各 Tutorial の「始める前に」に置く（持ち主の決定。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」）。
+- **理由:** Tutorial ごとに要るもの（Tutorial 1 は `elm` と `ElasticLM.Licensing`、Tutorial 3 は加えて `elm-server` と `ElasticLM.Client`）が違い、各 Tutorial は独立にする（V1c3b の Grill の Q7）。手順を流す仕組みは頁ごとに作業フォルダーを作るので、別の頁に置いた手順は流れない。
+- **却下した案:** 入手の手順を 1 つの頁にまとめ、各 Tutorial からリンクする。
+
+### 利用者の文書の nuget.org の形への切り替えを正式版の公開のあとにする（V1c3e の記録の途中の持ち主の決定 P3、Issue #219）
+
+- **決定:** 頁を nuget.org の形（`packages` のダウンロード、`nuget.config`、`--prerelease` のない形）に切り替えるのは、V1e で正式版のタグの前に 1 つの PR で行い、CI が頁を流して確かめる。ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るかは、そのとき V1e で決める（持ち主の決定。[design.ja.md](./design.ja.md) §20.5 の持ち主の作業、§20.7 の V1e の行と「V1c3e の Grill」）。
+- **理由:** 切り替えを 1 つの PR に収めれば、試しの期間の頁は一度も書き直さずに済み、切り替えの差分も 1 か所で読める。正式版のタグの前に CI で流せば、公開する版のサイトに確かめていない手順が載らない。
+- **却下した案:** 正式版の公開のあとに頁を切り替える（公開したサイトが、しばらくプレリリースの形のまま残る）。
+
+### ID の接頭辞を今予約し、V1c3e の PR のマージの条件にする（D3 を改めた持ち主の決定、Issue #219）
+
+- **決定（今の決定。上の「ID の接頭辞の予約を V1e で行う」の D3 を改めた）:** V1c3e では nuget.org の ID の接頭辞 `ElasticLM.` を予約しない。予約するか、先に公開して名前を取るかは、V1e で頁を nuget.org の形に切り替える PR の前に決める（P3）。`docs/releasing.md` の手順 4（「V1e の前に ID の接頭辞 `ElasticLM` を予約するかを決める」）は、V1c3e が、V1e で切り替えの PR の前に決めると直し、接頭辞を `ElasticLM.` と書く（記録の途中では変えないとしていたが、V1c3e の設計のレビューの R11 で、今の手順 4 が V1e の前に決めると読めるので直すことにした。予約しないことは持ち主の決定。[design.ja.md](./design.ja.md) §20.5 の持ち主の作業、§20.7 の V1c3 の形の「V1c3e の Grill」の D3）。
+- **理由:** 持ち主の言葉で「リリースできるかも分からないのに予約するのは気が引ける」。試しの期間に同じ名前のパッケージが nuget.org に置かれる道は、P1 の頁の `nuget.config` の割り当てと、V1c3e の設計のレビューの R2 で足した `--source packages` が塞ぐ（置かれても、頁の `dotnet add` の行は `packages` の版を選び、その版は入らない）。V1e の切り替えで頁から割り当てと `--source` が外れるとこの道が戻るので、その時点で V1e が決める。
+- **却下した案:** 記録の途中の D3 のとおり、V1c3e の PR のマージの前に接頭辞を予約し、予約が受けられたことをマージの条件にする。
+
+### rc が通さない公開の段を V1c3e で書かずにおく（V1c3e の設計のレビューの R1、Issue #219）
+
+- **決定:** D2 で rc のタグが通さなくなる公開の段（`release.yml` の `publish` の、`NuGet/login` による Trusted Publishing、`dotnet nuget push`、skopeo による GHCR への push と `latest` のタグ、イメージの証明、持ち主の作業の GHCR の package を public にすること）を、設計の §20.5 の「V1e で変えること」に挙げ、V1e の Grill の決める点に、それを正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか）を足す。0.112 と、上の「最初の公開を `0.x` の版にする」の「先に `1.0.0-rc.1` を出して公開の経路を確かめる」も、rc で確かめられるのは GitHub のプレリリースまでと直す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.112、§20.5 の「V1e で変えること」、§20.7 の V1e の行）。
+- **理由:** D2 のあとも「rc で公開の経路を確かめる」という文が残れば、V1e は、nuget.org と GHCR への push が正式版のタグで初めて動くことに気づかずに正式版のタグを押しうる。タグは消せないので、そこで落ちれば `1.0.0` は出せない。どう確かめるかは、`release.yml` を変える V1e の Grill で、テストのフィードの用意の手間と合わせて決めるのがよい。
+- **却下した案:** rc が通さない段を書かず、「rc で公開の経路を確かめる」の文をそのまま残す。
+- **却下した案:** 確かめ方を V1c3e で決める（V1c3e は `release.yml` を変えない行で、決めても試せない）。
+
+### 頁の `dotnet add` に `--source` を書かず、nuget.org の同じ名前のパッケージで頁の行が落ちることを受け入れる（V1c3e の設計のレビューの R2、Issue #219）
+
+- **決定:** 試しの期間の頁の `dotnet add` の行を `dotnet add app package <パッケージ> --prerelease --source packages` にし、版を選ぶ問い合わせを作業フォルダーの `packages` だけに向ける。V1e の切り替えの PR は `--source` も外す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」の Q3 の「割り当てが守るもの」）。
+- **理由:** `--source` がなければ、`--version` のない `dotnet add` は割り当てによらず nuget.org にも版を問い合わせ、同じ名前のより高い版があればそれを選び、復元は割り当てで落ちる。他人のコードは入らないが、頁の行も CI の頁の手順も落ちるので、だれでも nuget.org に 1 つ置くだけで頁の手順と CI を止められる。SDK 10.0.402 で、nuget.org の代わりにより高い版 `9.9.9` の `ElasticLM.Client` を置いたローカルのフォルダーの源を足して試すと、`--source packages` ありでは `packages` の `0.1.0-ci.1` を選んで通り、nuget.org への問い合わせも出なかった。なしでは `9.9.9` を選んで NU1102 で落ちた（2026-11-06）。
+- **却下した案:** `--source` を書かず、この道を、CI が止められうることを含めて試しの期間の受け入れたリスクとする。
+
+### 方針を「読み手が今手に入れられるものを書く」と言う（V1c3e の設計のレビューの R3、Issue #219）
+
+- **決定:** 方針を「利用者の文書は、試しの期間の読み手、つまり GitHub のプレリリースを手に入れた読み手がすることを書く」と言い直す。入口の頁の試しの期間の文は、最初の rc より前にも正しいように、試しの期間の配り方として書き（英語の例「During the trial, ElasticLM is distributed as GitHub prereleases.」）、プレリリースがまだなければ `CONTRIBUTING.md` の新しい「Build from source」の節で作れると続ける。PR #218 の振り返りの教訓 2 も同じ言い方で規則に入れる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の V1c3 の形の「V1c3e の Grill」の方針と Q4）。
+- **理由:** V1c3e の頁は、最初の rc（V1e）より前に `main` に入る。そのあいだ手に入るプレリリースはなく、「今手に入れられるもの」を書くという方針は、それで書いた頁自体に当てはまらない。また、入口の頁の「GitHub のプレリリースとして配っている」は、最初の rc までは事実でない。読み手を「Build from source」に送れば、最初の rc より前の読み手も頁の手順を進められる。
+- **却下した案:** 方針の言い方をそのままにし、最初の rc より前に頁の手順を始められないことを受け入れる（記録の途中の「V1e の最初の rc より前」の受け入れ）。

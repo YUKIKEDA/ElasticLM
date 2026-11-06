@@ -21,6 +21,11 @@ Each page is one of the four Diátaxis kinds (https://diataxis.fr/start-here/) a
 
 A page that needs another kind links to it instead of growing a second kind.
 
+## What the pages describe
+
+- The pages describe what a reader of the trial does: a reader who got ElasticLM from a GitHub prerelease (design §20.7, V1c3e). A tutorial has the reader download the executables from the prerelease's archives and the packages from its `.nupkg` files, as the reader types it, and the step runner (`eng/docs/Test-GuideSteps.ps1`) puts the job's executables and packages in their place at the `steps:prebuilt` markers. A page is not written as "not released yet, so build it from the source": V1c3a and V1c3b wrote the tutorials that way, which left every tutorial to be rewritten just before the release, with no point at which the documentation was checked and done (the owner's finding in PR #218).
+- Before the first prerelease there is nothing to download. One sentence in the status of the entry page (`docs/guide/README.md` and its translation) says that ElasticLM is distributed as GitHub prereleases during the trial, and sends a reader who finds none to "Build from source" in `CONTRIBUTING.md`. No other page says that nothing is released yet or that a prerelease may be missing.
+
 ## Shape of a page
 
 - The first heading is the page title. Under it, one paragraph says who the page is for and what they should know first.
@@ -103,6 +108,7 @@ Phrases that read as translations, and what to write instead: "consume a seat" �
 
 - `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` in `website/` pass.
 - Two independent reviewers read the pages (design §20.7, V1c1): one is given only `docs/guide/` and `README.md` and reports what a first-time reader cannot follow; the other is given the design and the code and reports every statement that differs from them.
+- A review that runs a page's steps before the first prerelease gets executables published as the CI's `aot` job publishes them and packages packed with a prerelease suffix (`-p:VersionSuffix=ci.<number>`), puts them into `tools` and `packages` as the page says, and only reads the download paragraphs.
 - The Japanese pages are written, or brought up to date, after both reviews of the English pages are fixed. In V1c2a (PR #199) they were translated first, and every page was translated a second time after the reviews.
 - After translating, compare the code blocks and code spans of each Japanese page with the English byte for byte. In V1c2b a writing tool turned the `'` escapes of a JSON example into the characters themselves; the comparison found it.
 - A reviewer other than the translator checks the Japanese pages for natural Japanese and for any difference from the English.

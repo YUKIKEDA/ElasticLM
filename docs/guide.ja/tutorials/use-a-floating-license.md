@@ -8,53 +8,38 @@ sidebar_position: 3
 
 ## 始める前に
 
-1.0 はまだリリースしていないので、`elm` ツール、`elm-server`、`ElasticLM.Licensing` と `ElasticLM.Client` のパッケージはソースからビルドする。次のものが要る。
+次のものが要る。
 
-- [ElasticLM のリポジトリ](https://github.com/YUKIKEDA/ElasticLM)のクローン。
 - .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
-- .NET がこのシステムでネイティブの実行ファイルをビルドするのに必要なもの。Microsoft の Native AOT 展開のページで、[Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) に挙がっている。
-  - Windows: 「Desktop development with C++」ワークロードを入れた Visual Studio。
-  - Ubuntu: パッケージ `clang` と `zlib1g-dev`。
-  - macOS: Xcode Command Line Tools。
 - マシンのポート 7070 と 7071 が空いていること。サーバーはこの両方で待ち受ける。
+- ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 
-このチュートリアル用に、クローンの外に空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。クローンの中で打つと、警告をエラーとして扱う設定や、パッケージのバージョンを一か所で管理する設定のような、リポジトリ自身のビルド設定がアプリにも効いてしまう。
+このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
 
 Linux と macOS では、このフォルダーにグループやほかのユーザーが書き込めてはならない。サーバーが自分の秘密鍵を、この中のフォルダーに置くからだ。そのフォルダーで `chmod go-w .` と打てば、グループとほかのユーザーは確実に書き込めなくなる。
 
-コマンドの中の `<repo>` は、自分のクローンのパスに置き換える。`C:/src/ElasticLM` や `/home/me/src/ElasticLM` のように、区切りには `/` を使う。
+`elm` ツール、`elm-server`、`ElasticLM.Licensing` と `ElasticLM.Client` のパッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」のラベルが付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」のラベルを付けるのはプレリリースでないリリースだけなので、そのラベルを目安にしない。
 
-鍵を作りライセンスを発行するコマンドラインツール `elm` と、ライセンスサーバー `elm-server` を、フォルダー `tools` にビルドする。どちらも、配布される形と同じく 1 つのファイルからなるネイティブの実行ファイルとしてビルドされる。ビルドに上のツールが要るのはそのためだ。
+リリースの Assets から、次のファイルをチュートリアルのフォルダーに保存する。
 
-Windows では、まずこのターミナルで Visual Studio Installer のフォルダーを `PATH` に足す。ビルドが実行する Visual Studio のスクリプトが、`vswhere.exe` を名前だけで呼ぶためだ。PowerShell では `$env:PATH = "C:\Program Files (x86)\Microsoft Visual Studio\Installer;$env:PATH"` と打つ。
+- 自分のシステムに合うアーカイブ `elm-<version>-<RID>` と `elm-server-<version>-<RID>`。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。名前が `-symbols` で終わるアーカイブにはデバッグシンボルしか入っていないので、そうでないほうを取る。
+- `ElasticLM.Client.<version>.nupkg` と `ElasticLM.Licensing.<version>.nupkg`。アプリは `ElasticLM.Client` を使い、`ElasticLM.Client` は `ElasticLM.Licensing` に依存するので、両方が要る。同じ名前の `.snupkg` ファイルは、パッケージのデバッグシンボルなので要らない。
+- ファイルのハッシュの一覧 `SHA256SUMS`。
+
+展開したり使ったりする前に、チュートリアルのフォルダーにあるアーカイブとパッケージを、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、ダウンロードしたプログラムを macOS で動かす方法と、プログラムに必要な Linux と macOS のバージョンも書いてある。
+
+2 つのアーカイブを `tools` という名前のフォルダーに展開する。Windows の PowerShell では `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools` と打ってから `Expand-Archive elm-server-<version>-<RID>.zip -DestinationPath tools -Force` と打つ。どちらのアーカイブにも同じ `LICENSE` ファイルが入っていて、`-Force` を付けると 2 つ目で上書きできる。Linux と macOS では `mkdir -p tools` と打ってから、`tar -xzf elm-<version>-<RID>.tar.gz -C tools` と `tar -xzf elm-server-<version>-<RID>.tar.gz -C tools` を打つ。これで `tools` には `elm` と `elm-server`（Windows では `elm.exe` と `elm-server.exe`）が入る。`elm` は鍵を作りライセンスを発行するコマンドラインツールで、`elm-server` はライセンスサーバーだ。
 
 <!-- steps:prebuilt name=elm -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Cli -c Release -o tools
-```
-
 <!-- steps:prebuilt name=elm-server -->
-```shell
-dotnet publish <repo>/src/ElasticLM.Server -c Release -o tools
-```
-
-ビルドが `vswhere.exe` を認識できないと表示したときや、`link.exe` の名前を含む `MSB3073` のエラーで止まったときは、[前提条件](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites)と、上の `PATH` の行を確かめる。
-
-Windows では、`tools` には各プログラムの `.pdb` ファイル（デバッグシンボル）もできるが、これは要らない。
 
 `elm` と `elm-server` というコマンドで `tools` の中のプログラムが動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-パッケージのバージョン 0.1.0 を、フォルダー `feed` にビルドする。アプリは `ElasticLM.Client` を使い、`ElasticLM.Client` は `ElasticLM.Licensing` に依存するので、両方をビルドする。
+2 つのパッケージを `packages` という名前のフォルダーに移す。PowerShell では `New-Item -ItemType Directory packages` と打ってから `Move-Item ElasticLM.*.nupkg packages` と打つ。Bash か zsh では `mkdir -p packages` と打ってから `mv ElasticLM.*.nupkg packages/` と打つ。
 
-<!-- steps:run -->
-```shell
-dotnet pack <repo>/src/ElasticLM.Licensing -c Release -o feed
-dotnet pack <repo>/src/ElasticLM.Client -c Release -o feed
-```
+<!-- steps:prebuilt name=packages -->
 
-これで `feed` には、2 つのパッケージのそれぞれについて、パッケージ本体の `.nupkg` ファイルと、デバッガー向けのシンボルパッケージの `.snupkg` ファイルができる。`.snupkg` ファイルについては何もしなくてよい。
-
-チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `feed` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `feed` は、`nuget.config` があるフォルダーからの相対パスだ。ElasticLM のパッケージはまだ nuget.org にないので、ほかの誰かが同じ名前のパッケージをそこに置けてしまう。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
+チュートリアルのフォルダーに、次の内容で `nuget.config` という名前のファイルを作る。このファイルがあると、アプリは名前が `ElasticLM.` で始まるパッケージを `packages` からだけ取り、ほかのパッケージはすべて nuget.org から取る。パス `packages` は、`nuget.config` があるフォルダーからの相対パスだ。このチュートリアルで使う ElasticLM のパッケージは GitHub のプレリリースのもので、nuget.org に同じ名前のパッケージがあっても、それは ElasticLM のものではない。このパッケージソースの対応付けによって、そのようなパッケージは決して使われない。
 
 <!-- steps:file path=nuget.config -->
 ```xml
@@ -62,11 +47,11 @@ dotnet pack <repo>/src/ElasticLM.Client -c Release -o feed
 <configuration>
   <packageSources>
     <clear />
-    <add key="feed" value="feed" />
+    <add key="packages" value="packages" />
     <add key="nuget.org" value="https://api.nuget.org/v3/index.json" />
   </packageSources>
   <packageSourceMapping>
-    <packageSource key="feed">
+    <packageSource key="packages">
       <package pattern="ElasticLM.*" />
     </packageSource>
     <packageSource key="nuget.org">
@@ -80,7 +65,7 @@ dotnet pack <repo>/src/ElasticLM.Client -c Release -o feed
 
 鍵は 2 つ要る。アプリとサーバーが信頼するルート鍵と、ライセンスに署名する署名鍵だ。署名鍵が署名したものが受け入れられるように、ルート鍵が署名鍵を証明する。
 
-`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
+`elm` は、それぞれの秘密鍵をパスフレーズで暗号化したファイルに保存する。鍵を作るときは、12 文字以上の新しいパスフレーズを尋ね、もう一度入力させる。あとのコマンドがその鍵を使うときは、そのパスフレーズをまた尋ねる。入力中は何も表示されない。このチュートリアルでは、2 つの鍵に同じパスフレーズを使う。環境変数 `ELM_KEY_PASSPHRASE` が設定されていれば、`elm` はパスフレーズをそこから取り、尋ねない。そのため、下の出力にあるパスフレーズを尋ねる行は表示されない。このターミナルで設定するには、PowerShell では `$env:ELM_KEY_PASSPHRASE = '<passphrase>'`、Bash か zsh では `export ELM_KEY_PASSPHRASE='<passphrase>'` と打つ。これはスクリプトや、誰も入力できないターミナルのためのものだ。実際の運用では、スクリプトにパスフレーズを書いておかない。詳しくは、`elm` のリファレンスの[パスフレーズ](../reference/elm-cli.md#パスフレーズ)を参照。
 
 下の出力にある鍵 ID、サーバーのインストール鍵、トークン ID、マシンフィンガープリント、日時は架空の値だ。手元のマシンでは毎回違う値になる。
 
@@ -226,12 +211,12 @@ info: elm-server[1]
 
 ## アプリを作る
 
-フォルダー `app` にコンソールアプリを作り、`ElasticLM.Client` パッケージを追加する。`ElasticLM.Licensing` も一緒に入る。
+フォルダー `app` にコンソールアプリを作り、`packages` から `ElasticLM.Client` パッケージを追加する。`ElasticLM.Licensing` も一緒に入る。`packages` にあるのはプレリリースのバージョンだけなので、`--prerelease` を付けてプレリリースのバージョンも選べるようにする。`--source packages` を付けると、`dotnet add` はバージョンを `packages` の中だけで探す。
 
 <!-- steps:run -->
 ```shell
 dotnet new console -o app
-dotnet add app package ElasticLM.Client --version 0.1.0
+dotnet add app package ElasticLM.Client --prerelease --source packages
 ```
 
 `app/Program.cs` の中身を、次のコードに置き換える。
@@ -401,15 +386,13 @@ leases: 1
   pro: 1 of 2 seats in use (2 with overage, 1 borrowed)
 ```
 
-これらの行の前には、製品、サーバーライセンスの ID とトークン ID、その有効期限、サーバーの鍵を表示する。`serving` は、起動後の 1 分が終わったことを示す。アプリが返却したリースはもうない。残っている 1 つのリースは借用で、1 時間後に期限が切れるまで、2 つのシートのうち 1 つを使う。ライセンスは上限を超えるシートを認めていないので、超過分を含めた上限も 2 だ。
+これらの行の前には、製品、サーバーライセンスの ID とトークン ID、その有効期限、サーバーの鍵を表示する。`serving` は、サーバーがもうリースを再登録していないことを示す。起動後の 1 分が終わったか、それより前に再登録されたリースですべてのシートが埋まったかのどちらかだ。アプリが返却したリースはもうない。残っている 1 つのリースは借用で、1 時間後に期限が切れるまで、2 つのシートのうち 1 つを使う。ライセンスは上限を超えるシートを認めていないので、超過分を含めた上限も 2 だ。
 
 その 1 時間のうちにアプリを動かすたびに、借用するシートが 1 つ増える。2 回目で両方のシートが借用され、3 回目は `ELM_NO_SEATS: No seats are free for the feature.` と表示して終了コード 1 で終わる。借用したシートも使用中と数えるからだ。
 
 サーバーを止める。2 つ目のターミナルで Ctrl+C を押す。サーバーは `Application is shutting down...` と `server.stopped: 1 leases were not returned` を表示して終わる。この 1 つのリースは借用だ。サーバーは借用の記録を `server-data` に残すので、ふたたび起動しても、借用の期限が切れるまではそれを数える。
 
-最初からやり直すには、サーバーを止めた状態で、チュートリアルのフォルダーを丸ごと消す。そうすれば、`server-data` にあるサーバーの借用の記録と、`client-data` にあるアプリの借用のファイルの両方が消える。そのあと、`tools` と `feed` のビルドも含めて、[始める前に](#始める前に)からやり直す。`server-data` だけを消してはいけない。そうすると、サーバーが新しいインストール鍵を作るので、新しいサーバーライセンスが要る。また、古い `client-data` を持つアプリは、最初に確かめたサーバーの鍵を保持しているので、新しいサーバーを `ELM_SERVER_PIN_MISMATCH` で拒否する。
-
-ElasticLM のソースを変えてバージョン 0.1.0 をもう一度パックしても、アプリが使うのは、NuGet が最初にグローバルパッケージフォルダー（`~/.nuget/packages` や `%USERPROFILE%\.nuget\packages` など）に保存した 0.1.0 のパッケージで、`feed` にある新しいパッケージではない。このフォルダーの場所は `dotnet nuget locals global-packages --list` で確かめられる。次の `dotnet add` か `dotnet run` の前に、その中のフォルダー `elasticlm.client` と `elasticlm.licensing` を消すか、`dotnet nuget locals global-packages --clear` でフォルダー全体を空にする。
+最初からやり直すには、サーバーを止めた状態で、チュートリアルのフォルダーを丸ごと消す。そうすれば、`server-data` にあるサーバーの借用の記録と、`client-data` にあるアプリの借用のファイルの両方が消える。そのあと、`tools` と `packages` へのダウンロードも含めて、[始める前に](#始める前に)からやり直す。`server-data` だけを消してはいけない。そうすると、サーバーが新しいインストール鍵を作るので、新しいサーバーライセンスが要る。また、古い `client-data` を持つアプリは、最初に確かめたサーバーの鍵を保持しているので、新しいサーバーを `ELM_SERVER_PIN_MISMATCH` で拒否する。
 
 ## 作ったもの
 
