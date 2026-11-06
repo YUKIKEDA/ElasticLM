@@ -34,7 +34,7 @@ Overwrites an output file that exists. Without it, a command that would overwrit
 
 ### Passphrases
 
-Every private key that `elm` writes is a PKCS#8 PEM file encrypted with a passphrase. On Linux and macOS a private key file is written with mode `0600`, also when `--force` overwrites a file that had another mode; on Windows it takes the access rules of its folder.
+Every private key that `elm` writes is a PKCS#8 PEM file encrypted with a passphrase. On Linux and macOS a private key file is written with mode `0600`; on Windows it takes the access rules of its folder. With `--force`, the new file replaces the old one instead of being written into it, so it does not keep the old file's mode or access rules, and a program that had the old file open does not see the new content.
 
 The commands that read or write a private key (`elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`) take the passphrase from an environment variable:
 
@@ -450,7 +450,7 @@ This command takes no options.
 elm admin request <METHOD> <path> [--body <file>] [--url <url>]
 ```
 
-Calls the administration API once and writes the body of a successful answer to standard output; any other answer's body goes to standard error with exit code 1.
+Calls the administration API once and writes the body of a successful answer to standard output, followed by a line break when the body does not end with one (an empty body writes nothing); any other answer's body goes to standard error with exit code 1.
 
 | Option or argument | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
@@ -489,7 +489,7 @@ With `ELM_API_KEY`, or a saved `elm admin login` for the same origin as `--url`,
 elm secret create --out <file> [options]
 ```
 
-Writes the nonce secret of `elm-service`, which the service's setting [`nonce.secretFile`](service-configuration.md#nonce) names: 32 random bytes in base64, on one line. It prints `secret file: <file>`, and with `--json` an object whose `file` is the path. The secret itself is never written to standard output or standard error. On Linux and macOS the file is written with mode `0600`, also when `--force` overwrites a file that had another mode; on Windows it takes the access rules of its folder.
+Writes the nonce secret of `elm-service`, which the service's setting [`nonce.secretFile`](service-configuration.md#nonce) names: 32 random bytes in base64, on one line. It prints `secret file: <file>`, and with `--json` an object whose `file` is the path. The secret itself is never written to standard output or standard error. On Linux and macOS the file is written with mode `0600`; on Windows it takes the access rules of its folder. With `--force`, the new file replaces the old one, as for a private key.
 
 | Option | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |

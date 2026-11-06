@@ -301,6 +301,52 @@ public sealed class ElmAdminTests
     }
 
     /// <summary>
+    /// request ends an answer body that has no line break with one, and writes nothing for an empty body (design §16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service without OIDC and its owner key from setup in ELM_API_KEY.
+    ///
+    /// Steps:
+    /// - POST /v1/admin/api-keys with a body file; the service answers JSON without a line break at its end.
+    /// - DELETE /v1/admin/api-keys/{id} of the new key; the service answers 204 without a body.
+    ///
+    /// Expected:
+    /// - Exit 0 and the JSON followed by exactly one line break; then exit 0 and no output at all.
+    /// </remarks>
+    [Fact]
+    public async Task Request_AnswerBody_EndsWithOneLineBreak()
+    {
+        await using var test = new TestService();
+        _time = test.Time;
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        _environment["ELM_API_KEY"] = owner;
+        string body = test.FilePath("key.json");
+        await File.WriteAllTextAsync(body, """{"name":"spare","permissions":["license.read"]}""", TestContext.Current.CancellationToken);
+
+        (int code, string output, string error) = Run(
+            "admin",
+            "request",
+            "POST",
+            "/v1/admin/api-keys",
+            "--body",
+            body,
+            "--url",
+            service.Url.ToString()
+        );
+        Assert.True(code == 0, error);
+        Assert.EndsWith("}" + Environment.NewLine, output, StringComparison.Ordinal);
+        Assert.False(output.EndsWith(Environment.NewLine + Environment.NewLine, StringComparison.Ordinal), "The body got two line breaks.");
+        using JsonDocument created = JsonDocument.Parse(output);
+        string id = created.RootElement.GetProperty("id").GetString()!;
+
+        (code, output, error) = Run("admin", "request", "DELETE", "/v1/admin/api-keys/" + id, "--url", service.Url.ToString());
+        Assert.True(code == 0, error);
+        Assert.Equal(string.Empty, output);
+    }
+
+    /// <summary>
     /// elm offline process uses the saved login for the administration entry when its origin is the --url's (design §12.8.4,
     /// §16): the audit row is by the OIDC administrator.
     /// </summary>

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.Cryptography;
 using ElasticLM.Issuing;
 
 namespace ElasticLM.Cli;
@@ -70,9 +71,13 @@ internal static class CliFiles
 
     public static void Write(string path, byte[] bytes, bool force, bool secret)
     {
+        // With --force the content goes to a new file beside the target, which then replaces it (design §16). Writing into
+        // the existing file would keep what that file had: its explicit access rules on Windows, its mode on Linux and macOS,
+        // and every handle another process opened on it, which could then read the new content.
+        string target = force ? path + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)) + ".tmp" : path;
         var options = new FileStreamOptions
         {
-            Mode = force ? FileMode.Create : FileMode.CreateNew,
+            Mode = FileMode.CreateNew,
             Access = FileAccess.Write,
             Share = FileShare.None,
         };
@@ -84,16 +89,15 @@ internal static class CliFiles
 
         try
         {
-            using var stream = new FileStream(path, options);
-            if (secret && !OperatingSystem.IsWindows())
+            using (var stream = new FileStream(target, options))
             {
-                // UnixCreateMode applies only to a new file: an existing file that --force overwrites keeps its mode, such as
-                // 0644. Set the mode on the open handle before the secret is written, so that it is never in a wider file
-                // (design §16).
-                File.SetUnixFileMode(stream.SafeFileHandle, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+                stream.Write(bytes);
             }
 
-            stream.Write(bytes);
+            if (force)
+            {
+                File.Move(target, path, overwrite: true);
+            }
         }
         catch (IOException) when (!force && File.Exists(path))
         {
@@ -107,6 +111,23 @@ internal static class CliFiles
         {
             throw new CliException($"The file '{path}' cannot be written: access is denied.");
         }
+        finally
+        {
+            if (force)
+            {
+                DeleteQuietly(target);
+            }
+        }
+    }
+
+    // Removes the temporary file of a write that failed; after a move there is none. A failure here would hide the first one.
+    private static void DeleteQuietly(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 }
 

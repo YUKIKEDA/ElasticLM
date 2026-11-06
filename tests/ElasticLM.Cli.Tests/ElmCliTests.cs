@@ -565,6 +565,107 @@ public sealed class ElmCliTests : IDisposable
         Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(path));
     }
 
+    /// <summary>
+    /// On Windows, a secret written over an existing file with --force does not keep the explicit access rules of that file.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; a file at the output path with an explicit rule that lets Everyone read it.
+    ///
+    /// Steps:
+    /// - secret create --force over the file.
+    ///
+    /// Expected:
+    /// - Exit 0, a new secret in the file, and no explicit rule for Everyone: the file has only the rules of its folder
+    ///   (design §16).
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_ForceOverFileWithExplicitRule_DropsTheRule()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("Explicit access rules are a Windows matter; Linux and macOS have the mode tests.");
+            return;
+        }
+
+        string path = P("shared.secret");
+        File.WriteAllText(path, "old");
+        var everyone = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.WorldSid, null);
+        var info = new FileInfo(path);
+        System.Security.AccessControl.FileSecurity security = info.GetAccessControl();
+        security.AddAccessRule(
+            new System.Security.AccessControl.FileSystemAccessRule(
+                everyone,
+                System.Security.AccessControl.FileSystemRights.Read,
+                System.Security.AccessControl.AccessControlType.Allow
+            )
+        );
+        info.SetAccessControl(security);
+        Assert.Contains(everyone.Value, ExplicitRuleSids(path));
+
+        (int code, _, string error) = Run("secret", "create", "--out", path, "--force");
+
+        Assert.True(code == 0, error);
+        Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(path).TrimEnd('\n')).Length);
+        Assert.DoesNotContain(everyone.Value, ExplicitRuleSids(path));
+
+        // The SIDs of the rules set on the file itself, not inherited from its folder.
+        static string[] ExplicitRuleSids(string file)
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return [];
+            }
+
+            var sids = new List<string>();
+            foreach (
+                System.Security.AccessControl.FileSystemAccessRule rule in new FileInfo(file)
+                    .GetAccessControl()
+                    .GetAccessRules(includeExplicit: true, includeInherited: false, typeof(System.Security.Principal.SecurityIdentifier))
+            )
+            {
+                sids.Add(rule.IdentityReference.Value);
+            }
+
+            return [.. sids];
+        }
+    }
+
+    /// <summary>
+    /// On Linux and macOS, a process that opened the old file before --force does not read the new secret through it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A non-Windows machine; a file "old" at the output path, opened for reading by the test.
+    ///
+    /// Steps:
+    /// - secret create --force over the file; read the open handle from its start; read the path.
+    ///
+    /// Expected:
+    /// - Exit 0; the open handle still reads "old"; the path reads the new 32-byte secret (design §16).
+    /// </remarks>
+    [Fact]
+    public void SecretCreate_ForceWhileOldFileIsOpen_OldHandleKeepsOldContent()
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.Skip("A file that another process holds open is a Linux and macOS matter here; Windows has the access rule test.");
+            return;
+        }
+
+        string path = P("open.secret");
+        File.WriteAllText(path, "old");
+        using var held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        (int code, _, string error) = Run("secret", "create", "--out", path, "--force");
+
+        Assert.True(code == 0, error);
+        held.Position = 0;
+        using var reader = new StreamReader(held);
+        Assert.Equal("old", reader.ReadToEnd());
+        Assert.Equal(32, Convert.FromBase64String(File.ReadAllText(path).TrimEnd('\n')).Length);
+    }
+
     private string P(string name) => Path.Combine(_dir, name);
 
     private static void AssertInputError((int Code, string Out, string Error) result, string expected)

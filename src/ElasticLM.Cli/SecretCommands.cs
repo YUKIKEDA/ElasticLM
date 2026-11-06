@@ -1,3 +1,4 @@
+using System.Buffers.Text;
 using System.CommandLine;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -31,15 +32,20 @@ internal static class SecretCommands
                     bool force = parse.GetValue(forceOption);
                     CliFiles.EnsureWritable(outPath, force);
 
-                    // The service takes at least this many bytes; the length is not an option.
+                    // The service takes at least this many bytes; the length is not an option. The secret and its text are
+                    // only in these two arrays, which are cleared after the write.
                     byte[] secret = RandomNumberGenerator.GetBytes(NonceService.MinSecretLength);
+                    byte[] text = new byte[Base64.GetMaxEncodedToUtf8Length(secret.Length) + 1];
                     try
                     {
-                        CliFiles.Write(outPath, Convert.ToBase64String(secret) + "\n", force, secret: true);
+                        Base64.EncodeToUtf8(secret, text, out _, out int written);
+                        text[written] = (byte)'\n';
+                        CliFiles.Write(outPath, text, force, secret: true);
                     }
                     finally
                     {
                         CryptographicOperations.ZeroMemory(secret);
+                        CryptographicOperations.ZeroMemory(text);
                     }
 
                     // The secret itself is never printed.
