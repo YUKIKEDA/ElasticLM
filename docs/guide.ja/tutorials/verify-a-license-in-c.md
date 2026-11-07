@@ -265,7 +265,7 @@ xattr -dr com.apple.quarantine app
 cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,@executable_path'
 ```
 
-システムごとのファイル、オプション、探す場所と、ライブラリが実行時に必要とするもの（Linux では glibc 2.28 以降（`linux-musl-x64` では musl）、OpenSSL、CA の証明書）は、[C API](../reference/c-api.md) に挙げてある。
+システムごとのファイル、オプション、探す場所と、ライブラリが実行時に必要とするもの（Linux では glibc 2.28 以降（`linux-musl-x64` では musl）と OpenSSL）は、[C API](../reference/c-api.md) に挙げてある。その頁が挙げる CA の証明書は HTTPS のためだけのもので、このプログラムは HTTPS を使わない。
 
 ## アプリを動かす
 

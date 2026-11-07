@@ -265,7 +265,7 @@ xattr -dr com.apple.quarantine app
 cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,@executable_path'
 ```
 
-[C API](../reference/c-api.md) lists the files, options, and search paths of each system, and what the library needs at run time: on Linux, glibc 2.28 or newer (musl for `linux-musl-x64`), OpenSSL, and the CA certificates.
+[C API](../reference/c-api.md) lists the files, options, and search paths of each system, and what the library needs at run time: on Linux, glibc 2.28 or newer (musl for `linux-musl-x64`) and OpenSSL. The CA certificates that the page also names are for HTTPS only, which this program does not use.
 
 ## Run the app
 

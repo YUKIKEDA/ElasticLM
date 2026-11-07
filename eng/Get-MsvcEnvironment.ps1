@@ -11,7 +11,8 @@
 
     The cmd process gets the Visual Studio Installer folder at the front of its PATH, since the environment scripts of
     Visual Studio call vswhere.exe by name (.cursor/rules/engineering.mdc), and no variable whose name starts with ELM_,
-    so that a passphrase of the caller never reaches vcvars or the variables returned.
+    so that a passphrase of the caller never reaches vcvars or the variables returned. The PATH that vcvars sets starts
+    from that PATH, so the PATH returned keeps the Installer folder too.
 
     tests/native/run.ps1 applies the variables to its own environment; eng/docs/Test-GuideSteps.ps1 gives them to the
     processes of a page's cl and app lines only.
