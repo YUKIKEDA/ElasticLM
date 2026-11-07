@@ -8,7 +8,7 @@ This page lists every function, type, and constant of `libelasticlm`, the C libr
 
 ## Getting and linking the library
 
-A release publishes on the [GitHub Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) one archive per platform, `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64``win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says how to check a downloaded archive.
+A release publishes on the [GitHub Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) one archive per platform, `libelasticlm-<version>-<RID>.zip` for Windows and `libelasticlm-<version>-<RID>.tar.gz` for Linux and macOS, where `<RID>` is one of `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. Its files are at the top of the archive, not inside a folder; the table below lists them. The archive whose name ends in `-symbols` holds only the debug symbols. [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says how to check a downloaded archive.
 
 - It is a NativeAOT library and cannot be unloaded: do not call `FreeLibrary` or `dlclose` on it.
 - It carries the .NET runtime inside. Besides the library itself, an app needs only what the table below lists at run time.

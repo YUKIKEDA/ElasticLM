@@ -8,7 +8,7 @@ sidebar_position: 10
 
 ## ライブラリの入手とリンク
 
-リリースでは、[GitHub の Releases ページ](https://github.com/YUKIKEDA/ElasticLM/releases)にプラットフォームごとのアーカイブを 1 つずつ公開する。`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64``win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` 向けにビルドする。ダウンロードしたアーカイブの確かめ方は [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) に書いてある。
+リリースでは、[GitHub の Releases ページ](https://github.com/YUKIKEDA/ElasticLM/releases)にプラットフォームごとのアーカイブを 1 つずつ公開する。Windows は `libelasticlm-<version>-<RID>.zip`、Linux と macOS は `libelasticlm-<version>-<RID>.tar.gz` だ。`<RID>` は `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` のどれかだ。ファイルはフォルダーに入っておらず、アーカイブの最上位にある。その一覧は下の表にある。名前が `-symbols` で終わるアーカイブには、デバッグシンボルだけが入っている。ダウンロードしたアーカイブの確かめ方は [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) に書いてある。
 
 - NativeAOT のライブラリなので、アンロードできない。`FreeLibrary` や `dlclose` を呼ばないこと。
 - .NET のランタイムを内部に持っている。アプリが実行時に必要とするのは、ライブラリ自身のほかには下の表にあるものだけだ。
