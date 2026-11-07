@@ -19,8 +19,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
-          set -u
+          set +e
           sw_vers
+          spctl --status; echo "spctl status exit $?"
+          csrutil status
           mkdir m && cd m
           echo '== curl'
           curl -sSL -o hello.tar.gz https://ftp.gnu.org/gnu/hello/hello-2.12.tar.gz
@@ -59,3 +61,5 @@ jobs:
           cp app/app app/app2
           xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" app/app2
           app/app2; echo "quarantined executable run exit $?"
+          spctl --assess --type execute -v app/app2 2>&1; echo "spctl app2 exit $?"
+          log show --last 2m --predicate 'process == "syspolicyd"' --style compact 2>/dev/null | tail -n 20
