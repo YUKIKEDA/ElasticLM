@@ -1076,7 +1076,7 @@
 
 ### Windows の `libelasticlm` にインポートライブラリ `elasticlm.lib` を配らない（F1 の Grill の Q14、V1c8 の Grill で改めた、Issue #209）
 
-- **決定:** `win-*` の `libelasticlm` の本体の圧縮ファイルに、`elasticlm.dll`、`include/elasticlm.h`、`LICENSE` と並べて `elasticlm.lib` を入れる。`ElasticLM.Native.csproj` が `win-*` の発行のあとに `.lib` を発行のフォルダーへ写し、`Test-Publish.ps1` は `win-*` の `libelasticlm` に限って受け入れ、`Pack-Rid.ps1` は本体の圧縮ファイルに入れて `-symbols` から除く。`.exp` は配らない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q1、Q2）。
+- **決定:** `win-*` の `libelasticlm` の本体の圧縮ファイルに、`elasticlm.dll`、`elasticlm.h`（圧縮ファイルの先頭。リポジトリでは `include/elasticlm.h`）、`LICENSE` と並べて `elasticlm.lib` を入れる。`ElasticLM.Native.csproj` が `win-*` の発行のあとに `.lib` を発行のフォルダーへ写し（なければビルドを失敗にする）、`Test-Publish.ps1` は `win-*` の `libelasticlm` に限って求め（なければ失敗）、`Pack-Rid.ps1` は本体の圧縮ファイルに入れて `-symbols` から除く。`.exp` は配らない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q1、Q2）。
 - **理由:** C のアプリは、ふつうビルドのときにライブラリをリンクする。Windows のヘッダーでは `ELM_API` が `__declspec(dllimport)` なので、関数を直接呼ぶプログラムのリンクには `.lib` が要る。NativeAOT の発行はすでに `.lib`（`win-x64` で 14,118 バイト、取り込みの入口だけ）を作っており、その `.lib` で `cl /W4 /WX` でリンクして `elm_version` が動いた（2026-11-07、SDK 10.0.403、ILCompiler 10.0.14）。
 - **却下した案:** `elasticlm.lib` を配らず、Windows のアプリは `LoadLibrary` で読み込んでヘッダーの `_fn` の型で呼ぶ（F1 のあとの §20.5 の形）。
 - **改めた:** F1 の Grill の Q14 は、`libelasticlm` の圧縮ファイルの中身を「ライブラリと `elasticlm.h`」としただけで、§20.5 の単一バイナリの検査はそこから「`elasticlm.lib` は配らない。§17.4 は実行時に読み込む形を前提にしている」と書いていた。V1c8 で調べると、`.lib` が発行のフォルダーになかったのは、ILCompiler の `CopyNativeBinary` が `.dll` だけを写すため（`microsoft.dotnet.ilcompiler` 10.0.14 の `build/Microsoft.NETCore.Native.Publish.targets` の 88〜92 行）で、検査が退けていたからではなかった。V1c8 の Grill の Q1 で配る形に改めた。
@@ -1095,12 +1095,30 @@
 
 ### C のテストをビルド時のリンクに書き直す（V1c8 の Grill の Q3、Issue #209）
 
-- **決定:** 今の C のテスト（`tests/native/test_elasticlm.c`、実行時に読み込む）は残し、`elm_version` を呼ぶ小さなプログラムをビルド時にリンクして動かす試験を足す。`tests/native/run.ps1`、CI の `aot` ジョブの 3 つの OS、`release.yml` のすべての RID で流し、Windows では zip に `elasticlm.lib` があることも確かめる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§17.4、§20.5 の「V1c8 の Grill」の Q3）。
-- **理由:** 今の C のテストは、公開するすべての関数をヘッダーの型の関数ポインターに入れて呼び、関数の型を確かめている（§17.3）。実行時に読み込む形は C の API の頁でもう 1 つの道として残る（Q5）ので、その道の試験も要る。ビルド時のリンクで確かめるのはリンクの手順で、それには関数を 1 つ呼べば足りる。
+- **決定:** 今の C のテスト（`tests/native/test_elasticlm.c`、実行時に読み込む）は残し、ヘッダーが宣言するすべての関数を参照するプログラムをビルド時にリンクし、`elm_version` を呼んで発行の版と比べる試験を足す。`tests/native/run.ps1`、CI の `aot` ジョブの 3 つの OS、`release.yml` のすべての RID で流す。Windows の zip の中身は、`release.yml` の別の段で決めた一覧と比べる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§17.4、§20.5 の「V1c8 の Grill」の Q3。試験の形は設計の独立レビューの R1、R2、R4 で決めた）。
+- **理由:** 実行時に読み込む形は C の API の頁でもう 1 つの道として残る（Q5）ので、その道（`LoadLibrary`・`dlopen`）の試験が要る。書き直すと、この道の試験がなくなる。関数の型の確かめは理由にならない。ヘッダーの `_fn` の型は関数の宣言と同じマクロ（`ELM_FUNCTION`）から作るので、ビルド時にリンクして呼んでも、確かめる型は同じになる（設計の独立レビューの R8）。
 - **却下した案:** 今の `test_elasticlm.c` を、ビルド時にリンクする形に書き直す。
+
+### リンクの試験を、展開した圧縮ファイルの中で動かす（V1c8 の設計の独立レビューの R1、Issue #209）
+
+- **決定:** リンクの試験は、ライブラリ（Windows では `elasticlm.lib` も）を `run.ps1` の一時フォルダーに写し、そこでビルドして動かす。発行のフォルダーには何も書かない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §17.4 の「ビルド時のリンクの試験」）。
+- **理由:** `$ORIGIN` と `@executable_path` は実行ファイルのフォルダーを指し、Windows にも rpath に当たるものがないので、プログラムはライブラリと同じフォルダーで動かす。発行のフォルダーでビルドすると、`release.yml` が試験のあとで動かす `Pack-Rid.ps1` が、本体のほかのファイルをすべて `-symbols` に入れ、試験の `.obj` と実行ファイルが黙って配られる。展開した圧縮ファイルで試す案は、利用者が受け取る物そのものを試せるが、Alpine の RID はコンテナの中で試すので、圧縮の段の組み直しが要る。圧縮ファイルの中身は R2 の段が別に確かめる。
+- **却下した案:** 試験を `Pack-Rid.ps1` のあとに移し、展開した本体の圧縮ファイルの中身（ヘッダー、`.lib`、ライブラリ）でリンクして動かす。
+
+### Windows の zip に `elasticlm.lib` があることだけを確かめる（V1c8 の設計の独立レビューの R2、Issue #209）
+
+- **決定:** `release.yml` の `Pack the archives` のあとに段を足し、`win-*` の `libelasticlm` の 2 つの zip の中身の一覧を、決めた一覧と完全に一致するかで比べる。本体は `elasticlm.dll`、`elasticlm.lib`、`elasticlm.h`、`LICENSE`、`-symbols` は `elasticlm.pdb` だけ（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §17.4 の「ビルド時のリンクの試験」）。
+- **理由:** V1c8 の Grill の Q2 は「本体に入れる」と「`-symbols` から除く」の両方を決めた。`.lib` があるかだけを見るのは、その必要条件にとどまる（`.cursor/rules/spec-checks.mdc`）。CI の `aot` ジョブは圧縮ファイルを作らず、`run.ps1` は圧縮の前に動くので、zip を確かめられるのは `release.yml` の圧縮のあとの段だけで、`release.yml` は PR ごとに動く。
+- **却下した案:** 本体の zip に `elasticlm.lib` があることだけを確かめる（V1c8 の Grill の Q3 の最初の形）。試験そのものを圧縮のあとに移し、展開した中身でリンクして zip の確かめを兼ねる案は、R1 の項で退けた。
+
+### リンクの試験は `elm_version` だけを参照する（V1c8 の設計の独立レビューの R4、Issue #209）
+
+- **決定:** `run.ps1` がヘッダーから読む関数の一覧（`$declared`）から、ヘッダーが宣言するすべての関数を参照する C を作ってリンクし、`elm_version` を呼んで、返った版を発行の版と比べる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §17.4 の「ビルド時のリンクの試験」）。
+- **理由:** 公開する名前とヘッダーの比べ合わせ（§17.3）は DLL を見るだけで、`.lib` は見ない。関数を 1 つ参照するだけでは、`.lib` がすべての関数を持つことも、Linux と macOS でヘッダーの宣言どおりにすべての記号がリンクで解決することも確かめられない。利用者のアプリは多くの関数をリンクする。レビュアーは 52 の関数すべてを参照する C を `cl /W4 /WX` で `elasticlm.lib` にリンクし、動くことを確かめた。版を比べれば、ほかの場所の古いライブラリを読んでいないことも分かる。
+- **却下した案:** `elm_version` だけを参照するまま、`.lib` の中身を `dumpbin /exports` でヘッダーと比べる段を別に足す。
 
 ### Linux の `libelasticlm.so` に SONAME を付ける（V1c8 の Grill の Q4、Issue #209）
 
-- **決定:** SONAME は付けない。C の API の頁は、`-L. -lelasticlm` の形でリンクすると書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q4）。
-- **理由:** SONAME のないライブラリにリンクしたプログラムは、リンカーに渡したファイルの名前で読み込む（GNU ld の `-soname` の説明。https://sourceware.org/binutils/docs/ld/Options.html ）。`-L. -lelasticlm -Wl,-rpath,'$ORIGIN'` でリンクしたプログラムは、WSL の gcc で動いた。ライブラリはアプリと一緒に配る（[design.ja.md](./design.ja.md) §17.3）ので、版の違うライブラリをシステムの共有の場所に並べるための SONAME は要らない。
-- **却下した案:** 発行で `libelasticlm.so` に SONAME を付ける。
+- **決定:** SONAME は付けない。恒久の決定で、見直しの行は置かない（設計の独立レビューの R9 で持ち主が確かめた）。C の API の頁は、`-L. -lelasticlm` の形でリンクすると書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q4）。
+- **理由:** GNU ld の `-soname` の説明（https://sourceware.org/binutils/docs/ld/Options.html ）は SONAME があるときの動きを述べ、ないときの動きは直接には述べていない。WSL の gcc で測ると、`-L. -lelasticlm -Wl,-rpath,'$ORIGIN'` でリンクしたプログラムは `NEEDED` が `libelasticlm.so` になって動き、パスで渡すと `NEEDED` が `./libelasticlm.so` になった。ライブラリはアプリと一緒に配る（[design.ja.md](./design.ja.md) §17.3）ので、版の違うライブラリをシステムの共有の場所に並べるための SONAME は要らない。
+- **却下した案:** 発行で `libelasticlm.so` に SONAME を付ける。今は付けずに、あとで見直す扱いにする（見直しの roadmap の行を置く。V1c8 の Grill の記録の Issue #209 の「今は付けない」の書き方）。
