@@ -1,0 +1,42 @@
+# Temporary: the path checks of Test-GuideSteps.ps1 on Linux and macOS for V1c3c (Issue #236, design §20.7 review R8).
+# Removed before the PR is ready.
+name: Measure runner paths
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-runner-paths.yml
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Refused paths
+        shell: pwsh
+        run: |
+          $fence = '```'
+          $prebuilt = '<!-- steps:prebuilt name=libelasticlm -->'
+          $build = @($prebuilt, '', '<!-- steps:run os=windows -->', $fence, 'cl /nologo app/app.c /Fe:app/app.exe', $fence, '')
+          $cases = [ordered]@{
+            'app-drive' = $build + @('<!-- steps:run -->', $fence, 'C:app/app x', $fence)
+            'app-backslash-root' = $build + @('<!-- steps:run -->', $fence, '\app\app x', $fence)
+            'app-backslash' = $build + @('<!-- steps:run -->', $fence, 'app\app.exe x', $fence)
+            'cl-output-drive' = @($prebuilt, '', '<!-- steps:run os=windows -->', $fence, 'cl /nologo app/app.c /Fe:C:app/app.exe', $fence)
+            'cc-output-backslash' = @($prebuilt, '', '<!-- steps:run os=linux -->', $fence, 'cc -o \app\app app/app.c', $fence)
+          }
+          New-Item -ItemType Directory pages, lib | Out-Null
+          foreach ($name in $cases.Keys) {
+            $page = "pages/$name.md"
+            ($cases[$name] -join "`n") + "`n" | Set-Content $page -NoNewline
+            $out = pwsh -NoProfile -File eng/docs/Test-GuideSteps.ps1 -Elm (Get-Command true).Source -Library lib -Page $page 2>&1 | Out-String
+            "$name exit $LASTEXITCODE :: $(($out -split "`n" | Where-Object { $_ -match '::error::' }) -replace '^.*::error::', '')"
+          }
