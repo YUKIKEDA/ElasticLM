@@ -192,14 +192,14 @@ jobs:
         shell: bash
         run: |
           docker run --rm -v "$GITHUB_WORKSPACE:/src" -v /etc/machine-id:/etc/machine-id:ro -w /src -e HOME=/tmp \
-            -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e OWNER="$(id -u):$(id -g)" \
+            -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e VERSION -e OWNER="$(id -u):$(id -g)" \
             "$ALPINE_SDK_IMAGE" sh -c '
               status=0
               pwsh -NoProfile -File eng/release/Publish-Rid.ps1 -Rid "$RID" -VersionSuffix "$SUFFIX" -OutDir artifacts/release/publish -LogDir artifacts/release/logs || status=1
               if [ $status -eq 0 ]; then pwsh -NoProfile -File eng/release/Test-Smoke.ps1 -PublishDir artifacts/release/publish || status=1; fi
               if [ $status -eq 0 ]; then
                 p=artifacts/release/publish
-                pwsh -NoProfile -File tests/native/run.ps1 -Rid "$RID" -Library $p/libelasticlm/libelasticlm.so -Elm $p/elm/elm \
+                pwsh -NoProfile -File tests/native/run.ps1 -Rid "$RID" -Version "$VERSION" -Library $p/libelasticlm/libelasticlm.so -Elm $p/elm/elm \
                   -Service $p/elm-service/elm-service -Server $p/elm-server/elm-server || status=1
               fi
               chown -R "$OWNER" /src
@@ -214,16 +214,38 @@ jobs:
         run: ./eng/release/Test-Smoke.ps1 -PublishDir artifacts/release/publish
 
       - name: C test of libelasticlm
-        # design §17.4-§17.6: the exports against the header and the C tests, against the published elm-service and elm-server.
+        # design §17.4-§17.6: the exports against the header, the build-time link test against this release's version, and
+        # the C tests, against the published elm-service and elm-server.
         if: ${{ matrix.container != 'alpine' }}
         run: |
           $p = 'artifacts/release/publish'
           $exe = $IsWindows ? '.exe' : ''
           $library = $IsWindows ? 'elasticlm.dll' : ($IsMacOS ? 'libelasticlm.dylib' : 'libelasticlm.so')
-          ./tests/native/run.ps1 -Rid $env:RID -Library "$p/libelasticlm/$library" -Elm "$p/elm/elm$exe" -Service "$p/elm-service/elm-service$exe" -Server "$p/elm-server/elm-server$exe"
+          ./tests/native/run.ps1 -Rid $env:RID -Version $env:VERSION -Library "$p/libelasticlm/$library" -Elm "$p/elm/elm$exe" -Service "$p/elm-service/elm-service$exe" -Server "$p/elm-server/elm-server$exe"
 
       - name: Pack the archives
         run: ./eng/release/Pack-Rid.ps1 -Rid $env:RID -Version $env:VERSION -PublishDir artifacts/release/publish -OutDir artifacts/release/archives
+
+      - name: Check the libelasticlm zips
+        # design §17.4 (decision 0.118): the import library goes into the main zip and not into -symbols, so both zips must
+        # hold exactly these files. The CI's aot job packs no archive, so this check runs here only.
+        if: startsWith(matrix.rid, 'win-')
+        run: |
+          $expected = [ordered]@{
+            "libelasticlm-$env:VERSION-$env:RID.zip" = @('LICENSE', 'elasticlm.dll', 'elasticlm.h', 'elasticlm.lib')
+            "libelasticlm-$env:VERSION-$env:RID-symbols.zip" = @('elasticlm.pdb')
+          }
+          $failed = 0
+          foreach ($archive in $expected.Keys) {
+            $path = Join-Path (Resolve-Path artifacts/release/archives).Path $archive
+            if (-not (Test-Path $path -PathType Leaf)) { "::error::$archive was not packed."; $failed++; continue }
+            $zip = [IO.Compression.ZipFile]::OpenRead($path)
+            try { $entries = @($zip.Entries | ForEach-Object FullName | Sort-Object -CaseSensitive) } finally { $zip.Dispose() }
+            $want = @($expected[$archive] | Sort-Object -CaseSensitive)
+            if (($entries -join '|') -cne ($want -join '|')) { "::error::$archive holds $($entries -join ', '), not $($want -join ', ')."; $failed++ }
+            else { "$archive holds $($entries -join ', ')." }
+          }
+          exit $failed
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

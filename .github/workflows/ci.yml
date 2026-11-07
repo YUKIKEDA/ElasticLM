@@ -177,7 +177,8 @@ jobs:
         run: ./eng/release/Test-Publish.ps1 -Rid ${{ matrix.rid }} -PublishDir publish -LogDir publish-logs -RecordGlibcOnly
 
       - name: C test of libelasticlm
-        # design §17.4: the exports against the header, then the C test compiled with warnings as errors and run against
+        # design §17.4: the exports against the header, the build-time link test (decision 0.118; the publish has no version
+        # suffix, so run.ps1's default version applies), then the C test compiled with warnings as errors and run against
         # the published library with keys and licenses made by elm. design §17.5: the activation test runs against the
         # published elm-service on loopback, and design §17.6 the lease test against the published elm-server on https.
         run: |

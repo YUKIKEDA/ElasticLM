@@ -38,4 +38,21 @@
       <FileWrites Include="$(_ElmNativeVersionFile)" />
     </ItemGroup>
   </Target>
+
+  <!-- design §17.4, decision 0.118: a Windows publish writes the import library elasticlm.lib beside the DLL in native/,
+       but ILCompiler's CopyNativeBinary copies only the DLL to the publish folder. Copy the import library too, so a C or
+       C++ app can link against the library at build time. A missing file fails the publish, so a later ILCompiler that
+       stops writing it is noticed. A JIT publish (-p:PublishAot=false) keeps NativeLib=Shared but writes no import
+       library, so the target also needs PublishAot. -->
+  <Target
+    Name="ElmCopyImportLibrary"
+    AfterTargets="Publish"
+    Condition="'$(NativeLib)' == 'Shared' And '$(PublishAot)' == 'true' And $(RuntimeIdentifier.StartsWith('win'))"
+  >
+    <PropertyGroup>
+      <_ElmImportLibrary>$(NativeOutputPath)$(TargetName).lib</_ElmImportLibrary>
+    </PropertyGroup>
+    <Error Condition="!Exists('$(_ElmImportLibrary)')" Text="The NativeAOT publish wrote no import library at $(_ElmImportLibrary) (design §17.4)." />
+    <Copy SourceFiles="$(_ElmImportLibrary)" DestinationFolder="$(PublishDir)" />
+  </Target>
 </Project>

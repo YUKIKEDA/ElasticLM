@@ -4,8 +4,8 @@
 
 .DESCRIPTION
     For elm, elm-server, elm-service, and libelasticlm, writes <name>-<version>-<rid>.zip (win-*) or .tar.gz (the others)
-    with the binary and LICENSE (libelasticlm also gets include/elasticlm.h), and <name>-<version>-<rid>-symbols with the
-    debug symbols. Run Test-Publish.ps1 first: this script packs what it finds and does not check the folders again.
+    with the binary and LICENSE (libelasticlm also gets include/elasticlm.h, and on win-* its import library elasticlm.lib),
+    and <name>-<version>-<rid>-symbols with the debug symbols. Run Test-Publish.ps1 first: this script packs what it finds and does not check the folders again.
 
 .PARAMETER Rid
     The runtime identifier the folders were published for.
@@ -57,13 +57,17 @@ try {
         elseif ($windows) { "$name.exe" }
         else { $name }
 
+        # decision 0.118: on win-*, libelasticlm's import library goes into the main archive beside the DLL, not into -symbols.
+        $shipped = @($binary)
+        if ($windows -and $name -eq 'libelasticlm') { $shipped += 'elasticlm.lib' }
+
         $main = Join-Path $staging $name
         $symbols = Join-Path $staging "$name-symbols"
         New-Item -ItemType Directory -Force -Path $main, $symbols | Out-Null
-        Copy-Item (Join-Path $folder $binary) $main
+        foreach ($file in $shipped) { Copy-Item (Join-Path $folder $file) $main }
         Copy-Item (Join-Path $root 'LICENSE') $main
         if ($name -eq 'libelasticlm') { Copy-Item (Join-Path $root 'include/elasticlm.h') $main }
-        Get-ChildItem -Path $folder -Force | Where-Object { $_.Name -ne $binary } | Copy-Item -Destination $symbols -Recurse
+        Get-ChildItem -Path $folder -Force | Where-Object { $shipped -notcontains $_.Name } | Copy-Item -Destination $symbols -Recurse
 
         New-Archive $main (Join-Path $OutDir "$name-$Version-$Rid.$extension")
         New-Archive $symbols (Join-Path $OutDir "$name-$Version-$Rid-symbols.$extension")

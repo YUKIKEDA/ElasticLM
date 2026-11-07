@@ -92,7 +92,10 @@ release is published (design §20.7, T28).
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release.
-5. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version).
+5. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version). Each
+   `libelasticlm-<version>-<rid>` archive holds the library, `elasticlm.h`, and `LICENSE` at its top; on `win-*` it also
+   holds the import library `elasticlm.lib`, which stays out of the `-symbols` archive (decision 0.118). The build job
+   has checked that the two `win-*` zips hold exactly these files and `elasticlm.pdb`.
 6. Approve the `release` environment in the run. The `publish` job pushes the `.nupkg` and `.snupkg` from the draft to
    nuget.org after checking them against `SHA256SUMS`, and then publishes the release.
 7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
