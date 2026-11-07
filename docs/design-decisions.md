@@ -1137,9 +1137,15 @@
 
 ### `elm-server` の起動で `app.StartAsync` のすべての例外を捕まえる（V1c9 の Grill の Q2、Issue #227）
 
-- **決定:** `ElmServer.StartAsync` は `app.StartAsync` が投げる `IOException` だけを捕まえて `ServerStartException` にし、ほかの例外はそのまま上げる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q2）。
-- **理由:** `elm-service` の `ElmService.StartAsync` と同じ形にする。待ち受けの失敗のほかの例外を `error:` の 1 行と終了コード 1 にすると、それはコードの誤りでも「起動できない」として扱われる。Kestrel がどの失敗を `IOException` にするかは、同じ節の「調べた事実」と未決の U1 にある。
+- **決定:** `ElmServer.StartAsync` は `app.StartAsync` が投げる `IOException` と `SocketException` だけを捕まえて `ServerStartException` にし、ほかの例外はそのまま上げる（持ち主の決定、推奨案。`SocketException` は U1 で足した。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q2 と U1）。
+- **理由:** `elm-service` の `ElmService.StartAsync` と同じ形にする。待ち受けの失敗のほかの例外を `error:` の 1 行と終了コード 1 にすると、それはコードの誤りでも「起動できない」として扱われる。Kestrel がどの失敗を `IOException` にするかは、同じ節の「調べた事実」にある。待ち受けの失敗の `SocketException` は、U1 で捕まえる側に入れた（下の項）。
 - **却下した案:** `app.StartAsync` のすべての例外を捕まえ、同じ `error:` の 1 行にする。
+
+### 待ち受けの失敗の `IOException` だけを捕まえ、`SocketException` をこの Issue の外に置く（V1c9 の Grill の U1、Issue #227）
+
+- **決定:** `elm-server` と `elm-service` の両方で、`app.StartAsync` の `IOException` と `SocketException` を捕まえ、同じ 1 行の文と終了コード 1 にする。`ElmService.cs` のコメントを測った事実に直し、両方のプログラムに、端末にないアドレス 192.0.2.1 で起動するテストを足す（持ち主の決定、(a)。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の U1、§14.8 の終了コード）。
+- **理由:** Kestrel が `IOException` にするのは使われているアドレスだけで、待ち受ける権限がない場合と端末にないアドレスは `SocketException` のまま上がる（dotnet/aspnetcore の release/10.0 の `SocketConnectionListener.cs` と `AddressBinder.cs`。192.0.2.1 への `Bind` は、Windows と Linux の両方で `SocketError.AddressNotAvailable` の `SocketException` だった）。どれも運用者から見て「起動できない」で、終了コード 1 の意味に当たる。同じ種類の誤りは見つかったところすべてで直す（`.cursor/rules/similar-findings.mdc`）。`elm-service` も同じ穴を持っていた。
+- **却下した案:** (b) Q2 のとおり `IOException` だけを捕まえ、権限がない場合と端末にないアドレスを Issue #227 の外に置く。
 
 ### .NET のホストの起動の失敗のログを出さない（V1c9 の Grill の Q3、Issue #227）
 
