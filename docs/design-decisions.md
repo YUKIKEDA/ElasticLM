@@ -1176,3 +1176,45 @@
 - **決定:** `elm-service` は、待ち受けに失敗したら利用ログに `service.stopped`（`node`）を書いてから閉じる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §14.8、§18.1、§13.1 の「V1c9 の Grill」の R7）。実装のあとのレビュー（PR #233）で、`service.started` を書いたあとのどの起動の失敗にも広げた。
 - **理由:** `service.started` は `app.StartAsync` の前に書くので、対の `service.stopped` がないと、ログを読む運用者には、待ち受けられなかった起動と、動いたあとに落ちたノードとの区別がつかない。正常な停止と同じ行で閉じれば、どの起動も対になる。
 - **却下した案:** 行を足さず、待ち受けに失敗した起動では `service.started` に対の行がないことを設計とログの Reference に書く。
+
+### Tutorial 4 のアプリにオンラインの有効化かフローティングを使う（V1c3c の Grill の Q1、Issue #236）
+
+- **決定:** Tutorial 4 の C のアプリは、Tutorial 1 と同じくライセンスファイルをオフラインで確かめる（`elm_verifier_create` と `elm_verifier_verify`）（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c3c の Grill」の Q1）。
+- **理由:** この頁が教える中身は、`libelasticlm` をビルド時にリンクして動かすこと。サーバーのない形がいちばん短く、頁の前提も `elm`、`libelasticlm`、C コンパイラーだけになる。
+- **却下した案:** (b) オンラインの有効化（`elm_activation_*`。`elm-service` を立てる手順が要る）。(c) フローティング（`elm_client_*`。`elm-server` を立てる手順が要る）。
+
+### Tutorial 4 でライブラリをアプリの隣に写す（V1c3c の Grill の Q2、Issue #236）
+
+- **決定:** `libelasticlm` の圧縮ファイルを作業フォルダーの `app` に展開し、ソースと実行ファイルも `app` に置く（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q2）。
+- **理由:** Windows の DLL の探し方、Linux の `$ORIGIN`、macOS の `@executable_path` はどれもアプリのフォルダーを指すので、写す行が要らない。写す行（`copy`、`cp`）は OS ごとに違い、手順を流す仕組みが受け付ける行の頭も増える。
+- **却下した案:** ライブラリを別のフォルダー（`libelasticlm`）に展開し、ビルドのあとにアプリのフォルダーへ写す。
+
+### Tutorial 4 の OS ごとのブロックを Docusaurus のタブで見せる（V1c3c の Grill の Q4、Issue #236）
+
+- **決定:** OS ごとのブロックは、上にラベルの文を置いて並べる（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q4）。
+- **理由:** 利用者の文書は GitHub でもそのまま読める Markdown で書く（`.cursor/rules/user-docs.mdc`）。タブの部品は GitHub では読めない。
+- **却下した案:** Docusaurus の `Tabs` と `TabItem` で OS ごとに切り替える。
+
+### CI で `Pack-Rid.ps1` の圧縮ファイルを展開して Tutorial 4 に渡す（V1c3c の設計の独立レビューの R1、Issue #236）
+
+- **決定:** `steps:prebuilt name=libelasticlm` は、`-Library`（ジョブの `publish/libelasticlm`）からその OS のライブラリだけを写し、`elasticlm.h` と `LICENSE` をリポジトリから写す。写す一覧は `Pack-Rid.ps1` の本体の圧縮ファイルの一覧と同じにする（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c3c の Grill」の Q3）。
+- **理由:** 発行のフォルダーにヘッダーと `LICENSE` はなく、デバッグシンボルがある。圧縮ファイルを作る段を `aot` ジョブに足さずに、読み手の `app` と同じ中身を作れる。
+- **却下した案:** `aot` ジョブで `Pack-Rid.ps1` を流し、できた本体の圧縮ファイルを展開して渡す。
+
+### Tutorial 4 の Windows の手順を cmd で書く（V1c3c の設計の独立レビューの R4、Issue #236）
+
+- **決定:** 頁は「x64 Native Tools Command Prompt を開き、`powershell` と打つ」と書き、Windows では頁の全体を PowerShell で打つ（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q5）。
+- **理由:** Native Tools Command Prompt は cmd だが、頁が Tutorial 1 から引き継ぐ文（展開、`PATH`、パスフレーズ）と `SECURITY.md` のダウンロードの確かめは PowerShell の形で書いてある。PowerShell は MSVC の環境を受け継ぎ、`app/app` でアプリを動かせる（手元で測った）ので、アプリを動かす行は 3 つの OS で同じになる。
+- **却下した案:** (b) cmd の形で頁の全体を書く（`SECURITY.md` に cmd での確かめ方がない）。(c) PowerShell と cmd の 2 つの端末を使い分ける（読み手が迷う）。
+
+### ゲートが C のサンプルをコンパイルする（V1c3c の設計の独立レビューの R7、Issue #236）
+
+- **決定:** `./build.ps1` は C をコンパイルせず、C のサンプルは CI の `aot` ジョブが頁のとおりにコンパイルして動かす。`.cursor/rules/user-docs.mdc` にそう書き足す（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q7）。
+- **理由:** ゲートに C コンパイラーを求めない。C コンパイラーのある環境でだけコンパイルすると、ゲートが OS と環境ごとに変わる。
+- **却下した案:** `./build.ps1` が、C コンパイラーを見つけたときだけ C のサンプルをコンパイルする。
+
+### C の API の頁の `c` のブロックにもサンプルの印を求める（V1c3c の Grill の Q7 を改めた。設計の独立レビューの R6、Issue #236）
+
+- **決定:** サンプルの印（`<!-- sample: … -->`）を求めるのは、Tutorials の頁の `c` のブロックだけにする。C の API の頁の `c` のブロックには求めない（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c3c の Grill」の Q7）。
+- **理由:** C の API の頁の 6 つの `c` のブロックは、どれも `elasticlm.h` の関数の宣言を並べたもので、サンプルのコードではない。ヘッダーは宣言を `ELM_FUNCTION` のマクロで書くので、印でヘッダーの範囲と一字一句比べることもできない。
+- **却下した案:** Grill の Q7 の答えのとおり、Tutorials と C の API の頁のすべての `c` のブロックに印を求める。
