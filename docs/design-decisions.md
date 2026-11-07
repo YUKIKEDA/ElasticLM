@@ -1194,3 +1194,21 @@
 - **決定:** OS ごとのブロックは、上にラベルの文を置いて並べる（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q4）。
 - **理由:** 利用者の文書は GitHub でもそのまま読める Markdown で書く（`.cursor/rules/user-docs.mdc`）。タブの部品は GitHub では読めない。
 - **却下した案:** Docusaurus の `Tabs` と `TabItem` で OS ごとに切り替える。
+
+### CI で `Pack-Rid.ps1` の圧縮ファイルを展開して Tutorial 4 に渡す（V1c3c の設計の独立レビューの R1、Issue #236）
+
+- **決定:** `steps:prebuilt name=libelasticlm` は、`-Library`（ジョブの `publish/libelasticlm`）からその OS のライブラリだけを写し、`elasticlm.h` と `LICENSE` をリポジトリから写す。写す一覧は `Pack-Rid.ps1` の本体の圧縮ファイルの一覧と同じにする（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c3c の Grill」の Q3）。
+- **理由:** 発行のフォルダーにヘッダーと `LICENSE` はなく、デバッグシンボルがある。圧縮ファイルを作る段を `aot` ジョブに足さずに、読み手の `app` と同じ中身を作れる。
+- **却下した案:** `aot` ジョブで `Pack-Rid.ps1` を流し、できた本体の圧縮ファイルを展開して渡す。
+
+### Tutorial 4 の Windows の手順を cmd で書く（V1c3c の設計の独立レビューの R4、Issue #236）
+
+- **決定:** 頁は「x64 Native Tools Command Prompt を開き、`powershell` と打つ」と書き、Windows では頁の全体を PowerShell で打つ（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q5）。
+- **理由:** Native Tools Command Prompt は cmd だが、頁が Tutorial 1 から引き継ぐ文（展開、`PATH`、パスフレーズ）と `SECURITY.md` のダウンロードの確かめは PowerShell の形で書いてある。PowerShell は MSVC の環境を受け継ぎ、`app/app` でアプリを動かせる（手元で測った）ので、アプリを動かす行は 3 つの OS で同じになる。
+- **却下した案:** (b) cmd の形で頁の全体を書く（`SECURITY.md` に cmd での確かめ方がない）。(c) PowerShell と cmd の 2 つの端末を使い分ける（読み手が迷う）。
+
+### ゲートが C のサンプルをコンパイルする（V1c3c の設計の独立レビューの R7、Issue #236）
+
+- **決定:** `./build.ps1` は C をコンパイルせず、C のサンプルは CI の `aot` ジョブが頁のとおりにコンパイルして動かす。`.cursor/rules/user-docs.mdc` にそう書き足す（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q7）。
+- **理由:** ゲートに C コンパイラーを求めない。C コンパイラーのある環境でだけコンパイルすると、ゲートが OS と環境ごとに変わる。
+- **却下した案:** `./build.ps1` が、C コンパイラーを見つけたときだけ C のサンプルをコンパイルする。
