@@ -2191,6 +2191,7 @@ M4c2（0.91）で、§12.8.1〜§12.8.3 の端末の側を `ActivationClient`（
 - インストール鍵は設定の `product` の、端末の範囲の場所（`dataDirectory` で変えられる）に置く。サーバーライセンスがまだないときは、鍵を作ったうえで、その拇印とマシン指紋をエラーの文に出して終了する。管理者はそれをベンダーに渡して、サーバーライセンスを発行してもらうか、`elm server activate`（オフラインなら `activate-request`）で有効化する（§13.7、M4c3）。
 - サーバーライセンスの検証には、インストール鍵の横のファイルの時計の守り（§11.4）を使う。状態はインストール鍵で署名する（§11.4 の手順 3）。M4c3 で、同じファイルを使う `ActivationClient`（署名する）に合わせて直した。署名のない前の版の状態は、手順 3 のとおりないものとして扱い、トークンの `iat` に戻り、次の書き込みで署名つきに置き換わる。サーバーの検証器と中の `ActivationClient` は、同じ 1 つの時計の守りを使う（§13.7）。
 - 終了コードは、正常な停止が 0、起動できないときが 1、引数と設定の誤りが 2 である。起動の時間（起動から待ち受けまで）を、開始の記録に書く。
+- 待ち受けられないとき（`listen` か `admin.listen` のアドレスで Kestrel が待ち受けを始められない）も、起動できないときに当たる。`ElmServer.StartAsync` は `app.StartAsync` が投げる `IOException` だけを捕まえて、`ServerStartException`（メッセージ `elm-server cannot listen on {settings.Listen} and {settings.AdminListen}: {e.Message}`）にする。`Program.cs` は、ほかの起動の誤りと同じく標準エラーに `error: ` とメッセージの 1 行を書き、終了コード 1 で終わる。Kestrel のメッセージが、待ち受けられなかったアドレスを名指す（例 `Failed to bind to address https://127.0.0.1:7070: address already in use.`）。ほかの例外は捕まえない（待ち受ける権限がない場合と端末にないアドレスの扱いは、下の「V1c9 の Grill」の U1 で持ち主に聞く）。`elm-service` の同じ扱い（§14.8 の終了コード、`ElmService.StartAsync`）に揃える。.NET のホストが書くログ（「Hosting failed to start」とスタックトレース）は、`elm-service` と同じく最後の行の前に残る。V1c9 の前は、捕まえない `IOException` で終わり、Windows では終了コードが -1073740791 だった（Issue #227。下の「V1c9 の Grill」）。
 - 上の起動の順は M3c で決めた。
 - 再読み込み（管理 API、§13.7）は、起動のときと同じ検査（製品、自分のインストール鍵、マシン指紋、トラストストア）を通ったファイルだけを使う。通らなければ古いサーバーライセンスを使い続け、`409` と検査のエラーコードを返す。通れば、借り出しの記録に `key.changed` を書けてから、利用ログに書き、新しいサーバーライセンスを使う（§18.1、0.59）。借り出しの記録に書けなければ、`409` と `ELM_INTERNAL_ERROR` を返して古いライセンスを使い続ける。利用ログに書けなければ運用の記録に書き、利用ログの次のファイルを新しいライセンスで始める。
 
@@ -2201,6 +2202,23 @@ M4c2（0.91）で、§12.8.1〜§12.8.3 の端末の側を `ActivationClient`（
 - 再読み込み（更新や、管理者の操作による）で読む新しいファイルは、起動時と同じ検査をする。`cnf.jkt` が自分の鍵と違えば読み込まず、古いライセンスを使い続ける。
 - 新しいライセンスで機能が減ったか席数が減ったときは、減った分のリースの更新を断り（`ELM_FEATURE_NOT_LICENSED` か `ELM_NO_SEATS`）、期限で自然に消す。すでに貸したリースを途中で取り消すことはしない。
 - 早期返却の判定での「ライセンスが変わった」は、§12.7.4 の内容による定義に従う。
+
+V1c9 の Grill（Issue #227。持ち主の決定はどれも推奨案）:
+
+- 調べた事実:
+  - V1c9 の前の `elm-server` は、待ち受けるポートがふさがっていると `Unhandled exception. System.IO.IOException: Failed to bind to address …` とスタックトレースを出し、Windows では終了コード -1073740791 で終わった（V1c3d で、発行した `win-x64` の実行ファイルで測った。Issue #227）。`ElmServer.StartAsync` は `app.StartAsync` の例外を捕まえない。
+  - `elm-service` は同じ場合を扱っている。`ElmService.StartAsync` が `app.StartAsync` の `IOException` を捕まえて `ServiceStartException`（`elm-service cannot listen on {settings.Listen}: {e.Message}`）にし、終了コード 1 で終わる（`src/ElasticLM.Service/ElmService.cs` の 214〜222 行）。
+  - Kestrel が `IOException` にするのは、アドレスがほかに使われているときである。ソケットの `Bind` が `SocketError.AddressAlreadyInUse` の `SocketException` を `AddressInUseException` にし（dotnet/aspnetcore の release/10.0、`1a5d35b`、`src/Servers/Kestrel/Transport.Sockets/src/SocketConnectionListener.cs` の 46〜49 行）、`AddressBinder.BindEndpointAsync` がそれを `IOException`（`Failed to bind to address {endpoint}: address already in use.`）にする（`src/Servers/Kestrel/Core/src/Internal/AddressBinder.cs` の 92〜95 行）。ほかのソケットの誤り（待ち受ける権限がない、端末にないアドレス）は `SocketException` のまま上がる。`SocketException` は `IOException` を継がない。Grill の Q2 は、権限がない場合と端末にないアドレスも `IOException` になるとして決めた。このずれは持ち主に確かめる（未決。下の U1）。
+  - Kestrel は、待ち受けの途中で失敗すると、それまでに始めた待ち受けを閉じてから例外を投げ直す（`src/Servers/Kestrel/Core/src/Internal/KestrelServerImpl.cs` の `StartAsync` の 231〜236 行の `catch` が `Dispose()` を呼ぶ）。
+- Q1 出す文: 待ち受けられなければ、`elm-server` は `error: elm-server cannot listen on <listen> and <admin.listen>: <Kestrel のメッセージ>` を標準エラーに書き、終了コード 1 で終わる。Kestrel のメッセージが、失敗したアドレスを名指す。`error: ` の頭は、`elm-server` のほかの誤りの行（`src/ElasticLM.Server/Program.cs`）に揃える。
+- Q2 捕まえる範囲: `ElmServer.StartAsync` の `app.StartAsync` が投げる `IOException` だけを捕まえ、`ServerStartException` にする。`elm-service` と同じ形である。ほかの例外はそのまま上げる。
+- Q3 .NET のホストのログ: 「Hosting failed to start」とスタックトレースは、`elm-service` と同じく最後の行の前に残す（Tutorial 2 もそう書いている）。消すと 2 つのプログラムのログが変わり、この不具合の範囲の外になる。要るなら別の行にする。
+- Q4 テスト（`ElasticLM.Server.Tests`）:
+  - `listen` のポートを `TcpListener` でふさぐと、`StartAsync` が `ServerStartException` を投げ、そのメッセージが `elm-server cannot listen on` で始まる。
+  - `admin.listen` のポートをふさいでも同じになる。
+  - ポートを空けたあと、同じデータのフォルダーで起動すると成功する。失敗した起動が借り出しの記録と利用ログのファイルを閉じたことを、これで確かめる。
+- Q5 文書: 同じ PR で、この規則を上の §13.1 の終了コードの項目に足す。`docs/guide/reference/server-configuration.md` と日本語の頁の終了コード 1 の理由に「`listen` か `admin.listen` で待ち受けられない」を足す。Tutorial 3（`docs/guide/tutorials/use-a-floating-license.md` と日本語の頁）のポートの確かめの段落を、Tutorial 2 が `elm-service` について書く形（長い誤りが出て、終了コードは 1、最後の行が新しいメッセージ）に書き直す。
+- 未決 U1: 待ち受ける権限がない場合と端末にないアドレスは、Kestrel では `SocketException` になり、Q2 のとおり `IOException` だけを捕まえると、V1c9 のあとも捕まえない例外で終わる。`SocketException` も捕まえて同じ文にするか（`elm-service` も同じく直すか）、Q2 のままにしてこの 2 つを Issue #227 の外に置くかを、実装の前に持ち主に聞く。
 
 ### 13.2 状態
 
@@ -4093,6 +4111,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c3e | 決めた形は下の「V1c3 の形」（V1c3e の Grill とその設計のレビューの R1〜R15、Issue #219） |
 | V1c3d | 決めた形は下の「V1c3 の形」（V1c3b の Grill の Q1〜Q4、Q6、Q7 と、V1c3e の Grill と、V1c3d の Grill、Issue #223）。V1c3e のあとに置く。V1c3b の Grill がこの行に残した点（Tutorial 2 の手順、サンプルの名前、`elm-service` の設定ファイルの中身、`elm-service` のダウンロードの文と `steps:prebuilt name=elm-service` の印の置き場所、`elm secret create` の形、試用の短い例、管理 API の本文と、応答から取った ID で `steps:file` の中身を埋めること、取ったキーを頁の外で `ELM_API_KEY` に設定する印）は、下の「V1c3d の Grill」で決めた |
 | V1c8 | 決めた形は 0.118 と §20.5 の「V1c8 の Grill」（V1c8 の Grill、Issue #209）。V1c3d のあと、V1c3c の前に置く |
+| V1c9 | 決めた形は §13.1 の終了コードの項目と「V1c9 の Grill」（V1c9 の Grill、Issue #227）。未決の U1（権限がない場合と端末にないアドレスの `SocketException`）は実装の前に持ち主に聞く。V1c8 のあと、V1c3c の前に置く |
 | V1c3c | 決めた形は下の「V1c3 の形」。V1c8 のあとに置く（Q6）。この行の Grill で決める点: Tutorial 4 の手順、`libelasticlm` の入手（V1c3e の方針で、GitHub のプレリリースの圧縮ファイル `libelasticlm-<版>-<RID>` から入れ、CI ではジョブの発行したものに置き換える。その印の形）、C のサンプルの置き場所とビルド（Windows は MSVC、ほかは cc）、V1c8 で決めたリンクの方法（0.118、§20.5 の「V1c8 の Grill」）の使い方、手順を流す仕組みで C のコンパイラーを流す書き方（設計のレビューの R6）、ビルドしたアプリの実行ファイルで始まる行の書き方と、仕組みがその行をどう流すか（V1c3b の設計のレビューの R2。Tutorial 1 と 3 は `dotnet run` で動かすので、V1c3b はこの行を足さない）、V1c8 の実装の PR で C の API の頁から移した 4 つの手順の書き方。Tutorial 4 はこの 4 つを持ち、手順を流す仕組みで確かめる: 圧縮ファイルの展開（ファイルは圧縮ファイルの最上位にあり、そのまま展開してもフォルダーはできない）、Windows の x64 か ARM64 の Native Tools Command Prompt（既定の Developer Command Prompt は x86 向けにビルドし、x64 の `elasticlm.lib` には LNK4272 を出してリンクが失敗する）、macOS の quarantine 属性の外し方（`xattr -dr com.apple.quarantine`。属性がどのダウンロードで付くかもこの行で確かめる）、`app.c` の中身と、アプリを動かす手順とその期待する出力（§20.5 の「V1c8 の Grill」の Q5 と D1） |
 | V1c4 | How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか）、オフラインの有効化（ファイルのやり取り）のサンプルの名前と、How-to の「オフラインの有効化」の頁からの引き方（V1c3 の設計のレビューの R13 で V1c3 から移した）。V1c3d で見つけた文書の直し 2 つもこの行で行う（PR #224 の振り返りの持ち主の決定）: `dotnet add` がパッケージを NuGet のグローバルのパッケージのフォルダーに残すことを、パッケージを使う頁に書くか（初見の読み手の 9）、誤りのコードの Reference の頁の `ELM_TRIAL_NOT_OFFERED` の文をサービスの文（「The product does not offer a trial.」）と `ErrorCode.cs` の XML ドキュメントに揃えるか（同じく 11）。V1c8 の初見の読み手が見つけた文書の直しも 1 つこの行で行う（V1c8 の実装の PR の持ち主の決定 D1）: macOS には、`SECURITY.md` の `sha256sum --check --ignore-missing` が使う `sha256sum` がないことがあるので、`shasum -a 256` の形を書く。書く前に、`shasum -a 256 --check --ignore-missing` が動くことを macOS のランナーで確かめる。利用者の文書の安全性のモデルの頁（英語と日本語）にある同じコマンドも直す |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
@@ -4664,7 +4683,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。V1d の前に行う | §20.7 |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンス（`licenseExpires` を書かない状態の応答）で例外になる不具合の修正と、CLI のほかの `GetProperty` の確かめ（Issue #203。V1c2b で見つけた。V1c2c の前） | §13.7 |
 | V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れて配り、発行の検査（`Test-Publish.ps1`）と `Pack-Rid.ps1` を変え、ビルド時にリンクする試験を CI に足す。Linux と macOS でビルド時にリンクする方法（`-lelasticlm` と実行時の検索パス）とあわせて、事実として C の API の頁に書く（OS ごとの手順は V1c3c。§20.5 の「V1c8 の Grill」の D1）。決めた形は 0.118 と §20.5 の「V1c8 の Grill」（Issue #209。V1c2c で見つけた。V1c3d のあと、V1c3c の前） | §17, §20.5 |
-| V1c9 | `elm-server` が、待ち受けるポートがふさがっていると、扱っていない例外（`IOException`）で終わる不具合の修正。`elm-service` と同じく `error:` の 1 行と終了コード 1 で終える。Tutorial 3 のポートの確かめの段落の出力も直す（Issue #227。V1c3d で見つけた。PR #224 の振り返りの持ち主の決定で行にした。V1c8 のあと、V1c3c の前） | §13 |
+| V1c9 | `elm-server` が、待ち受けるポートがふさがっていると、扱っていない例外（`IOException`）で終わる不具合の修正。`elm-service` と同じく `error:` の 1 行と終了コード 1 で終える。Tutorial 3 のポートの確かめの段落の出力も直す（決めた形は §13.1 の「V1c9 の Grill」。Issue #227。V1c3d で見つけた。PR #224 の振り返りの持ち主の決定で行にした。V1c8 のあと、V1c3c の前） | §13 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.N` から `1.0.0`、rc のタグは GitHub のプレリリースだけを出し、nuget.org と GHCR には正式版だけを push する `release.yml` の変更と、`docs/releasing.md` の rc の試しの手順（§20.5 の「V1e で変えること」）、rc が通さない公開の段を正式版のタグの前にどう確かめるか（同じく）、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、rc の版にする PR での `SECURITY.md` と `CONTRIBUTING.md` の「まだ出していない」の文の書き換え、rc のプレリリースそのもので試しの期間の形の Tutorial を 3 つの OS で手で一度ずつ流して OS ごとに記録すること（§20.7 の V1c3 の形の「V1c3e の Grill」の Q5）、正式版のタグの前に利用者の文書を nuget.org の形に切り替え、README と `README.ja.md` の Status の 1 行を外す 1 つの PR と、その前に ID の接頭辞を予約するか先に公開して名前を取るかの決定（同じく P3）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5）（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
 

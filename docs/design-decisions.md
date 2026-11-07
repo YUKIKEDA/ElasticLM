@@ -1134,3 +1134,15 @@
 - **決定:** 上の項と同じ（持ち主の決定 D1 の (a)。[design.ja.md](./design.ja.md) §20.5 の「V1c8 の Grill」の Q5 と D1）。
 - **理由:** `.cursor/rules/user-docs.mdc` は、Reference の頁は調べるための事実だけを持ち、手順も理由も書かないとしている。頁のコードをサンプルから取る決まりにも反する。
 - **却下した案:** (c) OS ごとの手順のブロック（展開、コンパイル、コピー）を、欠けていた 4 つを足して C の API の頁に残す（V1c8 の Grill の Q5 の最初の形）。
+
+### `elm-server` の起動で `app.StartAsync` のすべての例外を捕まえる（V1c9 の Grill の Q2、Issue #227）
+
+- **決定:** `ElmServer.StartAsync` は `app.StartAsync` が投げる `IOException` だけを捕まえて `ServerStartException` にし、ほかの例外はそのまま上げる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q2）。
+- **理由:** `elm-service` の `ElmService.StartAsync` と同じ形にする。待ち受けの失敗のほかの例外を `error:` の 1 行と終了コード 1 にすると、それはコードの誤りでも「起動できない」として扱われる。Kestrel がどの失敗を `IOException` にするかは、同じ節の「調べた事実」と未決の U1 にある。
+- **却下した案:** `app.StartAsync` のすべての例外を捕まえ、同じ `error:` の 1 行にする。
+
+### .NET のホストの起動の失敗のログを出さない（V1c9 の Grill の Q3、Issue #227）
+
+- **決定:** 待ち受けられないとき、.NET のホストのログ（「Hosting failed to start」とスタックトレース）は、`elm-service` と同じく最後の `error:` の行の前に残す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q3）。
+- **理由:** 消すと `elm-server` と `elm-service` の 2 つのログが変わり、この不具合の範囲の外になる。Tutorial 2 は `elm-service` について、長い誤りのあとに最後の行が出ると書いている。要るなら別の roadmap の行にする。
+- **却下した案:** V1c9 で、ホストのログの起動の失敗の行を抑え、`error:` の 1 行だけを出す。

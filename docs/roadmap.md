@@ -68,7 +68,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c6 | 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）から設計の節番号を外す。内部のコメントと公開しない型の XML ドキュメントは残す（V1d の前。design.ja.md §20.7 の V1c2 の形） | not-started | [#198](https://github.com/YUKIKEDA/ElasticLM/issues/198) |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンスで例外になる不具合の修正（V1c2b で見つけた。V1c2c の前） | done        | [#203](https://github.com/YUKIKEDA/ElasticLM/issues/203) |
 | V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れるかを調べて決め、入れるなら配って CI で確かめる。Linux と macOS でビルド時にリンクする方法も試して、事実として C の頁に書く（OS ごとの手順は V1c3c。V1c2c で見つけた。V1c3d のあと、V1c3c の前。決めた形は design.ja.md 0.118） | done | [#209](https://github.com/YUKIKEDA/ElasticLM/issues/209) |
-| V1c9 | `elm-server` が、待ち受けるポートがふさがっていると、扱っていない例外で終わる不具合の修正（V1c3d で見つけた。V1c8 のあと、V1c3c の前） | not-started | [#227](https://github.com/YUKIKEDA/ElasticLM/issues/227) |
+| V1c9 | `elm-server` が、待ち受けるポートがふさがっていると、扱っていない例外で終わる不具合の修正（V1c3d で見つけた。V1c8 のあと、V1c3c の前。決めた形は design.ja.md §13.1 の「V1c9 の Grill」） | in-progress | [#227](https://github.com/YUKIKEDA/ElasticLM/issues/227) |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e | v1 の公開（`1.0.0-rc.N` から `1.0.0`、rc のタグは GitHub のプレリリースだけを出し nuget.org と GHCR には正式版だけを push する `release.yml` の変更と `docs/releasing.md` の rc の試しの手順、rc が通さない nuget.org と GHCR への push の段を正式版のタグの前にどう確かめるか、持ち主の作業（GitHub Pages の有効化と environment `github-pages` の規則の確かめを含む）、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、rc の版にする PR での `SECURITY.md` と `CONTRIBUTING.md` の「まだ出していない」の文の書き換え、rc のプレリリースで Tutorial を 3 つの OS で手で一度ずつ流して OS ごとに記録する、正式版のタグの前に利用者の文書を nuget.org の形に切り替えて README の Status の 1 行を外す 1 つの PR とその前の ID の接頭辞の扱いの決定、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流す。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 
