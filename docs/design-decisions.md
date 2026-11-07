@@ -1176,3 +1176,21 @@
 - **決定:** `elm-service` は、待ち受けに失敗したら利用ログに `service.stopped`（`node`）を書いてから閉じる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §14.8、§18.1、§13.1 の「V1c9 の Grill」の R7）。実装のあとのレビュー（PR #233）で、`service.started` を書いたあとのどの起動の失敗にも広げた。
 - **理由:** `service.started` は `app.StartAsync` の前に書くので、対の `service.stopped` がないと、ログを読む運用者には、待ち受けられなかった起動と、動いたあとに落ちたノードとの区別がつかない。正常な停止と同じ行で閉じれば、どの起動も対になる。
 - **却下した案:** 行を足さず、待ち受けに失敗した起動では `service.started` に対の行がないことを設計とログの Reference に書く。
+
+### Tutorial 4 のアプリにオンラインの有効化かフローティングを使う（V1c3c の Grill の Q1、Issue #236）
+
+- **決定:** Tutorial 4 の C のアプリは、Tutorial 1 と同じくライセンスファイルをオフラインで確かめる（`elm_verifier_create` と `elm_verifier_verify`）（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c3c の Grill」の Q1）。
+- **理由:** この頁が教える中身は、`libelasticlm` をビルド時にリンクして動かすこと。サーバーのない形がいちばん短く、頁の前提も `elm`、`libelasticlm`、C コンパイラーだけになる。
+- **却下した案:** (b) オンラインの有効化（`elm_activation_*`。`elm-service` を立てる手順が要る）。(c) フローティング（`elm_client_*`。`elm-server` を立てる手順が要る）。
+
+### Tutorial 4 でライブラリをアプリの隣に写す（V1c3c の Grill の Q2、Issue #236）
+
+- **決定:** `libelasticlm` の圧縮ファイルを作業フォルダーの `app` に展開し、ソースと実行ファイルも `app` に置く（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q2）。
+- **理由:** Windows の DLL の探し方、Linux の `$ORIGIN`、macOS の `@executable_path` はどれもアプリのフォルダーを指すので、写す行が要らない。写す行（`copy`、`cp`）は OS ごとに違い、手順を流す仕組みに受け付ける行の頭を増やす。
+- **却下した案:** ライブラリを別のフォルダー（`libelasticlm`）に展開し、ビルドのあとにアプリのフォルダーへ写す。
+
+### Tutorial 4 の OS ごとのブロックを Docusaurus のタブで見せる（V1c3c の Grill の Q4、Issue #236）
+
+- **決定:** OS ごとのブロックは、上にラベルの文を置いて並べる（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q4）。
+- **理由:** 利用者の文書は GitHub でもそのまま読める Markdown で書く（`.cursor/rules/user-docs.mdc`）。タブの部品は GitHub では読めない。
+- **却下した案:** Docusaurus の `Tabs` と `TabItem` で OS ごとに切り替える。
