@@ -110,7 +110,7 @@ Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the 
 | `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`), `result` (an error code name) |
 | `server.started` | The server starts | `lic`, `key` (here the server's key ID: the thumbprint of the server's own installation key, not a client's), `borrows` (the borrows restored) |
 | `server.stopped` | The server stops | `leases` (the leases not returned) |
-| `records.set_aside` | The server started with `--set-aside-broken-records` and moved a broken borrow record aside | `file` |
+| `records.set_aside` | The server, run with `--set-aside-broken-records`, moved a broken borrow record aside at start, before it listens; the line is there also when the start then fails to listen | `file` |
 | `license.refreshed` | The server license was renewed from `elm-service` | `lic`, `token` (the token ID), `seq` |
 | `license.refresh_failed` | Renewing the server license failed | `stage` (`start`, `write`, `reload`, or `service`), `code` |
 
@@ -131,7 +131,7 @@ Lease lines carry `lic` (the license ID), `prd` (the product's `code`, the produ
 | `borrow.expired` | The cleanup removes an ended borrow | `lic`, `prd`, `feat`, `n`, `key`, `lease` |
 | `lease.denied` | Acquisitions, renewals, and releases refused by the lease rules, counted every 60 seconds, at stop, and on a seal order; refusals for a bad proof, the rate limit (`429`), or the body size (`413`) are not counted | `feat` (when known), `code`, `count` |
 | `service.started` | The node starts, before it accepts requests | `node` |
-| `service.stopped` | The node stops | `node` |
+| `service.stopped` | The node stops, or a start fails after `service.started` was written (for example, the node cannot listen) | `node` |
 
 A line is written after the request's change is committed. An expired lease is written once, by the node whose cleanup removed it.
 

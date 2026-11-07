@@ -110,7 +110,7 @@ info: elm-server[2]
 | `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID）、`result`（エラーコードの名前） |
 | `server.started` | サーバーが起動したとき | `lic`、`key`（ここではサーバーの鍵 ID。クライアントのものではなく、サーバー自身のインストール鍵のサムプリント）、`borrows`（復元した借用） |
 | `server.stopped` | サーバーが停止したとき | `leases`（返却されていないリース） |
-| `records.set_aside` | `--set-aside-broken-records` で起動したサーバーが、壊れた借用の記録を退避したとき | `file` |
+| `records.set_aside` | `--set-aside-broken-records` で動かしたサーバーが、起動中、待ち受けを始める前に、壊れた借用の記録を退避したとき。そのあと待ち受けに失敗した起動でも、この行は残る | `file` |
 | `license.refreshed` | サーバーライセンスを `elm-service` から更新したとき | `lic`、`token`（トークン ID）、`seq` |
 | `license.refresh_failed` | サーバーライセンスの更新に失敗したとき | `stage`（`start`、`write`、`reload`、`service` のいずれか）、`code` |
 
@@ -131,7 +131,7 @@ info: elm-server[2]
 | `borrow.expired` | 終わった借用を、片付けの処理が削除したとき | `lic`、`prd`、`feat`、`n`、`key`、`lease` |
 | `lease.denied` | リースのルールで拒否したリースの取得、リースの更新、返却。60 秒ごと、停止時、seal の指示のときに件数を書く。プルーフの不備、レート制限（`429`）、本文のサイズ（`413`）による拒否は数えない | `feat`（分かる場合）、`code`、`count` |
 | `service.started` | ノードが起動したとき。リクエストを受け付ける前に書く | `node` |
-| `service.stopped` | ノードが停止したとき | `node` |
+| `service.stopped` | ノードが停止したとき、または `service.started` を書いたあとで起動に失敗したとき（たとえば、待ち受けられないとき） | `node` |
 
 行は、リクエストによる変更をコミットしたあとに書く。期限切れのリースは、片付けの処理でそのリースを削除したノードが 1 回だけ書く。
 

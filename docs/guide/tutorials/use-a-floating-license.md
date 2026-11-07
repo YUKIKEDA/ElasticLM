@@ -207,7 +207,7 @@ info: elm-server[1]
 
 The time at the end is in UTC, as `+00:00` shows.
 
-If the port 7070 or 7071 is taken, the server instead prints a long error, ends with exit code 1, and its last line is `error: elm-server cannot listen on https://127.0.0.1:7070/ and http://127.0.0.1:7071/: Failed to bind to address https://127.0.0.1:7070: address already in use.` (with `http://127.0.0.1:7071` after `Failed to bind to address` when only 7071 is taken). Stop the program that uses the port, and start the server again.
+If port 7070 or 7071 is taken, the server instead logs the failure with a long stack trace and ends with exit code 1. Its last line is `error: elm-server cannot listen on https://127.0.0.1:7070/ and http://127.0.0.1:7071/: Failed to bind to address https://127.0.0.1:7070: address already in use.`; when only 7071 is taken, the address after `Failed to bind to address` is `http://127.0.0.1:7071`. Stop the program that uses the port, and start the server again.
 
 For the first lease duration after it starts, one minute with this license, the server refuses new leases: after a restart, apps that held leases before it need that time to reclaim their seats. Leave the server running, and go back to the first terminal for the rest of the tutorial. While you create the app, most of that minute passes.
 
