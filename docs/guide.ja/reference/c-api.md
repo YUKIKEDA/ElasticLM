@@ -8,17 +8,40 @@ sidebar_position: 10
 
 ## ライブラリの入手とリンク
 
-リリースでは、[GitHub の Releases ページ](https://github.com/YUKIKEDA/ElasticLM/releases)にプラットフォームごとのアーカイブを 1 つずつ公開する。Windows は `libelasticlm-<version>-<rid>.zip`、Linux と macOS は `libelasticlm-<version>-<rid>.tar.gz` だ。アーカイブに入っているのは、ライブラリ、ヘッダー `elasticlm.h`、`LICENSE` だけで、デバッグシンボルは別の `-symbols` のアーカイブに入っている。ライブラリは `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` 向けにビルドする。ダウンロードしたアーカイブの確かめ方は [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) に書いてある。
+リリースでは、[GitHub の Releases ページ](https://github.com/YUKIKEDA/ElasticLM/releases)にプラットフォームごとのアーカイブを 1 つずつ公開する。Windows は `libelasticlm-<version>-<rid>.zip`、Linux と macOS は `libelasticlm-<version>-<rid>.tar.gz` だ。アーカイブには、ライブラリ、ヘッダー `elasticlm.h`、`LICENSE` が、どれもアーカイブの最上位に入っている。Windows のアーカイブには、インポートライブラリ `elasticlm.lib` も入っている。デバッグシンボルは別の `-symbols` のアーカイブに入っている。ライブラリは `win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`、`osx-x64` 向けにビルドする。ダウンロードしたアーカイブの確かめ方は [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) に書いてある。
 
 - NativeAOT のライブラリなので、アンロードできない。`FreeLibrary` や `dlclose` を呼ばないこと。
-- `ELM_FUNCTION` は、各関数を宣言し、その関数へのポインター型も宣言する。ポインター型の名前は、関数名に `_fn` を付けたもの（`elm_verifier_create_fn`）だ。`LoadLibrary` と `GetProcAddress`、または `dlopen` と `dlsym` で、実行時にライブラリを読み込むプログラムのためにある。
-- ライブラリの隣に置くものはない。.NET のランタイムを内部に持っていて、必要なのは下の表にあるものだけだ。
+- .NET のランタイムを内部に持っている。アプリが実行時に必要とするのは、ライブラリ自身のほかには下の表にあるものだけだ。
+- アプリは、下の表とコマンドのようにビルド時にライブラリをリンクしてもよいし、実行時に読み込んでもよい。`ELM_FUNCTION` は、各関数を宣言し、その関数へのポインター型も宣言する。ポインター型の名前は、関数名に `_fn` を付けたもの（`elm_verifier_create_fn`）だ。`LoadLibrary` と `GetProcAddress`、または `dlopen` と `dlsym` でライブラリを読み込み、各関数をその `_fn` 型で呼ぶプログラムのためにある。`LoadLibrary` にフルパスを渡すとそのファイルを読み込み、名前だけを渡すと Windows が DLL の検索順序で探す。
 
-| プラットフォーム | ファイル | リンク | 実行時に必要なもの |
+| プラットフォーム | ファイル | ビルド時のリンク | 実行時に必要なもの |
 | --- | --- | --- | --- |
-| Windows | `elasticlm.dll` | アーカイブにインポートライブラリ（`.lib`）は入っていない。Windows では `ELM_API` が `__declspec(dllimport)` なので、`elm_version()` のようにヘッダーの関数を直接呼ぶと、リンク時にインポートライブラリが必要になり、なければリンクに失敗する（未解決の外部シンボル `__imp_elm_version`）。実行時に `LoadLibrary` と `GetProcAddress` でライブラリを読み込み、各関数をその `_fn` 型で呼ぶこと。`LoadLibrary` にフルパスを渡すとそのファイルを読み込み、名前だけを渡すと Windows が DLL の検索順序で探す。 | Windows に含まれる DLL だけ。 |
-| Linux | `libelasticlm.so` | 実行時に `dlopen` と `dlsym` で読み込み、各関数をその `_fn` 型で呼ぶ。プロジェクト自身の C のテストも、この方法で使っている。ビルド時のリンクは、プロジェクトではまだテストしていない。 | `linux-x64` と `linux-arm64` は glibc 2.28 以降（RHEL 8、Debian 10、Ubuntu 20.04 以降）。`linux-musl-x64` は Alpine などの musl。ライセンスの検証を含む暗号処理と HTTPS は、システムの OpenSSL（`libssl`）を使う。ライブラリは最初に必要になったときに OpenSSL を読み込むので、OpenSSL がインストールされていなければならない。HTTPS には、システムの CA 証明書も必要だ。ICU は要らない。 |
-| macOS | `libelasticlm.dylib` | 実行時に `dlopen` と `dlsym` で読み込み、各関数をその `_fn` 型で呼ぶ。プロジェクト自身の C のテストも、この方法で使っている。ビルド時のリンクは、プロジェクトではまだテストしていない。 | macOS 12.0 以降と、macOS に含まれるライブラリとフレームワークだけ。ライブラリにはコード署名がない。[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) にあるとおり、ダウンロードしたものは、quarantine 属性を外すまで Gatekeeper が実行を拒否する。 |
+| Windows | `elasticlm.dll` と、インポートライブラリ `elasticlm.lib` | `elasticlm.lib` にリンクする。Windows では `ELM_API` が `__declspec(dllimport)` なので、ヘッダーの関数を呼ぶには、リンク時にインポートライブラリが要る。実行時には、Windows が DLL の検索順序で `elasticlm.dll` を探す。この順序はアプリ自身のフォルダーから始まる。 | Windows に含まれる DLL だけ。 |
+| Linux | `libelasticlm.so` | `-L <folder> -lelasticlm` でリンクし、アプリに実行時の検索パスを与える。アプリ自身のフォルダーなら `-Wl,-rpath,'$ORIGIN'` だ。ライブラリには `SONAME` がないので、アプリにはリンクしたときのファイル名が記録される。ファイルへのパスではなく `-lelasticlm` でリンクすること。パスでリンクすると、アプリは実行時にそのパスを探す。 | `linux-x64` と `linux-arm64` は glibc 2.28 以降（RHEL 8、Debian 10、Ubuntu 20.04 以降）。`linux-musl-x64` は Alpine などの musl。ライセンスの検証を含む暗号処理と HTTPS は、システムの OpenSSL（`libssl`）を使う。ライブラリは最初に必要になったときに OpenSSL を読み込むので、OpenSSL がインストールされていなければならない。HTTPS には、システムの CA 証明書も必要だ。ICU は要らない。 |
+| macOS | `libelasticlm.dylib` | `-L <folder> -lelasticlm` と、ライブラリに合う `-arch`（`osx-arm64` は `arm64`、`osx-x64` は `x86_64`）でリンクする。ライブラリの install name は `@rpath/libelasticlm.dylib` なので、アプリに実行時の検索パスを与える。アプリ自身のフォルダーなら `-Wl,-rpath,@executable_path` だ。 | macOS 12.0 以降と、macOS に含まれるライブラリとフレームワークだけ。ライブラリには Developer ID の署名がなく、公証も受けていない（`osx-arm64` のライブラリにあるのは、リンカーが付ける ad-hoc の署名だけ）。[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) にあるとおり、ダウンロードしたものは、quarantine 属性を外すまで Gatekeeper が実行を拒否する。 |
+
+次のコマンドは、アーカイブを隣のフォルダー `libelasticlm` に展開した状態で `app.c` をビルドし、ライブラリをアプリの隣にコピーする。上の検索パスは、そこにあるライブラリを見つける。
+
+Windows（Visual Studio の Developer Command Prompt で）:
+
+```bat
+cl /I libelasticlm app.c libelasticlm\elasticlm.lib
+copy libelasticlm\elasticlm.dll .
+```
+
+Linux:
+
+```sh
+gcc -I libelasticlm app.c -o app -L libelasticlm -lelasticlm -Wl,-rpath,'$ORIGIN'
+cp libelasticlm/libelasticlm.so .
+```
+
+macOS（`osx-arm64` の場合）:
+
+```sh
+clang -arch arm64 -I libelasticlm app.c -o app -L libelasticlm -lelasticlm -Wl,-rpath,@executable_path
+cp libelasticlm/libelasticlm.dylib .
+```
 
 ## すべての関数に共通の規則
 

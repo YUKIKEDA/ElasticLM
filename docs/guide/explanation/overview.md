@@ -37,7 +37,7 @@ The rest of the guide uses these names.
 | --- | --- | --- | --- |
 | `ElasticLM.Licensing` | NuGet package | The app | Verifies a license file offline. It has no dependency outside the .NET base class library and never touches the network. |
 | `ElasticLM.Client` | NuGet package | The app | Talks to the servers: online and offline activation, refresh, deactivation, trials, leases, and borrowing. It creates and keeps the installation key. |
-| `libelasticlm` | NativeAOT shared library (`.dll`, `.so`, `.dylib`) and the C header `elasticlm.h` | C and C++ apps | The functions of both packages behind a C ABI. |
+| `libelasticlm` | NativeAOT shared library (`.dll`, `.so`, `.dylib`) and the C header `elasticlm.h`; on Windows also the import library `elasticlm.lib` | C and C++ apps | The functions of both packages behind a C ABI. |
 | `elm-server` | Single binary | The customer's administrator | The on-premises license server. It lends floating seats inside the customer's network. |
 | `elm-service` | Single binary and container image | The vendor | The hosted activation service: license keys, activations, trials, cloud leases, the administration API, and the admin UI. |
 | `elm` | Single binary (CLI) | The vendor and the customer's administrator | Creates keys and key certificates, issues and inspects license files, verifies logs, calls the administration API, and administers a local `elm-server`. |
