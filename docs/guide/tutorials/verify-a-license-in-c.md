@@ -18,7 +18,7 @@ To check the files you download, you also need the [GitHub CLI](https://cli.gith
 
 On Windows, open "x64 Native Tools Command Prompt" from the Start menu, then type `powershell` in it, and type every command of this page in that PowerShell. The prompt sets up the compiler `cl` for 64-bit x64 programs, and PowerShell keeps that setup. Do not use "Developer Command Prompt": it builds 32-bit x86 programs, which cannot link the x64 library. On a Windows ARM64 machine, open "ARM64 Native Tools Command Prompt" instead and take the `win-arm64` archives below. On Linux and macOS, use any terminal.
 
-Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
+Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there. The Native Tools prompt opens in another folder, so on Windows type `cd` and the path of the tutorial folder in its PowerShell first.
 
 You download the `elm` tool and the library from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
@@ -31,6 +31,8 @@ From the release's Assets, save these three files in the tutorial folder, where 
 Take the archives whose names do not end in `-symbols`: those hold only debug symbols.
 
 Before you extract or use anything, check the two archives in the tutorial folder as described in [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) in `SECURITY.md`. That section also says which Linux and macOS versions the programs need.
+
+On macOS, then remove the quarantine attribute from the two archives, as that section says: type `xattr -d com.apple.quarantine elm-<version>-<RID>.tar.gz` and the same for the `libelasticlm` archive. A web browser puts that attribute on each file it downloads, and `tar` gives it to every file it extracts from such an archive; Gatekeeper does not open a file that carries it and is not notarized. `gh release download` and `curl` do not put it: then `xattr` prints `No such xattr: com.apple.quarantine`, and there is nothing to remove.
 
 Extract the `elm` archive into a folder named `tools`. In PowerShell on Windows, type `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools`; on Linux and macOS, type `mkdir -p tools` and then `tar -xzf elm-<version>-<RID>.tar.gz -C tools`. `tools` then holds `elm` (`elm.exe` on Windows), the command-line tool that creates keys and issues licenses, and `LICENSE`.
 
@@ -255,15 +257,15 @@ On Linux, `-L app -lelasticlm` links `libelasticlm.so` from `app`, and `$ORIGIN`
 cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,$ORIGIN'
 ```
 
-On macOS, first remove the quarantine attribute from the files in `app`, then build. A web browser puts that attribute on each file it downloads, and `tar` gives it to every file it extracts from such an archive; `gh release download` and `curl` do not put it. Gatekeeper does not open a file that carries it and is not notarized, as [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) says. `xattr -dr` goes through the whole folder and ends without an error also where there is no attribute. `@executable_path` names the program's folder, and `cc` builds for the Mac you are on, so the archive's `<RID>` must match it:
+On macOS, first make sure that no file in `app` still carries the quarantine attribute, for example because you extracted the library before you removed the attribute from its archive; then build. `xattr -dr` goes through the whole folder and ends without an error also where there is no attribute. `@executable_path` names the program's folder; keep the single quotes here too, since PowerShell would read the commas as a list. `cc` builds for the Mac you are on, so the archive's `<RID>` must match it:
 
 <!-- steps:run os=macos -->
 ```shell
 xattr -dr com.apple.quarantine app
-cc -std=c11 -o app/app app/app.c -L app -lelasticlm -Wl,-rpath,@executable_path
+cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,@executable_path'
 ```
 
-[C API](../reference/c-api.md) lists the files, options, and search paths of each system.
+[C API](../reference/c-api.md) lists the files, options, and search paths of each system, and what the library needs at run time: on Linux, glibc 2.28 or newer (musl for `linux-musl-x64`), OpenSSL, and the CA certificates.
 
 ## Run the app
 
@@ -292,7 +294,7 @@ If it prints `invalid:` instead, the number after it says what failed. `elasticl
 
 If the program prints a line that starts with `error: A root key is not a P-256 public key in PEM.`, the first argument is not a public key file: check the order of the two arguments. An `error: cannot read` line names the file it could not read. [Error codes](../reference/error-codes.md) lists every code.
 
-If the program does not start at all, it did not find the library: check that `elasticlm.dll`, `libelasticlm.so`, or `libelasticlm.dylib` is in `app`, beside the program.
+If the program does not start at all, it did not find the library: check that `elasticlm.dll`, `libelasticlm.so`, or `libelasticlm.dylib` is in `app`, beside the program. On Windows, PowerShell then prints nothing, and `$LASTEXITCODE` is `-1073741515` (`0xC0000135`, a DLL that is not found).
 
 ## What you made
 

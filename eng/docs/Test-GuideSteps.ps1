@@ -73,7 +73,8 @@
       <path>        A program that an earlier cl or cc line of the page builds, named by the same relative path with /
                     (and, for cl, without .exe), run by its full path in the work folder. No other file can be run.
     A whole word in single quotes is one argument without its quotes, in an os=linux or os=macos block only; a single quote
-    anywhere else fails. The paths of /Fe:, -o, and a program are relative, with / and without '..', on every system.
+    anywhere else fails. A cl or cc line names one /Fe: or -o. The paths of /Fe:, -o, and a program are relative, with / and
+    without '..' or a placeholder, on every system.
 
     elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
     ELM_ (in any case), so that a variable left in the shell cannot override the page's settings file. The one exception
@@ -273,14 +274,15 @@ function Test-RelativePath([string]$path) {
     return $path -ne '' -and $path -notmatch '^[A-Za-z]:' -and -not $path.StartsWith('/') -and -not $path.Contains('\') -and ($path -split '/') -notcontains '..'
 }
 
-# The file that a cl line (/Fe:<path>) or a cc line (-o <path>) builds; $null when the line names none.
+# The file that a cl line (/Fe:<path>) or a cc line (-o <path>) builds; $null when the line names none or more than one,
+# since cc writes the last -o and the set of built files must hold the file that is written (review A2).
 function Get-BuiltFile([string]$program, [string[]]$words) {
     if ($program -ceq 'cl') {
         $output = @($words | Where-Object { $_ -clike '/Fe:*' })
         return $output.Count -eq 1 ? $output[0].Substring(4) : $null
     }
-    $index = [array]::IndexOf($words, '-o')
-    return ($index -gt 0 -and $index + 1 -lt $words.Count) ? $words[$index + 1] : $null
+    $indexes = @(for ($i = 1; $i -lt $words.Count; $i++) { if ($words[$i] -ceq '-o') { $i } })
+    return ($indexes.Count -eq 1 -and $indexes[0] + 1 -lt $words.Count) ? $words[$indexes[0] + 1] : $null
 }
 
 # The commands of a steps:run or steps:background block, checked before anything runs. $os is the block's os (or $null),
@@ -304,8 +306,9 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
             if ($program -cin 'cl', 'cc') {
                 if (-not $prebuilt.Contains('libelasticlm')) { throw "$($name):$($lineNumber): a $program line needs a steps:prebuilt name=libelasticlm marker before it." }
                 $output = Get-BuiltFile $program $words
-                if (-not $output -or -not (Test-RelativePath $output)) {
-                    throw "$($name):$($lineNumber): a $program line builds a file in the work folder: $($program -ceq 'cl' ? '/Fe:<path>' : '-o <path>'), relative, with / and without '..'."
+                # A placeholder would be filled after this check, with a value that may hold '..' (review A2).
+                if (-not $output -or -not (Test-RelativePath $output) -or $output.Contains('<')) {
+                    throw "$($name):$($lineNumber): a $program line builds one file in the work folder: one $($program -ceq 'cl' ? '/Fe:<path>' : '-o <path>'), relative, with / and without '..' or a placeholder."
                 }
                 [void]$built.Add($output)
                 # PowerShell runs app/app.exe as app/app too, and the page writes the shorter form on every OS.
@@ -316,7 +319,7 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
         elseif ($program.Contains('/') -or $program.Contains('\') -or $program -match '^[A-Za-z]:') {
             # A program that the page built: only a file that an earlier cl or cc line of the page builds, so that a page
             # cannot run any other file (design §20.7, V1c3c, reviews R2 and R8).
-            if (-not (Test-RelativePath $program)) { throw "$($name):$($lineNumber): a program the page built is named by a relative path, with / and without '..'." }
+            if (-not (Test-RelativePath $program) -or $program.Contains('<')) { throw "$($name):$($lineNumber): a program the page built is named by a relative path, with / and without '..' or a placeholder." }
             if (-not $built.Contains($program)) { throw "$($name):$($lineNumber): $program is not a file that an earlier cl or cc line of the page builds." }
             $kind = 'app'
         }
@@ -511,16 +514,22 @@ function Get-Msvc {
     return $script:msvc
 }
 
-# The full path of a program on a PATH; .NET looks a bare name up in this script's own PATH, not in the PATH a process is
-# given, so cl is looked up in the MSVC environment's PATH here (design §20.7, V1c3c, review R2).
-function Find-Program([string]$program, [string]$path) {
-    $file = $IsWindows ? "$program.exe" : $program
+# The full path of cl.exe in the MSVC environment's PATH; .NET looks a bare name up in this script's own PATH, not in the
+# PATH a process is given (design §20.7, V1c3c, review R2).
+function Find-Cl([string]$path) {
     foreach ($folder in $path -split [IO.Path]::PathSeparator) {
         if ($folder -eq '') { continue }
-        $candidate = Join-Path $folder $file
+        $candidate = Join-Path $folder 'cl.exe'
         if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
     }
-    throw "$program is not on the PATH."
+    throw 'cl.exe is not on the PATH of the MSVC environment.'
+}
+
+# The full path of a program on this script's PATH that can be run, as the shell finds it (review A3).
+function Find-Program([string]$program) {
+    $found = Get-Command $program -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (-not $found) { throw "$program is not on the PATH." }
+    return $found.Source
 }
 
 # A process in the work folder. elm-server gets no ELM_ variable: it reads ELM_<KEY> before its settings file.
@@ -534,9 +543,9 @@ function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [s
         'dotnet' { $dotnetPath }
         'elm-server' { $elmServerPath }
         'elm-service' { $elmServicePath }
-        'cl' { Find-Program 'cl' (Get-Msvc)['PATH'] }
-        'cc' { Find-Program 'cc' $env:PATH }
-        'xattr' { Find-Program 'xattr' $env:PATH }
+        'cl' { Find-Cl (Get-Msvc)['PATH'] }
+        'cc' { Find-Program 'cc' }
+        'xattr' { Find-Program 'xattr' }
         # A relative path, so that it never names a file outside the work folder (Read-Command).
         'app' { Join-Path $folder $program }
     }

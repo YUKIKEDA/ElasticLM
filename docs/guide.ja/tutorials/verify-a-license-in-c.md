@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # ライセンスを発行して C のアプリで確かめる
 
-このチュートリアルでは、ベンダーの鍵を作り、その鍵でライセンスを発行する。そして、ElasticLM の C 向けのライブラリ `libelasticlm` をリンクし、そのライセンスを手元のマシンで、ネットワークを使わずに確かめる小さな C のプログラムを書く。ElasticLM を初めて使う人のうち、ターミナルを使えて、C のプログラムをビルドできる人に向けている。同じことを .NET で行うのが[ライセンスを発行して .NET のアプリで確かめる](verify-a-license-offline.md)だ。
+このチュートリアルでは、ベンダーの鍵を作り、その鍵でライセンスを発行する。そして、そのライセンスを手元のマシンで、ネットワークを使わずに確かめる小さな C のプログラムを書く。このプログラムは、ElasticLM の C 向けのライブラリ `libelasticlm` をリンクする。ElasticLM を初めて使う人のうち、ターミナルを使えて、C のプログラムをビルドできる人に向けている。同じことを .NET で行うのが[ライセンスを発行して .NET のアプリで確かめる](verify-a-license-offline.md)だ。
 
 ## 始める前に
 
@@ -16,21 +16,23 @@ C のコンパイラーが要る。
 
 ダウンロードしたファイルを確かめるには、[GitHub CLI](https://cli.github.com/)（`gh`）も要る。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 
-Windows では、スタートメニューから「x64 Native Tools Command Prompt」を開き、そこで `powershell` と打つ。このページのコマンドは、すべてその PowerShell で打つ。このプロンプトは、64 ビットの x64 のプログラムを作るようにコンパイラー `cl` を準備し、PowerShell はその準備を引き継ぐ。「Developer Command Prompt」は使わない。32 ビットの x86 のプログラムを作るので、x64 のライブラリをリンクできない。Windows の ARM64 のマシンでは、代わりに「ARM64 Native Tools Command Prompt」を開き、下のアーカイブは `win-arm64` のものを取る。Linux と macOS では、どのターミナルでもよい。
+Windows では、スタートメニューから「x64 Native Tools Command Prompt」を開き、そこで `powershell` と打つ。このページのコマンドは、すべてその PowerShell で打つ。このプロンプトは、64 ビットの x64 のプログラムを作るようにコンパイラー `cl` を設定し、PowerShell はその設定を引き継ぐ。「Developer Command Prompt」は使わない。32 ビットの x86 のプログラムを作るので、x64 のライブラリをリンクできない。Windows の ARM64 のマシンでは、代わりに「ARM64 Native Tools Command Prompt」を開き、下のアーカイブは `win-arm64` のものを取る。Linux と macOS では、どのターミナルでもよい。
 
-このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
+このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。Native Tools のプロンプトは別のフォルダーで開くので、Windows では、まずその PowerShell で `cd` とチュートリアルのフォルダーのパスを打つ。
 
 `elm` ツールとライブラリは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」のラベルが付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」のラベルを付けるのはプレリリースでないリリースだけなので、そのラベルを目安にしない。
 
-リリースの Assets から、次の 3 つのファイルをチュートリアルのフォルダーに保存する。`<RID>` は自分のシステムを表し、`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`（Apple シリコンの Mac）、`osx-x64`（Intel のプロセッサーの Mac）のどれかだ。
+リリースの Assets から、次の 3 つのファイルをチュートリアルのフォルダーに保存する。`<RID>` は自分のシステムを表し、`win-x64`、`win-arm64`、`linux-x64`、`linux-arm64`、`linux-musl-x64`、`osx-arm64`（Apple シリコン搭載の Mac）、`osx-x64`（Intel プロセッサー搭載の Mac）のどれかだ。
 
 - アーカイブ `elm-<version>-<RID>`。Windows 用は `.zip` ファイル、それ以外は `.tar.gz` ファイルになっている。
-- アーカイブ `libelasticlm-<version>-<RID>`。種類は上と同じ。
+- アーカイブ `libelasticlm-<version>-<RID>`。ファイルの形式（`.zip` か `.tar.gz`）は `elm` のアーカイブと同じ。
 - ファイルのハッシュの一覧 `SHA256SUMS`。
 
 名前が `-symbols` で終わるアーカイブにはデバッグシンボルしか入っていないので、そうでないほうを取る。
 
 展開したり使ったりする前に、チュートリアルのフォルダーにある 2 つのアーカイブを、`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめる。この節には、プログラムに必要な Linux と macOS のバージョンも書いてある。
+
+macOS では、続けて、この節のとおりに 2 つのアーカイブから quarantine 属性を外す。`xattr -d com.apple.quarantine elm-<version>-<RID>.tar.gz` と打ち、`libelasticlm` のアーカイブにも同じように打つ。Web ブラウザーはダウンロードしたファイルにこの属性を付け、そのようなアーカイブから `tar` が展開したファイルにも、すべて同じ属性が付く。属性が付いていて公証（notarization）を受けていないファイルを、Gatekeeper は開かない。`gh release download` と `curl` は属性を付けない。そのときは `xattr` が `No such xattr: com.apple.quarantine` と表示し、外すものはない。
 
 `elm` のアーカイブを `tools` という名前のフォルダーに展開する。Windows の PowerShell では `Expand-Archive elm-<version>-<RID>.zip -DestinationPath tools` と打つ。Linux と macOS では `mkdir -p tools` と打ってから `tar -xzf elm-<version>-<RID>.tar.gz -C tools` と打つ。これで `tools` には、鍵を作り、ライセンスを発行するコマンドラインツール `elm`（Windows では `elm.exe`）と、`LICENSE` が入る。
 
@@ -38,7 +40,7 @@ Windows では、スタートメニューから「x64 Native Tools Command Promp
 
 `elm` と打つだけで動くように、このターミナルで `tools` フォルダーを `PATH` に足す。Windows の PowerShell では `$env:PATH = "$PWD/tools;$env:PATH"` と打ち、Bash か zsh では `export PATH="$PWD/tools:$PATH"` と打つ。
 
-`libelasticlm` のアーカイブを `app` という名前のフォルダーに展開する。プログラムを書いてビルドするのも、このフォルダーだ。ファイルはアーカイブの最上位にあるので、そのまま展開すると、チュートリアルのフォルダーそのものに散らばる。Windows の PowerShell では `Expand-Archive libelasticlm-<version>-<RID>.zip -DestinationPath app` と打つ。Linux と macOS では `mkdir -p app` と打ってから `tar -xzf libelasticlm-<version>-<RID>.tar.gz -C app` と打つ。これで `app` には、ライブラリ（Windows では `elasticlm.dll` とインポートライブラリ `elasticlm.lib`、Linux では `libelasticlm.so`、macOS では `libelasticlm.dylib`）、ヘッダー `elasticlm.h`、`LICENSE` が入る。
+`libelasticlm` のアーカイブを `app` という名前のフォルダーに展開する。プログラムを書いてビルドするのも、このフォルダーだ。ファイルはアーカイブの最上位にあるので、そのまま展開すると、ファイルはチュートリアルのフォルダーに直接出てくる。Windows の PowerShell では `Expand-Archive libelasticlm-<version>-<RID>.zip -DestinationPath app` と打つ。Linux と macOS では `mkdir -p app` と打ってから `tar -xzf libelasticlm-<version>-<RID>.tar.gz -C app` と打つ。これで `app` には、ライブラリ（Windows では `elasticlm.dll` とインポートライブラリ `elasticlm.lib`、Linux では `libelasticlm.so`、macOS では `libelasticlm.dylib`）、ヘッダー `elasticlm.h`、`LICENSE` が入る。
 
 <!-- steps:prebuilt name=libelasticlm -->
 
@@ -233,7 +235,7 @@ int main(int argc, char** argv)
 }
 ```
 
-プログラムは、ルート公開鍵から検証器を作る。信頼する鍵はこの 1 つだけだ。`struct_size` は、プログラムが構造体のどの版でビルドされたかをライブラリに伝える。0 のままのフィールドは既定の値になる。失効した鍵 ID はなく、時刻巻き戻しの対策もないので、このプログラムは時計を戻されても気づかない（戻されたことに気づける対策は、[時刻巻き戻しの検出と、その限界](../explanation/license-files-and-verification.md#時刻巻き戻しの検出とその限界)で説明している）。次に、ライセンスファイルを検証する。署名、鍵証明書、有効期限、製品 `acme-cad`、機能 `pro` を確かめる。要件の `installation` を `NULL` にしているのは、プログラムがデバイスに紐付けていないライセンスだけを使うことを示す。最後に、有効なら `valid` とライセンスの ID を、そうでなければ `invalid` とエラーの番号、理由を表示する。
+プログラムは、ルート公開鍵から検証器を作る。信頼する鍵はこの 1 つだけだ。`struct_size` は、プログラムが構造体のどの版でビルドされたかをライブラリに伝える。0 のままのフィールドは既定の値になる。既定では、失効した鍵 ID の一覧は空で、時刻巻き戻し対策は使わない。そのため、このプログラムは時計を戻されても気づかない（戻されたことに気づける時刻巻き戻し対策は、[時刻巻き戻しの検出と、その限界](../explanation/license-files-and-verification.md#時刻巻き戻しの検出とその限界)で説明している）。次に、ライセンスファイルを検証する。署名、鍵証明書、有効期限、製品 `acme-cad`、機能 `pro` を確かめる。要件の `installation` は `NULL` で、これは、プログラムがデバイスに紐付けていないライセンスだけを使うことを示す。最後に、有効なら `valid` とライセンスの ID を、そうでなければ `invalid` とエラーの番号と理由を表示する。
 
 このプログラムは、チュートリアルを短くするためにルート公開鍵をファイルから読む。実際のアプリは、`root.pub.pem` のテキストを文字列の定数などとしてコードに埋め込む。
 
@@ -241,7 +243,7 @@ int main(int argc, char** argv)
 
 ライブラリは、ビルドするプログラムと同じ `app` にある。プログラムは起動するとき、そこでライブラリを探す。Windows は DLL をまずプログラムのフォルダーで探し、Linux と macOS は、下の `-Wl,-rpath,...` のオプションでそこを探すようになる。
 
-Windows では、`cl` でビルドし、インポートライブラリ `elasticlm.lib` をリンクする。`cl` は、オブジェクトファイル `app.obj` もチュートリアルのフォルダーに書く。
+Windows では、`cl` でビルドし、インポートライブラリ `elasticlm.lib` をリンクする。`cl` は、オブジェクトファイル `app.obj` もチュートリアルのフォルダーに作る。
 
 <!-- steps:run os=windows -->
 ```shell
@@ -255,15 +257,15 @@ Linux では、`-L app -lelasticlm` で `app` の `libelasticlm.so` をリンク
 cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,$ORIGIN'
 ```
 
-macOS では、`app` のファイルから quarantine 属性をまず外し、それからビルドする。Web ブラウザーはダウンロードしたファイルにこの属性を付け、そのようなアーカイブから `tar` が展開したファイルにも、すべて同じ属性が付く。`gh release download` と `curl` は付けない。属性が付いていて公証（notarization）を受けていないファイルを、Gatekeeper は開かない。このことは [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) にも書いてある。`xattr -dr` はフォルダー全体をたどり、属性のないファイルがあってもエラーなしで終わる。`@executable_path` はプログラムのフォルダーを表す。`cc` は使っている Mac に合わせてビルドするので、アーカイブの `<RID>` はその Mac に合っていなければならない。
+macOS では、まず `app` に quarantine 属性の付いたファイルが残っていないようにし、それからビルドする。アーカイブから属性を外す前にライブラリを展開した場合などに、属性が残る。`xattr -dr` はフォルダー全体をたどり、属性のないファイルがあってもエラーなしで終わる。`@executable_path` はプログラムのフォルダーを表す。ここでも単引用符は外さない。PowerShell はカンマを一覧の区切りとして読むからだ。`cc` は使っている Mac に合わせてビルドするので、アーカイブの `<RID>` はその Mac に合っていなければならない。
 
 <!-- steps:run os=macos -->
 ```shell
 xattr -dr com.apple.quarantine app
-cc -std=c11 -o app/app app/app.c -L app -lelasticlm -Wl,-rpath,@executable_path
+cc -std=c11 -o app/app app/app.c -L app -lelasticlm '-Wl,-rpath,@executable_path'
 ```
 
-システムごとのファイル、オプション、探す場所は [C API](../reference/c-api.md) に挙げてある。
+システムごとのファイル、オプション、探す場所と、ライブラリが実行時に必要とするもの（Linux では glibc 2.28 以降（`linux-musl-x64` では musl）、OpenSSL、CA の証明書）は、[C API](../reference/c-api.md) に挙げてある。
 
 ## アプリを動かす
 
@@ -281,7 +283,7 @@ app/app root.pub.pem first.elmlic
 valid: license first-license, product acme-cad, feature pro
 ```
 
-代わりに `invalid:` と表示されたときは、そのあとに続く番号で、何が失敗したかがわかる。`elasticlm.h` は、それぞれの番号をエラーコードの名前で定義している。
+代わりに `invalid:` と表示されたときは、そのあとに続く番号で、何が失敗したかがわかる。`elasticlm.h` は、それぞれの番号を、エラーコードの名前を付けて定義している。
 
 | 番号 | コード | このチュートリアルで考えられる原因 | 対処 |
 | --- | --- | --- | --- |
@@ -292,7 +294,7 @@ valid: license first-license, product acme-cad, feature pro
 
 プログラムが `error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、1 つ目の引数が公開鍵のファイルではない。2 つの引数の順序を確かめる。`error: cannot read` の行には、読めなかったファイルの名前が出る。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げてある。
 
-プログラムがまったく起動しないときは、ライブラリが見つかっていない。`app` の中、プログラムの隣に `elasticlm.dll`、`libelasticlm.so`、`libelasticlm.dylib` のどれかがあるかを確かめる。
+プログラムがまったく起動しないときは、プログラムがライブラリを見つけられなかった。`app` の中、プログラムの隣に `elasticlm.dll`、`libelasticlm.so`、`libelasticlm.dylib` のどれかがあるかを確かめる。Windows では、そのとき PowerShell は何も表示せず、`$LASTEXITCODE` は `-1073741515`（`0xC0000135`。DLL が見つからない）になる。
 
 ## 作ったもの
 

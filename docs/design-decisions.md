@@ -1186,7 +1186,7 @@
 ### Tutorial 4 でライブラリをアプリの隣に写す（V1c3c の Grill の Q2、Issue #236）
 
 - **決定:** `libelasticlm` の圧縮ファイルを作業フォルダーの `app` に展開し、ソースと実行ファイルも `app` に置く（持ち主の決定、推奨案。§20.7 の「V1c3c の Grill」の Q2）。
-- **理由:** Windows の DLL の探し方、Linux の `$ORIGIN`、macOS の `@executable_path` はどれもアプリのフォルダーを指すので、写す行が要らない。写す行（`copy`、`cp`）は OS ごとに違い、手順を流す仕組みに受け付ける行の頭を増やす。
+- **理由:** Windows の DLL の探し方、Linux の `$ORIGIN`、macOS の `@executable_path` はどれもアプリのフォルダーを指すので、写す行が要らない。写す行（`copy`、`cp`）は OS ごとに違い、手順を流す仕組みが受け付ける行の頭も増える。
 - **却下した案:** ライブラリを別のフォルダー（`libelasticlm`）に展開し、ビルドのあとにアプリのフォルダーへ写す。
 
 ### Tutorial 4 の OS ごとのブロックを Docusaurus のタブで見せる（V1c3c の Grill の Q4、Issue #236）
