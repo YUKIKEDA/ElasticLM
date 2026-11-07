@@ -220,8 +220,8 @@ public sealed class ServiceUsageLogTests
     }
 
     /// <summary>
-    /// A node that writes service.started and then cannot listen writes service.stopped before it closes the file, so every
-    /// start has its pair (design §14.8, §18.1, V1c9 R7).
+    /// A start that fails after service.started, here because the node cannot listen, writes service.stopped once before it
+    /// closes the file, so every start has its pair (design §14.8, §18.1, V1c9 R7).
     /// </summary>
     /// <remarks>
     /// Preconditions:

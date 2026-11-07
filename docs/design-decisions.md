@@ -1173,6 +1173,6 @@
 
 ### `elm-service` の待ち受けの失敗で `service.started` だけが残ることを設計に書いて済ませる（V1c9 の設計の独立レビューの R7、Issue #227）
 
-- **決定:** `elm-service` は、待ち受けに失敗したら利用ログに `service.stopped`（`node`）を書いてから閉じる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §14.8、§18.1、§13.1 の「V1c9 の Grill」の R7）。
+- **決定:** `elm-service` は、待ち受けに失敗したら利用ログに `service.stopped`（`node`）を書いてから閉じる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §14.8、§18.1、§13.1 の「V1c9 の Grill」の R7）。実装のあとのレビュー（PR #233）で、`service.started` を書いたあとのどの起動の失敗にも広げた。
 - **理由:** `service.started` は `app.StartAsync` の前に書くので、対の `service.stopped` がないと、ログを読む運用者には、待ち受けられなかった起動と、動いたあとに落ちたノードとの区別がつかない。正常な停止と同じ行で閉じれば、どの起動も対になる。
 - **却下した案:** 行を足さず、待ち受けに失敗した起動では `service.started` に対の行がないことを設計とログの Reference に書く。
