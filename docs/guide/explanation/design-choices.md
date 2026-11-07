@@ -168,7 +168,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 
 **Rejected.** Targeting .NET 8 as well: its support ends in November 2026, and NativeAOT support in .NET 10 is further along. Writing parts in another language, such as a client or a key library in Rust: a server that loads a library written in another language cannot be a single binary, and every string and buffer that crosses the boundary needs agreed rules for termination and freeing. Native callers get `libelasticlm` instead, which is .NET code published as a NativeAOT shared library. SQLite as a separate library beside `elm-service`: that breaks the single binary.
 
-**Cost.** The Linux builds need glibc 2.28 or later, and the macOS builds macOS 12.0 or later. The executables and `libelasticlm` carry no code signature in v1; you check them with the published `SHA256SUMS` and the build provenance attestations instead.
+**Cost.** The Linux builds need glibc 2.28 or later, and the macOS builds macOS 12.0 or later. The executables and `libelasticlm` carry no Authenticode or Developer ID signature in v1 (the `osx-arm64` files carry only the ad-hoc signature that the linker adds); you check them with the published `SHA256SUMS` and the build provenance attestations instead.
 
 ## Cryptography from the base class library only
 
@@ -204,6 +204,6 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 | Installation key as identity | A copy made by a device administrator is the same device. | Use `deny` where copying matters; know that offline-only copies are not found. |
 | Leases in memory on `elm-server` | New users can wait up to one lease length after a restart. | Run the server under a service manager; pick `leaseDuration` with both waits in mind. |
 | Server license with an expiry | A server that cannot refresh stops lending. | Let the server refresh online, or carry refresh files in time. |
-| No code signing in v1 | The operating system cannot name the publisher. | Check downloads against `SHA256SUMS` and their attestations. |
+| No Authenticode or Developer ID signature in v1 | The operating system cannot name the publisher. | Check downloads against `SHA256SUMS` and their attestations. |
 
 The [security model](security-model.md) lists every accepted threat in one place.

@@ -145,7 +145,7 @@ These are accepted: ElasticLM does not stop them. Other pages mention them in a 
 
 ### Releases and this site
 
-- **The executables and `libelasticlm` are not code-signed.** Windows SmartScreen may warn, and macOS Gatekeeper will not open them until you remove the quarantine attribute after checking the file (see [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)).
+- **The executables and `libelasticlm` have no Authenticode or Developer ID signature** (the `osx-arm64` files carry only the ad-hoc signature that the linker adds). Windows SmartScreen may warn, and macOS Gatekeeper will not open them until you remove the quarantine attribute after checking the file (see [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)).
 - **The owner's GitHub or nuget.org account is taken over.** Whoever holds it can tag, approve, publish, move image tags, and change this site, and the attestations will look correct. Passkeys make this harder, and immutable releases keep published files unchanged.
 - **GitHub or its runners are compromised.** Releases and attestations rely on GitHub.
 - **An attestation shows only which workflow built which commit.** A bad commit that the owner merged is attested correctly. Code review and CI protect the code itself.

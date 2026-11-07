@@ -48,9 +48,9 @@ nuget.org with `dotnet nuget verify`, not against `SHA256SUMS`. A `.nupkg` file 
 has no nuget.org repository signature, and its bytes are those the release workflow attached to the release: check it
 like the other files, against `SHA256SUMS` and with `gh attestation verify`.
 
-The executables and `libelasticlm` are not code-signed. Windows SmartScreen may warn when you run them. macOS Gatekeeper
-does not open downloaded software that is not notarized; after checking the file as above, remove the quarantine
-attribute with `xattr -d com.apple.quarantine <file>`. The Linux binaries need glibc 2.28 or newer (RHEL 8, Debian 10,
+The executables and `libelasticlm` have no Authenticode or Developer ID signature (the `osx-arm64` files carry only
+the ad-hoc signature that the linker adds). Windows SmartScreen may warn when you run them. macOS Gatekeeper does not
+open downloaded software that is not notarized; after checking the file as above, remove the quarantine attribute with `xattr -d com.apple.quarantine <file>`. The Linux binaries need glibc 2.28 or newer (RHEL 8, Debian 10,
 Ubuntu 20.04 and later), or musl for `linux-musl-x64`; the macOS binaries need macOS 12 or newer.
 
 ## Supported versions
