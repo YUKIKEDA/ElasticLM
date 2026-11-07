@@ -11,7 +11,7 @@ A finding that asks for a change is still open when that head does not contain t
 
 A finding that is tried and not adopted is answered with the measurement or the reason, on the pull request it was written on.
 
-Before acting on a finding or declining it, check its claim against the code of that head: run the reproduction, or read the lines it names. A finding can be right about the reader's difficulty and wrong about the fact.
+Before acting on a finding or declining it, check its claim against the code of that head: run the reproduction, or read the lines it names. A finding can be right about the reader's difficulty and wrong about the fact. A finding that says what a rule or the design says is checked the same way: read the sentence it names before changing it. In V1c9 the design review (R7) called a sentence of `testing.mdc` wrong; read again, the sentence was about the operational log's `server.started` and `service.started` lines and was right, so it stayed and named those lines (PR #233).
 
 A finding that asks to change a decision the owner made is not declined by citing the rule that records the decision. Reply with what the decision was and what the finding shows, and ask the owner (`.cursor/rules/consent.mdc`).
 
