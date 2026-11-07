@@ -8,7 +8,8 @@
       macOS are not counted: the Swift parts of .NET's Apple crypto carry debug references to the module cache of the
       machine that built them (.cursor/rules/aot.mdc).
     - Single binary: the folder holds the binary and its debug symbols only (.pdb on Windows, .dbg on Linux, a .dSYM folder
-      on macOS). Any other file fails the check and is named.
+      on macOS). On win-*, libelasticlm's folder must also hold the import library elasticlm.lib (decision 0.118). Any
+      other file fails the check and is named.
     - Runtime dependencies: dumpbin /dependents (Windows, recorded only), the NEEDED entries of readelf -d (Linux), or
       otool -L (macOS). On Linux with glibc, only glibc's own libraries are allowed; on linux-musl-x64, only musl's libc;
       on macOS, only /usr/lib/ and /System/Library/.
@@ -16,7 +17,7 @@
       it without the limit, for CI, which builds on the runner's newer glibc.
     - macOS signature: codesign -dv is recorded; osx-arm64 binaries must carry the linker's ad-hoc signature (design §5.4).
     - Size: elm-service up to 40,000,000 bytes, elm-server up to 30,000,000, libelasticlm up to 8,000,000 (design §4.2,
-      decimal megabytes). elm has no target and is recorded only. Debug symbols are not counted.
+      decimal megabytes). elm has no target and is recorded only. Debug symbols and elasticlm.lib are not counted.
     Writes what it found to -Summary (the job summary by default) and fails at the end when any check failed.
     It runs on the OS family of the runtime identifier: Windows, Linux (glibc or musl binaries), or macOS.
 
@@ -99,8 +100,13 @@ foreach ($name in @('elm', 'elm-server', 'elm-service', 'libelasticlm')) {
         continue
     }
 
-    # Single binary: nothing but the binary and its symbols.
+    # Single binary: nothing but the binary and its symbols, and on win-* libelasticlm's import library, which must be
+    # there: ElasticLM.Native.csproj copies it, and the CI's aot job has no archive check that would miss it (design §20.5).
     $allowed = @($binary, (Get-SymbolName $binary))
+    if ($windows -and $name -eq 'libelasticlm') {
+        $allowed += 'elasticlm.lib'
+        if (-not (Test-Path (Join-Path $folder 'elasticlm.lib') -PathType Leaf)) { $failures.Add("$name has no import library elasticlm.lib in $folder.") }
+    }
     $extra = @(Get-ChildItem -Path $folder -Force | Where-Object { $allowed -notcontains $_.Name } | ForEach-Object { $_.Name })
     if ($extra.Count -gt 0) { $failures.Add("$name has files beside it: $($extra -join ', ').") }
 
