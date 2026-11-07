@@ -21,6 +21,8 @@ Each page is one of the four Diátaxis kinds (https://diataxis.fr/start-here/) a
 
 A page that needs another kind links to it instead of growing a second kind.
 
+A Grill or a design review that decides what goes on a page checks it against that page's kind and against "code in a page is taken from a sample" before recording it. V1c8's Grill (Q5) put the per-OS linking steps on the C API page, a Reference page, and the design review passed it. Only the first-time reader review of the implementation found the conflict, together with four gaps in the steps: the unpack, the default x86 prompt, the macOS quarantine, and `app.c`. The steps then moved to V1c3c by an owner decision in the middle of the PR (D1, PR #230).
+
 ## What the pages describe
 
 - The pages describe what a reader of the trial does: a reader who got ElasticLM from a GitHub prerelease (design §20.7, V1c3e). A tutorial has the reader download the executables from the prerelease's archives and the packages from its `.nupkg` files, as the reader types it, and the step runner (`eng/docs/Test-GuideSteps.ps1`) puts the job's executables and packages in their place at the `steps:prebuilt` markers. A page is not written as "not released yet, so build it from the source": V1c3a and V1c3b wrote the tutorials that way, which left every tutorial to be rewritten just before the release, with no point at which the documentation was checked and done (the owner's finding in PR #218).
