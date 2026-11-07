@@ -1122,3 +1122,15 @@
 - **決定:** SONAME は付けない。恒久の決定で、見直しの行は置かない（設計の独立レビューの R9 で持ち主が確かめた）。C の API の頁は、ファイルへのパスでなく `-L<フォルダー> -lelasticlm` の形でリンクすると書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q4）。
 - **理由:** GNU ld の `-soname` の説明（https://sourceware.org/binutils/docs/ld/Options.html ）は SONAME があるときの動きを述べ、ないときの動きは直接には述べていない。WSL の gcc で測ると、`-L. -lelasticlm -Wl,-rpath,'$ORIGIN'` でリンクしたプログラムは `NEEDED` が `libelasticlm.so` になって動き、パスで渡すと `NEEDED` が `./libelasticlm.so` になった。ライブラリはアプリと一緒に配る（[design.ja.md](./design.ja.md) §17.3）ので、版の違うライブラリをシステムの共有の場所に並べるための SONAME は要らない。
 - **却下した案:** 発行で `libelasticlm.so` に SONAME を付ける。今は付けずに、あとで見直す扱いにする（見直しの roadmap の行を置く。V1c8 の Grill の記録の Issue #209 の「今は付けない」の書き方）。
+
+### C のリンクの手順を、今 How-to の頁に書く（V1c8 の実装の PR の持ち主の決定 D1、Issue #209）
+
+- **決定:** C の API の頁（英語と日本語）の「Getting and linking the library」は事実だけを持つ。圧縮ファイルの展開、Windows の x64 か ARM64 の Native Tools Command Prompt、macOS の quarantine 属性の外し方、`app.c` の中身と動かす手順と期待する出力は、V1c3c の Tutorial 4 が C のサンプルとともに持ち、手順を流す仕組みで確かめる（持ち主の決定 D1 の (a)。[design.ja.md](./design.ja.md) 0.118、§20.5 の「V1c8 の Grill」の Q5 と D1、§20.7 の V1c3c の行）。
+- **理由:** `.cursor/rules/user-docs.mdc` は、頁のコードはゲートがビルドする `samples/` のサンプルから取るとしている。C のサンプルは V1c3c より前にはないので、今 How-to の頁を書くと、その手順は流して確かめられず、サンプルからも取れない。V1c8 の実装の PR が頁に書いた手順には、初見の読み手のレビューが欠けているものを 4 つ見つけており、確かめていない手順は同じように欠ける。
+- **却下した案:** (b) C のリンクの手順を、新しい How-to の頁として今書く。
+
+### C のリンクの手順を Reference の頁に残す（V1c8 の Grill の Q5、V1c8 の実装の PR の持ち主の決定 D1、Issue #209）
+
+- **決定:** 上の項と同じ（持ち主の決定 D1 の (a)。[design.ja.md](./design.ja.md) §20.5 の「V1c8 の Grill」の Q5 と D1）。
+- **理由:** `.cursor/rules/user-docs.mdc` は、Reference の頁は調べるための事実だけを持ち、手順も理由も書かないとしている。頁のコードをサンプルから取る決まりにも反する。
+- **却下した案:** (c) OS ごとの手順のブロック（展開、コンパイル、コピー）を、欠けていた 4 つを足して C の API の頁に残す（V1c8 の Grill の Q5 の最初の形）。
