@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ElasticLM.Issuing;
@@ -216,6 +217,49 @@ public sealed class ServiceUsageLogTests
         Assert.StartsWith($"The usage log cannot be written in '{test.FilePath("taken")}': ", unwritable.Message, StringComparison.Ordinal);
         await test.StartAsync();
         Assert.Empty(Directory.Exists(test.FilePath("usage")) ? Directory.EnumerateFiles(test.FilePath("usage")) : []);
+    }
+
+    /// <summary>
+    /// A start that fails after service.started, here because the node cannot listen, writes service.stopped once before it
+    /// closes the file, so every start has its pair (design §14.8, §18.1, V1c9 R7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log; a TcpListener on 127.0.0.1 holding the port given as listen.
+    ///
+    /// Steps:
+    /// - Start on the held port; verify the node's files.
+    ///
+    /// Expected:
+    /// - ServiceStartException "elm-service cannot listen on …"; one file, intact with no issue, whose signed lines are
+    ///   service.started and service.stopped, the second naming n1.
+    /// </remarks>
+    [Fact]
+    public async Task Usage_ListenFails_WritesServiceStopped()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        using var holder = new TcpListener(IPAddress.Loopback, 0);
+        holder.Start();
+        int port = ((IPEndPoint)holder.LocalEndpoint).Port;
+
+        ServiceStartException refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(
+                Logged(test, "n1") with
+                {
+                    Listen = new Uri($"http://127.0.0.1:{port}"),
+                },
+                test.HostOptions(),
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.StartsWith($"elm-service cannot listen on http://127.0.0.1:{port}/: ", refused.Message, StringComparison.Ordinal);
+        Assert.Single(Files(test, "n1"));
+        LogReport report = Verify(test, "n1");
+        Assert.Empty(report.Issues);
+        Assert.All(report.Entries, e => Assert.True(e.IsSigned));
+        Assert.Equal(["service.started", "service.stopped"], report.Entries.Select(e => e.Type));
+        Assert.Equal("n1", report.Entries[^1].Value.GetProperty("node").GetString());
     }
 
     /// <summary>

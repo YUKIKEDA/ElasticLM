@@ -33,10 +33,12 @@ Exit code 1 means, for example:
 - There is no server license yet. This is what happens at the first start: the server makes its installation key, and the message gives the key's thumbprint and the machine fingerprints. Send them to the vendor, who issues the server license; or activate the server license with the vendor's license key, online with [`elm server activate`](elm-cli.md#elm-server-activate), or offline with [`elm server activate-request`](elm-cli.md#elm-server-activate-request) and [`elm server import`](elm-cli.md#elm-server-import). [Floating licenses](../explanation/floating-licenses.md#running-elm-server) explains what the server needs from the vendor.
 - No root public keys are given.
 - A file that a setting names (a root key, the server license, a TLS certificate) cannot be read or is not valid.
+- The TLS certificate has an Extended Key Usage, the list of purposes the certificate may be used for, that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`).
 - The server license does not verify.
 - The server license cannot be written while `service.url` is set.
 - The borrow record is broken, or cannot be read or written.
 - The usage log cannot be written.
+- The server cannot listen on `listen` or `admin.listen`: another program uses the port, the server has no permission to listen there, or this machine does not have the address. The last line is `error: elm-server cannot listen on <listen> and <admin.listen>: <reason>`. It gives both URLs as the server reads them, each ending in `/`.
 
 ## How settings are given
 
@@ -140,7 +142,7 @@ An `allow` or `deny` entry is one of:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The certificate must carry its private key. |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
 | `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`. |
 
 ## `borrow`

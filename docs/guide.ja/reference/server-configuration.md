@@ -33,10 +33,12 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - サーバーライセンスがまだない。初回の起動ではこうなる。サーバーはインストール鍵を作り、メッセージにその鍵のサムプリントとマシンフィンガープリントを示す。これをベンダーに送ると、ベンダーがサーバーライセンスを発行する。または、ベンダーのライセンスキーでサーバーライセンスをアクティベーションする。オンラインなら [`elm server activate`](elm-cli.md#elm-server-activate)、オフラインなら [`elm server activate-request`](elm-cli.md#elm-server-activate-request) と [`elm server import`](elm-cli.md#elm-server-import) を使う。サーバーがベンダーから何を受け取る必要があるかは、[フローティングライセンス](../explanation/floating-licenses.md#elm-server-の運用)で説明している。
 - ルート公開鍵が指定されていない。
 - 設定で指定したファイル（ルート鍵、サーバーライセンス、TLS 証明書）を読めないか、有効でない。
+- TLS 証明書に拡張キー使用法（証明書を使ってよい用途の一覧）があり、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication`、日本語の Windows では「サーバー認証」と表示される）がない。
 - サーバーライセンスの検証に失敗した。
 - `service.url` を設定しているのに、サーバーライセンスを書き込めない。
 - 借用の記録が壊れているか、読み書きできない。
 - 利用ログを書き込めない。
+- `listen` か `admin.listen` で待ち受けられない。ほかのプログラムがそのポートを使っている、そこで待ち受ける権限がない、このマシンにそのアドレスがない、といった場合だ。最後の行は `error: elm-server cannot listen on <listen> and <admin.listen>: <reason>` になる。両方の URL を、サーバーが読んだとおりに、それぞれ `/` で終わる形で示す。
 
 ## 設定の渡し方
 
@@ -140,7 +142,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。証明書には秘密鍵が含まれていなければならない |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。証明書には秘密鍵が含まれていなければならない。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
 | `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | PEM の `tls.certificate` に対応する PEM の秘密鍵 |
 
 ## `borrow`

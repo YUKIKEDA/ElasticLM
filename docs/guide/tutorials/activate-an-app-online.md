@@ -214,7 +214,7 @@ info: elm-service[1]
       service.started: listening on http://127.0.0.1:8080/, database Sqlite, signing key FAKE-SIGNING-KEY-ID-000000000000000000000S1 (certificates until 01/15/2027 09:30:00 +00:00), in 223 ms
 ```
 
-If the port 8080 is taken, the service instead prints a long error, ends with exit code 1, and its last line is `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.`; stop the program that uses the port, and start the service again.
+If port 8080 is taken, the service instead logs the failure with a long stack trace and ends with exit code 1. Its last line is `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.` Stop the program that uses the port, and start the service again.
 
 Leave the service running, and go back to the first terminal for the rest of the tutorial. Type `127.0.0.1` in the URLs below, not `localhost`: an app's request names the URL it was sent to, and the service accepts only its own address, `http://127.0.0.1:8080`, and refuses a request sent to `http://localhost:8080` with `ELM_PROOF_INVALID`.
 

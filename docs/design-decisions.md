@@ -1134,3 +1134,45 @@
 - **決定:** 上の項と同じ（持ち主の決定 D1 の (a)。[design.ja.md](./design.ja.md) §20.5 の「V1c8 の Grill」の Q5 と D1）。
 - **理由:** `.cursor/rules/user-docs.mdc` は、Reference の頁は調べるための事実だけを持ち、手順も理由も書かないとしている。頁のコードをサンプルから取る決まりにも反する。
 - **却下した案:** (c) OS ごとの手順のブロック（展開、コンパイル、コピー）を、欠けていた 4 つを足して C の API の頁に残す（V1c8 の Grill の Q5 の最初の形）。
+
+### `elm-server` の起動で `app.StartAsync` のすべての例外を捕まえる（V1c9 の Grill の Q2、Issue #227）
+
+- **決定:** `ElmServer.StartAsync` は `app.StartAsync` が投げる `IOException` と `SocketException` だけを捕まえて `ServerStartException` にし、ほかの例外はそのまま上げる（持ち主の決定、推奨案。`SocketException` は U1 で足した。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q2 と U1）。
+- **理由:** `elm-service` の `ElmService.StartAsync` と同じ形にする。待ち受けの失敗のほかの例外を `error:` の 1 行と終了コード 1 にすると、それはコードの誤りでも「起動できない」として扱われる。Kestrel がどの失敗を `IOException` にするかは、同じ節の「調べた事実」にある。待ち受けの失敗の `SocketException` は、U1 で捕まえる側に入れた（下の項）。
+- **却下した案:** `app.StartAsync` のすべての例外を捕まえ、同じ `error:` の 1 行にする。
+
+### 待ち受けの失敗の `IOException` だけを捕まえ、`SocketException` をこの Issue の外に置く（V1c9 の Grill の U1、Issue #227）
+
+- **決定:** `elm-server` と `elm-service` の両方で、`app.StartAsync` の `IOException` と `SocketException` を捕まえ、同じ 1 行の文と終了コード 1 にする。`ElmService.cs` のコメントを測った事実に直し、両方のプログラムに、端末にないアドレス 192.0.2.1 で起動するテストを足す（持ち主の決定、(a)。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の U1、§14.8 の終了コード）。
+- **理由:** Kestrel が `IOException` にするのは使われているアドレスだけで、待ち受ける権限がない場合と端末にないアドレスは `SocketException` のまま上がる（dotnet/aspnetcore の release/10.0 の `SocketConnectionListener.cs` と `AddressBinder.cs`。192.0.2.1 への `Bind` は、Windows と Linux の両方で `SocketError.AddressNotAvailable` の `SocketException` だった）。どれも運用者から見て「起動できない」で、終了コード 1 の意味に当たる。同じ種類の誤りは見つかったところすべてで直す（`.cursor/rules/similar-findings.mdc`）。`elm-service` も同じ穴を持っていた。
+- **却下した案:** (b) Q2 のとおり `IOException` だけを捕まえ、権限がない場合と端末にないアドレスを Issue #227 の外に置く。
+
+### .NET のホストの起動の失敗のログを出さない（V1c9 の Grill の Q3、Issue #227）
+
+- **決定:** 待ち受けられないとき、.NET のホストのログ（「Hosting failed to start」とスタックトレース）は、`elm-service` と同じく最後の `error:` の行の前に残す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の Q3）。
+- **理由:** 消すと `elm-server` と `elm-service` の 2 つのログが変わり、この不具合の範囲の外になる。Tutorial 2 は `elm-service` について、長い誤りのあとに最後の行が出ると書いている。要るなら別の roadmap の行にする。
+- **却下した案:** V1c9 で、ホストのログの起動の失敗の行を抑え、`error:` の 1 行だけを出す。
+
+### 退避の痕跡を借り出しの記録の `chain.reset` だけに任せる（V1c9 の設計の独立レビューの R1、Issue #227）
+
+- **決定:** `elm-server` は、`records.set_aside` の行と運用の記録の警告（`RecordSetAside`、`ChainReset`）を、利用ログを開いた直後、`app.StartAsync` の前に書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の起動の項目と「V1c9 の Grill」の R1）。
+- **理由:** 退避はファイルの名前を変えた時点で済み、次の起動はもう退避しない。`app.StartAsync` の後に書くと、待ち受けに失敗した起動の退避は利用ログに残らない。利用ログは運用者が席の扱いを確かめる記録で、借り出しの記録の `chain.reset` の理由だけでは、利用ログを読む運用者に退避が見えない（§5.4 の管理者が借り出しの席を空ける脅威の痕跡は、利用ログの `records.set_aside` を挙げている）。
+- **却下した案:** `records.set_aside` を今の場所（`AfterStart`）に残し、失敗した起動の痕跡は借り出しの記録の `chain.reset` だけにする。
+
+### TLS の証明書の EKU の確かめを別の roadmap の行にする（V1c9 の設計の独立レビューの R3、Issue #227）
+
+- **決定:** `TlsCertificateFiles.TryLoad` が、Kestrel と同じ規則（EKU の拡張がないか、serverAuth を含む）で証明書を確かめ、通らなければ `elm-server` と `elm-service` の起動の誤り（終了コード 1）にする。V1c9 の中で行う（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.5、§13.1 の「V1c9 の Grill」の R3）。
+- **理由:** EKU がクライアント認証だけの証明書では、Kestrel が `app.StartAsync` の中で `InvalidOperationException` を投げ、V1c9 の `catch` の外なので、捕まえない例外で終わる。これは V1c9 が直す不具合（起動できないのに 1 行の文と終了コード 1 にならない）と同じ種類で、見つかったところで直す（`.cursor/rules/similar-findings.mdc`）。
+- **却下した案:** EKU の確かめを別の roadmap の行と Issue にし、V1c9 は待ち受けの失敗だけを直す。
+
+### 待ち受けの失敗の文に `SocketErrorCode` を足す（V1c9 の設計の独立レビューの R6、Issue #227）
+
+- **決定:** 文は Q1 のまま（`elm-server cannot listen on <listen> and <admin.listen>: <例外のメッセージ>`）で、`SocketException` の `SocketErrorCode` を足さない。§13.1 は、Kestrel のメッセージがアドレスを名指すのを、アドレスがほかに使われている場合に限って書く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §13.1 の「V1c9 の Grill」の R6）。
+- **理由:** 例外のメッセージは OS の誤りの文で、運用者に原因（権限がない、端末にないアドレス）を伝える。`SocketError` の名前は .NET の列挙の名前で、運用者に足すものがない。`elm-service` の文と同じ形を保つ。どちらの設定を確かめるかは、文の頭の 2 つのアドレスが示す。
+- **却下した案:** `SocketException` のときは、文に `SocketErrorCode`（例 `AddressNotAvailable`）を足す。
+
+### `elm-service` の待ち受けの失敗で `service.started` だけが残ることを設計に書いて済ませる（V1c9 の設計の独立レビューの R7、Issue #227）
+
+- **決定:** `elm-service` は、待ち受けに失敗したら利用ログに `service.stopped`（`node`）を書いてから閉じる（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §14.8、§18.1、§13.1 の「V1c9 の Grill」の R7）。実装のあとのレビュー（PR #233）で、`service.started` を書いたあとのどの起動の失敗にも広げた。
+- **理由:** `service.started` は `app.StartAsync` の前に書くので、対の `service.stopped` がないと、ログを読む運用者には、待ち受けられなかった起動と、動いたあとに落ちたノードとの区別がつかない。正常な停止と同じ行で閉じれば、どの起動も対になる。
+- **却下した案:** 行を足さず、待ち受けに失敗した起動では `service.started` に対の行がないことを設計とログの Reference に書く。

@@ -89,11 +89,14 @@ internal sealed partial class ServerProcess : IAsyncDisposable
     /// </summary>
     public async Task<string> InstallationKeyAsync()
     {
-        (int code, string output, string error) = await Binaries.RunAsync(Binaries.Server, [], _folder, _environment);
+        (int code, string output, string error) = await RunToExitAsync();
         Match key = InstallationKey().Match(output + error);
         Assert.True(code != 0 && key.Success, $"elm-server without its license exited with {code}: {output}{error}");
         return key.Groups[1].Value;
     }
+
+    /// <summary>Runs the server to its end, for a start that stops by itself, and returns its exit code and output.</summary>
+    public Task<(int Code, string Out, string Error)> RunToExitAsync() => Binaries.RunAsync(Binaries.Server, [], _folder, _environment);
 
     /// <summary>Starts the server and waits until it answers.</summary>
     public async Task StartAsync()

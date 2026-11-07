@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
@@ -153,6 +154,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         var disposables = new List<IAsyncDisposable>();
         X509Certificate2? tls = null;
         ServiceUsageLog? usage = null;
+        bool startWritten = false;
         try
         {
             Database database = Database.Create(settings.Database, settings.ConnectionString);
@@ -211,13 +213,17 @@ internal sealed partial class ElmService : IAsyncDisposable
 
             // design §18.1: the start is the first line after the chain line, before any request can write one.
             usage?.Write("service.started", w => w.WriteString("node", settings.NodeName));
+            startWritten = true;
             try
             {
                 await app.StartAsync(cancellationToken).ConfigureAwait(false);
             }
-            catch (IOException e)
+            catch (Exception e) when (e is IOException or SocketException)
             {
-                // Kestrel reports an address in use, or one it may not bind, as an IOException.
+                // Kestrel turns only an address in use into an IOException (AddressBinder.BindEndpointAsync, aspnetcore
+                // release/10.0); other socket errors, such as an address this machine does not have, stay SocketException
+                // (Socket.Bind to 192.0.2.1: SocketError.AddressNotAvailable on Windows 11 with .NET 10 and on Ubuntu 22.04
+                // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, §14.8, V1c9).
                 throw new ServiceStartException($"elm-service cannot listen on {settings.Listen}: {e.Message}");
             }
 
@@ -226,6 +232,13 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
         catch
         {
+            if (startWritten)
+            {
+                // design §18.1, V1c9 R7: service.started was written before listening, so a start that fails after it
+                // writes its pair before the file is closed.
+                usage?.Write("service.stopped", w => w.WriteString("node", settings.NodeName));
+            }
+
             usage?.Dispose();
             tls?.Dispose();
             signingKey.Dispose();

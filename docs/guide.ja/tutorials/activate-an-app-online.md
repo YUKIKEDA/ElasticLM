@@ -214,7 +214,7 @@ info: elm-service[1]
       service.started: listening on http://127.0.0.1:8080/, database Sqlite, signing key FAKE-SIGNING-KEY-ID-000000000000000000000S1 (certificates until 01/15/2027 09:30:00 +00:00), in 223 ms
 ```
 
-ポート 8080 がふさがっていると、サービスは代わりに長いエラーを表示し、終了コード 1 で終わる。その最後の行は `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.` だ。そのポートを使っているプログラムを止めてから、サービスをもう一度起動する。
+ポート 8080 がふさがっていると、サービスは代わりに、長いスタックトレースつきで失敗をログに出し、終了コード 1 で終わる。最後の行は `elm-service cannot listen on http://127.0.0.1:8080/: Failed to bind to address http://127.0.0.1:8080: address already in use.` だ。そのポートを使っているプログラムを止めてから、サービスをもう一度起動する。
 
 サービスは動かしたままにして、残りの手順は 1 つ目のターミナルで進める。下の URL には `localhost` ではなく `127.0.0.1` と打つ。アプリのリクエストには、送り先の URL が入る。サービスは自分のアドレス `http://127.0.0.1:8080` へのリクエストだけを受け付け、`http://localhost:8080` へ送ったリクエストは `ELM_PROOF_INVALID` で拒否する。
 

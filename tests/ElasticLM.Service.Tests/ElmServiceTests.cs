@@ -267,6 +267,108 @@ public sealed class ElmServiceTests
     }
 
     /// <summary>
+    /// A listen address this machine does not have is a SocketException in Kestrel, not an IOException, and stops the start
+    /// with the same message as a port in use (design §14.8, V1c9 U1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - 192.0.2.1 (TEST-NET-1, RFC 5737), which no interface of the test machine has: a plain Socket.Bind to 192.0.2.1:0
+    ///   throws SocketException first, or the test fails saying the machine allows that bind.
+    ///
+    /// Steps:
+    /// - Start with listen http://192.0.2.1:0.
+    ///
+    /// Expected:
+    /// - ServiceStartException whose message begins "elm-service cannot listen on http://192.0.2.1:0/: ".
+    /// </remarks>
+    [Fact]
+    public async Task Start_AddressNotOnThisMachine_Throws()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        using (var probe = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp))
+        {
+            Exception? bind = Record.Exception(() => probe.Bind(new IPEndPoint(IPAddress.Parse("192.0.2.1"), 0)));
+            Assert.True(
+                bind is SocketException,
+                "This machine lets a socket bind 192.0.2.1, so the test cannot make the service fail to listen on an address it does not have."
+            );
+        }
+
+        var e = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(
+                test.Settings(s => s with { Listen = new Uri("http://192.0.2.1:0") }),
+                test.HostOptions(),
+                TestContext.Current.CancellationToken
+            )
+        );
+        Assert.StartsWith("elm-service cannot listen on http://192.0.2.1:0/: ", e.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A TLS certificate whose Extended Key Usage leaves out server authentication stops the start with a reason before the
+    /// service listens; one that includes it among others starts (design §13.5, §14.8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Self-signed certificates for 127.0.0.1 with their keys as PEM files: one whose Extended Key Usage is client
+    ///   authentication (1.3.6.1.5.5.7.3.2) only, one whose Extended Key Usage is client and server authentication.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with the first; with the second.
+    ///
+    /// Expected:
+    /// - ServiceStartException "The TLS certificate '{path}' cannot be used by a server: its Extended Key Usage does not
+    ///   include server authentication (1.3.6.1.5.5.7.3.1)."; then a running service on https.
+    /// </remarks>
+    [Fact]
+    public async Task Start_TlsCertificateWithoutServerAuthentication_Throws()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        ServiceSettings Https(string name, params string[] usages)
+        {
+            using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var request = new CertificateRequest("CN=" + name, key, HashAlgorithmName.SHA256);
+            var names = new SubjectAlternativeNameBuilder();
+            names.AddIpAddress(IPAddress.Loopback);
+            request.CertificateExtensions.Add(names.Build());
+            var oids = new OidCollection();
+            foreach (string usage in usages)
+            {
+                oids.Add(new Oid(usage));
+            }
+
+            request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(oids, critical: false));
+            using X509Certificate2 certificate = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
+            File.WriteAllText(test.FilePath(name + ".crt"), certificate.ExportCertificatePem() + "\n");
+            File.WriteAllText(test.FilePath(name + ".key"), key.ExportPkcs8PrivateKeyPem() + "\n");
+            return test.Settings(s =>
+                s with
+                {
+                    Listen = new Uri("https://127.0.0.1:0"),
+                    TlsCertificate = test.FilePath(name + ".crt"),
+                    TlsKey = test.FilePath(name + ".key"),
+                }
+            );
+        }
+
+        var e = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(Https("client", "1.3.6.1.5.5.7.3.2"), test.HostOptions(), cancel)
+        );
+        Assert.Equal(
+            $"The TLS certificate '{test.FilePath("client.crt")}' cannot be used by a server: its Extended Key Usage does not include "
+                + "server authentication (1.3.6.1.5.5.7.3.1).",
+            e.Message
+        );
+        await using ElmService service = await ElmService.StartAsync(
+            Https("both", "1.3.6.1.5.5.7.3.2", "1.3.6.1.5.5.7.3.1"),
+            test.HostOptions(),
+            cancel
+        );
+        Assert.Equal(Uri.UriSchemeHttps, service.Url.Scheme);
+    }
+
+    /// <summary>
     /// The authentication failures counted since the last minute are written when the service stops (design §14.5).
     /// </summary>
     /// <remarks>
