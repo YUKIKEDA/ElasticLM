@@ -37,7 +37,7 @@ A Grill or a design review that decides what goes on a page checks it against th
 - Name the threat when the page says something is safe: who the attacker is, what they hold, and what stops them. Write what the product does not protect against as plainly as what it does.
 - A figure is a fenced `mermaid` block: a sequence diagram for a protocol, a state diagram for a lifecycle, a flowchart for an order of checks. No ASCII art and no images of text.
 - Until roadmap row V1c5 (Issue #192) is done, a page has at most one flowchart or state diagram: a second one rendered empty on the site in V1c1, while Mermaid alone drew it. The PR counts the drawn figures of each page in a browser.
-- Code in a page is taken from a sample in `samples/`, which the gate builds (from V1c3 on). Commands are given as they are typed, with fake keys and IDs.
+- Code in a page is taken from a sample in `samples/`, which the gate builds (from V1c3 on). A C sample is the exception: the gate needs no C compiler, so the CI `aot` job builds it as its page says, on Windows, Linux, and macOS, and `tests/native/run.ps1` compiles it with warnings as errors (design §20.7, V1c3c, the owner's decision on review R7). Commands are given as they are typed, with fake keys and IDs.
 - A tutorial's sample answers a reader's slip (arguments in the wrong order, a missing file, a file that is not a key) with one line and an exit code, not an unhandled exception. The first V1c3a sample threw `ArgumentException` when the two arguments were swapped, and the page explained the stack trace; the first-time reader review found it (PR #214).
 
 ## Markdown that works on GitHub and on the site

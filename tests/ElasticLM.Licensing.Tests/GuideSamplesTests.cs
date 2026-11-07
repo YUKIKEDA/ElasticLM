@@ -5,7 +5,8 @@ namespace ElasticLM.Licensing.Tests;
 /// <summary>
 /// Checks that the code of the user documentation is taken from the samples that the gate builds (design §20.7, V1c3): a code
 /// block with a <c>&lt;!-- sample: path#name --&gt;</c> comment equals that region of the sample (the whole file less its snippet
-/// markers without <c>#name</c>), and the C# blocks of the tutorials and the .NET API page carry such a comment.
+/// markers without <c>#name</c>), the C# blocks of the tutorials and the .NET API page and the C blocks of the tutorials carry
+/// such a comment, and the C samples are ASCII only.
 /// </summary>
 public sealed partial class GuideSamplesTests
 {
@@ -123,6 +124,95 @@ public sealed partial class GuideSamplesTests
             problems.Count == 0,
             problems.Count + " C# blocks are not taken from a sample:" + Environment.NewLine + string.Join(Environment.NewLine, problems)
         );
+    }
+
+    /// <summary>
+    /// Every C code block of a tutorial, in both languages, carries a sample comment (design §20.7, V1c3c, Q7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The pages of docs/guide/tutorials and docs/guide.ja/tutorials. The C API page is left out: its C blocks list the
+    ///   declarations of elasticlm.h, not sample code (the owner's decision on the design review's R6).
+    ///
+    /// Steps:
+    /// - Find each code block whose fence names <c>c</c>.
+    /// - Look for a <c>&lt;!-- sample: ... --&gt;</c> comment among the comment lines right above its opening fence.
+    ///
+    /// Expected:
+    /// - At least one C block is found, in both languages.
+    /// - Every C block has a sample comment; the message names the page and line of each block without one.
+    /// </remarks>
+    [Fact]
+    public void CBlock_OnTutorialPage_HasSampleComment()
+    {
+        var problems = new List<string>();
+        var found = new HashSet<string>(StringComparer.Ordinal);
+        foreach (string folder in (string[])["docs/guide/tutorials", "docs/guide.ja/tutorials"])
+        {
+            foreach (string page in PagesUnder(folder))
+            {
+                foreach (Block block in Blocks(ReadLines(ReferencePages.RepositoryFile(page))))
+                {
+                    if (block.Language == "c")
+                    {
+                        found.Add(folder);
+                        if (block.Samples.Count == 0)
+                        {
+                            problems.Add($"{page}:{block.Fence + 1}: the C block has no <!-- sample: <path>#<name> --> comment above it.");
+                        }
+                    }
+                }
+            }
+        }
+
+        Assert.Equal(2, found.Count);
+        Assert.True(
+            problems.Count == 0,
+            problems.Count + " C blocks are not taken from a sample:" + Environment.NewLine + string.Join(Environment.NewLine, problems)
+        );
+    }
+
+    /// <summary>
+    /// Every C sample is ASCII only, since MSVC reads a source file without a byte order mark in the system code page (design
+    /// §20.7, V1c3c, Q7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The <c>*.c</c> and <c>*.h</c> files under samples.
+    ///
+    /// Steps:
+    /// - Read each file's bytes.
+    ///
+    /// Expected:
+    /// - At least one C file exists, and none holds a byte above 0x7F; the message names each file and the line of its first
+    ///   such byte.
+    /// </remarks>
+    [Fact]
+    public void CSample_EveryFile_IsAscii()
+    {
+        string samples = ReferencePages.RepositoryFile("samples");
+        string[] files =
+        [
+            .. Directory
+                .EnumerateFiles(samples, "*.*", SearchOption.AllDirectories)
+                .Where(file => Path.GetExtension(file) is ".c" or ".h")
+                .Order(StringComparer.Ordinal),
+        ];
+        Assert.NotEmpty(files);
+
+        var problems = new List<string>();
+        foreach (string file in files)
+        {
+            byte[] bytes = File.ReadAllBytes(file);
+            int at = Array.FindIndex(bytes, b => b > 0x7F);
+            if (at >= 0)
+            {
+                int line = 1 + bytes.Take(at).Count(b => b == (byte)'\n');
+                problems.Add($"{Path.GetRelativePath(samples, file).Replace('\\', '/')}:{line}: a byte is not ASCII.");
+            }
+        }
+
+        Assert.True(problems.Count == 0, string.Join(Environment.NewLine, problems));
     }
 
     private static IEnumerable<string> PagesUnder(string folder)

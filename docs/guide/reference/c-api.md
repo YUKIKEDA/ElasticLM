@@ -4,7 +4,7 @@ sidebar_position: 10
 
 # C API
 
-This page lists every function, type, and constant of `libelasticlm`, the C library of ElasticLM, for developers of C and C++ apps. The library offers the same license verification, activation, and leases as the .NET packages behind a C ABI; read the [Overview](../explanation/overview.md) first for what each of them does. Each function's prototype is on this page; the comments in `elasticlm.h` are the full reference for every argument, and the copy in the archive is the one that matches your library. The header of the `main` branch is at <https://github.com/YUKIKEDA/ElasticLM/blob/main/include/elasticlm.h>.
+This page lists every function, type, and constant of `libelasticlm`, the C library of ElasticLM, for developers of C and C++ apps. The library offers the same license verification, activation, and leases as the .NET packages behind a C ABI; read the [Overview](../explanation/overview.md) first for what each of them does. Each function's prototype is on this page; the comments in `elasticlm.h` are the full reference for every argument, and the copy in the archive is the one that matches your library. The header of the `main` branch is at <https://github.com/YUKIKEDA/ElasticLM/blob/main/include/elasticlm.h>. To build a first program with the library, step by step, follow [Issue a license and verify it in a C app](../tutorials/verify-a-license-in-c.md).
 
 ## Getting and linking the library
 

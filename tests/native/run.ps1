@@ -9,6 +9,8 @@
     - Links a generated program that references every function the header declares against the library at build time, in
       a folder of its own with a copy of the library (and on Windows of the import library elasticlm.lib), runs it there,
       and compares elm_version with -Version (design §17.4, decision 0.118). Nothing is written beside the library.
+    - Compiles the C sample of Tutorial 4 (samples/VerifyOfflineC/app.c) the same way, with warnings as errors (design
+      §20.7, V1c3c).
     - Makes keys and two licenses with elm in a temporary folder: one unbound, one bound to the key the test creates.
     - Runs the verification test in its two steps.
     - Starts elm-service on a free loopback port (with 10 requests a second per installation key, not 2), makes a product, a feature, a policy, a license, and the product's trial
@@ -72,22 +74,13 @@ function Invoke-Checked([string]$what, [scriptblock]$command) {
     if ($LASTEXITCODE -ne 0) { throw "$what failed with exit code $LASTEXITCODE." }
 }
 
-# On Windows, the MSVC environment of the newest Visual Studio, found with vswhere (cl.exe, link.exe, dumpbin.exe).
-# design §20.5: the tools of the machine's architecture, so win-arm64 is built and run on an arm64 runner.
+# On Windows, the MSVC environment of the newest Visual Studio (cl.exe, link.exe, dumpbin.exe), from
+# eng/Get-MsvcEnvironment.ps1. design §20.5: the tools of the machine's architecture, so win-arm64 is built and run on an
+# arm64 runner. The variables go into this script's environment, which the end of the script puts back.
 function Import-MsvcEnvironment {
     $arm64 = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64'
-    $component = if ($arm64) { 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' } else { 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64' }
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    $vs = & $vswhere -latest -products * -requires $component -property installationPath
-    if (-not $vs) { throw 'No Visual Studio with the C++ tools was found.' }
-    $vcvars = Join-Path $vs 'VC\Auxiliary\Build\vcvarsall.bat'
-    $arch = if ($arm64) { 'arm64' } else { 'x64' }
-    foreach ($line in (cmd /c "`"$vcvars`" $arch >nul && set")) {
-        if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2]) }
-    }
-
-    # vcvars sets Platform, which MSBuild would read as a property and use in its output paths.
-    [Environment]::SetEnvironmentVariable('Platform', $null)
+    $variables = & (Join-Path $root 'eng/Get-MsvcEnvironment.ps1') -Architecture ($arm64 ? 'arm64' : 'x64')
+    foreach ($entry in $variables.GetEnumerator()) { [Environment]::SetEnvironmentVariable($entry.Key, $entry.Value) }
 }
 
 try {
@@ -238,6 +231,26 @@ try {
         Pop-Location
     }
     Invoke-Checked 'The link test' { & $linkTest $Version | Out-Host }
+
+    # design §20.7, V1c3c, Q7: the C sample of Tutorial 4 compiles without a warning. The page builds it without warning
+    # options to keep the reader's line short, and the Guide steps step runs it; this compiles it with the options of the C
+    # test above, linked the same way as the link test. It is not run here.
+    $sample = Join-Path $root 'samples/VerifyOfflineC/app.c'
+    $sampleProgram = Join-Path $linkFolder ($IsWindows ? 'sample_app.exe' : 'sample_app')
+    Push-Location $linkFolder
+    try {
+        if ($IsWindows) {
+            Invoke-Checked 'Compiling the C sample' { cl /nologo /W4 /WX /std:c11 /I $include $sample /Fo"$(Join-Path $linkFolder 'sample_app.obj')" /Fe"$sampleProgram" (Join-Path $linkFolder 'elasticlm.lib') | Out-Host }
+        } elseif ($IsMacOS) {
+            Invoke-Checked 'Compiling the C sample' { clang -arch $linkArch -std=c11 -Wall -Wextra -Werror -I $include $sample -o $sampleProgram -L $linkFolder -lelasticlm '-Wl,-rpath,@executable_path' }
+        } else {
+            Invoke-Checked 'Compiling the C sample' { gcc -std=c11 -Wall -Wextra -Werror -I $include $sample -o $sampleProgram -L $linkFolder -lelasticlm '-Wl,-rpath,$ORIGIN' }
+        }
+    }
+    finally {
+        Pop-Location
+    }
+    'The C sample compiles without a warning.'
 
     # Keys and licenses made for this run only.
     Push-Location $work

@@ -4,7 +4,7 @@ sidebar_position: 10
 
 # C API
 
-このページには、ElasticLM の C ライブラリ `libelasticlm` のすべての関数、型、定数を載せる。読者は C と C++ のアプリの開発者だ。このライブラリは、.NET のパッケージと同じライセンスの検証、アクティベーション、リースを C の ABI で提供する。それぞれが何をするかは、先に[概要](../explanation/overview.md)を読むこと。各関数のプロトタイプはこのページにある。すべての引数の完全なリファレンスは `elasticlm.h` のコメントで、使っているライブラリに合うのはアーカイブに入っているヘッダーだ。`main` ブランチのヘッダーは <https://github.com/YUKIKEDA/ElasticLM/blob/main/include/elasticlm.h> にある。
+このページには、ElasticLM の C ライブラリ `libelasticlm` のすべての関数、型、定数を載せる。読者は C と C++ のアプリの開発者だ。このライブラリは、.NET のパッケージと同じライセンスの検証、アクティベーション、リースを C の ABI で提供する。それぞれが何をするかは、先に[概要](../explanation/overview.md)を読むこと。各関数のプロトタイプはこのページにある。すべての引数の完全なリファレンスは `elasticlm.h` のコメントで、使っているライブラリに合うのはアーカイブに入っているヘッダーだ。`main` ブランチのヘッダーは <https://github.com/YUKIKEDA/ElasticLM/blob/main/include/elasticlm.h> にある。ライブラリを使う最初のプログラムを手順に沿って作るには、[ライセンスを発行して C のアプリで確かめる](../tutorials/verify-a-license-in-c.md)に従う。
 
 ## ライブラリの入手とリンク
 

@@ -1,7 +1,8 @@
 <#
 .SYNOPSIS
     Runs the marked steps of README.md and of every Tutorial page with a given elm, elm-server, elm-service, and package
-    folder (design §20.7, V1c1, V1c3a, V1c3b, V1c3e, and V1c3d).
+    folder, and builds and runs the C sample of Tutorial 4 with libelasticlm (design §20.7, V1c1, V1c3a, V1c3b, V1c3e, V1c3d,
+    and V1c3c).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
@@ -10,9 +11,13 @@
     code block, is steps:prebuilt (below).
 
       steps:run                       Each line is one command, run in order. A line starts with elm, dotnet, elm-server,
-                                      or elm-service and never with cd; the rest is split on spaces, and a double-quoted
-                                      part is one argument. Each line must exit with 0. Optional keys, about the block's
-                                      last command:
+                                      elm-service, cl, cc, xattr, or a program the page built, and never with cd; the
+                                      rest is split on spaces, and a double-quoted part is one argument. Each line must
+                                      exit with 0. Optional keys:
+                                        os=<os>             windows, linux, or macos: the block runs on that system only
+                                                            and is skipped on the others. It takes no capture, stream,
+                                                            pattern, or env, and a steps:expect cannot follow it.
+                                      and, about the block's last command:
                                         exit=<0-255>        the exit code it must end with instead of 0.
                                         capture=<name>      takes a value from its output. The name is lowercase words
                                                             joined by at least one hyphen (server-key), and a page
@@ -53,11 +58,29 @@
       elm-service   The page's elm-service lines run -ElmService. An elm-service line needs this marker before it.
       packages      Creates the folder packages in the work folder and copies every *.nupkg of -Feed into it (no
                     .snupkg). A dotnet add ... package or dotnet package add line needs this marker before it.
+      libelasticlm  Creates the folder app in the work folder and puts in it the files of the libelasticlm archive: the
+                    library of this system from -Library (elasticlm.dll and elasticlm.lib, libelasticlm.so, or
+                    libelasticlm.dylib), and include/elasticlm.h and LICENSE from the repository. A cl or cc line needs
+                    this marker before it.
+
+    The C lines of Tutorial 4 (design §20.7, V1c3c):
+      cl            In an os=windows block only. It runs the cl.exe of the MSVC x64 environment, which the script reads
+                    once with eng/Get-MsvcEnvironment.ps1, as the reader's x64 Native Tools Command Prompt sets it up.
+                    The line names the file it builds with /Fe:<path>.
+      cc            In an os=linux or os=macos block only; the cc on the PATH. The line names the file it builds with
+                    -o <path>.
+      xattr         In an os=macos block only; the xattr on the PATH.
+      <path>        A program that an earlier cl or cc line of the page builds, named by the same relative path with /
+                    (and, for cl, without .exe), run by its full path in the work folder. No other file can be run.
+    A whole word in single quotes is one argument without its quotes, in an os=linux or os=macos block only; a single quote
+    anywhere else fails. The paths of /Fe:, -o, and a program are relative, with / and without '..', on every system.
 
     elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
     ELM_ (in any case), so that a variable left in the shell cannot override the page's settings file. The one exception
-    is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. elm and
-    dotnet get the environment as it is, and elm lines also ELM_API_KEY once a block captured it with env.
+    is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. cl, cc,
+    xattr, and a program the page built get no ELM_ variable either; cl and the program get the MSVC environment on Windows,
+    which this script's own environment never holds. elm and dotnet get the environment as it is, and elm lines also
+    ELM_API_KEY once a block captured it with env.
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
@@ -87,6 +110,9 @@
     The folder of the ElasticLM packages (.nupkg) for steps:prebuilt name=packages. A page with that marker or a
     dotnet add ... package or dotnet package add line fails without it.
 
+.PARAMETER Library
+    The folder of the published libelasticlm for steps:prebuilt name=libelasticlm. A page with that marker fails without it.
+
 .PARAMETER Page
     The pages to run. Default: README.md and docs/guide/tutorials/*.md at the repository root.
 #>
@@ -96,6 +122,7 @@ param(
     [string]$ElmServer,
     [string]$ElmService,
     [string]$Feed,
+    [string]$Library,
     [string[]]$Page
 )
 
@@ -105,7 +132,15 @@ $elmPath = (Resolve-Path $Elm).Path
 $elmServerPath = $ElmServer ? (Resolve-Path $ElmServer).Path : $null
 $elmServicePath = $ElmService ? (Resolve-Path $ElmService).Path : $null
 $feedPath = $Feed ? (Resolve-Path $Feed).Path : $null
-$prebuiltNames = @('elm', 'elm-server', 'elm-service', 'packages')
+$libraryPath = $Library ? (Resolve-Path $Library).Path : $null
+$prebuiltNames = @('elm', 'elm-server', 'elm-service', 'packages', 'libelasticlm')
+$osNames = @('windows', 'linux', 'macos')
+$thisOs = $IsWindows ? 'windows' : ($IsMacOS ? 'macos' : 'linux')
+# The files of the libelasticlm archive (eng/release/Pack-Rid.ps1, release.yml's "Check the libelasticlm zips"): the
+# library of the OS from -Library, and the header and the license from the repository (design §20.7, V1c3c, review R1).
+$libraryFiles = switch ($thisOs) { 'windows' { @('elasticlm.dll', 'elasticlm.lib') } 'linux' { @('libelasticlm.so') } 'macos' { @('libelasticlm.dylib') } }
+# The OS that runs each new program: a cl line runs on Windows only, cc on Linux and macOS, xattr on macOS.
+$programOs = @{ cl = @('windows'); cc = @('linux', 'macos'); xattr = @('macos') }
 $apiKeyVariable = 'ELM_API_KEY'
 $dotnetPath = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $commandTimeout = [TimeSpan]::FromMinutes(10)
@@ -115,7 +150,7 @@ $probeInterval = 500
 $captureName = '[a-z][a-z0-9]*(?:-[a-z0-9]+)+'
 $valueLimit = 256
 $markerKeys = @{
-    run = @('capture', 'stream', 'pattern', 'exit', 'env')
+    run = @('capture', 'stream', 'pattern', 'exit', 'env', 'os')
     background = @('ready')
     file = @('path')
     expect = @()
@@ -218,18 +253,81 @@ function Read-Marker([string]$at, [string]$text) {
     return [pscustomobject]@{ Kind = $kind; Attributes = $attributes }
 }
 
-function Split-Step([string]$line) {
-    return @([regex]::Matches($line.Trim(), '"([^"]*)"|(\S+)') | ForEach-Object { $_.Groups[1].Success ? $_.Groups[1].Value : $_.Groups[2].Value })
+# The words of a line. A double-quoted part is one argument without its quotes, and so is a whole word in single quotes
+# (Single is then true); any other word is taken as it is.
+function Split-Word([string]$line) {
+    return @([regex]::Matches($line.Trim(), '"(?<double>[^"]*)"|(?<=^|\s)''(?<single>[^'']*)''(?=\s|$)|(?<word>\S+)') | ForEach-Object {
+            if ($_.Groups['double'].Success) { [pscustomobject]@{ Text = $_.Groups['double'].Value; Single = $false } }
+            elseif ($_.Groups['single'].Success) { [pscustomobject]@{ Text = $_.Groups['single'].Value; Single = $true } }
+            else { [pscustomobject]@{ Text = $_.Groups['word'].Value; Single = $false } }
+        })
 }
 
-# The commands of a steps:run or steps:background block, checked before anything runs.
-function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$hidden, [Collections.Generic.HashSet[string]]$prebuilt) {
+function Split-Step([string]$line) {
+    return @(Split-Word $line | ForEach-Object Text)
+}
+
+# A path of a page that names a file in the work folder: relative, with / only, and without '..'. The check is the same on
+# every OS, since [IO.Path]::IsPathRooted takes C:x and \x as relative on Linux and macOS (design §20.7, V1c3c, review R8).
+function Test-RelativePath([string]$path) {
+    return $path -ne '' -and $path -notmatch '^[A-Za-z]:' -and -not $path.StartsWith('/') -and -not $path.Contains('\') -and ($path -split '/') -notcontains '..'
+}
+
+# The file that a cl line (/Fe:<path>) or a cc line (-o <path>) builds; $null when the line names none.
+function Get-BuiltFile([string]$program, [string[]]$words) {
+    if ($program -ceq 'cl') {
+        $output = @($words | Where-Object { $_ -clike '/Fe:*' })
+        return $output.Count -eq 1 ? $output[0].Substring(4) : $null
+    }
+    $index = [array]::IndexOf($words, '-o')
+    return ($index -gt 0 -and $index + 1 -lt $words.Count) ? $words[$index + 1] : $null
+}
+
+# The commands of a steps:run or steps:background block, checked before anything runs. $os is the block's os (or $null),
+# and $built holds the files that the page's earlier cl and cc lines build.
+function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$hidden, [Collections.Generic.HashSet[string]]$prebuilt, [string]$os, [Collections.Generic.HashSet[string]]$built) {
     $lineNumber = $block.Line
     foreach ($line in $block.Lines) {
         $lineNumber++
         if ($line.Trim() -eq '') { continue }
-        [string[]]$words = Split-Step $line
-        switch -CaseSensitive ($words[0]) {
+        $split = @(Split-Word $line)
+        [string[]]$words = @($split | ForEach-Object Text)
+        # A single quote groups a word as bash and PowerShell do, and is taken in the blocks of those shells only: on
+        # Windows the page is typed in PowerShell too, but no Windows line needs it (design §20.7, V1c3c, review R9).
+        foreach ($item in $split) {
+            if ($item.Single -and $os -cnotin 'linux', 'macos') { throw "$($name):$($lineNumber): a single-quoted word is taken in an os=linux or os=macos block only." }
+            if (-not $item.Single -and $item.Text.Contains("'")) { throw "$($name):$($lineNumber): a single quote encloses a whole word." }
+        }
+        $program = $words[0]
+        if ($programOs.ContainsKey($program)) {
+            if ($os -cnotin $programOs[$program]) { throw "$($name):$($lineNumber): $($program -ceq 'xattr' ? 'an' : 'a') $program line stands in a block with os=$($programOs[$program] -join ' or os=')." }
+            if ($program -cin 'cl', 'cc') {
+                if (-not $prebuilt.Contains('libelasticlm')) { throw "$($name):$($lineNumber): a $program line needs a steps:prebuilt name=libelasticlm marker before it." }
+                $output = Get-BuiltFile $program $words
+                if (-not $output -or -not (Test-RelativePath $output)) {
+                    throw "$($name):$($lineNumber): a $program line builds a file in the work folder: $($program -ceq 'cl' ? '/Fe:<path>' : '-o <path>'), relative, with / and without '..'."
+                }
+                [void]$built.Add($output)
+                # PowerShell runs app/app.exe as app/app too, and the page writes the shorter form on every OS.
+                if ($program -ceq 'cl' -and $output.EndsWith('.exe', [StringComparison]::OrdinalIgnoreCase)) { [void]$built.Add($output.Substring(0, $output.Length - 4)) }
+            }
+            $kind = $program
+        }
+        elseif ($program.Contains('/') -or $program.Contains('\') -or $program -match '^[A-Za-z]:') {
+            # A program that the page built: only a file that an earlier cl or cc line of the page builds, so that a page
+            # cannot run any other file (design §20.7, V1c3c, reviews R2 and R8).
+            if (-not (Test-RelativePath $program)) { throw "$($name):$($lineNumber): a program the page built is named by a relative path, with / and without '..'." }
+            if (-not $built.Contains($program)) { throw "$($name):$($lineNumber): $program is not a file that an earlier cl or cc line of the page builds." }
+            $kind = 'app'
+        }
+        else {
+            $kind = $program
+        }
+        switch -CaseSensitive ($kind) {
+            'cl' { }
+            'cc' { }
+            'xattr' { }
+            'app' { }
             'elm' { }
             'dotnet' {
                 # dotnet add <project> package <id>, dotnet add package <id> in the project's folder, and the newer
@@ -248,7 +346,7 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
                 if (-not $prebuilt.Contains('elm-service')) { throw "$($name):$($lineNumber): an elm-service line needs a steps:prebuilt name=elm-service marker before it." }
             }
             'cd' { throw "$($name):$($lineNumber): a step does not change the folder (cd); pass the folder as an argument." }
-            default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, elm-server, or elm-service, not $($words[0])." }
+            default { throw "$($name):$($lineNumber): a step starts with elm, dotnet, elm-server, elm-service, cl, cc, xattr, or a program the page built, not $($words[0])." }
         }
         # Any <name> in an argument, a single word such as <repo> or <RID> included, is a placeholder, and only a name
         # captured earlier on the page fills one; a name that cannot be captured is never filled.
@@ -262,7 +360,7 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
                 }
             }
         }
-        [pscustomobject]@{ Line = $lineNumber; Words = $words; Shown = ($words | Select-Object -First 2) -join ' ' }
+        [pscustomobject]@{ Line = $lineNumber; Words = $words; Kind = $kind; Shown = ($words | Select-Object -First 2) -join ' ' }
     }
 }
 
@@ -280,8 +378,11 @@ function Read-Plan([string]$name, [object]$parsed) {
     # Every name a steps:run marker of the page captures, so that a steps:file block can tell a name captured later from
     # text such as a usage line's <data-folder>.
     $pageCaptures = @($parsed.Blocks | Where-Object Marker | ForEach-Object { [regex]::Match($_.Marker, '\scapture=([^\s"]+)').Groups[1].Value } | Where-Object { $_ })
+    # The files that the page's cl and cc lines build, which are the only programs a line may run by path.
+    $built = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $plan = [Collections.Generic.List[object]]::new()
     $previous = $null
+    $previousOs = $null
     foreach ($block in Get-Marked $parsed) {
         $at = "$($name):$($block.Order)"
         if ($block.PSObject.Properties['Text']) {
@@ -294,9 +395,18 @@ function Read-Plan([string]$name, [object]$parsed) {
             $marker = Read-Marker $at $block.Marker
         }
         $attributes = $marker.Attributes
-        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null }
+        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null }
         switch ($marker.Kind) {
             'run' {
+                if ($attributes.ContainsKey('os')) {
+                    if ($attributes['os'] -cnotin $osNames) { throw "$($at): os is windows, linux, or macos." }
+                    # A block that another OS skips would leave its captured name without a value (design §20.7, V1c3c,
+                    # review R5).
+                    if ($attributes.ContainsKey('capture') -or $attributes.ContainsKey('stream') -or $attributes.ContainsKey('pattern') -or $attributes.ContainsKey('env')) {
+                        throw "$($at): a block with os takes no capture, stream, pattern, or env."
+                    }
+                    $step.Os = $attributes['os']
+                }
                 $capture = $attributes.ContainsKey('capture') ? $attributes['capture'] : $null
                 if (-not $capture -and ($attributes.ContainsKey('stream') -or $attributes.ContainsKey('pattern') -or $attributes.ContainsKey('env'))) {
                     throw "$($at): stream, pattern, and env need capture."
@@ -322,7 +432,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     if ($attributes['exit'] -cnotmatch '^(0|[1-9][0-9]{0,2})$' -or [int]$attributes['exit'] -gt 255) { throw "$($at): exit is an integer from 0 to 255." }
                     $step.Exit = [int]$attributes['exit']
                 }
-                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt)
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $step.Os $built)
                 if ($step.Commands.Count -eq 0) { throw "$($name):$($block.Line): the steps:run block is empty." }
                 if ($null -ne $capture) {
                     if ($attributes.ContainsKey('env')) { [void]$hidden.Add($capture) } else { [void]$captured.Add($capture) }
@@ -344,7 +454,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     throw "$($at): ready of $program is $($program -ceq 'elm-service' ? 'an http or https' : 'an https') URL on 127.0.0.1, localhost, or [::1]."
                 }
                 $step.Ready = $ready
-                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt)
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $null $built)
             }
             'file' {
                 $value = $attributes.ContainsKey('path') ? $attributes['path'] : ''
@@ -370,28 +480,66 @@ function Read-Plan([string]$name, [object]$parsed) {
             }
             'expect' {
                 if ($previous -ne 'run') { throw "$($at): steps:expect must follow a steps:run block." }
+                # The block before it would be skipped on the other OSes, which would then check another block's output.
+                if ($previousOs) { throw "$($at): steps:expect follows a steps:run block without os." }
             }
             'prebuilt' {
-                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, name=elm-service, or name=packages." }
+                if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, name=elm-service, name=packages, or name=libelasticlm." }
                 if (-not $prebuilt.Add($attributes['name'])) { throw "$($at): steps:prebuilt name=$($attributes['name']) is given twice on the page." }
             }
         }
         $plan.Add($step)
         # A steps:prebuilt marker runs nothing, so a steps:expect after it still checks the steps:run block before it.
-        if ($marker.Kind -cne 'prebuilt') { $previous = $marker.Kind }
+        if ($marker.Kind -cne 'prebuilt') { $previous = $marker.Kind; $previousOs = $step.Os }
     }
     if ($plan.Count -eq 0) { throw "$name has no steps." }
+    if (-not $libraryPath -and $prebuilt.Contains('libelasticlm')) { throw "$name needs -Library: it puts libelasticlm in the folder app." }
     if (-not $elmServerPath -and $prebuilt.Contains('elm-server')) { throw "$name needs -ElmServer: it runs elm-server." }
     if (-not $elmServicePath -and $prebuilt.Contains('elm-service')) { throw "$name needs -ElmService: it runs elm-service." }
     if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
     return $plan
 }
 
+# The MSVC x64 environment of the reader's x64 Native Tools Command Prompt, read once in the run, the first time a cl line
+# runs (eng/Get-MsvcEnvironment.ps1). It goes to the processes of cl and app lines only, never to this script's own
+# environment (design §20.7, V1c3c, review R3).
+function Get-Msvc {
+    if (-not $script:msvc) {
+        try { $script:msvc = & (Join-Path $repoRoot 'eng/Get-MsvcEnvironment.ps1') -Architecture x64 }
+        catch { throw "a cl line needs Visual Studio with the C++ tools for x64: $($_.Exception.Message)" }
+    }
+    return $script:msvc
+}
+
+# The full path of a program on a PATH; .NET looks a bare name up in this script's own PATH, not in the PATH a process is
+# given, so cl is looked up in the MSVC environment's PATH here (design §20.7, V1c3c, review R2).
+function Find-Program([string]$program, [string]$path) {
+    $file = $IsWindows ? "$program.exe" : $program
+    foreach ($folder in $path -split [IO.Path]::PathSeparator) {
+        if ($folder -eq '') { continue }
+        $candidate = Join-Path $folder $file
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+    }
+    throw "$program is not on the PATH."
+}
+
 # A process in the work folder. elm-server gets no ELM_ variable: it reads ELM_<KEY> before its settings file.
 # elm-service likewise, except that the background elm-service gets the run's passphrase for its signing key. An elm line
-# gets the API key captured with env; no other program gets it, and this script's own environment never holds it.
-function New-StartInfo([string]$program, [string[]]$arguments, [string]$folder, [string]$apiKey, [switch]$Background) {
-    $file = switch -CaseSensitive ($program) { 'elm' { $elmPath } 'dotnet' { $dotnetPath } 'elm-server' { $elmServerPath } 'elm-service' { $elmServicePath } }
+# gets the API key captured with env; no other program gets it, and this script's own environment never holds it. cl, cc,
+# xattr, and a program the page built get no ELM_ variable either, so that the run's passphrase stays with elm (design
+# §20.7, V1c3c, review R10); cl and the built program get the MSVC environment on Windows.
+function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [string]$folder, [string]$apiKey, [switch]$Background) {
+    $file = switch -CaseSensitive ($kind) {
+        'elm' { $elmPath }
+        'dotnet' { $dotnetPath }
+        'elm-server' { $elmServerPath }
+        'elm-service' { $elmServicePath }
+        'cl' { Find-Program 'cl' (Get-Msvc)['PATH'] }
+        'cc' { Find-Program 'cc' $env:PATH }
+        'xattr' { Find-Program 'xattr' $env:PATH }
+        # A relative path, so that it never names a file outside the work folder (Read-Command).
+        'app' { Join-Path $folder $program }
+    }
     $info = [Diagnostics.ProcessStartInfo]::new($file)
     foreach ($argument in $arguments) { $info.ArgumentList.Add($argument) }
     $info.WorkingDirectory = $folder
@@ -399,13 +547,16 @@ function New-StartInfo([string]$program, [string[]]$arguments, [string]$folder, 
     $info.RedirectStandardInput = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
-    if ($program -cin 'elm-server', 'elm-service') {
+    if ($kind -cin 'elm-server', 'elm-service', 'cl', 'cc', 'xattr', 'app') {
         foreach ($variable in @($info.Environment.Keys)) {
             if ($variable.StartsWith('ELM_', [StringComparison]::OrdinalIgnoreCase)) { [void]$info.Environment.Remove($variable) }
         }
     }
-    if ($program -ceq 'elm-service' -and $Background) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
-    if ($program -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }
+    if ($IsWindows -and ($kind -ceq 'cl' -or ($kind -ceq 'app' -and $script:msvc))) {
+        foreach ($entry in (Get-Msvc).GetEnumerator()) { $info.Environment[$entry.Key] = $entry.Value }
+    }
+    if ($kind -ceq 'elm-service' -and $Background) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
+    if ($kind -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }
     return $info
 }
 
@@ -463,7 +614,7 @@ function Get-CapturedValue([string]$at, [object]$step, [object]$result) {
 function Start-Background([string]$name, [object]$step, [hashtable]$values, [string]$folder) {
     $command = $step.Commands[0]
     $at = "$($name):$($command.Line)"
-    $info = New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $folder -Background
+    $info = New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $folder -Background
     try { $process = [Diagnostics.Process]::Start($info) }
     catch { throw "$($at): $($command.Shown) could not be started." }
     # Set before anything else can fail, so that the end of the page stops the process.
@@ -571,13 +722,22 @@ function Invoke-Page([string]$path) {
         $apiKey = $null
         foreach ($step in $plan) {
             $block = $step.Block
+            # A block for another OS is skipped; its marker and lines were checked with the rest of the page.
+            if ($step.Os -and $step.Os -cne $thisOs) {
+                "skip: $($name):$($block.Line - 1): os=$($step.Os)"
+                continue
+            }
             switch ($step.Kind) {
                 'run' {
                     $last = $step.Commands[-1]
                     foreach ($command in $step.Commands) {
                         $expected = $command.Line -eq $last.Line ? $step.Exit : 0
-                        try { $result = Invoke-Step (New-StartInfo $command.Words[0] (Resolve-Argument $command.Words $values) $work $apiKey) }
-                        catch { throw "$($name):$($command.Line): $($command.Shown) could not be run." }
+                        try { $result = Invoke-Step (New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $work $apiKey) }
+                        catch {
+                            # The reason a compiler or a tool cannot be found holds no argument, output, or value.
+                            $reason = $command.Kind -cin 'cl', 'cc', 'xattr' ? ": $($_.Exception.Message)" : '.'
+                            throw "$($name):$($command.Line): $($command.Shown) could not be run$reason"
+                        }
                         if ($result.ExitCode -ne $expected) {
                             throw "$($name):$($command.Line): $($command.Shown) exited with $($result.ExitCode)$($expected -ne 0 ? ", not $expected" : '')."
                         }
@@ -633,7 +793,19 @@ function Invoke-Page([string]$path) {
                         if ($nupkgs.Count -eq 0) { throw "$($name):$($block.Order): -Feed holds no .nupkg file." }
                         foreach ($nupkg in $nupkgs) { Copy-Item -LiteralPath $nupkg.FullName -Destination $target }
                     }
-                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } }
+                    elseif ($prebuiltName -ceq 'libelasticlm') {
+                        # The files of the archive the reader extracts into app: the library from -Library, without its
+                        # debug symbols, and the header and the license from the repository, which Pack-Rid.ps1 adds.
+                        $target = Join-Path $work 'app'
+                        New-Item -ItemType Directory -Force $target | Out-Null
+                        foreach ($file in $libraryFiles) {
+                            $source = Join-Path $libraryPath $file
+                            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$($name):$($block.Order): -Library holds no $file." }
+                            Copy-Item -LiteralPath $source -Destination $target
+                        }
+                        Copy-Item -LiteralPath (Join-Path $repoRoot 'include/elasticlm.h'), (Join-Path $repoRoot 'LICENSE') -Destination $target
+                    }
+                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } 'libelasticlm' { '-Library' } }
                     "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
                 }
             }
@@ -659,6 +831,7 @@ function Get-LeftMessage([string]$name, [string[]]$folders) {
 }
 
 $script:background = $null
+$script:msvc = $null
 # The run's passphrase of the page that runs: ELM_KEY_PASSPHRASE of its elm lines, and the background elm-service's
 # ELM_SIGNING_PASSPHRASE.
 $script:passphrase = $null
