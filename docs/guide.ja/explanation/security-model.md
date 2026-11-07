@@ -145,7 +145,7 @@ gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
 
 ### リリースとこのサイト
 
-- **実行ファイルと `libelasticlm` には、Authenticode と Developer ID の署名がない**（`osx-arm64` のファイルにあるのは、リンカーが付ける ad-hoc の署名だけ）。 Windows SmartScreen が警告を出すことがある。macOS Gatekeeper は、ファイルを検証したうえで quarantine 属性を外すまで開かない（[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)を参照）。
+- **実行ファイルと `libelasticlm` には、Authenticode の署名も Developer ID の署名もない**（`osx-arm64` のファイルにあるのは、リンカーが付ける ad-hoc の署名だけ）。Windows SmartScreen が警告を出すことがある。macOS Gatekeeper は、ファイルを検証したうえで quarantine 属性を外すまで開かない（[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)を参照）。
 - **オーナーの GitHub や nuget.org のアカウントが乗っ取られる。** アカウントを手に入れた者は、タグの作成、承認、公開、イメージのタグの付け替え、このサイトの変更ができ、attestation も正しく見える。パスキーによって乗っ取りは難しくなり、イミュータブルなリリースによって公開済みのファイルは変わらない。
 - **GitHub やそのランナーが侵害される。** リリースと attestation は GitHub に依存している。
 - **attestation が示すのは、どのワークフローがどのコミットをビルドしたかだけだ。** オーナーがマージした問題のあるコミットにも、正しい attestation が付く。コードそのものは、コードレビューと CI で守る。
