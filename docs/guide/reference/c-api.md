@@ -8,40 +8,31 @@ This page lists every function, type, and constant of `libelasticlm`, the C libr
 
 ## Getting and linking the library
 
-A release publishes on the [GitHub Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) one archive per platform, `libelasticlm-<version>-<rid>.zip` for Windows and `libelasticlm-<version>-<rid>.tar.gz` for Linux and macOS. It holds the library, the header `elasticlm.h`, and `LICENSE`, all at the top of the archive; the Windows archive also holds the import library `elasticlm.lib`. A separate `-symbols` archive holds the debug symbols. The library is built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says how to check a downloaded archive.
+A release publishes on the [GitHub Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) one archive per platform, `libelasticlm-<version>-<rid>.zip` for Windows and `libelasticlm-<version>-<rid>.tar.gz` for Linux and macOS. Its files are at the top of the archive, not inside a folder; the table below lists them. A separate `-symbols` archive holds the debug symbols. The library is built for `win-x64`, `win-arm64`, `linux-x64`, `linux-arm64`, `linux-musl-x64`, `osx-arm64`, and `osx-x64`. [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says how to check a downloaded archive.
 
 - It is a NativeAOT library and cannot be unloaded: do not call `FreeLibrary` or `dlclose` on it.
 - It carries the .NET runtime inside. Besides the library itself, an app needs only what the table below lists at run time.
-- An app can link against the library at build time, as the table and the commands below show, or load it at run time. `ELM_FUNCTION` declares each function and also a pointer type to it named after the function with `_fn` (`elm_verifier_create_fn`), for programs that load the library with `LoadLibrary` and `GetProcAddress`, or `dlopen` and `dlsym`, and call each function through its `_fn` type. `LoadLibrary` with a full path loads that file; with a bare name, Windows looks for it in its DLL search order.
+- An app can link against the library at build time, as the table below shows, or load it at run time. `ELM_FUNCTION` declares each function and also a pointer type to it named after the function with `_fn` (`elm_verifier_create_fn`), for programs that load the library with `LoadLibrary` and `GetProcAddress`, or `dlopen` and `dlsym`, and call each function through its `_fn` type. `LoadLibrary` with a full path loads that file; with a bare name, Windows looks for it in its DLL search order.
 
-| Platform | Files | Linking at build time | Needs at run time |
+The table uses these terms:
+
+- Import library (Windows): a small file, here `elasticlm.lib`, that the linker reads to resolve the app's calls into a DLL. It holds no code; the code is in `elasticlm.dll`.
+- Run-time search path (rpath): a list of folders that the linker writes into the app. At run time, the system's loader looks for shared libraries there. `$ORIGIN` (Linux) and `@executable_path` (macOS) stand for the folder of the app's executable.
+- SONAME (Linux): a name that a shared library can carry. When the library has one, the linker records it in the app instead of the file name it was given.
+- Install name (macOS): the name that a library carries. The linker records it in the app, and the loader looks for the library by it. `@rpath/` at its start makes the loader look in each folder of the app's run-time search path.
+- Authenticode signature, Developer ID signature: the code signature that a publisher puts on a file, on Windows and on Apple's platforms. It shows who published the file.
+- Ad-hoc signature: a macOS code signature without a certificate. It shows no publisher.
+
+| | Windows | Linux | macOS |
 | --- | --- | --- | --- |
-| Windows | `elasticlm.dll`, and the import library `elasticlm.lib` | Link against `elasticlm.lib`. `ELM_API` is `__declspec(dllimport)` on Windows, so a call to a function of the header needs the import library at link time. At run time Windows finds `elasticlm.dll` in its DLL search order, which starts with the app's own folder. | Only DLLs that are part of Windows. |
-| Linux | `libelasticlm.so` | Link with `-L <folder> -lelasticlm`, and give the app a run-time search path, such as `-Wl,-rpath,'$ORIGIN'` for the app's own folder. The library has no `SONAME`, so the app records the file name it was linked with: link with `-lelasticlm`, not with a path to the file, or the app looks for that path at run time. | `linux-x64` and `linux-arm64`: glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, and later). `linux-musl-x64`: musl, as on Alpine. The cryptography, license verification included, and HTTPS use the system's OpenSSL (`libssl`), which the library loads when it first needs it, so OpenSSL must be installed; HTTPS also needs the system's CA certificates. ICU is not needed. |
-| macOS | `libelasticlm.dylib` | Link with `-L <folder> -lelasticlm` and `-arch` of the library (`arm64` for `osx-arm64`, `x86_64` for `osx-x64`). The library's install name is `@rpath/libelasticlm.dylib`, so give the app a run-time search path, such as `-Wl,-rpath,@executable_path` for the app's own folder. | macOS 12.0 or later, and only libraries and frameworks that are part of macOS. The library has no Developer ID signature and is not notarized (the `osx-arm64` library carries only the ad-hoc signature that the linker adds): Gatekeeper refuses a downloaded copy until its quarantine attribute is removed, as [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says. |
-
-These commands build `app.c` with the archive unpacked into the folder `libelasticlm` beside it, and copy the library next to the app, where the search paths above find it.
-
-Windows, in a Developer Command Prompt for Visual Studio:
-
-```bat
-cl /I libelasticlm app.c libelasticlm\elasticlm.lib
-copy libelasticlm\elasticlm.dll .
-```
-
-Linux:
-
-```sh
-gcc -I libelasticlm app.c -o app -L libelasticlm -lelasticlm -Wl,-rpath,'$ORIGIN'
-cp libelasticlm/libelasticlm.so .
-```
-
-macOS, for `osx-arm64`:
-
-```sh
-clang -arch arm64 -I libelasticlm app.c -o app -L libelasticlm -lelasticlm -Wl,-rpath,@executable_path
-cp libelasticlm/libelasticlm.dylib .
-```
+| Files in the archive | `elasticlm.dll`, the import library `elasticlm.lib`, `elasticlm.h`, `LICENSE` | `libelasticlm.so`, `elasticlm.h`, `LICENSE` | `libelasticlm.dylib`, `elasticlm.h`, `LICENSE` |
+| Linking at build time | Link against `elasticlm.lib`. `ELM_API` is `__declspec(dllimport)` on Windows, so a call to a function of the header needs the import library at link time. | `-L <folder> -lelasticlm` | `-L <folder> -lelasticlm` |
+| Architecture of the app | The app is built for the archive's architecture: x64 for `win-x64`, ARM64 for `win-arm64`. With MSVC, that is the x64 or ARM64 Native Tools Command Prompt of Visual Studio. The default Developer Command Prompt builds for x86: the linker warns LNK4272 (library machine type 'x64' conflicts with target machine type 'x86') and the link fails. | The app is built for the archive's architecture. `linux-musl-x64` is linked on a musl system, such as Alpine. `linux-arm64` needs an arm64 toolchain or a cross toolchain. | `-arch x86_64` for `osx-x64`, `-arch arm64` for `osx-arm64`. |
+| Name of the library recorded in the app | `elasticlm.dll`, from the import library. | The library has no `SONAME`, so the app records the name given to the linker: `libelasticlm.so` for `-lelasticlm`, or the path for a path to the file, and the app then looks for that path at run time. Link with `-lelasticlm`, not with a path. | The install name, `@rpath/libelasticlm.dylib`. |
+| Where the app finds the library at run time | Windows' DLL search order, which starts with the app's own folder. Windows has no run-time search path. | The run-time search path: `-Wl,-rpath,'$ORIGIN'` for the app's own folder. | The run-time search path: `-Wl,-rpath,@executable_path` for the app's own folder. |
+| Writing `$ORIGIN` | — | `'$ORIGIN'` in a shell, `$$ORIGIN` in a Makefile, and in PowerShell the whole option in single quotes: `'-Wl,-rpath,$ORIGIN'`. | — |
+| Needs at run time | Only DLLs that are part of Windows. | `linux-x64` and `linux-arm64`: glibc 2.28 or later (RHEL 8, Debian 10, Ubuntu 20.04, and later). `linux-musl-x64`: musl, as on Alpine. The cryptography, license verification included, and HTTPS use the system's OpenSSL (`libssl`), which the library loads when it first needs it, so OpenSSL must be installed; HTTPS also needs the system's CA certificates. ICU is not needed. | macOS 12.0 or later, and only libraries and frameworks that are part of macOS. |
+| Code signature | No Authenticode signature. | — | No Developer ID signature, and not notarized. The `osx-arm64` library carries only the ad-hoc signature that the linker adds. Gatekeeper refuses a downloaded copy until its quarantine attribute is removed, as [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) says. |
 
 ## Rules for every function
 
