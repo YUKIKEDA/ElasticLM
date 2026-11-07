@@ -24,7 +24,7 @@ Exit codes of the service:
 | Exit code | Meaning |
 | --- | --- |
 | 0 | The service stopped normally. |
-| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or a certificate file cannot be read, the signing key and its certificates do not match, the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
+| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or a certificate file cannot be read, the signing key and its certificates do not match, the TLS certificate cannot be read or has an Extended Key Usage that does not include server authentication (`1.3.6.1.5.5.7.3.1`), the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
 | 2 | The arguments are not valid, or a setting error: the configuration file or a value is not valid, or a required value is missing. |
 
 Exit codes of `setup`:
@@ -82,7 +82,7 @@ These settings do not follow the rule:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none | The PEM certificate for an `https` `listen`. |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none | The PEM certificate for an `https` `listen`. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
 | `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of `tls.certificate`. |
 
 ## `database`
