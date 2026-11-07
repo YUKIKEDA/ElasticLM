@@ -1,0 +1,61 @@
+# Temporary: measures macOS quarantine for V1c3c (Issue #236, design §20.7 Q6). Removed before the PR is ready.
+name: Measure quarantine
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-quarantine.yml
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Measure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -u
+          sw_vers
+          mkdir m && cd m
+          echo '== curl'
+          curl -sSL -o hello.tar.gz https://ftp.gnu.org/gnu/hello/hello-2.12.tar.gz
+          xattr -l hello.tar.gz; echo "xattr exit $?"
+          echo '== gh release download'
+          gh release download --repo cli/cli --pattern '*_checksums.txt' --dir gh
+          xattr -l gh/*; echo "xattr exit $?"
+
+          echo '== a library and an app, as Tutorial 4 builds them'
+          mkdir src
+          printf 'int lib_value(void) { return 42; }\n' > src/lib.c
+          cc -dynamiclib -o src/libdemo.dylib src/lib.c -install_name @rpath/libdemo.dylib
+          printf '#include <stdio.h>\nint lib_value(void);\nint main(void) { printf("value %%d\\n", lib_value()); return 0; }\n' > src/app.c
+          (cd src && tar -czf ../demo.tar.gz libdemo.dylib app.c)
+          echo '== quarantine the archive as a browser does'
+          xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" demo.tar.gz
+          xattr -l demo.tar.gz
+          mkdir app
+          tar -xzf demo.tar.gz -C app
+          echo '== attributes after tar'
+          for f in app/*; do echo "$f:"; xattr -l "$f"; done
+          echo '== link and run with the attribute'
+          cc -std=c11 -o app/app app/app.c -L app -ldemo -Wl,-rpath,@executable_path; echo "cc exit $?"
+          xattr -l app/app; echo "(attributes of the built app above)"
+          app/app; echo "run exit $?"
+          spctl --assess --type execute -v app/app 2>&1; echo "spctl app exit $?"
+          spctl --assess --type execute -v app/libdemo.dylib 2>&1; echo "spctl dylib exit $?"
+          echo '== xattr -dr with the attribute'
+          xattr -dr com.apple.quarantine app; echo "xattr -dr exit $?"
+          for f in app/*; do echo "$f:"; xattr -l "$f"; done
+          echo '== xattr -dr without the attribute'
+          xattr -dr com.apple.quarantine app; echo "xattr -dr again exit $?"
+          xattr -d com.apple.quarantine app/app.c; echo "xattr -d one file without the attribute exit $?"
+          app/app; echo "run after exit $?"
+          echo '== quarantined executable (a downloaded app that runs)'
+          cp app/app app/app2
+          xattr -w com.apple.quarantine "0083;$(printf %x "$(date +%s)");Safari;$(uuidgen)" app/app2
+          app/app2; echo "quarantined executable run exit $?"
