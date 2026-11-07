@@ -5,8 +5,9 @@ using System.Net.Sockets;
 namespace ElasticLM.E2E;
 
 /// <summary>
-/// The published elm-server and elm-service on a port another socket holds: each ends with exit code 1 and one line that
-/// names the address, after the host's own log (design §13.1, §14.8, V1c9).
+/// The published elm-server and elm-service on a port another socket holds: each ends with exit code 1 and one line on
+/// standard error that names the address, after the host's own "Hosting failed to start" on standard output (design §13.1,
+/// §14.8, V1c9).
 /// </summary>
 public sealed class ListenTests
 {
@@ -17,13 +18,15 @@ public sealed class ListenTests
     /// <remarks>
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license issued by elm, bound to the key the server made on its
-    ///   first run; a TcpListener of the test started on 127.0.0.1 at the server's listen port.
+    ///   first run; a TcpListener of the test started on 127.0.0.1 at the server's listen port right after the port was
+    ///   chosen, before that first run.
     ///
     /// Steps:
     /// - Run the server to its end.
     ///
     /// Expected:
-    /// - Exit code 1; the last line of standard error begins "error: elm-server cannot listen on https://127.0.0.1:{port}/ and ".
+    /// - Exit code 1; standard output holds "Hosting failed to start"; the last line of standard error begins
+    ///   "error: elm-server cannot listen on https://127.0.0.1:{port}/ and ".
     /// </remarks>
     [Fact]
     public async Task Server_ListenPortHeld_ExitsWithOneLine()
@@ -31,6 +34,11 @@ public sealed class ListenTests
         await using Vendor vendor = await Vendor.CreateAsync("license", "lease");
         string license = vendor.File("server.elmlic");
         await using ServerProcess server = ServerProcess.Prepare(vendor, "server", "acme-cad", license);
+
+        // Held right after Prepare found the port free, not after the license is issued: another process can take the port
+        // only in the short time between the two. The run without a license below ends before the server listens.
+        using var holder = new TcpListener(IPAddress.Loopback, server.Url.Port);
+        holder.Start();
         string serverKey = await server.InstallationKeyAsync();
         string expires = DateTimeOffset.UtcNow.AddDays(30).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         await vendor.ElmOkAsync(
@@ -57,12 +65,11 @@ public sealed class ListenTests
             "--out",
             license
         );
-        using var holder = new TcpListener(IPAddress.Loopback, server.Url.Port);
-        holder.Start();
 
-        (int code, _, string error) = await server.RunToExitAsync();
+        (int code, string output, string error) = await server.RunToExitAsync();
 
         Assert.Equal(1, code);
+        Assert.Contains("Hosting failed to start", output, StringComparison.Ordinal);
         Assert.StartsWith($"error: elm-server cannot listen on https://127.0.0.1:{server.Url.Port}/ and ", LastLine(error), StringComparison.Ordinal);
     }
 
@@ -79,7 +86,8 @@ public sealed class ListenTests
     /// - Run the service to its end.
     ///
     /// Expected:
-    /// - Exit code 1; the last line of standard error begins "elm-service cannot listen on http://127.0.0.1:{port}/: ".
+    /// - Exit code 1; standard output holds "Hosting failed to start"; the last line of standard error begins
+    ///   "elm-service cannot listen on http://127.0.0.1:{port}/: ".
     /// </remarks>
     [Fact]
     public async Task Service_ListenPortHeld_ExitsWithOneLine()
@@ -89,9 +97,10 @@ public sealed class ListenTests
         holder.Start();
         int port = ((IPEndPoint)holder.LocalEndpoint).Port;
 
-        (int code, _, string error) = await ServiceProcess.RunToExitAsync(vendor, port);
+        (int code, string output, string error) = await ServiceProcess.RunToExitAsync(vendor, port);
 
         Assert.Equal(1, code);
+        Assert.Contains("Hosting failed to start", output, StringComparison.Ordinal);
         Assert.StartsWith($"elm-service cannot listen on http://127.0.0.1:{port}/: ", LastLine(error), StringComparison.Ordinal);
     }
 
