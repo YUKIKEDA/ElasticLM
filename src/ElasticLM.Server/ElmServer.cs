@@ -1,5 +1,6 @@
 using System.Collections.Frozen;
 using System.Net;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text;
@@ -33,6 +34,9 @@ internal sealed class ServerHostOptions
     /// <summary>Gets a value indicating whether a broken borrow record is moved aside instead of stopping the start
     /// (<c>--set-aside-broken-records</c>, design §13.4).</summary>
     public bool SetAsideBrokenRecords { get; init; }
+
+    /// <summary>Gets one more logger provider, which the host disposes with itself, for tests that read the host's log.</summary>
+    public ILoggerProvider? LoggerProvider { get; init; }
 }
 
 /// <summary>
@@ -174,7 +178,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// Starts the server as design §13.1 says: settings, installation key, trust store, server license, the borrow record,
     /// TLS, the usage log, then listening with the reclaim window open.
     /// </summary>
-    /// <exception cref="ServerStartException">The server cannot start; the message says why.</exception>
+    /// <exception cref="ServerStartException">The server cannot start, including when it cannot listen on <c>listen</c> or
+    /// <c>admin.listen</c>; the message says why.</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -225,10 +230,28 @@ internal sealed partial class ElmServer : IAsyncDisposable
             disposables.Add(certificate);
 
             WebApplication app = Build(settings, certificate, host);
+
+            // design §13.1 (V1c9, R2): a failed start disposes the host too, which writes out the console log before Program
+            // prints the last line.
+            disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-server");
             SigningKeyAccess access = use => key.WithPrivateKey(use);
             UsageLog usage = OpenUsageLog(settings, store, access, licenseFile!, keyJwk, host.Time, log);
             disposables.Add(usage);
+
+            // design §13.1 (V1c9, R1): the record was set aside already, and the next start does not set it aside again, so
+            // this start's usage log records it before listening, which can fail.
+            if (journal.SetAside is string aside)
+            {
+                ServerLog.RecordSetAside(log, aside);
+                usage.Write("records.set_aside", w => w.WriteString("file", Path.GetFileName(aside)));
+            }
+
+            if (usage.ResetReason is string reason)
+            {
+                ServerLog.ChainReset(log, UsageLog.Stream, reason);
+            }
+
             LeaseEngine? created = null;
             var engine = new LeaseEngine(
                 identity!,
@@ -274,7 +297,19 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 )
             );
             server.Map();
-            await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await app.StartAsync(cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is IOException or SocketException)
+            {
+                // Kestrel turns only an address in use into an IOException (AddressBinder.BindEndpointAsync, aspnetcore
+                // release/10.0); other socket errors, such as an address this machine does not have, stay SocketException
+                // (Socket.Bind to 192.0.2.1: SocketError.AddressNotAvailable on Windows 11 with .NET 10 and on Ubuntu 22.04
+                // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, V1c9).
+                throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {settings.AdminListen}: {e.Message}");
+            }
+
             server.AfterStart(host.Time.GetElapsedTime(started));
             await server.RestartActivationAsync().ConfigureAwait(false);
             return server;
@@ -535,6 +570,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
+        if (host.LoggerProvider is ILoggerProvider provider)
+        {
+            // Registered through a factory, so the host's services dispose it as they dispose the console logger.
+            builder.Services.AddSingleton(_ => provider);
+        }
+
         builder.WebHost.UseKestrelHttpsConfiguration();
         builder.WebHost.ConfigureKestrel(kestrel =>
         {
@@ -645,17 +686,6 @@ internal sealed partial class ElmServer : IAsyncDisposable
         {
             // design §13.7: a refreshed file that could not be written or reloaded is tried again every hour.
             _sync = Time.CreateTimer(_ => SyncKept(), null, SyncInterval, SyncInterval);
-        }
-
-        if (_journal.SetAside is string aside)
-        {
-            ServerLog.RecordSetAside(_log, aside);
-            _usage.Write("records.set_aside", w => w.WriteString("file", Path.GetFileName(aside)));
-        }
-
-        if (_usage.ResetReason is string reason)
-        {
-            ServerLog.ChainReset(_log, UsageLog.Stream, reason);
         }
 
         _usage.Write(
