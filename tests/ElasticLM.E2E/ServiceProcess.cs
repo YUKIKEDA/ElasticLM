@@ -71,45 +71,11 @@ internal sealed class ServiceProcess : IAsyncDisposable
     /// <param name="database"><c>sqlite</c> or <c>postgres</c>.</param>
     public static async Task<ServiceProcess> StartAsync(Vendor vendor, string database)
     {
-        var url = new Uri($"http://127.0.0.1:{FreePort()}");
-        string usageLog = vendor.File("usage-log");
-        Dictionary<string, string?> environment = new()
-        {
-            ["ELM_LISTEN"] = url.ToString(),
-            ["ELM_SIGNING_KEY"] = vendor.SigningKey,
-            ["ELM_SIGNING_CERTIFICATES"] = vendor.Certificate,
-            ["ELM_SIGNING_PASSPHRASE"] = Vendor.Passphrase,
-            ["ELM_TRUST_ROOTKEYS"] = vendor.RootPublicKey,
-            ["ELM_NONCE_SECRET"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
-            ["ELM_BOOTSTRAPOWNER_ISS"] = "https://idp.example",
-            ["ELM_BOOTSTRAPOWNER_SUB"] = "e2e-owner",
-            ["ELM_USAGELOG_DIRECTORY"] = usageLog,
-            ["ELM_NODE_NAME"] = NodeName,
-
-            // A test makes its records faster than an administrator would (testing.mdc).
-            ["ELM_RATELIMIT_PERKEY"] = "1000",
-            ["ELM_RATELIMIT_PERIP"] = "1000",
-            ["ELM_RATELIMIT_CLIENTPERIP"] = "1000",
-            ["ELM_RATELIMIT_CLIENTPERKEY"] = "1000",
-        };
-        string? created = null;
-        if (database == "postgres")
-        {
-            created = "elm_e2e_" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(6));
-            await PostgresAsync($"CREATE DATABASE {created}");
-            environment["ELM_DATABASE_PROVIDER"] = "postgres";
-            environment["ELM_DATABASE_CONNECTION"] = new NpgsqlConnectionStringBuilder(PostgresServer) { Database = created }.ConnectionString;
-        }
-        else
-        {
-            environment["ELM_DATABASE_CONNECTION"] = "Data Source=" + vendor.File("service.db");
-        }
-
-        // The key setup prints is a secret: it goes to the admin client only, never into a message (security.mdc).
-        (int code, string key, string error) = await Binaries.RunAsync(Binaries.Service, ["setup"], vendor.Folder, environment);
-        key = key.Trim();
-        Assert.True(code == 0 && key.StartsWith("elm_", StringComparison.Ordinal), $"elm-service setup exited with {code}: {error}");
-
+        (Uri url, Dictionary<string, string?> environment, string key, string? created, string usageLog) = await SetUpAsync(
+            vendor,
+            database,
+            FreePort()
+        );
         var log = new StringBuilder();
         Process process = Binaries.StartLogged(Binaries.Service, [], vendor.Folder, environment, log);
         var admin = new HttpClient { BaseAddress = url };
@@ -126,6 +92,17 @@ internal sealed class ServiceProcess : IAsyncDisposable
             await service.DisposeAsync();
             throw;
         }
+    }
+
+    /// <summary>
+    /// Sets up the service for the vendor on SQLite and runs it on a loopback port to its end, for a start that stops by itself.
+    /// </summary>
+    /// <param name="vendor">The vendor whose keys the service signs with; its certificate has the use log.</param>
+    /// <param name="port">The port of the service's <c>listen</c>, on 127.0.0.1.</param>
+    public static async Task<(int Code, string Out, string Error)> RunToExitAsync(Vendor vendor, int port)
+    {
+        (_, Dictionary<string, string?> environment, _, _, _) = await SetUpAsync(vendor, "sqlite", port);
+        return await Binaries.RunAsync(Binaries.Service, [], vendor.Folder, environment);
     }
 
     /// <summary>Returns a loopback port no one listens on now.</summary>
@@ -200,6 +177,54 @@ internal sealed class ServiceProcess : IAsyncDisposable
         {
             await PostgresAsync($"DROP DATABASE IF EXISTS {_database} WITH (FORCE)");
         }
+    }
+
+    // The service's settings for the vendor, and the admin key that setup printed, which is a secret.
+    private static async Task<(Uri Url, Dictionary<string, string?> Environment, string Key, string? Database, string UsageLog)> SetUpAsync(
+        Vendor vendor,
+        string database,
+        int port
+    )
+    {
+        var url = new Uri($"http://127.0.0.1:{port}");
+        string usageLog = vendor.File("usage-log");
+        Dictionary<string, string?> environment = new()
+        {
+            ["ELM_LISTEN"] = url.ToString(),
+            ["ELM_SIGNING_KEY"] = vendor.SigningKey,
+            ["ELM_SIGNING_CERTIFICATES"] = vendor.Certificate,
+            ["ELM_SIGNING_PASSPHRASE"] = Vendor.Passphrase,
+            ["ELM_TRUST_ROOTKEYS"] = vendor.RootPublicKey,
+            ["ELM_NONCE_SECRET"] = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)),
+            ["ELM_BOOTSTRAPOWNER_ISS"] = "https://idp.example",
+            ["ELM_BOOTSTRAPOWNER_SUB"] = "e2e-owner",
+            ["ELM_USAGELOG_DIRECTORY"] = usageLog,
+            ["ELM_NODE_NAME"] = NodeName,
+
+            // A test makes its records faster than an administrator would (testing.mdc).
+            ["ELM_RATELIMIT_PERKEY"] = "1000",
+            ["ELM_RATELIMIT_PERIP"] = "1000",
+            ["ELM_RATELIMIT_CLIENTPERIP"] = "1000",
+            ["ELM_RATELIMIT_CLIENTPERKEY"] = "1000",
+        };
+        string? created = null;
+        if (database == "postgres")
+        {
+            created = "elm_e2e_" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(6));
+            await PostgresAsync($"CREATE DATABASE {created}");
+            environment["ELM_DATABASE_PROVIDER"] = "postgres";
+            environment["ELM_DATABASE_CONNECTION"] = new NpgsqlConnectionStringBuilder(PostgresServer) { Database = created }.ConnectionString;
+        }
+        else
+        {
+            environment["ELM_DATABASE_CONNECTION"] = "Data Source=" + vendor.File("service.db");
+        }
+
+        // The key setup prints is a secret: it goes to the admin client only, never into a message (security.mdc).
+        (int code, string key, string error) = await Binaries.RunAsync(Binaries.Service, ["setup"], vendor.Folder, environment);
+        key = key.Trim();
+        Assert.True(code == 0 && key.StartsWith("elm_", StringComparison.Ordinal), $"elm-service setup exited with {code}: {error}");
+        return (url, environment, key, created, usageLog);
     }
 
     private static async Task PostgresAsync(string command)
