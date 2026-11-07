@@ -60,8 +60,9 @@
                     .snupkg). A dotnet add ... package or dotnet package add line needs this marker before it.
       libelasticlm  Creates the folder app in the work folder and puts in it the files of the libelasticlm archive: the
                     library of this system from -Library (elasticlm.dll and elasticlm.lib, libelasticlm.so, or
-                    libelasticlm.dylib), and include/elasticlm.h and LICENSE from the repository. A cl or cc line needs
-                    this marker before it.
+                    libelasticlm.dylib), and include/elasticlm.h and LICENSE from the repository. On macOS the files get
+                    the quarantine attribute of a browser download, as tar leaves them. A cl or cc line needs this
+                    marker before it.
 
     The C lines of Tutorial 4 (design §20.7, V1c3c):
       cl            In an os=windows block only. It runs the cl.exe of the MSVC x64 environment, which the script reads
@@ -813,6 +814,16 @@ function Invoke-Page([string]$path) {
                             Copy-Item -LiteralPath $source -Destination $target
                         }
                         Copy-Item -LiteralPath (Join-Path $repoRoot 'include/elasticlm.h'), (Join-Path $repoRoot 'LICENSE') -Destination $target
+                        if ($IsMacOS) {
+                            # The state of a reader who downloaded the archive with a browser: tar gives the archive's
+                            # quarantine attribute to every file it extracts, so the page's xattr line has one to remove
+                            # (design §20.7, V1c3c, Q6; the owner's review R2 on PR #237).
+                            $quarantine = '0083;{0:x};Safari;{1}' -f [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), [guid]::NewGuid().ToString().ToUpperInvariant()
+                            foreach ($file in Get-ChildItem -LiteralPath $target -File) {
+                                & (Find-Program 'xattr') -w com.apple.quarantine $quarantine $file.FullName
+                                if ($LASTEXITCODE -ne 0) { throw "$($name):$($block.Order): xattr could not mark $($file.Name) as downloaded." }
+                            }
+                        }
                     }
                     $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } 'libelasticlm' { '-Library' } }
                     "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"

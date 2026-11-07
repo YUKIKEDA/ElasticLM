@@ -32,7 +32,7 @@ sidebar_position: 10
 | 実行時にライブラリを探す場所 | Windows の DLL の検索順序。この順序はアプリ自身のフォルダーから始まる。Windows には実行時の検索パスがない。 | `LD_LIBRARY_PATH`、実行時の検索パス、システムのライブラリのフォルダーの順。`-Wl,-rpath,'$ORIGIN'` は、アプリ自身のフォルダーを実行時の検索パスに加える。 | 実行時の検索パス。アプリ自身のフォルダーなら `-Wl,-rpath,@executable_path`。PowerShell ではオプション全体を単引用符で囲み、`'-Wl,-rpath,@executable_path'` と書く。囲まないと、PowerShell はカンマを一覧の区切りとして読み、その行は構文エラーになる。 |
 | `$ORIGIN` の書き方 | — | シェルでは `'$ORIGIN'`、Makefile では `$$ORIGIN`。PowerShell ではオプション全体を単引用符で囲み、`'-Wl,-rpath,$ORIGIN'` と書く。 | — |
 | 実行時に必要なもの | Windows に含まれる DLL だけ。 | `linux-x64` と `linux-arm64` は glibc 2.28 以降（RHEL 8、Debian 10、Ubuntu 20.04 以降）。`linux-musl-x64` は Alpine などの musl。ライセンスの検証を含む暗号処理と HTTPS は、システムの OpenSSL（`libssl`）を使う。ライブラリは最初に必要になったときに OpenSSL を読み込むので、OpenSSL がインストールされていなければならない。HTTPS には、システムの CA 証明書も必要だ。ICU は要らない。 | macOS 12.0 以降と、macOS に含まれるライブラリとフレームワークだけ。 |
-| コード署名 | Authenticode の署名はない。 | — | Developer ID の署名はなく、公証も受けていない。`osx-arm64` のライブラリにあるのは、リンカーが付ける ad-hoc の署名だけ。[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) にあるとおり、ダウンロードしたものは、quarantine 属性を外すまで Gatekeeper が拒否する。 |
+| コード署名 | Authenticode の署名はない。 | — | Developer ID の署名はなく、公証も受けていない。`osx-arm64` のライブラリにあるのは、リンカーが付ける ad-hoc の署名だけ。Web ブラウザーはダウンロードしたファイルに quarantine 属性を付け、そのようなアーカイブから `tar` が展開したファイルにも、すべて同じ属性が付く。`gh release download` と `curl` は付けない。[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md) にあるとおり、属性の付いたものは、属性を外すまで Gatekeeper が拒否する。 |
 
 ## すべての関数に共通の規則
 
