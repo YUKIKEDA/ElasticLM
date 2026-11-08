@@ -17,9 +17,10 @@ public static class TlsCertificateFiles
     /// (design §13.5, V1c12).
     /// </summary>
     /// <remarks>
-    /// In a PEM file, the first certificate goes with the key and the others are the intermediates. In a PKCS#12 file, the first
-    /// certificate with a private key is the server's, as <c>X509CertificateLoader.LoadPkcs12FromFile</c> chooses it, the certificates without a private key are the intermediates, and the other certificates with a key are not
-    /// used.
+    /// In a PEM file, the first certificate goes with the key and the others are the intermediates. In a PKCS#12 file, the
+    /// server's certificate is the first one with a private key, the one that <c>X509CertificateLoader.LoadPkcs12FromFile</c>
+    /// chooses. The certificates without a private key are the intermediates; the other certificates with a key are disposed
+    /// unused.
     /// </remarks>
     /// <param name="certificatePath">The certificate file.</param>
     /// <param name="keyPath">The PEM key file, or <see langword="null"/> for a PKCS#12 file.</param>

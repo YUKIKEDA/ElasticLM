@@ -305,7 +305,7 @@ public sealed class ElmServiceTests
                 TlsKey = key,
             }
         );
-        (bool sent, bool builds) = await chain.ConnectAsync(service.Url, TestContext.Current.CancellationToken);
+        (bool sent, bool builds, _) = await chain.ConnectAsync(service.Url, TestContext.Current.CancellationToken);
 
         Assert.True(sent);
         Assert.True(builds);
