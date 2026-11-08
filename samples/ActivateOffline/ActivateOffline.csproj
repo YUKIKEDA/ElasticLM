@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- The app of the How-to pages on offline activation and deactivation. Its Program.cs is the whole file that the pages
+         show; the pages' reader references the ElasticLM.Client package instead of this project, and gets
+         ElasticLM.Licensing as its dependency. -->
+    <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+  </ItemGroup>
+</Project>

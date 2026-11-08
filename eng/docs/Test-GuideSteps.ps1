@@ -1,14 +1,14 @@
 <#
 .SYNOPSIS
-    Runs the marked steps of README.md and of every Tutorial page with a given elm, elm-server, elm-service, and package
-    folder, and builds and runs the C sample of Tutorial 4 with libelasticlm (design §20.7, V1c1, V1c3a, V1c3b, V1c3e, V1c3d,
-    and V1c3c).
+    Runs the marked steps of README.md, of every Tutorial page, and of every How-to page with a given elm, elm-server,
+    elm-service, and package folder, and builds and runs the C sample of Tutorial 4 with libelasticlm (design §20.7, V1c1,
+    V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, and V1c4a).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
     value is a word without spaces and double quotes, or a double-quoted string without double quotes. A key given twice,
-    a key the kind does not take, and '-->' inside a value fail. The one marker that stands on a line of its own, with no
-    code block, is steps:prebuilt (below).
+    a key the kind does not take, and '-->' inside a value fail. The two markers that stand on a line of their own, with no
+    code block, are steps:prebuilt and steps:after (below).
 
       steps:run                       Each line is one command, run in order. A line starts with elm, dotnet, elm-server,
                                       elm-service, cl, cc, xattr, or a program the page built, and never with cd; the
@@ -77,6 +77,19 @@
     anywhere else fails. A cl or cc line names one /Fe: or -o. The paths of /Fe:, -o, and a program are relative, with / and
     without '..' or a placeholder, on every system.
 
+    <!-- steps:after page=docs/guide/tutorials/<page>.md --> stands on a line of its own, from the start of the line, on a
+    How-to page (docs/guide/how-to/) only, before every other marker of the page, and at most once (design §20.7, V1c4a,
+    Q5). The page it names is a Tutorial page, by its path from the repository root, so a page that steps:after names
+    never has one itself. The script first runs the named page's steps in the How-to page's work folder, then the How-to
+    page's steps in the same folder:
+      - The named page's steps:prebuilt names, its captured values, and the value it captured with env=ELM_API_KEY carry
+        over, so that the How-to page's elm-service, dotnet add ... package, and elm lines and its <name> placeholders work
+        as on the named page. A How-to page that captures a name the named page captured fails, as a name captured twice.
+      - The named page's background process keeps running into the How-to page's steps, and stops at the end of the How-to
+        page. A How-to page has no steps:background and no steps:prebuilt marker of its own.
+      - A failing step of the named page fails the How-to page. The named page is checked against its translation too.
+    The marker fails when it is indented, when the next line that is not blank opens a code block, and without page.
+
     elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
     ELM_ (in any case), so that a variable left in the shell cannot override the page's settings file. The one exception
     is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. cl, cc,
@@ -87,13 +100,14 @@
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
     packed again under the same version never comes from an older copy in the global packages folder, and so that the
-    job's package cache never holds the packages of one run. Both folders are removed at the end, also on failure, after
+    job's package cache never holds the packages of one run. A How-to page and the page its steps:after names share one
+    work folder and one package folder. Both folders are removed at the end, also on failure, after
     the background process has stopped; a folder that is still there fails the page, so that keys and secrets are never
     left behind unnoticed.
 
     The page's translation (README.ja.md, or the same file under docs/guide.ja/) must hold the content of each marked
-    block of the English page as fenced code blocks of its own, and each steps:prebuilt marker as a line of its own that
-    is the same apart from the spaces around it, all in the same order.
+    block of the English page as fenced code blocks of its own, and each steps:prebuilt and steps:after marker as a line
+    of its own that is the same apart from the spaces around it, all in the same order.
 
     A failing step stops the run with exit code 1. Only the page, the line, and the command's first two words are
     printed: arguments, output, and captured values are not.
@@ -116,7 +130,7 @@
     The folder of the published libelasticlm for steps:prebuilt name=libelasticlm. A page with that marker fails without it.
 
 .PARAMETER Page
-    The pages to run. Default: README.md and docs/guide/tutorials/*.md at the repository root.
+    The pages to run. Default: README.md, docs/guide/tutorials/*.md, and docs/guide/how-to/*.md at the repository root.
 #>
 [CmdletBinding()]
 param(
@@ -157,10 +171,16 @@ $markerKeys = @{
     file = @('path')
     expect = @()
     prebuilt = @('name')
+    after = @('page')
 }
+# The folder of the pages that may carry steps:after, and the folder of the pages it may name (design §20.7, V1c4a, Q5).
+$howToFolder = 'docs/guide/how-to/'
+$tutorialFolder = 'docs/guide/tutorials/'
 
 if (-not $Page) {
-    $Page = @(Join-Path $repoRoot 'README.md') + @(Get-ChildItem (Join-Path $repoRoot 'docs/guide/tutorials') -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object FullName)
+    $Page = @(Join-Path $repoRoot 'README.md') + @(foreach ($folder in $tutorialFolder, $howToFolder) {
+            Get-ChildItem (Join-Path $repoRoot $folder) -Filter '*.md' -File -ErrorAction SilentlyContinue | Sort-Object Name | ForEach-Object FullName
+        })
 }
 # .NET resolves a relative path against the process's folder, not PowerShell's current location.
 $Page = @($Page | ForEach-Object { (Resolve-Path -LiteralPath $_).Path })
@@ -172,11 +192,12 @@ function Get-PageName([string]$path) {
 }
 
 $fenceOpen = '^ {0,3}(?<fence>`{3,}|~{3,})'
-$prebuiltMarker = '<!--\s*steps:prebuilt(\s|-->)'
+# The markers that stand on a line of their own, with no code block.
+$lineMarker = '<!--\s*steps:(?<kind>prebuilt|after)(\s|-->)'
 
 # The fenced code blocks of a Markdown file, each with the marker on the line right before its opening line (or none), and
-# the steps:prebuilt markers, each on a line of its own. Each item has the line number of its marker (Order), so that the
-# two lists can be merged in the page's order.
+# the steps:prebuilt and steps:after markers, each on a line of its own. Each item has the line number of its marker
+# (Order), so that the two lists can be merged in the page's order.
 function Get-Page([string]$path) {
     $lines = [IO.File]::ReadAllLines($path)
     $blocks = [Collections.Generic.List[object]]::new()
@@ -195,13 +216,13 @@ function Get-Page([string]$path) {
         if ($i -ge $lines.Length) { throw "$(Get-PageName $path):$($start): the code block is not closed." }
         for ($k = $start - 1; $k -le $i; $k++) { [void]$inBlock.Add($k) }
         $blocks.Add([pscustomobject]@{
-            Marker = ($marker -match '^<!--\s*steps:' -and $marker -notmatch $prebuiltMarker) ? $marker : $null
+            Marker = ($marker -match '^<!--\s*steps:' -and $marker -notmatch $lineMarker) ? $marker : $null
             Line = $start
             Order = $start - 1
             Lines = @(if ($i -gt $start) { $lines[$start..($i - 1)] })
         })
     }
-    $prebuilt = [Collections.Generic.List[object]]::new()
+    $lineMarkers = [Collections.Generic.List[object]]::new()
     for ($j = 0; $j -lt $lines.Length; $j++) {
         # A marker's text inside a code block is neither a marker nor shown text a step can rely on: it fails, whatever its
         # kind, so that a page never runs differently from how it reads.
@@ -209,13 +230,15 @@ function Get-Page([string]$path) {
             if ($lines[$j] -match '<!--\s*steps:') { throw "$(Get-PageName $path):$($j + 1): a steps marker cannot stand inside a code block." }
             continue
         }
-        if ($lines[$j] -match $prebuiltMarker) {
-            # The next line that is not blank, as the check of a steps:prebuilt marker needs it; only an opening line
-            # counts, never the closing line of a block.
+        $standalone = [regex]::Match($lines[$j], $lineMarker)
+        if ($standalone.Success) {
+            # The next line that is not blank, as the check of a steps:prebuilt or steps:after marker needs it; only an
+            # opening line counts, never the closing line of a block.
             $next = $j + 1
             while ($next -lt $lines.Length -and $lines[$next].Trim() -eq '') { $next++ }
-            $prebuilt.Add([pscustomobject]@{
+            $lineMarkers.Add([pscustomobject]@{
                 Text = $lines[$j]
+                Kind = $standalone.Groups['kind'].Value
                 Order = $j + 1
                 BeforeFence = $openings.Contains($next)
             })
@@ -225,7 +248,7 @@ function Get-Page([string]$path) {
             throw "$(Get-PageName $path):$($j + 1): a steps marker must be the line right before a code block's opening line."
         }
     }
-    return [pscustomobject]@{ Blocks = $blocks; Prebuilt = $prebuilt }
+    return [pscustomobject]@{ Blocks = $blocks; LineMarkers = $lineMarkers }
 }
 
 # The kind and the key=value attributes of a marker; $at names its page and line.
@@ -233,7 +256,7 @@ function Read-Marker([string]$at, [string]$text) {
     $marker = [regex]::Match($text, '^<!--\s*steps:(?<kind>[a-z]+)(?<rest>.*?)\s*-->$')
     $kind = $marker.Groups['kind'].Value
     if (-not $marker.Success -or -not $markerKeys.ContainsKey($kind)) {
-        throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, or steps:prebuilt."
+        throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, steps:prebuilt, or steps:after."
     }
     $rest = $marker.Groups['rest'].Value
     if ($rest.Contains('-->')) { throw "$($at): a marker is one line, and a value cannot hold '-->'." }
@@ -368,17 +391,23 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
     }
 }
 
-# The marked blocks and the steps:prebuilt markers of a page, in the page's order.
+# The marked blocks and the steps:prebuilt and steps:after markers of a page, in the page's order.
 function Get-Marked([object]$parsed) {
-    return @(@($parsed.Blocks | Where-Object Marker) + @($parsed.Prebuilt) | Sort-Object Order)
+    return @(@($parsed.Blocks | Where-Object Marker) + @($parsed.LineMarkers) | Sort-Object Order)
 }
 
-# Checks every marker and line of a page before anything runs; returns the steps.
+# Checks every marker and line of a page, and of the page its steps:after names, before anything runs. Returns the steps
+# (Steps), what a page that runs after this one takes over (Captured, Hidden, Prebuilt, Built), and the page that
+# steps:after names, with its own plan (After), or $null.
 function Read-Plan([string]$name, [object]$parsed) {
     $captured = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     # The names captured with env: their values go into ELM_API_KEY only, never into a placeholder.
     $hidden = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $prebuilt = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    # The names that the page steps:after names captured, so that the error of a name captured again says where.
+    $inherited = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $after = $null
+    $isHowTo = $name.StartsWith($howToFolder, [StringComparison]::Ordinal)
     # Every name a steps:run marker of the page captures, so that a steps:file block can tell a name captured later from
     # text such as a usage line's <data-folder>.
     $pageCaptures = @($parsed.Blocks | Where-Object Marker | ForEach-Object { [regex]::Match($_.Marker, '\scapture=([^\s"]+)').Groups[1].Value } | Where-Object { $_ })
@@ -390,16 +419,17 @@ function Read-Plan([string]$name, [object]$parsed) {
     foreach ($block in Get-Marked $parsed) {
         $at = "$($name):$($block.Order)"
         if ($block.PSObject.Properties['Text']) {
-            # A steps:prebuilt marker: a line of its own, from the start of the line, not attached to a code block.
-            if ($block.Text -cne $block.Text.TrimStart()) { throw "$($at): a steps:prebuilt marker starts at the beginning of its line." }
-            if ($block.BeforeFence) { throw "$($at): a steps:prebuilt marker stands on a line of its own; the next line that is not blank must not open a code block." }
+            # A steps:prebuilt or steps:after marker: a line of its own, from the start of the line, not attached to a code
+            # block.
+            if ($block.Text -cne $block.Text.TrimStart()) { throw "$($at): a steps:$($block.Kind) marker starts at the beginning of its line." }
+            if ($block.BeforeFence) { throw "$($at): a steps:$($block.Kind) marker stands on a line of its own; the next line that is not blank must not open a code block." }
             $marker = Read-Marker $at $block.Text.TrimEnd()
         }
         else {
             $marker = Read-Marker $at $block.Marker
         }
         $attributes = $marker.Attributes
-        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null }
+        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null }
         switch ($marker.Kind) {
             'run' {
                 if ($attributes.ContainsKey('os')) {
@@ -419,6 +449,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     if ($capture -cnotmatch "^$captureName$") {
                         throw "$($at): a captured name is lowercase words joined by hyphens, such as server-key."
                     }
+                    if ($inherited.Contains($capture)) { throw "$($at): $capture is captured twice: $($after.Name) captures it." }
                     if ($captured.Contains($capture) -or $hidden.Contains($capture)) { throw "$($at): $capture is captured twice on the page." }
                 }
                 if ($attributes.ContainsKey('env') -and $attributes['env'] -cne $apiKeyVariable) { throw "$($at): env takes $apiKeyVariable only." }
@@ -443,6 +474,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                 }
             }
             'background' {
+                if ($isHowTo) { throw "$($at): a How-to page has no steps:background; the background process of the page that steps:after names keeps running." }
                 if (-not $attributes.ContainsKey('ready')) { throw "$($at): steps:background takes ready=<url>." }
                 if ($plan | Where-Object Kind -EQ 'background') { throw "$($at): a page has at most one steps:background block." }
                 $lines = @($block.Lines | Where-Object { $_.Trim() -ne '' })
@@ -488,20 +520,44 @@ function Read-Plan([string]$name, [object]$parsed) {
                 if ($previousOs) { throw "$($at): steps:expect follows a steps:run block without os." }
             }
             'prebuilt' {
+                if ($isHowTo) { throw "$($at): a How-to page has no steps:prebuilt; it takes the names of the page that steps:after names." }
                 if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, name=elm-service, name=packages, or name=libelasticlm." }
                 if (-not $prebuilt.Add($attributes['name'])) { throw "$($at): steps:prebuilt name=$($attributes['name']) is given twice on the page." }
+            }
+            'after' {
+                # Only a How-to page carries it, and it names only a Tutorial page, so a named page never has one: the
+                # pages do not chain (design §20.7, V1c4a, Q5).
+                if (-not $isHowTo) { throw "$($at): steps:after stands on a How-to page ($howToFolder) only." }
+                if ($plan.Count -gt 0) { throw "$($at): steps:after stands once, before every other steps marker of the page." }
+                $target = $attributes.ContainsKey('page') ? $attributes['page'] : ''
+                if ($target -cnotmatch "^$([regex]::Escape($tutorialFolder))[A-Za-z0-9][A-Za-z0-9._-]*\.md$") {
+                    throw "$($at): steps:after takes page=$($tutorialFolder)<page>.md, a Tutorial page by its path from the repository root."
+                }
+                $targetPath = Join-Path $repoRoot $target
+                if (-not (Test-Path -LiteralPath $targetPath -PathType Leaf)) { throw "$($at): $target does not exist." }
+                $targetParsed = Get-Page $targetPath
+                if (-not (Get-Marked $targetParsed)) { throw "$target has no steps." }
+                $targetPlan = Read-Plan $target $targetParsed
+                $after = [pscustomobject]@{ Name = $target; Path = $targetPath; Parsed = $targetParsed; Plan = $targetPlan }
+                $step.After = $after
+                $captured.UnionWith($targetPlan.Captured)
+                $hidden.UnionWith($targetPlan.Hidden)
+                $inherited.UnionWith($targetPlan.Captured)
+                $inherited.UnionWith($targetPlan.Hidden)
+                $prebuilt.UnionWith($targetPlan.Prebuilt)
+                $built.UnionWith($targetPlan.Built)
             }
         }
         $plan.Add($step)
         # A steps:prebuilt marker runs nothing, so a steps:expect after it still checks the steps:run block before it.
         if ($marker.Kind -cne 'prebuilt') { $previous = $marker.Kind; $previousOs = $step.Os }
     }
-    if ($plan.Count -eq 0) { throw "$name has no steps." }
+    if (-not ($plan | Where-Object Kind -CNE 'after')) { throw "$name has no steps." }
     if (-not $libraryPath -and $prebuilt.Contains('libelasticlm')) { throw "$name needs -Library: it puts libelasticlm in the folder app." }
     if (-not $elmServerPath -and $prebuilt.Contains('elm-server')) { throw "$name needs -ElmServer: it runs elm-server." }
     if (-not $elmServicePath -and $prebuilt.Contains('elm-service')) { throw "$name needs -ElmService: it runs elm-service." }
     if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
-    return $plan
+    return [pscustomobject]@{ Steps = $plan.ToArray(); Captured = $captured; Hidden = $hidden; Prebuilt = $prebuilt; Built = $built; After = $after }
 }
 
 # The MSVC x64 environment of the reader's x64 Native Tools Command Prompt, read once in the run, the first time a cl line
@@ -676,9 +732,9 @@ function Stop-Background {
     }
 }
 
-# A marked block becomes its content, and a steps:prebuilt marker its line without the spaces around it.
+# A marked block becomes its content, and a steps:prebuilt or steps:after marker its line without the spaces around it.
 function Get-TranslationItem([object]$item) {
-    return $item.PSObject.Properties['Text'] ? "prebuilt`n" + $item.Text.Trim() : "block`n" + ($item.Lines -join "`n")
+    return $item.PSObject.Properties['Text'] ? "line`n" + $item.Text.Trim() : "block`n" + ($item.Lines -join "`n")
 }
 
 function Test-Translation([string]$path, [object]$parsed) {
@@ -688,16 +744,127 @@ function Test-Translation([string]$path, [object]$parsed) {
     $translatedPath = Join-Path $repoRoot $translated
     if (-not (Test-Path $translatedPath)) { throw "$(Get-PageName $path) has no translation at $translated." }
     $translation = Get-Page $translatedPath
-    $theirs = @(@($translation.Blocks) + @($translation.Prebuilt) | Sort-Object Order | ForEach-Object { Get-TranslationItem $_ })
+    $theirs = @(@($translation.Blocks) + @($translation.LineMarkers) | Sort-Object Order | ForEach-Object { Get-TranslationItem $_ })
     $next = 0
     foreach ($item in Get-Marked $parsed) {
         $content = Get-TranslationItem $item
         while ($next -lt $theirs.Count -and $theirs[$next] -cne $content) { $next++ }
         if ($next -ge $theirs.Count) {
-            $what = $item.PSObject.Properties['Text'] ? 'steps:prebuilt marker' : 'code block'
+            $what = $item.PSObject.Properties['Text'] ? "steps:$($item.Kind) marker" : 'code block'
             throw "$($translated): the $what of $(Get-PageName $path):$($item.Order) is missing, changed, or out of order."
         }
         $next++
+    }
+}
+
+# Runs the steps of a page in the work folder. $state carries the captured values (Values), the value captured with env for
+# the elm lines after it (ApiKey), and the standard output of the last command (LastOutput), so that the steps of a How-to
+# page go on from those of the page that its steps:after names.
+function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$work) {
+    $values = $state.Values
+    foreach ($step in $steps) {
+        $block = $step.Block
+        # A block for another OS is skipped; its marker and lines were checked with the rest of the page.
+        if ($step.Os -and $step.Os -cne $thisOs) {
+            "skip: $($name):$($block.Line - 1): os=$($step.Os)"
+            continue
+        }
+        switch ($step.Kind) {
+            'run' {
+                $last = $step.Commands[-1]
+                foreach ($command in $step.Commands) {
+                    $expected = $command.Line -eq $last.Line ? $step.Exit : 0
+                    try { $result = Invoke-Step (New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $work $state.ApiKey) }
+                    catch {
+                        # The reason a compiler or a tool cannot be found holds no argument, output, or value.
+                        $reason = $command.Kind -cin 'cl', 'cc', 'xattr' ? ": $($_.Exception.Message)" : '.'
+                        throw "$($name):$($command.Line): $($command.Shown) could not be run$reason"
+                    }
+                    if ($result.ExitCode -ne $expected) {
+                        throw "$($name):$($command.Line): $($command.Shown) exited with $($result.ExitCode)$($expected -ne 0 ? ", not $expected" : '')."
+                    }
+                    "ok: $($name):$($command.Line): $($command.Shown)$($expected -ne 0 ? " (exit $expected)" : '')"
+                    $state.LastOutput = $result.Output
+                }
+                if ($step.Attributes.ContainsKey('capture')) {
+                    $capture = $step.Attributes['capture']
+                    $captured = Get-CapturedValue "$($name):$($last.Line)" $step $result
+                    if ($step.Attributes.ContainsKey('env')) {
+                        $state.ApiKey = $captured
+                        "ok: $($name):$($last.Line): captured $capture for $apiKeyVariable"
+                    }
+                    else {
+                        $values[$capture] = $captured
+                        "ok: $($name):$($last.Line): captured $capture"
+                    }
+                }
+            }
+            'background' {
+                Start-Background $name $step $values $work
+            }
+            'file' {
+                $value = $step.Attributes['path']
+                $target = Join-Path $work $value
+                New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
+                # A value is only A-Za-z0-9._~-, so it needs no escaping inside a JSON string or XML text.
+                $content = ($block.Lines -join "`n") + "`n"
+                foreach ($valueName in $values.Keys) { $content = $content.Replace("<$valueName>", $values[$valueName]) }
+                [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
+                "ok: $($name):$($block.Line - 1): file $value"
+            }
+            'expect' {
+                $output = @($state.LastOutput -split '\r?\n' | ForEach-Object { $_.TrimEnd() })
+                $at = 0
+                $lineNumber = $block.Line
+                foreach ($expectedLine in $block.Lines) {
+                    $lineNumber++
+                    if ($expectedLine.Trim() -eq '') { continue }
+                    while ($at -lt $output.Count -and $output[$at] -cne $expectedLine.TrimEnd()) { $at++ }
+                    if ($at -ge $output.Count) { throw "$($name):$($lineNumber): the expected line is not in the output, or not in this order." }
+                    $at++
+                }
+                "ok: $($name):$($block.Line - 1): expect"
+            }
+            'prebuilt' {
+                $prebuiltName = $step.Attributes['name']
+                if ($prebuiltName -ceq 'packages') {
+                    $target = Join-Path $work 'packages'
+                    New-Item -ItemType Directory -Force $target | Out-Null
+                    # The page does not have the reader download the symbols packages (.snupkg).
+                    $nupkgs = @(Get-ChildItem -LiteralPath $feedPath -File | Where-Object Extension -EQ '.nupkg')
+                    if ($nupkgs.Count -eq 0) { throw "$($name):$($block.Order): -Feed holds no .nupkg file." }
+                    foreach ($nupkg in $nupkgs) { Copy-Item -LiteralPath $nupkg.FullName -Destination $target }
+                }
+                elseif ($prebuiltName -ceq 'libelasticlm') {
+                    # The files of the archive the reader extracts into app: the library from -Library, without its
+                    # debug symbols, and the header and the license from the repository, which Pack-Rid.ps1 adds.
+                    $target = Join-Path $work 'app'
+                    New-Item -ItemType Directory -Force $target | Out-Null
+                    foreach ($file in $libraryFiles) {
+                        $source = Join-Path $libraryPath $file
+                        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$($name):$($block.Order): -Library holds no $file." }
+                        Copy-Item -LiteralPath $source -Destination $target
+                    }
+                    Copy-Item -LiteralPath (Join-Path $repoRoot 'include/elasticlm.h'), (Join-Path $repoRoot 'LICENSE') -Destination $target
+                    if ($IsMacOS) {
+                        # The state of a reader who downloaded the archive with a browser: tar gives the archive's
+                        # quarantine attribute to every file it extracts, so the page's xattr line has one to remove
+                        # (design §20.7, V1c3c, Q6; the owner's review R2 on PR #237).
+                        $quarantine = '0083;{0:x};Safari;{1}' -f [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), [guid]::NewGuid().ToString().ToUpperInvariant()
+                        foreach ($file in Get-ChildItem -LiteralPath $target -File) {
+                            & (Find-Program 'xattr') -w com.apple.quarantine $quarantine $file.FullName
+                            if ($LASTEXITCODE -ne 0) { throw "$($name):$($block.Order): xattr could not mark $($file.Name) as downloaded." }
+                        }
+                    }
+                }
+                $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } 'libelasticlm' { '-Library' } }
+                "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
+            }
+            'after' {
+                "ok: $($name):$($block.Order): after $($step.After.Name)"
+                Invoke-Plan $step.After.Name $step.After.Plan.Steps $state $work
+            }
+        }
     }
 }
 
@@ -707,6 +874,7 @@ function Invoke-Page([string]$path) {
     if (-not (Get-Marked $parsed)) { throw "$name has no steps." }
     $plan = Read-Plan $name $parsed
     Test-Translation $path $parsed
+    if ($plan.After) { Test-Translation $plan.After.Path $plan.After.Parsed }
 
     $suffix = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6))
     $work = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-$suffix"
@@ -726,110 +894,8 @@ function Invoke-Page([string]$path) {
     $left = @()
     $completed = $false
     try {
-        $lastOutput = $null
-        $values = @{}
-        # The value captured with env, for the elm lines after it; a local of the page, so the next page never gets it.
-        $apiKey = $null
-        foreach ($step in $plan) {
-            $block = $step.Block
-            # A block for another OS is skipped; its marker and lines were checked with the rest of the page.
-            if ($step.Os -and $step.Os -cne $thisOs) {
-                "skip: $($name):$($block.Line - 1): os=$($step.Os)"
-                continue
-            }
-            switch ($step.Kind) {
-                'run' {
-                    $last = $step.Commands[-1]
-                    foreach ($command in $step.Commands) {
-                        $expected = $command.Line -eq $last.Line ? $step.Exit : 0
-                        try { $result = Invoke-Step (New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $work $apiKey) }
-                        catch {
-                            # The reason a compiler or a tool cannot be found holds no argument, output, or value.
-                            $reason = $command.Kind -cin 'cl', 'cc', 'xattr' ? ": $($_.Exception.Message)" : '.'
-                            throw "$($name):$($command.Line): $($command.Shown) could not be run$reason"
-                        }
-                        if ($result.ExitCode -ne $expected) {
-                            throw "$($name):$($command.Line): $($command.Shown) exited with $($result.ExitCode)$($expected -ne 0 ? ", not $expected" : '')."
-                        }
-                        "ok: $($name):$($command.Line): $($command.Shown)$($expected -ne 0 ? " (exit $expected)" : '')"
-                        $lastOutput = $result.Output
-                    }
-                    if ($step.Attributes.ContainsKey('capture')) {
-                        $capture = $step.Attributes['capture']
-                        $captured = Get-CapturedValue "$($name):$($last.Line)" $step $result
-                        if ($step.Attributes.ContainsKey('env')) {
-                            $apiKey = $captured
-                            "ok: $($name):$($last.Line): captured $capture for $apiKeyVariable"
-                        }
-                        else {
-                            $values[$capture] = $captured
-                            "ok: $($name):$($last.Line): captured $capture"
-                        }
-                    }
-                }
-                'background' {
-                    Start-Background $name $step $values $work
-                }
-                'file' {
-                    $value = $step.Attributes['path']
-                    $target = Join-Path $work $value
-                    New-Item -ItemType Directory -Force (Split-Path $target -Parent) | Out-Null
-                    # A value is only A-Za-z0-9._~-, so it needs no escaping inside a JSON string or XML text.
-                    $content = ($block.Lines -join "`n") + "`n"
-                    foreach ($valueName in $values.Keys) { $content = $content.Replace("<$valueName>", $values[$valueName]) }
-                    [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
-                    "ok: $($name):$($block.Line - 1): file $value"
-                }
-                'expect' {
-                    $output = @($lastOutput -split '\r?\n' | ForEach-Object { $_.TrimEnd() })
-                    $at = 0
-                    $lineNumber = $block.Line
-                    foreach ($expectedLine in $block.Lines) {
-                        $lineNumber++
-                        if ($expectedLine.Trim() -eq '') { continue }
-                        while ($at -lt $output.Count -and $output[$at] -cne $expectedLine.TrimEnd()) { $at++ }
-                        if ($at -ge $output.Count) { throw "$($name):$($lineNumber): the expected line is not in the output, or not in this order." }
-                        $at++
-                    }
-                    "ok: $($name):$($block.Line - 1): expect"
-                }
-                'prebuilt' {
-                    $prebuiltName = $step.Attributes['name']
-                    if ($prebuiltName -ceq 'packages') {
-                        $target = Join-Path $work 'packages'
-                        New-Item -ItemType Directory -Force $target | Out-Null
-                        # The page does not have the reader download the symbols packages (.snupkg).
-                        $nupkgs = @(Get-ChildItem -LiteralPath $feedPath -File | Where-Object Extension -EQ '.nupkg')
-                        if ($nupkgs.Count -eq 0) { throw "$($name):$($block.Order): -Feed holds no .nupkg file." }
-                        foreach ($nupkg in $nupkgs) { Copy-Item -LiteralPath $nupkg.FullName -Destination $target }
-                    }
-                    elseif ($prebuiltName -ceq 'libelasticlm') {
-                        # The files of the archive the reader extracts into app: the library from -Library, without its
-                        # debug symbols, and the header and the license from the repository, which Pack-Rid.ps1 adds.
-                        $target = Join-Path $work 'app'
-                        New-Item -ItemType Directory -Force $target | Out-Null
-                        foreach ($file in $libraryFiles) {
-                            $source = Join-Path $libraryPath $file
-                            if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "$($name):$($block.Order): -Library holds no $file." }
-                            Copy-Item -LiteralPath $source -Destination $target
-                        }
-                        Copy-Item -LiteralPath (Join-Path $repoRoot 'include/elasticlm.h'), (Join-Path $repoRoot 'LICENSE') -Destination $target
-                        if ($IsMacOS) {
-                            # The state of a reader who downloaded the archive with a browser: tar gives the archive's
-                            # quarantine attribute to every file it extracts, so the page's xattr line has one to remove
-                            # (design §20.7, V1c3c, Q6; the owner's review R2 on PR #237).
-                            $quarantine = '0083;{0:x};Safari;{1}' -f [DateTimeOffset]::UtcNow.ToUnixTimeSeconds(), [guid]::NewGuid().ToString().ToUpperInvariant()
-                            foreach ($file in Get-ChildItem -LiteralPath $target -File) {
-                                & (Find-Program 'xattr') -w com.apple.quarantine $quarantine $file.FullName
-                                if ($LASTEXITCODE -ne 0) { throw "$($name):$($block.Order): xattr could not mark $($file.Name) as downloaded." }
-                            }
-                        }
-                    }
-                    $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } 'libelasticlm' { '-Library' } }
-                    "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
-                }
-            }
-        }
+        # A local of the page, so the next page never gets its values or its API key.
+        Invoke-Plan $name $plan.Steps ([pscustomobject]@{ Values = @{}; ApiKey = $null; LastOutput = $null }) $work
         $completed = $true
     }
     finally {

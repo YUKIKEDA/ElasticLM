@@ -5,7 +5,7 @@ namespace ElasticLM.Licensing.Tests;
 /// <summary>
 /// Checks that the code of the user documentation is taken from the samples that the gate builds (design §20.7, V1c3): a code
 /// block with a <c>&lt;!-- sample: path#name --&gt;</c> comment equals that region of the sample (the whole file less its snippet
-/// markers without <c>#name</c>), the C# blocks of the tutorials and the .NET API page and the C blocks of the tutorials carry
+/// markers without <c>#name</c>), the C# blocks of the tutorials, the How-to guides, and the .NET API page and the C blocks of the tutorials carry
 /// such a comment, and the C samples are ASCII only.
 /// </summary>
 public sealed partial class GuideSamplesTests
@@ -79,11 +79,12 @@ public sealed partial class GuideSamplesTests
     }
 
     /// <summary>
-    /// Every C# code block of a tutorial and of the .NET API page, in both languages, carries a sample comment.
+    /// Every C# code block of a tutorial, of a How-to guide, and of the .NET API page, in both languages, carries a sample comment.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - The pages of docs/guide/tutorials and, once they exist, docs/guide.ja/tutorials; docs/guide/reference/dotnet-api.md and
+    /// - The pages of docs/guide/tutorials and docs/guide/how-to and, once they exist, docs/guide.ja/tutorials and docs/guide.ja/how-to;
+    ///   docs/guide/reference/dotnet-api.md and
     ///   docs/guide.ja/reference/dotnet-api.md.
     ///
     /// Steps:
@@ -91,20 +92,23 @@ public sealed partial class GuideSamplesTests
     /// - Look for a <c>&lt;!-- sample: ... --&gt;</c> comment among the comment lines right above its opening fence.
     ///
     /// Expected:
-    /// - At least one English tutorial page exists, both .NET API pages exist, and at least one C# block is found.
+    /// - At least one English tutorial page and one English How-to page exist, both .NET API pages exist, and at least one C# block is
+    ///   found.
     /// - Every C# block has a sample comment; the message names the page and line of each block without one.
     /// </remarks>
     [Fact]
-    public void CSharpBlock_OnTutorialOrDotnetApiPage_HasSampleComment()
+    public void CSharpBlock_OnTutorialHowToOrDotnetApiPage_HasSampleComment()
     {
         string[] tutorials = [.. PagesUnder("docs/guide/tutorials"), .. PagesUnder("docs/guide.ja/tutorials")];
+        string[] howTo = [.. PagesUnder("docs/guide/how-to"), .. PagesUnder("docs/guide.ja/how-to")];
         string[] apiPages = ["docs/guide/reference/dotnet-api.md", "docs/guide.ja/reference/dotnet-api.md"];
         Assert.Contains(tutorials, page => page.StartsWith("docs/guide/", StringComparison.Ordinal));
+        Assert.Contains(howTo, page => page.StartsWith("docs/guide/", StringComparison.Ordinal));
         Assert.All(apiPages, page => Assert.True(File.Exists(ReferencePages.RepositoryFile(page)), page + " does not exist."));
 
         var problems = new List<string>();
         int found = 0;
-        foreach (string page in tutorials.Concat(apiPages))
+        foreach (string page in tutorials.Concat(howTo).Concat(apiPages))
         {
             foreach (Block block in Blocks(ReadLines(ReferencePages.RepositoryFile(page))))
             {
@@ -119,7 +123,7 @@ public sealed partial class GuideSamplesTests
             }
         }
 
-        Assert.True(found > 0, "No C# code block was found on the tutorials or the .NET API pages.");
+        Assert.True(found > 0, "No C# code block was found on the tutorials, the How-to guides, or the .NET API pages.");
         Assert.True(
             problems.Count == 0,
             problems.Count + " C# blocks are not taken from a sample:" + Environment.NewLine + string.Join(Environment.NewLine, problems)

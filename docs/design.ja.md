@@ -3860,7 +3860,7 @@ M3c で作った形:
 | 36 | `ELM_CLONE_DETECTED` | 複製を検出 | 409 |
 | 37 | `ELM_REQUEST_EXPIRED` | オフラインの要求ファイルの期限切れ | 400 |
 | 38 | `ELM_REQUEST_MISMATCH` | オフラインの応答が待っている要求と一致しない | — |
-| 39 | `ELM_TRIAL_NOT_OFFERED` | 製品が試用を出していない | 404 |
+| 39 | `ELM_TRIAL_NOT_OFFERED` | 製品が試用を出していない、または製品がない | 404 |
 | 40 | `ELM_NO_SEATS` | 空き席なし | 409 |
 | 41 | `ELM_UNKNOWN_LEASE` | リースを知らない（回収を送る） | 404 |
 | 42 | `ELM_BORROW_NOT_ALLOWED` | 借り出しが許されない、または上限超え | 403 |
@@ -4720,7 +4720,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 読み手への書き方（R1）: Tutorial 2 は最後にサービスを止め、2 つの端末を閉じて `ELM_API_KEY` と `ELM_SIGNING_PASSPHRASE` を消させる（`activate-an-app-online.md` の「Stop the service」）。そのため V1c4a の頁は「Tutorial 2 の終わり」を前提にせず、冒頭の段落で前提を状態で書く: 動いている `elm-service`、`ELM_API_KEY`、製品と機能。止めたサービスは Tutorial 2 の「Start the service」のとおりに起動し直すこと、API キーをなくしたら `elm-service setup` で新しいキーを作ること（`setup` は実行のたびに新しいキーを作る。`Setup.cs`）を書き、Tutorial 2 を指す。サービスが動いているあいだに `setup` を流せるか（SQLite）は、実装で一度確かめる。頁の例の値（製品 `acme-cad`、機能 `pro`、`http://127.0.0.1:8080`）は Tutorial 2 と同じにし、本文で「自分の値に替える」と書く。
   - Tutorial の残りに頼らない（R3）: 各頁は、自分で使うライセンス（とポリシー）を自分で作り、Tutorial 2 が手順の途中で残したもの（有効化の台数が埋まったライセンス、試用の記録、`client-data` と `other-data` の有効化、試用のポリシーを外した製品）には頼らない。管理者による解除の頁は、`GET /v1/admin/licenses/{id}/activations` で有効化の ID を取る手順にする。オフラインの有効化のサンプルは、新しいデータのフォルダー（`offline-data`）を使う（`client-data` は有効化を持つので `ELM_INVALID_STATE` で断られる。`ActivationClient.cs`）。
   - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
-    - 名指せるのは `docs/guide/tutorials/` の頁だけで、連鎖させない（名指された頁は `steps:after` を持てない）。
+    - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置け、`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた）。
     - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
     - How-to の頁は `steps:background` と `steps:prebuilt` を持たない（裏のプロセスは名指した頁のものだけで、1 頁に裏のプロセスは 1 つまでの決まりが続く）。
     - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
@@ -4731,10 +4731,12 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 退けた案: 各頁が用意の手順を全部持つ案と、How-to の頁を CI で流さず PR で一度だけ流す案（design-decisions.md）。
 - V1c4a の 4 頁（Q6）: 題と目的は次のとおり。細かい手順は実装で詰めて PR に書く。
   - 「Set up a policy」: 端末の台数、猶予期間、ノードロックかクラウドのフローティングかを決めてポリシーを作り、変える（`elm admin request`。§9.3、管理 API の Reference の頁）。
-  - 「Offer a trial」: 製品に試用のポリシーを付け、試用の記録を見て、消す（§12.9。上の「V1c の形」のとおり、試用は短い例にする）。
+  - 「Offer a trial」: 製品に試用のポリシーを付け、端末にもう一度試用させる（§12.9。上の「V1c の形」のとおり、試用は短い例にする）。試用は端末の指紋ごとに 1 度だけで、管理 API には試用の記録を作る経路がないので、Tutorial 2 の残りの記録に頼らずに記録を見て消すには、頁の中で記録を作る原因を起こす（実装中の持ち主の決定 D1）: Tutorial 2 のアプリで新しいデータのフォルダーから試用を始め、すでに試用したマシンでは `ELM_TRIAL_USED` になることを見て、製品の試用の記録を一覧で見て、その端末の記録を消し、もう一度試用を始めて通ることを確かめる。頁はすでに試用したマシン（Tutorial 2 のあとなど）での流れとして書き、まだ試用していないマシンでは最初の試用がそのまま通ると本文で書く。
   - 「Activate a device without a network」: オフラインの有効化。アプリが要求のファイルを作り、`elm offline process` で答えを作り、アプリが取り込む。更新のやり方も書く（§12.8）。
   - 「Deactivate a device」: 管理者が端末の有効化を解除する、アプリが自分で解除する、オフラインの解除の証明（§12.6、§12.8.2）。
 - サンプル（Q7。V1c4 の設計の独立レビューの R2、持ち主の決定で広げた）: `samples/ActivateOffline`。`ActivationClient` のオフラインの API とアプリ自身の解除を使う .NET のアプリで、どのコマンドもルート公開鍵とデータのフォルダーを引数で受け取る。コマンドは `request <license-key> <file>`（要求のファイルを書く。`CreateActivationRequestAsync`）、`refresh <file>`（更新の要求。`CreateRefreshRequestAsync`）、`import <file>`（答えを取り込んで機能 `pro` を確かめる。`ImportResponseAsync`）、`deactivate`（オンラインの解除。`DeactivateAsync`）、`deactivate-proof <file>`（オフラインの解除の証明。`CreateDeactivationProofAsync`）、`forget`（証明を忘れる。`ForgetDeactivationProofAsync`）の 6 つ。頁 3 と頁 4 のコードは、このサンプルの範囲（`// <snippet:名前>`）から引く。上の V1c3 の形のサンプルと同じく、プロジェクト参照で `ElasticLM.slnx` に入れてゲートでビルドし、`GuideSamplesTests` が頁と比べる。`docs/conventions.md` の表に行を足す。オンラインの解除だけを別のサンプルにする案は退けた（design-decisions.md）。
+  - 実装で決めたこと: どのコマンドも `app <root-public-key.pem> <data-folder> <command> [引数]` の形で、ルート公開鍵とデータのフォルダーを先に受け取る（`samples/ActivateOnline` と同じ順）。`deactivate` はオンラインの解除なので、サービスの URL を引数で受け取り（`deactivate <service-url>`）、`ServiceUrl` を設定するのはこのコマンドだけにする。使い方の行のライセンスキーは `<key>` と書く（`<license-key>` と書くと、引き継いだ Tutorial 2 の `license-key` の値が `steps:file` の `Program.cs` に入るため）。
+  - 頁のコードの見せ方（実装中の持ち主の決定 D2）: 手順を流す仕組みがアプリをビルドするので、頁 3 と頁 4 は `Program.cs` の全体を `steps:file` のブロックで 1 度だけ見せ、各コマンドの説明は本文で API の名前を挙げて行う。同じコードの範囲をもう一度見せることはしない。頁どうしは続けて流せないので、頁 4 もアプリを作る手順を持つ。どの頁も引かなくなったサンプルの範囲の印は残さない（`.cursor/rules/no-dead-code.mdc`）。上の Q7 の「頁 3 と頁 4 のコードは、このサンプルの範囲から引く」は、この決定で改めた。
 - サイトと入口（Q8）: `website/sidebars.js` で、How-to の区分を Tutorials と Reference のあいだに置き、`how-to` のフォルダーから自動で作る。区分の日本語の名前は「ハウツーガイド」で、`website/i18n/ja/docusaurus-plugin-content-docs/current.json` に書く。入口の頁（英語と日本語）の読む人ごとの道筋に 4 頁を足し、状況の文（How-to guides はまだ執筆中）を、書いた頁に合わせて直す。
 - レビュー: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（ジョブと同じ成果物で、Tutorial 2 から続けて手順を実際に流す）、日本語のレビュー（書き手と別）。指摘の要点と直し方は、PR を ready にする前に Issue か PR に載せる（`.cursor/rules/review-comments.mdc`）。
 

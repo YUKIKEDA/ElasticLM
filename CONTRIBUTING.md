@@ -45,7 +45,10 @@ In the clone, publish the executables into the work folder's `tools`:
 ```shell
 dotnet publish src/ElasticLM.Cli -c Release -o <work-folder>/tools
 dotnet publish src/ElasticLM.Server -c Release -o <work-folder>/tools
+dotnet publish src/ElasticLM.Service -c Release -o <work-folder>/tools
 ```
+
+`ElasticLM.Service` embeds the admin UI, so build `web/admin/dist` first (see [Requirements](#requirements)).
 
 and pack the packages into its `packages`:
 
@@ -56,13 +59,13 @@ dotnet pack src/ElasticLM.Client -c Release -o <work-folder>/packages
 
 These packages have the version of `VersionPrefix` (`0.1.0`) with no prerelease suffix. The tutorials' `dotnet add ... --prerelease --source packages` also takes a version that is not a prerelease, so the pages work as written. When you pack the same version again, your app still gets the copy that NuGet saved the first time in its global packages folder, not the new one: `dotnet nuget locals global-packages --list` shows where the folder is, and you delete its folders `elasticlm.client` and `elasticlm.licensing` (or clear it with `dotnet nuget locals global-packages --clear`) before the next `dotnet add` or `dotnet run`.
 
-To run the marked steps of `README.md` and the tutorials as the CI step "Guide steps" does, pack the two packages into one folder with a prerelease suffix of your own, such as `-p:VersionSuffix=local.1`, and run:
+To run the marked steps of `README.md`, the tutorials, and the how-to guides as the CI step "Guide steps" does, pack the two packages into one folder with a prerelease suffix of your own, such as `-p:VersionSuffix=local.1`, and run:
 
 ```shell
-./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmServer <elm-server> -Feed <that-folder>
+./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmServer <elm-server> -ElmService <elm-service> -Feed <that-folder>
 ```
 
-`-Elm` and `-ElmServer` take the executables, such as `<work-folder>/tools/elm.exe` on Windows. The script runs each page in a new work folder of its own.
+`-Elm`, `-ElmServer`, and `-ElmService` take the executables, such as `<work-folder>/tools/elm.exe` on Windows. The tutorial with the C app also needs `-Library`, the folder of a published `libelasticlm`, and `-Page` runs only the pages it names. The script runs each page in a new work folder of its own; a how-to guide runs there after the steps of the tutorial that its `steps:after` marker names.
 
 ## Versioning
 

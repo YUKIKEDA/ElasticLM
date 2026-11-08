@@ -107,7 +107,7 @@ public enum ErrorCode
     /// <summary>The offline response does not match the pending request.</summary>
     RequestMismatch = 38,
 
-    /// <summary>The product offers no trial.</summary>
+    /// <summary>The product does not offer a trial: no product has the code, or the product names no trial policy.</summary>
     TrialNotOffered = 39,
 
     /// <summary>No seat is free.</summary>
