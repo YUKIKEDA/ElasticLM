@@ -1032,7 +1032,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `elm-server` の設定ファイル | 64 KiB |
 | `allow` と `deny` の項目 | 合わせて 1,000 |
 | 頻度の制限が覚える送信元（IPv4 のアドレスか IPv6 の /64） | 100,000。超えたら新しい送信元は 1 つの溢れ用のバケットを分け合う（§13.8） |
-| ノンスの文字列 | 128 文字（正しいノンスは 56 バイトの base64url で 75 文字） |
+| ノンスの文字列 | 1〜128 文字。クライアントは外れた値を無いとみなす（§12.1）（正しいノンスは 56 バイトの base64url で 75 文字） |
 | 証明の `jti` | 64 文字 |
 | インストール鍵のファイル | 16 KiB |
 | 時刻のクレーム（`iat`, `exp`, `nbf`, 機能の `exp`） | 0 以上、253,402,300,799（9999-12-31T23:59:59Z、`DateTimeOffset` が表せる最後の秒）以下 |
@@ -1388,6 +1388,7 @@ public static class ErrorCodes
 - サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
 - 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。`ELM_RATE_LIMITED` の `Retry-After` は、どちらのプログラムでもいつも `1` である（`elm-server` の `GuardAsync`、`elm-service` の `WriteProblemAsync`）。
 - `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
+- クライアント（`ActivationClient` と `LicenseClient`）は、ヘッダーのノンスも、`GET /v1/nonce` の本文のノンスと同じく 1 文字以上 128 文字以下に限り、外れた値はヘッダーがないのと同じに扱う（1 つの関数 `LicenseClient.ValidNonce`。V1c11 の Grill、Issue #242。持ち主の決定はすべて推奨案）。空のヘッダーと空白だけのヘッダーは、どちらも `HttpClient` で空の文字列になる（2026-11-08、.NET 10.0.14 で生の HTTP の応答を返して測った）。前は長さの上限しか見ず、空のノンスで次の要求の証明を作ろうとして、`ProofBuilder.Create` が `ArgumentException` を投げていた（C では `ELM_INVALID_ARGUMENT`。V1c10 の実装で見つけた）。ヘッダーがないときの動き（前のノンスを使い、`ELM_NONCE_REQUIRED` なら新しいノンスで 1 回だけ送り直し、ノンスがなければ `GET /v1/nonce`）は変えない。ノンスはその有効期間（§12.2）のあいだ何度でも使えるので、範囲の外のヘッダーを受けたクライアントは、期間の中では前のノンスで送り、切れていれば `ELM_NONCE_REQUIRED` のあと `GET /v1/nonce` で取り直す（V1c11 の設計の独立レビューと正しさのレビューの A2、持ち主の決定で、Issue の Done when をこの動きに合わせて読む）。ノンスの文字の種類は確かめない。サーバーのノンスはどれも `NonceService` が作る 75 文字の base64url だが、利用者の文書はノンスを中身を読まない文字列（opaque string）とし、文字の正しくない値はサーバーが `ELM_NONCE_REQUIRED` で断って今の送り直しの流れで直るため（レビューの R4、持ち主の決定）。
 
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
@@ -1681,7 +1682,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - `TryCreate` は、インストール鍵があれば読み（読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。鍵がなければ作らず、最初の `ActivateAsync` か `StartTrialAsync` が送る前に、鍵とそのフォルダーを作る（§10.2 の「最初の有効化・試用のときに作る」）。鍵を持たないクライアントは、操作のたびに、同じ端末のほかのプロセスが作った鍵があれば読む。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。`ServiceUrl` が `null` のクライアントは、オンラインの操作（有効化・試用・更新・解除）を送らずに `ELM_INVALID_STATE`（「No service URL is set; use the offline requests.」）を返し、自動の更新のタイマーを置かない（M4c2）。
 - 内部の設定（`elm-server` と `elm` だけが使う、M4c3）: `RequiredKind`（受け取るファイルの種類を 1 つに絞る。保存した有効化がその種類でなければ、どの操作も `ELM_INVALID_STATE`）、`CreateKey`（`false` なら鍵を作らない）、`LicenseKept`（新しいファイルを保存するたびに、そのバイト列で呼ぶ）。§13.7 のとおりに使う。
 - 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。
-- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（128 文字まで）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
+- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（1 文字以上 128 文字まで。外れれば無いとみなす。§12.1）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
 - 送るもの: 有効化と試用は、製品の `code`（`product`）、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、どちらかが 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。クライアントは有効化の前にポリシーを知らず、トークンも `ClientInfoStrategy` を持たないので、`client` を送るかはアプリが決め、残すかはサービスがポリシーで決める（§4.4）。
 
 保存（鍵のフォルダー、§10.2 の ACL と権限の内）:
@@ -4142,7 +4143,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c8 | 決めた形は 0.118 と §20.5 の「V1c8 の Grill」（V1c8 の Grill、Issue #209）。V1c3d のあと、V1c3c の前に置く |
 | V1c9 | 決めた形は §13.1 の終了コードの項目と「V1c9 の Grill」（V1c9 の Grill とその U1、設計の独立レビューの R1〜R11、Issue #227）。V1c8 のあと、V1c3c の前に置く |
 | V1c10 | `libelasticlm` の関数が `ArgumentException` を `ELM_INVALID_ARGUMENT` に変えるとき、`elm_last_error_message()` の文の終わりに .NET の引数の名前（`(Parameter 'rootPublicKeysPem')`）が付く不具合の修正（Issue #238。`src/ElasticLM.Native/NativeErrors.cs` が `ArgumentException.Message` をそのまま渡す）。V1c3c の初見の読み手のレビュー（F4）と C のサンプルで見つけ、PR #237 の持ち主の決定で行にした。V1c3c のあと、V1c4 の前に置く。決めた形は §17.3 の「V1c10 の Grill」（V1c10 の Grill、Issue #238） |
-| V1c11 | `ActivationClient` と `LicenseClient` が、サーバーの空の `ELM-Nonce` ヘッダーを受け入れ、次の要求の証明を作るところで `ArgumentException` を投げる不具合の修正（Issue #242）。V1c10 の実装で見つけ、PR #241 の持ち主の決定で行にした。V1c10 のあと、V1c4 の前に置く。この行の Grill で決める点: ヘッダーのノンスの長さの決まり、外れたときの動き、試験 |
+| V1c11 | `ActivationClient` と `LicenseClient` が、サーバーの空の `ELM-Nonce` ヘッダーを受け入れ、次の要求の証明を作るところで `ArgumentException` を投げる不具合の修正（Issue #242）。V1c10 の実装で見つけ、PR #241 の持ち主の決定で行にした。V1c10 のあと、V1c4 の前に置く。決めた形は §12.1 の V1c11 の文（V1c11 の Grill、Issue #242） |
 | V1c3c | 決めた形は下の「V1c3 の形」と「V1c3c の Grill」（V1c3c の Grill、Issue #236）。V1c8 と V1c9 のあとに置く（Q6）。V1c3b の Grill と V1c8 の D1 がこの行に残した点（Tutorial 4 の手順、`libelasticlm` の入手とその印、C のサンプルの置き場所とビルド、V1c8 で決めたリンクの方法の使い方、C のコンパイラーとビルドしたアプリの実行ファイルの行、V1c8 で C の API の頁から移した 4 つの手順）は、下の「V1c3c の Grill」で決めた |
 | V1c4 | How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか）、オフラインの有効化（ファイルのやり取り）のサンプルの名前と、How-to の「オフラインの有効化」の頁からの引き方（V1c3 の設計のレビューの R13 で V1c3 から移した）。V1c3d で見つけた文書の直し 2 つもこの行で行う（PR #224 の振り返りの持ち主の決定）: `dotnet add` がパッケージを NuGet のグローバルのパッケージのフォルダーに残すことを、パッケージを使う頁に書くか（初見の読み手の 9）、誤りのコードの Reference の頁の `ELM_TRIAL_NOT_OFFERED` の文をサービスの文（「The product does not offer a trial.」）と `ErrorCode.cs` の XML ドキュメントに揃えるか（同じく 11）。V1c8 の初見の読み手が見つけた文書の直しも 1 つこの行で行う（V1c8 の実装の PR の持ち主の決定 D1）: macOS には、`SECURITY.md` の `sha256sum --check --ignore-missing` が使う `sha256sum` がないことがあるので、`shasum -a 256` の形を書く。書く前に、`shasum -a 256 --check --ignore-missing` が動くことを macOS のランナーで確かめる。利用者の文書の安全性のモデルの頁（英語と日本語）にある同じコマンドも直す |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |

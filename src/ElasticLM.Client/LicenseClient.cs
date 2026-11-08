@@ -1261,13 +1261,20 @@ public sealed class LicenseClient : IAsyncDisposable
         return reply;
     }
 
+    /// <summary>
+    /// Returns <paramref name="nonce"/> when it is 1 to 128 characters long, and <see langword="null"/> otherwise, for a nonce
+    /// from an answer's body or its <c>ELM-Nonce</c> header alike (design §12.6.2, V1c11). A value outside that range is taken
+    /// as no nonce, so the next request fetches one instead of building a proof that <see cref="ProofBuilder"/> refuses.
+    /// </summary>
+    /// <param name="nonce">The nonce the server sent, or <see langword="null"/>.</param>
+    /// <returns>The nonce, or <see langword="null"/>.</returns>
+    internal static string? ValidNonce(string? nonce) => nonce is { Length: > 0 and <= 128 } ? nonce : null;
+
     internal static string? ReadNonce(byte[] body)
     {
         try
         {
-            return JsonSerializer.Deserialize(body, ClientWireContext.Default.NonceAnswerBody)?.Nonce is { Length: > 0 and <= 128 } nonce
-                ? nonce
-                : null;
+            return ValidNonce(JsonSerializer.Deserialize(body, ClientWireContext.Default.NonceAnswerBody)?.Nonce);
         }
         catch (JsonException)
         {
@@ -1305,7 +1312,7 @@ public sealed class LicenseClient : IAsyncDisposable
             }
 
             LicenseError? error = response.IsSuccessStatusCode ? null : ProblemOf(response.StatusCode, content);
-            return new Reply(content, error, nonce is { Length: <= 128 } ? nonce : null, serverLicense, retryAfter);
+            return new Reply(content, error, ValidNonce(nonce), serverLicense, retryAfter);
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {

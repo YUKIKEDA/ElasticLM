@@ -766,6 +766,74 @@ public sealed partial class ActivationClientTests
         }
     }
 
+    /// <summary>
+    /// A nonce in an answer's <c>ELM-Nonce</c> header that is empty or longer than 128 characters is taken as no nonce: the
+    /// client keeps the earlier nonce, and fetches a new one when the service refuses that one as expired, instead of failing
+    /// with an argument exception (design §12.1, V1c11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license on the test service; a handler that sets the <c>ELM-Nonce</c> header of every answer to
+    ///   <paramref name="header"/>, as a service that sends a bad header would, and counts the GETs of <c>/v1/nonce</c>. An
+    ///   empty header and one of spaces both reach the client as an empty string (measured on .NET 10.0.14).
+    ///
+    /// Steps:
+    /// - Activate with the key; refresh at once; advance the clock past the nonce's 300 seconds; refresh again.
+    ///
+    /// Expected:
+    /// - The activation fetches one nonce. The first refresh succeeds at sequence 2 with no new GET: the bad header was not
+    ///   kept, and the earlier nonce was used. The second refresh succeeds at sequence 3 after exactly one more GET: the
+    ///   service refused the expired nonce, and the client fetched one. Without the lower bound the empty header fails the
+    ///   first refresh; without the upper bound the 129 characters cost a GET there.
+    /// </remarks>
+    /// <param name="header">The value the handler writes into the header.</param>
+    [Theory]
+    [InlineData("")]
+    [InlineData("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+    public async Task Answer_NonceHeaderOutOfRange_IsTakenAsNoNonce(string header)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"maxActivations\":1");
+        var bad = new NonceHeader(header);
+        await using ActivationClient client = vendor.Client("a", bad);
+
+        Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal(1, bad.NonceGets);
+
+        Task<ActivationResult> refresh = client.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refresh);
+        Assert.Equal(2L, Activated(await refresh).Sequence);
+        Assert.Equal(1, bad.NonceGets);
+
+        vendor.Test.Time.Advance(TimeSpan.FromSeconds(301));
+        refresh = client.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refresh);
+        Assert.Equal(3L, Activated(await refresh).Sequence);
+        Assert.Equal(2, bad.NonceGets);
+    }
+
+    // Sets the ELM-Nonce header of every answer to one value, as a service that sends a bad header would, and counts the GETs
+    // of /v1/nonce.
+    private sealed class NonceHeader(string value) : DelegatingHandler
+    {
+        private int _nonceGets;
+
+        public int NonceGets => Volatile.Read(ref _nonceGets);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith("/v1/nonce", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _nonceGets);
+            }
+
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            response.Headers.Remove("ELM-Nonce");
+            response.Headers.TryAddWithoutValidation("ELM-Nonce", value);
+            return response;
+        }
+    }
+
     // Counts POSTs, and answers the next one with 429 and a Retry-After without sending it, when armed.
     private sealed class ScriptedHandler : DelegatingHandler
     {

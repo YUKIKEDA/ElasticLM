@@ -390,6 +390,71 @@ public sealed class LeaseClientTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A nonce in an answer's <c>ELM-Nonce</c> header that is empty or longer than 128 characters is taken as no nonce: the
+    /// client keeps the earlier nonce, and fetches a new one when the server refuses that one as expired, instead of failing
+    /// with an argument exception (design §12.1, V1c11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its reclaim window (10-minute leases, so renewals come every 200 s); the client's HTTP handler sets
+    ///   the <c>ELM-Nonce</c> header of every answer to <paramref name="header"/>, as a server that sends a bad header would,
+    ///   and counts the GETs of <c>/v1/nonce</c>. An empty header and one of spaces both reach the client as an empty string
+    ///   (measured on .NET 10.0.14).
+    ///
+    /// Steps:
+    /// - Acquire pro; advance 200 s (the first renewal, within the nonce's 300 seconds); advance 200 s more (the second
+    ///   renewal, after them); release.
+    ///
+    /// Expected:
+    /// - The acquire fetches one nonce. The first renewal reaches sequence 2 with no new GET: the bad header was not kept,
+    ///   and the earlier nonce was used. The second renewal reaches sequence 3 after exactly one more GET: the server refused
+    ///   the expired nonce, and the client fetched one. The release succeeds and the server counts no seat. Without the lower
+    ///   bound the empty header fails the first renewal; without the upper bound the 129 characters cost a GET there.
+    /// </remarks>
+    /// <param name="header">The value the handler writes into the header.</param>
+    [Theory]
+    [InlineData("")]
+    [InlineData("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx")]
+    public async Task Answer_NonceHeaderOutOfRange_IsTakenAsNoNonce(string header)
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var bad = new NonceHeader(header);
+        LicenseClient client = _deployment.Client(
+            server.PublicUrls[0],
+            change: o => new LicenseClientOptions
+            {
+                ProductId = o.ProductId,
+                ServerUrl = o.ServerUrl,
+                Trust = o.Trust,
+                DataDirectory = o.DataDirectory,
+                ClockGuard = o.ClockGuard,
+                TimeProvider = o.TimeProvider,
+                WrapHandler = inner =>
+                {
+                    bad.InnerHandler = inner;
+                    return bad;
+                },
+            }
+        );
+
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(1, lease.Token.Sequence);
+        Assert.Equal(1, bad.NonceGets);
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 2);
+        Assert.Equal(1, bad.NonceGets);
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 3);
+        Assert.Equal(LeaseState.Held, lease.State);
+        Assert.Equal(2, bad.NonceGets);
+
+        Assert.Null(await client.ReleaseLeaseAsync(lease, TestContext.Current.CancellationToken));
+        Assert.Equal(0, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
     /// A lease the server stopped as a clone is lost at the client's next renewal (design §10.4).
     /// </summary>
     /// <remarks>
@@ -480,6 +545,30 @@ public sealed class LeaseClientTests : IAsyncDisposable
         Assert.Equal(0, server.Engine.SeatsInUse("pro"));
         Assert.Equal(LeaseState.Released, first.State);
         Assert.Equal(LeaseState.Released, second.State);
+    }
+
+    /// <summary>
+    /// Sets the <c>ELM-Nonce</c> header of every answer to one value, as a server that sends a bad header would, and counts
+    /// the GETs of <c>/v1/nonce</c>.
+    /// </summary>
+    private sealed class NonceHeader(string value) : DelegatingHandler
+    {
+        private int _nonceGets;
+
+        public int NonceGets => Volatile.Read(ref _nonceGets);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith("/v1/nonce", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _nonceGets);
+            }
+
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            response.Headers.Remove("ELM-Nonce");
+            response.Headers.TryAddWithoutValidation("ELM-Nonce", value);
+            return response;
+        }
     }
 
     /// <summary>
