@@ -36,7 +36,7 @@ HTTP の状態は、サーバーがリクエストにそのコードで答える
 | コード | 番号 | HTTP の状態 | 返すもの | 意味 | すべきこと |
 | --- | --- | --- | --- | --- | --- |
 | `ELM_OK` | 0 | 2xx | すべて | 成功。 | 何もしない。 |
-| `ELM_INVALID_ARGUMENT` | 1 | 400 | `elm-server`、`elm-service`、`libelasticlm` | 引数が正しくない。管理 API のクエリの値や本文の項目が正しくない、機能のバージョンが `major.minor[.patch]` の形でない、シート数が 1 から機能のシート数までの範囲にない、借用の期間が 1 秒より短い、借用の更新を求めた（借用は期間のあいだずっと続き、更新しない。[借用](../explanation/floating-licenses.md#借用)を参照）、C で出力先が `NULL` か `struct_size` が違う、のどれかだ。 | 呼び出しを直す。メッセージに引数の名前が出る。 |
+| `ELM_INVALID_ARGUMENT` | 1 | 400 | `elm-server`、`elm-service`、`libelasticlm` | 引数が正しくない。管理 API のクエリの値や本文の項目が正しくない、機能のバージョンが `major.minor[.patch]` の形でない、シート数が 1 から機能のシート数までの範囲にない、借用の期間が 1 秒より短い、借用の更新を求めた（借用は期間のあいだずっと続き、更新しない。[借用](../explanation/floating-licenses.md#借用)を参照）、C で出力先が `NULL` か `struct_size` が違う、のどれかだ。 | 呼び出しを直す。メッセージは、正しくない引数か値を C での名前で挙げるか、どこが正しくないかを書く。 |
 | `ELM_MALFORMED` | 2 | 400（`elm-server` のライセンスの再読み込みでは 409） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm-service`、`elm` | 入力の形式かサイズが正しくない。有効でないライセンスファイルやトークン、サイズの上限を超えたファイル、解析できないリクエストの本文、壊れた保存済みのアクティベーションファイル、有効でないサーバーのレスポンス、のどれかだ。 | ファイルや本文が想定したもので、欠けていないかを確かめる。保存したアクティベーションが壊れている場合は、管理者にアクティベーションを解除してもらい、もう一度アクティベーションする。 |
 | `ELM_UNTRUSTED_KEY` | 3 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | ライセンスやリースにあるどの鍵証明書も、トラストストアのルート鍵でその署名鍵を証明していない。 | アプリが発行元のルート鍵を信頼していることと、ファイルがその発行元のものであることを確かめる。 |
 | `ELM_BAD_SIGNATURE` | 4 | 409（`elm-server` のライセンスの再読み込み） | `ElasticLM.Licensing`、`ElasticLM.Client`、`libelasticlm`、`elm-server`、`elm` | 署名が検証に通らない、またはトークンが ES256 で署名されていない。`elm-server` は、リースの再登録のレスポンスで、リースごとにこのコードを返す。 | ファイルは書き換えられたか壊れたものとして扱い、発行元から新しいファイルを受け取る。 |

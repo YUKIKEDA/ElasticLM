@@ -22,7 +22,7 @@ elm <group> <command> [arguments] [options]
 
 製品 ID（`--product`）は、英小文字、数字、`-` からなる 1 から 64 文字で、たとえば `example-editor` のように書く。`elm-service` での製品の `code` であり、`elm-server` の設定 `product` でもある。`ElasticLM.Client`、`elm-server`、`elm-service` はこれ以外の形を受け付けず、`elm server` のコマンドはこの ID でサーバーのフォルダーを探す。`elm license issue` は形を確かめないが、製品 ID がこれ以外の形のライセンスは、この 3 つでは使えない。
 
-エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプション、または必須のオプションがないときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。
+エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプションのとき、必須のオプションがないとき、ファイルかフォルダーのパスを受け取るオプションか引数が空か空白だけのときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。
 
 ### `--json`
 

@@ -17,7 +17,7 @@ internal static class LogCommands
         {
             Description = "The log files, or a folder of them. They are verified in the order of their names (oldest first).",
             Arity = ArgumentArity.OneOrMore,
-        };
+        }.AsPath();
         var productOption = new Option<string>("--product")
         {
             Description = "The product ID of the server license; needed for a server's log, not for elm-service's.",
@@ -30,7 +30,7 @@ internal static class LogCommands
         var trustOption = new Option<string[]>("--trust")
         {
             Description = $"A root public key file to trust. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
-        };
+        }.AsPath();
         var revokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         Option<bool> jsonOption = CommonOptions.Json();
 
@@ -55,10 +55,7 @@ internal static class LogCommands
                         throw new CliException("--stream must be usage or borrows.");
                     }
 
-                    TrustStore trust = TrustStore.Create(
-                        TrustKeys.Read(host, parse.GetValue(trustOption) ?? []),
-                        parse.GetValue(revokedOption) ?? []
-                    );
+                    TrustStore trust = TrustKeys.Store(host, parse.GetValue(trustOption), parse.GetValue(revokedOption));
                     string? node = parse.GetValue(nodeOption);
                     if (node is not null && (stream != "usage" || !IsNodeName(node)))
                     {

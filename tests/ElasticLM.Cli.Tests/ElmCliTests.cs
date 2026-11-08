@@ -144,6 +144,164 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
+    /// An empty value whose library sentence would not say which value it is exits with 2 and a line that names the option
+    /// or argument, without a .NET parameter name (design §17.3, V1c10 Q3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keys, a certificate, and a license from the offline flow.
+    ///
+    /// Steps:
+    /// - Run the case's command: license verify with --revoked ""; license verify with --product ""; license verify with
+    ///   --key-thumbprint ""; license issue with --bind-key ""; server activate with an empty license-key; server activate-request with --key ""; server
+    ///   forget-proof with --product "". The empty paths, --data among them, are in EmptyPath_NamesTheOption_ExitsWithTwo.
+    ///
+    /// Expected:
+    /// - Exit 2 and exactly the line "error: " + the case's message on the error output: "--revoked must not be empty.",
+    ///   "--product must not be empty.", "--key-thumbprint must not be empty.", "--bind-key must not be empty.", "<license-key> must not be empty.", "--key must
+    ///   not be empty.", "--product must not be empty.".
+    /// </remarks>
+    /// <param name="option">The case: the option or argument whose value is empty.</param>
+    [Theory]
+    [InlineData("--revoked")]
+    [InlineData("--product")]
+    [InlineData("--key-thumbprint")]
+    [InlineData("--bind-key")]
+    [InlineData("license-key")]
+    [InlineData("--key")]
+    [InlineData("--product server")]
+    public void EmptyValue_NamesTheOption_ExitsWithTwo(string option)
+    {
+        string license = IssueSample();
+        string[] Changed(string name, string value)
+        {
+            string[] args = Verify(license);
+            args[Array.IndexOf(args, name) + 1] = value;
+            return args;
+        }
+
+        string[] Bound(string value)
+        {
+            string[] args = Issue("bound.elmlic");
+            args[Array.IndexOf(args, "--bind-key") + 1] = value;
+            return args;
+        }
+
+        string[] server = ["--service", "https://service.example/", "--license", P("server.elmlic"), "--trust", P("root.pub.pem")];
+        (string[] args, string message) = option switch
+        {
+            "--revoked" => ([.. Verify(license), "--revoked", string.Empty], "--revoked must not be empty."),
+            "--product" => (Changed("--product", string.Empty), "--product must not be empty."),
+            "--key-thumbprint" => (Changed("--key-thumbprint", string.Empty), "--key-thumbprint must not be empty."),
+            "--bind-key" => (Bound(string.Empty), "--bind-key must not be empty."),
+            "license-key" => (["server", "activate", string.Empty, "--product", "acme-cad", .. server], "<license-key> must not be empty."),
+            "--key" => (
+                ["server", "activate-request", "--key", string.Empty, "--product", "acme-cad", "--out", P("x.elmreq")],
+                "--key must not be empty."
+            ),
+            _ => (["server", "forget-proof", "--product", string.Empty], "--product must not be empty."),
+        };
+
+        (int code, _, string error) = Run(args);
+
+        Assert.Equal((2, "error: " + message + Environment.NewLine), (code, error));
+    }
+
+    /// <summary>
+    /// Every option and argument that takes a file or folder path refuses an empty value, and one of white space only, with a
+    /// line that names it, without a .NET parameter name (design §17.3, V1c10 D2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An empty folder; nothing else is needed, since the check is part of parsing.
+    ///
+    /// Steps:
+    /// - Run the case's command line with "{}" replaced by "", then by three spaces. The cases are every path option and
+    ///   argument of elm: admin request --body; key root create --out and --public-out; key signing create --out; key
+    ///   certify --root, --public, and --out; key thumbprint &lt;public-key-file&gt;; license issue --signing-key,
+    ///   --certificate, --out, and --trust; license inspect and license verify &lt;license-file&gt;; license verify --trust;
+    ///   log verify &lt;files&gt; and --trust; offline process --in and --out; secret create --out; server status --data;
+    ///   server import &lt;answer&gt;; server deactivate-proof --out; server activate-request --out; server refresh --data,
+    ///   --trust, and --license; server deactivate --license.
+    ///
+    /// Expected:
+    /// - Exit 2 both times; the error output holds "error: {name} must not be empty or only white space." and no
+    ///   "(Parameter".
+    /// </remarks>
+    /// <param name="command">The command line, words separated by spaces, with {} for the empty path.</param>
+    /// <param name="name">The option, or the argument as the help shows it.</param>
+    [Theory]
+    [InlineData("admin request GET /v1/admin/products --body {}", "--body")]
+    [InlineData("key root create --out {}", "--out")]
+    [InlineData("key root create --out k.pem --public-out {}", "--public-out")]
+    [InlineData("key signing create --out {}", "--out")]
+    [InlineData("key certify --root {} --public p.pem --use license --out c.jws", "--root")]
+    [InlineData("key certify --root r.pem --public {} --use license --out c.jws", "--public")]
+    [InlineData("key certify --root r.pem --public p.pem --use license --out {}", "--out")]
+    [InlineData("key thumbprint {}", "<public-key-file>")]
+    [InlineData("license issue --signing-key {}", "--signing-key")]
+    [InlineData("license issue --certificate {}", "--certificate")]
+    [InlineData("license issue --out {}", "--out")]
+    [InlineData("license issue --trust {}", "--trust")]
+    [InlineData("license inspect {}", "<license-file>")]
+    [InlineData("license verify {} --product acme-cad", "<license-file>")]
+    [InlineData("license verify l.elmlic --product acme-cad --trust {}", "--trust")]
+    [InlineData("log verify {}", "<files>")]
+    [InlineData("log verify usage.jsonl --trust {}", "--trust")]
+    [InlineData("offline process --url https://service.example/ --in {}", "--in")]
+    [InlineData("offline process --url https://service.example/ --in a.elmreq --out {}", "--out")]
+    [InlineData("secret create --out {}", "--out")]
+    [InlineData("server status --data {}", "--data")]
+    [InlineData("server import {} --product acme-cad --license s.elmlic", "<answer>")]
+    [InlineData("server deactivate-proof --product acme-cad --out {}", "--out")]
+    [InlineData("server activate-request --product acme-cad --key K --out {}", "--out")]
+    [InlineData("server refresh --product acme-cad --service https://service.example/ --license s.elmlic --data {}", "--data")]
+    [InlineData("server refresh --product acme-cad --service https://service.example/ --license s.elmlic --trust {}", "--trust")]
+    [InlineData("server refresh --product acme-cad --service https://service.example/ --license {}", "--license")]
+    [InlineData("server deactivate --product acme-cad --service https://service.example/ --license {}", "--license")]
+    public void EmptyPath_NamesTheOption_ExitsWithTwo(string command, string name)
+    {
+        foreach (string blank in new[] { string.Empty, "   " })
+        {
+            string[] args = [.. command.Split(' ').Select(word => word == "{}" ? blank : word)];
+
+            (int code, _, string error) = Run(args);
+
+            Assert.True(code == 2, $"'{blank}': exit {code}: {error}");
+            Assert.Contains($"error: {name} must not be empty or only white space.", error, StringComparison.Ordinal);
+            Assert.DoesNotContain("(Parameter", error, StringComparison.Ordinal);
+        }
+    }
+
+    /// <summary>
+    /// A root key that is not P-256 exits with 2 and the trust store's sentence, without a .NET parameter name (design §17.3,
+    /// V1c10).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Keys, a certificate, and a license from the offline flow; a --trust file with a P-384 public key.
+    ///
+    /// Steps:
+    /// - license verify with that --trust file.
+    ///
+    /// Expected:
+    /// - Exit 2 and exactly the line "error: A root key is not a P-256 public key in PEM.".
+    /// </remarks>
+    [Fact]
+    public void Verify_RootKeyNotP256_ExitsWithTwoWithoutParameterName()
+    {
+        string license = IssueSample();
+        using ECDsa p384 = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+        File.WriteAllText(P("p384.pub.pem"), p384.ExportSubjectPublicKeyInfoPem());
+        string[] args = Verify(license);
+        args[Array.IndexOf(args, "--trust") + 1] = P("p384.pub.pem");
+
+        (int code, _, string error) = Run(args);
+
+        Assert.Equal((2, "error: A root key is not a P-256 public key in PEM." + Environment.NewLine), (code, error));
+    }
+
+    /// <summary>
     /// Without --trust, issue and verify read the root keys from ELM_TRUST_ROOT_KEYS, which may hold several PEM blocks;
     /// with neither, they exit with 2 and issue writes nothing.
     /// </summary>

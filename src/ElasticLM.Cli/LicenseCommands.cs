@@ -26,12 +26,12 @@ internal static class LicenseCommands
 
     private static Command IssueCommand(CliHost host)
     {
-        var signingOption = new Option<string>("--signing-key") { Description = "The encrypted signing key file.", Required = true };
+        var signingOption = new Option<string>("--signing-key") { Description = "The encrypted signing key file.", Required = true }.AsPath();
         var certificateOption = new Option<string[]>("--certificate")
         {
             Description = "A certificate file of the signing key. Repeat for several (at most four).",
             Required = true,
-        };
+        }.AsPath();
         var productOption = new Option<string>("--product") { Description = "The product ID.", Required = true };
         var licenseIdOption = new Option<string>("--license-id") { Description = "The license ID.", Required = true };
         var kindOption = new Option<string>("--kind")
@@ -66,12 +66,12 @@ internal static class LicenseCommands
         };
         var cloneOption = new Option<string?>("--clone") { Description = "Server licenses: deny or flag a detected clone. Default: deny." };
         var metaOption = new Option<string[]>("--meta") { Description = "Vendor metadata key=value. Repeat for several." };
-        var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true };
+        var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true }.AsPath();
         var issueTrustOption = new Option<string[]>("--trust")
         {
             Description =
                 $"A root public key file; the license is verified with it before it is written. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
-        };
+        }.AsPath();
         var issueRevokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         Option<string> passphraseOption = CommonOptions.PassphraseEnvironment();
         Option<bool> forceOption = CommonOptions.Force();
@@ -139,7 +139,7 @@ internal static class LicenseCommands
                         ExpiresAt = expires,
                         GracePeriod = TimeSpan.FromDays(graceDays),
                         RefreshWindow = parse.GetValue(refreshOption) is double refresh ? TimeSpan.FromDays(refresh) : null,
-                        InstallationKeyThumbprint = parse.GetValue(bindOption),
+                        InstallationKeyThumbprint = parse.GetValue(bindOption) is string bind ? CliParse.NotEmpty(bind, "--bind-key") : null,
                         Fingerprints = parse.GetValue(fingerprintOption) ?? [],
                         FingerprintMatching = ParseMatching(parse.GetValue(matchingOption)!),
                         LeaseDuration = isServer ? TimeSpan.FromMinutes(parse.GetValue(leaseOption) ?? 10) : null,
@@ -154,10 +154,7 @@ internal static class LicenseCommands
 
                     string[] certificates = [.. parse.GetValue(certificateOption)!.Select(p => CliFiles.ReadText(p, MaxLicenseFileBytes))];
                     using ECDsa signing = CommonOptions.ReadPrivateKey(host, parse.GetValue(signingOption)!, parse.GetValue(passphraseOption)!);
-                    TrustStore trust = TrustStore.Create(
-                        TrustKeys.Read(host, parse.GetValue(issueTrustOption) ?? []),
-                        parse.GetValue(issueRevokedOption) ?? []
-                    );
+                    TrustStore trust = TrustKeys.Store(host, parse.GetValue(issueTrustOption), parse.GetValue(issueRevokedOption));
                     IssuedLicense issued = LicenseIssuer.Issue(signing, certificates, spec, host.Time, trust);
                     string outPath = parse.GetValue(outOption)!;
                     CliFiles.Write(outPath, issued.File, parse.GetValue(forceOption), secret: false);
@@ -188,7 +185,7 @@ internal static class LicenseCommands
 
     private static Command InspectCommand(CliHost host)
     {
-        var fileArgument = new Argument<string>("license-file") { Description = "The license file." };
+        var fileArgument = new Argument<string>("license-file") { Description = "The license file." }.AsPath();
         Option<bool> jsonOption = CommonOptions.Json();
         var inspect = new Command("inspect", "Show the contents of a license file without verifying it.") { fileArgument, jsonOption };
         inspect.SetAction(parse =>
@@ -224,11 +221,11 @@ internal static class LicenseCommands
 
     private static Command VerifyCommand(CliHost host)
     {
-        var fileArgument = new Argument<string>("license-file") { Description = "The license file." };
+        var fileArgument = new Argument<string>("license-file") { Description = "The license file." }.AsPath();
         var trustOption = new Option<string[]>("--trust")
         {
             Description = $"A root public key file to trust. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
-        };
+        }.AsPath();
         var revokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         var productOption = new Option<string>("--product") { Description = "The product ID the license must be for.", Required = true };
         var kindOption = new Option<string>("--kind")
@@ -262,17 +259,14 @@ internal static class LicenseCommands
                 host,
                 () =>
                 {
-                    string product = parse.GetValue(productOption)!;
-                    TrustStore trust = TrustStore.Create(
-                        TrustKeys.Read(host, parse.GetValue(trustOption) ?? []),
-                        parse.GetValue(revokedOption) ?? []
-                    );
+                    string product = CliParse.NotEmpty(parse.GetValue(productOption)!, "--product");
+                    TrustStore trust = TrustKeys.Store(host, parse.GetValue(trustOption), parse.GetValue(revokedOption));
                     string[] fingerprints = parse.GetValue(thisMachineOption)
                         ? [.. MachineFingerprint.Compute(product)]
                         : parse.GetValue(fingerprintOption) ?? [];
                     string? keyThumbprint = parse.GetValue(keyOption);
                     InstallationIdentity? installation =
-                        keyThumbprint is not null ? new InstallationIdentity(keyThumbprint, fingerprints)
+                        keyThumbprint is not null ? new InstallationIdentity(CliParse.NotEmpty(keyThumbprint, "--key-thumbprint"), fingerprints)
                         : fingerprints.Length > 0 ? throw new CliException("--fingerprint and --this-machine need --key-thumbprint.")
                         : null;
                     var requirement = new LicenseRequirement(

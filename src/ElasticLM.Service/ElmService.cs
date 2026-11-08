@@ -347,7 +347,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
         catch (ArgumentException e)
         {
-            throw new ServiceStartException("The trust settings are not valid: " + e.Message);
+            throw new ServiceStartException("The trust settings are not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
     }
 

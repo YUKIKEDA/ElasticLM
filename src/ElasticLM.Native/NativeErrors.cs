@@ -83,13 +83,14 @@ internal static unsafe class NativeErrors
 
     /// <summary>
     /// Turns an exception into a number (design §17.3): a refusal keeps its number, an argument exception is
-    /// <c>ELM_INVALID_ARGUMENT</c>, and anything else is <c>ELM_INTERNAL_ERROR</c>.
+    /// <c>ELM_INVALID_ARGUMENT</c> with its message but not the .NET parameter name, and anything else is
+    /// <c>ELM_INTERNAL_ERROR</c>.
     /// </summary>
     public static int Fail(Exception exception) =>
         exception switch
         {
             NativeException refusal => Fail(refusal.Code, refusal.Message),
-            ArgumentException argument => Fail(ErrorCode.InvalidArgument, argument.Message),
+            ArgumentException argument => Fail(ErrorCode.InvalidArgument, ArgumentMessages.WithoutParameterName(argument)),
             _ => Fail(ErrorCode.InternalError, "An internal error occurred: " + exception.Message),
         };
 }

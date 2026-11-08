@@ -12,7 +12,8 @@
     - Compiles the C sample of Tutorial 4 (samples/VerifyOfflineC/app.c) the same way, with warnings as errors (design
       §20.7, V1c3c).
     - Makes keys and two licenses with elm in a temporary folder: one unbound, one bound to the key the test creates.
-    - Runs the verification test in its two steps.
+    - Runs the verification test in its two steps. The second also compares the whole elm_last_error_message of a root key
+      that is not PEM, with no .NET parameter name in it, on the published library (design §17.3, V1c10).
     - Starts elm-service on a free loopback port (with 10 requests a second per installation key, not 2), makes a product, a feature, a policy, a license, and the product's trial
       policy with the setup key, and runs the activation test against it: activation, a refresh, deactivation, and a trial
       (design §17.5, §20.7).

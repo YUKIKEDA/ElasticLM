@@ -95,6 +95,9 @@ internal sealed partial class ServerProcess : IAsyncDisposable
         return key.Groups[1].Value;
     }
 
+    /// <summary>Sets a variable of the server's environment, such as a setting (design §13.8), for the runs from now on.</summary>
+    public void SetEnvironment(string name, string value) => _environment[name] = value;
+
     /// <summary>Runs the server to its end, for a start that stops by itself, and returns its exit code and output.</summary>
     public Task<(int Code, string Out, string Error)> RunToExitAsync() => Binaries.RunAsync(Binaries.Server, [], _folder, _environment);
 

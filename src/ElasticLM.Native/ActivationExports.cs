@@ -29,7 +29,7 @@ public static unsafe partial class Exports
         {
             var o = (ActivationOptions*)options;
             StructSizes.Check(o, "options");
-            string product = NativeStrings.Read(o->ProductId, "product_id");
+            string product = NativeStrings.ReadNotEmpty(o->ProductId, "product_id");
             string? url = NativeStrings.ReadOptional(o->ServiceUrl, "service_url");
             Uri? service = null;
             if (url is not null && !Uri.TryCreate(url, UriKind.Absolute, out service))
@@ -38,7 +38,7 @@ public static unsafe partial class Exports
             }
 
             string[] roots = ReadArray(o->RootKeysPem, o->RootKeyCount, 1, MaxRootKeys, "root_keys_pem", NativeStrings.MaxPemBytes);
-            string[] revoked = ReadArray(o->RevokedKeyIds, o->RevokedKeyCount, 0, MaxRevokedKeyIds, "revoked_key_ids", NativeStrings.MaxTextBytes);
+            string[] revoked = ReadRevoked(o->RevokedKeyIds, o->RevokedKeyCount);
             KeyScope scope = Scope(o->Scope);
             int skew = o->ClockSkewSeconds == 0 ? DefaultClockSkewSeconds : o->ClockSkewSeconds;
             if (skew is < 1 or > MaxClockSkewSeconds)
@@ -53,7 +53,7 @@ public static unsafe partial class Exports
                 ServiceUrl = service,
                 Trust = TrustStore.Create(roots, revoked),
                 KeyScope = scope,
-                DataDirectory = NativeStrings.ReadOptional(o->Directory, "directory"),
+                DataDirectory = NativeStrings.ReadOptionalPath(o->Directory, "directory"),
                 SendClientInfo = Flag(o->SendClientInfo, "send_client_info"),
                 AppVersion = NativeStrings.ReadOptional(o->AppVersion, "app_version"),
                 VerifierOptions = new LicenseVerifierOptions
@@ -87,7 +87,12 @@ public static unsafe partial class Exports
     /// <returns>A design §19 number; 0 on success.</returns>
     [UnmanagedCallersOnly(EntryPoint = "elm_activation_activate")]
     public static int ActivationActivate(nint activation, byte* licenseKey, nint* result, long* retryAfterSeconds) =>
-        Online(activation, result, retryAfterSeconds, a => a.ActivateAsync(NativeStrings.Read(licenseKey, "license_key")).GetAwaiter().GetResult());
+        Online(
+            activation,
+            result,
+            retryAfterSeconds,
+            a => a.ActivateAsync(NativeStrings.ReadNotEmpty(licenseKey, "license_key")).GetAwaiter().GetResult()
+        );
 
     /// <summary><c>elm_activation_start_trial</c>: starts a trial on this installation.</summary>
     /// <param name="activation">The handle.</param>
@@ -195,7 +200,7 @@ public static unsafe partial class Exports
             activation,
             result,
             replaced,
-            a => a.CreateActivationRequestAsync(NativeStrings.Read(licenseKey, "license_key"), Flag(renew, "renew")).GetAwaiter().GetResult()
+            a => a.CreateActivationRequestAsync(NativeStrings.ReadNotEmpty(licenseKey, "license_key"), Flag(renew, "renew")).GetAwaiter().GetResult()
         );
 
     /// <summary><c>elm_activation_create_refresh_request</c>: makes an offline refresh request file.</summary>

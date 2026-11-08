@@ -91,7 +91,8 @@ public sealed class LeaseTests : IAsyncLifetime
 
     /// <summary>
     /// A server in its reclaim window gives ELM_SERVER_RECOVERING and its Retry-After; the arguments are checked; a lease of
-    /// another client is refused; the outputs are emptied on a failure.
+    /// another client is refused; the outputs are emptied on a failure. The messages carry no .NET parameter name (design §17.3,
+    /// V1c10).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -104,9 +105,10 @@ public sealed class LeaseTests : IAsyncLifetime
     ///   NULL.
     ///
     /// Expected:
-    /// - ELM_SERVER_RECOVERING (43) with out NULL and retry 600, twice; ELM_INVALID_ARGUMENT (1) for count 0, the NULL and the
-    ///   empty feature, and both periods out of range; the longest period passes the check and the server refuses it with
-    ///   another number; B's release 1 and the lease still HELD; 1 for both pins with deleted 0; 1 for each NULL output.
+    /// - ELM_SERVER_RECOVERING (43) with out NULL and retry 600, twice; ELM_INVALID_ARGUMENT (1) for count 0 ("count must be at
+    ///   least 1."), the NULL and the empty feature ("feature_id must not be empty."), and both periods out of range; the
+    ///   longest period passes the check and the server refuses it with another number; B's release 1 with exactly "The lease
+    ///   was made by another client." and the lease still HELD; 1 for both pins with deleted 0; 1 for each NULL output.
     /// </remarks>
     [Fact]
     public async Task Failures_RetryAfterArgumentsAndOwner()
@@ -120,16 +122,16 @@ public sealed class LeaseTests : IAsyncLifetime
         Assert.Equal(43, LeaseApi.Acquire(_api, a, "pro", 1, out _, out _, nullRetry: true));
         _deployment.Time.Advance(Window);
 
-        Assert.Equal(1, LeaseApi.Acquire(_api, a, "pro", 0, out _, out _));
+        Assert.Equal((1, "count must be at least 1."), (LeaseApi.Acquire(_api, a, "pro", 0, out _, out _), NativeApi.LastError));
         Assert.Equal(1, LeaseApi.Acquire(_api, a, null, 1, out _, out _));
-        Assert.Equal(1, LeaseApi.Acquire(_api, a, string.Empty, 1, out _, out _));
+        Assert.Equal((1, "feature_id must not be empty."), (LeaseApi.Acquire(_api, a, string.Empty, 1, out _, out _), NativeApi.LastError));
         Assert.Equal(1, LeaseApi.Borrow(_api, a, "pro", 0, out _, out _));
         Assert.Equal(1, LeaseApi.Borrow(_api, a, "pro", 3_162_240_001, out _, out _));
         Assert.NotEqual(1, LeaseApi.Borrow(_api, a, "pro", 3_162_240_000, out nint longest, out _));
         Assert.Equal((nint)0, longest);
 
         Assert.Equal(0, LeaseApi.Acquire(_api, a, "pro", 1, out nint lease, out _));
-        Assert.Equal(1, LeaseApi.Release(b, lease));
+        Assert.Equal((1, "The lease was made by another client."), (LeaseApi.Release(b, lease), NativeApi.LastError));
         Assert.Equal(0, LeaseApi.State(lease));
 
         Assert.Equal((1, 0), (LeaseApi.ResetPin(_api, a, "ftp://x/", out int deleted), deleted));

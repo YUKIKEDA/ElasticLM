@@ -105,7 +105,9 @@ internal sealed partial record ServerSettings
 
         Uri admin = ParseAdmin(Env("ELM_ADMIN_LISTEN") ?? file.Admin?.Listen ?? "http://127.0.0.1:7071");
         string usage = Env("ELM_LOG_USAGE") ?? file.Log?.Usage ?? "usage.jsonl";
-        if (Path.GetFileNameWithoutExtension(usage).Length == 0)
+
+        // design §17.3 (V1c10, A1): a name of white space only is no file name either.
+        if (string.IsNullOrWhiteSpace(Path.GetFileNameWithoutExtension(usage)))
         {
             throw new ServerStartException($"log.usage must name a file: '{usage}'.");
         }

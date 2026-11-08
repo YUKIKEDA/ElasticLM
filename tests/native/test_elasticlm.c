@@ -332,6 +332,25 @@ static void test_refusals(elm_verifier* verifier, elm_verifier* revoked, const c
     free(large);
 }
 
+/*
+ * A root key that is not PEM is refused with the trust store's sentence and no .NET parameter name (design §17.3, V1c10).
+ * Preconditions: the text of unbound.elmlic, which is a license file and not a PEM key.
+ * Steps: elm_verifier_create with that text as the only root key.
+ * Expected: ELM_INVALID_ARGUMENT, out NULL, and exactly the message "A root key is not a P-256 public key in PEM.".
+ */
+static void test_root_not_pem(const char* file)
+{
+    elm_verifier* verifier = NULL;
+    verifier = (elm_verifier*)&verifier;
+    elm_verifier_options options;
+    memset(&options, 0, sizeof options);
+    options.struct_size = sizeof options;
+    options.root_keys_pem = &file;
+    options.root_key_count = 1;
+    check(elm.verifier_create(&options, &verifier) == ELM_INVALID_ARGUMENT && verifier == NULL, "a root key that is not PEM");
+    check(strcmp(elm.last_error_message(), "A root key is not a P-256 public key in PEM.") == 0, "its message has no .NET parameter name");
+}
+
 /* The process's resident memory in KiB, to print around the thread test; 0 when it cannot be read. */
 static long resident_kib(void)
 {
@@ -923,6 +942,7 @@ int main(int argc, char** argv)
     test_unbound(verifier, unbound, unbound_length);
     test_bound(verifier, installation, bound, bound_length);
     test_refusals(verifier, revoked, unbound, unbound_length);
+    test_root_not_pem(unbound);
     test_null_handles();
     test_c_threads(verifier);
 

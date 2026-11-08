@@ -185,6 +185,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(host);
         long started = host.Time.GetTimestamp();
+        CheckPaths(settings);
         TrustStore trust = ReadTrust(settings, host.Environment);
         var store = new InstallationKeyStore(settings.Product, KeyScope.Machine, settings.DataDirectory);
         if (!store.TryLoadOrCreate(out InstallationKey? key, out LicenseError? keyError))
@@ -493,14 +494,44 @@ internal sealed partial class ElmServer : IAsyncDisposable
             throw new ServerStartException($"Set trust.rootKeys or {ServerSettings.TrustRootKeysVariable} to the vendor's root public keys.");
         }
 
+        // design §17.3 (V1c10): the trust store's own refusal of an empty key ID does not name the setting.
+        if (settings.TrustRevokedKeyIds.Any(string.IsNullOrEmpty))
+        {
+            throw new ServerStartException("trust.revokedKeyIds must not hold an empty or null entry.");
+        }
+
         try
         {
             return TrustStore.Create([.. keys], [.. settings.TrustRevokedKeyIds]);
         }
         catch (ArgumentException e)
         {
-            throw new ServerStartException("The trust settings are not valid: " + e.Message);
+            throw new ServerStartException("The trust settings are not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
+    }
+
+    // design §17.3 (V1c10, R5, D3, and A1): the file system's own refusal of a blank path says neither the setting nor the
+    // value, and it is an ArgumentException, which Program does not catch.
+    private static void CheckPaths(ServerSettings settings)
+    {
+        static void RefuseBlank(string? value, string key)
+        {
+            if (value is not null && string.IsNullOrWhiteSpace(value))
+            {
+                throw new ServerStartException($"{key} must not be empty or only white space.");
+            }
+        }
+
+        RefuseBlank(settings.DataDirectory, "dataDirectory");
+        RefuseBlank(settings.LicensePath, "license");
+
+        if (settings.TrustRootKeyFiles.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ServerStartException("trust.rootKeys must not hold an empty, white-space-only, or null entry.");
+        }
+
+        RefuseBlank(settings.TlsCertificate, "tls.certificate");
+        RefuseBlank(settings.TlsKey, "tls.key");
     }
 
     // design §13.1 step 3: the server license must verify for this installation; at the start a failure stops the server,

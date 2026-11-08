@@ -46,10 +46,10 @@ public static unsafe partial class Exports
         {
             var o = (InstallationOptions*)options;
             StructSizes.Check(o, "options");
-            string product = NativeStrings.Read(o->ProductId, "product_id");
+            string product = NativeStrings.ReadNotEmpty(o->ProductId, "product_id");
             KeyScope scope = Scope(o->Scope);
             bool create = Flag(o->Create, "create");
-            var store = new InstallationKeyStore(product, scope, NativeStrings.ReadOptional(o->Directory, "directory"));
+            var store = new InstallationKeyStore(product, scope, NativeStrings.ReadOptionalPath(o->Directory, "directory"));
             InstallationKey? key;
             LicenseError? error;
             if (!(create ? store.TryLoadOrCreate(out key, out error) : store.TryLoad(out key, out error)))
@@ -107,7 +107,7 @@ public static unsafe partial class Exports
             var o = (VerifierOptions*)options;
             StructSizes.Check(o, "options");
             string[] roots = ReadArray(o->RootKeysPem, o->RootKeyCount, 1, MaxRootKeys, "root_keys_pem", NativeStrings.MaxPemBytes);
-            string[] revoked = ReadArray(o->RevokedKeyIds, o->RevokedKeyCount, 0, MaxRevokedKeyIds, "revoked_key_ids", NativeStrings.MaxTextBytes);
+            string[] revoked = ReadRevoked(o->RevokedKeyIds, o->RevokedKeyCount);
             int skew = o->ClockSkewSeconds == 0 ? DefaultClockSkewSeconds : o->ClockSkewSeconds;
             if (skew is < 1 or > MaxClockSkewSeconds)
             {
@@ -115,7 +115,7 @@ public static unsafe partial class Exports
             }
 
             bool rejectTrial = Flag(o->RejectTrialAsStandard, "reject_trial_as_standard");
-            string? path = NativeStrings.ReadOptional(o->ClockGuardPath, "clock_guard_path");
+            string? path = NativeStrings.ReadOptionalPath(o->ClockGuardPath, "clock_guard_path");
             NativeInstallation? installation = o->Installation == 0 ? null : NativeHandles.Get<NativeInstallation>(o->Installation, "installation");
             TrustStore trust = TrustStore.Create(roots, revoked);
 
@@ -177,7 +177,7 @@ public static unsafe partial class Exports
 
             var r = (Requirement*)requirement;
             StructSizes.Check(r, "requirement");
-            string product = NativeStrings.Read(r->ProductId, "product_id");
+            string product = NativeStrings.ReadNotEmpty(r->ProductId, "product_id");
             LicenseKind kind = Kind(r->Kind);
             string? feature = NativeStrings.ReadOptional(r->FeatureId, "feature_id");
             string? version = NativeStrings.ReadOptional(r->FeatureVersion, "feature_version");
@@ -459,6 +459,14 @@ public static unsafe partial class Exports
         }
 
         return result;
+    }
+
+    // design §17.3 (V1c10): the trust store's own refusal of an empty key ID does not say which entry it is.
+    private static string[] ReadRevoked(byte** items, nuint count)
+    {
+        string[] revoked = ReadArray(items, count, 0, MaxRevokedKeyIds, "revoked_key_ids", NativeStrings.MaxTextBytes);
+        int empty = Array.IndexOf(revoked, string.Empty);
+        return empty < 0 ? revoked : throw NativeException.Invalid($"revoked_key_ids[{empty}] must not be empty.");
     }
 
     private static void ClearOutputs(nint* pointer, nuint* length)

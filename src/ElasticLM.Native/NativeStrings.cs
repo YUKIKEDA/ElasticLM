@@ -26,6 +26,36 @@ internal static unsafe class NativeStrings
         ReadOptional(text, name, maxBytes) ?? throw NativeException.Invalid($"{name} is required.");
 
     /// <summary>
+    /// Reads a required NUL-terminated UTF-8 string from C that must not be empty (design §17.3, V1c10).
+    /// </summary>
+    /// <exception cref="NativeException">The string cannot be read as <see cref="Read"/> says, or it is empty.</exception>
+    public static string ReadNotEmpty(byte* text, string name) =>
+        Read(text, name) is { Length: > 0 } value ? value : throw NativeException.Invalid($"{name} must not be empty.");
+
+    /// <summary>
+    /// Reads an optional NUL-terminated UTF-8 string from C that must not be empty when it is given (design §17.3, V1c10).
+    /// </summary>
+    /// <exception cref="NativeException">The string cannot be read as <see cref="ReadOptional"/> says, or it is empty.</exception>
+    public static string? ReadOptionalNotEmpty(byte* text, string name)
+    {
+        string? value = ReadOptional(text, name);
+        return value is { Length: 0 } ? throw NativeException.Invalid($"{name} must not be empty.") : value;
+    }
+
+    /// <summary>
+    /// Reads an optional path from C that must not be empty or only white space when it is given (design §17.3, V1c10).
+    /// </summary>
+    /// <exception cref="NativeException">The string cannot be read as <see cref="ReadOptional"/> says, or it is empty or only
+    /// white space.</exception>
+    public static string? ReadOptionalPath(byte* text, string name)
+    {
+        string? path = ReadOptional(text, name);
+        return path is null || !string.IsNullOrWhiteSpace(path)
+            ? path
+            : throw NativeException.Invalid($"{name} must not be empty or only white space.");
+    }
+
+    /// <summary>
     /// Reads an optional NUL-terminated UTF-8 string from C; <see langword="null"/> stays <see langword="null"/>.
     /// </summary>
     /// <exception cref="NativeException">No NUL comes within the bound, or the bytes are not valid UTF-8.</exception>

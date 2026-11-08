@@ -144,6 +144,16 @@ internal sealed record ServiceSettings
         Uri listen = ParseListen(Env("ELM_LISTEN") ?? file.Listen ?? "http://127.0.0.1:8080");
         string? tlsCertificate = Env("ELM_TLS_CERTIFICATE") ?? file.Tls?.Certificate;
         string? tlsKey = Env("ELM_TLS_KEY") ?? file.Tls?.Key;
+        string? usageDirectory = Env("ELM_USAGELOG_DIRECTORY") ?? file.UsageLog?.Directory;
+        string? signingKey = Env("ELM_SIGNING_KEY") ?? file.Signing?.Key;
+
+        // design §17.3 (V1c10, A1): the value a variable puts in place of the file's is checked as the file's is. A list variable
+        // drops its empty entries, and the variables of the other path settings hold the secret itself, not a path.
+        PathValue(tlsCertificate, "tls.certificate");
+        PathValue(tlsKey, "tls.key");
+        PathValue(usageDirectory, "usageLog.directory");
+        PathValue(signingKey, "signing.key");
+
         if (listen.Scheme == Uri.UriSchemeHttps && (tlsCertificate is null || tlsKey is null))
         {
             throw new ServiceStartException("An https listen needs tls.certificate and tls.key (PEM files).");
@@ -160,7 +170,6 @@ internal sealed record ServiceSettings
             ?? (file.Database?.ConnectionFile is string connectionFile ? ReadSecret(connectionFile, "database.connectionFile") : null)
             ?? throw new ServiceStartException($"Set {ConnectionVariable} or database.connectionFile to the database connection string.");
 
-        string? signingKey = Env("ELM_SIGNING_KEY") ?? file.Signing?.Key;
         IReadOnlyList<string> certificates = EnvList("ELM_SIGNING_CERTIFICATES") ?? file.Signing?.Certificates ?? [];
         if (requireSigning && signingKey is null)
         {
@@ -265,7 +274,7 @@ internal sealed record ServiceSettings
             NonceSecret = nonceSecret,
             RateLimitClientPerIp = clientPerIp,
             RateLimitClientPerKey = clientPerKey,
-            UsageLogDirectory = Env("ELM_USAGELOG_DIRECTORY") ?? file.UsageLog?.Directory,
+            UsageLogDirectory = usageDirectory,
             NodeName = nodeName,
             Oidc = oidc,
             InactiveAdminDays = inactiveDays,
@@ -346,18 +355,18 @@ internal sealed record ServiceSettings
         }
 
         Text(file.Listen, "listen");
-        Text(file.Tls?.Certificate, "tls.certificate");
-        Text(file.Tls?.Key, "tls.key");
+        PathValue(file.Tls?.Certificate, "tls.certificate");
+        PathValue(file.Tls?.Key, "tls.key");
         Text(file.Database?.Provider, "database.provider");
-        Text(file.Database?.ConnectionFile, "database.connectionFile");
-        Text(file.Signing?.Key, "signing.key");
-        List(file.Signing?.Certificates, "signing.certificates");
-        Text(file.Signing?.PassphraseFile, "signing.passphraseFile");
-        List(file.Trust?.RootKeys, "trust.rootKeys");
+        PathValue(file.Database?.ConnectionFile, "database.connectionFile");
+        PathValue(file.Signing?.Key, "signing.key");
+        PathList(file.Signing?.Certificates, "signing.certificates");
+        PathValue(file.Signing?.PassphraseFile, "signing.passphraseFile");
+        PathList(file.Trust?.RootKeys, "trust.rootKeys");
         List(file.Trust?.RevokedKeyIds, "trust.revokedKeyIds");
         List(file.PublicUrls, "publicUrls");
-        Text(file.Nonce?.SecretFile, "nonce.secretFile");
-        Text(file.UsageLog?.Directory, "usageLog.directory");
+        PathValue(file.Nonce?.SecretFile, "nonce.secretFile");
+        PathValue(file.UsageLog?.Directory, "usageLog.directory");
         Text(file.Node?.Name, "node.name");
         Text(file.Oidc?.Issuer, "oidc.issuer");
         Text(file.Oidc?.Audience, "oidc.audience");
@@ -365,9 +374,27 @@ internal sealed record ServiceSettings
         List(file.Oidc?.CliScopes, "oidc.cliScopes");
         Text(file.Oidc?.RoleClaim, "oidc.roleClaim");
         Text(file.Oidc?.WebClientId, "oidc.webClientId");
-        Text(file.Oidc?.WebClientSecretFile, "oidc.webClientSecretFile");
-        Text(file.DataProtection?.KekFile, "dataProtection.kekFile");
+        PathValue(file.Oidc?.WebClientSecretFile, "oidc.webClientSecretFile");
+        PathValue(file.DataProtection?.KekFile, "dataProtection.kekFile");
         return file;
+    }
+
+    // design §17.3 (V1c10, A1): a path of white space only would become "The path is empty." on Windows, without the key. It
+    // checks a value of the file and the value that a variable puts in its place alike.
+    private static void PathValue(string? value, string key)
+    {
+        if (value is not null && string.IsNullOrWhiteSpace(value))
+        {
+            throw new ServiceStartException($"{key} must not be empty or only white space; leave it out instead.");
+        }
+    }
+
+    private static void PathList(IReadOnlyList<string>? values, string key)
+    {
+        if (values is not null && values.Any(string.IsNullOrWhiteSpace))
+        {
+            throw new ServiceStartException($"{key} must not hold an empty, white-space-only, or null entry.");
+        }
     }
 
     private static SettingsFile ReadFile(string path)

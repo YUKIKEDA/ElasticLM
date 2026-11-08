@@ -89,7 +89,10 @@ internal static class ServerCommands
     {
         url = new Option<string?>("--url") { Description = "The administration API. Default: http://127.0.0.1:7071 (admin.listen)." };
         product = new Option<string?>("--product") { Description = "The server's product ID, to find its data folder at the default place." };
-        data = new Option<string?>("--data") { Description = "The server's data folder (dataDirectory), which holds the administrator token." };
+        data = new Option<string?>("--data")
+        {
+            Description = "The server's data folder (dataDirectory), which holds the administrator token.",
+        }.AsPath();
         json = CommonOptions.Json();
         command.Options.Add(url);
         command.Options.Add(product);
@@ -109,11 +112,13 @@ internal static class ServerCommands
         Action<JsonElement, TextWriter> print
     )
     {
+        // design §17.3 (V1c10): the key store's own refusal of an empty product ID does not name the option; an empty --data
+        // is a parse error (CliPaths).
         string folder =
             data
             ?? (
                 product is not null
-                    ? new InstallationKeyStore(product, KeyScope.Machine).Directory
+                    ? new InstallationKeyStore(CliParse.NotEmpty(product, "--product"), KeyScope.Machine).Directory
                     : throw new CliException("Pass --data or --product.")
             );
         string token =

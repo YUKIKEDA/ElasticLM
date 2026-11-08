@@ -21,5 +21,12 @@
     <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
     <!-- The C ABI tests make licenses with the same test issuer (tests/ElasticLM.Licensing.Tests/TestIssuer.cs). -->
     <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
+    <!-- elm, elm-server, elm-service, and libelasticlm show argument messages without the .NET parameter name
+         (ArgumentMessages, design §17.3 V1c10); libelasticlm's assembly name differs by OS (design §17.4). -->
+    <InternalsVisibleTo Include="elm" />
+    <InternalsVisibleTo Include="elm-server" />
+    <InternalsVisibleTo Include="elm-service" />
+    <InternalsVisibleTo Include="elasticlm" />
+    <InternalsVisibleTo Include="libelasticlm" />
   </ItemGroup>
 </Project>

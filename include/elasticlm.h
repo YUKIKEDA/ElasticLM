@@ -170,7 +170,8 @@ typedef struct {
     uint32_t struct_size;
     const char* product_id; /* required */
     int32_t scope;          /* ELM_SCOPE_* */
-    const char* directory;  /* NULL for the default folder of design §10.2 */
+    const char* directory;  /* NULL for the default folder of design §10.2; empty or only white space:
+                             * ELM_INVALID_ARGUMENT */
     int32_t create;         /* 1: create the key when there is none; 0: ELM_INSTALLATION_KEY_UNREADABLE */
 } elm_installation_options;
 
@@ -183,7 +184,7 @@ typedef struct {
     const elm_installation* installation; /* NULL, or the key that signs the clock guard's state; copied */
     const char* clock_guard_path;         /* NULL: "clock" in the installation's folder, or no state without one.
                                            * Without an installation the state file is not signed: whoever can write
-                                           * it can reset the guard. */
+                                           * it can reset the guard. Empty or only white space: ELM_INVALID_ARGUMENT. */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
     int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
 } elm_verifier_options;
@@ -216,7 +217,8 @@ typedef struct {
     const char* const* revoked_key_ids;   /* key IDs revoked by the vendor: 0 to 1024 */
     size_t revoked_key_count;
     int32_t scope;                        /* ELM_SCOPE_* */
-    const char* directory;                /* NULL for the default folder of design §10.2 */
+    const char* directory;                /* NULL for the default folder of design §10.2; empty or only white space:
+                                           * ELM_INVALID_ARGUMENT */
     int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
     const char* app_version;              /* NULL, or at most 64 bytes */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
@@ -240,7 +242,8 @@ typedef struct {
     size_t revoked_key_count;
     const char* expected_server_license_id; /* NULL, or the server license to pin (design §13.5); not with license_key */
     int32_t scope;                        /* ELM_SCOPE_* */
-    const char* directory;                /* NULL for the default folder of design §10.2 */
+    const char* directory;                /* NULL for the default folder of design §10.2; empty or only white space:
+                                           * ELM_INVALID_ARGUMENT */
     int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
     const char* app_version;              /* NULL, or at most 64 bytes */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */

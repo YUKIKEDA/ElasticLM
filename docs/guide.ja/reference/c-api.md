@@ -217,7 +217,7 @@ int32_t elm_lease_last_error(const elm_lease* lease);
 
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
-| `elm_last_error_message` | `const char*` | このスレッドで最後に呼んだ、エラー番号を返す関数のメッセージ。成功のあとは空。 |
+| `elm_last_error_message` | `const char*` | このスレッドで最後に呼んだ、エラー番号を返す関数のメッセージ。成功のあとは空。`ELM_INVALID_ARGUMENT` のメッセージは、C の引数かメンバーの名前を挙げるか、値のどこが正しくないかを書く。 |
 | `elm_version` | `const char*` | ライブラリのバージョン。プロセスが終わるまで有効。 |
 
 ```c
@@ -287,7 +287,7 @@ void elm_string_free(char* text);
 | `struct_size` | `uint32_t` | `sizeof(elm_installation_options)`。 |
 | `product_id` | `const char*` | 必須。製品 ID。 |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` か `ELM_SCOPE_MACHINE`。 |
-| `directory` | `const char*` | `NULL` ならスコープの[既定のフォルダー](../explanation/devices-and-proofs.md#鍵の保存場所)。または自分で決めたフォルダー。 |
+| `directory` | `const char*` | `NULL` ならスコープの[既定のフォルダー](../explanation/devices-and-proofs.md#鍵の保存場所)。または自分で決めたフォルダー。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `create` | `int32_t` | `1`: 鍵がなければ作る。`0`（既定）: 既存の鍵を開くだけ。鍵がなければ `ELM_INSTALLATION_KEY_UNREADABLE` になる。 |
 
 ### `elm_verifier_options`
@@ -302,7 +302,7 @@ void elm_string_free(char* text);
 | `revoked_key_ids` | `const char* const*` | ベンダーが失効させた鍵 ID。0 個から 1024 個。 |
 | `revoked_key_count` | `size_t` | 失効した鍵 ID の数。 |
 | `installation` | `const elm_installation*` | `NULL`、またはその鍵で時刻巻き戻し対策の状態に署名するインストール。検証器は自分用のコピーを持つ。 |
-| `clock_guard_path` | `const char*` | 時刻巻き戻し対策の状態ファイル。`NULL` なら、インストールのフォルダーの `clock`。インストールがなければ状態を持たない。インストールがないと状態ファイルに署名しないので、そのファイルに書き込める人は誰でも対策をリセットできる。 |
+| `clock_guard_path` | `const char*` | 時刻巻き戻し対策の状態ファイル。`NULL` なら、インストールのフォルダーの `clock`。インストールがなければ状態を持たない。インストールがないと状態ファイルに署名しないので、そのファイルに書き込める人は誰でも対策をリセットできる。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
 | `reject_trial_as_standard` | `int32_t` | `0`（既定）: 標準の要件でトライアルのライセンスも受け付ける。`1`: 受け付けない。 |
 
@@ -349,7 +349,7 @@ void elm_string_free(char* text);
 | `revoked_key_ids` | `const char* const*` | ベンダーが失効させた鍵 ID。0 個から 1024 個。 |
 | `revoked_key_count` | `size_t` | 失効した鍵 ID の数。 |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` か `ELM_SCOPE_MACHINE`。 |
-| `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。 |
+| `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `send_client_info` | `int32_t` | `1`: ホスト名とユーザー名を送る。 |
 | `app_version` | `const char*` | `NULL`、またはアプリのバージョン（64 バイトまで）。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
@@ -373,7 +373,7 @@ void elm_string_free(char* text);
 | `revoked_key_count` | `size_t` | 失効した鍵 ID の数。 |
 | `expected_server_license_id` | `const char*` | `NULL`、またはピンとして記録するサーバーライセンス。`license_key` とは一緒に使えない。 |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` か `ELM_SCOPE_MACHINE`。 |
-| `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。 |
+| `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `send_client_info` | `int32_t` | `1`: ホスト名とユーザー名を送る。 |
 | `app_version` | `const char*` | `NULL`、またはアプリのバージョン（64 バイトまで）。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
