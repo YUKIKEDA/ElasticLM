@@ -16,6 +16,7 @@ The agent shell on this setup is PowerShell. Do not use bash-only constructs in 
 ## Use instead
 
 - Multi-line text for a commit: a here-string.
+- A here-string (`@'…'@`) does not hold the line break before its closing `'@`: text that must end with one empty line needs two empty lines before `'@` (measured in pwsh 7: `"x`n`n"` takes two). In PR #245 a test block put in with a here-string lost the empty line before the next comment, and StyleCop failed the build with SA1513, SA1515, and SA1516.
 
 ```powershell
 git commit -m @"
