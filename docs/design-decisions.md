@@ -1266,3 +1266,9 @@
 - **決定:** `elm-server` の空か空白だけの `trust.rootKeys` の要素、`tls.certificate`、`tls.key` と、`elm-service` の空白だけのパスの設定を、V1c10 の中で、設定の名前を挙げて断る（持ち主の決定、推奨案。§17.3 の「V1c10 の Grill」の Q3）。実装で見つかった `elm-service` のほかのパスの設定と、環境変数から来た値も、同じ種類の問題として同じ形で確かめる（`.cursor/rules/similar-findings.mdc`）。
 - **理由:** 設計のレビューの R5（`dataDirectory`）と実装中の D3（`license`）と同じ種類で、同じ形で直せる。
 - **却下した案:** roadmap に別の行を作って直す。
+
+### How-to の頁の前提の状態を、各頁の手順で作るか、PR で一度だけ流す（V1c4 の Grill の Q5、Issue #248）
+
+- **決定:** How-to の頁は、頁の頭で Tutorial 2 の終わりの状態から始めると書き、新しい印でその Tutorial を名指す。手順を流す仕組みは、同じ作業フォルダーで先にその Tutorial を流し、裏の `elm-service` を止めずに続けて How-to の手順を流す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c4 の形」の Q5）。
+- **理由:** How-to の頁は、用意を済ませた読み手に 1 つの目的の手順だけを書く（Diátaxis。`.cursor/rules/user-docs.mdc`）。用意を Tutorial 2 に任せれば頁は目的の手順だけになり、それでも CI が毎回、Tutorial 2 から続けて流すので、頁と動きのずれに気づける。
+- **却下した案:** (b) 各頁が、鍵、サービスの設定、製品の作成などの用意の手順を、見える形で全部持つ（頁が長くなり、Tutorial 2 の手順をくり返す）。(c) How-to の頁は CI で流さず、PR で一度だけ流す（あとで頁と動きがずれても気づけない）。
