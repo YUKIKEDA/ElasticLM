@@ -68,7 +68,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c4c | 利用者の文書の How-to guides の `elm-server` の 4 頁（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ。英語と日本語。V1c4b のあと。決めた形は design.ja.md §20.7 の「V1c4 の形」の「V1c4c の Grill」） | in-progress | [#256](https://github.com/YUKIKEDA/ElasticLM/issues/256) |
 | V1c4e | 利用者の文書の How-to guides のアプリの 3 頁（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行。英語と日本語。V1c4c のあと。Grill で決める点は design.ja.md §20.7 の「V1c4 の形」） | not-started | — |
 | V1c4d | 利用者の文書の How-to guides の `elm-service` の運用の 6 頁（コンテナー、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限。英語と日本語。V1c4e のあと。PostgreSQL、Keycloak、コンテナー、Entra ID の頁の流し方も、この行の Grill で決める。design.ja.md §20.7 の「V1c4 の形」） | not-started | — |
-| V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` のサーバーライセンスを有効化してオンラインとオフラインで更新する頁（英語と日本語。V1c4c の Grill の Q4 で足した。V1c4d のあと。名指す Tutorial と流し方はこの行の Grill で決める。design.ja.md §20.7 の表の V1c4f の行） | not-started | — |
+| V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` のサーバーライセンスを有効化してオンラインとオフラインで更新する頁（英語と日本語。V1c4c の Grill の Q4 で足した。V1c4d のあと。名指す Tutorial と流し方、裏のプロセスを 2 つ持てるようにする手順を流す仕組みの変更はこの行の Grill で決める。design.ja.md §20.7 の表の V1c4f の行） | not-started | — |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の原因を調べて直す（V1e の最初の公開の前。design.ja.md §20.7 の V1c1 の形） | not-started | [#192](https://github.com/YUKIKEDA/ElasticLM/issues/192) |
 | V1c6 | 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）から設計の節番号を外す。内部のコメントと公開しない型の XML ドキュメントは残す（V1d の前。design.ja.md §20.7 の V1c2 の形） | not-started | [#198](https://github.com/YUKIKEDA/ElasticLM/issues/198) |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンスで例外になる不具合の修正（V1c2b で見つけた。V1c2c の前） | done        | [#203](https://github.com/YUKIKEDA/ElasticLM/issues/203) |
