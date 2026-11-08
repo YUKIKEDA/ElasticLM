@@ -32,7 +32,7 @@ When the owner corrects a criterion, go back over the decisions made before the 
 
 A consequence written in a report is not a decision either. Write a decision into a rule or the design only on the owner's word.
 
-An answer the owner gave in a Grill that the work shows to be wrong is put to the owner again, with the reason and a recommendation, before the PR is opened. Writing the change into the PR body and the design is not asking. In M4b1 three Grill answers were changed during the work and the review asked for the owner's word (PR #61).
+An answer the owner gave in a Grill that the work shows to be wrong is put to the owner again, with the reason and a recommendation, before the PR is opened. Writing the change into the PR body and the design is not asking. In M4b1 three Grill answers were changed during the work and the review asked for the owner's word (PR #61). In V1c3c the design narrowed the Grill's Q7 (sample comments on the C API page too) while it was being written; the independent design review (R6) had it put to the owner, and the owner's review (R3) asked for the changed answer in `docs/design-decisions.md` (PR #237).
 
 "Go ahead" and "next" mean the current roadmap row only. They are not consent to add rows, file extra Issues, or widen an open design.
 
