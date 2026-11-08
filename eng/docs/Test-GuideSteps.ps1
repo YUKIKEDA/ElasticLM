@@ -2,7 +2,7 @@
 .SYNOPSIS
     Runs the marked steps of README.md, of every Tutorial page, and of every How-to page with a given elm, elm-server,
     elm-service, and package folder, and builds and runs the C sample of Tutorial 4 with libelasticlm (design §20.7, V1c1,
-    V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, and V1c4b).
+    V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, V1c4b, and V1c4e).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
@@ -73,7 +73,15 @@
                     -o <path>.
       xattr         In an os=macos block only; the xattr on the PATH.
       <path>        A program that an earlier cl or cc line of the page builds, named by the same relative path with /
-                    (and, for cl, without .exe), run by its full path in the work folder. No other file can be run.
+                    (and, for cl, without .exe), run by its full path in the work folder; or the one program that an
+                    earlier dotnet publish line builds (below). No other file can be run.
+
+    The NativeAOT publish of the How-to guide "Publish with NativeAOT" (design §20.7, V1c4e, review R11): a line
+    dotnet publish <project folder> ... -o <folder> (or --output <folder>, -o:<folder>, --output:<folder>) builds
+    <folder>/<the last name of the project folder>, which a later line may run by that path, without .exe on Windows. The
+    project folder comes right after publish, and it and the output folder are relative, with / and without '..', '.', or a
+    placeholder; a line that names more than one output folder fails. A steps:file block that writes into such an output
+    folder fails, wherever it stands on the page.
     A whole word in single quotes is one argument without its quotes, in an os=linux or os=macos block only; a single quote
     anywhere else fails. A cl or cc line names one /Fe: or -o. The paths of /Fe:, -o, and a program are relative, with / and
     without '..' or a placeholder, on every system.
@@ -100,7 +108,9 @@
     is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. cl, cc,
     xattr, and a program the page built get no ELM_ variable either; cl and the program get the MSVC environment on Windows,
     which this script's own environment never holds. elm and dotnet get the environment as it is, and elm lines also
-    ELM_API_KEY once a block captured it with env.
+    ELM_API_KEY once a block captured it with env. On Windows, dotnet lines also get the Visual Studio Installer folder at
+    the front of PATH when it exists, as eng/release/Publish-Rid.ps1 sets it, since a NativeAOT publish runs the Visual
+    Studio environment scripts, which call vswhere.exe by name (design §20.7, V1c4e).
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
@@ -314,9 +324,27 @@ function Get-BuiltFile([string]$program, [string[]]$words) {
     return ($indexes.Count -eq 1 -and $indexes[0] + 1 -lt $words.Count) ? $words[$indexes[0] + 1] : $null
 }
 
+# The folder that a dotnet publish line writes to (-o <path>, --output <path>, -o:<path>, or --output:<path>); $null when
+# the line names none, and '' when it names more than one (design §20.7, V1c4e, review R11).
+function Get-PublishFolder([string[]]$words) {
+    $folders = [Collections.Generic.List[string]]::new()
+    for ($i = 2; $i -lt $words.Count; $i++) {
+        if ($words[$i] -cin '-o', '--output') {
+            $folders.Add($i + 1 -lt $words.Count ? $words[$i + 1] : '')
+            $i++
+        }
+        elseif ($words[$i] -cmatch '^(-o|--output):(.*)$') {
+            $folders.Add($Matches[2])
+        }
+    }
+    if ($folders.Count -eq 0) { return $null }
+    return $folders.Count -eq 1 ? $folders[0] : ''
+}
+
 # The commands of a steps:run or steps:background block, checked before anything runs. $os is the block's os (or $null),
-# and $built holds the files that the page's earlier cl and cc lines build.
-function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$hidden, [Collections.Generic.HashSet[string]]$prebuilt, [string]$os, [Collections.Generic.HashSet[string]]$built) {
+# $built holds the files that the page's earlier cl, cc, and dotnet publish lines build, and $outputs the folders that its
+# dotnet publish lines write to.
+function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSet[string]]$captured, [Collections.Generic.HashSet[string]]$hidden, [Collections.Generic.HashSet[string]]$prebuilt, [string]$os, [Collections.Generic.HashSet[string]]$built, [Collections.Generic.HashSet[string]]$outputs) {
     $lineNumber = $block.Line
     foreach ($line in $block.Lines) {
         $lineNumber++
@@ -346,10 +374,10 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
             $kind = $program
         }
         elseif ($program.Contains('/') -or $program.Contains('\') -or $program -match '^[A-Za-z]:') {
-            # A program that the page built: only a file that an earlier cl or cc line of the page builds, so that a page
-            # cannot run any other file (design §20.7, V1c3c, reviews R2 and R8).
+            # A program that the page built: only a file that an earlier cl, cc, or dotnet publish line of the page builds,
+            # so that a page cannot run any other file (design §20.7, V1c3c, reviews R2 and R8; V1c4e, review R11).
             if (-not (Test-RelativePath $program) -or $program.Contains('<')) { throw "$($name):$($lineNumber): a program the page built is named by a relative path, with / and without '..' or a placeholder." }
-            if (-not $built.Contains($program)) { throw "$($name):$($lineNumber): $program is not a file that an earlier cl or cc line of the page builds." }
+            if (-not $built.Contains($program)) { throw "$($name):$($lineNumber): $program is not a file that an earlier cl, cc, or dotnet publish line of the page builds." }
             $kind = 'app'
         }
         else {
@@ -369,6 +397,21 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
                     ($words[1] -ceq 'package' -and $words[2] -ceq 'add'))
                 if ($addsPackage -and -not $prebuilt.Contains('packages')) {
                     throw "$($name):$($lineNumber): a dotnet add package or dotnet package add line needs a steps:prebuilt name=packages marker before it."
+                }
+                # dotnet publish <project folder> ... -o <folder> builds <folder>/<the project folder's name>, the one program
+                # of the publish that a later line may run (design §20.7, V1c4e, review R11).
+                if ($words.Count -gt 1 -and $words[1] -ceq 'publish') {
+                    $folder = Get-PublishFolder $words
+                    if ($null -ne $folder) {
+                        $project = $words.Count -gt 2 ? $words[2].TrimEnd('/') : ''
+                        if ($folder -eq '' -or -not (Test-RelativePath $folder) -or $folder.Contains('<') -or
+                            $project -eq '' -or $project.StartsWith('-') -or -not (Test-RelativePath $project) -or $project.Contains('<') -or $project.Contains('.')) {
+                            throw "$($name):$($lineNumber): a dotnet publish line names its project folder first and one output folder (-o <path>), both relative, with / and without '..' or a placeholder."
+                        }
+                        $folder = $folder.TrimEnd('/')
+                        [void]$outputs.Add($folder)
+                        [void]$built.Add("$folder/$(($project -split '/')[-1])")
+                    }
                 }
             }
             'elm-server' {
@@ -416,8 +459,10 @@ function Read-Plan([string]$name, [object]$parsed) {
     # Every name a steps:run marker of the page captures, so that a steps:file block can tell a name captured later from
     # text such as a usage line's <data-folder>.
     $pageCaptures = @($parsed.Blocks | Where-Object Marker | ForEach-Object { [regex]::Match($_.Marker, '\scapture=([^\s"]+)').Groups[1].Value } | Where-Object { $_ })
-    # The files that the page's cl and cc lines build, which are the only programs a line may run by path.
+    # The files that the page's cl, cc, and dotnet publish lines build, which are the only programs a line may run by path,
+    # and the folders that its dotnet publish lines write to.
     $built = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    $outputs = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $plan = [Collections.Generic.List[object]]::new()
     $previous = $null
     $previousOs = $null
@@ -472,7 +517,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     if ($attributes['exit'] -cnotmatch '^(0|[1-9][0-9]{0,2})$' -or [int]$attributes['exit'] -gt 255) { throw "$($at): exit is an integer from 0 to 255." }
                     $step.Exit = [int]$attributes['exit']
                 }
-                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $step.Os $built)
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $step.Os $built $outputs)
                 if ($step.Commands.Count -eq 0) { throw "$($name):$($block.Line): the steps:run block is empty." }
                 if ($null -ne $capture) {
                     if ($attributes.ContainsKey('env')) { [void]$hidden.Add($capture) } else { [void]$captured.Add($capture) }
@@ -506,7 +551,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     throw "$($at): ready of $program is $($program -ceq 'elm-service' ? 'an http or https' : 'an https') URL on 127.0.0.1, localhost, or [::1]."
                 }
                 $step.Ready = $ready
-                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $null $built)
+                $step.Commands = @(Read-Command $name $block $captured $hidden $prebuilt $null $built $outputs)
             }
             'file' {
                 $value = $attributes.ContainsKey('path') ? $attributes['path'] : ''
@@ -573,6 +618,16 @@ function Read-Plan([string]$name, [object]$parsed) {
     if (-not $elmServerPath -and $prebuilt.Contains('elm-server')) { throw "$name needs -ElmServer: it runs elm-server." }
     if (-not $elmServicePath -and $prebuilt.Contains('elm-service')) { throw "$name needs -ElmService: it runs elm-service." }
     if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
+    # A steps:file block does not write into a folder that a dotnet publish line of the page writes to, before or after
+    # it, so that the program run from there is the published one (design §20.7, V1c4e, review R11).
+    foreach ($step in $plan | Where-Object Kind -ceq 'file') {
+        $value = $step.Attributes['path']
+        foreach ($folder in $outputs) {
+            if ($value -ceq $folder -or $value.StartsWith("$folder/", [StringComparison]::Ordinal)) {
+                throw "$($name):$($step.Block.Order): steps:file does not write into $folder, which a dotnet publish line of the page writes to."
+            }
+        }
+    }
     return [pscustomobject]@{ Steps = $plan.ToArray(); Captured = $captured; Hidden = $hidden; Prebuilt = $prebuilt; Built = $built; After = $after }
 }
 
@@ -636,6 +691,12 @@ function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [s
     }
     if ($IsWindows -and ($kind -ceq 'cl' -or ($kind -ceq 'app' -and $script:msvc))) {
         foreach ($entry in (Get-Msvc).GetEnumerator()) { $info.Environment[$entry.Key] = $entry.Value }
+    }
+    # NativeAOT on Windows runs the Visual Studio environment scripts, which call vswhere.exe by name from the Installer
+    # folder; eng/release/Publish-Rid.ps1 puts it on PATH the same way (design §20.7, V1c4e, .cursor/rules/engineering.mdc).
+    if ($IsWindows -and $kind -ceq 'dotnet') {
+        $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
+        if (Test-Path $installer) { $info.Environment['PATH'] = "$installer;$($info.Environment['PATH'])" }
     }
     if ($kind -ceq 'elm-service' -and $Background) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
     if ($kind -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }

@@ -4,6 +4,7 @@
     <Project Path="samples/ActivateOnline/ActivateOnline.csproj" />
     <Project Path="samples/FloatingLease/FloatingLease.csproj" />
     <Project Path="samples/MakeTestCertificate/MakeTestCertificate.csproj" />
+    <Project Path="samples/ResilientActivation/ResilientActivation.csproj" />
     <Project Path="samples/VerifyLicense/VerifyLicense.csproj" />
     <Project Path="samples/VerifyOffline/VerifyOffline.csproj" />
   </Folder>
