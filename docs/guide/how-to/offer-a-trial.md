@@ -82,7 +82,7 @@ dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem trial-data
 ELM_TRIAL_USED: A fingerprint of this installation already had a trial of the product.
 ```
 
-The service keeps a record of each trial with the fingerprints of the machine that had it, and refuses a second trial of the product to a machine with any of those fingerprints, whichever data folder or installation key asks. This machine had a trial in the tutorial. On a machine that never had a trial of the product, this run succeeds at once, and you can skip to [See the trials](#see-the-trials).
+The service keeps a record of each trial with the fingerprints of the machine that had it, and refuses a second trial of the product to a machine with any of those fingerprints, whichever data folder or installation key asks. This machine had a trial in the tutorial. On a machine that never had a trial of the product, this run succeeds at once and prints `trial: pro`; the steps below then delete the record of that trial, and start another one in a second data folder.
 
 ## See the trials
 
@@ -110,13 +110,13 @@ Delete the machine's record:
 elm admin request DELETE /v1/admin/trials/<trial-id> --url http://127.0.0.1:8080
 ```
 
-The service answers with no body, so `elm` prints nothing. Deleting the record does not end the earlier trial: its license and its activation stay. To end it, deactivate its activation as in [Deactivate as the administrator](deactivate-a-device.md#deactivate-as-the-administrator), with the trial's ID as the license ID.
+The service answers with no body, so `elm` prints nothing. Deleting the record does not end the earlier trial: its license and its activation stay. Deactivating that activation, as in [Deactivate as the administrator](deactivate-a-device.md#deactivate-as-the-administrator) with the trial's ID as the license ID, frees its place and refuses its next refresh, but the trial's license file on the device stays valid until it expires.
 
-Start the trial again:
+Start the trial again, in a second new data folder, `second-trial-data`. A data folder that keeps an activation refuses to start a trial (`ELM_INVALID_STATE`), and on a machine whose first run above succeeded, `trial-data` keeps that trial:
 
 <!-- steps:run -->
 ```shell
-dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem trial-data
+dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem second-trial-data
 ```
 
 The app prints two lines. The first one is:

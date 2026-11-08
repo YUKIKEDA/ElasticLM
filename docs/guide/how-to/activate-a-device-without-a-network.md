@@ -10,7 +10,7 @@ This guide is for a vendor whose customers run the app on devices that never rea
 
 ## Before you start
 
-Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The app below also uses the root public key `root.pub.pem`, the folder `packages` with the two ElasticLM packages, and the file `nuget.config` of that folder.
+Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The app below also uses the root public key `root.pub.pem`, the folder `packages` with the two ElasticLM packages, and the file `nuget.config` in the tutorial folder.
 
 - If the service is stopped, start it again in a second terminal, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service).
 - If `ELM_API_KEY` is not set, for example because you closed the terminal, make a new API key with `elm-service setup --config service.json`, and read it into `ELM_API_KEY` as in [Set up the service](../tutorials/activate-an-app-online.md#set-up-the-service). `elm-service setup` makes a new key each time it runs, also while the service runs, and the keys it made before stay valid.
@@ -66,7 +66,7 @@ dotnet new console -o offline-app
 dotnet add offline-app package ElasticLM.Client --prerelease --source packages
 ```
 
-`dotnet add` also keeps a copy of the packages in NuGet's global packages folder, which `dotnet nuget locals global-packages --list` shows (or the folder that `NUGET_PACKAGES` names, if you set it). That folder holds the packages of every project on this machine: once you have tried ElasticLM, delete only its folders `elasticlm.licensing` and `elasticlm.client` there.
+`dotnet add` also keeps a copy of the packages in NuGet's global packages folder; `dotnet nuget locals global-packages --list` shows where it is, also when the environment variable `NUGET_PACKAGES` moves it. That folder holds the packages of every project on this machine: once you have tried ElasticLM, delete only its folders `elasticlm.licensing` and `elasticlm.client` there.
 
 Replace the content of `offline-app/Program.cs` with this code. The steps below name the method of `ActivationClient` that each command calls:
 
@@ -249,7 +249,7 @@ dotnet run --project offline-app -- root.pub.pem offline-data request <offline-l
 file: request.elmreq
 ```
 
-The request file holds the license key, the device's public key, and its machine fingerprints, signed with the installation key, and it expires 7 days after it was made. Keep it where others cannot read it, since anyone with the file has the license key. Until the device imports an answer, the app hands out the same request again; after 7 days by the device's clock it makes a new one, and prints `replaced: discard the earlier request file` as well.
+The request file holds the license key, the device's public key, and its machine fingerprints, signed with the installation key, and it expires 7 days after it was made. Keep it where others cannot read it, since anyone with the file has the license key. Until the device imports an answer, the app hands out the same request again. It makes a new one instead when the waiting request is 7 days old by the device's clock, when the app passes `renew: true`, or when the request is for another license key; it then also prints `replaced: discard the earlier request file`.
 
 ## Hand in the request
 
@@ -271,7 +271,7 @@ Choose who hands in the file:
 - **The customer**, with `elm` and no credentials: `elm offline process` then sends the file to the public entry of the service, which needs none, since the file proves as much as an online request. Without `ELM_API_KEY`, and without a login of `elm admin login`, the same command does this.
 - **The vendor's administrator**, on the customer's behalf: with `ELM_API_KEY` set, as here, or after `elm admin login`, `elm offline process` sends the file to the administration API, which writes a row of the audit log for each file. The admin UI's offline page does the same.
 
-If the answer file gets lost, hand in the same request again: the service gives the same answer to the same request.
+If the answer file gets lost before the device makes another request, hand in the same request again: the service gives the same answer to the same request. Once the device has imported an answer, delete its request file. A request handed in after a later request of the same device, such as the activation request after the refresh below, names a sequence number the service has moved past: the service takes it for a copy of the installation (`ELM_CLONE_DETECTED`) and, under the default `cloneStrategy` `deny`, stops the activation.
 
 ## Import the answer on the device
 
@@ -282,7 +282,16 @@ Carry `response.elmresp` back to the device. The command `import` calls `ImportR
 dotnet run --project offline-app -- root.pub.pem offline-data import response.elmresp
 ```
 
-The app prints four lines, the activation's sequence number among them:
+The app prints the feature, the license's ID, the license file's sequence number, and when the license file expires, 90 days from now in UTC:
+
+```text
+activated: pro
+license: 01960000-0000-7000-8000-000000000302
+sequence: 1
+expires: 2026-04-15 09:30:00Z
+```
+
+The ID and the time differ on your machine; the feature and the sequence number are the same:
 
 <!-- steps:expect -->
 ```text
@@ -290,7 +299,7 @@ activated: pro
 sequence: 1
 ```
 
-The second line is the license's ID, such as `license: 01960000-0000-7000-8000-000000000302`, and the last one is when the license file expires, 90 days from now in UTC, such as `expires: 2026-04-15 09:30:00Z`. The device is now activated and works without a network until then, and for its grace period after.
+The device is now activated and works without a network until then, and for its grace period after.
 
 ## Refresh the license file
 
@@ -314,13 +323,22 @@ elm offline process --url http://127.0.0.1:8080 --in refresh.elmreq --out refres
 dotnet run --project offline-app -- root.pub.pem offline-data import refresh.elmresp
 ```
 
+The app prints the same four lines, with the next sequence number and a new expiry 90 days from now:
+
+```text
+activated: pro
+license: 01960000-0000-7000-8000-000000000302
+sequence: 2
+expires: 2026-04-15 09:31:00Z
+```
+
 <!-- steps:expect -->
 ```text
 activated: pro
 sequence: 2
 ```
 
-The new license file has the next sequence number, and a new expiry 90 days from now. The service refuses a refresh request whose license is suspended, revoked, or expired, as it refuses an online refresh.
+Delete `request.elmreq` and `refresh.elmreq` now that their answers are imported. The service refuses a refresh request whose license is suspended, revoked, or expired, as it refuses an online refresh.
 
 ## When the service or the app refuses
 
@@ -341,6 +359,7 @@ ELM_REQUEST_MISMATCH: The answer is not for the request this installation waits 
 | `ELM_REQUEST_MISMATCH` | The answer is not the answer to the request the app waits for. | Import the answer to the latest request, or make a new request. |
 | `ELM_REQUEST_EXPIRED` | `elm offline process` got this from the service: the request is older than its 7 days, or the device's clock is behind. | Make a new request. When the device's clock is behind, the app passes `renew: true` to `CreateActivationRequestAsync` or `CreateRefreshRequestAsync` to make a new request at once. |
 | `ELM_INVALID_STATE` | The data folder keeps an activation, so the app makes no activation request. | Refresh it instead, or deactivate it first. |
+| `ELM_CLONE_DETECTED` | `elm offline process` got this from the service: the file names a sequence number the activation has moved past, such as an old request handed in after a later one, or a copy of the device's data folder. Under `cloneStrategy` `deny`, the activation is stopped. | Have an administrator deactivate the activation, as in [Deactivate as the administrator](deactivate-a-device.md#deactivate-as-the-administrator), then activate the device again with a new request. |
 | `ELM_ACTIVATION_LIMIT` | The license has as many devices as its policy allows. | Deactivate another device, as in [Deactivate a device](deactivate-a-device.md). |
 
 `elm offline process` prints the service's code on a line that starts with `error:`, and ends with exit code 1. [Error codes](../reference/error-codes.md) lists every code.

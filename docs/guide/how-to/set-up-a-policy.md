@@ -93,7 +93,7 @@ With `floating` `cloud`, licenses are not activated. Instead, the service lends 
 elm admin request POST /v1/admin/policies --body floating-policy.json --url http://127.0.0.1:8080
 ```
 
-Its `id` is `<floating-policy-id>` below. Each feature of a license under it needs `seats`, the number of devices that may hold a lease at once. Create a license with 5 seats of `pro`:
+In its answer, `floating` is `cloud`, and `binding` stays `nodeLocked`, the default: for a cloud-floating policy, `floating` decides, and `binding` does not apply. Its `id` is `<floating-policy-id>` below. Each feature of a license under it needs `seats`, the number of devices that may hold a lease at once. Create a license with 5 seats of `pro`:
 
 <!-- steps:file path=floating-license.json -->
 ```json
@@ -133,7 +133,7 @@ elm admin request PATCH /v1/admin/policies/<three-devices-policy-id> --body poli
 {"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Standard, 3 devices","licenseKind":"standard","binding":"nodeLocked","maxActivations":5,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":31622400,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":604800,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:31:00Z"}
 ```
 
-A change applies to every license under the policy from the next license file or lease that the service issues; the files and leases already issued keep their values until they expire. A new `duration` applies only to licenses created after the change, and licenses that already have an expiry keep it. `productId`, `licenseKind`, and `binding` cannot change: the service answers `ELM_INVALID_ARGUMENT`. To change those, create another policy, and create new licenses under it.
+A change applies to every license under the policy from the next license file or lease that the service issues; the files and leases already issued keep their values until they expire. A new `duration` applies to licenses created after the change and, under `fromFirstActivation`, to a license without an expiry at its next activation or cloud lease; licenses that already have an expiry keep it. `productId`, `licenseKind`, and `binding` cannot change: the service answers `ELM_INVALID_ARGUMENT`. To change those, create another policy, and create new licenses under it.
 
 To see the policies of your product, with their settings:
 

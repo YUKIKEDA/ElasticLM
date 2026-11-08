@@ -86,7 +86,7 @@ For every setting of `elm-server`, see [elm-server configuration](../reference/s
 Verify every file you download from a GitHub Release before you run or ship it. The commands are in [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md); in short:
 
 ```sh
-sha256sum --check --ignore-missing SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
 gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
   --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml \
   --source-ref refs/tags/v<version> --deny-self-hosted-runners

@@ -10,7 +10,7 @@ This guide is for a vendor who runs `elm-service`, and for the developer who bui
 
 ## Before you start
 
-Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The app below also uses the root public key `root.pub.pem`, the folder `packages` with the two ElasticLM packages, and the file `nuget.config` of that folder.
+Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The app below also uses the root public key `root.pub.pem`, the folder `packages` with the two ElasticLM packages, and the file `nuget.config` in the tutorial folder.
 
 - If the service is stopped, start it again in a second terminal, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service).
 - If `ELM_API_KEY` is not set, for example because you closed the terminal, make a new API key with `elm-service setup --config service.json`, and read it into `ELM_API_KEY` as in [Set up the service](../tutorials/activate-an-app-online.md#set-up-the-service). `elm-service setup` makes a new key each time it runs, also while the service runs, and the keys it made before stay valid.
@@ -50,7 +50,9 @@ elm admin request POST /v1/admin/policies --body moving-policy.json --url http:/
 elm admin request POST /v1/admin/licenses --body moving-license.json --url http://127.0.0.1:8080
 ```
 
-The `key` at the end of the answer is the license key, `<moving-license-key>` below. Create the app, and add the `ElasticLM.Client` package to it from `packages`:
+The `key` at the end of the answer is the license key, `<moving-license-key>` below.
+
+If you made `offline-app` in [Activate a device without a network](activate-a-device-without-a-network.md#create-the-app), use it, and skip to the activation of `device-data` below: `dotnet new` refuses to create it again. Otherwise create the app, and add the `ElasticLM.Client` package to it from `packages`:
 
 <!-- steps:run -->
 ```shell
@@ -58,7 +60,7 @@ dotnet new console -o offline-app
 dotnet add offline-app package ElasticLM.Client --prerelease --source packages
 ```
 
-`dotnet add` also keeps a copy of the packages in NuGet's global packages folder, which `dotnet nuget locals global-packages --list` shows (or the folder that `NUGET_PACKAGES` names, if you set it). That folder holds the packages of every project on this machine: once you have tried ElasticLM, delete only its folders `elasticlm.licensing` and `elasticlm.client` there.
+`dotnet add` also keeps a copy of the packages in NuGet's global packages folder; `dotnet nuget locals global-packages --list` shows where it is, also when the environment variable `NUGET_PACKAGES` moves it. That folder holds the packages of every project on this machine: once you have tried ElasticLM, delete only its folders `elasticlm.licensing` and `elasticlm.client` there.
 
 Replace the content of `offline-app/Program.cs` with this code, the same as in [Activate a device without a network](activate-a-device-without-a-network.md#create-the-app). The steps below name the method of `ActivationClient` that each command calls:
 
@@ -319,7 +321,7 @@ dotnet run --project offline-app -- root.pub.pem device-data forget
 forgotten
 ```
 
-The data folder can now be activated again. If the app forgot the proof before it was handed in, the service would still count the old activation: a new activation would then take a second place under the limit, or be refused with `ELM_ACTIVATION_LIMIT`. Hand in the proof even when it is late.
+The data folder can now be activated again. Forget the proof only after it was handed in. If the app forgets it before, the service still holds the old activation for this installation key, and the device's next activation request names a sequence number that does not match it: the service takes it for a copy of the installation (`ELM_CLONE_DETECTED`) and, under the default `cloneStrategy` `deny`, stops the activation. An administrator then deactivates it, as below, and the device activates again.
 
 ## Deactivate as the administrator
 

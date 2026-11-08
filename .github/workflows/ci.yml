@@ -211,8 +211,8 @@ jobs:
         # design §20.7 (V1c1, V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a): the marked steps of README.md, of each Tutorial, and of
         # each How-to guide, run in a work folder outside the clone. A How-to guide runs after the steps of the Tutorial that
         # its steps:after marker names, in the same work folder, with that Tutorial's background process still running. Where a
-        # page has the reader download from a GitHub prerelease, its steps:prebuilt marker puts the published elm, elm-server, elm-service, and libelasticlm, and the packages packed here, in their place. The
-        # packages get a prerelease version, as release.yml gives a pull request's run, so that the page's dotnet add
+        # page has the reader download from a GitHub prerelease, its steps:prebuilt marker puts the published elm,
+        # elm-server, elm-service, and libelasticlm, and the packages packed here, in their place. The packages get a prerelease version, as release.yml gives a pull request's run, so that the page's dotnet add
         # --prerelease finds only prerelease versions in its packages folder, as a reader of a prerelease does.
         # NUGET_PACKAGES points to a new folder for each page, so the cache above never holds the packages of one run. A
         # page's steps:background block runs elm-server, or elm-service on http://127.0.0.1:8080, in the background,
