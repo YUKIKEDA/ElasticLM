@@ -113,7 +113,7 @@ A renewal can also change what the license grants: give `--feature` with the new
 
 The server does not compare a file that you load by hand with the one it replaces: a file issued with `elm license issue` has no sequence number to compare. So after a renewal that grants fewer seats, the administrator can still load the old file again, and the server uses it until it expires. A license file issued by hand cannot be revoked.
 
-If you as the vendor must be able to reduce what a server grants, either issue its files with a short expiry, so that each renewal is the next chance to change them, or activate the server through `elm-service`, which renews the server license with a sequence number: a server loaded with an older file by hand goes back to its newest license within an hour. [Security model](../explanation/security-model.md#on-the-customers-license-server) lists this with the other limits on the customer's server.
+If you as the vendor must be able to reduce what a server grants, either issue its files with a short expiry, so that each renewal is the next chance to change them, or activate the server through `elm-service` and let it renew online (`service.url`). Such a server renews with a sequence number: if an older file of the same license is loaded by hand, the server goes back to its newest license within an hour. A server activated offline keeps a file loaded by hand until the administrator imports its next renewal. [Security model](../explanation/security-model.md#on-the-customers-license-server) lists this with the other limits on the customer's server.
 
 ## Servers activated with elm-service
 
@@ -122,7 +122,7 @@ A server that got its server license from `elm-service` with `elm server activat
 - Online, when `service.url` names the vendor's `elm-service`: the server renews on its own before the license expires, and `elm server refresh` renews at once.
 - Offline: `elm server refresh-request` writes a request file, the vendor processes it in `elm-service`, and `elm server import` reads the answer.
 
-Do not load a file issued by hand into such a server: within an hour, the server writes back the license of its activation. [Server license commands](../reference/elm-cli.md#server-license-commands) lists the commands, and [`service`](../reference/server-configuration.md#service) the setting.
+Do not load a file issued by hand into such a server: a renewal of the activation writes its own license over it. With `service.url`, the server also goes back to the license of its activation within an hour when the file you loaded is an older one of the same license. [Server license commands](../reference/elm-cli.md#server-license-commands) lists the commands, and [`service`](../reference/server-configuration.md#service) the setting.
 
 ## See also
 

@@ -169,7 +169,11 @@ Add `tls` to `server.json`, with the certificate and its private key. Keep every
 }
 ```
 
-The certificate's names must include the name or address in the apps' server URL, here `127.0.0.1`: otherwise the apps refuse the server with `ELM_SERVER_PIN_MISMATCH`, as below. A PKCS#12 file (`.pfx` or `.p12`) works too: name it in `tls.certificate` and leave out `tls.key`. If the file has a password, set it in the environment variable `ELM_TLS_PASSWORD` of the server's process; there is no setting for it in the file.
+The certificate's names must include the name or address in the apps' server URL, here `127.0.0.1`: otherwise the apps refuse the server with `ELM_SERVER_PIN_MISMATCH`, as below.
+
+The server reads only the first certificate of the file, its own, so it does not send the certificate of an intermediate CA from the file. If your CA signs server certificates with an intermediate CA, the machines that run the app must be able to find that intermediate CA's certificate on their own, for example in their store of intermediate CAs; otherwise they refuse the server in the same way.
+
+A PKCS#12 file (`.pfx` or `.p12`) works too: name it in `tls.certificate` and leave out `tls.key`. If the file has a password, set it in the environment variable `ELM_TLS_PASSWORD` of the server's process; there is no setting for it in the file.
 
 The server reads its certificate only when it starts, so restart it. In the second terminal, press Ctrl+C to stop the server, then start it again:
 
@@ -205,7 +209,7 @@ Every machine that runs the app must trust the CA that issued the server's certi
 A CA that you add as trusted is trusted by every program of the user or the machine, not only by your app. To try the test CA, add it in the narrowest place, and remove it when you are done:
 
 - **Windows**: add it to the trusted root CAs of your user only, not of the machine, in PowerShell: `Import-Certificate -FilePath certs\test-ca.crt -CertStoreLocation Cert:\CurrentUser\Root`. Windows asks you to confirm. To remove it, find its thumbprint with `Get-ChildItem Cert:\CurrentUser\Root | Where-Object Subject -Like '*ElasticLM test CA*'` and delete it with `Remove-Item Cert:\CurrentUser\Root\<thumbprint>`; Windows asks you to confirm this too.
-- **macOS**: add it to your login keychain, trusted for TLS only: `security add-trusted-cert -r trustRoot -p ssl -k ~/Library/Keychains/login.keychain-db certs/test-ca.crt`. macOS asks for your password. To remove it, type `security remove-trusted-cert certs/test-ca.crt` and then `security delete-certificate -c "ElasticLM test CA (for trying only)" ~/Library/Keychains/login.keychain-db`.
+- **macOS**: add it to your login keychain, trusted for basic certificate checks and TLS only: `security add-trusted-cert -r trustRoot -p basic -p ssl -k ~/Library/Keychains/login.keychain-db certs/test-ca.crt`. These are the same trust settings that `dotnet dev-certs https --trust` gives the .NET development certificate. macOS asks for your password. To remove it, type `security remove-trusted-cert certs/test-ca.crt` and then `security delete-certificate -c "ElasticLM test CA (for trying only)" ~/Library/Keychains/login.keychain-db`.
 - **Linux**: do not add the test CA to the system's store with `update-ca-certificates`, which needs root and changes the trust of every program. Give it to the app's process only, in the environment variable `SSL_CERT_FILE`, which names a file of CAs that .NET trusts: in Bash, type `SSL_CERT_FILE=certs/test-ca.crt dotnet run --project app -- root.pub.pem client-data`. That process trusts the test CA as well as the CAs of the system's certificate folder; no other program is changed, and nothing remains to remove.
 
 Then run the app again. It prints `leased: pro` and `borrowed: pro for 1 hour`, as in the tutorial. With both seats borrowed, it prints `ELM_NO_SEATS` instead; [Check the server](../tutorials/use-a-floating-license.md#check-the-server) explains why.
