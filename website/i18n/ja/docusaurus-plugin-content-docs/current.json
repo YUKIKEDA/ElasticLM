@@ -7,6 +7,10 @@
     "message": "チュートリアル",
     "description": "The label for category 'Tutorials' in sidebar 'guide'"
   },
+  "sidebar.guide.category.How-to guides": {
+    "message": "ハウツーガイド",
+    "description": "The label for category 'How-to guides' in sidebar 'guide'"
+  },
   "sidebar.guide.category.Reference": {
     "message": "リファレンス",
     "description": "The label for category 'Reference' in sidebar 'guide'"

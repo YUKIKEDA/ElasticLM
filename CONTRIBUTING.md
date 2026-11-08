@@ -32,7 +32,7 @@ Never commit a private key, a secret, or a real license token, test data include
 
 ## Build from source
 
-The tutorials in `docs/guide/tutorials/` have the reader download `elm`, `elm-server`, and the `.nupkg` files of a GitHub prerelease into the folders `tools` and `packages` of a work folder (design §20.7). Before the first prerelease, or to try a change, build them from a clone instead. Keep the work folder outside the clone: inside it, the repository's own build settings would also apply to the tutorial's app.
+The tutorials in `docs/guide/tutorials/` and the how-to guides in `docs/guide/how-to/` have the reader download `elm`, `elm-server`, `elm-service`, `libelasticlm`, and the `.nupkg` files of a GitHub prerelease into the folders `tools`, `app`, and `packages` of a work folder (design §20.7). Before the first prerelease, or to try a change, build them from a clone instead. Keep the work folder outside the clone: inside it, the repository's own build settings would also apply to the tutorial's app.
 
 Besides the .NET 10 SDK, a NativeAOT publish needs the tools listed under [Prerequisites](https://learn.microsoft.com/dotnet/core/deploying/native-aot/#prerequisites) in Microsoft's Native AOT deployment page:
 
@@ -40,14 +40,21 @@ Besides the .NET 10 SDK, a NativeAOT publish needs the tools listed under [Prere
 - Linux: `clang` and `zlib1g-dev` (the Ubuntu package names).
 - macOS: the Xcode Command Line Tools.
 
-In the clone, publish the executables into the work folder's `tools`:
+`elm-service` embeds the admin UI, so build `web/admin/dist` first with the Node.js of [Requirements](#requirements): in `web/admin`, run `corepack pnpm install --frozen-lockfile` and then `corepack pnpm build` (`./build.ps1` does the same). Then, in the clone, publish the executables into the work folder's `tools`:
 
 ```shell
 dotnet publish src/ElasticLM.Cli -c Release -o <work-folder>/tools
 dotnet publish src/ElasticLM.Server -c Release -o <work-folder>/tools
+dotnet publish src/ElasticLM.Service -c Release -o <work-folder>/tools
 ```
 
-and pack the packages into its `packages`:
+For the tutorial with the C app, publish `libelasticlm` for your system's RID, such as `win-x64`, and copy the library files of the publish folder into the work folder's `app`, as the tutorial does with the archive: `elasticlm.dll` and `elasticlm.lib` on Windows, `libelasticlm.so` on Linux, `libelasticlm.dylib` on macOS, with `include/elasticlm.h` and `LICENSE` from the clone:
+
+```shell
+dotnet publish src/ElasticLM.Native -c Release -r <RID> -o <library-folder>
+```
+
+Pack the packages into the work folder's `packages`:
 
 ```shell
 dotnet pack src/ElasticLM.Licensing -c Release -o <work-folder>/packages
@@ -56,13 +63,13 @@ dotnet pack src/ElasticLM.Client -c Release -o <work-folder>/packages
 
 These packages have the version of `VersionPrefix` (`0.1.0`) with no prerelease suffix. The tutorials' `dotnet add ... --prerelease --source packages` also takes a version that is not a prerelease, so the pages work as written. When you pack the same version again, your app still gets the copy that NuGet saved the first time in its global packages folder, not the new one: `dotnet nuget locals global-packages --list` shows where the folder is, and you delete its folders `elasticlm.client` and `elasticlm.licensing` (or clear it with `dotnet nuget locals global-packages --clear`) before the next `dotnet add` or `dotnet run`.
 
-To run the marked steps of `README.md` and the tutorials as the CI step "Guide steps" does, pack the two packages into one folder with a prerelease suffix of your own, such as `-p:VersionSuffix=local.1`, and run:
+To run the marked steps of `README.md`, the tutorials, and the how-to guides as the CI step "Guide steps" does, pack the two packages into one folder with a prerelease suffix of your own, such as `-p:VersionSuffix=local.1`, and run:
 
 ```shell
-./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmServer <elm-server> -Feed <that-folder>
+./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmServer <elm-server> -ElmService <elm-service> -Feed <that-folder>
 ```
 
-`-Elm` and `-ElmServer` take the executables, such as `<work-folder>/tools/elm.exe` on Windows. The script runs each page in a new work folder of its own.
+`-Elm`, `-ElmServer`, and `-ElmService` take the executables, such as `<work-folder>/tools/elm.exe` on Windows. The tutorial with the C app also needs `-Library`, the `<library-folder>` above, and `-Page` runs only the pages it names. The script runs each page in a new work folder of its own; a how-to guide runs there after the steps of the tutorial that its `steps:after` marker names.
 
 ## Versioning
 

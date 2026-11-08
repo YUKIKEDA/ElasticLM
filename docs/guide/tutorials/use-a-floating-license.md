@@ -221,6 +221,8 @@ dotnet new console -o app
 dotnet add app package ElasticLM.Client --prerelease --source packages
 ```
 
+`dotnet add` also keeps a copy of the packages in NuGet's global packages folder; `dotnet nuget locals global-packages --list` shows where it is, also when the environment variable `NUGET_PACKAGES` moves it. That folder holds the packages of every project on this machine: once you have tried ElasticLM, delete only its folders `elasticlm.licensing` and `elasticlm.client` there.
+
 Replace the content of `app/Program.cs` with this code:
 
 <!-- sample: samples/FloatingLease/Program.cs -->

@@ -164,6 +164,8 @@ dotnet new console -o app
 dotnet add app package ElasticLM.Licensing --prerelease --source packages
 ```
 
+`dotnet add` は、パッケージのコピーを NuGet のグローバルパッケージフォルダーにも置く。その場所は `dotnet nuget locals global-packages --list` で表示でき、環境変数 `NUGET_PACKAGES` で場所を変えたときも同じように表示できる。このフォルダーには、このマシンのすべてのプロジェクトのパッケージが入っている。ElasticLM を試し終えたら、そこにある ElasticLM のフォルダー `elasticlm.licensing` だけを削除する。
+
 `app/Program.cs` の中身を、次のコードに置き換える。
 
 <!-- sample: samples/VerifyOffline/Program.cs -->

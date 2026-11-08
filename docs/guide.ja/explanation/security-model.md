@@ -86,7 +86,7 @@ sidebar_position: 7
 GitHub Release からダウンロードしたファイルは、実行や配布の前にすべて検証する。コマンドは[SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)にある。要点は次のとおりだ。
 
 ```sh
-sha256sum --check --ignore-missing SHA256SUMS
+sha256sum --check --ignore-missing SHA256SUMS   # on macOS: shasum -a 256 --check --ignore-missing SHA256SUMS
 gh attestation verify <file> --repo YUKIKEDA/ElasticLM \
   --signer-workflow YUKIKEDA/ElasticLM/.github/workflows/release.yml \
   --source-ref refs/tags/v<version> --deny-self-hosted-runners

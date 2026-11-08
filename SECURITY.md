@@ -29,6 +29,14 @@ file. `<version>` is the release's tag without its leading `v`, as in the file n
 version is `1.0.0-rc.1` and the option is `--source-ref refs/tags/v1.0.0-rc.1`. The `gh attestation verify` line works
 the same in PowerShell, Bash, and zsh.
 
+On macOS, `sha256sum` may be missing; the `shasum` that comes with macOS takes the same options when given `-a 256`.
+On macOS 15.8 and 26.7, both `sha256sum` and this line print `OK` for a listed file that matches and `FAILED` for one
+that does not, skip listed files that are not in the folder, and exit with 1 when any file fails:
+
+```sh
+shasum -a 256 --check --ignore-missing SHA256SUMS
+```
+
 PowerShell on Windows has no `sha256sum`. This line checks every archive and package in the folder against
 `SHA256SUMS`, and prints `OK` or `FAILED` with each file's name:
 
