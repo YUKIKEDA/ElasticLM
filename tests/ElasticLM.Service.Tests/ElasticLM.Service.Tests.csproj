@@ -12,5 +12,7 @@
     <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
     <!-- design §20.7, V1c2: the reference pages are compared with the code. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
+    <!-- design §13.5, V1c12: the certificate chain whose intermediate the service must send, shared with the server's tests. -->
+    <Compile Include="..\ElasticLM.Server.Tests\TestCertificateChain.cs" Link="TestCertificateChain.cs" />
   </ItemGroup>
 </Project>

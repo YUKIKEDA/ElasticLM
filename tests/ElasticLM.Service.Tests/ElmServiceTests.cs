@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing.Tests;
+using ElasticLM.Server.Tests;
 
 namespace ElasticLM.Service.Tests;
 
@@ -270,6 +271,44 @@ public sealed class ElmServiceTests
         Assert.Equal(Uri.UriSchemeHttps, service.Url.Scheme);
         Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("health", cancel)).StatusCode);
         Assert.Equal(certificate.Thumbprint, seen);
+    }
+
+    /// <summary>
+    /// With an https listen and a PEM file with the certificate and then an intermediate CA, the service sends the intermediate
+    /// (design §13.5, V1c12).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A root CA, an intermediate CA it signs, and a certificate for 127.0.0.1 the intermediate signs, valid around the real
+    ///   time; a PEM file with the certificate and then the intermediate, and a PEM file with the certificate's key.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with the two files; connect with SslStream, and in the validation callback read the
+    ///   certificates the service sent (the chain's ExtraStore), then build the chain trusting only the root, with downloads off
+    ///   and no revocation check.
+    ///
+    /// Expected:
+    /// - The intermediate is among the certificates the service sent, and the chain builds.
+    /// </remarks>
+    [Fact]
+    public async Task Start_HttpsListenWithIntermediate_SendsTheIntermediate()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        using var chain = new TestCertificateChain();
+        (string certificate, string key) = chain.WritePem(test.FilePath("chain.crt"), test.FilePath("chain.key"), chain.Intermediate);
+
+        ElmService service = await test.StartAsync(s =>
+            s with
+            {
+                Listen = new Uri("https://127.0.0.1:0"),
+                TlsCertificate = certificate,
+                TlsKey = key,
+            }
+        );
+        (bool sent, bool builds) = await chain.ConnectAsync(service.Url, TestContext.Current.CancellationToken);
+
+        Assert.True(sent);
+        Assert.True(builds);
     }
 
     /// <summary>

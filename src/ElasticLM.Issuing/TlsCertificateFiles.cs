@@ -11,52 +11,91 @@ public static class TlsCertificateFiles
     private const string ServerAuthenticationOid = "1.3.6.1.5.5.7.3.1";
 
     /// <summary>
-    /// Reads a PKCS#12 file (with its password), or a PEM certificate with its PEM key in <paramref name="keyPath"/>, and
-    /// checks that a server may use it: it has no Extended Key Usage, or its Extended Key Usage includes server
-    /// authentication (design §13.5).
+    /// Reads a PKCS#12 file (with its password), or a PEM certificate with its PEM key in <paramref name="keyPath"/>, with the
+    /// intermediate CA certificates of the same file, and checks that a server may use them: the server's certificate has no
+    /// Extended Key Usage, or its Extended Key Usage includes server authentication, and every intermediate is a CA certificate
+    /// (design §13.5, V1c12).
     /// </summary>
+    /// <remarks>
+    /// In a PEM file, the first certificate goes with the key and the others are the intermediates. In a PKCS#12 file, the first
+    /// certificate with a private key is the server's, as <c>X509CertificateLoader.LoadPkcs12FromFile</c> chooses it, the certificates without a private key are the intermediates, and the other certificates with a key are not
+    /// used.
+    /// </remarks>
     /// <param name="certificatePath">The certificate file.</param>
     /// <param name="keyPath">The PEM key file, or <see langword="null"/> for a PKCS#12 file.</param>
     /// <param name="password">The PKCS#12 password, or <see langword="null"/>.</param>
-    /// <param name="certificate">The certificate with its private key, which the caller disposes.</param>
+    /// <param name="certificate">The certificate with its private key and the intermediates, which the caller disposes.</param>
     /// <param name="problem">Why it cannot be read or used, otherwise <see langword="null"/>.</param>
     /// <returns><see langword="true"/> when a certificate with its private key that a server may use was read.</returns>
-    public static bool TryLoad(string certificatePath, string? keyPath, string? password, out X509Certificate2? certificate, out string? problem)
+    public static bool TryLoad(string certificatePath, string? keyPath, string? password, out TlsServerCertificate? certificate, out string? problem)
     {
         ArgumentException.ThrowIfNullOrEmpty(certificatePath);
         certificate = null;
+        X509Certificate2? server = null;
+        var intermediates = new List<(int Position, X509Certificate2 Certificate)>();
         try
         {
             if (keyPath is null)
             {
-                X509Certificate2 pfx = X509CertificateLoader.LoadPkcs12FromFile(certificatePath, password);
-                if (!pfx.HasPrivateKey)
+                X509Certificate2Collection all = X509CertificateLoader.LoadPkcs12CollectionFromFile(certificatePath, password);
+                for (int i = 0; i < all.Count; i++)
                 {
-                    pfx.Dispose();
+                    if (!all[i].HasPrivateKey)
+                    {
+                        intermediates.Add((i + 1, all[i]));
+                    }
+                    else if (server is null)
+                    {
+                        server = all[i];
+                    }
+                    else
+                    {
+                        all[i].Dispose();
+                    }
+                }
+
+                if (server is null)
+                {
                     problem = $"The TLS certificate '{certificatePath}' has no private key.";
                     return false;
                 }
-
-                if (!AllowsServerAuthentication(pfx))
+            }
+            else
+            {
+                using (X509Certificate2 pem = X509Certificate2.CreateFromPemFile(certificatePath, keyPath))
                 {
-                    pfx.Dispose();
-                    problem = NotForServers(certificatePath);
-                    return false;
+                    server = ForKestrel(pem);
                 }
 
-                certificate = pfx;
-                problem = null;
-                return true;
+                var all = new X509Certificate2Collection();
+                all.ImportFromPemFile(certificatePath);
+                all[0].Dispose();
+                for (int i = 1; i < all.Count; i++)
+                {
+                    intermediates.Add((i + 1, all[i]));
+                }
             }
 
-            using X509Certificate2 pem = X509Certificate2.CreateFromPemFile(certificatePath, keyPath);
-            if (!AllowsServerAuthentication(pem))
+            if (!AllowsServerAuthentication(server))
             {
                 problem = NotForServers(certificatePath);
                 return false;
             }
 
-            certificate = ForKestrel(pem);
+            foreach ((int position, X509Certificate2 intermediate) in intermediates)
+            {
+                if (!IsAuthority(intermediate))
+                {
+                    problem =
+                        $"The TLS certificate '{certificatePath}' cannot be used by a server: its certificate {position} "
+                        + $"({intermediate.Subject}) is not a CA certificate.";
+                    return false;
+                }
+            }
+
+            certificate = new TlsServerCertificate(server, [.. intermediates.Select(c => c.Certificate)]);
+            server = null;
+            intermediates.Clear();
             problem = null;
             return true;
         }
@@ -65,7 +104,19 @@ public static class TlsCertificateFiles
             problem = $"The TLS certificate cannot be read: {e.Message}";
             return false;
         }
+        finally
+        {
+            server?.Dispose();
+            foreach ((_, X509Certificate2 intermediate) in intermediates)
+            {
+                intermediate.Dispose();
+            }
+        }
     }
+
+    // design §13.5 (V1c12, R6): a certificate without the basic constraints extension is not taken for a CA either.
+    private static bool IsAuthority(X509Certificate2 certificate) =>
+        certificate.Extensions.OfType<X509BasicConstraintsExtension>().Any(constraints => constraints.CertificateAuthority);
 
     // Kestrel's rule, checked here so that the start stops with a reason before listening: Kestrel throws
     // InvalidOperationException from app.StartAsync for such a certificate (CertificateLoader.IsCertificateAllowedForServerAuth
