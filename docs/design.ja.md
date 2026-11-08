@@ -4276,7 +4276,7 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
   - サンプルはすべてゲートでビルドする（C のサンプルは C のテストと同じジョブで作る）。例外は `samples/PackageConsumer` の 1 つで、ソリューションと `build.ps1` に入れず、`release.yml` の `consume` のジョブがパッケージを作ったあとに発行して動かす（§20.5）。
   - 手引きのコードはサンプルのファイルから引き、コンパイルされないコードを文書に置かない。
   - README の手順と各 Tutorial の手順は、CI のスクリプトで同じ順に流す。頁は、試しの期間の読み手（GitHub のプレリリースを手に入れた読み手）がすることを書き、実行ファイルとパッケージのダウンロードは、スクリプトが印のところでジョブの実行ファイルと pack したパッケージに置き換える（V1c3e の Grill と、その設計のレビューの R3。下の「V1c3 の形」）。
-  - How-to guides の手順は、その PR で一度実際に流す。
+  - How-to guides の手順は、外の環境の要らない頁は Tutorials と同じく CI の `aot` ジョブで流し、PostgreSQL、Keycloak、コンテナー、Entra ID の要る頁の流し方は V1c4d の Grill で決める（下の「V1c4 の形」の Q2。V1c4 の設計の独立レビューの R6 で、この文を改めた）。
 - 読めるかの確かめ: 各行の PR で、設計を読んでいない独立のレビュアーに文書だけを渡し、分からないところと手順で詰まるところを挙げさせ、直す。
 - サイト（V1c1）:
   - Docusaurus（3.10.2 が最新の安定版。V1c1 で版を固定する）で作る。設定とテーマは `website/` に置き、docs の plugin の `path` で `../docs/guide` を読ませる（`path` はサイトのフォルダーからの相対のパス。https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs ）。`..` で外のフォルダーを指せることは、Docusaurus の文書に例がないので V1c1 で確かめる。
@@ -4713,16 +4713,28 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
 - 流す範囲（Q2）: 外の環境の要らない頁（V1c4a〜V1c4c、V1c4e）は、Tutorials と同じく CI の `aot` ジョブで流す。手順を流す仕組みの既定の頁に `docs/guide/how-to/*.md` を足す。V1c4d の頁を CI で流すか、PR で一度流すか、流せない Entra ID の手順をどう扱うかは、V1c4d の Grill で決める。
 - 「文書に書く」の残り（Q3）: IdP の設定と運用者への勧めは、V1c4d の「OIDC での管理者のログイン」の頁が持つ。`ELM_PUBLICURLS` と `ELM_NODE_NAME` を設定しなければならないことは、V1c4d の「コンテナーでの運用」の頁が持ち、今の `docs/container.md` との分け方もその行で決める。T24 は今の `SECURITY.md` のままにし、頁はそこへのリンクにする。T26 は V1e で試してから書く。
 - 3 つの直し（Q4。V1c4a で行う。上の表の V1c4 の行が挙げた直し）:
-  - グローバルのパッケージのフォルダー（V1c3d の初見の読み手の 9）: Tutorial 1〜3 の `dotnet add … package` の行の下に、パッケージが NuGet のグローバルのパッケージのフォルダーにも残ること、`dotnet nuget locals global-packages --list` でその場所が分かること、試しのあとに消してよいことを 1 文で書く（英語と日本語）。
-  - `ELM_TRIAL_NOT_OFFERED`（同じく 11）: 誤りのコードの頁（英語と日本語）と `src/ElasticLM.Licensing/ErrorCode.cs` の XML ドキュメントの文（「The product offers no trial.」）を、利用者に見えるサービスの文（「The product does not offer a trial.」。`ElmService.Client.cs`。Tutorial 2 も引く）にそろえる。あわせて、製品が登録されていない場合もこのコードであることを足し、デバイスのプロトコルの頁と有効化の解説の頁にそろえる。
-  - macOS の `sha256sum`（V1c8 の実装の PR の持ち主の決定 D1）: `macos-latest` のランナーで、`shasum -a 256 --check --ignore-missing SHA256SUMS` が動くか（`--ignore-missing` を受け付けるか、一致と不一致を正しく出すか）を一時のワークフローで測る。動けば、その形を `SECURITY.md` の「Checking a download」と、安全性のモデルの頁（英語と日本語）に書く。動かなければ、測った結果を書いて持ち主に問い直す。
-- 前提の状態（Q5）: How-to の頁は、読み手が用意を済ませていることを前提に、1 つの目的の手順だけを書く（`.cursor/rules/user-docs.mdc` の Diátaxis の種類）。V1c4a の頁は、頁の頭に「この手引きは Tutorial 2 の終わりの状態から始める」と書き、読み手に Tutorial 2 を指す。新しい印 `<!-- steps:after page=<頁> -->` を頁に 1 つ置き、手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流す。取った値（`api-key` など）も引き継ぐ。印の細部（置ける頁、名指せる頁、裏のプロセスの止め方、取った値の引き継ぎ、断る入力）は実装で決めて PR に書く。頁の例の値（製品 `acme-cad`、機能 `pro`、`http://127.0.0.1:8080`）は Tutorial 2 と同じにし、本文で「自分の値に替える」と書く。各頁が用意の手順を全部持つ案と、How-to の頁を CI で流さず PR で一度だけ流す案は退けた（design-decisions.md）。
+  - グローバルのパッケージのフォルダー（V1c3d の初見の読み手の 9）: `dotnet add … package` を書く頁（Tutorial 1〜3 と、V1c4a の How-to の頁）の、その行の下の地の文（手順の印のない文）に、パッケージが NuGet のグローバルのパッケージのフォルダーにも残ること、`dotnet nuget locals global-packages --list` でその場所が分かること（`NUGET_PACKAGES` を設定していればその場所）、試しのあとに消してよいのはそのフォルダーの中の `elasticlm.licensing` と `elasticlm.client` のフォルダーだけであること（そのフォルダーには、このマシンのすべてのプロジェクトのパッケージがある）を書く（英語と日本語。V1c4 の設計の独立レビューの R9）。
+  - `ELM_TRIAL_NOT_OFFERED`（同じく 11）: 誤りのコードの頁（英語と日本語）と `src/ElasticLM.Licensing/ErrorCode.cs` の XML ドキュメントの文（「The product offers no trial.」）を、利用者に見えるサービスの文（「The product does not offer a trial.」。`ElmService.Client.cs`。Tutorial 2 も引く）にそろえる。あわせて、製品が登録されていない場合もこのコードであること（`ElmService.Client.cs` の試用の確かめ）を足し、デバイスのプロトコルの頁と有効化の解説の頁にそろえる。誤りのコードの頁の「What to do」（「Ask the vendor; the product needs a trial policy.」）も、アプリの製品 ID の誤りの場合に合わせて直し、§19 の表の `ELM_TRIAL_NOT_OFFERED` の行にも「または製品がない」を足す（V1c4 の設計の独立レビューの R8）。
+  - macOS の `sha256sum`（V1c8 の実装の PR の持ち主の決定 D1）: `macos-latest` のランナーで、`shasum -a 256 --check --ignore-missing SHA256SUMS` が動くか（`--ignore-missing` を受け付けるか、一致と不一致を正しく出すか）を一時のワークフローで測る。一致するファイルと一致しないファイル（中身を 1 バイト変えたもの）の両方で、出力と終了コードを確かめ、ランナーの `sw_vers` と `shasum --version` を記録して、`SECURITY.md` が最小とする macOS 12 との版の差を PR に書く（V1c4 の設計の独立レビューの R10）。動けば、その形を `SECURITY.md` の「Checking a download」と、安全性のモデルの頁（英語と日本語）に書く。動かなければ、測った結果を書いて持ち主に問い直す。一時のワークフローは、PR を ready にする前に消す。
+- 前提の状態（Q5。V1c4 の設計の独立レビューの R1、R3〜R5、R7 で改めた）: How-to の頁は、読み手が用意を済ませていることを前提に、1 つの目的の手順だけを書く（`.cursor/rules/user-docs.mdc` の Diátaxis の種類）。
+  - 読み手への書き方（R1）: Tutorial 2 は最後にサービスを止め、2 つの端末を閉じて `ELM_API_KEY` と `ELM_SIGNING_PASSPHRASE` を消させる（`activate-an-app-online.md` の「Stop the service」）。そのため V1c4a の頁は「Tutorial 2 の終わり」を前提にせず、冒頭の段落で前提を状態で書く: 動いている `elm-service`、`ELM_API_KEY`、製品と機能。止めたサービスは Tutorial 2 の「Start the service」のとおりに起動し直すこと、API キーをなくしたら `elm-service setup` で新しいキーを作ること（`setup` は実行のたびに新しいキーを作る。`Setup.cs`）を書き、Tutorial 2 を指す。サービスが動いているあいだに `setup` を流せるか（SQLite）は、実装で一度確かめる。頁の例の値（製品 `acme-cad`、機能 `pro`、`http://127.0.0.1:8080`）は Tutorial 2 と同じにし、本文で「自分の値に替える」と書く。
+  - Tutorial の残りに頼らない（R3）: 各頁は、自分で使うライセンス（とポリシー）を自分で作り、Tutorial 2 が手順の途中で残したもの（有効化の台数が埋まったライセンス、試用の記録、`client-data` と `other-data` の有効化、試用のポリシーを外した製品）には頼らない。管理者による解除の頁は、`GET /v1/admin/licenses/{id}/activations` で有効化の ID を取る手順にする。オフラインの有効化のサンプルは、新しいデータのフォルダー（`offline-data`）を使う（`client-data` は有効化を持つので `ELM_INVALID_STATE` で断られる。`ActivationClient.cs`）。
+  - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
+    - 名指せるのは `docs/guide/tutorials/` の頁だけで、連鎖させない（名指された頁は `steps:after` を持てない）。
+    - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
+    - How-to の頁は `steps:background` と `steps:prebuilt` を持たない（裏のプロセスは名指した頁のものだけで、1 頁に裏のプロセスは 1 つまでの決まりが続く）。
+    - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
+    - `steps:after` の印は、`steps:prebuilt` と同じく訳の頁にも同じ形で要り、訳の確かめが比べる。
+    - 名指した頁が落ちれば、How-to の頁も落ちる。作業フォルダーと鍵は、How-to の頁の終わりに今のとおり消す。
+  - CI の時間（R5）: How-to の頁はそれぞれ Tutorial 2 を流し直すので、頁が増えるほど `aot` ジョブの時間がかさむ。V1c4a の PR は、増えた時間を 3 つのランナーで書く。積み上がりが目立てば、まとめて流す形を V1c4b 以降の Grill で考える。
+  - 後の行（R7）: V1c4b、V1c4c、V1c4e も外の環境なしで流せる見込みだが、署名鍵の交代と TLS の証明書の頁はサービスかサーバーの起動し直しが要り、`elm-server` の頁は Tutorial 3 を名指すかもしれない。裏のプロセスを止めることと起動し直すこと、名指す Tutorial は、それぞれの行の Grill で決める。
+  - 退けた案: 各頁が用意の手順を全部持つ案と、How-to の頁を CI で流さず PR で一度だけ流す案（design-decisions.md）。
 - V1c4a の 4 頁（Q6）: 題と目的は次のとおり。細かい手順は実装で詰めて PR に書く。
   - 「Set up a policy」: 端末の台数、猶予期間、ノードロックかクラウドのフローティングかを決めてポリシーを作り、変える（`elm admin request`。§9.3、管理 API の Reference の頁）。
   - 「Offer a trial」: 製品に試用のポリシーを付け、試用の記録を見て、消す（§12.9。上の「V1c の形」のとおり、試用は短い例にする）。
   - 「Activate a device without a network」: オフラインの有効化。アプリが要求のファイルを作り、`elm offline process` で答えを作り、アプリが取り込む。更新のやり方も書く（§12.8）。
   - 「Deactivate a device」: 管理者が端末の有効化を解除する、アプリが自分で解除する、オフラインの解除の証明（§12.6、§12.8.2）。
-- サンプル（Q7）: `samples/ActivateOffline`。`ActivationClient` のオフラインの API を使う .NET のアプリで、`request <file>` で要求のファイルを書き、`import <file>` で答えを取り込んで機能 `pro` を確かめる。上の V1c3 の形のサンプルと同じく、プロジェクト参照で `ElasticLM.slnx` に入れてゲートでビルドし、頁のコードは `sample:` の印で全体を引く（`GuideSamplesTests` が比べる）。`docs/conventions.md` の表に行を足す。
+- サンプル（Q7。V1c4 の設計の独立レビューの R2、持ち主の決定で広げた）: `samples/ActivateOffline`。`ActivationClient` のオフラインの API とアプリ自身の解除を使う .NET のアプリで、どのコマンドもルート公開鍵とデータのフォルダーを引数で受け取る。コマンドは `request <license-key> <file>`（要求のファイルを書く。`CreateActivationRequestAsync`）、`refresh <file>`（更新の要求。`CreateRefreshRequestAsync`）、`import <file>`（答えを取り込んで機能 `pro` を確かめる。`ImportResponseAsync`）、`deactivate`（オンラインの解除。`DeactivateAsync`）、`deactivate-proof <file>`（オフラインの解除の証明。`CreateDeactivationProofAsync`）、`forget`（証明を忘れる。`ForgetDeactivationProofAsync`）の 6 つ。頁 3 と頁 4 のコードは、このサンプルの範囲（`// <snippet:名前>`）から引く。上の V1c3 の形のサンプルと同じく、プロジェクト参照で `ElasticLM.slnx` に入れてゲートでビルドし、`GuideSamplesTests` が頁と比べる。`docs/conventions.md` の表に行を足す。オンラインの解除だけを別のサンプルにする案は退けた（design-decisions.md）。
 - サイトと入口（Q8）: `website/sidebars.js` で、How-to の区分を Tutorials と Reference のあいだに置き、`how-to` のフォルダーから自動で作る。区分の日本語の名前は「ハウツーガイド」で、`website/i18n/ja/docusaurus-plugin-content-docs/current.json` に書く。入口の頁（英語と日本語）の読む人ごとの道筋に 4 頁を足し、状況の文（How-to guides はまだ執筆中）を、書いた頁に合わせて直す。
 - レビュー: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（ジョブと同じ成果物で、Tutorial 2 から続けて手順を実際に流す）、日本語のレビュー（書き手と別）。指摘の要点と直し方は、PR を ready にする前に Issue か PR に載せる（`.cursor/rules/review-comments.mdc`）。
 

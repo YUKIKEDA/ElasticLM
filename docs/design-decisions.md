@@ -1272,3 +1272,9 @@
 - **決定:** How-to の頁は、頁の頭で Tutorial 2 の終わりの状態から始めると書き、新しい印でその Tutorial を名指す。手順を流す仕組みは、同じ作業フォルダーで先にその Tutorial を流し、裏の `elm-service` を止めずに続けて How-to の手順を流す（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c4 の形」の Q5）。
 - **理由:** How-to の頁は、用意を済ませた読み手に 1 つの目的の手順だけを書く（Diátaxis。`.cursor/rules/user-docs.mdc`）。用意を Tutorial 2 に任せれば頁は目的の手順だけになり、それでも CI が毎回、Tutorial 2 から続けて流すので、頁と動きのずれに気づける。
 - **却下した案:** (b) 各頁が、鍵、サービスの設定、製品の作成などの用意の手順を、見える形で全部持つ（頁が長くなり、Tutorial 2 の手順をくり返す）。(c) How-to の頁は CI で流さず、PR で一度だけ流す（あとで頁と動きがずれても気づけない）。
+
+### オフラインの有効化と解除のサンプルを分ける（V1c4 の設計の独立レビューの R2、Issue #248）
+
+- **決定:** `samples/ActivateOffline` 1 つに、`request`、`refresh`、`import`、`deactivate`、`deactivate-proof`、`forget` の 6 つのコマンドを持たせ、How-to の「Activate a device without a network」と「Deactivate a device」の頁のコードを、その範囲から引く（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §20.7 の「V1c4 の形」の Q7）。
+- **理由:** 頁のコードはサンプルから取る（`.cursor/rules/user-docs.mdc`）。要求と取り込みだけのサンプルでは、更新、アプリ自身の解除、オフラインの解除の証明のコードを引けない。どのコマンドも同じ `ActivationClient` とデータのフォルダーを使うので、1 つのサンプルに保つほうが簡単である。
+- **却下した案:** オンラインの解除（とオフラインの解除の証明）だけを別のサンプルにする。
