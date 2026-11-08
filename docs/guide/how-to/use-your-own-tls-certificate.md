@@ -171,9 +171,9 @@ Add `tls` to `server.json`, with the certificate and its private key. Keep every
 
 The certificate's names must include the name or address in the apps' server URL, here `127.0.0.1`: otherwise the apps refuse the server with `ELM_SERVER_PIN_MISMATCH`, as below.
 
-The server reads only the first certificate of the file, its own, so it does not send the certificate of an intermediate CA from the file. If your CA signs server certificates with an intermediate CA, the machines that run the app must be able to find that intermediate CA's certificate on their own, for example in their store of intermediate CAs; otherwise they refuse the server in the same way.
+If your CA signs server certificates with an intermediate CA, put the intermediate CA's certificate in the same PEM file after the server's certificate, and the server sends it with its own; the root CA is not needed. Without it, the machines that run the app must find the intermediate CA's certificate on their own, or they refuse the server in the same way. A certificate after the server's that is not a CA certificate stops the server with exit code 1. On Windows, the server's machine may keep the intermediate, and a root that it does not trust, in its store of intermediate CAs; [Intermediate CA certificates](../reference/server-configuration.md#tls) explains this and the downloads of missing certificates.
 
-A PKCS#12 file (`.pfx` or `.p12`) works too: name it in `tls.certificate` and leave out `tls.key`. If the file has a password, set it in the environment variable `ELM_TLS_PASSWORD` of the server's process; there is no setting for it in the file.
+A PKCS#12 file (`.pfx` or `.p12`) works too: name it in `tls.certificate` and leave out `tls.key`; it can hold the intermediate CA's certificate as well. If the file has a password, set it in the environment variable `ELM_TLS_PASSWORD` of the server's process; there is no setting for it in the file.
 
 The server reads its certificate only when it starts, so restart it. In the second terminal, press Ctrl+C to stop the server, then start it again:
 

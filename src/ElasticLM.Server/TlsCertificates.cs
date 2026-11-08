@@ -44,12 +44,12 @@ internal static class TlsCertificates
     }
 
     /// <summary>
-    /// Reads the operator's certificate: a PKCS#12 file (password in <see cref="ServerSettings.TlsPasswordVariable"/>), or a
-    /// PEM certificate with its PEM key in <paramref name="keyPath"/>.
+    /// Reads the operator's certificate with the intermediate CA certificates of the same file: a PKCS#12 file (password in
+    /// <see cref="ServerSettings.TlsPasswordVariable"/>), or a PEM certificate with its PEM key in <paramref name="keyPath"/>.
     /// </summary>
-    /// <exception cref="ServerStartException">The files cannot be read or do not hold a certificate with its private key.</exception>
-    public static X509Certificate2 FromFiles(string certificatePath, string? keyPath, string? password) =>
-        TlsCertificateFiles.TryLoad(certificatePath, keyPath, password, out X509Certificate2? certificate, out string? problem)
+    /// <exception cref="ServerStartException">The files cannot be read, do not hold a certificate with its private key, or hold an intermediate that is not a CA certificate.</exception>
+    public static TlsServerCertificate FromFiles(string certificatePath, string? keyPath, string? password) =>
+        TlsCertificateFiles.TryLoad(certificatePath, keyPath, password, out TlsServerCertificate? certificate, out string? problem)
             ? certificate!
             : throw new ServerStartException(problem!);
 }

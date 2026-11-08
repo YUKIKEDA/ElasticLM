@@ -24,7 +24,7 @@ Exit codes of the service:
 | Exit code | Meaning |
 | --- | --- |
 | 0 | The service stopped normally. |
-| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or its certificates cannot be read, the signing key and its certificates do not match, the TLS certificate cannot be read or has an Extended Key Usage (the list of purposes the certificate may be used for) that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`), the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
+| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or its certificates cannot be read, the signing key and its certificates do not match, the TLS certificate cannot be read or has an Extended Key Usage (the list of purposes the certificate may be used for) that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`), a certificate after the first in the TLS certificate file is not a CA certificate, the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
 | 2 | The arguments are not valid, or a setting error: the configuration file or a value is not valid, or a required value is missing. |
 
 When the service cannot listen on `listen` (another program uses the port, the service has no permission to listen there, or this machine does not have the address), the last line is `elm-service cannot listen on <listen>: <reason>`. It gives the URL as the service reads it, ending in `/`.
@@ -86,6 +86,8 @@ These settings do not follow the rule:
 | --- | --- | --- | --- | --- |
 | `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none | The PEM certificate for an `https` `listen`. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
 | `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of `tls.certificate`. |
+
+If your CA signs the service's certificate with an intermediate CA, put the intermediate's certificate in the same PEM file after the service's certificate, and the service sends it with its own; `tls.key` goes with the first certificate. The root CA is not needed. Every certificate after the first must be a CA certificate, or the service does not start (exit code 1). The service builds and sends the chain as `elm-server` does, with the same downloads of missing certificates, the same OCSP stapling on Linux, and the same certificate store of intermediate CAs on Windows; see [Intermediate CA certificates](server-configuration.md#tls) in the `elm-server` configuration.
 
 ## `database`
 

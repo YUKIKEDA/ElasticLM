@@ -69,7 +69,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private readonly InstallationKey _key;
     private readonly TrustStore _trust;
     private readonly byte[] _keyJwk;
-    private readonly X509Certificate2 _certificate;
+    private readonly TlsServerCertificate _certificate;
     private readonly NonceService _nonces;
     private readonly MemoryReplayStore _replays;
     private readonly ProofVerifier _proofs;
@@ -225,9 +225,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 ?? throw new ServerStartException($"The administrator token in '{store.Directory}' cannot be created or read.");
             IReadOnlyList<Uri> publicUrls =
                 settings.PublicUrls.Count > 0 ? settings.PublicUrls : DefaultPublicUrls(settings.Listen, settings.Listen.Port);
-            X509Certificate2 certificate = settings.TlsCertificate is string certificatePath
+            TlsServerCertificate certificate = settings.TlsCertificate is string certificatePath
                 ? TlsCertificates.FromFiles(certificatePath, settings.TlsKey, host.Environment(ServerSettings.TlsPasswordVariable))
-                : TlsCertificates.SelfSigned(key, publicUrls, host.Time);
+                : new TlsServerCertificate(TlsCertificates.SelfSigned(key, publicUrls, host.Time), []);
             disposables.Add(certificate);
 
             WebApplication app = Build(settings, certificate, host);
@@ -597,7 +597,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         return [new UriBuilder(listen) { Port = port, Path = "/" }.Uri];
     }
 
-    private static WebApplication Build(ServerSettings settings, X509Certificate2 certificate, ServerHostOptions host)
+    private static WebApplication Build(ServerSettings settings, TlsServerCertificate certificate, ServerHostOptions host)
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
@@ -617,7 +617,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
             kestrel.Limits.MaxRequestBodySize = 1024 * 1024;
 
             // ServerSettings.Load checks the hosts already; settings built in code are checked here.
-            kestrel.Listen(ServerSettings.ListenAddress(settings.Listen), settings.Listen.Port, options => options.UseHttps(certificate));
+            // design §13.5 (V1c12): the intermediates of the operator's file go with the certificate. Kestrel builds the chain
+            // from them, and on Windows .NET puts them in the CA store, from which SChannel sends them.
+            kestrel.Listen(
+                ServerSettings.ListenAddress(settings.Listen),
+                settings.Listen.Port,
+                options =>
+                    options.UseHttps(https =>
+                    {
+                        https.ServerCertificate = certificate.Certificate;
+                        https.ServerCertificateChain = certificate.Intermediates;
+                    })
+            );
             kestrel.Listen(ServerSettings.ListenAddress(settings.AdminListen), settings.AdminListen.Port);
         });
         return builder.Build();
@@ -1141,7 +1152,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         ServerIdentity Identity,
         LeaseEngine Engine,
         byte[] LicenseFile,
-        X509Certificate2 Certificate,
+        TlsServerCertificate Certificate,
         IReadOnlyList<Uri> PublicUrls,
         UsageLog Usage,
         BorrowJournal Journal,

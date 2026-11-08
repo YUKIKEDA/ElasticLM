@@ -49,7 +49,7 @@ internal sealed partial class ElmService : IAsyncDisposable
     private readonly ECDsa _signingKey;
     private readonly IReadOnlyList<string> _signingCertificates;
     private readonly TrustStore _trust;
-    private readonly X509Certificate2? _tls;
+    private readonly TlsServerCertificate? _tls;
     private readonly RateLimiter<IPAddress> _perIp;
     private readonly RateLimiter<Guid> _perKey;
     private readonly RateLimiter<IPAddress> _clientPerIp;
@@ -85,7 +85,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         IReadOnlyList<string> signingCertificates,
         SigningKeyStatus signing,
         TrustStore trust,
-        X509Certificate2? tls,
+        TlsServerCertificate? tls,
         TimeProvider time,
         ILogger log,
         ServiceUsageLog? usage
@@ -152,7 +152,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         TrustStore trust = ReadTrust(settings, host.Environment);
         (ECDsa signingKey, IReadOnlyList<string> certificates, SigningKeyStatus signing) = ReadSigningKey(settings, trust, host);
         var disposables = new List<IAsyncDisposable>();
-        X509Certificate2? tls = null;
+        TlsServerCertificate? tls = null;
         ServiceUsageLog? usage = null;
         bool startWritten = false;
         try
@@ -171,7 +171,13 @@ internal sealed partial class ElmService : IAsyncDisposable
 
             if (settings.Listen.Scheme == Uri.UriSchemeHttps)
             {
-                tls = TlsCertificateFiles.TryLoad(settings.TlsCertificate!, settings.TlsKey, null, out X509Certificate2? loaded, out string? problem)
+                tls = TlsCertificateFiles.TryLoad(
+                    settings.TlsCertificate!,
+                    settings.TlsKey,
+                    null,
+                    out TlsServerCertificate? loaded,
+                    out string? problem
+                )
                     ? loaded
                     : throw new ServiceStartException(problem!);
             }
@@ -418,7 +424,13 @@ internal sealed partial class ElmService : IAsyncDisposable
         return (key!, certificates, status!);
     }
 
-    private static WebApplication Build(ServiceSettings settings, X509Certificate2? tls, ServiceHostOptions host, Database database, WebHooks hooks)
+    private static WebApplication Build(
+        ServiceSettings settings,
+        TlsServerCertificate? tls,
+        ServiceHostOptions host,
+        Database database,
+        WebHooks hooks
+    )
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
@@ -440,7 +452,12 @@ internal sealed partial class ElmService : IAsyncDisposable
                 {
                     if (tls is not null)
                     {
-                        options.UseHttps(tls);
+                        // design §13.5 (V1c12): the intermediates of the PEM file go with the certificate, as in elm-server.
+                        options.UseHttps(https =>
+                        {
+                            https.ServerCertificate = tls.Certificate;
+                            https.ServerCertificateChain = tls.Intermediates;
+                        });
                     }
                 }
             );
