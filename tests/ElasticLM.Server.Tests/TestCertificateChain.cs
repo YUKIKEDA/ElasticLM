@@ -156,7 +156,9 @@ internal sealed class TestCertificateChain : IDisposable
     {
         if (OperatingSystem.IsWindows())
         {
-            RemoveFromAuthorities(StoreLocation.CurrentUser, Intermediate.Thumbprint, Root.Thumbprint);
+            // The machine's store first: the user's store also lists the machine's certificates, and removing one of those
+            // through the user's store is refused ("Access is denied" on the windows-latest runner, whose user is an
+            // administrator, so .NET wrote to the machine's store there).
             try
             {
                 RemoveFromAuthorities(StoreLocation.LocalMachine, Intermediate.Thumbprint, Root.Thumbprint);
@@ -165,6 +167,8 @@ internal sealed class TestCertificateChain : IDisposable
             {
                 // The machine's store needs an administrator, and .NET then wrote to the user's store only.
             }
+
+            RemoveFromAuthorities(StoreLocation.CurrentUser, Intermediate.Thumbprint, Root.Thumbprint);
         }
 
         Root.Dispose();
