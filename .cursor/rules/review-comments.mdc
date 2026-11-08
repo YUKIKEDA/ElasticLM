@@ -7,6 +7,10 @@ alwaysApply: true
 
 A comment on a pull request is about that pull request's head. Read it against that head before calling the pull request ready to merge.
 
+The commit an inline comment is attached to (`original_commit_id`) is the head when the review was submitted, which is not always the head the reviewer read. Compare it with the head the review's summary names, and check the comment's claim in the current head's file before changing anything. In V1c10 a re-review written on bd02746 attached its inline comments to the next head, a812cc3, where its R1 was already fixed (PR #241).
+
+A reply that the API refuses with `422` and "user_id can only have one pending review per pull request" means that the account has a review it has not submitted. The agent runs on the owner's account, so that is a review the owner is writing: do not delete or submit it, tell the owner, and post the replies after it is submitted. In V1c10 three replies waited for the owner's review this way (PR #241).
+
 A finding that asks for a change is still open when that head does not contain the change. Say so. A later pull request stacked above the head does not resolve it.
 
 A finding that is tried and not adopted is answered with the measurement or the reason, on the pull request it was written on.
