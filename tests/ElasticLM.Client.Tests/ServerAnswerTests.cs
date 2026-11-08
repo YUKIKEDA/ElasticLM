@@ -45,6 +45,41 @@ public sealed class ServerAnswerTests : IDisposable
     }
 
     /// <summary>
+    /// A nonce from a server, from an answer's body or its <c>ELM-Nonce</c> header alike, is kept only when it is 1 to 128
+    /// characters long (design §12.1, V1c11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Nonces of 0, 1, 128, and 129 characters, and none; nonce answers whose nonce is 0, 1, 128, and 129 characters.
+    ///
+    /// Steps:
+    /// - Check each nonce with ValidNonce, and read each answer with ReadNonce.
+    ///
+    /// Expected:
+    /// - The ones of 1 and 128 characters are kept as they are; the empty one, the one of 129 characters, and none give
+    ///   null, from the header check and the body reader alike.
+    /// </remarks>
+    [Fact]
+    public void Nonce_LengthOutsideOneTo128_IsNoNonce()
+    {
+        foreach (int length in new[] { 1, 128 })
+        {
+            string nonce = new('n', length);
+            Assert.Equal(nonce, LicenseClient.ValidNonce(nonce));
+            Assert.Equal(nonce, LicenseClient.ReadNonce(Bytes($$"""{"nonce":"{{nonce}}"}""")));
+        }
+
+        foreach (int length in new[] { 0, 129 })
+        {
+            string nonce = new('n', length);
+            Assert.Null(LicenseClient.ValidNonce(nonce));
+            Assert.Null(LicenseClient.ReadNonce(Bytes($$"""{"nonce":"{{nonce}}"}""")));
+        }
+
+        Assert.Null(LicenseClient.ValidNonce(null));
+    }
+
+    /// <summary>
     /// A problem answer gives its §19 code; an unknown or missing code, or a body that is not JSON, gives ELM_INTERNAL_ERROR;
     /// a detail longer than 512 characters is not passed on.
     /// </summary>

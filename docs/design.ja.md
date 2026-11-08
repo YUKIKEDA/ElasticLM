@@ -1032,7 +1032,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `elm-server` の設定ファイル | 64 KiB |
 | `allow` と `deny` の項目 | 合わせて 1,000 |
 | 頻度の制限が覚える送信元（IPv4 のアドレスか IPv6 の /64） | 100,000。超えたら新しい送信元は 1 つの溢れ用のバケットを分け合う（§13.8） |
-| ノンスの文字列 | 128 文字（正しいノンスは 56 バイトの base64url で 75 文字） |
+| ノンスの文字列 | 1〜128 文字。クライアントは外れた値を無いとみなす（§12.1）（正しいノンスは 56 バイトの base64url で 75 文字） |
 | 証明の `jti` | 64 文字 |
 | インストール鍵のファイル | 16 KiB |
 | 時刻のクレーム（`iat`, `exp`, `nbf`, 機能の `exp`） | 0 以上、253,402,300,799（9999-12-31T23:59:59Z、`DateTimeOffset` が表せる最後の秒）以下 |
@@ -1387,7 +1387,8 @@ public static class ErrorCodes
 - ライセンスキーを送るクライアント（`LicenseClient`、`ActivationClient`、`elm offline process`）はリダイレクトに従わない。`3xx` は誤りの応答として扱う（`ELM_INTERNAL_ERROR`）。設定を誤ったプロキシの `307` や `308` に従うと、ライセンスキーを含む本文を別の送り先へ送り直してしまうためである。証明の `htu` で要求はそこで失敗するが、キーはもう届いている（M4d2 の設計のレビュー R5、持ち主が受けた）。
 - サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
 - 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。`ELM_RATE_LIMITED` の `Retry-After` は、どちらのプログラムでもいつも `1` である（`elm-server` の `GuardAsync`、`elm-service` の `WriteProblemAsync`）。
-- `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。クライアント（`ActivationClient` と `LicenseClient`）は、ヘッダーのノンスも、`GET /v1/nonce` の本文のノンスと同じく 1 文字以上 128 文字以下に限り、外れた値はヘッダーがないのと同じに扱う（1 つの関数 `LicenseClient.ValidNonce`。V1c11 の Grill、Issue #242。持ち主の決定はすべて推奨案）。空のヘッダーと空白だけのヘッダーは、どちらも `HttpClient` で空の文字列になる（2026-11-08、.NET 10.0.14 で生の HTTP の応答を返して測った）。前は長さの上限しか見ず、空のノンスで次の要求の証明を作ろうとして、`ProofBuilder.Create` が `ArgumentException` を投げていた（C では `ELM_INVALID_ARGUMENT`。V1c10 の実装で見つけた）。ヘッダーがないときの動き（前のノンスを使い、`ELM_NONCE_REQUIRED` なら新しいノンスで 1 回だけ送り直し、ノンスがなければ `GET /v1/nonce`）は変えない。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
+- `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
+- クライアント（`ActivationClient` と `LicenseClient`）は、ヘッダーのノンスも、`GET /v1/nonce` の本文のノンスと同じく 1 文字以上 128 文字以下に限り、外れた値はヘッダーがないのと同じに扱う（1 つの関数 `LicenseClient.ValidNonce`。V1c11 の Grill、Issue #242。持ち主の決定はすべて推奨案）。空のヘッダーと空白だけのヘッダーは、どちらも `HttpClient` で空の文字列になる（2026-11-08、.NET 10.0.14 で生の HTTP の応答を返して測った）。前は長さの上限しか見ず、空のノンスで次の要求の証明を作ろうとして、`ProofBuilder.Create` が `ArgumentException` を投げていた（C では `ELM_INVALID_ARGUMENT`。V1c10 の実装で見つけた）。ヘッダーがないときの動き（前のノンスを使い、`ELM_NONCE_REQUIRED` なら新しいノンスで 1 回だけ送り直し、ノンスがなければ `GET /v1/nonce`）は変えない。ノンスはその有効期間（§12.2）のあいだ何度でも使えるので、範囲の外のヘッダーを受けたクライアントは、期間の中では前のノンスで送り、切れていれば `ELM_NONCE_REQUIRED` のあと `GET /v1/nonce` で取り直す（V1c11 の設計の独立レビューと正しさのレビューの A2、持ち主の決定で、Issue の Done when をこの動きに合わせて読む）。ノンスの文字の種類は確かめない。サーバーのノンスはどれも `NonceService` が作る 75 文字の base64url だが、利用者の文書はノンスを中身を読まない文字列（opaque string）とし、文字の正しくない値はサーバーが `ELM_NONCE_REQUIRED` で断って今の送り直しの流れで直るため（レビューの R4、持ち主の決定）。
 
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
