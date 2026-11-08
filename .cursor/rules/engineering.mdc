@@ -22,6 +22,7 @@ Details: `docs/conventions.md`. C# style: `.cursor/rules/csharp.mdc`. Tests: `.c
 - Package versions live in `Directory.Packages.props` (Central Package Management). A new package goes through `.cursor/rules/dependencies.mdc` first.
 - Projects under `src/` build with `BannedSymbols.txt`. Do not remove an entry to get a build through.
 - A path in an MSBuild item's metadata that a task splits into folders (the `Link` of an embedded file, which the embedded files' manifest reads) is written with `$([System.IO.Path]::DirectorySeparatorChar)`. The manifest splits on the OS's own separator only: in M5c `admin\index.html` made no folder on Linux and macOS, and `admin/index.html` none on Windows, and elm-service did not start with the web sign-in on the first two (PR #118).
+- A list in a `-p:<name>=<value>` of the `dotnet` command line is written with `%3B` between its items: MSBuild reads both `;` and `,` as the end of a property, and stops with `MSB1006`. In PR #265 `-p:WarningsNotAsErrors=NU1901;NU1902;…` stopped that way; `dotnet msbuild -getProperty:WarningsNotAsErrors` showed that the `%3B` form gives the list of the four codes.
 
 ## Format and analyzers
 

@@ -42,7 +42,7 @@ sidebar_position: 15
 dotnet publish app -c Release -p:TreatWarningsAsErrors=true -p:WarningsNotAsErrors=NU1901%3BNU1902%3BNU1903%3BNU1904 -o publish
 ```
 
-`;` はコードを区切る文字で、`-p` の値の中では `%3B` と書く。そのまま `;` を書くと、シェルでコマンドが終わるか、プロパティが終わり、`dotnet` は `MSB1006` で止まる。
+`;` は警告のコードを区切る文字で、`-p` の値の中では `%3B` と書く。そのまま `;` を書くと、シェルでコマンドが終わるか、プロパティが終わり、`dotnet` は `MSB1006` で止まる。
 
 最初の発行では、自分のシステム用の NativeAOT のコンパイラーのパッケージをダウンロードし、そのあとアプリと、アプリが使う .NET の部分をネイティブコードにコンパイルする。速いネットワークでは、約 15 秒かかった。最後に `app -> …/publish/` のような行を表示する。
 
