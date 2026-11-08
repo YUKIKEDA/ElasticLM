@@ -4176,8 +4176,10 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c4c | 決めた形は下の「V1c4 の形」の行の分け方と「V1c4c の Grill」（Issue #256）。`elm-server` の 4 頁と試用の証明書のサンプル。V1c4b のあとに置く |
 | V1c12 | V1c4c の実装で見つけ、PR の持ち主の決定 D1 で行にした。`elm-server` は `tls.certificate` の PEM の最初の証明書だけを読む（`TlsCertificateFiles.cs` の `X509Certificate2.CreateFromPemFile`）ので、中間 CA の証明書をファイルから送れず、中間 CA で署名する社内の CA の証明書では、アプリのマシンが中間 CA を自分で見つけられなければアプリが断る。V1c12 の Grill（Issue #260）で、`elm-service` も同じ `TlsCertificateFiles` を使うので両方を直すと決めた。決めた形は §13.5 の「運用者の証明書の中間 CA」。V1c4c のあと、V1c4e の前に置く |
 | V1c4e | 決めた形は下の「V1c4 の形」の行の分け方と「V1c4e の Grill」（Issue #264）。アプリの 3 頁とサンプル `samples/ResilientActivation`、手順を流す仕組みの NativeAOT の発行。V1c12 のあとに置く |
-| V1c4d | 決めた形は下の「V1c4 の形」の行の分け方と Q2、Q3。`elm-service` の運用の 6 頁。この行の Grill で頁の細部と、PostgreSQL、Keycloak、コンテナー、Entra ID の頁の流し方を決める。V1c4e のあとに置く |
-| V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。V1c4d のあとに置く |
+| V1c13 | V1c4d の Grill の Q2 で足した行。手順を流す仕組みが、Tutorial を 1 度だけ流し、その終わりの状態を How-to の頁ごとに写して使う。決めた形は下の「V1c4 の形」の「V1c13 の Grill」（Issue #268）。V1c4e のあと、V1c4d1 の前に置く |
+| V1c4d1 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新）。この行の Grill で頁の細部（バックアップのコマンドがないことの扱い、速さの上限の見せ方、版の更新の流し方）を決める。V1c13 のあとに置く |
+| V1c4d2 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン）。流し方の向きは下の「V1c4 の形」の「V1c4d の Grill」の Q3 で、細部はこの行の Grill で決める。V1c4d1 のあとに置く |
+| V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。V1c4d2 のあとに置く |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
 | V1e | `-rc.N` で確かめることと正式版に進む条件、rc のタグを GitHub のプレリリースだけにする `release.yml` の変更（§20.5 の「V1e で変えること」。V1c3e の記録の途中の持ち主の決定 D2）: `publish` をプレリリースの後ろのない版のタグだけで動かすこと、rc の下書きの Release をどのジョブがどの承認のあとにプレリリースとして公開するか（T22 は Release の公開を environment `release` の承認のあとのジョブに限る）、サイトの公開のジョブを rc でどうするか（今は `needs` で `publish` を待つ）、rc が通さない公開の段（nuget.org と GHCR への push、イメージの証明、GHCR の package を public にすること。§20.5 の「V1e で変えること」）を正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか。V1c3e の設計のレビューの R1）、`docs/releasing.md` の試しの手順（rc のプレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れる。試しの期間の Tutorials の形を指す）、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか（rc は nuget.org に置かないので、`1.0.0-rc.1` にするならその基準の取り方も）、持ち主の試しの記録（rc のプレリリースそのものに対して、試しの期間の形の Tutorial を Windows、Linux、macOS の 3 つで手で一度ずつ流し、OS ごとに、Windows の SmartScreen と Smart App Control が署名のない `.exe` に何を出したか、macOS の quarantine（`SECURITY.md` の `xattr`）、Linux の実行の権限、PATH への足し方を記録する。下の「V1c3 の形」の「V1c3e の Grill」の Q5、V1c3e の設計のレビューの R12）、rc の版にする PR での `SECURITY.md` の「Nothing is released yet.」と `CONTRIBUTING.md` の「Nothing is published yet.」の書き換え（V1c3e の設計のレビューの R10）、利用者の文書を nuget.org の形に切り替える 1 つの PR（正式版のタグの前。頁から `packages` のダウンロード、`nuget.config`、`--prerelease`、`--source packages` を外し、README と `README.ja.md` の Status の 1 行を外し、入口の頁の試しの期間の文と各頁のプレリリースの文を書き換え、CI が頁を流して確かめる。CI が nuget.org の形の頁をどう置き換えるかも決める。V1c3e の記録の途中の持ち主の決定 P3）、その PR の前に nuget.org の ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るか（P3。D3 を改めた決定）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5） |
 
@@ -4186,7 +4188,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 - V1d は、V1a〜V1c4 のコード、テスト、計測、文書を見直す。見つかったものはそれぞれ Issue にし、V1e は、そのすべてが直されるか（それぞれのバグの PR）、§5.4 の受け入れた脅威に書かれるまで公開しない。V1e で足す文書と変更は、V1e の設計のレビューで見る。
 - V1b のあとの修正（V1d の見つけたものを含む）が §4.2 の目標に関わるなら、その PR で測り直す（§4.2 の「各行の PR で測る」）。
 - V1e は、版を `1.0.0` にする PR で、`Directory.Build.props` の `VersionPrefix` を `1.0.0` にし、`CHANGELOG.md` と `CONTRIBUTING.md` の `1.0` より前の決まり（0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい）を外す。
-- V1e の最初の rc より前に、手順を実際に流すレビュー（V1c3d と V1c3c の初見の読み手、V1c4d の How-to の頁のうち、その行の Grill で PR で一度流すと決めたもの（外の環境の要らない How-to の頁は CI の `aot` ジョブで流す。下の「V1c4 の形」の Q2））は、`aot` ジョブと同じく発行した実行ファイルとライブラリと、プレリリースの版（`-p:VersionSuffix=ci.<番号>`）で pack した `.nupkg` を使い、頁のとおり `tools` と `packages` に置いて流す。ダウンロードの段落は読むだけにする（V1c3e の設計のレビューの R12。V1c3e の初見の読み手と同じ形。下の「V1c3 の形」の「V1c3e の Grill」の「レビュー」）。
+- V1e の最初の rc より前に、手順を実際に流すレビュー（V1c3d と V1c3c の初見の読み手、V1c4d2 の How-to の頁のうち、その行の Grill で PR で一度流すと決めたもの（外の環境の要らない How-to の頁は CI の `aot` ジョブで流す。下の「V1c4 の形」の Q2））は、`aot` ジョブと同じく発行した実行ファイルとライブラリと、プレリリースの版（`-p:VersionSuffix=ci.<番号>`）で pack した `.nupkg` を使い、頁のとおり `tools` と `packages` に置いて流す。ダウンロードの段落は読むだけにする（V1c3e の設計のレビューの R12。V1c3e の初見の読み手と同じ形。下の「V1c3 の形」の「V1c3e の Grill」の「レビュー」）。
 
 #### V1a の形（0.113）
 
@@ -4303,7 +4305,7 @@ V1c の Grill（Issue #186、Q1〜Q18。持ち主の訂正 2 件を含む）で�
   - サンプルはすべてゲートでビルドする（C のサンプルは C のテストと同じジョブで作る）。例外は `samples/PackageConsumer` の 1 つで、ソリューションと `build.ps1` に入れず、`release.yml` の `consume` のジョブがパッケージを作ったあとに発行して動かす（§20.5）。
   - 手引きのコードはサンプルのファイルから引き、コンパイルされないコードを文書に置かない。
   - README の手順と各 Tutorial の手順は、CI のスクリプトで同じ順に流す。頁は、試しの期間の読み手（GitHub のプレリリースを手に入れた読み手）がすることを書き、実行ファイルとパッケージのダウンロードは、スクリプトが印のところでジョブの実行ファイルと pack したパッケージに置き換える（V1c3e の Grill と、その設計のレビューの R3。下の「V1c3 の形」）。
-  - How-to guides の手順は、外の環境の要らない頁は Tutorials と同じく CI の `aot` ジョブで流し、PostgreSQL、Keycloak、コンテナー、Entra ID の要る頁の流し方は V1c4d の Grill で決める（下の「V1c4 の形」の Q2。V1c4 の設計の独立レビューの R6 で、この文を改めた）。
+  - How-to guides の手順は、外の環境の要らない頁は Tutorials と同じく CI の `aot` ジョブで流し、PostgreSQL、Keycloak、コンテナー、Entra ID の要る頁の流し方は V1c4d2 の Grill で決める（V1c4d の Grill で V1c4d から分けた。下の「V1c4 の形」の Q2。V1c4 の設計の独立レビューの R6 で、この文を改めた）。
 - 読めるかの確かめ: 各行の PR で、設計を読んでいない独立のレビュアーに文書だけを渡し、分からないところと手順で詰まるところを挙げさせ、直す。
 - サイト（V1c1）:
   - Docusaurus（3.10.2 が最新の安定版。V1c1 で版を固定する）で作る。設定とテーマは `website/` に置き、docs の plugin の `path` で `../docs/guide` を読ませる（`path` はサイトのフォルダーからの相対のパス。https://docusaurus.io/docs/api/plugins/@docusaurus/plugin-content-docs ）。`..` で外のフォルダーを指せることは、Docusaurus の文書に例がないので V1c1 で確かめる。
@@ -4824,6 +4826,21 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - CI の時間（Q6。R13、持ち主の決定 B）: 頁ごとに流して測る（見積もりは、測っていない約 7 分）。どれかのランナーで `aot` ジョブが 20 分を超えたら、発行の頁だけを `ci.yml` の別のジョブで流す。そのジョブは、`aot` ジョブが作った `elm` とパッケージを artifact で受け取り、ほかのジョブと並べて流す。超えなければ `aot` ジョブで流す。別のジョブにしても 20 分を超えるなら、PR を ready にする前に、まとめて流す仕組みを roadmap の行にして持ち主に問い直す。
   - レビュー（Q7）: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（ジョブと同じ成果物で、Tutorial から続けて手順を実際に流す）、日本語のレビュー（書き手と別。英語の 2 つのレビューを直したあとに日本語を書く）。指摘は表にして、PR を ready にする前に Issue か PR に載せる。
 
+- V1c4d の Grill（Issue #268 に記録した。Q1〜Q3。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: `elm-service` の運用の How-to の分け方。
+  - 調べた事実（2026-11-08、`main` の 9bd2f03）: 手順を流す仕組みは `docker`、`wslc`、`psql`、`sqlite3`、ファイルの写しを流せない。PostgreSQL と Keycloak は CI の Linux の段（ゲートと `aot` ジョブの E2E）でだけ立て、イメージを動かすのは `release.yml` の `image-test` だけである。`elm-service` にバックアップのコマンドはなく、設計にバックアップの節もない。版の更新は起動のときに移行が流れ、古い版は新しいデータベースを断り（`Migrator.cs`）、戻す移行はない。速さの上限は `rateLimit.*` の 4 つで、`X-Forwarded-For` を信じない（§14.7）。CI の `aot` ジョブは、V1c4e のあと windows-latest で 17.0 分で、Tutorial 2 を名指す How-to の 9 頁は、どれも Tutorial 2 を最初から流し直している。
+  - 行の分け方（Q1）: V1c4d を V1c4d1（SQLite の `elm-service` で流せる 3 頁: 速さの上限、バックアップと戻し、版の更新）と V1c4d2（外の環境が要る 3 頁: コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン）に分ける。V1c4d1 を先に置く。V1c4f は V1c4d2 のあと。上の Q3 の「IdP の設定と運用者への勧め」は V1c4d2 の OIDC の頁、「`ELM_PUBLICURLS` と `ELM_NODE_NAME`」と `docs/container.md` との分け方は V1c4d2 のコンテナーの頁が持つ。
+  - CI の時間（Q2）: V1c4d1 の前に、手順を流す仕組みが Tutorial を 1 度だけ流して How-to の頁ごとに写す行 V1c13 を置く（下の「V1c13 の Grill」）。上の V1c4c の Grill の Q2 の決まり（20 分を超えたら、まとめて流す仕組みを行にする）の先取りである。
+  - 外の環境が要る頁の向き（Q3）: V1c4d2 の頁は、Linux だけの新しい CI の段で流す。段は PostgreSQL と Keycloak のコンテナーを立て、頁の `os=linux` のブロックでは `docker` の行を流せるようにし、イメージの頁は CI で作ったイメージを使う。Entra ID の手順は流せないので本文だけにする。細部は V1c4d2 の Grill で決める。
+  - V1c4d1 の 3 頁の細部（バックアップのコマンドがないことの扱い、速さの上限の見せ方、版の更新の流し方）は、V1c4d1 の Grill で決める。
+
+- V1c13 の Grill（Issue #268、Q1〜Q5。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: 手順を流す仕組みが、Tutorial を 1 度だけ流して How-to の頁で使う。
+  - 調べた事実（2026-11-09、`main` の 9bd2f03）: `eng/docs/Test-GuideSteps.ps1` は、`-Page` の頁ごとに新しい作業フォルダーとパッケージのフォルダー（`NUGET_PACKAGES`）と、新しいパスフレーズ（`ELM_KEY_PASSPHRASE`、裏の `elm-service` の `ELM_SIGNING_PASSPHRASE`）を作り、How-to の頁では `steps:after` が名指す Tutorial の手順を同じ作業フォルダーで最初から流してから、How-to の頁の手順を流す（`Invoke-Page`、`Invoke-Plan` の `after`）。Tutorial の頁も、別の 1 頁として流す。Tutorial ごとに名指す How-to の頁は、Tutorial 2 が 9 頁、Tutorial 3 が 4 頁、Tutorial 1 が 2 頁ある。`elm-service` の起動し直しは 1〜2 秒、`elm-server` は起動のあと 1 リースの時間（Tutorial 3 では 60 秒）新しいリースを断る。アプリのビルドの結果（`obj/project.assets.json` など）には、作業フォルダーとパッケージのフォルダーの絶対パスが入る。
+  - 流し方（Q1）: Tutorial を 1 度だけ流し、終わったら裏のプロセスを止め（今の頁の終わりと同じ `Stop-Background`）、作業フォルダーとパッケージのフォルダーを、そのまま取っておく（写しの元）。How-to の頁は、写しの元をその頁の新しい作業フォルダーとパッケージのフォルダーに写し、Tutorial の取った値、`env` で取った API キー、`steps:prebuilt` の名前、パスフレーズ（写しの元の鍵はそのパスフレーズで作った）を引き継ぎ、Tutorial の `steps:background` の行を、写しの中で同じ ready の URL で起動し直してから、How-to の頁の手順を流す。頁は必ず自分の写しを使い、ほかの頁の変更を受けない。How-to の頁の `steps:background`（引き継いだ裏のプロセスを置き換える 1 つ）と、名指す頁の決まり（上の Q5 の R4）は今のまま。
+  - Tutorial の頁と兼ねる（Q2）: Tutorial の頁の確かめ（今の別の 1 頁）を、写しの元を作る 1 度の実行で兼ねる。`-Page` の頁の並びで、Tutorial の頁がそれを名指す How-to の頁より先に来れば、その実行を使う。来なければ（How-to の頁だけを流すとき）、How-to の頁の前に Tutorial を 1 度流し、その結果を Tutorial の頁としても出す。Tutorial の頁が落ちたら、それを名指す How-to の頁は流さずに、「名指した Tutorial が落ちた」の 1 行で落とす。写しの元は、実行の終わりに（落ちたときも）消し、残れば今の作業フォルダーと同じく誤りにする。
+  - 写しのビルドの結果（Q3）: 写しはそのまま作り、写しの中の `dotnet run` と `dotnet add`、`dotnet publish` が正しく動くか（ビルドし直すか、前のパスを使わないか）を実装で 3 つの OS で確かめる。正しく動かなければ、写しから `bin` と `obj` を消す形に切り替えて PR に書く。
+  - 測ることと終わりの条件（Q4）: PR で、3 つのランナーの Guide steps と `aot` ジョブの時間を `main` と比べて書く。`aot` ジョブがどのランナーでも 15 分以下になることを V1c4d1 に進む条件にし、ならなければ持ち主に問い直す。
+  - レビュー（Q5）: 設計の独立レビューと、コードの正しさのレビュー（手順を流す仕組みの見出しの文を含む）。利用者の文書の頁は変えないので、初見の読み手と日本語のレビューは行わない。指摘は表にして、PR を ready にする前に PR か Issue に載せる。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4900,7 +4917,9 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c4b | 利用者の文書の How-to guides の鍵の 4 頁（ルート鍵の保管、署名鍵の交代、ライセンスの失効、署名鍵の失効。英語と日本語。Issue #252） | §20.7 |
 | V1c4c | 利用者の文書の How-to guides の `elm-server` の 4 頁（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ。英語と日本語） | §20.7 |
 | V1c4e | 利用者の文書の How-to guides のアプリの 3 頁（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行。英語と日本語） | §20.7 |
-| V1c4d | 利用者の文書の How-to guides の `elm-service` の運用の 6 頁（コンテナー、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限。英語と日本語） | §20.7 |
+| V1c13 | 手順を流す仕組みが、Tutorial を 1 度だけ流してその終わりの状態を How-to の頁ごとに写す（V1c4d の Grill の Q2） | §20.7 |
+| V1c4d1 | 利用者の文書の How-to guides の `elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新。英語と日本語） | §20.7 |
+| V1c4d2 | 利用者の文書の How-to guides の `elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン。英語と日本語） | §20.7 |
 | V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` を有効化して更新する頁（英語と日本語） | §13.7、§20.7 |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。あわせて、`elm server reload` の誤りの文でコードが 2 度出る重なり（`error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): …`）を直す（V1c4c の初見の読み手の F6、PR の持ち主の決定 D2）。V1d の前に行う | §20.7 |
