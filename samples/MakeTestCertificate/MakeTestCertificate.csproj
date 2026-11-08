@@ -1,0 +1,9 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <PublishAot>true</PublishAot>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+  <!-- The app of the How-to guide "Use your own TLS certificate". Its Program.cs is the whole file that the guide shows; it
+       uses .NET only, so the guide's reader adds no package. -->
+</Project>

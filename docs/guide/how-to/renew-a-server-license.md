@@ -1,0 +1,129 @@
+---
+sidebar_position: 10
+---
+
+# Renew a server license
+
+This guide is for a vendor who issues server licenses by hand with `elm`, and for the customer's administrator who puts the new file into `elm-server`: before the server license expires, or when the seats or features change. The server reads the new file while it runs, so apps keep their leases. The guide starts where `elm-server` runs with a server license that `elm license issue` made, as at the end of [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md). A server that got its license from `elm-service` renews it differently; see [Servers activated with elm-service](#servers-activated-with-elm-service).
+
+<!-- steps:after page=docs/guide/tutorials/use-a-floating-license.md -->
+
+## Before you start
+
+Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The steps below use the signing key `signing.key.pem` with its certificate `signing.cert`, the root public key `root.pub.pem`, and the server's data folder `server-data`. In the tutorial, one machine plays both parts; in real use, the vendor issues the file on its own machine and sends it to the administrator.
+
+If the server is stopped, start it again in a second terminal, as in [Start the server](../tutorials/use-a-floating-license.md#start-the-server).
+
+The examples use the values of the tutorial: the product `acme-cad`, the license ID `floating-server`, and the feature `pro` with two seats. Replace them with your own.
+
+## Look at the current server license
+
+Ask the server what it holds:
+
+<!-- steps:run -->
+```shell
+elm server status --data server-data
+```
+
+`elm` prints the server license and its seats:
+
+```text
+product: acme-cad
+license: floating-server (token FAKEjti000000000000002)
+expires: 2099-12-31 00:00:00Z
+key: FAKE-SERVER-KEY-00000000000000000000000000K
+serving
+leases: 1
+  pro: 1 of 2 seats in use (2 with overage, 1 borrowed)
+```
+
+<!-- steps:expect -->
+```text
+expires: 2099-12-31 00:00:00Z
+```
+
+`license` is the license ID and the token ID of the file in use, and `expires` its expiry. `key` is the thumbprint of the server's installation key, which the new file must be bound to.
+
+## Issue the new file
+
+As the vendor, issue the server license again with `elm license issue`. Change only what the renewal is for, here the expiry, and give every other option as before: the same `--license-id`, `--bind-key`, `--feature`, `--lease-minutes`, and `--borrow-days`. An option that you leave out goes back to its default: the lease time to 10 minutes, borrowing to off, the early returns to 2. A new `--license-id` makes a license that the apps do not know: they refuse the server with `ELM_SERVER_PIN_MISMATCH`, because each app keeps the ID of the server license it checked first. [`elm license issue`](../reference/elm-cli.md#elm-license-issue) lists every option and its default.
+
+Replace `<server-key>` with the thumbprint after `key:` above, all 43 characters exactly. Here the vendor's machine is also the server's, so the command writes straight into the server's `license` file, and `--force` lets it overwrite the old one:
+
+<!-- steps:run -->
+```shell
+elm license issue --signing-key signing.key.pem --certificate signing.cert --product acme-cad --license-id floating-server --kind server --feature "pro;seats=2" --expires 2100-12-31T00:00:00Z --bind-key <server-key> --lease-minutes 1 --borrow-days 1 --trust root.pub.pem --out server.elmlic --force
+```
+
+`elm` asks for the signing key's passphrase and prints:
+
+```text
+Passphrase for 'signing.key.pem':
+license file: server.elmlic
+license ID: floating-server
+token ID: FAKEjti000000000000003
+```
+
+The signing key's certificate must be valid when you issue: the new file carries it. In real use, send the new file to the customer's administrator. As the administrator, keep a copy of the old file, and put the new one at the path of `license` in the server's settings.
+
+## Make the server read it
+
+Tell the running server to read its license file again:
+
+<!-- steps:run -->
+```shell
+elm server reload --data server-data
+```
+
+`elm` prints the license ID and the token ID of the new file:
+
+```text
+reloaded: license floating-server, token FAKEjti000000000000003
+```
+
+Compare the token ID with the one that `elm license issue` printed: they are the same. The server checks the new file as it does at a start: the product, its installation key, the machine fingerprints, and the trust store. Check the expiry:
+
+<!-- steps:run -->
+```shell
+elm server status --data server-data
+```
+
+<!-- steps:expect -->
+```text
+expires: 2100-12-31 00:00:00Z
+```
+
+The leases and borrows that the server lent stay as they are.
+
+If the new file does not pass a check, the server keeps the old license in use, and `elm` prints `error:`, the error code, and the reason, and ends with exit code 1. For example, a file bound to another installation key gives:
+
+```text
+error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
+```
+
+Put the old file back at the path of `license` until you have a file that passes: the server reads the file again at its next start, and with a file that does not verify, it does not start. [Error codes](../reference/error-codes.md) lists every code.
+
+## Change the seats or features
+
+A renewal can also change what the license grants: give `--feature` with the new seats or features. When the new license grants fewer seats or drops a feature, the server does not take back leases it lent. It refuses the renewal of leases above the new count with `ELM_NO_SEATS`, and of a dropped feature with `ELM_FEATURE_NOT_LICENSED`, so those leases end within one lease time. Borrows stay valid until they expire, and the server refuses an early return of a borrow made before such a change with `ELM_RETURN_NOT_ALLOWED`; [Early return](../explanation/floating-licenses.md#early-return) explains which changes count.
+
+## What a new file cannot take back
+
+The server does not compare a file that you load by hand with the one it replaces: a file issued with `elm license issue` has no sequence number to compare. So after a renewal that grants fewer seats, the administrator can still load the old file again, and the server uses it until it expires. A license file issued by hand cannot be revoked.
+
+If you as the vendor must be able to reduce what a server grants, either issue its files with a short expiry, so that each renewal is the next chance to change them, or activate the server through `elm-service`, which renews the server license with a sequence number: a server loaded with an older file by hand goes back to its newest license within an hour. [Security model](../explanation/security-model.md#on-the-customers-license-server) lists this with the other limits on the customer's server.
+
+## Servers activated with elm-service
+
+A server that got its server license from `elm-service` with `elm server activate` keeps an activation in its data folder, and renews the license from it:
+
+- Online, when `service.url` names the vendor's `elm-service`: the server renews on its own before the license expires, and `elm server refresh` renews at once.
+- Offline: `elm server refresh-request` writes a request file, the vendor processes it in `elm-service`, and `elm server import` reads the answer.
+
+Do not load a file issued by hand into such a server: within an hour, the server writes back the license of its activation. [Server license commands](../reference/elm-cli.md#server-license-commands) lists the commands, and [`service`](../reference/server-configuration.md#service) the setting.
+
+## See also
+
+- [Running `elm-server`](../explanation/floating-licenses.md#running-elm-server): what the server gets from the vendor, and how it renews.
+- [`elm license issue`](../reference/elm-cli.md#elm-license-issue), [`elm server reload`](../reference/elm-cli.md#elm-server-reload), and [`elm server status`](../reference/elm-cli.md#elm-server-status): every option.
+- [Limit borrowing](limit-borrowing.md): the borrow limits of the server license and of the server.
