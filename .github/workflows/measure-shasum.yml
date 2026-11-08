@@ -28,6 +28,7 @@ jobs:
           echo "PATH shasum: $(command -v shasum)  PATH sha256sum: $(command -v sha256sum)"
           echo "/usr/bin/shasum version: $(/usr/bin/shasum --version 2>&1)"
           ls -l /usr/bin/shasum /sbin/sha256sum /usr/bin/sha256sum 2>&1
+          exit 0
 
       - name: Check a folder
         # One listed file that matches, one listed file whose content changed by one byte, and one listed file that is
