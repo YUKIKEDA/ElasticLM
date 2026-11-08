@@ -164,7 +164,11 @@ public sealed class ServiceSettingsTests : IDisposable
     ///   a listen host name; listen ""; signing.key ""; a certificate entry ""; a null certificate entry; tls.certificate "";
     ///   a settings file of 64 KiB + 1; a perKey variable that is not a number; no nonce secret; one of 31 bytes; one that
     ///   is not base64; nonce.secretFile ""; signing.passphraseFile ""; a public URL over http, with a query, and ""; a revoked key ID ""
-    ///   after k1; listen on 0.0.0.0 without publicUrls.
+    ///   after k1; each path setting (a trust.rootKeys entry, tls.certificate, tls.key, usageLog.directory,
+    ///   database.connectionFile, signing.key, a signing.certificates entry, signing.passphraseFile, nonce.secretFile,
+    ///   oidc.webClientSecretFile, dataProtection.kekFile) "" and then three spaces; ELM_TLS_CERTIFICATE, ELM_TLS_KEY,
+    ///   ELM_USAGELOG_DIRECTORY, and ELM_SIGNING_KEY of three spaces;
+    ///   listen on 0.0.0.0 without publicUrls.
     ///
     /// Expected:
     /// - A ServiceStartException with the case's own message each time.
@@ -231,17 +235,20 @@ public sealed class ServiceSettingsTests : IDisposable
         Refused(Base(",\"listen\":\"\""), "listen must not be empty; leave it out instead.");
         Refused(
             "{\"signing\":{\"key\":\"\",\"certificates\":[\"c\"]}," + Connection(ConnectionFile) + "}",
-            "signing.key must not be empty; leave it out instead."
+            "signing.key must not be empty or only white space; leave it out instead."
         );
         Refused(
             "{\"signing\":{\"key\":\"k\",\"certificates\":[\"\"]}," + Connection(ConnectionFile) + "}",
-            "signing.certificates must not hold an empty or null entry."
+            "signing.certificates must not hold an empty, white-space-only, or null entry."
         );
         Refused(
             "{\"signing\":{\"key\":\"k\",\"certificates\":[null]}," + Connection(ConnectionFile) + "}",
-            "signing.certificates must not hold an empty or null entry."
+            "signing.certificates must not hold an empty, white-space-only, or null entry."
         );
-        Refused(Base(",\"tls\":{\"certificate\":\"\",\"key\":\"k\"}"), "tls.certificate must not be empty; leave it out instead.");
+        Refused(
+            Base(",\"tls\":{\"certificate\":\"\",\"key\":\"k\"}"),
+            "tls.certificate must not be empty or only white space; leave it out instead."
+        );
 
         string tooLarge = Base();
         tooLarge += new string(' ', (64 * 1024) + 1 - tooLarge.Length);
@@ -257,10 +264,13 @@ public sealed class ServiceSettingsTests : IDisposable
         Refused(withoutNonce, nonce);
         Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? Convert.ToBase64String(new byte[31]) : null);
         Refused(withoutNonce, nonce, name => name == ServiceSettings.NonceSecretVariable ? "not base64!" : null);
-        Refused(withoutNonce[..^1] + ",\"nonce\":{\"secretFile\":\"\"}}", "nonce.secretFile must not be empty; leave it out instead.");
+        Refused(
+            withoutNonce[..^1] + ",\"nonce\":{\"secretFile\":\"\"}}",
+            "nonce.secretFile must not be empty or only white space; leave it out instead."
+        );
         Refused(
             "{\"signing\":{\"key\":\"k\",\"certificates\":[\"c\"],\"passphraseFile\":\"\"}," + Connection(ConnectionFile) + "}",
-            "signing.passphraseFile must not be empty; leave it out instead."
+            "signing.passphraseFile must not be empty or only white space; leave it out instead."
         );
         Refused(Base(",\"publicUrls\":[\"http://elm.example/\"]"), "publicUrls must be https URLs without query or fragment: 'http://elm.example/'.");
         Refused(
@@ -271,6 +281,66 @@ public sealed class ServiceSettingsTests : IDisposable
 
         // design §17.3 (V1c10): named before the trust store, whose own sentence would not say which value it is.
         Refused(Base(",\"trust\":{\"revokedKeyIds\":[\"k1\",\"\"]}"), "trust.revokedKeyIds must not hold an empty or null entry.");
+
+        // design §17.3 (V1c10, A1): a path of white space only would become "The path is empty." on Windows, without the key.
+        foreach (string blank in new[] { string.Empty, "   " })
+        {
+            Refused(
+                Base($",\"trust\":{{\"rootKeys\":[\"r.pem\",\"{blank}\"]}}"),
+                "trust.rootKeys must not hold an empty, white-space-only, or null entry."
+            );
+            Refused(
+                Base($",\"tls\":{{\"certificate\":\"{blank}\",\"key\":\"k\"}}"),
+                "tls.certificate must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                Base($",\"tls\":{{\"certificate\":\"c\",\"key\":\"{blank}\"}}"),
+                "tls.key must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                Base($",\"usageLog\":{{\"directory\":\"{blank}\"}}"),
+                "usageLog.directory must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                $"{{\"database\":{{\"connectionFile\":\"{blank}\"}}}}",
+                "database.connectionFile must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                $"{{\"signing\":{{\"key\":\"{blank}\",\"certificates\":[\"c\"]}}}}",
+                "signing.key must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                $"{{\"signing\":{{\"key\":\"k\",\"certificates\":[\"c\",\"{blank}\"]}}}}",
+                "signing.certificates must not hold an empty, white-space-only, or null entry."
+            );
+            Refused(
+                $"{{\"signing\":{{\"key\":\"k\",\"certificates\":[\"c\"],\"passphraseFile\":\"{blank}\"}}}}",
+                "signing.passphraseFile must not be empty or only white space; leave it out instead."
+            );
+            Refused($"{{\"nonce\":{{\"secretFile\":\"{blank}\"}}}}", "nonce.secretFile must not be empty or only white space; leave it out instead.");
+            Refused(
+                Base($",\"oidc\":{{\"webClientSecretFile\":\"{blank}\"}}"),
+                "oidc.webClientSecretFile must not be empty or only white space; leave it out instead."
+            );
+            Refused(
+                Base($",\"dataProtection\":{{\"kekFile\":\"{blank}\"}}"),
+                "dataProtection.kekFile must not be empty or only white space; leave it out instead."
+            );
+        }
+
+        // A variable that puts a path in place of the file's is checked the same way; an empty variable counts as not set.
+        foreach (string variable in new[] { "ELM_TLS_CERTIFICATE", "ELM_TLS_KEY", "ELM_USAGELOG_DIRECTORY", "ELM_SIGNING_KEY" })
+        {
+            string key = variable switch
+            {
+                "ELM_TLS_CERTIFICATE" => "tls.certificate",
+                "ELM_TLS_KEY" => "tls.key",
+                "ELM_USAGELOG_DIRECTORY" => "usageLog.directory",
+                _ => "signing.key",
+            };
+            Refused(Base(), $"{key} must not be empty or only white space; leave it out instead.", name => name == variable ? "   " : null);
+        }
+
         Refused(
             Base(",\"listen\":\"http://0.0.0.0:9000\""),
             "Set publicUrls to the https URLs devices reach the service under; listen is not a loopback address."
@@ -334,7 +404,7 @@ public sealed class ServiceSettingsTests : IDisposable
             Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(",\"node\":{\"name\":\"\"}")), _ => null)).Message
         );
         Assert.Equal(
-            "usageLog.directory must not be empty; leave it out instead.",
+            "usageLog.directory must not be empty or only white space; leave it out instead.",
             Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(",\"usageLog\":{\"directory\":\"\"}")), _ => null)).Message
         );
     }

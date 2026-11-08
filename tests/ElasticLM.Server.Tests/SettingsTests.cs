@@ -119,7 +119,8 @@ public sealed class SettingsTests : IDisposable
     /// Expected:
     /// - ServerStartException naming: the unknown key, product, listen (http, and a host name other than localhost),
     ///   rateLimit.perIp (0 and 10001), the allow entry, admin.listen (not loopback, https), borrow.maxDuration (not a
-    ///   duration, zero), borrow.reserve (-1), log.usage (no file name), and the missing file.
+    ///   duration, zero), borrow.reserve (-1), log.usage (no file name; three spaces in the file and in ELM_LOG_USAGE), and the
+    ///   missing file.
     /// </remarks>
     [Fact]
     public void Load_InvalidSettings_Throw()
@@ -145,6 +146,8 @@ public sealed class SettingsTests : IDisposable
         AssertError("""{"product":"acme-cad","borrow":{"maxDuration":"00:00:00"}}""", "borrow.maxDuration");
         AssertError("""{"product":"acme-cad","borrow":{"reserve":-1}}""", "borrow.reserve");
         AssertError("""{"product":"acme-cad","log":{"usage":"logs/"}}""", "log.usage");
+        AssertError("""{"product":"acme-cad","log":{"usage":"   "}}""", "log.usage must name a file: '   '.");
+        AssertError("""{"product":"acme-cad"}""", "log.usage must name a file: '   '.", new() { ["ELM_LOG_USAGE"] = "   " });
         AssertError("""{"product":"acme-cad","product":"acme-cam"}""", "not valid");
         var e = Assert.Throws<ServerStartException>(() => ServerSettings.Load(Path.Combine(_directory, "none.json"), _ => null));
         Assert.Contains("does not exist", e.Message, StringComparison.Ordinal);

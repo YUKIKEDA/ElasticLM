@@ -287,7 +287,7 @@ Passed to `elm_installation_open`.
 | `struct_size` | `uint32_t` | `sizeof(elm_installation_options)`. |
 | `product_id` | `const char*` | Required. The product ID. |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` or `ELM_SCOPE_MACHINE`. |
-| `directory` | `const char*` | `NULL` for the [default folder](../explanation/devices-and-proofs.md#where-the-key-is-stored) of the scope, or your own folder. |
+| `directory` | `const char*` | `NULL` for the [default folder](../explanation/devices-and-proofs.md#where-the-key-is-stored) of the scope, or your own folder. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `create` | `int32_t` | `1`: create the key when there is none. `0` (default): open an existing key only; no key is `ELM_INSTALLATION_KEY_UNREADABLE`. |
 
 ### `elm_verifier_options`
@@ -302,7 +302,7 @@ Passed to `elm_verifier_create`.
 | `revoked_key_ids` | `const char* const*` | Key IDs revoked by the vendor: 0 to 1024. |
 | `revoked_key_count` | `size_t` | The number of revoked key IDs. |
 | `installation` | `const elm_installation*` | `NULL`, or the installation whose key signs the clock guard's state. The verifier keeps its own copy. |
-| `clock_guard_path` | `const char*` | The clock guard's state file. `NULL`: `clock` in the installation's folder, or no state without an installation. Without an installation the state file is not signed, so whoever can write it can reset the guard. |
+| `clock_guard_path` | `const char*` | The clock guard's state file. `NULL`: `clock` in the installation's folder, or no state without an installation. Without an installation the state file is not signed, so whoever can write it can reset the guard. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |
 | `reject_trial_as_standard` | `int32_t` | `0` (default): a standard requirement also accepts a trial license. `1`: it does not. |
 
@@ -349,7 +349,7 @@ Passed to `elm_activation_create`.
 | `revoked_key_ids` | `const char* const*` | Key IDs revoked by the vendor: 0 to 1024. |
 | `revoked_key_count` | `size_t` | The number of revoked key IDs. |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` or `ELM_SCOPE_MACHINE`. |
-| `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. |
+| `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `send_client_info` | `int32_t` | `1`: send the host and user names. |
 | `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |
@@ -373,7 +373,7 @@ Passed to `elm_client_create`.
 | `revoked_key_count` | `size_t` | The number of revoked key IDs. |
 | `expected_server_license_id` | `const char*` | `NULL`, or the server license to pin. Not allowed with `license_key`. |
 | `scope` | `int32_t` | `ELM_SCOPE_USER` or `ELM_SCOPE_MACHINE`. |
-| `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. |
+| `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `send_client_info` | `int32_t` | `1`: send the host and user names. |
 | `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |

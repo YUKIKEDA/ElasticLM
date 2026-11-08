@@ -74,6 +74,40 @@ public sealed class ElmServerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// An empty trust.rootKeys entry, tls.certificate, or tls.key, or one of white space only, stops the start with a sentence
+    /// that names the setting, not with the ArgumentException of the file system (design §17.3, V1c10 A1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder with a server license.
+    ///
+    /// Steps:
+    /// - Start with trust.rootKeys of the root key file and the blank value; with tls.certificate the blank value; with
+    ///   tls.certificate a file name and tls.key the blank value. The blank value is "" and then three spaces.
+    ///
+    /// Expected:
+    /// - ServerStartException "trust.rootKeys must not hold an empty, white-space-only, or null entry.", "tls.certificate must
+    ///   not be empty or only white space.", and "tls.key must not be empty or only white space.", for both blank values.
+    /// </remarks>
+    [Fact]
+    public async Task Start_TrustOrTlsPathBlank_ThrowsNamingTheSetting()
+    {
+        string data = _deployment.NewFolder("server");
+        foreach (string blank in new[] { string.Empty, "   " })
+        {
+            Assert.Equal(
+                "trust.rootKeys must not hold an empty, white-space-only, or null entry.",
+                await RefusedAsync(data, s => s with { TrustRootKeyFiles = [_deployment.RootKeyFile, blank] })
+            );
+            Assert.Equal("tls.certificate must not be empty or only white space.", await RefusedAsync(data, s => s with { TlsCertificate = blank }));
+            Assert.Equal(
+                "tls.key must not be empty or only white space.",
+                await RefusedAsync(data, s => s with { TlsCertificate = _deployment.FilePath("tls.crt"), TlsKey = blank })
+            );
+        }
+    }
+
+    /// <summary>
     /// An empty license setting, or one of white space only, stops the start with a sentence that names the setting, not with
     /// the ArgumentException of the file system (design §17.3, V1c10 D3).
     /// </summary>
@@ -99,4 +133,7 @@ public sealed class ElmServerTests : IAsyncDisposable
             Assert.Equal("license must not be empty or only white space.", refused.Message);
         }
     }
+
+    private async Task<string> RefusedAsync(string data, Func<ServerSettings, ServerSettings> change) =>
+        (await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(data, change))).Message;
 }

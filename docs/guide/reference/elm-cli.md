@@ -22,7 +22,7 @@ A date or time (`--expires`, `--not-before`, `exp=` in `--feature`) is ISO 8601:
 
 A product ID (`--product`) is 1 to 64 lowercase letters, digits, and `-`, such as `example-editor`: the product's `code` in `elm-service` and the setting `product` of `elm-server`. `ElasticLM.Client`, `elm-server`, and `elm-service` accept no other form, and the `elm server` commands use it to find the server's folder. `elm license issue` does not check the form, but a license whose product ID has another form cannot be used with those three.
 
-Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, or a missing required option, is followed by `Run 'elm --help' for usage.` and exit code 2.
+Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, a missing required option, or a file or folder path option or argument that is empty or only white space is followed by `Run 'elm --help' for usage.` and exit code 2.
 
 ### `--json`
 

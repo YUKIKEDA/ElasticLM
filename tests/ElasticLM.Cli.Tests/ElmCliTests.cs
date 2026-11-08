@@ -153,12 +153,12 @@ public sealed class ElmCliTests : IDisposable
     ///
     /// Steps:
     /// - Run the case's command: license verify with --revoked ""; license verify with --product ""; license verify with
-    ///   --key-thumbprint ""; server activate with an empty license-key; server activate-request with --key ""; server
+    ///   --key-thumbprint ""; license issue with --bind-key ""; server activate with an empty license-key; server activate-request with --key ""; server
     ///   forget-proof with --product "". The empty paths, --data among them, are in EmptyPath_NamesTheOption_ExitsWithTwo.
     ///
     /// Expected:
     /// - Exit 2 and exactly the line "error: " + the case's message on the error output: "--revoked must not be empty.",
-    ///   "--product must not be empty.", "--key-thumbprint must not be empty.", "<license-key> must not be empty.", "--key must
+    ///   "--product must not be empty.", "--key-thumbprint must not be empty.", "--bind-key must not be empty.", "<license-key> must not be empty.", "--key must
     ///   not be empty.", "--product must not be empty.".
     /// </remarks>
     /// <param name="option">The case: the option or argument whose value is empty.</param>
@@ -166,6 +166,7 @@ public sealed class ElmCliTests : IDisposable
     [InlineData("--revoked")]
     [InlineData("--product")]
     [InlineData("--key-thumbprint")]
+    [InlineData("--bind-key")]
     [InlineData("license-key")]
     [InlineData("--key")]
     [InlineData("--product server")]
@@ -179,12 +180,20 @@ public sealed class ElmCliTests : IDisposable
             return args;
         }
 
+        string[] Bound(string value)
+        {
+            string[] args = Issue("bound.elmlic");
+            args[Array.IndexOf(args, "--bind-key") + 1] = value;
+            return args;
+        }
+
         string[] server = ["--service", "https://service.example/", "--license", P("server.elmlic"), "--trust", P("root.pub.pem")];
         (string[] args, string message) = option switch
         {
             "--revoked" => ([.. Verify(license), "--revoked", string.Empty], "--revoked must not be empty."),
             "--product" => (Changed("--product", string.Empty), "--product must not be empty."),
             "--key-thumbprint" => (Changed("--key-thumbprint", string.Empty), "--key-thumbprint must not be empty."),
+            "--bind-key" => (Bound(string.Empty), "--bind-key must not be empty."),
             "license-key" => (["server", "activate", string.Empty, "--product", "acme-cad", .. server], "<license-key> must not be empty."),
             "--key" => (
                 ["server", "activate-request", "--key", string.Empty, "--product", "acme-cad", "--out", P("x.elmreq")],

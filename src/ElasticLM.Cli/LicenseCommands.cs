@@ -139,7 +139,7 @@ internal static class LicenseCommands
                         ExpiresAt = expires,
                         GracePeriod = TimeSpan.FromDays(graceDays),
                         RefreshWindow = parse.GetValue(refreshOption) is double refresh ? TimeSpan.FromDays(refresh) : null,
-                        InstallationKeyThumbprint = parse.GetValue(bindOption),
+                        InstallationKeyThumbprint = parse.GetValue(bindOption) is string bind ? CliParse.NotEmpty(bind, "--bind-key") : null,
                         Fingerprints = parse.GetValue(fingerprintOption) ?? [],
                         FingerprintMatching = ParseMatching(parse.GetValue(matchingOption)!),
                         LeaseDuration = isServer ? TimeSpan.FromMinutes(parse.GetValue(leaseOption) ?? 10) : null,
