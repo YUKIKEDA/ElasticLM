@@ -20,8 +20,15 @@ internal static class OfflineCommands
     public static Command Create(CliHost host)
     {
         var url = new Option<string>("--url") { Description = "The elm-service URL (https; http only on a loopback address).", Required = true };
-        var input = new Option<string>("--in") { Description = "The request file (.elmreq) or deactivation proof (.elmdeact).", Required = true };
-        var output = new Option<string?>("--out") { Description = "Where to write the answer (.elmresp) of an activation or refresh request." };
+        var input = new Option<string>("--in")
+        {
+            Description = "The request file (.elmreq) or deactivation proof (.elmdeact).",
+            Required = true,
+        }.AsPath();
+        var output = new Option<string?>("--out")
+        {
+            Description = "Where to write the answer (.elmresp) of an activation or refresh request.",
+        }.AsPath();
         Option<bool> force = CommonOptions.Force();
         Option<bool> json = CommonOptions.Json();
         var process = new Command("process", "Send an offline activation, refresh, or deactivation file to the service.")

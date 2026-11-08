@@ -163,8 +163,8 @@ public sealed class ServiceSettingsTests : IDisposable
     ///   characters; perIp, perKey, clientPerIp, clientPerKey 0 and 10001; retentionDays 0 and 36601; a listen with a path;
     ///   a listen host name; listen ""; signing.key ""; a certificate entry ""; a null certificate entry; tls.certificate "";
     ///   a settings file of 64 KiB + 1; a perKey variable that is not a number; no nonce secret; one of 31 bytes; one that
-    ///   is not base64; nonce.secretFile ""; signing.passphraseFile ""; a public URL over http, with a query, and ""; listen on 0.0.0.0 without
-    ///   publicUrls.
+    ///   is not base64; nonce.secretFile ""; signing.passphraseFile ""; a public URL over http, with a query, and ""; a revoked key ID ""
+    ///   after k1; listen on 0.0.0.0 without publicUrls.
     ///
     /// Expected:
     /// - A ServiceStartException with the case's own message each time.
@@ -268,6 +268,9 @@ public sealed class ServiceSettingsTests : IDisposable
             "publicUrls must be https URLs without query or fragment: 'https://elm.example/?a=1'."
         );
         Refused(Base(",\"publicUrls\":[\"\"]"), "publicUrls must not hold an empty or null entry.");
+
+        // design §17.3 (V1c10): named before the trust store, whose own sentence would not say which value it is.
+        Refused(Base(",\"trust\":{\"revokedKeyIds\":[\"k1\",\"\"]}"), "trust.revokedKeyIds must not hold an empty or null entry.");
         Refused(
             Base(",\"listen\":\"http://0.0.0.0:9000\""),
             "Set publicUrls to the https URLs devices reach the service under; listen is not a loopback address."

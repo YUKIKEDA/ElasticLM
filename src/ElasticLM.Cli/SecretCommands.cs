@@ -13,7 +13,7 @@ internal static class SecretCommands
 {
     public static Command Create(CliHost host)
     {
-        var outOption = new Option<string>("--out") { Description = "The secret file to write.", Required = true };
+        var outOption = new Option<string>("--out") { Description = "The secret file to write.", Required = true }.AsPath();
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
 

@@ -217,7 +217,7 @@ int32_t elm_lease_last_error(const elm_lease* lease);
 
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
-| `elm_last_error_message` | `const char*` | このスレッドで最後に呼んだ、エラー番号を返す関数のメッセージ。成功のあとは空。 |
+| `elm_last_error_message` | `const char*` | このスレッドで最後に呼んだ、エラー番号を返す関数のメッセージ。成功のあとは空。`ELM_INVALID_ARGUMENT` のメッセージは、C の引数かメンバーの名前か、値の何が正しくないかを示し、.NET の引数の名前は付かない。 |
 | `elm_version` | `const char*` | ライブラリのバージョン。プロセスが終わるまで有効。 |
 
 ```c

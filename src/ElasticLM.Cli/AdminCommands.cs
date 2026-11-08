@@ -34,7 +34,7 @@ internal static class AdminCommands
 
         var method = new Argument<string>("METHOD") { Description = "GET, POST, PUT, PATCH, or DELETE." };
         var path = new Argument<string>("path") { Description = "The path, starting with /v1/admin/; it may hold a query." };
-        var body = new Option<string?>("--body") { Description = "A JSON file to send, up to 64 KiB." };
+        var body = new Option<string?>("--body") { Description = "A JSON file to send, up to 64 KiB." }.AsPath();
         var url = new Option<string?>("--url") { Description = "The elm-service URL; by default ELM_SERVICE_URL, then the saved login's." };
         var request = new Command("request", "Call the administration API once and write the answer's body.") { method, path, body, url };
         request.SetAction(parse =>

@@ -1,5 +1,6 @@
 using System.Data.Common;
 using AuraORM;
+using ElasticLM.Licensing;
 using Microsoft.Data.Sqlite;
 using Npgsql;
 
@@ -58,7 +59,7 @@ internal abstract partial class Database : IAsyncDisposable
         }
         catch (ArgumentException e)
         {
-            throw new ServiceStartException("The database connection string is not valid: " + e.Message);
+            throw new ServiceStartException("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
     }
 

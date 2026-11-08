@@ -1,6 +1,9 @@
+using System.CommandLine;
+using System.CommandLine.Parsing;
 using System.Globalization;
 using System.Security.Cryptography;
 using ElasticLM.Issuing;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Cli;
 
@@ -235,10 +238,56 @@ internal static class CliParse
         return new FeatureSpec(id, range, seats, expires);
     }
 
+    /// <summary>
+    /// Returns a value that must not be empty. The library's own refusal would not say which value it is (design §17.3,
+    /// V1c10).
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <param name="name">The option or argument, as the usage line names it.</param>
+    public static string NotEmpty(string value, string name) => value.Length > 0 ? value : throw new CliException($"{name} must not be empty.");
+
     public static KeyValuePair<string, string> Meta(string text)
     {
         int equals = text.IndexOf('=', StringComparison.Ordinal);
         return equals > 0 ? new(text[..equals], text[(equals + 1)..]) : throw new CliException($"The metadata '{text}' is not key=value.");
+    }
+}
+
+/// <summary>
+/// The options and arguments that take a file or folder path (design §17.3, V1c10). An empty value, or one of white space
+/// only, is a parse error that names the option or argument: the file system's own refusal ("The path is empty.") would not
+/// say which value it is.
+/// </summary>
+internal static class CliPaths
+{
+    /// <summary>Makes an option a path option.</summary>
+    /// <param name="option">The option.</param>
+    /// <returns>The same option.</returns>
+    public static Option<T> AsPath<T>(this Option<T> option)
+    {
+        option.Validators.Add(RefuseBlankOption);
+        return option;
+    }
+
+    /// <summary>Makes an argument a path argument; the message names it as the help shows it, such as &lt;license-file&gt;.</summary>
+    /// <param name="argument">The argument.</param>
+    /// <returns>The same argument.</returns>
+    public static Argument<T> AsPath<T>(this Argument<T> argument)
+    {
+        argument.Validators.Add(RefuseBlankArgument);
+        return argument;
+    }
+
+    private static void RefuseBlankOption(OptionResult result) => RefuseBlank(result, result.Option.Name);
+
+    private static void RefuseBlankArgument(ArgumentResult result) => RefuseBlank(result, $"<{result.Argument.Name}>");
+
+    private static void RefuseBlank(SymbolResult result, string name)
+    {
+        if (result.Tokens.Any(token => string.IsNullOrWhiteSpace(token.Value)))
+        {
+            result.AddError($"{name} must not be empty or only white space.");
+        }
     }
 }
 
@@ -249,7 +298,37 @@ internal static class TrustKeys
 {
     public const string EnvironmentVariable = "ELM_TRUST_ROOT_KEYS";
 
-    public static string[] Read(CliHost host, string[] files)
+    /// <summary>
+    /// Creates the trust store of a command from its <c>--trust</c> files (or the variable) and its <c>--revoked</c> key IDs.
+    /// </summary>
+    /// <param name="host">The host, for the variable.</param>
+    /// <param name="files">The <c>--trust</c> files, or <see langword="null"/>.</param>
+    /// <param name="revoked">The <c>--revoked</c> key IDs, or <see langword="null"/>.</param>
+    public static TrustStore Store(CliHost host, string[]? files, string[]? revoked)
+    {
+        string[] keys = Read(host, files ?? []);
+        string[] ids = revoked ?? [];
+
+        // design §17.3 (V1c10): the trust store's own refusal of an empty key ID does not name the option.
+        if (ids.Any(id => id.Length == 0))
+        {
+            throw new CliException("--revoked must not be empty.");
+        }
+
+        return TrustStore.Create(keys, ids);
+    }
+
+    /// <summary>
+    /// Splits a text into its PEM blocks. A file and the variable may both hold several root keys; the trust store takes one
+    /// block per key.
+    /// </summary>
+    public static string[] SplitBlocks(string pem, string source)
+    {
+        string[] keys = KeyFiles.SplitPem(pem);
+        return keys.Length > 0 ? keys : throw new CliException($"{source} holds no PEM public key.");
+    }
+
+    private static string[] Read(CliHost host, string[] files)
     {
         if (files.Length > 0)
         {
@@ -263,15 +342,5 @@ internal static class TrustKeys
         }
 
         return SplitBlocks(pem, EnvironmentVariable);
-    }
-
-    /// <summary>
-    /// Splits a text into its PEM blocks. A file and the variable may both hold several root keys; the trust store takes one
-    /// block per key.
-    /// </summary>
-    public static string[] SplitBlocks(string pem, string source)
-    {
-        string[] keys = KeyFiles.SplitPem(pem);
-        return keys.Length > 0 ? keys : throw new CliException($"{source} holds no PEM public key.");
     }
 }

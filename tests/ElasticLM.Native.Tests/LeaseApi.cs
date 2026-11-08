@@ -58,7 +58,7 @@ internal static unsafe class LeaseApi
         return code;
     }
 
-    public static int Borrow(NativeApi api, nint client, string feature, long period, out nint lease, out long retry)
+    public static int Borrow(NativeApi api, nint client, string feature, long period, out nint lease, out long retry, int count = 1)
     {
         nint result = -1;
         long wait = -1;
@@ -67,7 +67,7 @@ internal static unsafe class LeaseApi
             api.Text(feature),
             period,
             null,
-            1,
+            count,
             &result,
             &wait
         );

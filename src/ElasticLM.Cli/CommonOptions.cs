@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Security.Cryptography;
 using ElasticLM.Issuing;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Cli;
 
@@ -37,7 +38,7 @@ internal static class CommonOptions
         }
         catch (ArgumentException e)
         {
-            host.Error.WriteLine("error: " + e.Message);
+            host.Error.WriteLine("error: " + ArgumentMessages.WithoutParameterName(e));
             return ExitCodes.InvalidInput;
         }
     }

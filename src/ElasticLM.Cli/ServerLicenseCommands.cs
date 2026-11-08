@@ -47,7 +47,7 @@ internal static class ServerLicenseCommands
                 () =>
                 {
                     Uri url = ServiceUrl(parse.GetValue(service)!);
-                    string? licenseKey = activate ? parse.GetValue(key) : null;
+                    string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "<license-key>") : null;
                     return Kept(
                         host,
                         common,
@@ -64,7 +64,7 @@ internal static class ServerLicenseCommands
 
     private static Command Import(CliHost host)
     {
-        var answer = new Argument<string>("answer") { Description = "The service's answer file (.elmresp)." };
+        var answer = new Argument<string>("answer") { Description = "The service's answer file (.elmresp)." }.AsPath();
         var command = new Command("import", "Import the service's answer to the waiting request and write the license file.") { answer };
         Common common = AddCommon(command);
         Option<string> license = LicenseOption(command);
@@ -119,7 +119,7 @@ internal static class ServerLicenseCommands
 
     private static Command Proof(CliHost host)
     {
-        var output = new Option<string>("--out") { Description = "Where to write the deactivation proof (.elmdeact).", Required = true };
+        var output = new Option<string>("--out") { Description = "Where to write the deactivation proof (.elmdeact).", Required = true }.AsPath();
         Option<bool> force = CommonOptions.Force();
         var command = new Command(
             "deactivate-proof",
@@ -212,7 +212,7 @@ internal static class ServerLicenseCommands
         }
 
         Common common = AddCommon(command);
-        var output = new Option<string>("--out") { Description = "Where to write the request file.", Required = true };
+        var output = new Option<string>("--out") { Description = "Where to write the request file.", Required = true }.AsPath();
         var renew = new Option<bool>("--renew") { Description = "Make a new request before the waiting one expires." };
         Option<bool> force = CommonOptions.Force();
         command.Options.Add(output);
@@ -223,6 +223,7 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
+                    string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "--key") : null;
                     if (
                         Status(host, common, parse) is JsonElement status
                         && status.TryGetProperty("autoRefresh", out JsonElement auto)
@@ -244,8 +245,8 @@ internal static class ServerLicenseCommands
                         null,
                         client =>
                         {
-                            OfflineRequestResult result = activate
-                                ? client.CreateActivationRequestAsync(parse.GetValue(key)!, parse.GetValue(renew)).GetAwaiter().GetResult()
+                            OfflineRequestResult result = licenseKey is not null
+                                ? client.CreateActivationRequestAsync(licenseKey, parse.GetValue(renew)).GetAwaiter().GetResult()
                                 : client.CreateRefreshRequestAsync(parse.GetValue(renew)).GetAwaiter().GetResult();
                             if (result is OfflineRequestResult.Failed failed)
                             {
@@ -329,7 +330,7 @@ internal static class ServerLicenseCommands
 
     private static int WithClient(CliHost host, Common common, ParseResult parse, Uri? service, Func<ActivationClient, int> body)
     {
-        string product = parse.GetValue(common.Product)!;
+        string product = Product(parse, common);
         if (!new InstallationKeyStore(product, KeyScope.Machine, parse.GetValue(common.Data)).HasKey)
         {
             // design §13.7: the server makes its key at its first start; a key made here could be the wrong folder's (R5).
@@ -340,7 +341,7 @@ internal static class ServerLicenseCommands
         {
             ProductId = product,
             ServiceUrl = service,
-            Trust = TrustStore.Create(TrustKeys.Read(host, parse.GetValue(common.Trust) ?? []), parse.GetValue(common.Revoked) ?? []),
+            Trust = TrustKeys.Store(host, parse.GetValue(common.Trust), parse.GetValue(common.Revoked)),
             KeyScope = KeyScope.Machine,
             DataDirectory = parse.GetValue(common.Data),
             TimeProvider = host.Time,
@@ -480,7 +481,11 @@ internal static class ServerLicenseCommands
             : throw new CliException($"--service must be an https URL, or http on a loopback address: '{text}'.");
 
     private static string Folder(ParseResult parse, Common common) =>
-        new InstallationKeyStore(parse.GetValue(common.Product)!, KeyScope.Machine, parse.GetValue(common.Data)).Directory;
+        new InstallationKeyStore(Product(parse, common), KeyScope.Machine, parse.GetValue(common.Data)).Directory;
+
+    // design §17.3 (V1c10): the key store's own refusal of an empty product ID does not name the option; an empty --data is a
+    // parse error (CliPaths).
+    private static string Product(ParseResult parse, Common common) => CliParse.NotEmpty(parse.GetValue(common.Product)!, "--product");
 
     private static Common AddCommon(Command command)
     {
@@ -488,11 +493,11 @@ internal static class ServerLicenseCommands
         var data = new Option<string?>("--data")
         {
             Description = "The server's data folder (dataDirectory); default: the machine-wide one of --product.",
-        };
+        }.AsPath();
         var trust = new Option<string[]>("--trust")
         {
             Description = $"A root public key file to trust. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
-        };
+        }.AsPath();
         var revoked = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
         var admin = new Option<string?>("--url") { Description = "The server's administration API. Default: http://127.0.0.1:7071." };
         command.Options.Add(product);
@@ -516,14 +521,14 @@ internal static class ServerLicenseCommands
 
     private static Option<string> LicenseOption(Command command)
     {
-        var license = new Option<string>("--license") { Description = "The server's license file (its setting license).", Required = true };
+        var license = new Option<string>("--license") { Description = "The server's license file (its setting license).", Required = true }.AsPath();
         command.Options.Add(license);
         return license;
     }
 
     private static Option<string?> RemovedLicenseOption(Command command)
     {
-        var license = new Option<string?>("--license") { Description = "The server's license file, removed when it is the activation's." };
+        var license = new Option<string?>("--license") { Description = "The server's license file, removed when it is the activation's." }.AsPath();
         command.Options.Add(license);
         return license;
     }

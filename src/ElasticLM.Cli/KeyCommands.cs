@@ -23,8 +23,8 @@ internal static class KeyCommands
 
     private static Command CreateKeyCommand(CliHost host, string name, string description)
     {
-        var outOption = new Option<string>("--out") { Description = "The encrypted private key file to write.", Required = true };
-        var publicOption = new Option<string?>("--public-out") { Description = "The public key file to write. Default: <out>.pub.pem." };
+        var outOption = new Option<string>("--out") { Description = "The encrypted private key file to write.", Required = true }.AsPath();
+        var publicOption = new Option<string?>("--public-out") { Description = "The public key file to write. Default: <out>.pub.pem." }.AsPath();
         Option<string> passphraseOption = CommonOptions.PassphraseEnvironment();
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
@@ -69,8 +69,12 @@ internal static class KeyCommands
 
     private static Command CertifyCommand(CliHost host)
     {
-        var rootOption = new Option<string>("--root") { Description = "The encrypted root key file.", Required = true };
-        var publicOption = new Option<string>("--public") { Description = "The public key file of the signing key to certify.", Required = true };
+        var rootOption = new Option<string>("--root") { Description = "The encrypted root key file.", Required = true }.AsPath();
+        var publicOption = new Option<string>("--public")
+        {
+            Description = "The public key file of the signing key to certify.",
+            Required = true,
+        }.AsPath();
         var useOption = new Option<string[]>("--use")
         {
             Description = "What the key may sign: license, lease, log. Repeat for several. Default: license.",
@@ -78,7 +82,7 @@ internal static class KeyCommands
         };
         var notBeforeOption = new Option<string?>("--not-before") { Description = "Start of validity (ISO 8601). Default: now." };
         var daysOption = new Option<int>("--days") { Description = "Validity in days, at most 731. Default: 365.", DefaultValueFactory = _ => 365 };
-        var outOption = new Option<string>("--out") { Description = "The certificate file to write.", Required = true };
+        var outOption = new Option<string>("--out") { Description = "The certificate file to write.", Required = true }.AsPath();
         Option<string> passphraseOption = CommonOptions.PassphraseEnvironment();
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
@@ -145,7 +149,7 @@ internal static class KeyCommands
 
     private static Command ThumbprintCommand(CliHost host)
     {
-        var fileArgument = new Argument<string>("public-key-file") { Description = "A public key PEM file." };
+        var fileArgument = new Argument<string>("public-key-file") { Description = "A public key PEM file." }.AsPath();
         var thumbprint = new Command("thumbprint", "Print the key ID (JWK thumbprint) of a public key.") { fileArgument };
         thumbprint.SetAction(parse =>
             CommonOptions.Run(

@@ -186,6 +186,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
         ArgumentNullException.ThrowIfNull(host);
         long started = host.Time.GetTimestamp();
         TrustStore trust = ReadTrust(settings, host.Environment);
+
+        // design §17.3 (V1c10, R5 and D3): the file system's own refusal says neither the setting nor the value.
+        if (settings.DataDirectory is string dataFolder && string.IsNullOrWhiteSpace(dataFolder))
+        {
+            throw new ServerStartException("dataDirectory must not be empty or only white space.");
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.LicensePath))
+        {
+            throw new ServerStartException("license must not be empty or only white space.");
+        }
+
         var store = new InstallationKeyStore(settings.Product, KeyScope.Machine, settings.DataDirectory);
         if (!store.TryLoadOrCreate(out InstallationKey? key, out LicenseError? keyError))
         {
@@ -493,13 +505,19 @@ internal sealed partial class ElmServer : IAsyncDisposable
             throw new ServerStartException($"Set trust.rootKeys or {ServerSettings.TrustRootKeysVariable} to the vendor's root public keys.");
         }
 
+        // design §17.3 (V1c10): the trust store's own refusal of an empty key ID does not name the setting.
+        if (settings.TrustRevokedKeyIds.Any(string.IsNullOrEmpty))
+        {
+            throw new ServerStartException("trust.revokedKeyIds must not hold an empty or null entry.");
+        }
+
         try
         {
             return TrustStore.Create([.. keys], [.. settings.TrustRevokedKeyIds]);
         }
         catch (ArgumentException e)
         {
-            throw new ServerStartException("The trust settings are not valid: " + e.Message);
+            throw new ServerStartException("The trust settings are not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
     }
 

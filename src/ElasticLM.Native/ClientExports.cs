@@ -32,14 +32,14 @@ public static unsafe partial class Exports
         {
             var o = (ClientOptions*)options;
             StructSizes.Check(o, "options");
-            string product = NativeStrings.Read(o->ProductId, "product_id");
+            string product = NativeStrings.ReadNotEmpty(o->ProductId, "product_id");
             if (!Uri.TryCreate(NativeStrings.Read(o->ServerUrl, "server_url"), UriKind.Absolute, out Uri? server))
             {
                 throw NativeException.Invalid("server_url is not an absolute URL.");
             }
 
             string[] roots = ReadArray(o->RootKeysPem, o->RootKeyCount, 1, MaxRootKeys, "root_keys_pem", NativeStrings.MaxPemBytes);
-            string[] revoked = ReadArray(o->RevokedKeyIds, o->RevokedKeyCount, 0, MaxRevokedKeyIds, "revoked_key_ids", NativeStrings.MaxTextBytes);
+            string[] revoked = ReadRevoked(o->RevokedKeyIds, o->RevokedKeyCount);
             KeyScope scope = Scope(o->Scope);
             int skew = o->ClockSkewSeconds == 0 ? DefaultClockSkewSeconds : o->ClockSkewSeconds;
             if (skew is < 1 or > MaxClockSkewSeconds)
@@ -51,11 +51,11 @@ public static unsafe partial class Exports
             {
                 ProductId = product,
                 ServerUrl = server,
-                LicenseKey = NativeStrings.ReadOptional(o->LicenseKey, "license_key"),
+                LicenseKey = NativeStrings.ReadOptionalNotEmpty(o->LicenseKey, "license_key"),
                 Trust = TrustStore.Create(roots, revoked),
                 ExpectedServerLicenseId = NativeStrings.ReadOptional(o->ExpectedServerLicenseId, "expected_server_license_id"),
                 KeyScope = scope,
-                DataDirectory = NativeStrings.ReadOptional(o->Directory, "directory"),
+                DataDirectory = NativeStrings.ReadOptionalPath(o->Directory, "directory"),
                 SendClientInfo = Flag(o->SendClientInfo, "send_client_info"),
                 AppVersion = NativeStrings.ReadOptional(o->AppVersion, "app_version"),
                 VerifierOptions = new LicenseVerifierOptions
@@ -97,7 +97,11 @@ public static unsafe partial class Exports
             result,
             retryAfterSeconds,
             c =>
-                c.AcquireLeaseAsync(NativeStrings.Read(featureId, "feature_id"), NativeStrings.ReadOptional(featureVersion, "feature_version"), count)
+                c.AcquireLeaseAsync(
+                        NativeStrings.ReadNotEmpty(featureId, "feature_id"),
+                        NativeStrings.ReadOptional(featureVersion, "feature_version"),
+                        Seats(count)
+                    )
                     .GetAwaiter()
                     .GetResult()
         );
@@ -133,10 +137,10 @@ public static unsafe partial class Exports
                 }
 
                 return c.BorrowLeaseAsync(
-                        NativeStrings.Read(featureId, "feature_id"),
+                        NativeStrings.ReadNotEmpty(featureId, "feature_id"),
                         TimeSpan.FromSeconds(periodSeconds),
                         NativeStrings.ReadOptional(featureVersion, "feature_version"),
-                        count
+                        Seats(count)
                     )
                     .GetAwaiter()
                     .GetResult();
@@ -351,6 +355,9 @@ public static unsafe partial class Exports
             handle.Close();
             NativeHandles.Free<NativeClient>(client);
         });
+
+    // design §17.3 (V1c10): the lease client's own refusal begins with the .NET parameter name.
+    private static int Seats(int count) => count >= 1 ? count : throw NativeException.Invalid("count must be at least 1.");
 
     // design §17.6: inside its own callback, the blocking calls of a handle are refused.
     private static LicenseClient LeaseClientOf(nint client, bool blocking)

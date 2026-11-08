@@ -186,6 +186,43 @@ public sealed class ElmServiceTests
     }
 
     /// <summary>
+    /// A start error from the trust store or the database driver carries the library's sentence without the .NET parameter
+    /// name (design §17.3, V1c10).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A vendor; a trust.rootKeys file with a P-384 public key.
+    ///
+    /// Steps:
+    /// - Start with that file as trust.rootKeys; start on PostgreSQL with the connection string Host=127.0.0.1;Port=x (read
+    ///   before any connection is made).
+    ///
+    /// Expected:
+    /// - ServiceStartException "The trust settings are not valid: A root key is not a P-256 public key in PEM."; and
+    ///   ServiceStartException "The database connection string is not valid: Couldn't set port".
+    /// </remarks>
+    [Fact]
+    public async Task Start_TrustOrConnectionNotValid_ThrowsWithoutParameterName()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using ECDsa p384 = ECDsa.Create(ECCurve.NamedCurves.nistP384);
+        string p384File = test.FilePath("p384.pub.pem");
+        File.WriteAllText(p384File, p384.ExportSubjectPublicKeyInfoPem() + "\n");
+        async Task<string> Refused(Func<ServiceSettings, ServiceSettings> change) =>
+            (await Assert.ThrowsAsync<ServiceStartException>(() => ElmService.StartAsync(test.Settings(change), test.HostOptions(), cancel))).Message;
+
+        Assert.Equal(
+            "The trust settings are not valid: A root key is not a P-256 public key in PEM.",
+            await Refused(s => s with { TrustRootKeyFiles = [p384File] })
+        );
+        Assert.Equal(
+            "The database connection string is not valid: Couldn't set port",
+            await Refused(s => s with { Database = DatabaseProvider.Postgres, ConnectionString = "Host=127.0.0.1;Port=x" })
+        );
+    }
+
+    /// <summary>
     /// With an https listen and PEM files, the service answers over TLS with that certificate.
     /// </summary>
     /// <remarks>
