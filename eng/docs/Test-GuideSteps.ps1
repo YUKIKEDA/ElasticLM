@@ -2,7 +2,7 @@
 .SYNOPSIS
     Runs the marked steps of README.md, of every Tutorial page, and of every How-to page with a given elm, elm-server,
     elm-service, and package folder, and builds and runs the C sample of Tutorial 4 with libelasticlm (design §20.7, V1c1,
-    V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, and V1c4a).
+    V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, and V1c4b).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
@@ -35,7 +35,8 @@
                                       the GETs come every 0.5 s with a 5 s limit each, for at most 60 s. The URL's host is
                                       127.0.0.1, localhost, or [::1]: https for elm-server, with the server's self-signed
                                       certificate accepted; https or http for elm-service. A page has at most one. The
-                                      process tree is stopped at the end of the page.
+                                      process tree is stopped at the end of the page. On a How-to page, the one block
+                                      replaces the background process of the page that steps:after names (below).
       steps:file path=<path>          The block's content is written to that path, relative to the work folder, with each
                                       <name> captured earlier on the page replaced by its value. A <name> that the page
                                       captures later, or captures with env, fails before anything runs; any other <...>
@@ -86,7 +87,11 @@
         over, so that the How-to page's elm-service, dotnet add ... package, and elm lines and its <name> placeholders work
         as on the named page. A How-to page that captures a name the named page captured fails, as a name captured twice.
       - The named page's background process keeps running into the How-to page's steps, and stops at the end of the How-to
-        page. A How-to page has no steps:background and no steps:prebuilt marker of its own.
+        page. A How-to page has no steps:prebuilt marker of its own. It may have one steps:background block, which replaces
+        that process (design §20.7, V1c4b, Q1): at the block, the process tree is stopped and waited for as at the end of a
+        page, and the block's line is started and waited for as on any page, with the same passphrase. The block fails when
+        the page has no steps:after, when the named page has no steps:background, and when its line starts another
+        program than the named page's (elm-service replaces elm-service).
       - A failing step of the named page fails the How-to page. The named page is checked against its translation too.
     The marker fails when it is indented, when the next line that is not blank opens a code block, and without page.
 
@@ -429,7 +434,7 @@ function Read-Plan([string]$name, [object]$parsed) {
             $marker = Read-Marker $at $block.Marker
         }
         $attributes = $marker.Attributes
-        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null }
+        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null; Replaces = $false }
         switch ($marker.Kind) {
             'run' {
                 if ($attributes.ContainsKey('os')) {
@@ -474,13 +479,24 @@ function Read-Plan([string]$name, [object]$parsed) {
                 }
             }
             'background' {
-                if ($isHowTo) { throw "$($at): a How-to page has no steps:background; the background process of the page that steps:after names keeps running." }
+                # A How-to page's only steps:background stops the background process of the page that steps:after names and
+                # starts this line instead, such as elm-service with a rewritten service.json (design §20.7, V1c4b, Q1).
+                if ($isHowTo) {
+                    if (-not $after) { throw "$($at): a How-to page's steps:background replaces the background process of the page that steps:after names, and the page has no steps:after." }
+                    if (-not ($after.Plan.Steps | Where-Object Kind -EQ 'background')) { throw "$($at): a How-to page's steps:background replaces the background process of $($after.Name), which has no steps:background." }
+                    $step.Replaces = $true
+                }
                 if (-not $attributes.ContainsKey('ready')) { throw "$($at): steps:background takes ready=<url>." }
                 if ($plan | Where-Object Kind -EQ 'background') { throw "$($at): a page has at most one steps:background block." }
                 $lines = @($block.Lines | Where-Object { $_.Trim() -ne '' })
                 if ($lines.Count -ne 1) { throw "$($name):$($block.Line): the steps:background block has one line." }
                 $program = (Split-Step $lines[0])[0]
                 if ($program -cnotin 'elm-server', 'elm-service') { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a steps:background line starts with elm-server or elm-service." }
+                if ($step.Replaces) {
+                    # The page restarts the program that the named page started, such as elm-service with new settings.
+                    $replaced = @($after.Plan.Steps | Where-Object Kind -EQ 'background')[0].Commands[0].Words[0]
+                    if ($program -cne $replaced) { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a How-to page's steps:background starts $replaced again, as $($after.Name) does, not $program." }
+                }
                 # elm-server always serves https, with a certificate of its own key; elm-service serves http unless it is
                 # given a certificate, and http on a loopback address is what its clients take outside production.
                 $ready = $null
@@ -800,6 +816,12 @@ function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$w
                 }
             }
             'background' {
+                if ($step.Replaces) {
+                    # Stopped and waited for as at the end of a page, so that the new process can open the same database file
+                    # and listen on the same port.
+                    Stop-Background
+                    "ok: $($name):$($block.Line - 1): stopped the background process"
+                }
                 Start-Background $name $step $values $work
             }
             'file' {
