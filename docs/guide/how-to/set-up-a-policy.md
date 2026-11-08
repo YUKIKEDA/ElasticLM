@@ -93,7 +93,7 @@ With `floating` `cloud`, licenses are not activated. Instead, the service lends 
 elm admin request POST /v1/admin/policies --body floating-policy.json --url http://127.0.0.1:8080
 ```
 
-In its answer, `floating` is `cloud`, and `binding` stays `nodeLocked`, the default: for a cloud-floating policy, `floating` decides, and `binding` does not apply. Its `id` is `<floating-policy-id>` below. Each feature of a license under it needs `seats`, the number of devices that may hold a lease at once. Create a license with 5 seats of `pro`:
+In its answer, `floating` is `cloud`, and `binding` stays `nodeLocked`, the default: for a cloud-floating policy, `floating` decides how devices hold a license (through leases), and `binding` does not apply. Its `id` is `<floating-policy-id>` below. Each feature of a license under it needs `seats`, the number of devices that may hold a lease at once. Create a license with 5 seats of `pro`:
 
 <!-- steps:file path=floating-license.json -->
 ```json

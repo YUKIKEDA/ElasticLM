@@ -268,10 +268,10 @@ activation 01960000-0000-7000-8000-000000000601, license 01960000-0000-7000-8000
 
 Choose who hands in the file:
 
-- **The customer**, with `elm` and no credentials: `elm offline process` then sends the file to the public entry of the service, which needs none, since the file proves as much as an online request. Without `ELM_API_KEY`, and without a login of `elm admin login`, the same command does this.
+- **The customer**, with `elm` and no credentials: `elm offline process` then sends the file to the public entry of the service, which needs none, since the file proves as much as an online request. `elm offline process` takes this path when `ELM_API_KEY` is not set and `elm admin login` has not signed in.
 - **The vendor's administrator**, on the customer's behalf: with `ELM_API_KEY` set, as here, or after `elm admin login`, `elm offline process` sends the file to the administration API, which writes a row of the audit log for each file. The admin UI's offline page does the same.
 
-If the answer file gets lost before the device makes another request, hand in the same request again: the service gives the same answer to the same request. Once the device has imported an answer, delete its request file. A request handed in after a later request of the same device, such as the activation request after the refresh below, names a sequence number the service has moved past: the service takes it for a copy of the installation (`ELM_CLONE_DETECTED`) and, under the default `cloneStrategy` `deny`, stops the activation.
+If the answer file gets lost before the device makes another request, hand in the same request again: the service gives the same answer to the same request. Once the device has imported an answer, delete its request file. An older request of the device handed in after a newer one has been processed, such as the activation request after the refresh below, names a sequence number the service has moved past: the service takes it for a copy of the installation (`ELM_CLONE_DETECTED`) and, under the default `cloneStrategy` `deny`, stops the activation.
 
 ## Import the answer on the device
 
