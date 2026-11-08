@@ -31,7 +31,8 @@ if (args.Length != length)
 
 try
 {
-    // check works with files alone, so it gives the client no service URL.
+    // check works with files alone, and this one gives the client no service URL to show that. A real app gives the URL
+    // also when it only checks: Check still sends nothing, and the client then refreshes the activation in the background.
     var options = new ActivationClientOptions
     {
         ProductId = ProductId,
@@ -77,8 +78,9 @@ static async Task<int> ActivateAsync(ActivationClient client, string licenseKey)
                 // No answer, or a busy service: the same request may work later.
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "retry later",
 
-                // The key does not open a license that can be activated now.
-                ErrorCode.LicenseNotFound or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+                // The key does not open a license of this product that can be activated now.
+                ErrorCode.LicenseNotFound or ErrorCode.WrongProduct or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired =>
+                    "ask for another key",
 
                 // Every device the license allows is activated.
                 ErrorCode.ActivationLimit => "ask to deactivate another device",
@@ -117,8 +119,9 @@ static int Check(ActivationClient client)
                 // The license does not grant the feature: the app leaves it out.
                 ErrorCode.FeatureNotLicensed or ErrorCode.FeatureExpired => "feature not licensed",
 
-                // The data folder was copied to another machine, or the machine changed too much.
-                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "activate again",
+                // The kept file is not this installation's, or the machine changed too much: the app deactivates
+                // (DeactivateAsync) and activates again.
+                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "deactivate and activate again",
                 _ => "tell the vendor",
             };
             return Decide(decision, invalid.Error, null);
@@ -141,7 +144,12 @@ static async Task<int> RefreshAsync(ActivationClient client)
             string decision = failed.Error.Code switch
             {
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "keeps working",
-                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+
+                // The kept file works until it ends; the license itself needs the vendor.
+                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask to contact the vendor",
+
+                // Nothing is kept to refresh, among other cases that the reason names.
+                ErrorCode.InvalidState => "activate first",
 
                 // The service no longer has the activation, and the client removed the kept file.
                 ErrorCode.ActivationNotFound => "activate again",

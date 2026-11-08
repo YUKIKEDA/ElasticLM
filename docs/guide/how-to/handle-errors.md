@@ -4,7 +4,7 @@ sidebar_position: 13
 
 # Handle errors
 
-This guide is for a developer who builds ElasticLM's activation into an app and decides what the app does when an activation, a check, or a refresh fails: try again later, ask the user, or tell the vendor. The guide starts where `elm-service` is running at `http://127.0.0.1:8080` with a product, as at the end of [Run the hosted activation service and activate a .NET app online](../tutorials/activate-an-app-online.md). [Error codes](../reference/error-codes.md) lists every code.
+This guide is for a developer who builds ElasticLM's activation into an app and decides what the app does when an activation, a check, or a refresh fails: try again later, ask the user, or tell the vendor. The guide starts where `elm-service` is running at `http://127.0.0.1:8080` with a product; [Run the hosted activation service and activate a .NET app online](../tutorials/activate-an-app-online.md) sets this up. [Error codes](../reference/error-codes.md) lists every code.
 
 <!-- steps:after page=docs/guide/tutorials/activate-an-app-online.md -->
 
@@ -18,13 +18,14 @@ The examples use the values of the tutorial: the product `acme-cad`, its feature
 
 The ElasticLM API reports a failure as a result, not as an exception:
 
+- `ActivationClient.TryCreate` returns `false` with a `LicenseError` in its `out` argument when the client cannot start, for example with `ELM_INSTALLATION_KEY_UNREADABLE` when the installation key in the data folder cannot be read: on Windows, that is also what a data folder copied from another machine or user gives.
 - `ActivationClient.ActivateAsync`, `StartTrialAsync`, and `RefreshAsync` return `ActivationResult`: `Activated` with the license, or `Failed` with a `LicenseError` and an optional `RetryAfter`.
 - `ActivationClient.Check` returns `LicenseVerificationResult`: `Valid` with the license and `InGracePeriod`, or `Invalid` with a `LicenseError`.
 - A `LicenseError` has a `Code` (an `ErrorCode`), its `WireName` such as `ELM_LICENSE_NOT_FOUND`, and a `Message`, an English sentence for logs and support, not for the app's logic.
 
 An exception means a mistake in the call itself, such as an argument out of range (`ArgumentException`) or a disposed client (`ObjectDisposedException`); [How failures are reported](../reference/dotnet-api.md#how-failures-are-reported) lists them. The app decides by the operation and the `Code`, never by the `Message`: the message of `ELM_NETWORK_ERROR`, for example, holds the system's own words, which differ between Windows, Linux, and macOS.
 
-The client already retries on its own in two places, so the app does not need to: it sends a request once more after `ELM_NONCE_REQUIRED`, and while it runs, it refreshes a kept activation again every hour after a failure. [What the client retries on its own](../reference/error-codes.md#what-the-client-retries-on-its-own) lists the details.
+The client already retries on its own in two places, so the app does not need to: it sends a request once more after `ELM_NONCE_REQUIRED`, and while it runs with a service URL, it refreshes a kept activation again an hour after a failure. [What the client retries on its own](../reference/error-codes.md#what-the-client-retries-on-its-own) lists the details.
 
 ## Decide by the operation and the code
 
@@ -32,22 +33,26 @@ The same code can call for different things in different operations: `ELM_LICENS
 
 | Operation | Code | What the app does |
 | --- | --- | --- |
-| Activate | [`ELM_NETWORK_ERROR`](../reference/error-codes.md), [`ELM_RATE_LIMITED`](../reference/error-codes.md) | Try again later; wait at least `RetryAfter` when it is set. |
-| Activate | [`ELM_LICENSE_NOT_FOUND`](../reference/error-codes.md), [`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md), [`ELM_LICENSE_REVOKED`](../reference/error-codes.md), [`ELM_EXPIRED`](../reference/error-codes.md) | Ask the user for another license key, or to contact the vendor. |
+| Activate, start a trial | [`ELM_NETWORK_ERROR`](../reference/error-codes.md), [`ELM_RATE_LIMITED`](../reference/error-codes.md) | Try again later; wait at least `RetryAfter` when it is set. |
+| Activate | [`ELM_LICENSE_NOT_FOUND`](../reference/error-codes.md), [`ELM_WRONG_PRODUCT`](../reference/error-codes.md), [`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md), [`ELM_LICENSE_REVOKED`](../reference/error-codes.md), [`ELM_EXPIRED`](../reference/error-codes.md) | Ask the user for another license key, or to contact the vendor. |
 | Activate | [`ELM_ACTIVATION_LIMIT`](../reference/error-codes.md) | Ask the user to deactivate the license on another device first. |
-| Start a trial | [`ELM_TRIAL_USED`](../reference/error-codes.md), [`ELM_TRIAL_NOT_OFFERED`](../reference/error-codes.md) | Offer to buy a license. |
-| Activate, start a trial | [`ELM_INVALID_STATE`](../reference/error-codes.md) | An activation is kept already, or another process of the app holds the data folder: check first, or try again when the other process is done. |
+| Start a trial | [`ELM_TRIAL_USED`](../reference/error-codes.md) | Offer to buy a license. |
+| Start a trial | [`ELM_TRIAL_NOT_OFFERED`](../reference/error-codes.md) | The product ID is wrong, or the vendor offers no trial: check the app's product ID, and tell the vendor. |
+| Activate, start a trial | [`ELM_INVALID_STATE`](../reference/error-codes.md) | An activation is kept already, or another process of the app holds the data folder: check first, or try again when the other process is done. The message names the case. |
 | Check | [`ELM_LICENSE_NOT_FOUND`](../reference/error-codes.md) | Nothing is activated: ask the user to activate. |
 | Check | [`ELM_EXPIRED`](../reference/error-codes.md) | The kept file and its grace period ended: refresh, which needs the network. |
-| Check | [`ELM_CLOCK_TAMPERED`](../reference/error-codes.md) | Ask the user to correct the clock. |
+| Check | [`ELM_CLOCK_TAMPERED`](../reference/error-codes.md) | The clock is earlier than a time the client saw: ask the user to correct the clock, or refresh online. |
 | Check | [`ELM_FEATURE_NOT_LICENSED`](../reference/error-codes.md), [`ELM_FEATURE_EXPIRED`](../reference/error-codes.md) | Leave the feature out. |
-| Check | [`ELM_WRONG_INSTALLATION`](../reference/error-codes.md), [`ELM_FINGERPRINT_MISMATCH`](../reference/error-codes.md) | The data folder was copied, or the machine changed: activate again. |
+| Check | [`ELM_WRONG_INSTALLATION`](../reference/error-codes.md), [`ELM_FINGERPRINT_MISMATCH`](../reference/error-codes.md) | The kept file is not this installation's, or the machine changed too much: deactivate with `DeactivateAsync`, then activate again. |
+| Check | [`ELM_WRONG_KIND`](../reference/error-codes.md) | The kept file is of another kind than the app asked for, such as a trial checked as `Standard`: pass the kind the app activated. |
 | Refresh | [`ELM_NETWORK_ERROR`](../reference/error-codes.md), [`ELM_RATE_LIMITED`](../reference/error-codes.md) | Keep working with the kept file; the client tries again on its own. |
 | Refresh | [`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md), [`ELM_LICENSE_REVOKED`](../reference/error-codes.md), [`ELM_EXPIRED`](../reference/error-codes.md) | The kept file works until it ends; ask the user to contact the vendor. |
 | Refresh | [`ELM_ACTIVATION_NOT_FOUND`](../reference/error-codes.md) | The vendor removed the activation, and the client removed the kept file: ask the user to activate again. |
-| Any | Any other code, such as [`ELM_CLONE_DETECTED`](../reference/error-codes.md), [`ELM_PROOF_INVALID`](../reference/error-codes.md), or [`ELM_INTERNAL_ERROR`](../reference/error-codes.md) | Tell the vendor, with the code and the message. |
+| Refresh | [`ELM_INVALID_STATE`](../reference/error-codes.md) | No activation is kept: ask the user to activate. The message names the other cases. |
+| Any | [`ELM_INTERNAL_ERROR`](../reference/error-codes.md) | From the client, it cannot write its data folder: check the folder's permissions and the free disk space. From the service: tell the vendor. The message says which. |
+| Any | Any other code, such as [`ELM_CLONE_DETECTED`](../reference/error-codes.md) or [`ELM_PROOF_INVALID`](../reference/error-codes.md) | Tell the vendor, with the code and the message. |
 
-`ELM_INVALID_STATE` also comes back when the app calls a method that needs a service URL on a client without one, such as `RefreshAsync`: that is a mistake in the app's code. `ELM_INTERNAL_ERROR` can come from the service, or from the client when it cannot write its data folder; the message says which.
+`ELM_INVALID_STATE` also comes back when the app calls a method that needs a service URL on a client without one, such as `RefreshAsync`, which is a mistake in the app's code, and after 16 requests in a row got no answer, which needs the vendor's administrator; the message says which. [Error codes](../reference/error-codes.md) lists every case of each code.
 
 ## Create the app
 
@@ -99,7 +104,8 @@ if (args.Length != length)
 
 try
 {
-    // check works with files alone, so it gives the client no service URL.
+    // check works with files alone, and this one gives the client no service URL to show that. A real app gives the URL
+    // also when it only checks: Check still sends nothing, and the client then refreshes the activation in the background.
     var options = new ActivationClientOptions
     {
         ProductId = ProductId,
@@ -145,8 +151,9 @@ static async Task<int> ActivateAsync(ActivationClient client, string licenseKey)
                 // No answer, or a busy service: the same request may work later.
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "retry later",
 
-                // The key does not open a license that can be activated now.
-                ErrorCode.LicenseNotFound or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+                // The key does not open a license of this product that can be activated now.
+                ErrorCode.LicenseNotFound or ErrorCode.WrongProduct or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired =>
+                    "ask for another key",
 
                 // Every device the license allows is activated.
                 ErrorCode.ActivationLimit => "ask to deactivate another device",
@@ -185,8 +192,9 @@ static int Check(ActivationClient client)
                 // The license does not grant the feature: the app leaves it out.
                 ErrorCode.FeatureNotLicensed or ErrorCode.FeatureExpired => "feature not licensed",
 
-                // The data folder was copied to another machine, or the machine changed too much.
-                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "activate again",
+                // The kept file is not this installation's, or the machine changed too much: the app deactivates
+                // (DeactivateAsync) and activates again.
+                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "deactivate and activate again",
                 _ => "tell the vendor",
             };
             return Decide(decision, invalid.Error, null);
@@ -209,7 +217,12 @@ static async Task<int> RefreshAsync(ActivationClient client)
             string decision = failed.Error.Code switch
             {
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "keeps working",
-                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+
+                // The kept file works until it ends; the license itself needs the vendor.
+                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask to contact the vendor",
+
+                // Nothing is kept to refresh, among other cases that the reason names.
+                ErrorCode.InvalidState => "activate first",
 
                 // The service no longer has the activation, and the client removed the kept file.
                 ErrorCode.ActivationNotFound => "activate again",
@@ -251,7 +264,7 @@ static void PrintExpiry(VerifiedLicense license)
 }
 ```
 
-Each command prints the decision on one line that is the same on every system, such as `retry later: ELM_NETWORK_ERROR`, then the `RetryAfter` when there is one, and the reason. `check` gives the client no service URL, since it reaches no service; [Run without a network](run-without-a-network.md) uses it.
+Each command prints the decision on one line that is the same on every system, such as `retry later: ELM_NETWORK_ERROR`, then the `RetryAfter` when there is one, and the reason. `check` gives the client no service URL, to show that it reaches no service; a real app gives the URL also when it only checks, so that the client refreshes in the background. [Run without a network](run-without-a-network.md) uses `check`.
 
 ## See the decisions
 
@@ -289,11 +302,11 @@ reason: The service cannot be reached: Connection refused (127.0.0.1:8081)
 retry later: ELM_NETWORK_ERROR
 ```
 
-Neither attempt kept anything in `errors-data`. [Run without a network](run-without-a-network.md) activates with a real key and shows what the app keeps when a refresh fails.
+Neither attempt kept an activation in `errors-data`; the client made its installation key there. [Run without a network](run-without-a-network.md) activates with a real key and shows what the app keeps when a refresh fails.
 
 ## Leases from a license server
 
-`LicenseClient`, the client of a floating license, reports failures the same way: `AcquireLeaseAsync` and `BorrowLeaseAsync` return `LeaseResult`, `Acquired` or `Failed` with a `LicenseError` and a `RetryAfter`. The client does not wait by itself: after `ELM_SERVER_RECOVERING`, which a server sends for a minute or so after it starts, wait `RetryAfter` and ask again, as the tutorial's app does. `ELM_NO_SEATS` means that every seat is in use: tell the user, or try again later. A lease that the client already holds is renewed on its own; its state and `LastError` say when that fails. [Floating licenses](../explanation/floating-licenses.md) explains the lease's states.
+`LicenseClient`, the client of a floating license, reports failures the same way: `AcquireLeaseAsync` and `BorrowLeaseAsync` return `LeaseResult`, `Acquired` or `Failed` with a `LicenseError` and a `RetryAfter`. The client does not wait by itself: after `ELM_SERVER_RECOVERING`, which a server sends for one lease time after it starts (10 minutes by default), wait `RetryAfter` and ask again, as the app of [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md) does. `ELM_NO_SEATS` means that every seat is in use: tell the user, or try again later. A lease that the client already holds is renewed on its own; its state and `LastError` say when that fails. [Floating licenses](../explanation/floating-licenses.md) explains the lease's states.
 
 ## In C
 

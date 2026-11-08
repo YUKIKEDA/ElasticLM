@@ -12,11 +12,11 @@ This guide is for a developer who ships a .NET app that uses ElasticLM, and want
 
 Type the commands in the folder of the tutorial. NativeAOT compiles the app with the platform's native tools, which the .NET SDK does not bring:
 
-- **Windows**: Visual Studio 2022 or later, or its Build Tools, with the workload "Desktop development with C++".
+- **Windows**: Visual Studio 2022 or later, or its Build Tools, with the workload "Desktop development with C++". The publish also needs the Visual Studio Installer folder on `PATH`, since the Visual Studio scripts that it runs call `vswhere.exe` from there by name: in PowerShell, type `$env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:PATH"` in the terminal where you publish.
 - **Linux**: `clang` and the `zlib` development files, such as `sudo apt-get install clang zlib1g-dev` on Ubuntu.
 - **macOS**: the Xcode command line tools: `xcode-select --install`.
 
-[Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) in `CONTRIBUTING.md` lists the same tools. NativeAOT builds for the system it runs on: publish on Windows for Windows, on Linux for Linux, and on macOS for macOS.
+[Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) in `CONTRIBUTING.md` lists the same tools and the same `PATH` entry. NativeAOT builds for the system it runs on: publish on Windows for Windows, on Linux for Linux, and on macOS for macOS.
 
 ## Turn on NativeAOT
 
@@ -42,13 +42,13 @@ Publish the app into the folder `publish`. `-p:TreatWarningsAsErrors=true` makes
 dotnet publish app -c Release -p:TreatWarningsAsErrors=true -p:WarningsNotAsErrors=NU1901%3BNU1902%3BNU1903%3BNU1904 -o publish
 ```
 
-`%3B` is how a `-p` value writes `;`, which separates the codes: a plain `;` or `,` would end the property there.
+`%3B` is how a `-p` value writes `;`, which separates the codes: a plain `;` would end the command in the shell, or end the property, and `dotnet` would stop with `MSB1006`.
 
-The first publish takes a minute or more: it downloads the NativeAOT compiler packages for your system, and compiles the app and the parts of .NET it uses into native code. It ends with a line such as `app -> …/publish/`.
+The first publish downloads the NativeAOT compiler packages for your system, then compiles the app and the parts of .NET it uses into native code; on a fast network that took about 15 seconds. It ends with a line such as `app -> …/publish/`.
 
-Without `-r`, `dotnet publish` builds for the system you run it on, such as `win-x64` on 64-bit Windows or `osx-arm64` on an Apple silicon Mac. To build for another processor of the same system, add `-r` with its runtime identifier, such as `-r win-arm64` or `-r linux-arm64`; [the .NET RID catalog](https://learn.microsoft.com/dotnet/core/rid-catalog) lists them.
+Without `-r`, `dotnet publish` builds for the system you run it on, such as `win-x64` on 64-bit Windows or `osx-arm64` on an Apple silicon Mac. To build for another processor of the same system, add `-r` with its runtime identifier, such as `-r win-arm64`; [the .NET RID catalog](https://learn.microsoft.com/dotnet/core/rid-catalog) lists them. That needs the native tools for that processor too, such as the ARM64 build tools of Visual Studio, or a cross toolchain on Linux; [Cross-compilation](https://learn.microsoft.com/dotnet/core/deploying/native-aot/cross-compile) in the .NET documentation says which.
 
-If the publish stops with a warning turned into an error, the message names the code that NativeAOT cannot compile, or the package it comes from. A warning from an ElasticLM package is a bug: report it as described in `SECURITY.md` or the repository's issues. On Windows, an error that `vswhere.exe` or the C++ tools cannot be found means that the C++ workload is missing; on Linux, an error about `clang` or `-lz` means that `clang` or `zlib1g-dev` is missing.
+If the publish stops with a warning turned into an error, the message names the code that NativeAOT cannot compile, or the package it comes from. A warning from an ElasticLM package is a bug: report it in the repository's [issues](https://github.com/YUKIKEDA/ElasticLM/issues). On Windows, the error `'vswhere.exe' is not recognized as an internal or external command`, followed by `error MSB3073` for `link.exe`, means that the Visual Studio Installer folder is not on `PATH`, or that the C++ workload is missing.
 
 ## Run the published app
 
@@ -66,7 +66,7 @@ It prints the same line as `dotnet run` did:
 valid: license first-license, product acme-cad, feature pro
 ```
 
-The executable needs no .NET runtime: copy it, without the debug symbols, to a machine of the same system and processor, and run it there. Keep the symbols of each release you ship, so that you can read the stack traces of crash reports.
+The executable needs no .NET runtime: copy it, without the debug symbols, to a machine of the same system and processor, and run it there. On Linux, that machine also needs a version of the C library (glibc) at least as new as that of the machine you published on, and the ICU library for globalization unless the app sets `InvariantGlobalization`; [Native AOT deployment](https://learn.microsoft.com/dotnet/core/deploying/native-aot/) lists the requirements. Keep the symbols of each release you ship, so that you can read the stack traces of crash reports.
 
 Before you ship, embed the root public key in the code instead of reading `root.pub.pem` from a file, as the tutorial says: the text of the key can be a string constant, and NativeAOT keeps it in the executable.
 

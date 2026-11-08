@@ -77,11 +77,12 @@
                     earlier dotnet publish line builds (below). No other file can be run.
 
     The NativeAOT publish of the How-to guide "Publish with NativeAOT" (design §20.7, V1c4e, review R11): a line
-    dotnet publish <project folder> ... -o <folder> (or --output <folder>, -o:<folder>, --output:<folder>) builds
-    <folder>/<the last name of the project folder>, which a later line may run by that path, without .exe on Windows. The
-    project folder comes right after publish, and it and the output folder are relative, with / and without '..', '.', or a
-    placeholder; a line that names more than one output folder fails. A steps:file block that writes into such an output
-    folder fails, wherever it stands on the page.
+    dotnet publish <project folder> ... -o <folder> (or --output <folder>, and -o: or --output: or -o= or --output=
+    followed by the folder) builds <folder>/<the last name of the project folder>, which a later line may run by that path,
+    without .exe on Windows. The project folder comes right after publish, and it and the output folder are relative, with
+    / and without '..', '.', a leading '-', or a placeholder; the project folder's name has no '.', and a line that names
+    more than one output folder fails. A steps:file block that writes into such an output folder, of the page or of the page
+    that steps:after names, fails wherever it stands, compared without '.' parts and without case.
     A whole word in single quotes is one argument without its quotes, in an os=linux or os=macos block only; a single quote
     anywhere else fails. A cl or cc line names one /Fe: or -o. The paths of /Fe:, -o, and a program are relative, with / and
     without '..' or a placeholder, on every system.
@@ -333,7 +334,7 @@ function Get-PublishFolder([string[]]$words) {
             $folders.Add($i + 1 -lt $words.Count ? $words[$i + 1] : '')
             $i++
         }
-        elseif ($words[$i] -cmatch '^(-o|--output):(.*)$') {
+        elseif ($words[$i] -cmatch '^(-o|--output)[:=](.*)$') {
             $folders.Add($Matches[2])
         }
     }
@@ -404,11 +405,11 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
                     $folder = Get-PublishFolder $words
                     if ($null -ne $folder) {
                         $project = $words.Count -gt 2 ? $words[2].TrimEnd('/') : ''
-                        if ($folder -eq '' -or -not (Test-RelativePath $folder) -or $folder.Contains('<') -or
-                            $project -eq '' -or $project.StartsWith('-') -or -not (Test-RelativePath $project) -or $project.Contains('<') -or $project.Contains('.')) {
-                            throw "$($name):$($lineNumber): a dotnet publish line names its project folder first and one output folder (-o <path>), both relative, with / and without '..' or a placeholder."
-                        }
                         $folder = $folder.TrimEnd('/')
+                        if ($folder -eq '' -or $folder.StartsWith('-') -or -not (Test-RelativePath $folder) -or $folder.Contains('<') -or ($folder -split '/') -contains '.' -or
+                            $project -eq '' -or $project.StartsWith('-') -or -not (Test-RelativePath $project) -or $project.Contains('<') -or $project.Contains('.')) {
+                            throw "$($name):$($lineNumber): a dotnet publish line names its project folder first and one output folder (-o <path>), both relative, with / and without '.' or a placeholder; the project folder's name has no '.'."
+                        }
                         [void]$outputs.Add($folder)
                         [void]$built.Add("$folder/$(($project -split '/')[-1])")
                     }
@@ -607,6 +608,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                 $inherited.UnionWith($targetPlan.Hidden)
                 $prebuilt.UnionWith($targetPlan.Prebuilt)
                 $built.UnionWith($targetPlan.Built)
+                $outputs.UnionWith($targetPlan.Outputs)
             }
         }
         $plan.Add($step)
@@ -620,15 +622,17 @@ function Read-Plan([string]$name, [object]$parsed) {
     if (-not $feedPath -and $prebuilt.Contains('packages')) { throw "$name needs -Feed: it puts the ElasticLM packages in the folder packages." }
     # A steps:file block does not write into a folder that a dotnet publish line of the page writes to, before or after
     # it, so that the program run from there is the published one (design §20.7, V1c4e, review R11).
+    # The paths are compared without '.' and empty parts and without case, since Windows and macOS do not tell
+    # publish/app.exe from ./Publish/app.exe (review C14).
     foreach ($step in $plan | Where-Object Kind -ceq 'file') {
-        $value = $step.Attributes['path']
+        $value = (($step.Attributes['path'] -split '/') | Where-Object { $_ -ne '' -and $_ -ne '.' }) -join '/'
         foreach ($folder in $outputs) {
-            if ($value -ceq $folder -or $value.StartsWith("$folder/", [StringComparison]::Ordinal)) {
+            if ($value -ieq $folder -or $value.StartsWith("$folder/", [StringComparison]::OrdinalIgnoreCase)) {
                 throw "$($name):$($step.Block.Order): steps:file does not write into $folder, which a dotnet publish line of the page writes to."
             }
         }
     }
-    return [pscustomobject]@{ Steps = $plan.ToArray(); Captured = $captured; Hidden = $hidden; Prebuilt = $prebuilt; Built = $built; After = $after }
+    return [pscustomobject]@{ Steps = $plan.ToArray(); Captured = $captured; Hidden = $hidden; Prebuilt = $prebuilt; Built = $built; Outputs = $outputs; After = $after }
 }
 
 # The MSVC x64 environment of the reader's x64 Native Tools Command Prompt, read once in the run, the first time a cl line
@@ -695,8 +699,9 @@ function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [s
     # NativeAOT on Windows runs the Visual Studio environment scripts, which call vswhere.exe by name from the Installer
     # folder; eng/release/Publish-Rid.ps1 puts it on PATH the same way (design §20.7, V1c4e, .cursor/rules/engineering.mdc).
     if ($IsWindows -and $kind -ceq 'dotnet') {
-        $installer = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer'
-        if (Test-Path $installer) { $info.Environment['PATH'] = "$installer;$($info.Environment['PATH'])" }
+        $programFiles = ${env:ProgramFiles(x86)}
+        $installer = $programFiles ? (Join-Path $programFiles 'Microsoft Visual Studio\Installer') : $null
+        if ($installer -and (Test-Path -LiteralPath $installer)) { $info.Environment['PATH'] = "$installer;$($info.Environment['PATH'])" }
     }
     if ($kind -ceq 'elm-service' -and $Background) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
     if ($kind -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }

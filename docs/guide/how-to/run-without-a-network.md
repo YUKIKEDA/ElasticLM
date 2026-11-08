@@ -15,18 +15,24 @@ Type the commands in the folder of the tutorial, with its `tools` folder on your
 - If the service is stopped, start it again in a second terminal, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service).
 - If `ELM_API_KEY` is not set, for example because you closed the terminal, make a new API key with `elm-service setup --config service.json`, and read it into `ELM_API_KEY` as in [Set up the service](../tutorials/activate-an-app-online.md#set-up-the-service).
 
-The examples use the values of the tutorial: the product `acme-cad`, its feature `pro`, and the service at `http://127.0.0.1:8080`. Replace them with your own. In the file below, `<product-id>` is the `id` of your product, which this command lists:
+The examples use the values of the tutorial: the product `acme-cad`, its feature `pro`, and the service at `http://127.0.0.1:8080`. Replace them with your own. In the file below, `<product-id>` is the `id` of your product, which this command lists with the product's `code`:
 
 <!-- steps:run -->
 ```shell
 elm admin request GET /v1/admin/products --url http://127.0.0.1:8080
 ```
 
+`elm` prints a page of products:
+
+```text
+{"items":[{"id":"01960000-0000-7000-8000-000000000101","code":"acme-cad","name":"ACME CAD","trialPolicyId":null,"createdAt":"2026-01-15T09:30:00Z"}]}
+```
+
 In the outputs below, the IDs, the license key, and the times are fake. On your machine they are different every time.
 
 ## Create a license to try with
 
-Create a policy and a license with the feature `pro` under it, so that this guide does not use up an activation of the tutorial's license. The policy has only a name, so it takes the defaults: license files that expire after 30 days, a grace period of 7 days, and a refresh that starts 20 days before the expiry:
+Create a policy and a license with the feature `pro` under it, so that this guide does not use up an activation of the tutorial's license. The policy has only a name, so it takes the defaults: the license itself does not expire, while each license file that the service issues for an activation expires after 30 days, has a grace period of 7 days, and is refreshed from 20 days before its expiry:
 
 <!-- steps:file path=resilient-policy.json -->
 ```json
@@ -102,7 +108,8 @@ if (args.Length != length)
 
 try
 {
-    // check works with files alone, so it gives the client no service URL.
+    // check works with files alone, and this one gives the client no service URL to show that. A real app gives the URL
+    // also when it only checks: Check still sends nothing, and the client then refreshes the activation in the background.
     var options = new ActivationClientOptions
     {
         ProductId = ProductId,
@@ -148,8 +155,9 @@ static async Task<int> ActivateAsync(ActivationClient client, string licenseKey)
                 // No answer, or a busy service: the same request may work later.
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "retry later",
 
-                // The key does not open a license that can be activated now.
-                ErrorCode.LicenseNotFound or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+                // The key does not open a license of this product that can be activated now.
+                ErrorCode.LicenseNotFound or ErrorCode.WrongProduct or ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired =>
+                    "ask for another key",
 
                 // Every device the license allows is activated.
                 ErrorCode.ActivationLimit => "ask to deactivate another device",
@@ -188,8 +196,9 @@ static int Check(ActivationClient client)
                 // The license does not grant the feature: the app leaves it out.
                 ErrorCode.FeatureNotLicensed or ErrorCode.FeatureExpired => "feature not licensed",
 
-                // The data folder was copied to another machine, or the machine changed too much.
-                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "activate again",
+                // The kept file is not this installation's, or the machine changed too much: the app deactivates
+                // (DeactivateAsync) and activates again.
+                ErrorCode.WrongInstallation or ErrorCode.FingerprintMismatch => "deactivate and activate again",
                 _ => "tell the vendor",
             };
             return Decide(decision, invalid.Error, null);
@@ -212,7 +221,12 @@ static async Task<int> RefreshAsync(ActivationClient client)
             string decision = failed.Error.Code switch
             {
                 ErrorCode.NetworkError or ErrorCode.RateLimited => "keeps working",
-                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask for another key",
+
+                // The kept file works until it ends; the license itself needs the vendor.
+                ErrorCode.LicenseSuspended or ErrorCode.LicenseRevoked or ErrorCode.Expired => "ask to contact the vendor",
+
+                // Nothing is kept to refresh, among other cases that the reason names.
+                ErrorCode.InvalidState => "activate first",
 
                 // The service no longer has the activation, and the client removed the kept file.
                 ErrorCode.ActivationNotFound => "activate again",
@@ -254,7 +268,7 @@ static void PrintExpiry(VerifiedLicense license)
 }
 ```
 
-The app has three commands. `activate` calls `ActivateAsync`, `check` calls `Check`, and `refresh` calls `RefreshAsync`. Each prints what the app does on one line that is the same on every system, such as `keeps working: ELM_NETWORK_ERROR`, then the reason, which may name the system's own message, and the expiry of the kept license file.
+The app has three commands. `activate` calls `ActivateAsync`, `check` calls `Check`, and `refresh` calls `RefreshAsync`. After a success, each prints its result and the expiry of the kept license file. After a failure, it prints what the app does on one line that is the same on every system, such as `keeps working: ELM_NETWORK_ERROR`, then the reason, which may hold the system's own words, and for `refresh` the client's state. `check` gives the client no service URL, to show that it reaches no service; a real app gives the URL also when it only checks, so that the client refreshes in the background.
 
 ## Activate online
 
@@ -334,7 +348,7 @@ valid: pro
 ## What the client does while the network is down
 
 - **The kept license file keeps working** until its expiry and then for its grace period: 30 and 7 days with the defaults of the policy. `Check` returns `Valid` with `InGracePeriod` `true` during the grace period; after it, `Check` fails with `ELM_EXPIRED`, and the app needs a refresh, which needs the network. [Expiry and grace period](../explanation/license-files-and-verification.md#expiry-and-grace-period) explains the times.
-- **The client refreshes on its own** while the app runs, from the start of the refresh window (20 days before the expiry by default). When a refresh fails, it tries again every hour, or after the service's `Retry-After` up to a day, and the app keeps working. `RefreshAsync` refreshes at once.
+- **The client refreshes on its own** while the app runs, from the start of the refresh window (20 days before the expiry by default). When a refresh fails, it tries again an hour later, or after the service's `Retry-After` when that is longer (at most a day), and the app keeps working. This needs a client with the service URL. `RefreshAsync` refreshes at once.
 - **`State` and `StateChanged` say how the refresh goes**: `RefreshFailing` after a failure, `Active` again after a refresh that works, `Refused` when the license was revoked, suspended, or expired, and `CloneDetected` when the service saw a copy. The state is that of the running client: a new process starts at `Active` whenever it has a kept activation, so this guide's `check` does not show it.
 - **The clock is checked too.** The client keeps the time it last saw, and a clock set back before it makes `Check` fail with `ELM_CLOCK_TAMPERED`; a refresh that works resets it. [Clock rollback detection and its limits](../explanation/license-files-and-verification.md#clock-rollback-detection-and-its-limits) explains this.
 - **A device that is never online** activates and refreshes with files instead; see [Activate a device without a network](activate-a-device-without-a-network.md).
