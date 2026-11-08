@@ -1254,3 +1254,15 @@
 - **決定:** `license` 設定が空か空白だけのとき `elm-server` が扱わない例外で終わる不具合は、V1c10 の中で、設定の名前を挙げた起動の誤りにする（持ち主の決定、推奨案。§17.3 の「V1c10 の Grill」の Q3）。
 - **理由:** 設計のレビューの R5（`dataDirectory`）と同じ種類で、同じ形で直せる。
 - **却下した案:** roadmap に別の行を作って直す。
+
+### 空白だけのパスを Windows だけで断る（V1c10 の正しさのレビューの A4、Issue #238）
+
+- **決定:** C の `directory` と `clock_guard_path`、`elm` のパスのオプションと引数、`elm-server` と `elm-service` のパスの設定は、空か空白だけの値を、どの OS でも断る（持ち主の決定、推奨案。[design.ja.md](./design.ja.md) §17.3 の「V1c10 の Grill」の Q3）。
+- **理由:** Windows の `Path.GetFullPath` は空白だけのパスを「The path is empty.」で断り、Linux と macOS では正しい相対パスになる。空白だけのフォルダー名はまず打ち間違いで、どの OS でも同じ結果にする。`elasticlm.h` と C の API の頁に書く。
+- **却下した案:** (b) 空だけを断り、空白だけの値は OS に任せる（Windows では、どの値かを言わない「The path is empty.」が残り、Linux と macOS では空白の名前のフォルダーが作られる）。
+
+### `elm-server` と `elm-service` のほかの空のパスの設定を別の行で直す（V1c10 の正しさのレビューの A1、Issue #238）
+
+- **決定:** `elm-server` の空か空白だけの `trust.rootKeys` の要素、`tls.certificate`、`tls.key` と、`elm-service` の空白だけのパスの設定を、V1c10 の中で、設定の名前を挙げて断る（持ち主の決定、推奨案。§17.3 の「V1c10 の Grill」の Q3）。実装で見つかった `elm-service` のほかのパスの設定と、環境変数から来た値も、同じ種類の問題として同じ形で確かめる（`.cursor/rules/similar-findings.mdc`）。
+- **理由:** 設計のレビューの R5（`dataDirectory`）と実装中の D3（`license`）と同じ種類で、同じ形で直せる。
+- **却下した案:** roadmap に別の行を作って直す。
