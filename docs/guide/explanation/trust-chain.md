@@ -32,7 +32,7 @@ No private key is ever placed in an executable's resources or constants. `elm` i
 
 ### Root key
 
-The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase; a new key's passphrase must be at least 12 characters. The formats of the private and public key files are in [Token and file formats](../reference/formats.md#key-files-and-key-ids).
+The root key is created with `elm key root create`. Like every private key `elm` writes, it is stored as a PKCS#8 PEM file encrypted with a passphrase; a new key's passphrase must be at least 12 characters. The formats of the private and public key files are in [Token and file formats](../reference/formats.md#key-files-and-key-ids). How to keep it and check a copy is in [Keep the root key safe](../how-to/keep-the-root-key-safe.md).
 
 The root key never goes onto an online service. Its only job is `elm key certify`, which signs a key certificate for a signing key. Because it is used rarely, it can stay on an offline machine or removable media between uses.
 
@@ -124,6 +124,8 @@ The client fetches the server license and the server's public key from `GET /v1/
 
 ## Rotating keys
 
+The steps for a vendor who runs `elm-service` are in [Rotate the signing key](../how-to/rotate-the-signing-key.md).
+
 ### Renewing a certificate
 
 A certificate can be renewed without changing the key: certify the same public key again with a new period. A license file may then carry several certificates for the same key with different periods, and the verifier uses whichever one holds the token's `iat`, in any order. A license file carries at most 4 certificates.
@@ -153,7 +155,7 @@ If you certify with the new root first, every app that does not yet know it reje
 
 ## When a signing key leaks
 
-A leaked signing key lets the thief sign any license that the chain accepts. Because of the issue-time rule, the certificate's period does not stop them: they can back-date `iat` into the old period.
+A leaked signing key lets the thief sign any license that the chain accepts. Because of the issue-time rule, the certificate's period does not stop them: they can back-date `iat` into the old period. The steps to replace and revoke a leaked key are in [Revoke a signing key](../how-to/revoke-a-signing-key.md).
 
 The answer is the list of revoked key IDs in the trust store. When a key ID is on that list, the verifier rejects any license or cloud lease token signed by that key with `ELM_KEY_REVOKED` before it reads the payload, and it ignores certificates for that key. A certificate signed by a revoked root key ID is ignored too.
 

@@ -4,7 +4,7 @@ sidebar_position: 6
 
 # Rotate the signing key
 
-This guide is for a vendor who runs `elm-service` and replaces the key with which it signs license files: on a schedule, before the key's certificate ends, or because the old key may have leaked. The apps need no update, since they trust the root key and not the signing key, and the license files that the old key signed keep working. The guide starts where `elm-service` is running at `http://127.0.0.1:8080`, your terminal has one of its API keys in the environment variable `ELM_API_KEY`, the service has a product with a feature, and you have the root key that certified the service's signing key. [Run the hosted activation service and activate a .NET app online](../tutorials/activate-an-app-online.md) sets all of this up; [Replacing a signing key](../explanation/trust-chain.md#replacing-a-signing-key) explains why the old files keep working.
+This guide is for a vendor who runs `elm-service` and replaces the key with which it signs license files: on a schedule, or before the key's certificate ends. If the key may have leaked, follow [Revoke a signing key](revoke-a-signing-key.md) instead: it replaces the key and revokes the old one in a single restart. The apps need no update, since they trust the root key and not the signing key, and the license files that the old key signed keep working. The guide starts where `elm-service` is running at `http://127.0.0.1:8080`, your terminal has one of its API keys in the environment variable `ELM_API_KEY`, the service has a product with a feature, and you have the root key that certified the service's signing key. [Run the hosted activation service and activate a .NET app online](../tutorials/activate-an-app-online.md) sets all of this up; [Replacing a signing key](../explanation/trust-chain.md#replacing-a-signing-key) explains why the old files keep working.
 
 <!-- steps:after page=docs/guide/tutorials/activate-an-app-online.md -->
 
@@ -20,6 +20,12 @@ The examples use the values of the tutorial: the product `acme-cad`, its feature
 <!-- steps:run -->
 ```shell
 elm admin request GET /v1/admin/products --url http://127.0.0.1:8080
+```
+
+`elm` prints a page of products:
+
+```text
+{"items":[{"id":"01960000-0000-7000-8000-000000000101","code":"acme-cad","name":"ACME CAD","trialPolicyId":null,"createdAt":"2026-01-15T09:30:00Z"}]}
 ```
 
 In the outputs below, the key IDs, the IDs, the license key, and the times are fake. On your machine they are different every time. Here the device and the connected computer are the same machine.
@@ -39,6 +45,8 @@ Create a policy and a license with the feature `pro` under it. The policy has on
 ```shell
 elm admin request POST /v1/admin/policies --body rotation-policy.json --url http://127.0.0.1:8080
 ```
+
+The `id` at the start of the answer is the policy's ID, `<rotation-policy-id>` in the next file:
 
 <!-- steps:file path=rotation-license.json -->
 ```json
@@ -236,9 +244,11 @@ elm offline process --url http://127.0.0.1:8080 --in rotation.elmreq --out rotat
 dotnet run --project offline-app -- root.pub.pem rotation-data import rotation.elmresp
 ```
 
-The app prints the feature, the license's ID, the license file's sequence number, and when the license file expires:
+The app prints the request file, `elm offline process` the activation, the license, and the sequence number of the answer, and the app then the feature, the license's ID, the license file's sequence number, and when the license file expires:
 
 ```text
+file: rotation.elmreq
+activation 01960000-0000-7000-8000-000000000601, license 01960000-0000-7000-8000-000000000303, seq 1: rotation.elmresp
 activated: pro
 license: 01960000-0000-7000-8000-000000000303
 sequence: 1
@@ -251,11 +261,11 @@ activated: pro
 sequence: 1
 ```
 
-The current signing key signed this license file.
+The current signing key signed this license file. Delete `rotation.elmreq` now that its answer is imported: a request file holds the license key.
 
 ## Create the new signing key
 
-Create the new signing key, with new file names, so that the files of the current key stay as they are until the service has restarted:
+Create the new signing key on the machine that runs the service, with new file names, so that the files of the current key stay as they are until the service has restarted. Give it a new passphrase, which differs from the root key's and from that of any key that may have leaked; the tutorial used one passphrase for every key only to keep the trial short. First remove `ELM_KEY_PASSPHRASE` from the terminal, so that `elm` asks for the new passphrase instead of taking the one in the variable: in PowerShell, type `Remove-Item Env:ELM_KEY_PASSPHRASE`; in Bash or zsh, type `unset ELM_KEY_PASSPHRASE`. Then create the key:
 
 <!-- steps:run -->
 ```shell
@@ -272,9 +282,9 @@ private key (encrypted): signing-2.key.pem
 public key: signing-2.pub.pem
 ```
 
-The service reads the passphrase of its signing key from `ELM_SIGNING_PASSPHRASE` in the terminal where it runs. Give the new key the same passphrase as the current one, or set `ELM_SIGNING_PASSPHRASE` again before you restart the service below.
+The service reads the passphrase of its signing key from `ELM_SIGNING_PASSPHRASE` in the terminal where it runs; you set it to the new passphrase before the restart below.
 
-Certify the new key with the root key, for signing licenses and leases, the two uses the service needs. If your settings set `usageLog.directory`, the service also signs its usage log, and the key needs `--use license,lease,log`. Take the root key from where you keep it, as in [Keep the root key safe](keep-the-root-key-safe.md), and pass its path to `--root`:
+Certify the new key with the root key, for signing licenses and leases, the two uses the service needs. If your settings set `usageLog.directory`, the service also signs its usage log, and the key needs `--use license,lease,log`. Certify on the offline machine that holds the root key, as in [Keep the root key safe](keep-the-root-key-safe.md): carry the new public key `signing-2.pub.pem` there, run this command there, and carry back only the certificate `signing-2.cert`. Never bring the root key to the machine that runs the service. The public key and the certificate are not secrets:
 
 <!-- steps:run -->
 ```shell
@@ -328,7 +338,7 @@ Change `signing` in `service.json` to the new key and its certificate. Keep ever
 }
 ```
 
-The service reads its signing key only when it starts, so restart it. In the second terminal, press Ctrl+C to stop the service. If the new key has another passphrase, read it into `ELM_SIGNING_PASSPHRASE` again, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service). Then start the service:
+The service reads its signing key only when it starts, so restart it. In the second terminal, press Ctrl+C to stop the service. Read the new key's passphrase into `ELM_SIGNING_PASSPHRASE`, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service): in PowerShell, type `$env:ELM_SIGNING_PASSPHRASE = Read-Host -MaskInput`; in Bash or zsh, type `read -rs ELM_SIGNING_PASSPHRASE; export ELM_SIGNING_PASSPHRASE`; then type the passphrase and press Enter. Then start the service:
 
 <!-- steps:background ready=http://127.0.0.1:8080/health -->
 ```shell
@@ -342,15 +352,16 @@ info: elm-service[1]
       service.started: listening on http://127.0.0.1:8080/, database Sqlite, signing key FAKE-SIGNING-KEY-ID-000000000000000000000S2 (certificates until 01/15/2027 09:30:00 +00:00), in 179 ms
 ```
 
-If the service does not start, it prints the reason and ends with exit code 1. The reason is one of these:
+If the service does not start, it prints the reason. For example, these end with exit code 1:
 
 | Last line | What happened | What to do |
 | --- | --- | --- |
 | `The signing key cannot be read: it is not an encrypted PKCS#8 P-256 key, or the passphrase is wrong.` | `ELM_SIGNING_PASSPHRASE` holds another passphrase than the new key's, or `signing.key` names a file that is not a signing key. | Read the new key's passphrase into `ELM_SIGNING_PASSPHRASE`, and check `signing.key`. |
+| `Set ELM_SIGNING_PASSPHRASE or signing.passphraseFile to the signing key's passphrase.` | `ELM_SIGNING_PASSPHRASE` is not set in the terminal of the service. | Read the new key's passphrase into `ELM_SIGNING_PASSPHRASE` as above. |
 | `The signing key or a certificate file cannot be read: Could not find file '…'.` | A file in `signing` does not exist at that path. The message names the full path. | Correct the path; paths are relative to the folder you start the service in. |
 | `No certificate that the trust store vouches for lets the signing key FAKE-SIGNING-KEY-ID-000000000000000000000S2 sign for License, Lease at 2026-01-15T09:30:00Z.` | No certificate in `signing.certificates` certifies this key for these uses now: it is the certificate of another key, it lacks a use (here both; `Lease` alone when only `--use lease` is missing), it is not valid yet or has ended, or its root key is not in `trust.rootKeys`. The same comes when the key's ID is in `trust.revokedKeyIds`. | Certify the key again as above, and check that `signing.key` and `signing.certificates` name the new key's files. |
 
-To go back to the old key, put the old `signing` settings back and restart the service again.
+A mistake in the settings file itself, such as a missing comma, ends with exit code 2 and a line that starts with `The settings file 'service.json' is not valid:`. [Command line and exit codes](../reference/service-configuration.md#command-line-and-exit-codes) lists the exit codes. Until you delete the old key below, you can go back to it: put the old `signing` settings back, set `ELM_SIGNING_PASSPHRASE` to its passphrase, and restart the service again.
 
 ## Check the key in use
 
@@ -383,6 +394,8 @@ dotnet run --project offline-app -- root.pub.pem rotation-data import rotation-r
 The app prints the next sequence number and a new expiry:
 
 ```text
+file: rotation-refresh.elmreq
+activation 01960000-0000-7000-8000-000000000601, license 01960000-0000-7000-8000-000000000303, seq 2: rotation-refresh.elmresp
 activated: pro
 license: 01960000-0000-7000-8000-000000000303
 sequence: 2
@@ -395,11 +408,17 @@ activated: pro
 sequence: 2
 ```
 
-The new key signed this license file, and the app accepted it with the same trust store: the root key certified both keys.
+The new key signed this license file, and the app accepted it with the same trust store: the root key certified both keys. Delete `rotation-refresh.elmreq` now that its answer is imported.
 
 ## Take the old key out of use
 
-The service does not read `signing.key.pem` any more. Do not give it to the service again or sign with it, and delete it from the machine that runs the service, so that it cannot leak from there. Do not revoke it unless it may have leaked: an app whose trust store lists a key ID as revoked refuses every license file that key signed, also those of devices that have not refreshed yet. If it may have leaked, follow [Revoke a signing key](revoke-a-signing-key.md).
+The service does not read `signing.key.pem` any more. Once the new key works:
+
+- Keep the old public key `signing.pub.pem`, or record its key ID, which `elm key thumbprint signing.pub.pem` prints: you need the ID if you ever revoke the key.
+- Keep the old certificate out of `signing.certificates`, which names only the new key's certificate now. The license files that the old key signed carry their own copy of it.
+- Delete the old private key `signing.key.pem`, and every copy of it, so that it can neither leak nor be given to the service again by mistake.
+
+Do not revoke the old key unless it may have leaked: an app whose trust store lists a key ID as revoked refuses every license file that key signed, also those of devices that have not refreshed yet. If it may have leaked, follow [Revoke a signing key](revoke-a-signing-key.md).
 
 ## Renew the certificate of the same key
 

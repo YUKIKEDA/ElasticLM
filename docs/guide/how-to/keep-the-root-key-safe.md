@@ -35,6 +35,7 @@ Write it down where you record your copies of the root key. The public key and i
 
 - Keep `root.key.pem` on a machine that has no network, or on removable media such as a USB drive that you connect only when you use the key. Never put it on the machine that runs `elm-service`, in a repository, in a container image, or in a server's backup.
 - Use it only for `elm key certify`: to certify a new signing key, as in [Rotate the signing key](rotate-the-signing-key.md), or to renew the certificate of a signing key. No other command and no program of ElasticLM reads the root key.
+- Give the root key a passphrase of its own, which no signing key uses: whoever learns a signing key's passphrase, for example from the machine that runs the service, must not learn the root key's too. The tutorials used one passphrase for every key only to keep the trial short. `elm` cannot change the passphrase of a key file, so create the root key of your product with its own passphrase from the start, with `elm key root create` on the offline machine.
 - `elm` keeps the key encrypted with its passphrase, and asks for the passphrase each time it uses the key. Type it when `elm` asks. Do not write it in a script, and do not keep it in `ELM_KEY_PASSPHRASE` in a file or a terminal profile. Keep it apart from the key file, so that whoever finds one does not also have the other.
 
 ## Keep two copies
@@ -45,7 +46,7 @@ If every copy of the key, or its passphrase, is lost, you can certify no new sig
 
 ## Check that a copy works
 
-After you make a copy, and from time to time, check that the copy can still be read with the passphrase: certify the signing key's public key with it. Pass the path of the copy to `--root` instead of `root.key.pem`. `--out check.cert` names a new file, since `elm` does not overwrite a file that exists without `--force`, and `--days 1` keeps the certificate's period short:
+After you make a copy, and from time to time, check that the copy can still be read with the passphrase: certify the signing key's public key with it. First remove `ELM_KEY_PASSPHRASE` from the terminal, so that `elm` asks for the passphrase and the check shows that you still know it: in PowerShell, type `Remove-Item Env:ELM_KEY_PASSPHRASE`; in Bash or zsh, type `unset ELM_KEY_PASSPHRASE`. Pass the path of the copy to `--root` instead of `root.key.pem`. `--out check.cert` names a new file, since `elm` does not overwrite a file that exists without `--force`, and `--days 1` keeps the certificate's period short:
 
 <!-- steps:run -->
 ```shell
@@ -72,6 +73,8 @@ uses: license
 Compare `root key ID:` with the key ID you recorded. When they are the same, the copy is the root key and the passphrase is right. `elm` cannot tell a root key from another private key: if you pass the file of a signing key, it certifies with that key, and `root key ID:` shows that key's ID instead.
 
 Then delete `check.cert`. Nothing uses it: the signing key already has its own certificate.
+
+Once both copies pass this check, delete `root.key.pem` from every machine that has a network, such as the one you created it on: from then on, the key lives only on the offline machine or the removable media.
 
 | What `elm` prints | What happened | What to do |
 | --- | --- | --- |

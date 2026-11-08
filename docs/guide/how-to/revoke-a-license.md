@@ -22,6 +22,12 @@ The examples use the values of the tutorial: the product `acme-cad`, its feature
 elm admin request GET /v1/admin/products --url http://127.0.0.1:8080
 ```
 
+`elm` prints a page of products:
+
+```text
+{"items":[{"id":"01960000-0000-7000-8000-000000000101","code":"acme-cad","name":"ACME CAD","trialPolicyId":null,"createdAt":"2026-01-15T09:30:00Z"}]}
+```
+
 In the outputs below, the IDs, the license key, and the times are fake. On your machine they are different every time. Here the device and the connected computer are the same machine.
 
 ## Prepare a license to revoke
@@ -40,6 +46,8 @@ Create a policy and a license with the feature `pro` under it. The policy has on
 elm admin request POST /v1/admin/policies --body revoke-policy.json --url http://127.0.0.1:8080
 ```
 
+The `id` at the start of the answer is the policy's ID, `<revoke-policy-id>` in the next file:
+
 <!-- steps:file path=revoke-license.json -->
 ```json
 {"policyId":"<revoke-policy-id>","name":"Former customer","features":[{"code":"pro"}]}
@@ -52,7 +60,7 @@ elm admin request POST /v1/admin/licenses --body revoke-license.json --url http:
 
 The `key` at the end of the answer is the license key, `<revoke-license-key>` below.
 
-If you made `offline-app` in [Activate a device without a network](activate-a-device-without-a-network.md#create-the-app), use it, and skip to the activation of `customer-data` below: `dotnet new` refuses to create it again. Otherwise create the app, and add the `ElasticLM.Client` package to it from `packages`:
+If you made `offline-app` in [Activate a device without a network](activate-a-device-without-a-network.md#create-the-app) or in another guide, such as [Rotate the signing key](rotate-the-signing-key.md), use it, and skip to the activation of `customer-data` below: `dotnet new` refuses to create it again. Otherwise create the app, and add the `ElasticLM.Client` package to it from `packages`:
 
 <!-- steps:run -->
 ```shell
@@ -236,16 +244,18 @@ elm offline process --url http://127.0.0.1:8080 --in customer.elmreq --out custo
 dotnet run --project offline-app -- root.pub.pem customer-data import customer.elmresp
 ```
 
-The app prints:
+The app prints the request file, `elm offline process` the activation, the license, and the sequence number of the answer, and the app then the feature, the license's ID, the sequence number, and the expiry:
 
 ```text
+file: customer.elmreq
+activation 01960000-0000-7000-8000-000000000601, license 01960000-0000-7000-8000-000000000304, seq 1: customer.elmresp
 activated: pro
 license: 01960000-0000-7000-8000-000000000304
 sequence: 1
 expires: 2026-02-14 09:30:00Z
 ```
 
-`<revoke-license-id>` below is that ID, the `id` of the license.
+`<revoke-license-id>` below is that ID, the `id` of the license. Delete `customer.elmreq` now that its answer is imported: a request file holds the license key.
 
 ## Revoke the license
 
@@ -277,6 +287,7 @@ elm offline process --url http://127.0.0.1:8080 --in new-device.elmreq --out new
 The app makes the request file without asking the service, and `elm offline process` prints the service's refusal and ends with exit code 1:
 
 ```text
+file: new-device.elmreq
 error: ELM_LICENSE_REVOKED: The license is revoked.
 ```
 
@@ -289,8 +300,11 @@ elm offline process --url http://127.0.0.1:8080 --in customer-refresh.elmreq --o
 ```
 
 ```text
+file: customer-refresh.elmreq
 error: ELM_LICENSE_REVOKED: The license is revoked.
 ```
+
+Delete `new-device.elmreq` and `customer-refresh.elmreq`: no answer will come for them, and they hold the license key.
 
 An app that activates or refreshes online gets the same code from `ActivateAsync` or `RefreshAsync`, and a client that refreshes on its own goes to the state `Refused`.
 

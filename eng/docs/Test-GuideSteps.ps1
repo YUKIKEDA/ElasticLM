@@ -90,7 +90,8 @@
         page. A How-to page has no steps:prebuilt marker of its own. It may have one steps:background block, which replaces
         that process (design §20.7, V1c4b, Q1): at the block, the process tree is stopped and waited for as at the end of a
         page, and the block's line is started and waited for as on any page, with the same passphrase. The block fails when
-        the page has no steps:after, or when the named page has no steps:background.
+        the page has no steps:after, when the named page has no steps:background, and when its line starts another
+        program than the named page's (elm-service replaces elm-service).
       - A failing step of the named page fails the How-to page. The named page is checked against its translation too.
     The marker fails when it is indented, when the next line that is not blank opens a code block, and without page.
 
@@ -491,6 +492,11 @@ function Read-Plan([string]$name, [object]$parsed) {
                 if ($lines.Count -ne 1) { throw "$($name):$($block.Line): the steps:background block has one line." }
                 $program = (Split-Step $lines[0])[0]
                 if ($program -cnotin 'elm-server', 'elm-service') { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a steps:background line starts with elm-server or elm-service." }
+                if ($step.Replaces) {
+                    # The page restarts the program that the named page started, such as elm-service with new settings.
+                    $replaced = @($after.Plan.Steps | Where-Object Kind -EQ 'background')[0].Commands[0].Words[0]
+                    if ($program -cne $replaced) { throw "$($name):$($block.Line + 1 + [array]::IndexOf($block.Lines, $lines[0])): a How-to page's steps:background starts $replaced again, as $($after.Name) does, not $program." }
+                }
                 # elm-server always serves https, with a certificate of its own key; elm-service serves http unless it is
                 # given a certificate, and http on a loopback address is what its clients take outside production.
                 $ready = $null
