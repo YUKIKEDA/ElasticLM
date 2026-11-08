@@ -1,0 +1,62 @@
+name: Measure shasum
+
+# A temporary measurement for roadmap row V1c4a (design §20.7, "V1c4 の形", Q4 with review R10): does
+# `shasum -a 256 --check --ignore-missing SHA256SUMS` work on the macOS runner, and with which macOS and shasum versions.
+# It is removed before the pull request is ready.
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-shasum.yml
+
+permissions:
+  contents: read
+
+jobs:
+  shasum:
+    runs-on: macos-latest
+    timeout-minutes: 5
+    steps:
+      - name: Versions
+        run: |
+          set +e
+          sw_vers
+          echo "sw_vers exit: $?"
+          shasum --version
+          echo "shasum --version exit: $?"
+          command -v shasum sha256sum
+          echo "command -v exit: $?"
+
+      - name: Check a folder
+        # One listed file that matches, one listed file whose content changed by one byte, and one listed file that is
+        # missing; a file that is not listed is there too, as the archives of other systems would be in a download folder.
+        run: |
+          set +e
+          mkdir -p "$RUNNER_TEMP/sums" && cd "$RUNNER_TEMP/sums"
+          printf 'matching file\n' > match.txt
+          printf 'changed file\n' > changed.txt
+          printf 'missing file\n' > missing.txt
+          printf 'not listed\n' > unlisted.txt
+          shasum -a 256 match.txt changed.txt missing.txt > SHA256SUMS
+          printf 'changed filf\n' > changed.txt
+          rm missing.txt
+          echo "--- SHA256SUMS"
+          cat SHA256SUMS
+          echo "--- all three listed: one match, one changed, one missing"
+          shasum -a 256 --check --ignore-missing SHA256SUMS
+          echo "exit: $?"
+          echo "--- without --ignore-missing"
+          shasum -a 256 --check SHA256SUMS
+          echo "exit: $?"
+          echo "--- only the matching file and the missing file listed"
+          grep -v changed.txt SHA256SUMS > MATCHONLY
+          shasum -a 256 --check --ignore-missing MATCHONLY
+          echo "exit: $?"
+          echo "--- only the changed file listed"
+          grep changed.txt SHA256SUMS > CHANGEDONLY
+          shasum -a 256 --check --ignore-missing CHANGEDONLY
+          echo "exit: $?"
+          echo "--- only the missing file listed"
+          grep missing.txt SHA256SUMS > MISSINGONLY
+          shasum -a 256 --check --ignore-missing MISSINGONLY
+          echo "exit: $?"
+          exit 0
