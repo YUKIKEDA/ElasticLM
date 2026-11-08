@@ -4827,17 +4827,30 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - レビュー（Q7）: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（ジョブと同じ成果物で、Tutorial から続けて手順を実際に流す）、日本語のレビュー（書き手と別。英語の 2 つのレビューを直したあとに日本語を書く）。指摘は表にして、PR を ready にする前に Issue か PR に載せる。
 
 - V1c4d の Grill（Issue #268 に記録した。Q1〜Q3。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: `elm-service` の運用の How-to の分け方。
-  - 調べた事実（2026-11-08、`main` の 9bd2f03）: 手順を流す仕組みは `docker`、`wslc`、`psql`、`sqlite3`、ファイルの写しを流せない。PostgreSQL と Keycloak は CI の Linux の段（ゲートと `aot` ジョブの E2E）でだけ立て、イメージを動かすのは `release.yml` の `image-test` だけである。`elm-service` にバックアップのコマンドはなく、設計にバックアップの節もない。版の更新は起動のときに移行が流れ、古い版は新しいデータベースを断り（`Migrator.cs`）、戻す移行はない。速さの上限は `rateLimit.*` の 4 つで、`X-Forwarded-For` を信じない（§14.7）。CI の `aot` ジョブは、V1c4e のあと windows-latest で 17.0 分で、Tutorial 2 を名指す How-to の 9 頁は、どれも Tutorial 2 を最初から流し直している。
+  - 調べた事実（2026-11-08、`main` の 9bd2f03）: 手順を流す仕組みは `docker`、`wslc`、`psql`、`sqlite3`、ファイルの写しを流せない。PostgreSQL は CI の Linux の段（ゲート、`aot` ジョブの E2E と「Measure elm-service on PostgreSQL」）でだけ、Keycloak はゲートでだけ立て、イメージを作るのも動かすのも `release.yml`（`image` と `image-test`）だけで、`ci.yml` にイメージを作る段はない（V1c13 の設計の独立レビューの R8）。`elm-service` にバックアップのコマンドはなく、設計にバックアップの節もない。版の更新は起動のときに移行が流れ、古い版は新しいデータベースを断り（`Migrator.cs`）、戻す移行はない。速さの上限は `rateLimit.*` の 4 つで、`X-Forwarded-For` を信じない（§14.7）。CI の `aot` ジョブは、V1c4e のあと windows-latest で 17.0 分で、Tutorial 2 を名指す How-to の 9 頁は、どれも Tutorial 2 を最初から流し直している。
   - 行の分け方（Q1）: V1c4d を V1c4d1（SQLite の `elm-service` で流せる 3 頁: 速さの上限、バックアップと戻し、版の更新）と V1c4d2（外の環境が要る 3 頁: コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン）に分ける。V1c4d1 を先に置く。V1c4f は V1c4d2 のあと。上の Q3 の「IdP の設定と運用者への勧め」は V1c4d2 の OIDC の頁、「`ELM_PUBLICURLS` と `ELM_NODE_NAME`」と `docs/container.md` との分け方は V1c4d2 のコンテナーの頁が持つ。
   - CI の時間（Q2）: V1c4d1 の前に、手順を流す仕組みが Tutorial を 1 度だけ流して How-to の頁ごとに写す行 V1c13 を置く（下の「V1c13 の Grill」）。上の V1c4c の Grill の Q2 の決まり（20 分を超えたら、まとめて流す仕組みを行にする）の先取りである。
-  - 外の環境が要る頁の向き（Q3）: V1c4d2 の頁は、Linux だけの新しい CI の段で流す。段は PostgreSQL と Keycloak のコンテナーを立て、頁の `os=linux` のブロックでは `docker` の行を流せるようにし、イメージの頁は CI で作ったイメージを使う。Entra ID の手順は流せないので本文だけにする。細部は V1c4d2 の Grill で決める。
+  - 外の環境が要る頁の向き（Q3）: V1c4d2 の頁は、Linux だけの新しい CI の段で流す。段は PostgreSQL と Keycloak のコンテナーを立て、頁の `os=linux` のブロックでは `docker` の行を流せるようにし、イメージの頁は CI で作ったイメージを使う。Entra ID の手順は流せないので本文だけにする。細部（段をどのワークフローに置くか、イメージをどこで作るかを含む）は V1c4d2 の Grill で決める。
   - V1c4d1 の 3 頁の細部（バックアップのコマンドがないことの扱い、速さの上限の見せ方、版の更新の流し方）は、V1c4d1 の Grill で決める。
 
-- V1c13 の Grill（Issue #268、Q1〜Q5。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: 手順を流す仕組みが、Tutorial を 1 度だけ流して How-to の頁で使う。
-  - 調べた事実（2026-11-09、`main` の 9bd2f03）: `eng/docs/Test-GuideSteps.ps1` は、`-Page` の頁ごとに新しい作業フォルダーとパッケージのフォルダー（`NUGET_PACKAGES`）と、新しいパスフレーズ（`ELM_KEY_PASSPHRASE`、裏の `elm-service` の `ELM_SIGNING_PASSPHRASE`）を作り、How-to の頁では `steps:after` が名指す Tutorial の手順を同じ作業フォルダーで最初から流してから、How-to の頁の手順を流す（`Invoke-Page`、`Invoke-Plan` の `after`）。Tutorial の頁も、別の 1 頁として流す。Tutorial ごとに名指す How-to の頁は、Tutorial 2 が 9 頁、Tutorial 3 が 4 頁、Tutorial 1 が 2 頁ある。`elm-service` の起動し直しは 1〜2 秒、`elm-server` は起動のあと 1 リースの時間（Tutorial 3 では 60 秒）新しいリースを断る。アプリのビルドの結果（`obj/project.assets.json` など）には、作業フォルダーとパッケージのフォルダーの絶対パスが入る。
-  - 流し方（Q1）: Tutorial を 1 度だけ流し、終わったら裏のプロセスを止め（今の頁の終わりと同じ `Stop-Background`）、作業フォルダーとパッケージのフォルダーを、そのまま取っておく（写しの元）。How-to の頁は、写しの元をその頁の新しい作業フォルダーとパッケージのフォルダーに写し、Tutorial の取った値、`env` で取った API キー、`steps:prebuilt` の名前、パスフレーズ（写しの元の鍵はそのパスフレーズで作った）を引き継ぎ、Tutorial の `steps:background` の行を、写しの中で同じ ready の URL で起動し直してから、How-to の頁の手順を流す。頁は必ず自分の写しを使い、ほかの頁の変更を受けない。How-to の頁の `steps:background`（引き継いだ裏のプロセスを置き換える 1 つ）と、名指す頁の決まり（上の Q5 の R4）は今のまま。
-  - Tutorial の頁と兼ねる（Q2）: Tutorial の頁の確かめ（今の別の 1 頁）を、写しの元を作る 1 度の実行で兼ねる。`-Page` の頁の並びで、Tutorial の頁がそれを名指す How-to の頁より先に来れば、その実行を使う。来なければ（How-to の頁だけを流すとき）、How-to の頁の前に Tutorial を 1 度流し、その結果を Tutorial の頁としても出す。Tutorial の頁が落ちたら、それを名指す How-to の頁は流さずに、「名指した Tutorial が落ちた」の 1 行で落とす。写しの元は、実行の終わりに（落ちたときも）消し、残れば今の作業フォルダーと同じく誤りにする。
-  - 写しのビルドの結果（Q3）: 写しはそのまま作り、写しの中の `dotnet run` と `dotnet add`、`dotnet publish` が正しく動くか（ビルドし直すか、前のパスを使わないか）を実装で 3 つの OS で確かめる。正しく動かなければ、写しから `bin` と `obj` を消す形に切り替えて PR に書く。
+- V1c13 の Grill（Issue #268、Q1〜Q5。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある。そのあと設計の独立レビュー（R1〜R10）で改めた。持ち主の決定（R1、R3）も推奨案）: 手順を流す仕組みが、Tutorial を 1 度だけ流して How-to の頁で使う。
+  - 調べた事実（2026-11-09、`main` の 9bd2f03）:
+    - 今の流し方: `eng/docs/Test-GuideSteps.ps1` は、`-Page` の頁ごとに新しい作業フォルダーとパッケージのフォルダー（`NUGET_PACKAGES`）と、新しいパスフレーズ（`ELM_KEY_PASSPHRASE`、裏の `elm-service` の `ELM_SIGNING_PASSPHRASE`）を作る。How-to の頁では、`steps:after` が名指す Tutorial の手順を同じ作業フォルダーで最初から流してから、How-to の頁の手順を、裏のプロセスを止めずに流す（`Invoke-Page`、`Invoke-Plan` の `after`）。Tutorial の頁も、別の 1 頁として流す。最初に落ちた頁で全体を `exit 1` で止める。
+    - 頁の数: Tutorial ごとに名指す How-to の頁は、Tutorial 2 が 9 頁、Tutorial 3 が 4 頁、Tutorial 1 が 2 頁ある。既定の頁の並びは README、Tutorials、How-to の順である。
+    - 裏のプロセス: 裏のプロセスは `Kill($true)` で止める（`Stop-Background`）。`elm-service` の起動し直しは 1〜2 秒で、ノンスは `nonce.secret`、API キーはデータベースにあるので、起動し直しで失うものはない。`elm-server` は起動のあと 1 リースの時間（Tutorial 3 では 60 秒）新しいリースを断り、利用ログは起動のたびに新しいファイルを始める（R5）。
+    - フォルダーの保護: `elm-server` は、起動のたびにデータのフォルダー（`server-data`、`KeyScope.Machine`）が秘密を置けるかを確かめる（`InstallationKeyStore.TryLoad` の `ProtectedFiles.CheckDirectory`）。Windows はフォルダーが親から権限を継がないこと（`AreAccessRulesProtected`）、Unix は 0700 を求める。インストール鍵の Windows の保護（DPAPI）は場所に縛られない（R1）。
+    - 絶対パス: アプリのビルドの結果（`obj/project.assets.json` の `packageFolders`、`*.nuget.g.props` の `NuGetPackageRoot`、`projectPath` など）には、作業フォルダーとパッケージのフォルダーの絶対パスが入る（R2）。
+  - 流し方（Q1。R1、R5、R6）: Tutorial を 1 度だけ流し、終わったら裏のプロセスを止めて（今の頁の終わりと同じ `Stop-Background`）、作業フォルダーとパッケージのフォルダーを写しの元として取っておく。How-to の頁は次のとおり流す。
+    - 写しの元を、その頁の新しい作業フォルダーとパッケージのフォルダーに写す。写す処理は、ファイルとフォルダーの保護をそのまま保つ。Windows はフォルダーとファイルの ACL を、Unix はモードを写す（R1、持ち主の決定 A）。
+    - 引き継ぐもの: Tutorial の取った値、`env` で取った API キー、`steps:prebuilt` の名前、パスフレーズ（写しの元の鍵はそのパスフレーズで作った）。`Read-Plan` が名指す頁から引き継ぐ `Built` と `Outputs`、名指す頁の `Read-Plan` と訳の確かめは今のまま（R6）。
+    - Tutorial の `steps:background` の行を、写しの中で同じ ready の URL で起動し直してから、How-to の頁の手順を流す。頁は必ず自分の写しを使い、ほかの頁の変更を受けない。How-to の頁の `steps:background`（引き継いだ裏のプロセスを置き換える 1 つ）と、名指す頁の決まり（上の Q5 の R4）は今のまま。
+    - 頁の写しは、今の作業フォルダーと同じく頁の終わりに消し、残れば誤りにする。
+    - 振る舞いが変わること（R5）: 裏のプロセスが Kill で止まった写しから起動し直すので、Tutorial 3 を名指す 4 頁では、`elm-server` が起動のあと 1 リースの時間リースの再登録の期間に入り、利用ログのファイルが 1 つ増える。頁が比べる行（`expires:`、`"intact": true,` など）は変わらない見込みで、更新の頁（`reload` が再登録の期間に通るか）と利用ログの頁を、PR で確かめる。
+  - Tutorial の頁と兼ねる（Q2。R3、R4、R10）:
+    - 1 回の実行で、Tutorial の頁は 1 度だけ流す。`-Page` の並びで Tutorial の頁がそれを名指す How-to の頁より先に来れば、その実行を写しの元にする。来なければ（How-to の頁だけを流すとき）、How-to の頁の前に Tutorial を 1 度流し、その結果を Tutorial の頁としても出す。あとで同じ Tutorial の頁や同じ頁が並んでも、もう一度は流さない（R4）。
+    - 写しの元を残すのは、並びの中の How-to の頁が名指す Tutorial だけで、それを名指す最後の How-to の頁が終わったら消す。消せなければ、今の作業フォルダーと同じ `::error::` で名指す。実行が落ちたときも消す（R10）。
+    - 落ちたとき: 今のとおり、最初に落ちた頁で全体を止める。Tutorial の頁が落ちれば、それを名指す How-to の頁は流れない（R3、持ち主の決定 A。Q2 の「名指した Tutorial が落ちた」の 1 行は出さない）。
+  - 写しのビルドの結果（Q3。R2、R7）: 写しはそのまま作り、写しの中の `dotnet run`、`dotnet add`、`dotnet publish` が正しく動くかを、実装で 3 つの OS で確かめる。写しの元が残っていると、写しのビルドが元のパスを読んでも落ちないので、確かめは、How-to の頁を流したあとの写しのファイル（`obj` と `bin`、パッケージのフォルダー）に、写しの元のパスが残っていないかを数えて行う。残っていれば、写しから `bin` と `obj` を消す形に切り替えて PR に書く。`Copy-Item -Recurse` は、写す先がすでにあると、その中にもう 1 段のフォルダーを作るので、写す先は写す前に作らない（R7）。
   - 測ることと終わりの条件（Q4）: PR で、3 つのランナーの Guide steps と `aot` ジョブの時間を `main` と比べて書く。`aot` ジョブがどのランナーでも 15 分以下になることを V1c4d1 に進む条件にし、ならなければ持ち主に問い直す。
   - レビュー（Q5）: 設計の独立レビューと、コードの正しさのレビュー（手順を流す仕組みの見出しの文を含む）。利用者の文書の頁は変えないので、初見の読み手と日本語のレビューは行わない。指摘は表にして、PR を ready にする前に PR か Issue に載せる。
 
