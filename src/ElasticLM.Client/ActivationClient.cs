@@ -1045,7 +1045,7 @@ public sealed class ActivationClient : IAsyncDisposable
             }
 
             LicenseError? error = response.IsSuccessStatusCode ? null : LicenseClient.ProblemOf(response.StatusCode, content);
-            return new Reply(content, error, nonce is { Length: <= 128 } ? nonce : null, retryAfter);
+            return new Reply(content, error, LicenseClient.ValidNonce(nonce), retryAfter);
         }
         catch (HttpRequestException e)
             when (e.HttpRequestError

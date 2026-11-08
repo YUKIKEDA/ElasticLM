@@ -766,6 +766,52 @@ public sealed partial class ActivationClientTests
         }
     }
 
+    /// <summary>
+    /// A nonce in an answer's <c>ELM-Nonce</c> header that is empty or longer than 128 characters is taken as no nonce, so the
+    /// next request gets a nonce of its own instead of failing with an argument exception (design §12.1, V1c11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license on the test service; a handler that sets the <c>ELM-Nonce</c> header of every answer to
+    ///   <paramref name="header"/>, as a service that sends a bad header would. An empty header and one of spaces both reach
+    ///   the client as an empty string (measured on .NET 10.0.14).
+    ///
+    /// Steps:
+    /// - Activate with the key, then refresh.
+    ///
+    /// Expected:
+    /// - Both succeed, and the refresh's activation is at sequence 2: the bad header did not make the client build a proof
+    ///   with that nonce.
+    /// </remarks>
+    /// <param name="header">The value the handler writes into the header.</param>
+    [Theory]
+    [InlineData("")]
+    [InlineData("1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890")]
+    public async Task Answer_NonceHeaderOutOfRange_IsTakenAsNoNonce(string header)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"maxActivations\":1");
+        await using ActivationClient client = vendor.Client("a", new NonceHeader(header));
+
+        Activated(await client.ActivateAsync(key, Cancel));
+        Task<ActivationResult> refresh = client.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refresh);
+
+        Assert.Equal(2L, Activated(await refresh).Sequence);
+    }
+
+    // Sets the ELM-Nonce header of every answer to one value, as a service that sends a bad header would.
+    private sealed class NonceHeader(string value) : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            response.Headers.Remove("ELM-Nonce");
+            response.Headers.TryAddWithoutValidation("ELM-Nonce", value);
+            return response;
+        }
+    }
+
     // Counts POSTs, and answers the next one with 429 and a Retry-After without sending it, when armed.
     private sealed class ScriptedHandler : DelegatingHandler
     {
