@@ -34,6 +34,7 @@ Exit code 1 means, for example:
 - No root public keys are given.
 - A file that a setting names (a root key, the server license, a TLS certificate) cannot be read or is not valid.
 - The TLS certificate has an Extended Key Usage, the list of purposes the certificate may be used for, that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`).
+- A certificate after the server's in the TLS certificate file is not a CA certificate. The message names its place in the file and its subject: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
 - The server license does not verify.
 - The server license cannot be written while `service.url` is set.
 - The borrow record is broken, or cannot be read or written.
@@ -144,6 +145,13 @@ An `allow` or `deny` entry is one of:
 | --- | --- | --- | --- | --- |
 | `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
 | `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`. |
+
+Intermediate CA certificates:
+
+- If your CA signs the server's certificate with an intermediate CA, put the intermediate's certificate in the same file, and the server sends it with its own. In a PEM file, the server's certificate comes first and the intermediates after it; the server pairs `tls.key` with the first certificate. In a PKCS#12 file, the first certificate with a private key is the server's, and the certificates without a private key are the intermediates. The root CA is not needed: the apps' machines must trust it on their own.
+- Every certificate after the server's must be a CA certificate (basic constraints with CA). Otherwise the server does not start (exit code 1). An intermediate that does not lead from the server's certificate towards a root is left out without a message.
+- The server builds the chain from these certificates when it starts, and also uses the system's certificate stores and the addresses in the certificates (Authority Information Access): when the chain does not reach a root that the server's machine knows, the server tries to download the missing certificates. On a network where those addresses do not answer, this makes the start slower: by about 15 seconds on Linux, also without intermediates in the file. On Linux, the server also asks the OCSP responder named in its certificate for a status to send with it (OCSP stapling).
+- On Windows, .NET puts the intermediates into the certificate store of intermediate CAs, of the machine or else of the server's user, and leaves them there: Windows sends only intermediates from that store. Such a certificate does not make anything trusted. If the server's user can write to neither store, the intermediates are not sent.
 
 ## `borrow`
 
