@@ -208,7 +208,7 @@ jobs:
           }
 
       - name: Guide steps
-        # design §20.7 (V1c1, V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, V1c4b): the marked steps of README.md, of each Tutorial,
+        # design §20.7 (V1c1, V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, V1c4b, V1c4e): the marked steps of README.md, of each Tutorial,
         # and of each How-to guide, run in a work folder outside the clone. A How-to guide runs after the steps of the Tutorial
         # that its steps:after marker names, in the same work folder, with that Tutorial's background process still running; a
         # How-to guide's one steps:background block stops that process and starts its own line instead. Where a
@@ -220,7 +220,8 @@ jobs:
         # without any ELM_ variable except the signing key's passphrase for elm-service, and the script stops its process
         # tree at the end of the page. Tutorial 4 builds its C sample with cl on Windows (the script reads the MSVC x64
         # environment for that line and the app's line only) and with cc on Linux and macOS, and skips the blocks of the
-        # other systems.
+        # other systems. A How-to guide publishes the Tutorial 1 app with NativeAOT and runs it; on Windows the script puts the
+        # Visual Studio Installer folder on PATH for that dotnet line, as the Publish step does (V1c4e).
         run: |
           foreach ($project in 'src/ElasticLM.Licensing', 'src/ElasticLM.Client') {
             dotnet pack $project -c Release -o guide-feed -nologo "-p:VersionSuffix=ci.$env:GITHUB_RUN_NUMBER"
