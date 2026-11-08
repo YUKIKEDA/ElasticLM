@@ -4,7 +4,7 @@ sidebar_position: 10
 
 # Renew a server license
 
-This guide is for a vendor who issues server licenses by hand with `elm`, and for the customer's administrator who puts the new file into `elm-server`: before the server license expires, or when the seats or features change. The server reads the new file while it runs, so apps keep their leases. The guide starts where `elm-server` runs with a server license that `elm license issue` made, as at the end of [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md). A server that got its license from `elm-service` renews it differently; see [Servers activated with elm-service](#servers-activated-with-elm-service).
+This guide is for a vendor who issues server licenses by hand with `elm`, and for the customer's administrator who puts the new file into `elm-server`: before the server license expires, or when the seats or features change. The server reads the new file while it runs, so apps keep their leases. The guide starts where you have finished [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md): `elm-server` with a server license that `elm license issue` made. A server that got its license from `elm-service` renews it differently; see [Servers activated with elm-service](#servers-activated-with-elm-service).
 
 <!-- steps:after page=docs/guide/tutorials/use-a-floating-license.md -->
 
@@ -46,9 +46,9 @@ expires: 2099-12-31 00:00:00Z
 
 ## Issue the new file
 
-As the vendor, issue the server license again with `elm license issue`. Change only what the renewal is for, here the expiry, and give every other option as before: the same `--license-id`, `--bind-key`, `--feature`, `--lease-minutes`, and `--borrow-days`. An option that you leave out goes back to its default: the lease time to 10 minutes, borrowing to off, the early returns to 2. A new `--license-id` makes a license that the apps do not know: they refuse the server with `ELM_SERVER_PIN_MISMATCH`, because each app keeps the ID of the server license it checked first. [`elm license issue`](../reference/elm-cli.md#elm-license-issue) lists every option and its default.
+As the vendor, issue the server license again with `elm license issue`. Change only what the renewal is for, here the expiry, and give every other option as before: the same `--license-id`, `--bind-key`, `--feature`, `--lease-minutes`, and `--borrow-days`. An option that you leave out goes back to its default: for example, the lease time to 10 minutes, borrowing to off, and the grace period to 7 days. A new `--license-id` makes a license that the apps do not know: they refuse the server with `ELM_SERVER_PIN_MISMATCH`, because each app keeps the ID of the server license it checked first. [`elm license issue`](../reference/elm-cli.md#elm-license-issue) lists every option and its default.
 
-Replace `<server-key>` with the thumbprint after `key:` above, all 43 characters exactly. Here the vendor's machine is also the server's, so the command writes straight into the server's `license` file, and `--force` lets it overwrite the old one:
+Replace `<server-key>` with the thumbprint after `key:` above, all 43 characters exactly. Here the vendor's machine is also the server's, so the command writes straight into the server's `license` file, and `--force` lets it overwrite the old one. First keep a copy of the old file, so that you can put it back if the server refuses the new one: in PowerShell, type `Copy-Item server.elmlic server.elmlic.old`; in Bash or zsh, type `cp server.elmlic server.elmlic.old`. Then issue:
 
 <!-- steps:run -->
 ```shell
@@ -65,6 +65,8 @@ token ID: FAKEjti000000000000003
 ```
 
 The signing key's certificate must be valid when you issue: the new file carries it. In real use, send the new file to the customer's administrator. As the administrator, keep a copy of the old file, and put the new one at the path of `license` in the server's settings.
+
+Once the server has read the new file below, delete `server.elmlic.old`, unless you need it as a record: the server must never be given the old file again.
 
 ## Make the server read it
 
@@ -101,11 +103,11 @@ If the new file does not pass a check, the server keeps the old license in use, 
 error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
 ```
 
-Put the old file back at the path of `license` until you have a file that passes: the server reads the file again at its next start, and with a file that does not verify, it does not start. [Error codes](../reference/error-codes.md) lists every code.
+Put the old file back at the path of `license`, here from `server.elmlic.old`, until you have a file that passes: the server reads the file again at its next start, and with a file that does not verify, it does not start. [Error codes](../reference/error-codes.md) lists every code.
 
 ## Change the seats or features
 
-A renewal can also change what the license grants: give `--feature` with the new seats or features. When the new license grants fewer seats or drops a feature, the server does not take back leases it lent. It refuses the renewal of leases above the new count with `ELM_NO_SEATS`, and of a dropped feature with `ELM_FEATURE_NOT_LICENSED`, so those leases end within one lease time. Borrows stay valid until they expire, and the server refuses an early return of a borrow made before such a change with `ELM_RETURN_NOT_ALLOWED`; [Early return](../explanation/floating-licenses.md#early-return) explains which changes count.
+A renewal can also change what the license grants: give `--feature` with the new seats or features. When the new license grants fewer seats or drops a feature, the server does not take back leases it lent. While more seats of a feature are held than the new count, it refuses every renewal of that feature with `ELM_NO_SEATS`, until enough leases have expired; borrows count as held, so this can last until they expire. It refuses the renewals of a dropped feature with `ELM_FEATURE_NOT_LICENSED`, so those leases end within one lease time. Borrows stay valid until they expire, and the server refuses an early return of a borrow made before such a change with `ELM_RETURN_NOT_ALLOWED`; [Early return](../explanation/floating-licenses.md#early-return) explains which changes count.
 
 ## What a new file cannot take back
 

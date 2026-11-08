@@ -25,8 +25,8 @@ try
     DateTimeOffset notBefore = DateTimeOffset.UtcNow.AddMinutes(-5);
     DateTimeOffset notAfter = notBefore.AddDays(ValidDays);
 
-    // The authority: it may sign server certificates only (path length 0), and nothing but certificates and lists of
-    // revoked certificates.
+    // The authority: it may sign certificates of servers and other end entities, but no other authority (path length 0),
+    // and nothing but certificates and lists of revoked certificates.
     using ECDsa authorityKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
     var authorityRequest = new CertificateRequest("CN=ElasticLM test CA (for trying only)", authorityKey, HashAlgorithmName.SHA256);
     authorityRequest.CertificateExtensions.Add(new X509BasicConstraintsExtension(true, true, 0, critical: true));

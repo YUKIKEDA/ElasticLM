@@ -4,7 +4,7 @@ sidebar_position: 11
 
 # Limit borrowing
 
-This guide is for a customer's administrator who runs `elm-server` and wants borrows to be shorter than the server license allows, or to keep seats free for normal leases. A borrow is a lease that an app takes away from the network until it expires; [Borrowing](../explanation/floating-licenses.md#borrowing) explains it. The guide starts where `elm-server` runs with a server license that allows borrowing, as at the end of [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md), and you have that tutorial's app.
+This guide is for a customer's administrator who runs `elm-server` and wants borrows to be shorter than the server license allows, or to keep seats free for normal leases. A borrow is a lease that an app takes away from the network until it expires; [Borrowing](../explanation/floating-licenses.md#borrowing) explains it. The guide starts where you have finished [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md): `elm-server` with a server license that allows borrowing, and that tutorial's app.
 
 <!-- steps:after page=docs/guide/tutorials/use-a-floating-license.md -->
 
@@ -100,7 +100,7 @@ To keep seats from being borrowed, set `reserve` in `borrow`, for example one se
   }
 ```
 
-After a restart, a borrow that would leave fewer free seats than `reserve` is refused with `ELM_NO_SEATS: No seats are free to borrow for the feature.` With two seats and one of them borrowed, as here, every new borrow is refused, and the free seat stays for normal leases. `reserve` counts the seats of each feature separately.
+After a restart, a borrow that would leave fewer free seats than `reserve` is refused with `ELM_NO_SEATS: No seats are free to borrow for the feature.` With two seats and one of them borrowed, as here, every new borrow is refused, and the free seat stays for normal leases. `reserve` counts the seats of each feature separately. The server checks the length of a borrow first, so the tutorial's app, which asks for one hour, still gets `ELM_BORROW_NOT_ALLOWED` with the `maxDuration` above; to see `ELM_NO_SEATS`, set `reserve` without `maxDuration`.
 
 To lift the limits, take `borrow` out of `server.json` and restart the server.
 
