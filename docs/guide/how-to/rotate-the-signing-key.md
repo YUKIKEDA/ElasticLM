@@ -359,7 +359,7 @@ If the service does not start, it prints the reason. For example, these end with
 | `The signing key cannot be read: it is not an encrypted PKCS#8 P-256 key, or the passphrase is wrong.` | `ELM_SIGNING_PASSPHRASE` holds another passphrase than the new key's, or `signing.key` names a file that is not a signing key. | Read the new key's passphrase into `ELM_SIGNING_PASSPHRASE`, and check `signing.key`. |
 | `Set ELM_SIGNING_PASSPHRASE or signing.passphraseFile to the signing key's passphrase.` | `ELM_SIGNING_PASSPHRASE` is not set in the terminal of the service. | Read the new key's passphrase into `ELM_SIGNING_PASSPHRASE` as above. |
 | `The signing key or a certificate file cannot be read: Could not find file '…'.` | A file in `signing` does not exist at that path. The message names the full path. | Correct the path; paths are relative to the folder you start the service in. |
-| `No certificate that the trust store vouches for lets the signing key FAKE-SIGNING-KEY-ID-000000000000000000000S2 sign for License, Lease at 2026-01-15T09:30:00Z.` | No certificate in `signing.certificates` certifies this key for these uses now: it is the certificate of another key, it lacks a use (here both; `Lease` alone when only `--use lease` is missing), it is not valid yet or has ended, or its root key is not in `trust.rootKeys`. The same comes when the key's ID is in `trust.revokedKeyIds`. | Certify the key again as above, and check that `signing.key` and `signing.certificates` name the new key's files. |
+| `No certificate that the trust store vouches for lets the signing key FAKE-SIGNING-KEY-ID-000000000000000000000S2 sign for License, Lease at 2026-01-15T09:30:00Z.` | No certificate in `signing.certificates` certifies this key for these uses now: it is the certificate of another key, it was certified without a use that the service needs (this line shows both `License` and `Lease` missing; it names only `Lease` when only `--use lease` was left out), it is not valid yet or has ended, or its root key is not in `trust.rootKeys`. The same comes when the key's ID is in `trust.revokedKeyIds`. | Certify the key again as above, and check that `signing.key` and `signing.certificates` name the new key's files. |
 
 A mistake in the settings file itself, such as a missing comma, ends with exit code 2 and a line that starts with `The settings file 'service.json' is not valid:`. [Command line and exit codes](../reference/service-configuration.md#command-line-and-exit-codes) lists the exit codes. Until you delete the old key below, you can go back to it: put the old `signing` settings back, set `ELM_SIGNING_PASSPHRASE` to its passphrase, and restart the service again.
 
@@ -382,7 +382,7 @@ Compare `keyId` with the `signing key ID:` that `elm key certify` printed for th
 
 ## Check that devices keep working
 
-A license file that the old key signed carries the old key's certificate, so apps keep accepting it, also after that certificate ends. A device moves to the new key at its next refresh: a device that refreshes online on its own, and a device without a network when its refresh files are carried, as here. Refresh the device of `rotation-data`: make the refresh request (`refresh` calls `CreateRefreshRequestAsync`), hand it in, and import the answer:
+A license file that the old key signed carries the old key's certificate, so apps keep accepting it, also after that certificate ends. A device moves to the new key at its next refresh. A device online refreshes on its own; a device without a network moves when its refresh files are carried, as here. Refresh the device of `rotation-data`: make the refresh request (`refresh` calls `CreateRefreshRequestAsync`), hand it in, and import the answer:
 
 <!-- steps:run -->
 ```shell
@@ -415,7 +415,7 @@ The new key signed this license file, and the app accepted it with the same trus
 The service does not read `signing.key.pem` any more. Once the new key works:
 
 - Keep the old public key `signing.pub.pem`, or record its key ID, which `elm key thumbprint signing.pub.pem` prints: you need the ID if you ever revoke the key.
-- Keep the old certificate out of `signing.certificates`, which names only the new key's certificate now. The license files that the old key signed carry their own copy of it.
+- The old certificate is no longer in `signing.certificates`, which now names only the new key's certificate; do not add it back. The license files that the old key signed carry their own copy of it.
 - Delete the old private key `signing.key.pem`, and every copy of it, so that it can neither leak nor be given to the service again by mistake.
 
 Do not revoke the old key unless it may have leaked: an app whose trust store lists a key ID as revoked refuses every license file that key signed, also those of devices that have not refreshed yet. If it may have leaked, follow [Revoke a signing key](revoke-a-signing-key.md).

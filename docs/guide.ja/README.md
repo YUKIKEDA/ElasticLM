@@ -2,7 +2,7 @@
 
 ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセンスを発行し、顧客のマシンでそのライセンスを検証し、同時使用数を数えられる。このドキュメントの読者は、ライセンスを発行する人、アプリに検証を組み込む開発者、ライセンスサーバーを運用する管理者だ。自分が使うプラットフォームの知識は前提にするが、設計書を読んでいることは前提にしない。
 
-> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md)、[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)、[ライセンスを発行して C のアプリで確かめる](tutorials/verify-a-license-in-c.md)は書き終えている。ハウツーガイドはまだ執筆中だが、[ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md)は書き終えている。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
+> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md)、[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)、[ライセンスを発行して C のアプリで確かめる](tutorials/verify-a-license-in-c.md)は書き終えている。ハウツーガイドはまだ執筆中だが、[ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md)、[ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)、[署名鍵を入れ替える](how-to/rotate-the-signing-key.md)、[ライセンスを失効させる](how-to/revoke-a-license.md)、[署名鍵を失効させる](how-to/revoke-a-signing-key.md)は書き終えている。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
 
 ## ドキュメントの構成
 
@@ -26,11 +26,13 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 3. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): シートを含むサーバーライセンスを発行し、そのシートを貸し出すサーバーを動かすチュートリアル。
 4. [ポリシーを設定する](how-to/set-up-a-policy.md)と[トライアルを提供する](how-to/offer-a-trial.md): 販売するライセンスの規則と、トライアルについてのハウツーガイド。
 5. [ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)と[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md): サービスに一度もつながらないデバイスと、ライセンスを別のデバイスに移すことについてのハウツーガイド。
-6. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
-7. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
-8. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
-9. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
-10. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
+6. [ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)と[署名鍵を入れ替える](how-to/rotate-the-signing-key.md): 署名鍵を証明する鍵の保管と、サービスが署名に使う鍵の入れ替えについてのハウツーガイド。
+7. [ライセンスを失効させる](how-to/revoke-a-license.md)と[署名鍵を失効させる](how-to/revoke-a-signing-key.md): ライセンスを完全に終わらせることと、漏れた署名鍵についてのハウツーガイド。
+8. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
+9. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
+10. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
+11. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
+12. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
 
 **ElasticLM をアプリに組み込む場合（開発者）。** アプリにルート公開鍵を組み込み、ライセンス、アクティベーション、リースを確かめる。
 
@@ -39,23 +41,25 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 3. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): ライセンスサーバーからシートのリースを受け、シートを借用する .NET のアプリを作るチュートリアル。
 4. [ライセンスを発行して C のアプリで確かめる](tutorials/verify-a-license-in-c.md): `libelasticlm` をリンクし、ライセンスをオフラインで検証する C のプログラムを作るチュートリアル。.NET でないアプリ向け。
 5. [ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)と[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md): オフラインのアクティベーション、トークンの更新、アクティベーション解除をするアプリのコードを載せたハウツーガイド。
-6. [ライセンスファイルと検証](explanation/license-files-and-verification.md)
-7. [デバイスとプルーフ](explanation/devices-and-proofs.md): デバイスを識別するインストール鍵。
-8. [アクティベーション](explanation/activation.md)か[フローティングライセンス](explanation/floating-licenses.md)のうち、製品で使うほう。
-9. [セキュリティモデル](explanation/security-model.md): アプリが確かめなければならないことと、アプリでは防げないこと。
-10. [.NET API](reference/dotnet-api.md) か [C API](reference/c-api.md): アプリに組み込むライブラリのすべての型、関数、オプション。
+6. [署名鍵を失効させる](how-to/revoke-a-signing-key.md): ベンダーが署名鍵を失効させたときに、アプリのトラストストアに何を載せるかについてのハウツーガイド。
+7. [ライセンスファイルと検証](explanation/license-files-and-verification.md)
+8. [デバイスとプルーフ](explanation/devices-and-proofs.md): デバイスを識別するインストール鍵。
+9. [アクティベーション](explanation/activation.md)か[フローティングライセンス](explanation/floating-licenses.md)のうち、製品で使うほう。
+10. [セキュリティモデル](explanation/security-model.md): アプリが確かめなければならないことと、アプリでは防げないこと。
+11. [.NET API](reference/dotnet-api.md) か [C API](reference/c-api.md): アプリに組み込むライブラリのすべての型、関数、オプション。
 
 **組織のライセンスサーバーを運用する場合（顧客の管理者）。** 組織のシートを貸し出す `elm-server` を運用する。
 
 1. [ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md): サーバーライセンスを使って `elm-server` を準備し、サーバーが何を貸し出すかを確かめるチュートリアル。
-2. [フローティングライセンス](explanation/floating-licenses.md): リース、借用、サーバーを再起動したときに何が起きるか。
-3. [デバイスとプルーフ](explanation/devices-and-proofs.md): クライアントが自分の身元を証明する方法。
-4. [セキュリティモデル](explanation/security-model.md): サーバーの鍵とログが何を守るか。
+2. [署名鍵を失効させる](how-to/revoke-a-signing-key.md#ライセンスサーバーで鍵を失効させる): ベンダーが署名鍵を失効させたときに、サーバーで何を設定するかについてのハウツーガイド。
+3. [フローティングライセンス](explanation/floating-licenses.md): リース、借用、サーバーを再起動したときに何が起きるか。
+4. [デバイスとプルーフ](explanation/devices-and-proofs.md): クライアントが自分の身元を証明する方法。
+5. [セキュリティモデル](explanation/security-model.md): サーバーの鍵とログが何を守るか。
 
 **販売や課金のシステムを連携する場合（ベンダーのシステム）。** システムは API キーを使って、SaaS 型のサービスの管理 API を呼び出す。
 
 1. [SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md): API キーを使い、管理 API で製品、そのポリシー、ライセンスを作るチュートリアル。
-2. [ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md): ポリシーとトライアルを作る呼び出しと、デバイスのアクティベーションを解除する呼び出しについてのハウツーガイド。
+2. [ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md)、[ライセンスを失効させる](how-to/revoke-a-license.md): ポリシーとトライアルを作る呼び出し、デバイスのアクティベーションを解除する呼び出し、ライセンスを失効させる呼び出しについてのハウツーガイド。
 3. [アクティベーション](explanation/activation.md): サービスから見た製品、ポリシー、ライセンス、デバイス。
 4. [セキュリティモデル](explanation/security-model.md): API キー、ロール、監査ログ。
 5. [管理 API](reference/administration-api.md): システムが呼び出すすべてのルートと、そのリクエストとレスポンス。

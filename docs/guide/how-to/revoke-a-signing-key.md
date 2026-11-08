@@ -152,7 +152,7 @@ The verifier checks the token's key ID against the revoked key IDs before its ce
 The app developer adds the old key ID to the revoked key IDs of the app's trust store, and ships the new version:
 
 - In .NET, the `revokedKeyIds` of [`TrustStore.Create`](../reference/dotnet-api.md#truststore).
-- In C, `revoked_key_ids` of [`elm_verifier_options`](../reference/c-api.md#elm_verifier_options), and of the options of the activation and the license client.
+- In C, `revoked_key_ids` of [`elm_verifier_options`](../reference/c-api.md#elm_verifier_options), and of `elm_activation_options` and `elm_client_options`.
 
 The list reaches a device only with that version; there is no revocation list fetched over the network. A device that still keeps a license file of the old key then gets `ELM_KEY_REVOKED` from `Check`. An app that activates online can refresh at that point, with `RefreshAsync` in .NET or `elm_activation_refresh` in C: the service answers with a license file signed by the new key, and the app checks again. A device without a network needs its refresh files carried, so ship the version to such devices only after they have refreshed.
 

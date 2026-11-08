@@ -16,7 +16,7 @@ In the outputs below, the key IDs and the dates are fake. On your machine they a
 
 ## Record the root key's ID
 
-The key ID is a short name computed from the public key. It names the root key in every key certificate, so it tells you which key a file holds. Print it:
+The key ID is a short name computed from the public key. Every key certificate names the root key that certified it by this ID, so the ID tells you which root key a copy of `root.key.pem` holds. Print it:
 
 <!-- steps:run -->
 ```shell
