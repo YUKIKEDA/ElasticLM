@@ -100,14 +100,16 @@
         over, so that the How-to page's elm-service, dotnet add ... package, and elm lines and its <name> placeholders work
         as on the named page. A How-to page that captures a name the named page captured fails, as a name captured twice.
       - The named page's passphrase carries over too, since its keys were made with it. Its background process, started
-        again in the copy, runs into the How-to page's steps, and stops at the end of the How-to page. A How-to page has no steps:prebuilt marker of its own. It may have one steps:background block, which replaces
-        that process (design §20.7, V1c4b, Q1): at the block, the process tree is stopped and waited for as at the end of a
+        again in the copy, runs into the How-to page's steps, and stops at the end of the How-to page. A How-to page has no
+        steps:prebuilt marker of its own. It may have one steps:background block, which replaces that process (design
+        §20.7, V1c4b, Q1): at the block, the process tree is stopped and waited for as at the end of a
         page, and the block's line is started and waited for as on any page, with the same passphrase. The block fails when
         the page has no steps:after, when the named page has no steps:background, and when its line starts another
         program than the named page's (elm-service replaces elm-service).
       - A failing step of the named page fails the run, before the How-to page. The named page is checked against its
         translation too. The kept folders are removed after the last How-to page of the run that names the page, and at the
-        end of the run, also after a failure; a folder that is still there fails the run.
+        end of the run, also after a failure; a folder that is still there fails the run. A Tutorial page that no listed
+        How-to page names keeps nothing, as README.md does not.
     The marker fails when it is indented, when the next line that is not blank opens a code block, and without page.
 
     elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
@@ -123,9 +125,9 @@
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
     packed again under the same version never comes from an older copy in the global packages folder, and so that the
     job's package cache never holds the packages of one run. A How-to page starts from copies of the folders of the page
-    its steps:after names (above). Both folders of a page are removed at the end, also on failure, after
-    the background process has stopped; a folder that is still there fails the page, so that keys and secrets are never
-    left behind unnoticed.
+    its steps:after names (above). Both folders of a page are removed at the end, also on failure, after the background
+    process has stopped, except those that a Tutorial page keeps for the copies, which are removed as said above; a folder
+    that is still there fails the page, so that keys and secrets are never left behind unnoticed.
 
     The page's translation (README.ja.md, or the same file under docs/guide.ja/) must hold the content of each marked
     block of the English page as fenced code blocks of its own, and each steps:prebuilt and steps:after marker as a line
@@ -846,8 +848,8 @@ function Test-Translation([string]$path, [object]$parsed) {
 }
 
 # Runs the steps of a page in the work folder. $state carries the captured values (Values), the value captured with env for
-# the elm lines after it (ApiKey), and the standard output of the last command (LastOutput), so that the steps of a How-to
-# page go on from those of the page that its steps:after names.
+# the elm lines after it (ApiKey), and the standard output of the last command (LastOutput); a How-to page starts with those
+# of the page that its steps:after names (Invoke-Page).
 function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$work) {
     $values = $state.Values
     foreach ($step in $steps) {
@@ -954,37 +956,40 @@ function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$w
                 $argumentName = switch -CaseSensitive ($prebuiltName) { 'elm' { '-Elm' } 'elm-server' { '-ElmServer' } 'elm-service' { '-ElmService' } 'packages' { '-Feed' } 'libelasticlm' { '-Library' } }
                 "ok: $($name):$($block.Order): prebuilt $prebuiltName ($argumentName)"
             }
-            'after' {
-                "ok: $($name):$($block.Order): after $($step.After.Name)"
-                Invoke-Plan $step.After.Name $step.After.Plan.Steps $state $work
-            }
         }
     }
 }
 
-# Copies a folder with its files, keeping their protection: on Windows the access rules of every folder and file whose
-# rules do not come from its parent, and on Linux and macOS the mode of every folder and file. elm-server checks the
-# protection of its data folder at each start (design §20.7, V1c13, review R1). The target must not exist yet.
+# Copies a folder with its files, keeping their protection: on Windows the access rules of every folder and file that does
+# not inherit them, and on Linux and macOS the mode of every folder and file. elm-server checks the protection of its data
+# folder at each start (design §20.7, V1c13, review R1). The target must not exist yet. A link fails: the steps make none,
+# and following one could copy what is outside the work folder.
 function Copy-Protected([string]$source, [string]$target) {
     $folder = [IO.DirectoryInfo]::new($source)
     [void][IO.Directory]::CreateDirectory($target)
-    Copy-Protection $folder.FullName $target -Folder
+    # On Windows the folder's rules come first, so that what is copied into it inherits them as in the source.
+    if ($IsWindows) { Copy-Protection $folder.FullName $target -Folder }
     foreach ($item in $folder.EnumerateFileSystemInfos()) {
+        if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw "The work folder holds a link, $($item.FullName), which the copy does not follow." }
         $to = Join-Path $target $item.Name
         if ($item -is [IO.DirectoryInfo]) {
             Copy-Protected $item.FullName $to
         }
         else {
+            # On Linux and macOS, File.Copy keeps the file's mode.
             [IO.File]::Copy($item.FullName, $to)
-            Copy-Protection $item.FullName $to
+            if ($IsWindows) { Copy-Protection $item.FullName $to }
         }
     }
+    # On Linux and macOS the folder's mode comes last, so that a folder without the owner's write can still be filled.
+    if (-not $IsWindows) { Copy-Protection $folder.FullName $target -Folder }
 }
 
 function Copy-Protection([string]$source, [string]$target, [switch]$Folder) {
     if ($IsWindows) {
         $rules = $Folder ? [IO.FileSystemAclExtensions]::GetAccessControl([IO.DirectoryInfo]::new($source)) : [IO.FileSystemAclExtensions]::GetAccessControl([IO.FileInfo]::new($source))
-        # A folder or file that takes its rules from its parent gets the same from its new parent, which was copied first.
+        # A folder or file that inherits its rules gets the same from its new parent, which was copied first. The data
+        # folders the steps make (ProtectedFiles) inherit none.
         if (-not $rules.AreAccessRulesProtected) { return }
         $copy = $Folder ? [Security.AccessControl.DirectorySecurity]::new() : [Security.AccessControl.FileSecurity]::new()
         $copy.SetSecurityDescriptorSddlForm($rules.GetSecurityDescriptorSddlForm([Security.AccessControl.AccessControlSections]::Access), [Security.AccessControl.AccessControlSections]::Access)
@@ -1015,6 +1020,8 @@ function Invoke-Page([string]$path) {
         # The Tutorial runs once in the run, and is reported as its own page, also when the list does not hold it.
         if (-not $script:sources.ContainsKey($plan.After.Name)) { Invoke-Page $plan.After.Path }
         $source = $script:sources[$plan.After.Name]
+        # The count of the pages that name it keeps its folders until here; a page that is not counted is a bug of this script.
+        if (-not $source) { throw "$($name): $($plan.After.Name) kept no folders to copy." }
     }
 
     $suffix = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6))
@@ -1047,14 +1054,12 @@ function Invoke-Page([string]$path) {
         $env:MSBUILDDISABLENODEREUSE = '1'
         $env:DOTNET_CLI_TELEMETRY_OPTOUT = '1'
         $env:DOTNET_NOLOGO = '1'
-        $steps = $plan.Steps
         if ($source) {
             # The Tutorial's steps ran once already: start its background process again in the copy, then the page's steps.
             "ok: $($name): copy of $($plan.After.Name)"
             if ($source.Background) { Start-Background $plan.After.Name $source.Background $state.Values $work }
-            $steps = @($plan.Steps | Where-Object Kind -cne 'after')
         }
-        Invoke-Plan $name $steps $state $work
+        Invoke-Plan $name @($plan.Steps | Where-Object Kind -cne 'after') $state $work
         $completed = $true
         $script:ran.Add($name) | Out-Null
         if ($script:wanted.ContainsKey($name)) {
@@ -1068,7 +1073,9 @@ function Invoke-Page([string]$path) {
         $script:passphrase = $null
         foreach ($variable in $saved.Keys) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
         if (-not $keep) {
-            Remove-Item -Recurse -Force -LiteralPath $work, $packages -ErrorAction Continue
+            # A copy that failed part way may not have made both folders yet.
+            $made = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
+            if ($made) { Remove-Item -Recurse -Force -LiteralPath $made -ErrorAction Continue }
             # A folder that is still there, such as one a process still holds open, would keep keys and secrets. When a step
             # failed, its error is the one that ends the run, so the folders are named here; otherwise the error below names
             # them.
@@ -1109,26 +1116,34 @@ $script:passphrase = $null
 $script:ran = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
 $script:wanted = @{}
 $script:sources = @{}
-foreach ($path in $Page) {
-    $after = [regex]::Match([IO.File]::ReadAllText($path), '(?m)^<!-- steps:after page=([^\s"]+) -->\s*$')
-    if ($after.Success) { $script:wanted[$after.Groups[1].Value] = 1 + ($script:wanted[$after.Groups[1].Value] ?? 0) }
-}
-$failed = $null
+$failed = $false
+$errors = [Collections.Generic.List[string]]::new()
 try {
+    # Counted with the parser that Read-Plan uses, over the pages without repeats, since a page listed again does not run
+    # again (review C1, C9).
+    $counted = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($path in $Page) {
+        if (-not $counted.Add((Get-PageName $path))) { continue }
+        foreach ($marker in @((Get-Page $path).LineMarkers | Where-Object Kind -ceq 'after')) {
+            $named = (Read-Marker "$(Get-PageName $path):$($marker.Order)" $marker.Text.TrimEnd()).Attributes['page']
+            if ($named) { $script:wanted[$named] = 1 + ($script:wanted[$named] ?? 0) }
+        }
+    }
     foreach ($path in $Page) { Invoke-Page $path }
 }
 catch {
-    $failed = $_.Exception.Message
+    $failed = $true
+    $errors.Add($_.Exception.Message)
 }
 finally {
     # The sources hold keys: remove them also after a failure.
     foreach ($name in @($script:sources.Keys)) {
         try { Remove-Source $name }
-        catch { Write-Host "::error::$($_.Exception.Message)"; $failed ??= $_.Exception.Message }
+        catch { $failed = $true; $errors.Add($_.Exception.Message) }
     }
 }
 if ($failed) {
-    Write-Host "::error::$failed"
+    foreach ($message in $errors) { Write-Host "::error::$message" }
     exit 1
 }
 exit 0
