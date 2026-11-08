@@ -217,7 +217,7 @@ A lease handle can still be read after `elm_client_destroy`. [Floating licenses]
 
 | Function | Returns | What it does |
 | --- | --- | --- |
-| `elm_last_error_message` | `const char*` | The message of the last function on this thread that returns an error number: empty after a success. An `ELM_INVALID_ARGUMENT` message names the C argument or member, or says what is wrong with the value; it carries no .NET parameter name. |
+| `elm_last_error_message` | `const char*` | The message of the last function on this thread that returns an error number: empty after a success. An `ELM_INVALID_ARGUMENT` message names the C argument or member, or says what is wrong with the value. |
 | `elm_version` | `const char*` | The library's version, valid until the process ends. |
 
 ```c
