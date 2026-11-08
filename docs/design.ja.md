@@ -4147,7 +4147,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c3c | 決めた形は下の「V1c3 の形」と「V1c3c の Grill」（V1c3c の Grill、Issue #236）。V1c8 と V1c9 のあとに置く（Q6）。V1c3b の Grill と V1c8 の D1 がこの行に残した点（Tutorial 4 の手順、`libelasticlm` の入手とその印、C のサンプルの置き場所とビルド、V1c8 で決めたリンクの方法の使い方、C のコンパイラーとビルドしたアプリの実行ファイルの行、V1c8 で C の API の頁から移した 4 つの手順）は、下の「V1c3c の Grill」で決めた |
 | V1c4 | V1c4 の Grill（Issue #248）で V1c4a〜V1c4e の 5 行に分けた（下の「V1c4 の形」）。分ける前にこの行が挙げた決める点: How-to の頁の一覧と順（英語と日本語、0.117）、設計が「文書に書く」とした事柄（T24 と T26 の確かめ方、§5.4 の Gatekeeper の扱いと運用者への勧め、`ELM_NODE_NAME` など）をどの頁が持つか、CI で流す頁と PR で一度流す頁の分け方、流す環境（PostgreSQL と Keycloak は WSL のコンテナー、Entra ID の頁は流せるか）、オフラインの有効化（ファイルのやり取り）のサンプルの名前と、How-to の「オフラインの有効化」の頁からの引き方（V1c3 の設計のレビューの R13 で V1c3 から移した）。V1c3d で見つけた文書の直し 2 つもこの行で行う（PR #224 の振り返りの持ち主の決定）: `dotnet add` がパッケージを NuGet のグローバルのパッケージのフォルダーに残すことを、パッケージを使う頁に書くか（初見の読み手の 9）、誤りのコードの Reference の頁の `ELM_TRIAL_NOT_OFFERED` の文をサービスの文（「The product does not offer a trial.」）と `ErrorCode.cs` の XML ドキュメントに揃えるか（同じく 11）。V1c8 の初見の読み手が見つけた文書の直しも 1 つこの行で行う（V1c8 の実装の PR の持ち主の決定 D1）: macOS には、`SECURITY.md` の `sha256sum --check --ignore-missing` が使う `sha256sum` がないことがあるので、`shasum -a 256` の形を書く。書く前に、`shasum -a 256 --check --ignore-missing` が動くことを macOS のランナーで確かめる。利用者の文書の安全性のモデルの頁（英語と日本語）にある同じコマンドも直す |
 | V1c4a | 決めた形は下の「V1c4 の形」（V1c4 の Grill、Issue #248）。How-to の土台、文書の直し 3 つ、ライセンスの 4 頁とオフラインの有効化のサンプル。V1c11 のあとに置く |
-| V1c4b | 決めた形は下の「V1c4 の形」の行の分け方。鍵の 3 頁。この行の Grill で頁の細部を決める。V1c4a のあとに置く |
+| V1c4b | 決めた形は下の「V1c4 の形」の行の分け方と「V1c4b の Grill」（Issue #252）。鍵の 4 頁（V1c4b の Grill で、失効を 2 頁に分けた）。V1c4a のあとに置く |
 | V1c4c | 決めた形は下の「V1c4 の形」の行の分け方。`elm-server` の 4 頁。この行の Grill で頁の細部を決める。V1c4b のあとに置く |
 | V1c4e | 決めた形は下の「V1c4 の形」の行の分け方。アプリの 3 頁。この行の Grill で頁の細部を決める。V1c4c のあとに置く |
 | V1c4d | 決めた形は下の「V1c4 の形」の行の分け方と Q2、Q3。`elm-service` の運用の 6 頁。この行の Grill で頁の細部と、PostgreSQL、Keycloak、コンテナー、Entra ID の頁の流し方を決める。V1c4e のあとに置く |
@@ -4723,7 +4723,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
     - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置く。`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた）。
     - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
-    - How-to の頁は `steps:background` と `steps:prebuilt` を持たない（裏のプロセスは名指した頁のものだけで、1 頁に裏のプロセスは 1 つまでの決まりが続く）。
+    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。
     - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
     - `steps:after` の印は、`steps:prebuilt` と同じく訳の頁にも同じ形で要り、訳の確かめが比べる。
     - 名指した頁が落ちれば、How-to の頁も落ちる。作業フォルダーと鍵は、How-to の頁の終わりに今のとおり消す。
@@ -4740,6 +4740,20 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 頁のコードの見せ方（実装中の持ち主の決定 D2）: 手順を流す仕組みがアプリをビルドするので、頁 3 と頁 4 は `Program.cs` の全体を `steps:file` のブロックで 1 度だけ見せ、各コマンドの説明は本文で API の名前を挙げて行う。同じコードの範囲をもう一度見せることはしない。頁どうしは続けて流せないので、頁 4 もアプリを作る手順を持つ。どの頁も引かなくなったサンプルの範囲の印は残さない（`.cursor/rules/no-dead-code.mdc`）。上の Q7 の「頁 3 と頁 4 のコードは、このサンプルの範囲から引く」は、この決定で改めた。
 - サイトと入口（Q8）: `website/sidebars.js` で、How-to の区分を Tutorials と Reference のあいだに置き、`how-to` のフォルダーから自動で作る。区分の日本語の名前は「ハウツーガイド」で、`website/i18n/ja/docusaurus-plugin-content-docs/current.json` に書く。入口の頁（英語と日本語）の読む人ごとの道筋に 4 頁を足し、状況の文（How-to guides はまだ執筆中）を、書いた頁に合わせて直す。
 - レビュー: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（ジョブと同じ成果物で、Tutorial 2 から続けて手順を実際に流す）、日本語のレビュー（書き手と別）。指摘の要点と直し方は、PR を ready にする前に Issue か PR に載せる（`.cursor/rules/review-comments.mdc`）。
+
+- V1c4b の Grill（Issue #252、Q1〜Q4。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: 鍵の How-to。
+  - 調べた事実（2026-11-08、`main` の 9da8646）: `elm key` は `root create`、`signing create`、`certify`、`thumbprint` だけで（`src/ElasticLM.Cli/KeyCommands.cs`）、書き出し、バックアップ、パスフレーズの変更はない。`elm-service` は署名鍵を起動のときに 1 度だけ読み（`ElmService.cs` の `ReadSigningKey`）、読み直しの経路（エンドポイント、シグナル、`setup` のほかのコマンド）はない。鍵の証明書は「いま有効」なものだけを受け付けるので（`SigningKeyCertificates.TryCheck`）、開始日が先の証明書を前もって置けない。前の鍵で署名したライセンスは発行の時刻で判断するので通り続け、アプリは何も変えなくてよい（§7.3、§7.4）。署名鍵 ID の失効はアプリの `revokedKeyIds` とサーバーの `trust.revokedKeyIds` で行い、アプリには新しい版でだけ届く（§7.5）。今のサンプルはどれも `revokedKeyIds: []` と書く。ライセンスの失効は `POST /v1/admin/licenses/{id}/revoke` で、端末の次の有効化と更新は `ELM_LICENSE_REVOKED` で断られ、端末が持っているファイルは期限と猶予期間のあいだ有効のまま。手順を流す仕組みは、裏のサービスを止めることも起動し直すことも、動いているあいだに設定を変えることもできず、ファイルを写す行もない。
+  - 起動し直し（Q1）: How-to の頁に `steps:background` を 1 つだけ許す。その頁の `steps:after` が名指した頁の裏のプロセスを、その印のところで止め（`Process.Kill(true)` で止まるのを待つ）、新しい行で立ち上げ直す。上の Q5 の決まり（R4）の「How-to の頁は `steps:background` を持たない」を、「引き継いだ裏のプロセスを置き換える 1 つだけは持てる」に改める。名指した頁に裏のプロセスがなければ、How-to の頁の `steps:background` は落ちる（1 頁に裏のプロセスは 1 つまでの決まりが続く）。立ち上げ直したプロセスの扱い（`ready`、`ELM_SIGNING_PASSPHRASE` の受け渡し、頁の終わりに止めること）は、今の `steps:background` と同じ。署名鍵の交代の全体（新しい鍵の作成と証明、`service.json` の書き換え、起動し直し、`GET /v1/admin/signing-key` で新しい鍵 ID を確かめること、前の鍵で署名したライセンスも通ること）を CI で流す。起動し直しを本文だけにする案は退けた。
+  - 4 頁（Q2。V1c4 の Grill の Q1 は 3 頁としていたが、失効を 2 頁に分けた）:
+    - 「Keep the root key safe」（Tutorial 1 を名指す）: 下の Q4。
+    - 「Rotate the signing key」（Tutorial 2 を名指す）: 新しい署名鍵を作って `--use license,lease` で証明し、`service.json` の `signing` を新しい鍵と証明書に書き換え、サービスを起動し直し、`GET /v1/admin/signing-key` で新しい鍵 ID を確かめ、前の鍵で署名したライセンスでも端末の更新が通ることを確かめる。同じ鍵の証明書を更新する場合（`signing.certificates` に新しい証明書を足して起動し直す）も書く。
+    - 「Revoke a license」（Tutorial 2 を名指す）: ライセンスを作り、端末で有効化し、失効させる。新しい有効化と端末の更新が `ELM_LICENSE_REVOKED` で断られることを確かめ、端末が持っているファイルは期限と猶予期間のあいだ有効のままであること（`activation.md`）を書く。
+    - 「Revoke a signing key」（Tutorial 2 を名指す）: 漏れた署名鍵を交代させ（交代の頁を指す）、サーバーの `trust.revokedKeyIds` に前の鍵 ID を足して起動し直し、アプリの新しい版で失効の一覧を配る（下の Q3）。前の鍵で署名した、期限のないトークンは鍵の失効でしか止められないこと（`trust-chain.md`）を書く。
+    - 失効を 1 頁にまとめる案は退けた（対象、手順、届き方がまったく違い、1 頁に 1 つの目的の決まりに合わない）。
+  - アプリの側の失効（Q3）: 頁にアプリのコードを載せず、.NET の API の頁の `TrustStore.Create` の `revokedKeyIds` と、C の API の頁の `revoked_key_ids` を指す。失効が効くことは、同じ検証器を使う `elm license verify --revoked <鍵 ID>` が `ELM_KEY_REVOKED` になることで見せ、CI で流す（`elm key thumbprint` で鍵 ID を `capture` で取る）。失効の一覧を引数で受け取る新しいサンプルを作る案は退けた。
+  - ルート鍵の頁（Q4）: 頁の大半は手引き（ルート鍵をオフラインのマシンか取り外せる媒体に置く、`elm key certify` のときだけ使う、写しを 2 つ別の場所に置く、パスフレーズをスクリプトに書かない。`trust-chain.md` と安全性のモデルの頁を指す）。CI で流すのは、`elm key thumbprint root.pub.pem` で鍵 ID を記録することと、写しが使えることの確かめとして `elm key certify` でルート鍵を使うことの 2 つ。写しは OS の道具で作ると本文で書く（手順を流す仕組みはファイルを写せないので、CI は元のファイルで確かめる）。
+  - CI の時間: V1c4b の PR は、`aot` ジョブに増えた時間を 3 つのランナーで書く（上の Q5 の R5）。
+  - レビュー: 設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（手順を実際に流す）、日本語のレビュー（書き手と別。英語の 2 つのレビューを直したあとに日本語を書く）。
 
 ## 21. 依存
 
@@ -4814,7 +4828,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c3c | 利用者の文書の Tutorial 4（C のアプリに `libelasticlm`）と C のサンプル。手順を流す仕組みに、C のコンパイラーと、ビルドしたアプリの実行ファイルで始まる行を足す。V1c8 で C の API の頁から移した 4 つの手順も Tutorial 4 に書く（英語と日本語。V1c8 のあと。決めた形は §20.7 の V1c3 の形） | §17, §20.7 |
 | V1c4 | V1c4a〜V1c4e に分けた（§20.7 の「V1c4 の形」、Issue #248）。分ける前の行: 利用者の文書の How-to guides と、オフラインの有効化（ファイルのやり取り）のサンプル（決めた形は §20.7 の V1c の形、0.116。サンプルは V1c3 の設計のレビューの R13 で移した。V1c3d で見つけた文書の直し 2 つ（パッケージのグローバルのフォルダーの文、`ELM_TRIAL_NOT_OFFERED` の文）と、V1c8 で見つけた直し 1 つ（macOS の `sha256sum`）も行う） | §20.7 |
 | V1c4a | 利用者の文書の How-to guides の土台、ライセンスの 4 頁（ポリシー、試用、オフラインの有効化、端末の解除）とオフラインの有効化のサンプル、V1c3d と V1c8 で見つけた文書の直し 3 つ（英語と日本語。決めた形は §20.7 の「V1c4 の形」、Issue #248） | §20.7 |
-| V1c4b | 利用者の文書の How-to guides の鍵の 3 頁（ルート鍵の保管、署名鍵の交代、失効。英語と日本語） | §20.7 |
+| V1c4b | 利用者の文書の How-to guides の鍵の 4 頁（ルート鍵の保管、署名鍵の交代、ライセンスの失効、署名鍵の失効。英語と日本語。Issue #252） | §20.7 |
 | V1c4c | 利用者の文書の How-to guides の `elm-server` の 4 頁（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ。英語と日本語） | §20.7 |
 | V1c4e | 利用者の文書の How-to guides のアプリの 3 頁（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行。英語と日本語） | §20.7 |
 | V1c4d | 利用者の文書の How-to guides の `elm-service` の運用の 6 頁（コンテナー、PostgreSQL、OIDC での管理者のログイン、バックアップと戻し、版の更新、速さの上限。英語と日本語） | §20.7 |
