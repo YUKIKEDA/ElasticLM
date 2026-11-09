@@ -124,6 +124,15 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <summary>Gets or sets a change made to every ID token's payload before signing.</summary>
     public Action<Dictionary<string, object?>>? IdTokenChange { get; set; }
 
+    /// <summary>Gets or sets a change made to every ID token's header before signing.</summary>
+    public Action<Dictionary<string, object?>>? IdTokenHeaderChange { get; set; }
+
+    /// <summary>Gets or sets a rewrite of every ID token that <see cref="IdToken"/> mints, in its compact form, after signing.</summary>
+    public Func<string, string>? IdTokenRewrite { get; set; }
+
+    /// <summary>Gets or sets the hash with which <see cref="IdToken"/> signs, SHA-256 unless a test signs as ES384.</summary>
+    public HashAlgorithmName IdTokenHash { get; set; } = HashAlgorithmName.SHA256;
+
     /// <summary>Gets or sets whether the discovery document names an end_session_endpoint.</summary>
     public bool EndSession { get; set; } = true;
 
@@ -168,11 +177,13 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <param name="groups">The <c>groups</c> claim.</param>
     /// <param name="change">Changes the header and the payload before signing.</param>
     /// <param name="key">Signs with this key instead of the provider's.</param>
+    /// <param name="hash">Signs with this hash instead of SHA-256.</param>
     public string Token(
         string subject = "alice",
         string[]? groups = null,
         Action<Dictionary<string, object?>, Dictionary<string, object?>>? change = null,
-        ECDsa? key = null
+        ECDsa? key = null,
+        HashAlgorithmName? hash = null
     )
     {
         long now = _time.GetUtcNow().ToUnixTimeSeconds();
@@ -199,7 +210,7 @@ internal sealed class FakeIdp : IAsyncDisposable
 
         change?.Invoke(header, payload);
         string signingInput = Encode(header) + "." + Encode(payload);
-        byte[] signature = (key ?? _key).SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256);
+        byte[] signature = (key ?? _key).SignData(Encoding.ASCII.GetBytes(signingInput), hash ?? HashAlgorithmName.SHA256);
         return signingInput + "." + Base64Url.EncodeToString(signature);
     }
 
@@ -420,8 +431,10 @@ internal sealed class FakeIdp : IAsyncDisposable
         }
 
         IdTokenChange?.Invoke(payload);
+        IdTokenHeaderChange?.Invoke(header);
         string signingInput = Encode(header) + "." + Encode(payload);
-        return signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256));
+        string token = signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), IdTokenHash));
+        return IdTokenRewrite?.Invoke(token) ?? token;
     }
 
     private static Task ErrorAsync(HttpContext context, string error)

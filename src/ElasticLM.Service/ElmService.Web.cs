@@ -139,7 +139,7 @@ internal sealed partial class ElmService
                         ValidateIssuer = true,
                         ValidAudience = web.ClientId,
                         ValidateAudience = true,
-                        ValidAlgorithms = [SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.EcdsaSha256],
+                        ValidAlgorithms = SignatureAlgorithms,
                         RequireSignedTokens = true,
                         RequireExpirationTime = true,
                         ValidateLifetime = true,
@@ -234,9 +234,17 @@ internal sealed partial class ElmService
         string clientId = _settings.Web!.ClientId;
         string claim = _settings.Oidc!.SubjectClaim;
 
-        // OpenID Connect Core 1.0 §3.1.3.7: the handler only logs several audiences without azp; the service refuses.
-        if ((azp is not null && azp != clientId) || (audiences.Length > 1 && azp is null))
+        // design §15.3, §20.7 V1c16: the handler does not require a signature on the code flow's ID token, so the service
+        // refuses an unsigned one before any other check. The string read here is the one the handler checked: it takes it
+        // from the token endpoint's answer and passes the same answer to this event, as long as the service sets no
+        // OnMessageReceived or OnTokenResponseReceived and redeems no code in OnAuthorizationCodeReceived.
+        if (!IsSigned(context.TokenEndpointResponse?.IdToken))
         {
+            context.Fail("The ID token is not signed with RS256, PS256, or ES256.");
+        }
+        else if ((azp is not null && azp != clientId) || (audiences.Length > 1 && azp is null))
+        {
+            // OpenID Connect Core 1.0 §3.1.3.7: the handler only logs several audiences without azp; the service refuses.
             context.Fail("The ID token's azp does not name the web client.");
         }
         else if (!IsIdentifier(principal?.FindFirst("iss")?.Value))

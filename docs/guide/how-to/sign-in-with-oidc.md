@@ -299,6 +299,7 @@ This guide has not been tried with Entra ID; check each setting against Microsof
 - Show the client's name on the approval page of the device flow, so that an administrator sees which program asks.
 - Keep `oidc.audience` different from both client IDs; the service refuses to start otherwise.
 - Put the role claim, and the claim of `oidc.subjectClaim`, in both the ID token and the access token, with the same value.
+- Sign both the ID token and the access token with RS256, PS256, or ES256. The service refuses a token signed with any other algorithm, or not signed at all. The service logs the reason for a refused admin UI sign-in; for a refused access token, it logs the reason only at the `Debug` level.
 - Allow the admin UI's client the authorization code flow only, and turn off everything else for it, such as service accounts and direct grants in Keycloak (`fullScopeAllowed: false` keeps unrelated roles out of its tokens).
 - Keep the IdP's token lifetimes short: the service checks access tokens itself and does not ask the IdP, so a signed-out token stays valid until it expires.
 - `apiKeys.inactiveAdminDays` (90) stops the API keys of an administrator who has not signed in for that many days.

@@ -1644,3 +1644,9 @@
 - **決定:** 新しい行 V1c16 で直す。V1c15 のあと、V1c4f の前に置く（持ち主の決定、推奨案 B）。
 - **理由:** V1c15（管理者を見分ける要求）の外の、前からの差で、`pace` の規則で行を分ける。安全性の直しを、それだけでレビューできる。
 - **却下した案:** (A) V1c15 の PR で直す。(C) 設計を OIDC Core §3.1.3.7 の TLS の例外に合わせ、コードは直さない。
+
+### 署名のない ID トークンを断る場所（V1c16 の Grill の Q1、Issue #292）
+
+- **決定:** `OnTokenValidated` の最初で、`TokenEndpointResponse.IdToken` の生の文字列の部分の数、署名の部分、ヘッダーの `alg` を確かめる（持ち主の決定、推奨案 A）。
+- **理由:** ほかの ID トークンの確かめ（`azp`、`iss`、`oidc.subjectClaim`）と同じ場所で、`IdentityOf` と同じ文字列を読む。ライブラリの中の作り（型の変換、呼ぶオーバーロード）に頼らない。
+- **却下した案:** (B) `context.SecurityToken` の `RawSignature` と `Header.Alg` を見る（`JwtSecurityTokenConverter` が写すことに頼る）。(C) `OnTokenResponseReceived` で、ハンドラーが確かめる前に断る（ノンスの Cookie が 15 分残る）。(D) `JsonWebTokenHandler` を継いだ `TokenHandler` で `RequireSignedTokens` を `true` に戻す（ハンドラーが別のオーバーロードを呼ぶようになると、黙って効かなくなる）。

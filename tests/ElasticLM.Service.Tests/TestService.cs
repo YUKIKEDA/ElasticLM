@@ -106,17 +106,19 @@ internal sealed class TestService : IAsyncDisposable
         return change?.Invoke(settings) ?? settings;
     }
 
-    public ServiceHostOptions HostOptions(string? passphrase = Passphrase) =>
+    /// <summary>Returns the host options; with <paramref name="log"/>, the log is written to it from Information up.</summary>
+    public ServiceHostOptions HostOptions(string? passphrase = Passphrase, ILoggerProvider? log = null) =>
         new()
         {
             Time = Time,
             Environment = name => name == ServiceSettings.SigningPassphraseVariable ? passphrase : null,
-            MinimumLogLevel = LogLevel.Warning,
+            MinimumLogLevel = log is null ? LogLevel.Warning : LogLevel.Information,
+            LoggerProvider = log,
         };
 
-    public async Task<ElmService> StartAsync(Func<ServiceSettings, ServiceSettings>? change = null)
+    public async Task<ElmService> StartAsync(Func<ServiceSettings, ServiceSettings>? change = null, ILoggerProvider? log = null)
     {
-        ElmService service = await ElmService.StartAsync(Settings(change), HostOptions(), TestContext.Current.CancellationToken);
+        ElmService service = await ElmService.StartAsync(Settings(change), HostOptions(log: log), TestContext.Current.CancellationToken);
         _owned.Add(service);
         return service;
     }
