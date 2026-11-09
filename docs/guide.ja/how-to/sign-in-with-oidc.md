@@ -147,7 +147,7 @@ docker start elm-keycloak
 docker exec elm-keycloak bash -c 'for i in $(seq 120); do exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /realms/elm/.well-known/openid-configuration HTTP/1.0\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 " && exit 0; sleep 1; done; exit 1'
 ```
 
-`start-dev` は、Keycloak を開発用に動かす。通信は暗号化しない http で、データはコンテナと一緒に消える。最後の行は、Keycloak がレルムへのリクエストに応答するようになるまで待つ。30 秒ほどかかる。サービスが IdP の設定を読むのは、サインインで初めて必要になったときだけだ。Keycloak が応答するようになる前のサインインは `The identity provider cannot be reached.` で失敗し、次のサインインのときにまた読み込みを試す。
+`start-dev` は、Keycloak を開発用に動かす。通信は暗号化しない http で、データはコンテナと一緒に消える。Keycloak が起動するあいだ、最後の行は `Connection refused` を毎秒表示するが、これは想定どおりだ。この行は、Keycloak がレルムへのリクエストに応答するようになるまで待つ。30 秒ほどかかる。サービスが IdP の設定を読むのは、サインインで初めて必要になったときだけだ。Keycloak が応答するようになる前のサインインは `The identity provider cannot be reached.` で失敗し、次のサインインのときにまた読み込みを試す。
 
 ## サービスで OIDC を有効にする
 
@@ -219,7 +219,7 @@ elm-web-try-only
 elm-service --config service.json
 ```
 
-`/auth/login` は、ブラウザーを Keycloak のサインイン画面に送る。この画面が表示されれば、サービスがレルムを読めていて、Keycloak が `elm-web` とそのリダイレクト URI を知っていることがわかる。リダイレクト URI が違うと、Keycloak は代わりにエラーの画面を返す。
+この起動では、ログに警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` と、`A Data Protection key was made: 1.` の行が出る。サービスはサインイン用の鍵を保存する前に、鍵暗号化鍵を使って自分で暗号化するので、フレームワーク自身の暗号化の仕組みは使わない。`/auth/login` は、ブラウザーを Keycloak のサインイン画面に送る。この画面が表示されれば、サービスがレルムを読めていて、Keycloak が `elm-web` とそのリダイレクト URI を知っていることがわかる。リダイレクト URI が違うと、Keycloak は代わりにエラーの画面を返す。
 
 サービスは、どこでサインインするかを `elm` に伝える。
 
@@ -241,7 +241,7 @@ elm admin request GET /v1/admin/oidc --url http://127.0.0.1:8080
 elm admin request GET /v1/admin/admins --url http://127.0.0.1:8080
 ```
 
-一覧には、チュートリアルのオーナー `https://idp.example` `tutorial` がある。`alice` は、サインインすると、`sub` `6f1c2a4e-5b7d-4e8f-9a0b-1c2d3e4f5a6b` で一覧に現れる。
+一覧には、チュートリアルのオーナー `https://idp.example` `tutorial` がある。`alice` は、サインインすると一覧に現れ、その `subject` には `sub` `6f1c2a4e-5b7d-4e8f-9a0b-1c2d3e4f5a6b` が入っている。
 
 ## elm でサインインする
 
@@ -251,7 +251,7 @@ elm admin request GET /v1/admin/admins --url http://127.0.0.1:8080
 elm admin login --url http://127.0.0.1:8080
 ```
 
-`elm` は、Keycloak のアドレスとコード、さらにコードを含んだアドレスを標準エラー出力に表示して待つ。アドレスをブラウザーで開き、求められたらコードを入力し、パスワード `alice-try-only` で `alice` としてサインインする。アクセスの許可を求める画面に `elm command-line tool` と出ていることを確かめてから、Yes を選ぶ。すると `elm` はサインインを保存し、それまでのサインインを置き換える。`elm admin request` は、サインインが終わるまで、このサービスに対してそれを使う。`elm admin request GET /v1/admin/me --url http://127.0.0.1:8080` を試すと、このユーザーの `sub` とロール `owner` が表示される。`elm admin logout` でサインインを終える。サインインを保存する場所などの詳細は、[elm コマンドリファレンス](../reference/elm-cli.md#elm-admin-login)にある。
+`elm` は、Keycloak のアドレスとコード、さらにコードを含んだアドレスを標準エラー出力に表示して待つ。アドレスをブラウザーで開き、求められたらコードを入力し、パスワード `alice-try-only` で `alice` としてサインインする。アクセスの許可を求める画面に `elm command-line tool` と出ていることを確かめてから、Yes を選ぶ。すると `elm` は `Signed in to http://127.0.0.1:8080/.` を表示してサインインを保存し、それまでのサインインを置き換える。`elm admin request` は、サインインが終わるまで、このサービスに対してそれを使う。`elm admin request GET /v1/admin/me --url http://127.0.0.1:8080` を試すと、このユーザーの `sub` が `subject` に入り、ロール `owner` とともに表示される。下の節のあいだは、サインインしたままにしておく。`elm admin logout` でサインインを終える。サインインを保存する場所は、`elm` のリファレンスの[環境変数](../reference/elm-cli.md#環境変数)にある。
 
 自分で求めたのではないコードは、決して入力しない。コードとアドレスを送ってくる人は、こちらの手で自分をサインインさせようとしている。
 
@@ -259,19 +259,19 @@ elm admin login --url http://127.0.0.1:8080
 
 ブラウザーで `http://127.0.0.1:8080/` を開き、`alice` としてサインインする。サービスは、セッション Cookie でサインインを維持する。セッションは、リクエストがないまま `session.idleMinutes`（30）が過ぎるか、`session.maxHours`（12）が過ぎると終わる。管理画面からサインアウトすると、サービスのセッションが終わり、Keycloak のサインアウトの画面が開いて確認を求める。Keycloak のセッションは、確認したときだけ終わるので、共用のブラウザーでは必ず確認する。サインインで守れないものは、ほかにも[セキュリティモデル](../explanation/security-model.md#saas-型のサービスとその管理者)に挙げている。
 
-BROWSERS_TRIED
+このガイドは、ブラウザーでは試していない。ループバックアドレス上の暗号化しない `http` でも、サービスと Keycloak はどちらも `Secure` 付きの Cookie を設定する。そのため、そのような Cookie を `http` では送り返さないブラウザーでは、ここでサインインできない。その Cookie を送り返すクライアントからなら、サービスは `http://127.0.0.1:8080` でのサインインを受け付けた。
 
 本番では、管理画面を https で提供する。サービスの前で TLS を終端するか、サービスに [`tls`](../reference/service-configuration.md#tls) を設定する。そして `publicUrls` に https のアドレスを設定する。リダイレクト URI は、そのアドレスを使うようになる。
 
 ## チュートリアルのオーナーを無効にする
 
-`alice` がサインインしたら、チュートリアルのオーナーはもう要らない。そのままでも、そのオーナーの API キーは、`setup` が作ってから 90 日で期限が切れる。`alice` としてサインインした状態で、`GET /v1/admin/admins` でそのオーナーの `id` を探し、無効にする。
+`alice` がサインインしたら、チュートリアルのオーナーはもう要らない。そのままでも、そのオーナーの API キーは、`setup` が作ってから 90 日で期限が切れる。本番では、これをしておく。このガイドでは、あとでチュートリアルのサービスと、それを使うほかのハウツーガイドに戻るなら、この手順は飛ばす。オーナーを無効にしたあとで OIDC をまたオフにすると、チュートリアルのサービスに入れる API キーはなくなる。`setup` も無効にしたブートストラップのオーナーを受け付けないので、チュートリアルを最初からやり直すしかなくなる。`alice` としてサインインした状態で、`GET /v1/admin/admins` でそのオーナーの `id` を探し、無効にする。
 
 ```shell
 elm admin request POST /v1/admin/admins/<id>/disable --url http://127.0.0.1:8080
 ```
 
-そのオーナーの API キーは、チュートリアルのキーも含めて、すぐに使えなくなる。オーナーは別のオーナーを無効にできるが、ブートストラップのオーナー、自分自身、有効な最後のオーナーは無効にできない。
+成功しても、`elm` は何も表示しない。そのあと `GET /v1/admin/admins` を見ると、そのオーナーは `"enabled":false` になっている。そのオーナーの API キーは、チュートリアルのキーも含めて、すぐに使えなくなる。オーナーは別のオーナーを無効にできるが、ブートストラップのオーナー、自分自身、有効な最後のオーナーは無効にできない。
 
 ## Microsoft Entra ID
 
@@ -295,7 +295,7 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 
 ## Keycloak を止める
 
-このガイドのコンテナは試すためだけのもので、`start-dev` はデータをコンテナの中に置く。まず `elm admin logout` を実行し、サービスを止める。次にコンテナを止めて削除する。`docker stop elm-keycloak` を実行し、続けて `docker rm -v elm-keycloak` を実行する。チュートリアルのサービスに戻すには、`kek.secret` と `web-client.secret` も削除し、`service.json` から `oidc` と `dataProtection` の設定を取り除き、チュートリアルの `bootstrapOwner`（`https://idp.example`、`tutorial`）を書き戻す。そのあと、チュートリアルの API キーをもう一度 `ELM_API_KEY` に読み込む。チュートリアルのオーナーがまた使えるのは、それを無効にしなかったときだけだ。
+このガイドのコンテナは試すためだけのもので、`start-dev` はデータをコンテナの中に置く。まず `elm admin logout` を実行し、サービスを止める。次にコンテナを止めて削除する。`docker stop elm-keycloak` を実行し、続けて `docker rm -v elm-keycloak` を実行する。チュートリアルのサービスに戻すには、`kek.secret` と `web-client.secret` も削除し、`service.json` から `oidc` と `dataProtection` の設定を取り除き、チュートリアルの `bootstrapOwner`（`https://idp.example`、`tutorial`）を書き戻す。そのあと、チュートリアルの API キーをもう一度 `ELM_API_KEY` に読み込む。キーがなければ、[始める前に](#始める前に)のとおりに `elm-service setup --config service.json` で新しいキーを作る。これができるのは、チュートリアルのオーナーを無効にしなかったときだけだ。`import` フォルダーも削除する。その中のファイルには、試すためのパスワードとクライアントシークレットが入っている。
 
 ## 関連するページ
 

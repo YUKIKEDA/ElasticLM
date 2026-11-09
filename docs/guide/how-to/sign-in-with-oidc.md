@@ -147,7 +147,7 @@ docker start elm-keycloak
 docker exec elm-keycloak bash -c 'for i in $(seq 120); do exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /realms/elm/.well-known/openid-configuration HTTP/1.0\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 " && exit 0; sleep 1; done; exit 1'
 ```
 
-`start-dev` runs Keycloak for development, with plain http and data that is gone with the container. The last line waits until Keycloak answers for the realm, which takes about half a minute. The service reads the IdP's settings only when a sign-in first needs them: before Keycloak answers, a sign-in fails with `The identity provider cannot be reached.`, and the next one tries again.
+`start-dev` runs Keycloak for development, with plain http and data that is gone with the container. While Keycloak starts, the last line prints `Connection refused` once a second; that is expected. It waits until Keycloak answers for the realm, which takes about half a minute. The service reads the IdP's settings only when a sign-in first needs them: before Keycloak answers, a sign-in fails with `The identity provider cannot be reached.`, and the next one tries again.
 
 ## Turn OIDC on in the service
 
@@ -219,7 +219,7 @@ Press Ctrl+C in the second terminal, and start the service there again; `ELM_SIG
 elm-service --config service.json
 ```
 
-`/auth/login` sends a browser to Keycloak's sign-in page. That the page answers shows that the service reads the realm, and that Keycloak knows `elm-web` and its redirect URI: with another redirect URI, Keycloak answers with an error page instead.
+At this start, the log shows a warning `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` and the line `A Data Protection key was made: 1.`: the service encrypts the sign-in's keys with the key encryption key itself before it stores them, so the framework's own encryptor is not used. `/auth/login` sends a browser to Keycloak's sign-in page. That the page answers shows that the service reads the realm, and that Keycloak knows `elm-web` and its redirect URI: with another redirect URI, Keycloak answers with an error page instead.
 
 The service tells `elm` where to sign in:
 
@@ -241,7 +241,7 @@ The tutorial's API key still works. List the administrators with it:
 elm admin request GET /v1/admin/admins --url http://127.0.0.1:8080
 ```
 
-The list holds the tutorial's owner, `https://idp.example` `tutorial`. `alice` appears, with her `sub` `6f1c2a4e-5b7d-4e8f-9a0b-1c2d3e4f5a6b`, once she has signed in.
+The list holds the tutorial's owner, `https://idp.example` `tutorial`. `alice` appears, with her `sub` `6f1c2a4e-5b7d-4e8f-9a0b-1c2d3e4f5a6b` in `subject`, once she has signed in.
 
 ## Sign in with elm
 
@@ -251,7 +251,7 @@ Remove `ELM_API_KEY` from the first terminal, since `elm` prefers it to a sign-i
 elm admin login --url http://127.0.0.1:8080
 ```
 
-`elm` prints an address of Keycloak and a code on standard error, and also an address with the code in it, and waits. Open the address in a browser, enter the code if asked, sign in as `alice` with the password `alice-try-only`, and check that the page that asks you to grant access names `elm command-line tool` before you choose Yes. `elm` then saves the sign-in, in place of any earlier one, and `elm admin request` uses it for this service until it ends: try `elm admin request GET /v1/admin/me --url http://127.0.0.1:8080`, which shows her `sub` with the role `owner`. `elm admin logout` ends it. [elm command reference](../reference/elm-cli.md#elm-admin-login) has the details, such as where the sign-in is saved.
+`elm` prints an address of Keycloak and a code on standard error, and also an address with the code in it, and waits. Open the address in a browser, enter the code if asked, sign in as `alice` with the password `alice-try-only`, and check that the page that asks you to grant access names `elm command-line tool` before you choose Yes. `elm` prints `Signed in to http://127.0.0.1:8080/.`, saves the sign-in, in place of any earlier one, and `elm admin request` uses it for this service until it ends: try `elm admin request GET /v1/admin/me --url http://127.0.0.1:8080`, which shows her `sub` in `subject` with the role `owner`. Stay signed in for the sections below; `elm admin logout` ends the sign-in, and [Environment variables](../reference/elm-cli.md#environment-variables) in the `elm` reference says where it is saved.
 
 Never type a code that you did not ask for yourself: someone who sends you a code and an address is asking you to sign them in.
 
@@ -259,19 +259,19 @@ Never type a code that you did not ask for yourself: someone who sends you a cod
 
 Open `http://127.0.0.1:8080/` in a browser, and sign in as `alice`. The service keeps the sign-in in a session cookie, which ends after `session.idleMinutes` (30) without a request, or after `session.maxHours` (12). Signing out of the admin UI ends the service's session and opens Keycloak's sign-out page, which asks you to confirm; Keycloak's session ends only if you do, so on a shared browser always confirm. [Security model](../explanation/security-model.md#around-the-hosted-service-and-its-administrators) lists what else a sign-in does not cover.
 
-BROWSERS_TRIED
+This guide has not been tried in a browser. Over plain `http` on the loopback address, the service and Keycloak both set cookies marked `Secure`, so a browser that does not send such cookies back over `http` cannot sign in here. The service accepted the sign-in over `http://127.0.0.1:8080` from a client that sends them back.
 
 In production, serve the admin UI over https: put TLS in front of the service, or give it [`tls`](../reference/service-configuration.md#tls), and set `publicUrls` to the https address, which the redirect URI then uses.
 
 ## Retire the tutorial's owner
 
-Once `alice` has signed in, the tutorial's owner is no longer needed. Its API key expires anyway 90 days after `setup` made it. Signed in as `alice`, find the owner's `id` in `GET /v1/admin/admins`, and disable it:
+Once `alice` has signed in, the tutorial's owner is no longer needed. Its API key expires anyway 90 days after `setup` made it. Do this in production; in this guide, skip it if you will go back to the tutorial's service and its other how-to guides afterwards: once the owner is disabled and OIDC is off again, no API key gets into the tutorial's service, and `setup` refuses a disabled bootstrap owner, so only starting the tutorial again from the beginning helps. Signed in as `alice`, find the owner's `id` in `GET /v1/admin/admins`, and disable it:
 
 ```shell
 elm admin request POST /v1/admin/admins/<id>/disable --url http://127.0.0.1:8080
 ```
 
-Its API keys, the tutorial's key included, stop working at once. An owner can disable another owner, but never the bootstrap owner, themselves, or the last enabled owner.
+`elm` prints nothing when it succeeds; `GET /v1/admin/admins` then shows the owner with `"enabled":false`. Its API keys, the tutorial's key included, stop working at once. An owner can disable another owner, but never the bootstrap owner, themselves, or the last enabled owner.
 
 ## Microsoft Entra ID
 
@@ -295,7 +295,7 @@ This guide has not been tried with Entra ID; check each setting against Microsof
 
 ## Stop Keycloak
 
-The container of this guide is for trying only, and `start-dev` keeps its data in the container. Run `elm admin logout` and stop the service first, then stop the container and remove it: `docker stop elm-keycloak`, then `docker rm -v elm-keycloak`. Delete `kek.secret` and `web-client.secret` too, remove the `oidc` and `dataProtection` settings from `service.json`, and put back the tutorial's `bootstrapOwner` (`https://idp.example`, `tutorial`) to go back to the tutorial's service; then read the tutorial's API key into `ELM_API_KEY` again. The tutorial's owner works again only if you did not disable it.
+The container of this guide is for trying only, and `start-dev` keeps its data in the container. Run `elm admin logout` and stop the service first, then stop the container and remove it: `docker stop elm-keycloak`, then `docker rm -v elm-keycloak`. Delete `kek.secret` and `web-client.secret` too, remove the `oidc` and `dataProtection` settings from `service.json`, and put back the tutorial's `bootstrapOwner` (`https://idp.example`, `tutorial`) to go back to the tutorial's service; then read the tutorial's API key into `ELM_API_KEY` again, or, without it, make a new one with `elm-service setup --config service.json` as in [Before you start](#before-you-start). This works only if you did not disable the tutorial's owner. Delete the `import` folder too: its file holds the trial password and client secret.
 
 ## See also
 
