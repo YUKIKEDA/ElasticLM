@@ -4,7 +4,7 @@ sidebar_position: 18
 
 # サービスをアップグレードする
 
-このガイドは、`elm-service` を SQLite で 1 つのノードで動かしていて、それを新しいバージョンに移すベンダーの運用担当者に向けている。新しいバージョンにはデータベースのマイグレーションが加わっていることがあり、サービスは起動時にそれを適用する。マイグレーションを元に戻す手段はない。新しいバージョンがデータベースにマイグレーションを適用すると、古いバージョンはそのデータベースを拒否する。そのため、このガイドでは、まずバックアップを取り、それからサービスを止め、実行ファイルを置き換えて、もう一度起動する。このガイドは、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](../tutorials/activate-an-app-online.md)の設定で、`elm-service` が `http://127.0.0.1:8080` で動いている状態から始める。
+このガイドは、`elm-service` を 1 つのノードと SQLite で動かしていて、それを新しいバージョンに移すベンダーの運用担当者に向けている。新しいバージョンにはデータベースのマイグレーションが加わっていることがあり、サービスは起動時にそれを適用する。マイグレーションを元に戻す手段はない。新しいバージョンがデータベースにマイグレーションを適用すると、古いバージョンはそのデータベースを拒否する。そのため、このガイドでは、まずバックアップを取り、それからサービスを止め、実行ファイルを置き換えて、もう一度起動する。このガイドは、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](../tutorials/activate-an-app-online.md)の設定で、`elm-service` が `http://127.0.0.1:8080` で動いている状態から始める。
 
 <!-- steps:after page=docs/guide/tutorials/activate-an-app-online.md -->
 
@@ -34,12 +34,12 @@ elm-service backup --config service.json --out before-upgrade.db
 backup: before-upgrade.db, schema version 8
 ```
 
-新しいバージョンを使い続けると確かになるまで、このファイルを取っておく。元に戻す手段はこれしかない。どこに置くか、ほかに何を取っておくかは、[サービスをバックアップして復元する](back-up-and-restore-the-service.md)で説明している。
+新しいバージョンのままでよいと確かめられるまで、このファイルを取っておく。古いバージョンに戻す手段はこれしかない。どこに置くか、ほかに何を取っておくかは、[サービスをバックアップして復元する](back-up-and-restore-the-service.md)で説明している。
 
 ## 実行ファイルを置き換えてサービスを起動する
 
 1. 2 つ目のターミナルで Ctrl+C を押して、サービスを止める。
-2. チュートリアルと同じように、新しいアーカイブを `tools` フォルダーに、古いファイルの上から展開する。Windows では `Expand-Archive elm-service-<version>-<RID>.zip -DestinationPath tools -Force`、Linux と macOS では `tar -xzf elm-service-<version>-<RID>.tar.gz -C tools` だ。
+2. チュートリアルと同じように、新しいアーカイブを、古いファイルを上書きして `tools` フォルダーに展開する。Windows では `Expand-Archive elm-service-<version>-<RID>.zip -DestinationPath tools -Force`、Linux と macOS では `tar -xzf elm-service-<version>-<RID>.tar.gz -C tools` だ。
 3. `ELM_SIGNING_PASSPHRASE` がまだ設定されている 2 つ目のターミナルで、サービスをもう一度起動する。
 
 <!-- steps:background ready=http://127.0.0.1:8080/health -->
@@ -56,7 +56,7 @@ info: elm-service[3]
 
 新しいマイグレーションがなければ、ログにこの行は出ない。どちらの場合も、ログは `service.started` の行で終わる。リリースノートに別の指示がない限り、設定ファイルはそのままでよい。
 
-チュートリアルの製品を読むなどして、サービスが自分のデータで応えることを確かめる。
+チュートリアルの製品を読むなどして、サービスがこれまでのデータを返すことを確かめる。
 
 <!-- steps:run capture=product-code pattern="(acme-cad)" -->
 ```shell
@@ -69,7 +69,7 @@ SQLite で動かせるのは 1 つのノードだけだ。PostgreSQL で複数�
 
 ## 古いバージョンに戻す
 
-マイグレーションを元に戻す手段はない。古いバージョンは、自分の知らないマイグレーションを新しいバージョンが適用したデータベースでは起動しない。終了コード 1 で終わり、次のような行を表示する。
+マイグレーションを元に戻す手段はない。新しいバージョンが、古いバージョンの知らないマイグレーションをデータベースに適用すると、古いバージョンはそのデータベースでは起動しない。終了コード 1 で終わり、次のような行を表示する。
 
 ```text
 The database has schema version 9, which this elm-service does not know; it is older than the database.
