@@ -7,7 +7,9 @@ using ElasticLM.Issuing;
 namespace ElasticLM.Cli;
 
 /// <summary>
-/// <c>elm secret create</c>: writes a random secret for the nonces of <c>elm-service</c> (design §14.8, §16).
+/// <c>elm secret create</c>: writes a random secret of 32 bytes for <c>elm-service</c>, which serves as the nonce secret
+/// (<c>nonce.secretFile</c>) and as the admin UI sign-in's key encryption key (<c>dataProtection.kekFile</c>) (design §14.8,
+/// §15.3, §16).
 /// </summary>
 internal static class SecretCommands
 {
@@ -17,7 +19,10 @@ internal static class SecretCommands
         Option<bool> forceOption = CommonOptions.Force();
         Option<bool> jsonOption = CommonOptions.Json();
 
-        var create = new Command("create", "Create a file with a random secret for the nonces of elm-service (nonce.secretFile).")
+        var create = new Command(
+            "create",
+            "Create a file with a random secret for elm-service: the nonce secret (nonce.secretFile) or the admin UI sign-in's key encryption key (dataProtection.kekFile)."
+        )
         {
             outOption,
             forceOption,
@@ -32,8 +37,9 @@ internal static class SecretCommands
                     bool force = parse.GetValue(forceOption);
                     CliFiles.EnsureWritable(outPath, force);
 
-                    // The service takes at least this many bytes; the length is not an option. The secret and its text are
-                    // only in these two arrays, which are cleared after the write.
+                    // The service takes at least this many bytes for the nonce secret and exactly as many for the key
+                    // encryption key (WebLoginSettings.KekLength), so the length is not an option. The secret and its text
+                    // are only in these two arrays, which are cleared after the write.
                     byte[] secret = RandomNumberGenerator.GetBytes(NonceService.MinSecretLength);
                     byte[] text = new byte[Base64.GetMaxEncodedToUtf8Length(secret.Length) + 1];
                     try

@@ -4,7 +4,7 @@ sidebar_position: 1
 
 # elm command reference
 
-This page lists every command and option of `elm`, the command line tool for vendors and administrators: it creates and certifies keys, issues and verifies license files, administers an on-premises license server on its own machine, calls the administration API of `elm-service`, passes offline request files to the service, creates the nonce secret of `elm-service`, and verifies signed logs. It is for looking up a command you already know you need. For what keys, certificates, license files, and servers are, read the [Overview](../explanation/overview.md) and the [Trust chain](../explanation/trust-chain.md) first.
+This page lists every command and option of `elm`, the command line tool for vendors and administrators: it creates and certifies keys, issues and verifies license files, administers an on-premises license server on its own machine, calls the administration API of `elm-service`, passes offline request files to the service, creates the secret files of `elm-service` (the nonce secret and the key encryption key of the admin UI's sign-in), and verifies signed logs. It is for looking up a command you already know you need. For what keys, certificates, license files, and servers are, read the [Overview](../explanation/overview.md) and the [Trust chain](../explanation/trust-chain.md) first.
 
 ## Common behavior
 
@@ -489,7 +489,7 @@ With `ELM_API_KEY`, or a saved `elm admin login` for the same origin as `--url`,
 elm secret create --out <file> [options]
 ```
 
-Writes the nonce secret of `elm-service`, which the service's setting [`nonce.secretFile`](service-configuration.md#nonce) names: 32 random bytes in base64, on one line. It prints `secret file: <file>`, and with `--json` an object whose `file` is the path. The secret itself is never written to standard output or standard error. On Linux and macOS the file is written with mode `0600`; on Windows it takes the access rules of its folder. With `--force`, the new file replaces the old one, as for a private key.
+Writes a secret file of `elm-service`: 32 random bytes in base64, on one line. The file serves as the nonce secret, which the service's setting [`nonce.secretFile`](service-configuration.md#nonce) names, and as the key encryption key of the admin UI's sign-in, which [`dataProtection.kekFile`](service-configuration.md#dataprotection) names. The length is fixed at 32 bytes for both: it is the service's minimum for the nonce secret and the length of the key encryption key. Create a separate file for each use. It prints `secret file: <file>`, and with `--json` an object whose `file` is the path. The secret itself is never written to standard output or standard error. On Linux and macOS the file is written with mode `0600`; on Windows it takes the access rules of its folder. With `--force`, the new file replaces the old one, as for a private key.
 
 | Option | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |

@@ -577,8 +577,9 @@ public sealed class ElmCliTests : IDisposable
     ///
     /// Expected:
     /// - Exit 0 and the standard output "secret file: &lt;path&gt;" alone, with nothing on the standard error. Each file is
-    ///   one base64 line and a line break, which decodes to 32 bytes (the service's minimum, design §14.8). The two secrets
-    ///   differ, and no output holds the secret.
+    ///   one base64 line and a line break, which decodes to 32 bytes: the service's minimum for the nonce secret
+    ///   (NonceService.MinSecretLength, design §14.8) and the length of the admin UI sign-in's key encryption key
+    ///   (WebLoginSettings.KekLength, design §16, V1c4d2b, review R8). The two secrets differ, and no output holds the secret.
     /// </remarks>
     [Fact]
     public void SecretCreate_WritesBase64Of32Bytes_AndPrintsOnlyThePath()
@@ -596,6 +597,8 @@ public sealed class ElmCliTests : IDisposable
         Assert.Single(first.Split('\n', StringSplitOptions.RemoveEmptyEntries));
         Assert.Equal(32, Convert.FromBase64String(first.TrimEnd('\n')).Length);
         Assert.Equal(32, Convert.FromBase64String(second.TrimEnd('\n')).Length);
+        Assert.Equal(Issuing.NonceService.MinSecretLength, Convert.FromBase64String(first.TrimEnd('\n')).Length);
+        Assert.Equal(Service.WebLoginSettings.KekLength, Convert.FromBase64String(first.TrimEnd('\n')).Length);
         Assert.NotEqual(first, second);
         Assert.DoesNotContain(first.TrimEnd('\n'), output, StringComparison.Ordinal);
         Assert.DoesNotContain(second.TrimEnd('\n'), secondOutput, StringComparison.Ordinal);
