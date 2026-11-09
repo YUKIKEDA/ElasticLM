@@ -122,7 +122,7 @@ error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INS
 - オンライン。`service.url` にベンダーの `elm-service` を指定しているときは、ライセンスの期限が切れる前にサーバーが自分で更新する。`elm server refresh` を使えば、すぐに更新する。
 - オフライン。`elm server refresh-request` でリクエストファイルを書き、ベンダーがそれを `elm-service` で処理し、`elm server import` でそのレスポンスを取り込む。
 
-このようなサーバーに、手作業で発行したファイルを読み込ませない。アクティベーションを更新すると、読み込ませたファイルはそのアクティベーションのライセンスで上書きされる。`service.url` を指定しているときは、読み込ませたファイルが同じライセンスの古いものなら、サーバーは 1 時間以内にアクティベーションのライセンスに戻る。コマンドは[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に、設定は [`service`](../reference/server-configuration.md#service) に挙げている。
+このようなサーバーに、手作業で発行したファイルを読み込ませない。アクティベーションを更新すると、読み込ませたファイルはそのアクティベーションのライセンスで上書きされる。`service.url` を指定しているときは、読み込ませたファイルが同じライセンスの古いものなら、サーバーは 1 時間以内にアクティベーションのライセンスに戻る。どちらの方法も、[elm-service でサーバーライセンスをアクティベーションする](activate-a-server-license-with-elm-service.md)で手順を追って示している。コマンドは[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に、設定は [`service`](../reference/server-configuration.md#service) に挙げている。
 
 ## 関連するページ
 

@@ -5038,7 +5038,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `elm server refresh` の出力の `seq` が 2。
     - `elm server import` の出力の `seq` が 3。
     - 本文は、自動の更新の時刻（期限から `refreshWindow` を引いた時刻。失敗のあとの試し直しは下の R8）を §13.7 から書く。
-  - 置き場所（Q4）: How-to の 22 番目。題は「Activate a server license with elm-service」（日本語は「`elm-service` でサーバーライセンスを有効化する」）。入口の頁のベンダーとサーバー管理者の道筋に足し、`renew-a-server-license.md` の節「Servers activated with elm-service」からリンクする。
+  - 置き場所（Q4）: How-to の 22 番目。題は「Activate a server license with elm-service」（日本語は、利用者の文書の用語集の「アクティベーション」に合わせて「elm-service でサーバーライセンスをアクティベーションする」にした。実装で決めた）。入口の頁のベンダーとサーバー管理者の道筋に足し、`renew-a-server-license.md` の節「Servers activated with elm-service」からリンクする。
   - レビュー（Q5）: 設計の独立レビュー、正しさのレビュー（頁の手順を CI と同じ公開した実行ファイルで流す）、初見の読み手のレビュー、日本語のレビュー（書き手と別）。指摘は表にして、ready の前に Issue か PR に載せる。仕組みの新しい決まりは、許す形を頁で流し、断る形を決まりごとに 1 つ、決まりを破った頁の写しを手元で流して確かめる（仕組みには自動のテストがない）。
   - 設計の独立レビュー（R1〜R10、Issue #296）で改めた形:
     - 読み込み直しの確かめ（R1）: `elm server activate`、`refresh`、`import` は、管理 API に届かないときも終了コード 0 で終わり、`The server is not running; it reads the license when it starts.` だけを出す（`ServerLicenseCommands.cs` の `Reload`）。そのため、seq だけでは動いているサーバーが読み込み直したかを見られない。サーバーが止まっている `activate` のあとはこの文を、`refresh` と `import` のあとは `The server reloaded the license.` を `steps:expect` で確かめる。

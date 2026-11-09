@@ -135,7 +135,7 @@ info: elm-server[1]
 
 ## Renew online
 
-With `service.url`, the server renews the license on its own. It asks the service when the file enters its last `refreshWindow` days, here 20 days before it expires. When a renewal fails, it tries again an hour later, or after the time that the service names, at most 24 hours. It stops trying when the service no longer knows the activation, or refuses it because the server looks like a copy of another ([Clone detection with the sequence number](../explanation/activation.md#clone-detection-with-the-sequence-number)) or its [proof](../explanation/devices-and-proofs.md#proofs) does not verify. Each new file goes to the path of `license`, and the server reads it while it runs, so apps keep their leases.
+With `service.url`, the server renews the license on its own. It asks the service when the file enters its last `refreshWindow` days, here 20 days before it expires. When a renewal fails, it tries again an hour later, or after the time that the service names, at most 24 hours. It stops trying when the service no longer knows the activation, or refuses the renewal because the server looks like a copy of another ([Clone detection with the sequence number](../explanation/activation.md#clone-detection-with-the-sequence-number)) or its [proof](../explanation/devices-and-proofs.md#proofs) does not verify. Each new file goes to the path of `license`, and the server reads it while it runs, so apps keep their leases.
 
 To renew at once, for example after the vendor added seats to the license, run `elm server refresh`: it renews whenever you run it, also before the `refreshWindow`. It needs `--service` too, since it does not read `server.json`:
 
