@@ -54,9 +54,8 @@ function Invoke-Native([string]$what, [scriptblock]$command) {
     $out
 }
 
-function Read-Json([string]$path) { Get-Content -Raw $path | ConvertFrom-Json }
-
-function Get-Blob([string]$layout, [string]$digest) { Join-Path $layout ('blobs/' + $digest.Replace(':', '/')) }
+# Read-LayoutJson, Get-LayoutBlob, Get-PlatformManifest, and New-DockerArchive, which eng/docs/Test-GuideSteps.ps1 uses too.
+. (Join-Path $PSScriptRoot 'ImageLayout.ps1')
 
 try {
     New-Item -ItemType Directory -Path $work | Out-Null
@@ -65,15 +64,15 @@ try {
     Invoke-Native 'tar' { tar -xf $ImageTar -C $layout } | Out-Null
 
     # The index digest.
-    $outer = Read-Json (Join-Path $layout 'index.json')
+    $outer = Read-LayoutJson (Join-Path $layout 'index.json')
     $digest = $outer.manifests[0].digest
     if ($digest -ne $ExpectedDigest) { $failures.Add("The index digest is $digest, not $ExpectedDigest.") }
+    if ($outer.manifests[0].mediaType -ne 'application/vnd.oci.image.index.v1+json') { throw 'The layout does not name an image index of both platforms.' }
 
     # This architecture's manifest and the base's manifest of the same platform.
-    $imageIndex = Read-Json (Get-Blob $layout $digest)
-    $descriptor = @($imageIndex.manifests | Where-Object { $_.platform.os -eq 'linux' -and $_.platform.architecture -eq $Arch })
-    if ($descriptor.Count -ne 1) { throw "The image index has no single linux/$Arch manifest." }
-    $manifest = Read-Json (Get-Blob $layout $descriptor[0].digest)
+    $platform = Get-PlatformManifest $layout $Arch
+    $descriptor = @($platform.Descriptor)
+    $manifest = $platform.Manifest
     $from = (Select-String -Path (Join-Path $root 'eng/container/Dockerfile') -Pattern '^FROM\s+(\S+)$').Matches[0].Groups[1].Value
     $repository = $from.Split('@')[0].Split(':')[0]
     $baseIndex = (Invoke-Native 'imagetools inspect' { docker buildx imagetools inspect --raw $from }) -join "`n" | ConvertFrom-Json
@@ -90,7 +89,7 @@ try {
     $added = Join-Path $work 'added'
     New-Item -ItemType Directory -Path $added | Out-Null
     foreach ($layer in $layers | Select-Object -Skip $baseLayers.Count) {
-        $blob = Get-Blob $layout $layer
+        $blob = Get-LayoutBlob $layout $layer
         $paths = @(Invoke-Native 'tar' { tar -tzf $blob } | ForEach-Object { $_.TrimStart('.', '/') } | Where-Object { $_ })
         $extra = @($paths | Where-Object { $allowed -notcontains $_ -and $allowed -notcontains "$_/" })
         if ($extra.Count -gt 0) { $failures.Add("An added layer holds $($extra -join ', ').") }
@@ -109,18 +108,10 @@ try {
 
     # Load this platform and check that the loaded image is the manifest's. Docker 28's classic image store does not read an
     # OCI layout (it looks for docker's manifest.json), so the layout gets a manifest.json that names this platform's config
-    # and layers: the same blobs, nothing rebuilt.
+    # and layers: the same blobs, nothing rebuilt (New-DockerArchive).
     "Docker: $((Invoke-Native 'docker version' { docker version --format '{{.Server.Version}} (API {{.Server.APIVersion}})' }) -join '')"
-    $dockerManifest = @(
-        [ordered]@{
-            Config = 'blobs/' + $manifest.config.digest.Replace(':', '/')
-            RepoTags = @($tag)
-            Layers = @($manifest.layers | ForEach-Object { 'blobs/' + $_.digest.Replace(':', '/') })
-        }
-    )
-    ConvertTo-Json -InputObject $dockerManifest -Depth 4 | Set-Content (Join-Path $layout 'manifest.json') -Encoding utf8NoBOM
     $dockerArchive = Join-Path $work 'docker-archive.tar'
-    Invoke-Native 'tar' { tar -cf $dockerArchive -C $layout . } | Out-Null
+    New-DockerArchive $layout $manifest $tag $dockerArchive
     Invoke-Native 'docker load' { docker load --input $dockerArchive } | Out-Host
     $id = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Id}}' $tag }).Trim()
     # The classic image store names an image by its config digest; the containerd image store by its manifest's digest.
