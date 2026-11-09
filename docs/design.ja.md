@@ -4892,7 +4892,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `elm admin login` はデバイスフローで、人の承認が要る（`tests/ElasticLM.Cli.Tests/KeycloakTests.cs` はコードで Keycloak のフォームを送って承認する）。
     - イメージは最初の正式版まで公開しない（rc は push しない）。`CONTRIBUTING.md` にイメージを作る手順はない。`docs/container.md` は SQLite のコンテナーの運用だけを書き、PostgreSQL とコンテナーでの `backup` に触れない。
   - 行の分け方（Q1）: V1c4d2 を V1c4d2a（コンテナーと PostgreSQL の 2 頁、CI の段、手順を流す仕組みの変更）と V1c4d2b（OIDC の頁）に分ける。V1c4d2b は V1c4d2a のあと、V1c4f の前に置く。
-  - 段の置き場所（Q2）: `release.yml` の `image` ジョブのあとに、新しいジョブ（ubuntu-latest）を置く。そのジョブは、`image` ジョブのイメージの成果物と、同じ run の linux-x64 の実行ファイルとパッケージを受け取って頁を流す。公開するのと同じイメージで頁を確かめ、イメージを 2 度作らない。`ci.yml` の `aot` ジョブの Guide steps では、`docker` のブロックは飛ばされる。
+  - 段の置き場所（Q2）: `release.yml` の `image` ジョブのあとに、新しいジョブ（ubuntu-latest）を置く。そのジョブは、`image` ジョブのイメージの成果物と、同じ run の linux-x64 の実行ファイルとパッケージを受け取って頁を流す。公開するのと同じイメージで頁を確かめ、イメージを 2 度作らない。`ci.yml` の `aot` ジョブの Guide steps では、`docker` のブロックは飛ばされる（設計の独立レビューの R1 で、`docker` の行を持つ頁を頁ごと飛ばす形に改めた。下の箇条）。
   - PostgreSQL と Keycloak を誰が立てるか（Q3）: 頁が、試すためのコンテナーを `os=linux` のブロックの `docker run` で立てる。CI の段は前もって立てない（手順を流す仕組みが用意するものは読み手にも手順として書く、PR #267 の教訓）。自分のサーバーを持つ読み手は、そのブロックを飛ばす。`pg_dump`、`pg_restore`、`psql` は、サーバーと同じ版の道具を使うため、PostgreSQL のコンテナーの中のものを `docker exec` で使う。上の「V1c4d の Grill」の Q3 の「段が立てる」を改めた。
   - OIDC の頁で CI が確かめる範囲（Q4、V1c4d2b）: 承認より前と、承認の要らない道まで（Keycloak を立てて realm を入れる、OIDC の設定でサービスが起動する、`GET /v1/admin/oidc` が発行者を返す、`/auth/login` が Keycloak へ移す 302）。ログインと承認（ブラウザーとデバイスコード）は本文にし、`KeycloakTests` が確かめていると PR に書く。Entra ID は本文だけ。細部は V1c4d2b の Grill で決める。
   - `docs/container.md` との分け方（Q5）: 利用者向けの中身（起動、ボリューム、秘密のファイル、`ELM_PUBLICURLS`、`ELM_NODE_NAME`、ヘルス、コンテナーでの `backup`）は新しい How-to の頁に移す。`docs/container.md` には、イメージの作り方と確かめ方（保守する人のため）だけを残して頁を指す。入口の頁の `docs/container.md` へのリンクも頁に向け直す。同じ事実を 2 か所に置かない。
@@ -4907,7 +4907,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 確かめ: `docker exec … pg_dump -Fc` で写しを作る。別のデータベースに `pg_restore` で戻す。サービスをそこに向けて起動し直し、製品が取れること。
     - 本文: 対応する版（15〜18）。複数のノードで同じにするもの（ノンスの秘密、署名鍵、KEK）と、ノードごとのもの（`node.name`、利用ログ）。版を更新する順（古いノードを全部止め、新しい版を 1 つ起動して移行させ、残りを起動する。移行のあとは古いノードが終了コード 1 で断る）。戻したときに消えるもの（バックアップの頁を指す）。2 つ目のノードを動かす手順は本文だけ（1 頁に裏のプロセスは 1 つまで）。
   - 手順を流す仕組み（Q9）:
-    - `-Docker` を渡したときだけ、`os=linux` のブロックの `docker` の行を流す。渡さない段とほかの OS では、そのブロックを飛ばして `skipped` と出す。
+    - `-Docker` を渡したときだけ、`os=linux` のブロックの `docker` の行を流す。渡さない段とほかの OS では、そのブロックを飛ばして `skipped` と出す（設計の独立レビューの R1 で、頁ごと飛ばして `skip: <頁>` と出す形に改めた。下の箇条）。
     - `steps:background` に `docker run --rm --name <名前> …` を許し、止めるときは `docker stop <名前>` を流す。ready は今と同じくループバックの URL。
     - `docker` の行には `ELM_SIGNING_PASSPHRASE` だけを渡す（`-e` で値を書かずに渡すため）。ほかの `ELM_*` は渡さない。
     - `steps:prebuilt name=image` は、`-Image <tar>` で受け取ったイメージを `docker load` し、頁が使う名前を付ける。
