@@ -82,6 +82,7 @@ These settings do not follow the rule:
 | `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK` | The key encryption key itself (base64), not a file path. |
 | `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`, or `ELM_TRUST_ROOT_KEYS` | `ELM_TRUST_ROOTKEYS` follows the rule and holds file paths. `ELM_TRUST_ROOT_KEYS` holds the root public keys as PEM text, and is read only when the files give no key. **Mind the second `_`:** the two names differ only by it. |
 | `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | Scopes separated by spaces, not by `;`. |
+| `oidc.webScopes` | `ELM_OIDC_WEBSCOPES` | Scopes separated by spaces, not by `;`. |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | `value=role` pairs separated by `;`, such as `elm-owners=owner;elm-support=support`. A claim value that holds `;` is written in the file instead. |
 
 ## Top-level settings
@@ -134,11 +135,11 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
 | `bootstrapOwner.iss` | `ELM_BOOTSTRAPOWNER_ISS` | string | none | The OIDC issuer of the first `owner` administrator. 1 to 255 characters. Set both `iss` and `sub`, or neither. With `oidc.issuer` set, it must equal `oidc.issuer`. |
-| `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_SUB` | string | none | The subject (`sub`) of the first `owner` administrator at that issuer. 1 to 255 characters. |
+| `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_SUB` | string | none | The first `owner` administrator's value, at that issuer, of the claim that `oidc.subjectClaim` names (`sub` by default). 1 to 255 characters. The key stays `sub` whichever claim is named. |
 
 `elm-service setup` needs `bootstrapOwner`, and makes its API keys for this administrator.
 
-- With OIDC (`oidc.issuer` set): `iss` is the identity provider's issuer and `sub` is the subject that it gives the person who is the first `owner`. When that person signs in, they get the `owner` role whatever `oidc.roleMap` says.
+- With OIDC (`oidc.issuer` set): `iss` is the identity provider's issuer and `sub` is the value that it gives the person who is the first `owner` in the claim that `oidc.subjectClaim` names: the subject (`sub`) by default, or the object ID with `oid`. When that person signs in, they get the `owner` role whatever `oidc.roleMap` says.
 - Without OIDC: nobody signs in, and the first `owner` works with the API keys that `setup` makes. `iss` and `sub` only name that administrator, and any text of 1 to 255 characters works, such as `local` and `owner`. If you may turn on OIDC later, use the identity provider's issuer and the person's subject there from the start: `bootstrapOwner.iss` must then equal `oidc.issuer`, and the person with that `sub` gets the `owner` role at sign-in.
 
 ## `nonce`
@@ -186,8 +187,18 @@ The identity provider whose access tokens the administration API accepts. Withou
 | `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | list of strings | `openid`, `offline_access` | The scopes that `elm admin login` asks for. 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces, `"`, or `\`. |
 | `oidc.roleClaim` | `ELM_OIDC_ROLECLAIM` | string | `groups` | The token claim whose values name roles. 1 to 255 characters. |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | object of strings | none | Claim values and the roles they give. 1 to 100 entries. A value is 1 to 255 characters; a role is `owner`, `admin`, `support`, or `viewer`. In the environment variable, each value appears once. |
+| `oidc.subjectClaim` | `ELM_OIDC_SUBJECTCLAIM` | string | `sub` | The token claim that tells administrators apart: `sub` or `oid` only; any other value stops the service from starting. Its value is the administrator's `subject`, and is compared with `bootstrapOwner.sub`. A token is refused when the claim is missing, appears more than once, or is not one string of 1 to 255 characters without control characters. Put the claim in both the ID token and the access token, with the same value. To change it after administrators have signed in, follow the steps below this table. |
 | `oidc.webClientId` | `ELM_OIDC_WEBCLIENTID` | string | none: the admin UI's sign-in is off | The confidential client of the admin UI's sign-in. 1 to 255 characters. Needs `oidc.issuer` and the web client's secret. Must differ from `oidc.cliClientId` and from `oidc.audience`. |
 | `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET` | file path | none | The file that holds the web client's secret: 1 to 1024 printable ASCII characters without spaces. Required with `oidc.webClientId`. A secret: see [Secrets](#secrets). |
+| `oidc.webScopes` | `ELM_OIDC_WEBSCOPES` | list of strings | `openid` | The scopes that the admin UI's sign-in asks for. 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces, `"`, or `\`. Must hold `openid`, in lower case. Needs `oidc.webClientId`. With Microsoft Entra ID and `oidc.subjectClaim` set to `oid`, use `openid profile`: Entra ID puts `oid` in a token only when the request asks for `profile`. |
+
+The service does not move administrators from one claim to another. If you change `oidc.subjectClaim` after administrators have signed in, each person becomes a new administrator at their next sign-in. To change it on a running service:
+
+1. In the same restart that changes `oidc.subjectClaim`, change `bootstrapOwner.sub` to the first `owner` administrator's value of the new claim.
+2. Sign in, and make the API keys again as the new administrator. The keys of an old administrator stop working after `apiKeys.inactiveAdminDays`, because nobody signs in as that administrator any more.
+3. Disable the old administrators (`POST /v1/admin/admins/{id}/disable`).
+
+At most identity providers, `sub` and `oid` have values of different forms. At one where the two are the same, each person stays on their own administrator; nobody lands on another person's administrator.
 
 For the admin UI's sign-in, register the web client at the identity provider with these URLs, where `<origin>` is the scheme, host, and port of the first `publicUrls` entry (such as `https://activation.example.com`), or of the loopback `listen` URL without `publicUrls`:
 
@@ -196,7 +207,7 @@ For the admin UI's sign-in, register the web client at the identity provider wit
 | Redirect URI (callback) | `<origin>/auth/callback` |
 | Post-logout redirect URI | `<origin>/` |
 
-The sign-in uses the authorization code flow with PKCE and asks for the scope `openid` only. At sign-out, the admin UI sends the browser to the identity provider's `end_session_endpoint` with `client_id` and `post_logout_redirect_uri`, when the provider's discovery document has that endpoint.
+The sign-in uses the authorization code flow with PKCE and asks for the scopes of `oidc.webScopes` (`openid` by default). At sign-out, the admin UI sends the browser to the identity provider's `end_session_endpoint` with `client_id` and `post_logout_redirect_uri`, when the provider's discovery document has that endpoint.
 
 ## `apiKeys`
 

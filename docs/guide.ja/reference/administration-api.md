@@ -80,12 +80,12 @@ sidebar_position: 6
 | 資格情報 | 送り方 | 受け入れる条件 |
 | --- | --- | --- |
 | API キー | `Authorization: Bearer elm_…`。`elm_` と 43 文字の base64url からなる。キーは `elm-service setup` と `POST /v1/admin/api-keys` で作る。 | 常に受け入れる。キーは、期限が切れるか失効するまで使える。`oidc.issuer` を設定したときは、その管理者が `apiKeys.inactiveAdminDays` 日サインインしていなくても使えなくなる。日数は、最後のサインイン、管理者の作成、キーの作成のうち、いちばん遅いものから数える。 |
-| OIDC のアクセストークン | `Authorization: Bearer <token>`。値は `elm_` で始まらない。`elm admin login` で得る。 | `oidc.issuer` を設定したときだけ受け入れる。トークンは、8,192 文字以下の署名付き JWT（RS256、PS256、ES256 のいずれか）で、`typ` が `at+jwt`、`application/at+jwt`、`JWT` のいずれか、`iss` が `oidc.issuer` と等しく、`aud` が `oidc.audience` を含み、`exp` が有効（時計のずれは 60 秒まで許す）でなければならない。`iss` と `sub` は、それぞれ制御文字を含まない 1 から 255 文字で、管理者を表す。`oidc.roleClaim`（値は 100 個まで）が、`oidc.roleMap` を通してロールを決める。これらの制限を外れたトークンは有効でない。 |
+| OIDC のアクセストークン | `Authorization: Bearer <token>`。値は `elm_` で始まらない。`elm admin login` で得る。 | `oidc.issuer` を設定したときだけ受け入れる。トークンは、8,192 文字以下の署名付き JWT（RS256、PS256、ES256 のいずれか）で、`typ` が `at+jwt`、`application/at+jwt`、`JWT` のいずれか、`iss` が `oidc.issuer` と等しく、`aud` が `oidc.audience` を含み、`exp` が有効（時計のずれは 60 秒まで許す）でなければならない。`iss` と、`oidc.subjectClaim` が指すクレーム（既定は `sub`）は、それぞれ制御文字を含まない 1 から 255 文字で、管理者を表す。そのクレームは 1 回だけ、文字列で入っていなければならない。`oidc.roleClaim`（値は 100 個まで）が、`oidc.roleMap` を通してロールを決める。これらの制限を外れたトークンは有効でない。 |
 | 管理画面のセッション | Cookie の `__Host-elm-session`。`Authorization` ヘッダーは付けない。`GET` と `HEAD` 以外のリクエストには、ヘッダー `X-ELM-CSRF: 1` も要る。`Origin` ヘッダーがあるときは、管理画面のオリジンでなければならない。 | 管理画面のサインインが有効なとき（`oidc.webClientId` を設定したとき）だけ受け入れる。リクエストがないまま `session.idleMinutes` が過ぎるか、`session.maxHours` が過ぎると、セッションは終わる。 |
 
 - スキーム名の `Bearer` は、大文字と小文字を区別しない。`Authorization` ヘッダーのあるリクエストを、Cookie で認証することはない。
 - 資格情報がない、知らない資格情報である、資格情報が失効しているか期限が切れている、管理者が無効になっている、セッションが終わっている、のどれも同じレスポンスになる。`401` と `ELM_UNAUTHORIZED` だ。
-- 有効なアクセストークンでも、ロールのクレームがどのロールにも対応しなければ、`403` と `ELM_FORBIDDEN` になる。トークンの `iss` と `sub` が `bootstrapOwner`（最初の管理者。[elm-service の設定](service-configuration.md#bootstrapowner)で指定する）のものなら、クレームの内容にかかわらず、ロールは `owner` になる。
+- 有効なアクセストークンでも、ロールのクレームがどのロールにも対応しなければ、`403` と `ELM_FORBIDDEN` になる。トークンの `iss` と、`oidc.subjectClaim` のクレームの値が `bootstrapOwner`（最初の管理者。[elm-service の設定](service-configuration.md#bootstrapowner)で指定する）のものなら、クレームの内容にかかわらず、ロールは `owner` になる。
 - CSRF 対策のヘッダーがないセッションのリクエストと、別のオリジンからのセッションのリクエストは、`403` と `ELM_FORBIDDEN` になる。
 
 設定は [elm-service の設定](service-configuration.md#oidc)にある。サインインそのもの（`/auth/login`、`/auth/callback`、`/auth/logout`）は管理画面の一部で、この API には含まない。
@@ -336,7 +336,7 @@ sidebar_position: 6
 | --- | --- | --- |
 | `id` | 文字列 | 管理者の ID。 |
 | `issuer` | 文字列 | OIDC の発行者（`iss`）。 |
-| `subject` | 文字列 | その発行者におけるサブジェクト（`sub`）。 |
+| `subject` | 文字列 | その発行者における、`oidc.subjectClaim` が指すクレームの値（既定は `sub`）。 |
 | `role` | 文字列 | `owner`、`admin`、`support`、`viewer`、`none` のいずれか。 |
 | `enabled` | 真偽値 | 管理者が認証できるかどうか。無効にした管理者の API キー、トークン、セッションは使えない。 |
 | `createdAt` | 時刻 | 管理者を作成した時刻。`bootstrapOwner` なら `elm-service setup` が作成した時刻、それ以外なら最初のサインインの時刻。 |
@@ -1723,7 +1723,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | --- | --- | --- |
 | `id` | 文字列 | 管理者の ID。 |
 | `issuer` | 文字列 | OIDC の発行者。 |
-| `subject` | 文字列 | その発行者におけるサブジェクト。 |
+| `subject` | 文字列 | その発行者における、`oidc.subjectClaim` が指すクレームの値（既定は `sub`）。 |
 | `role` | 文字列 | `owner`、`admin`、`support`、`viewer`、`none` のいずれか。 |
 | `permissions` | 文字列の配列 | このリクエストが持つ権限。[ロールと権限](#ロールと権限)の順に並ぶ。API キーでは、キーの権限のうちロールも持つものだ。 |
 

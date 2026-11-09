@@ -10,13 +10,16 @@ namespace ElasticLM.Service;
 /// <param name="CliScopes">The scopes <c>elm admin login</c> asks for.</param>
 /// <param name="RoleClaim">The claim whose values name roles.</param>
 /// <param name="RoleMap">The claim values and the roles they give.</param>
+/// <param name="SubjectClaim">The claim that tells administrators apart: <c>sub</c> or <c>oid</c> (<c>oidc.subjectClaim</c>,
+/// V1c15). Its value is the administrator's <c>subject</c>.</param>
 internal sealed record OidcSettings(
     string Issuer,
     string Audience,
     string CliClientId,
     IReadOnlyList<string> CliScopes,
     string RoleClaim,
-    IReadOnlyDictionary<string, string> RoleMap
+    IReadOnlyDictionary<string, string> RoleMap,
+    string SubjectClaim
 )
 {
     private const int MaxTextLength = 255;
@@ -25,8 +28,14 @@ internal sealed record OidcSettings(
     private const int MaxScopeLength = 100;
     private const int MaxRoleMapEntries = 100;
 
+    /// <summary>The claim that tells administrators apart when <c>oidc.subjectClaim</c> is left out.</summary>
+    public const string DefaultSubjectClaim = "sub";
+
     /// <summary>Gets the scopes asked for when <c>oidc.cliScopes</c> is left out.</summary>
     public static IReadOnlyList<string> DefaultScopes { get; } = ["openid", "offline_access"];
+
+    // design §20.7, V1c15 review R4: only claims the user cannot change at the identity provider and that differ per user.
+    private static readonly string[] SubjectClaims = ["sub", "oid"];
 
     /// <summary>
     /// Reads the <c>oidc</c> settings from the file and the environment; <see langword="null"/> when no issuer is set.
@@ -45,10 +54,11 @@ internal sealed record OidcSettings(
             : section?.CliScopes;
         string? roleClaim = environment("ELM_OIDC_ROLECLAIM") ?? section?.RoleClaim;
         IReadOnlyDictionary<string, string>? roleMap = environment("ELM_OIDC_ROLEMAP") is string mapText ? ParseRoleMap(mapText) : section?.RoleMap;
+        string? subjectClaim = environment("ELM_OIDC_SUBJECTCLAIM") ?? section?.SubjectClaim;
 
         if (issuerText is null)
         {
-            return audience is null && clientId is null && scopes is null && roleClaim is null && roleMap is null
+            return audience is null && clientId is null && scopes is null && roleClaim is null && roleMap is null && subjectClaim is null
                 ? null
                 : throw new ServiceStartException("The oidc settings need oidc.issuer.");
         }
@@ -57,10 +67,11 @@ internal sealed record OidcSettings(
         Text(audience, "oidc.audience");
         Text(clientId, "oidc.cliClientId");
         Text(roleClaim ?? "groups", "oidc.roleClaim");
-        scopes ??= DefaultScopes;
-        if (scopes.Count is < 1 or > MaxScopes || scopes.Any(s => !IsScope(s)))
+        CheckScopes(scopes ??= DefaultScopes, "oidc.cliScopes");
+        subjectClaim ??= DefaultSubjectClaim;
+        if (!SubjectClaims.Contains(subjectClaim, StringComparer.Ordinal))
         {
-            throw new ServiceStartException("oidc.cliScopes must hold 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces.");
+            throw new ServiceStartException("oidc.subjectClaim must be sub or oid.");
         }
 
         if (roleMap is not { Count: >= 1 and <= MaxRoleMapEntries })
@@ -86,7 +97,23 @@ internal sealed record OidcSettings(
             );
         }
 
-        return new OidcSettings(issuer, audience!, clientId!, [.. scopes], roleClaim ?? "groups", roleMap);
+        return new OidcSettings(issuer, audience!, clientId!, [.. scopes], roleClaim ?? "groups", roleMap, subjectClaim);
+    }
+
+    /// <summary>
+    /// Checks a list of scopes (<c>oidc.cliScopes</c>, <c>oidc.webScopes</c>): 1 to 20 scopes, each 1 to 100 printable ASCII
+    /// characters without spaces, <c>"</c>, or <c>\</c>.
+    /// </summary>
+    /// <param name="scopes">The scopes.</param>
+    /// <param name="key">The setting's key, for the message.</param>
+    /// <exception cref="ServiceStartException">The list is out of its range.</exception>
+    public static void CheckScopes(IReadOnlyList<string> scopes, string key)
+    {
+        ArgumentNullException.ThrowIfNull(scopes);
+        if (scopes.Count is < 1 or > MaxScopes || scopes.Any(s => !IsScope(s)))
+        {
+            throw new ServiceStartException($"{key} must hold 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces, \", or \\.");
+        }
     }
 
     /// <summary>

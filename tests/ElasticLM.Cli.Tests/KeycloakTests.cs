@@ -138,7 +138,8 @@ public sealed partial class KeycloakTests
             "elm-web-test-only",
             System.Security.Cryptography.RandomNumberGenerator.GetBytes(WebLoginSettings.KekLength),
             TimeSpan.FromMinutes(30),
-            TimeSpan.FromHours(12)
+            TimeSpan.FromHours(12),
+            WebLoginSettings.DefaultScopes
         );
         ElmService service = await test.StartAsync(s =>
             s with
@@ -249,7 +250,7 @@ public sealed partial class KeycloakTests
     }
 
     private static OidcSettings Settings(string realm, string audience) =>
-        new(realm, audience, "elm-cli", OidcSettings.DefaultScopes, "groups", Roles);
+        new(realm, audience, "elm-cli", OidcSettings.DefaultScopes, "groups", Roles, OidcSettings.DefaultSubjectClaim);
 
     // Approves a device code on Keycloak's pages, as a person would: the verification URL with the code leads to the login
     // page, the login to the consent page (Keycloak asks for consent in the device flow), and the consent ends the approval;

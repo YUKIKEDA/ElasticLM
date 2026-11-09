@@ -404,11 +404,11 @@ public sealed class ElmServiceWebTests
     /// Steps:
     /// - Start a sign-in in one browser and finish it in another; start one and come back after 16 minutes; let the provider
     ///   answer access_denied; let it put in the ID token: another audience, azp of another client, two audiences without azp,
-    ///   another nonce, no sub, 101 groups; then wait a minute for the failure count.
+    ///   another nonce, no sub, the sub the number 12345, 101 groups; then wait a minute for the failure count.
     ///
     /// Expected:
     /// - 400 with the fixed text, text/plain; charset=utf-8, no-store, nosniff, and the CSP default-src 'none'; frame-ancestors
-    ///   'none' for each; no session row; auth.failed rows whose counts add up to the ten.
+    ///   'none' for each; no session row; auth.failed rows whose counts add up to the eleven.
     /// </remarks>
     [Fact]
     public async Task Callback_Refusals_AreBadRequests()
@@ -447,6 +447,7 @@ public sealed class ElmServiceWebTests
             p => p["aud"] = new[] { FakeIdp.WebClientId, "other" },
             p => p["nonce"] = "another-nonce",
             p => p.Remove("sub"),
+            p => p["sub"] = 12345L,
             p => p["groups"] = Enumerable.Range(0, ElmService.MaxRoleValues + 1).Select(i => "g" + i).ToArray(),
         ];
         foreach (Action<Dictionary<string, object?>> change in tokens)
@@ -456,7 +457,7 @@ public sealed class ElmServiceWebTests
         }
 
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
-        await test.WaitWithClockAsync(async () => await FailuresAsync(test, service, owner) == 10);
+        await test.WaitWithClockAsync(async () => await FailuresAsync(test, service, owner) == 11);
     }
 
     /// <summary>
@@ -529,6 +530,136 @@ public sealed class ElmServiceWebTests
         AdminRow row = (await service.Database.FindAdminAsync(new AdminIdentity(idp.Issuer, "carol"), TestContext.Current.CancellationToken))!;
         Assert.Equal("admin", row.Role);
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
+    }
+
+    /// <summary>
+    /// With oidc.subjectClaim oid (design §14.6, §15.3, §20.7 V1c15), the CLI's access token and the admin UI's sign-in,
+    /// whose sub differs per application as Entra ID's does but whose oid is the same, give one administrator row whose
+    /// subject is the oid; bootstrapOwner.sub of that oid gives owner; the sign-in asks for the scopes of oidc.webScopes.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in that trusts the fake provider, with oidc.subjectClaim oid, oidc.webScopes openid
+    ///   profile, and the bootstrap owner of the oid oid-alice.
+    /// - The provider gives alice the oid oid-alice, the sub cli-alice to the CLI client and web-alice to the web client, and
+    ///   no mapped group.
+    ///
+    /// Steps:
+    /// - Get an access token from the provider's token endpoint with the device code grant as the CLI client; list
+    ///   administrators with it.
+    /// - Sign in to the admin UI; list administrators with the cookie.
+    ///
+    /// Expected:
+    /// - 200 both times, each listing one administrator: subject oid-alice, role owner, and the ID of the session's
+    ///   administrator.
+    /// - The authorization request's scope is "openid profile".
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task SubjectClaim_Oid_GivesOneAdministratorForTheCliAndTheAdminUi(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        idp.Oid = "oid-alice";
+        idp.ClientSubjects[FakeIdp.CliClientId] = "cli-alice";
+        idp.ClientSubjects[FakeIdp.WebClientId] = "web-alice";
+        idp.Groups = ["nobody"];
+        ElmService service = await StartAsync(
+            test,
+            idp,
+            s =>
+                s with
+                {
+                    Oidc = idp.Settings(subjectClaim: "oid"),
+                    Web = FakeIdp.WebSettings(Kek, ["openid", "profile"]),
+                    BootstrapOwner = new AdminIdentity(idp.Issuer, "oid-alice"),
+                }
+        );
+
+        JsonElement byToken = Assert.Single(
+            await AdminsAsync(await test.Http(service, await CliTokenAsync(idp)).GetAsync("v1/admin/admins", TestContext.Current.CancellationToken))
+        );
+        using var browser = new WebBrowser();
+        SessionHolder session = await SignInAsync(browser, service);
+        JsonElement bySession = Assert.Single(await AdminsAsync(await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "v1/admin/admins"))));
+        foreach (JsonElement admin in new[] { byToken, bySession })
+        {
+            Assert.Equal(
+                ("oid-alice", "owner", session.AdminId.ToString("D")),
+                (admin.GetProperty("subject").GetString(), admin.GetProperty("role").GetString(), admin.GetProperty("id").GetString())
+            );
+        }
+
+        Assert.True(idp.Authorizations.TryPeek(out string? authorization));
+        Assert.Equal("openid profile", Query(new Uri(idp.Issuer + "/auth" + authorization))["scope"]);
+    }
+
+    /// <summary>
+    /// With oidc.subjectClaim oid, a token is taken only when its oid is one string of 1 to 255 characters without control
+    /// characters (design §14.6, §15.3, §20.7 V1c15 review R5), on both paths: an access token is refused with 401 and an ID
+    /// token with the 400 page. The service does not read sub then, but the OpenID Connect handler still requires it in the
+    /// ID token.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in and oidc.subjectClaim oid; the provider gives alice the oid oid-alice.
+    ///
+    /// Steps:
+    /// - For each oid: none, the number 12345, the array ["oid-alice", "oid-bob"], the array ["oid-alice"], the object
+    ///   {"id": "oid-alice"}, and 256 characters: list administrators with an access token of that oid, and sign in with an ID
+    ///   token of that oid.
+    /// - List administrators with an access token of oid-alice and no sub; sign in with an ID token of oid-alice and no sub;
+    ///   then with an ID token of oid-alice.
+    ///
+    /// Expected:
+    /// - 401 ELM_UNAUTHORIZED with the token message and the 400 page for each oid.
+    /// - 200 for the access token without sub; the 400 page for the ID token without sub; the last sign-in makes a session of
+    ///   the administrator oid-alice.
+    /// </remarks>
+    [Fact]
+    public async Task SubjectClaim_Oid_NotOneString_IsRefused()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        idp.Oid = "oid-alice";
+        ElmService service = await StartAsync(test, idp, s => s with { Oidc = idp.Settings(subjectClaim: "oid") });
+
+        Action<Dictionary<string, object?>>[] refused =
+        [
+            p => p.Remove("oid"),
+            p => p["oid"] = 12345L,
+            p => p["oid"] = new[] { "oid-alice", "oid-bob" },
+            p => p["oid"] = new[] { "oid-alice" },
+            p => p["oid"] = new Dictionary<string, object?>(StringComparer.Ordinal) { ["id"] = "oid-alice" },
+            p => p["oid"] = new string('o', 256),
+        ];
+        foreach (Action<Dictionary<string, object?>> change in refused)
+        {
+            await TestService.AssertProblemAsync(
+                await test.Http(service, idp.Token(change: (_, p) => change(p))).GetAsync("v1/admin/admins", TestContext.Current.CancellationToken),
+                HttpStatusCode.Unauthorized,
+                "ELM_UNAUTHORIZED",
+                "The access token is not valid, or its administrator is disabled."
+            );
+            idp.IdTokenChange = change;
+            await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.BadRequest, SignInFailed);
+        }
+
+        using (
+            HttpResponseMessage withoutSub = await test.Http(service, idp.Token(change: (_, p) => p.Remove("sub")))
+                .GetAsync("v1/admin/admins", TestContext.Current.CancellationToken)
+        )
+        {
+            Assert.Equal(HttpStatusCode.OK, withoutSub.StatusCode);
+        }
+
+        idp.IdTokenChange = p => p.Remove("sub");
+        await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.BadRequest, SignInFailed);
+        idp.IdTokenChange = null;
+        using var browser = new WebBrowser();
+        SessionHolder session = await SignInAsync(browser, service);
+        AdminRow admin = (await service.Database.FindAdminAsync(new AdminIdentity(idp.Issuer, "oid-alice"), TestContext.Current.CancellationToken))!;
+        Assert.Equal(admin.Id, session.AdminId);
     }
 
     /// <summary>
@@ -898,6 +1029,31 @@ public sealed class ElmServiceWebTests
         Assert.Equal(0, await store.EnsureKeyAsync(keys, atStart: false, TestContext.Current.CancellationToken));
         Assert.Equal(2L, await test.ScalarAsync("SELECT COUNT(*) FROM dataprotection_keys"));
         Assert.Equal(2, keys.GetAllKeys().Count);
+    }
+
+    // The CLI's access token from the provider's token endpoint, as elm admin login gets it with the device code grant.
+    private static async Task<string> CliTokenAsync(FakeIdp idp)
+    {
+        using var http = new HttpClient();
+        using var form = new FormUrlEncodedContent([
+            new("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            new("device_code", "device-1"),
+            new("client_id", FakeIdp.CliClientId),
+        ]);
+        using HttpResponseMessage answer = await http.PostAsync(new Uri(idp.Issuer + "/token"), form, TestContext.Current.CancellationToken);
+        using JsonDocument body = JsonDocument.Parse(await answer.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+        return body.RootElement.GetProperty("access_token").GetString()!;
+    }
+
+    private static async Task<JsonElement[]> AdminsAsync(HttpResponseMessage answer)
+    {
+        using (answer)
+        {
+            string text = await answer.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+            Assert.True(answer.StatusCode == HttpStatusCode.OK, text);
+            using JsonDocument page = JsonDocument.Parse(text);
+            return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(e => e.Clone())];
+        }
     }
 
     private static async Task<long> FailuresAsync(TestService test, ElmService service, string owner) =>

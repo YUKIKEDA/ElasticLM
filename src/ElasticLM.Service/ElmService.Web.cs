@@ -96,8 +96,14 @@ internal sealed partial class ElmService
                     options.ResponseType = OpenIdConnectResponseType.Code;
                     options.ResponseMode = OpenIdConnectResponseMode.Query;
                     options.UsePkce = true;
+
+                    // design §15.3: oidc.webScopes, which holds openid (V1c15); the handler's default profile is not added.
                     options.Scope.Clear();
-                    options.Scope.Add("openid");
+                    foreach (string scope in web.Scopes)
+                    {
+                        options.Scope.Add(scope);
+                    }
+
                     options.MapInboundClaims = false;
 
                     // The default claim actions remove iss, aud, azp, and others after the token is checked; the sign-in reads iss.
@@ -226,15 +232,25 @@ internal sealed partial class ElmService
         string[] audiences = [.. principal?.FindAll("aud").Select(c => c.Value) ?? []];
         string? azp = principal?.FindFirst("azp")?.Value;
         string clientId = _settings.Web!.ClientId;
+        string claim = _settings.Oidc!.SubjectClaim;
 
         // OpenID Connect Core 1.0 §3.1.3.7: the handler only logs several audiences without azp; the service refuses.
         if ((azp is not null && azp != clientId) || (audiences.Length > 1 && azp is null))
         {
             context.Fail("The ID token's azp does not name the web client.");
         }
-        else if (!IsIdentifier(principal?.FindFirst("iss")?.Value) || !IsIdentifier(principal?.FindFirst("sub")?.Value))
+        else if (!IsIdentifier(principal?.FindFirst("iss")?.Value))
         {
-            context.Fail("The ID token's iss or sub is missing or not 1 to 255 characters without control characters.");
+            context.Fail("The ID token's iss is missing or not 1 to 255 characters without control characters.");
+        }
+        else if (context.TokenEndpointResponse?.IdToken is not string idToken || IdentityOf(idToken, claim) is null)
+        {
+            // design §15.3: the code flow's ID token comes from the token endpoint. With oidc.subjectClaim oid the service
+            // does not read sub; the handler still requires it: after this event it calls
+            // OpenIdConnectProtocolValidator.ValidateTokenResponse, whose ValidateIdToken refuses an ID token without sub
+            // (IDX21314, RequireSub true by default; Microsoft.IdentityModel.Protocols.OpenIdConnect 8.19.2,
+            // OpenIdConnectProtocolValidator.cs; ASP.NET Core 10.0.14, OpenIdConnectHandler.cs).
+            context.Fail($"The ID token's {IdentityRefusal(claim)}.");
         }
         else if (principal!.FindAll(_settings.Oidc!.RoleClaim).Count() > MaxRoleValues)
         {
@@ -253,7 +269,9 @@ internal sealed partial class ElmService
         {
             ClaimsPrincipal principal = context.Principal!;
             OidcSettings oidc = _settings.Oidc!;
-            var identity = new AdminIdentity(principal.FindFirst("iss")!.Value, principal.FindFirst("sub")!.Value);
+
+            // OnTokenValidated found the claim once as a string, which the handler turned into one string claim.
+            var identity = new AdminIdentity(principal.FindFirst("iss")!.Value, principal.FindFirst(oidc.SubjectClaim)!.Value);
             string[] values = [.. principal.FindAll(oidc.RoleClaim).Where(c => c.ValueType == ClaimValueTypes.String).Select(c => c.Value)];
             string? ip = Ip(http);
             AdminRow? admin = await Database.FindAdminAsync(identity, http.RequestAborted).ConfigureAwait(false);

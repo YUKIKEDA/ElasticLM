@@ -186,11 +186,17 @@ internal sealed class OidcSection
     [JsonPropertyName("roleMap")]
     public Dictionary<string, string>? RoleMap { get; set; }
 
+    [JsonPropertyName("subjectClaim")]
+    public string? SubjectClaim { get; set; }
+
     [JsonPropertyName("webClientId")]
     public string? WebClientId { get; set; }
 
     [JsonPropertyName("webClientSecretFile")]
     public string? WebClientSecretFile { get; set; }
+
+    [JsonPropertyName("webScopes")]
+    public List<string>? WebScopes { get; set; }
 }
 
 /// <summary><c>apiKeys</c> (design §14.6, M5a).</summary>

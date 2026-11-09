@@ -18,7 +18,8 @@ namespace ElasticLM.Service.Tests;
 /// A minimal OIDC provider for tests (design §15.3, decision 0.97): discovery, JWKS, the device authorization flow (RFC 8628),
 /// refresh tokens, revocation, and the authorization code flow with PKCE of the admin UI's sign-in (M5b), on loopback http.
 /// Its signing key is made by the test, and it mints access tokens and ID tokens with any claims the test asks for. The
-/// authorization endpoint signs in <see cref="Subject"/> at once, without a page.
+/// authorization endpoint signs in <see cref="Subject"/> (or the client's own <c>sub</c> of <see cref="ClientSubjects"/>) at
+/// once, without a page.
 /// </summary>
 internal sealed class FakeIdp : IAsyncDisposable
 {
@@ -63,8 +64,20 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <summary>Gets or sets whether the discovery document names a revocation endpoint.</summary>
     public bool Revocation { get; set; } = true;
 
-    /// <summary>Gets or sets the subject the device flow and refreshes sign in.</summary>
+    /// <summary>Gets or sets the subject the device flow, refreshes, and the code flow sign in.</summary>
     public string Subject { get; set; } = "alice";
+
+    /// <summary>
+    /// Gets the <c>sub</c> per client ID that the token endpoint and the code flow use instead of <see cref="Subject"/>, as
+    /// Entra ID gives each application its own <c>sub</c> for one user.
+    /// </summary>
+    public ConcurrentDictionary<string, string> ClientSubjects { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Gets or sets the <c>oid</c> put in every access token and ID token, as Entra ID's object ID that is the same for every
+    /// application; <see langword="null"/> leaves it out.
+    /// </summary>
+    public string? Oid { get; set; }
 
     /// <summary>Gets or sets the groups the device flow and refreshes put in the tokens.</summary>
     public string[] Groups { get; set; } = ["elm-owners"];
@@ -129,13 +142,13 @@ internal sealed class FakeIdp : IAsyncDisposable
         return idp;
     }
 
-    /// <summary>Returns the web sign-in's settings for the service (M5b) with a key encryption key.</summary>
-    public static WebLoginSettings WebSettings(byte[] kek) =>
-        new(WebClientId, WebClientSecret, kek, TimeSpan.FromMinutes(30), TimeSpan.FromHours(12));
+    /// <summary>Returns the web sign-in's settings for the service (M5b) with a key encryption key and the scopes it asks for.</summary>
+    public static WebLoginSettings WebSettings(byte[] kek, IReadOnlyList<string>? scopes = null) =>
+        new(WebClientId, WebClientSecret, kek, TimeSpan.FromMinutes(30), TimeSpan.FromHours(12), scopes ?? WebLoginSettings.DefaultScopes);
 
-    /// <summary>Returns OIDC settings for the service that trust this provider.</summary>
-    public OidcSettings Settings(IReadOnlyDictionary<string, string>? roleMap = null) =>
-        new(Issuer, Audience, CliClientId, OidcSettings.DefaultScopes, "groups", roleMap ?? DefaultRoleMap);
+    /// <summary>Returns OIDC settings for the service that trust this provider, with the claim that names administrators.</summary>
+    public OidcSettings Settings(IReadOnlyDictionary<string, string>? roleMap = null, string subjectClaim = OidcSettings.DefaultSubjectClaim) =>
+        new(Issuer, Audience, CliClientId, OidcSettings.DefaultScopes, "groups", roleMap ?? DefaultRoleMap, subjectClaim);
 
     /// <summary>Forgets every refresh token, as a provider whose sessions ended.</summary>
     public void ForgetRefreshTokens() => _refreshTokens.Clear();
@@ -179,6 +192,11 @@ internal sealed class FakeIdp : IAsyncDisposable
             ["exp"] = now + (long)Lifetime.TotalSeconds,
             ["groups"] = groups ?? ["elm-owners"],
         };
+        if (Oid is string oid)
+        {
+            payload["oid"] = oid;
+        }
+
         change?.Invoke(header, payload);
         string signingInput = Encode(header) + "." + Encode(payload);
         byte[] signature = (key ?? _key).SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256);
@@ -267,7 +285,7 @@ internal sealed class FakeIdp : IAsyncDisposable
                 return;
             }
 
-            await TokensAsync(context, null).ConfigureAwait(false);
+            await TokensAsync(context, null, form["client_id"].ToString()).ConfigureAwait(false);
             return;
         }
 
@@ -279,18 +297,22 @@ internal sealed class FakeIdp : IAsyncDisposable
 
         if (grant == "refresh_token" && _refreshTokens.TryRemove(form["refresh_token"].ToString(), out _))
         {
-            await TokensAsync(context, Rotate ? null : form["refresh_token"].ToString()).ConfigureAwait(false);
+            await TokensAsync(context, Rotate ? null : form["refresh_token"].ToString(), form["client_id"].ToString()).ConfigureAwait(false);
             return;
         }
 
         await ErrorAsync(context, "invalid_grant").ConfigureAwait(false);
     }
 
-    private Task TokensAsync(HttpContext context, string? keepRefresh)
+    // The sub that a client gets: its own from ClientSubjects, or Subject.
+    private string SubjectOf(string clientId) => ClientSubjects.TryGetValue(clientId, out string? subject) ? subject : Subject;
+
+    private Task TokensAsync(HttpContext context, string? keepRefresh, string clientId)
     {
         string refresh = keepRefresh ?? "refresh-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(16));
-        _refreshTokens[refresh] = Subject;
-        var answer = new Dictionary<string, object?> { ["access_token"] = Token(Subject, Groups), ["token_type"] = TokenType };
+        string subject = SubjectOf(clientId);
+        _refreshTokens[refresh] = subject;
+        var answer = new Dictionary<string, object?> { ["access_token"] = Token(subject, Groups), ["token_type"] = TokenType };
         if (!OmitExpiresIn)
         {
             answer["expires_in"] = (long)Lifetime.TotalSeconds;
@@ -324,7 +346,7 @@ internal sealed class FakeIdp : IAsyncDisposable
             redirect,
             query["nonce"].ToString(),
             query["code_challenge"].ToString(),
-            Subject,
+            SubjectOf(query["client_id"].ToString()),
             Groups
         );
         context.Response.Headers.Location = redirect + "?code=" + code + "&state=" + state;
@@ -392,6 +414,11 @@ internal sealed class FakeIdp : IAsyncDisposable
             ["nonce"] = nonce,
             ["groups"] = groups,
         };
+        if (Oid is string oid)
+        {
+            payload["oid"] = oid;
+        }
+
         IdTokenChange?.Invoke(payload);
         string signingInput = Encode(header) + "." + Encode(payload);
         return signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256));

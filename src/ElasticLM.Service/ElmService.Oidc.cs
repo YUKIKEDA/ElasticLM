@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Security.Claims;
+using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
@@ -146,10 +148,18 @@ internal sealed partial class ElmService
 
         ClaimsPrincipal principal = result.Principal;
         string? issuer = principal.FindFirst("iss")?.Value;
-        string? subject = principal.FindFirst("sub")?.Value;
-        if (!IsIdentifier(issuer) || !IsIdentifier(subject))
+        if (!IsIdentifier(issuer))
         {
-            ServiceLog.TokenRefused(_log, "iss or sub is missing or not 1 to 255 characters without control characters");
+            ServiceLog.TokenRefused(_log, "iss is missing or not 1 to 255 characters without control characters");
+            return new OidcResult(null);
+        }
+
+        // JwtBearer checked the value after "Bearer " without its surrounding white space.
+        string? subject = IdentityOf(presented.Trim(), oidc.SubjectClaim);
+        if (subject is null)
+        {
+            string reason = IdentityRefusal(oidc.SubjectClaim);
+            ServiceLog.TokenRefused(_log, reason);
             return new OidcResult(null);
         }
 
@@ -196,6 +206,61 @@ internal sealed partial class ElmService
         new(admin.Id, Permissions.OfRole(admin.Role), AuditActors.Oidc, admin.Id.ToString("D"), admin.Id);
 
     private static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= MaxIdentifierLength } && !value.Any(char.IsControl);
+
+    private static string IdentityRefusal(string claim) =>
+        $"{claim} is missing, given more than once, or not one string of 1 to 255 characters without control characters";
+
+    /// <summary>
+    /// Reads the administrator's identity from a checked token (design §14.6, §15.3): the member that <c>oidc.subjectClaim</c>
+    /// names, when the payload holds it once, as a JSON string of 1 to 255 characters without control characters.
+    /// </summary>
+    /// <param name="token">The token in its compact form, already checked by the handler.</param>
+    /// <param name="claim">The claim's name.</param>
+    /// <returns>The value, or <see langword="null"/>.</returns>
+    /// <remarks>
+    /// The payload's JSON is read here instead of the claims that the handlers make, because those claims hide the JSON type
+    /// (design §20.7, V1c15 review R5). Microsoft.IdentityModel.JsonWebTokens 8.19.2, which both handlers use, shows it:
+    /// JsonWebToken.PayloadClaimSet.cs (ReadPayloadValue) reads <c>sub</c> with
+    /// <c>JsonSerializerPrimitives.ReadStringOrNumberAsString</c>, so a number becomes a string claim; Json/JsonClaimSet.cs
+    /// (CreateClaimFromObject, CreateClaimFromJsonElement) makes one claim per element of an array, so <c>["x"]</c> gives the
+    /// same string claim as <c>"x"</c>, while a number gives an Integer or Double claim and an object a Json claim; and a
+    /// member written twice keeps only its last value. Here a number, an array of any length, an object, null, and a member
+    /// written twice are all refused.
+    /// </remarks>
+    internal static string? IdentityOf(string token, string claim)
+    {
+        string[] parts = token.Split('.');
+        if (parts.Length != 3)
+        {
+            return null;
+        }
+
+        try
+        {
+            using JsonDocument payload = JsonDocument.Parse(Base64Url.DecodeFromChars(parts[1]));
+            if (payload.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            int found = 0;
+            string? value = null;
+            foreach (JsonProperty member in payload.RootElement.EnumerateObject())
+            {
+                if (member.NameEquals(claim))
+                {
+                    found++;
+                    value = member.Value.ValueKind == JsonValueKind.String ? member.Value.GetString() : null;
+                }
+            }
+
+            return found == 1 && IsIdentifier(value) ? value : null;
+        }
+        catch (Exception e) when (e is FormatException or JsonException)
+        {
+            return null;
+        }
+    }
 
     /// <summary>
     /// Reads the discovery document and checks it (design §14.6): its <c>issuer</c> equals the configured issuer as text, and

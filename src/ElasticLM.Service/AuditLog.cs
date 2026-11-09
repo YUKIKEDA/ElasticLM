@@ -10,7 +10,7 @@ namespace ElasticLM.Service;
 /// One administration operation to record (design §18.2).
 /// </summary>
 /// <param name="ActorType"><c>apikey</c>, <c>oidc</c> (M5), or <c>system</c>.</param>
-/// <param name="ActorId">The API key ID, the OIDC issuer and subject, or for <c>system</c> the operation's name (<c>setup</c>, <c>auth</c>).</param>
+/// <param name="ActorId">The API key ID, the administrator's ID for <c>oidc</c>, or for <c>system</c> the operation's name (<c>setup</c>, <c>auth</c>).</param>
 /// <param name="Action">The operation, such as <c>apikey.create</c>.</param>
 /// <param name="Target">What it acted on, such as an API key ID, or <see langword="null"/>.</param>
 /// <param name="Result">The result code, such as <c>ELM_OK</c>.</param>
@@ -154,7 +154,7 @@ internal static class AuditActors
 
     /// <summary>
     /// An OIDC access token (M5a) or a session of the admin UI (M5b); the actor is the administrator's ID, and the token's
-    /// <c>iss</c> and <c>sub</c> are in the <c>admin.create</c> row's detail.
+    /// <c>iss</c> and the value of the claim that <c>oidc.subjectClaim</c> names are in the <c>admin.create</c> row's detail.
     /// </summary>
     public const string Oidc = "oidc";
 }

@@ -29,7 +29,7 @@ internal sealed record NewApiKey(string Key, string Name, IEnumerable<string> Pe
 /// <param name="Permissions">The permissions the caller holds now.</param>
 /// <param name="ActorType">The audit log's actor type: <c>apikey</c> or <c>oidc</c> (design §18.2).</param>
 /// <param name="ActorId">The audit log's actor: the API key's ID, or the administrator's ID for an access token (the token's
-/// <c>iss</c> and <c>sub</c> are in the <c>admin.create</c> row's detail).</param>
+/// <c>iss</c> and the value of the claim that <c>oidc.subjectClaim</c> names are in the <c>admin.create</c> row's detail).</param>
 /// <param name="RateKey">What the per-caller rate limit counts by: the API key's ID or the administrator's ID (design §14.7).</param>
 internal sealed record Caller(Guid AdminId, IReadOnlySet<string> Permissions, string ActorType, string ActorId, Guid RateKey);
 

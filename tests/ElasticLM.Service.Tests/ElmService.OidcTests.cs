@@ -17,6 +17,8 @@ public sealed class ElmServiceOidcTests
 {
     private const string TokenRefused = "The access token is not valid, or its administrator is disabled.";
 
+    private static readonly string[] OneElementSub = ["alice"];
+
     /// <summary>
     /// A valid token of a mapped group signs in: the administrator is added with the mapped role, its last login is written,
     /// and the audit log names it by its ID, with the issuer and subject in admin.create.
@@ -75,8 +77,9 @@ public sealed class ElmServiceOidcTests
     /// Steps:
     /// - Send tokens: signed by another key, unsigned, of another issuer, of another audience, expired 61 seconds ago, not
     ///   valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, a valid token longer than 8,192 characters
-    ///   (a large claim), without sub, with a sub of
-    ///   256 characters, with 101 role values; then one that expired 30 seconds ago, one with typ JWT, and one without kid.
+    ///   (a large claim), without sub, with a sub of 256 characters, with the sub the number 12345 (which the library would
+    ///   read as text), with the sub the array ["alice"], with 101 role values; then one that expired 30 seconds ago, one
+    ///   with typ JWT, and one without kid.
     ///
     /// Expected:
     /// - 401 ELM_UNAUTHORIZED with the token message for each refused one; 200 for the last three.
@@ -107,6 +110,8 @@ public sealed class ElmServiceOidcTests
             idp.Token(change: (_, p) => p["pad"] = new string('p', ElmService.MaxAccessTokenLength)),
             idp.Token(change: (_, p) => p.Remove("sub")),
             idp.Token(new string('s', 256)),
+            idp.Token(change: (_, p) => p["sub"] = 12345L),
+            idp.Token(change: (_, p) => p["sub"] = OneElementSub),
             idp.Token(groups: [.. Enumerable.Range(0, ElmService.MaxRoleValues + 1).Select(i => "g" + i)]),
         ];
         foreach (string token in refused)
