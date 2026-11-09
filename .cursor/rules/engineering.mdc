@@ -36,6 +36,10 @@ A script that replaces text in a source file checks that its anchor occurs exact
 
 A Python script on Windows that opens a file in text mode writes CRLF line ends. Open it with `newline=""` on both the read and the write, so the file keeps LF (M4b1, PR #61).
 
+## Repository scripts
+
+A script under `eng/` that counts or checks ahead what it will parse later calls the same reading function as the parse, not a second pattern. A second pattern can accept less than the parse, and the script then falls back to other behavior without an error. In V1c13 the step runner counted the How-to pages that name each Tutorial with its own regular expression, which did not allow the spaces and quotes that `Read-Plan` accepts; on a mismatch the runner went back to running the Tutorial again for each page. The correctness review found it, and the count now uses `Get-Page` and `Read-Marker` (PR #269, C1).
+
 ## Data access (AuraORM)
 
 - A string primary key column has `[MaxLength(n)]`. Without it the generator makes no `Table` for the record and reports nothing. In M4d1 `LeaseReturnRow` had no table until its `Counter` key had a length (PR #83).
