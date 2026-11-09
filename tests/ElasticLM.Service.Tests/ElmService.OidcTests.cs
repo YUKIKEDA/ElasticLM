@@ -75,10 +75,11 @@ public sealed class ElmServiceOidcTests
     /// - A service that trusts the fake provider.
     ///
     /// Steps:
-    /// - Send tokens: signed by another key, unsigned, of another issuer, of another audience, expired 61 seconds ago, not
-    ///   valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, a valid token longer than 8,192 characters
-    ///   (a large claim), without sub, with a sub of 256 characters, with the sub the number 12345, with the sub the array
-    ///   ["alice"], with 101 role values; then one that expired 30 seconds ago, one with typ JWT, and one without kid.
+    /// - Send tokens: signed by another key, unsigned with alg ES256, unsigned with alg none, of another issuer, of another
+    ///   audience, expired 61 seconds ago, not valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, a valid
+    ///   token longer than 8,192 characters (a large claim), without sub, with a sub of 256 characters, with the sub the
+    ///   number 12345, with the sub the array ["alice"], with 101 role values; then one that expired 30 seconds ago, one
+    ///   with typ JWT, and one without kid.
     ///
     /// Expected:
     /// - 401 ELM_UNAUTHORIZED with the token message for each refused one; 200 for the last three.
@@ -101,6 +102,7 @@ public sealed class ElmServiceOidcTests
         [
             idp.Token(key: other),
             parts[0] + "." + parts[1] + ".",
+            Unsigned(idp.Token(change: (h, _) => h["alg"] = "none")),
             idp.Token(change: (_, p) => p["iss"] = "https://other.example/realms/test"),
             idp.Token(change: (_, p) => p["aud"] = "other-api"),
             idp.Token(change: (_, p) => p["exp"] = now - 61),
@@ -202,6 +204,65 @@ public sealed class ElmServiceOidcTests
         Assert.Null(ElmService.IdentityOf(valid[..valid.LastIndexOf('.')], "sub"));
         Assert.Null(ElmService.IdentityOf(valid + ".x", "sub"));
         Assert.StartsWith("oid is missing, given more than once", ElmService.IdentityRefusal("oid"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A token counts as signed only with three parts, a signature part that is not empty, and a header that holds alg once
+    /// as the JSON string RS256, PS256, or ES256 (design §15.3, §20.7 V1c16). Each refused input breaks one condition only.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Compact tokens made by the test, with the payload {} and the signature part "sig" unless the case says otherwise.
+    ///
+    /// Steps:
+    /// - Check headers with alg RS256, PS256, and ES256; then: two, four, and five parts; an empty signature part; alg written
+    ///   twice (also with the same value); alg the number 256; no alg; alg none, HS256, and rs256; a header part that is not
+    ///   base64url; a header that is a JSON array; a header that is not JSON; no token at all.
+    ///
+    /// Expected:
+    /// - Signed for the three algorithms; not signed for every other input.
+    /// </remarks>
+    [Theory]
+    [InlineData("{\"alg\":\"RS256\"}", true)]
+    [InlineData("{\"alg\":\"PS256\",\"kid\":\"k1\"}", true)]
+    [InlineData("{\"typ\":\"JWT\",\"alg\":\"ES256\"}", true)]
+    [InlineData("{\"alg\":\"ES256\",\"alg\":\"none\"}", false)]
+    [InlineData("{\"alg\":\"ES256\",\"alg\":\"ES256\"}", false)]
+    [InlineData("{\"alg\":256}", false)]
+    [InlineData("{\"typ\":\"JWT\"}", false)]
+    [InlineData("{\"alg\":\"none\"}", false)]
+    [InlineData("{\"alg\":\"HS256\"}", false)]
+    [InlineData("{\"alg\":\"rs256\"}", false)]
+    [InlineData("[\"alg\",\"ES256\"]", false)]
+    [InlineData("not json", false)]
+    public void IsSigned_TakesOneAllowedAlgorithmOnly(string header, bool expected) =>
+        Assert.Equal(expected, ElmService.IsSigned(Signed(header, "sig")));
+
+    /// <summary>
+    /// A token with an allowed algorithm still counts as unsigned when its form is wrong (design §15.3, §20.7 V1c16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Compact tokens made by the test, whose header is {"alg":"ES256"}.
+    ///
+    /// Steps:
+    /// - Check the token with the signature part "sig"; with an empty signature part; with two, four, and five parts; with
+    ///   a header part that is not base64url; and no token.
+    ///
+    /// Expected:
+    /// - Signed for the first; not signed for the others.
+    /// </remarks>
+    [Fact]
+    public void IsSigned_FormIsChecked()
+    {
+        string signed = Signed("{\"alg\":\"ES256\"}", "sig");
+        Assert.True(ElmService.IsSigned(signed));
+        Assert.False(ElmService.IsSigned(Signed("{\"alg\":\"ES256\"}", string.Empty)));
+        Assert.False(ElmService.IsSigned(signed[..signed.LastIndexOf('.')]));
+        Assert.False(ElmService.IsSigned(signed + ".x"));
+        Assert.False(ElmService.IsSigned(signed + ".x.y"));
+        Assert.False(ElmService.IsSigned("@@@.e30.c2ln"));
+        Assert.False(ElmService.IsSigned(null));
     }
 
     /// <summary>
@@ -708,6 +769,10 @@ public sealed class ElmServiceOidcTests
     }
 
     // A compact token around a payload's JSON text, with an empty header object and a placeholder signature.
+    private static string Unsigned(string token) => token[..(token.LastIndexOf('.') + 1)];
+
+    private static string Signed(string header, string signature) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(header)) + ".e30." + signature;
+
     private static string Compact(string payload) => "e30." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload)) + ".c2ln";
 
     private static JsonElement Admin(JsonElement[] admins, string subject) => admins.Single(a => a.GetProperty("subject").GetString() == subject);

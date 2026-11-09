@@ -124,6 +124,12 @@ internal sealed class FakeIdp : IAsyncDisposable
     /// <summary>Gets or sets a change made to every ID token's payload before signing.</summary>
     public Action<Dictionary<string, object?>>? IdTokenChange { get; set; }
 
+    /// <summary>Gets or sets a change made to every ID token's header before signing.</summary>
+    public Action<Dictionary<string, object?>>? IdTokenHeaderChange { get; set; }
+
+    /// <summary>Gets or sets a rewrite of every signed ID token, in its compact form, before the token endpoint sends it.</summary>
+    public Func<string, string>? IdTokenRewrite { get; set; }
+
     /// <summary>Gets or sets whether the discovery document names an end_session_endpoint.</summary>
     public bool EndSession { get; set; } = true;
 
@@ -420,8 +426,10 @@ internal sealed class FakeIdp : IAsyncDisposable
         }
 
         IdTokenChange?.Invoke(payload);
+        IdTokenHeaderChange?.Invoke(header);
         string signingInput = Encode(header) + "." + Encode(payload);
-        return signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256));
+        string token = signingInput + "." + Base64Url.EncodeToString(_key.SignData(Encoding.ASCII.GetBytes(signingInput), HashAlgorithmName.SHA256));
+        return IdTokenRewrite?.Invoke(token) ?? token;
     }
 
     private static Task ErrorAsync(HttpContext context, string error)

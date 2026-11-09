@@ -28,6 +28,9 @@ internal sealed class ServiceHostOptions
 
     /// <summary>Gets a wrapper around the usage log's access to the signing key, so tests can make a write fail.</summary>
     public Func<SigningKeyAccess, SigningKeyAccess>? WrapUsageLogKey { get; init; }
+
+    /// <summary>Gets one more logger provider, which the host disposes with itself, for tests that read the host's log.</summary>
+    public ILoggerProvider? LoggerProvider { get; init; }
 }
 
 /// <summary>
@@ -434,6 +437,12 @@ internal sealed partial class ElmService : IAsyncDisposable
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
+        if (host.LoggerProvider is ILoggerProvider provider)
+        {
+            // Registered through a factory, so the host's services dispose it as they dispose the console logger.
+            builder.Services.AddSingleton(_ => provider);
+        }
+
         if (tls is not null)
         {
             builder.WebHost.UseKestrelHttpsConfiguration();

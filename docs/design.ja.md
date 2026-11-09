@@ -3177,7 +3177,7 @@ M5b の形（0.99）:
   - IdP とのやりとり（discovery、鍵、トークンのエンドポイント）は、M5a の取り出し口と同じ `HttpClient`（転送を追わない、30 秒、応答は 256 KiB まで、§14.6）を使う（`Backchannel`。既定の待ちは 60 秒）。IdP の 5xx の答えは、この `HttpClient` が `HttpRequestException` にし、IdP に届かないものとして扱う（下の「戻りの失敗」）。
   - クライアントの認証は `client_secret_post`（ハンドラーは秘密を要求の本文で送る）。
   - discovery は、M5a の確かめ（`issuer` と `jwks_uri`）に加えて、`authorization_endpoint` と `token_endpoint`、あれば `end_session_endpoint` が https（ループバックの http は可）であることを求める（秘密を送る先のため）。違えば IdP に届かないものとして扱う。
-  - ID トークンは、署名（RS256・PS256・ES256）、`iss` が `oidc.issuer`、`aud` が `oidc.webClientId` を含む、`nonce`、`exp` と `iat` があること、サービスの `TimeProvider` での期限（時計の差 60 秒）で確かめる。`azp` があればそれが `oidc.webClientId` であることを、`aud` が複数なら `azp` があることを求める（OpenID Connect Core 1.0 §3.1.3.7: https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation ）。ハンドラーの確かめは、`aud` が複数で `azp` がないときに警告を書くだけなので、`azp` は `OnTokenValidated` でサービスが確かめる。署名もサービスが確かめる。ハンドラーは、トークンのエンドポイントから受けた ID トークンを確かめるとき、自分の写しの `TokenValidationParameters` で `RequireSignedTokens` を `false` にする（ASP.NET Core 10.0.14、`src/Security/Authentication/OpenIdConnect/src/OpenIdConnectHandler.cs` の 839 行。OpenID Connect Core 1.0 §3.1.3.7 の、TLS で直に受けたトークンの例外）。そのため、署名のない ID トークンもハンドラーを通る。署名があれば、ハンドラーが `ValidAlgorithms` と鍵で確かめる。サービスは `OnTokenValidated` の最初で、`TokenEndpointResponse.IdToken` の生の文字列について、次のどれかなら断る。部分が 3 つでない。署名の部分が空。ヘッダーの `alg` が、ちょうど 1 つの JSON の文字列として RS256・PS256・ES256 のどれかになっていない（V1c16、下の §20.7 の「V1c16 の Grill」）。`iss` と `oidc.subjectClaim` の要求は、M5a と同じく 1〜255 文字で制御文字を含まない。`oidc.subjectClaim` が `oid` のとき、サービスは `sub` を読まず確かめない。ID トークンの `sub` は OpenID Connect のハンドラーが求める（`OpenIdConnectProtocolValidator.ValidateIdToken`、IDX21314。実装で Microsoft.IdentityModel.Protocols.OpenIdConnect の使う版のソースを読み、ファイルを書く。V1c15 の設計の独立レビューの R2）。
+  - ID トークンは、署名（RS256・PS256・ES256）、`iss` が `oidc.issuer`、`aud` が `oidc.webClientId` を含む、`nonce`、`exp` と `iat` があること、サービスの `TimeProvider` での期限（時計の差 60 秒）で確かめる。`azp` があればそれが `oidc.webClientId` であることを、`aud` が複数なら `azp` があることを求める（OpenID Connect Core 1.0 §3.1.3.7: https://openid.net/specs/openid-connect-core-1_0.html#IDTokenValidation ）。ハンドラーの確かめは、`aud` が複数で `azp` がないときに警告を書くだけなので、`azp` は `OnTokenValidated` でサービスが確かめる。署名もサービスが確かめる。ハンドラーは、トークンのエンドポイントから受けた ID トークンを確かめるとき、自分の写しの `TokenValidationParameters` で `RequireSignedTokens` を `false` にする（ASP.NET Core 10.0.14、`src/Security/Authentication/OpenIdConnect/src/OpenIdConnectHandler.cs` の 839 行。OpenID Connect Core 1.0 §3.1.3.7 の、TLS で直に受けたトークンの例外）。そのため、署名のない ID トークンもハンドラーを通る。署名を確かめるのは Microsoft.IdentityModel.JsonWebTokens 8.19.2 である。`JsonWebToken.cs` の 542 行（`IsSigned`）は、2 つ目の `.` のあとに何かあれば署名ありとする。`JsonWebTokenHandler.ValidateToken.cs` は、署名がなく `RequireSignedTokens` が `false` ならそこで返す（147〜157 行）。署名があれば、鍵（225〜236 行、347 行）と `ValidAlgorithms`（364 行。Microsoft.IdentityModel.Tokens 8.19.2 の `Validators.cs` の 44 行で、文字どおり比べる）で確かめる。サービスは `OnTokenValidated` の最初で、`TokenEndpointResponse.IdToken` の生の文字列について、次のどれかなら断る。部分が 3 つでない。署名の部分が空。ヘッダーの `alg` が、ちょうど 1 つの JSON の文字列として RS256・PS256・ES256 のどれかになっていない。`TokenEndpointResponse` か `IdToken` がない（V1c16、下の §20.7 の「V1c16 の Grill」）。今の版では、署名の部分が空であることの確かめとライブラリーの確かめで足りる。部分の数と `alg` の確かめは、ライブラリーの中の作りに頼らないための重ねた守りである。`iss` と `oidc.subjectClaim` の要求は、M5a と同じく 1〜255 文字で制御文字を含まない。`oidc.subjectClaim` が `oid` のとき、サービスは `sub` を読まず確かめない。ID トークンの `sub` は OpenID Connect のハンドラーが求める（`OpenIdConnectProtocolValidator.ValidateIdToken`、IDX21314。実装で Microsoft.IdentityModel.Protocols.OpenIdConnect の使う版のソースを読み、ファイルを書く。V1c15 の設計の独立レビューの R2）。
 - メソッド: `/auth/login` と `/auth/callback` は `GET` だけ、`/auth/logout` は `POST` だけを受け、ほかのメソッドはハンドラーに渡す前に `404` にする（ハンドラーはメソッドを問わずパスで受け、POST の本文を、サービスの上限 64 KiB（§12.1）でなく Kestrel の 1 MiB まで読むため）。
 - ログインの開始 `GET /auth/login`: 送信元ごとの頻度の制限（`rateLimit.perIp`）だけを受ける。`OnRedirectToIdentityProvider` で、`redirect_uri` を上の戻りの URL に置き（ハンドラーの既定は要求のスキーム・`Host`・`PathBase` から作る）、認証のプロパティの `IssuedUtc` にサービスの `TimeProvider` の今の時刻を書く（`state` に入る）。IdP の認可のエンドポイントへ `302` で送る。discovery が取れないときは `503` の画面を返し、理由はサービスのログに書く。
 - 戻り `GET /auth/callback`: 送信元ごとの頻度の制限だけを受ける。順に:
@@ -4983,7 +4983,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 直す文書（R11、R3）: Reference の `service-configuration.md`（`oidc` の 2 行、`bootstrapOwner` の説明、環境変数の表、`cliScopes`）、`administration-api.md`（トークンの説明、`iss` と `sub`、`subject` の説明）、`logs.md`（`admin.create` と `session.create`）、`security-model.md`（両方のトークンに要ること）、OIDC の頁の Entra ID の節（制限の文を外す）と「Settings to keep in mind」、その日本語の頁のすべて。XML ドキュメント（`ServiceSettings.cs`、`ApiKeys.cs`、`AuditLog.cs`）とログの文（`ElmService.Oidc.cs`、`ElmService.Web.cs` の「iss or sub」）。
     - `FakeIdp`（R12）: `Oid` を足して `Token` と `IdToken` の両方に入れ、`sub` をクライアントごとに変えられるようにする（デバイスフローとリフレッシュの `TokensAsync` と、コードフローの `grant`）。`Settings()` と `WebSettings()` を新しい 2 つの設定に合わせる。
 - V1c16 の Grill（Issue #292 に記録した。Q1〜Q4。持ち主の決定はすべて推奨案で、Q1 の退けた案は design-decisions.md にある）: 管理画面のサインインで、署名のない ID トークンを断る。
-  - 調べた事実（2026-11-09、`main` の eaca59a）: 上の §15.3 のとおり、ハンドラーはトークンのエンドポイントから受けた ID トークンで `RequireSignedTokens` を `false` にする。確かめたあと、`OnTokenValidated` を呼ぶ（同じファイルの 848〜866 行）。`TokenEndpointResponse.IdToken` は、V1c15 の `IdentityOf` が読む生の文字列と同じである。認可の応答の ID トークン（768 行）は、`response_type=code` だけを使うサービスでは来ない。CLI のアクセストークン（JwtBearer）では上書きされない。
+  - 調べた事実（2026-11-09、`main` の eaca59a）: 上の §15.3 のとおり、ハンドラーはトークンのエンドポイントから受けた ID トークンで `RequireSignedTokens` を `false` にする。確かめたあと、`OnTokenValidated` を呼ぶ（同じファイルの 848〜866 行）。`TokenEndpointResponse.IdToken` は、ハンドラーが 833 行で受けて 848 行で確かめ、866 行でイベントに渡す文字列と同じである。これは、サービスが `OnMessageReceived` と `OnTokenResponseReceived` を使わず、`OnAuthorizationCodeReceived` でコードの交換（`HandleCodeRedemption`）も `TokenEndpointResponse` の設定もしないことに頼る。この 2 つのイベントを足すときは、この前提を見直す（`OnTokenValidated` のコメントにも書く）。認可の応答の ID トークン（768 行）は、2 つの理由で届かない。ハンドラーが GET のコールバックの `id_token` を断る（645〜652 行）。サービスがコールバックで GET 以外を断る（`RefuseWebPath`）。CLI のアクセストークン（JwtBearer）では上書きされない。
   - 断る場所と形（Q1）: `OnTokenValidated` の最初で、ほかの確かめの前に断る。断る条件は §15.3 の 3 つ（部分が 3 つでない、署名の部分が空、ヘッダーの `alg` がちょうど 1 つの文字列として RS256・PS256・ES256 のどれかでない）。ログの理由は「The ID token is not signed with RS256, PS256, or ES256.」で、ほかの失敗と同じく `OnRemoteFailure` に進み、`400` の頁になる。
   - テスト（Q2）: `FakeIdp` に、トークンのエンドポイントが返す ID トークンを差し替えるオプションを足す。次の 4 つを送り、どれも `400` の頁で、セッションの Cookie も `admin_sessions` の行もできず、ログに理由が出ることを確かめる。
     - `alg: none` で署名の部分が空
@@ -4994,6 +4994,27 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 似た穴（Q3）: CLI の `Token_EachRefusal_IsUnauthorized` に、`alg: none` で署名の部分が空のトークンを足す。
   - 文書（Q4）: §15.3 にハンドラーの上書きとサービスの確かめを書く。§5.3 の T13、利用者の文書、CHANGELOG は変えない。振る舞いが書いてあるとおりに戻るだけで、まだ何もリリースしていない。
   - レビュー: 設計の独立レビューと正しさのレビュー。利用者の頁は変わらないので、初見の読み手のレビューと日本語のレビューはしない。
+  - 設計の独立レビュー（R1〜R9、Issue #292）で改めた形:
+    - 署名があるときのテスト（R1）: §15.3 の「署名があれば鍵と `ValidAlgorithms` で確かめる」の文にも、管理画面の道のテストを置く。次の 4 つを、どれも `400` でセッションができないことで確かめる。
+      - 別の鍵で署名した ES256
+      - 別の有効な ID トークンの署名を付け替えたもの
+      - `alg: HS256` で署名があるもの
+      - ヘッダーを `alg: RS256` にして ES256 の署名を付けたもの
+    - ログの理由（R2）: `ServiceHostOptions` に、`elm-server` の `ServerHostOptions` と同じ `LoggerProvider`（テストがホストのログを読むための、もう 1 つのロガーの提供元）を足す。断る理由は Information の `SignInRefused` で出るので、そのテストはログの水準を Information にする。期待する理由は次のとおり。
+      - 署名の部分が空の 3 つ: 「The ID token is not signed with RS256, PS256, or ES256.」
+      - `alg: none` で署名の部分が空でないものと、R1 の 4 つ: ライブラリーの署名の確かめの失敗（`kid` が合えば IDX10511 など）。サービスの理由ではないことを確かめる。
+    - 順番（R3）: 署名の部分が空で、かつ `azp` が別のクライアントの ID トークンを送り、ログの理由が署名の理由であることを確かめる。
+    - 単体テスト（R4）: 単体テストの対象は、`alg` を読む部分だけでなく、確かめ全体の関数（`internal`）にする。各条件に、その条件だけが捕まえる入力を置く。
+      - 部分の数: 2、4、5 つ
+      - 署名の部分: 空
+      - `alg`: 2 度ある、数、ない、`none`、`HS256`、`rs256`
+      - ヘッダー: base64url でない、オブジェクトでない、JSON でない
+      - 通るもの: 許す 3 つ
+      - 変異も条件ごとに確かめる。部分の数と `alg` の条件は、端から端までのテストでは届かない（上の §15.3 のとおり、ライブラリーが先に断る）。そのため、単体テストがその変異を殺すことで足りるとする。
+    - ノンスの Cookie（R5）: ハンドラーは `OnTokenValidated` の前にノンスの Cookie を読んで消す（863 行、1190 行）。サービスが署名のないトークンを断った `400` の応答が、`__Host-elm-nonce.` の Cookie を消すこと（期限が過去の `Set-Cookie`）を確かめる。これが、Q1 で C（`OnTokenResponseReceived`）を退けた理由を確かめるテストになる。署名のあるトークンをライブラリーが断るときは、ハンドラーは Cookie を読む前（848 行）に止まるので、Cookie は期限（15 分）まで残る。これは前からの振る舞いで、変えない（実装で確かめた）。
+    - 認可の応答の ID トークン（R6）と、確かめる文字列の前提（R7）は、上の「調べた事実」に書いた。`TokenEndpointResponse` か `IdToken` がないときは、同じ理由で断る。
+    - 出典（R8）は §15.3 に書いた。
+    - 利用者の文書（R9、持ち主の決定は推奨案）: 管理画面の ID トークンが RS256・PS256・ES256 で署名されている必要があることは、前からの要件だが、OIDC の How-to の頁にも Reference にも書いていなかった。この行で、OIDC の How-to の「Settings to keep in mind with any IdP」（日本語は「どの IdP でも気をつける設定」）に 1 行足す（英語と日本語）。ID トークンとアクセストークンを 3 つのどれかで署名すること、ほかのアルゴリズムや署名のないトークンは断ること、理由の出るログ（管理画面は Information、アクセストークンは `Debug`）を書く。Q4 の「利用者の文書は変えない」はこれで改める。日本語のレビューを書き手と別のエージェントで行う。1 行の事実なので、初見の読み手のレビューは行わない。
 
 ## 21. 依存
 

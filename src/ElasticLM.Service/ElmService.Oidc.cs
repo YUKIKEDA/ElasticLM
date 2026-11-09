@@ -42,6 +42,14 @@ internal sealed partial class ElmService
     private static readonly TimeSpan OidcFetchTimeout = TimeSpan.FromSeconds(30);
     private static readonly string[] AccessTokenTypes = ["at+jwt", "application/at+jwt", "JWT"];
 
+    // design §14.6, §15.3: the signature algorithms of the access token and the ID token.
+    private static readonly string[] SignatureAlgorithms =
+    [
+        SecurityAlgorithms.RsaSha256,
+        SecurityAlgorithms.RsaSsaPssSha256,
+        SecurityAlgorithms.EcdsaSha256,
+    ];
+
     // design §14.6: the discovery URL is the issuer without a terminating "/" and the well-known suffix (OpenID Connect
     // Discovery 1.0 §4).
     internal static string DiscoveryUrl(string issuer) => issuer.TrimEnd('/') + "/.well-known/openid-configuration";
@@ -96,7 +104,7 @@ internal sealed partial class ElmService
                         ValidateIssuer = true,
                         ValidAudience = oidc.Audience,
                         ValidateAudience = true,
-                        ValidAlgorithms = [SecurityAlgorithms.RsaSha256, SecurityAlgorithms.RsaSsaPssSha256, SecurityAlgorithms.EcdsaSha256],
+                        ValidAlgorithms = SignatureAlgorithms,
                         RequireSignedTokens = true,
                         RequireExpirationTime = true,
                         ValidateLifetime = true,
@@ -241,28 +249,68 @@ internal sealed partial class ElmService
         try
         {
             using JsonDocument payload = JsonDocument.Parse(Base64Url.DecodeFromChars(parts[1]));
-            if (payload.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                return null;
-            }
-
-            int found = 0;
-            string? value = null;
-            foreach (JsonProperty member in payload.RootElement.EnumerateObject())
-            {
-                if (member.NameEquals(claim))
-                {
-                    found++;
-                    value = member.Value.ValueKind == JsonValueKind.String ? member.Value.GetString() : null;
-                }
-            }
-
-            return found == 1 && IsIdentifier(value) ? value : null;
+            string? value = OnlyString(payload.RootElement, claim);
+            return IsIdentifier(value) ? value : null;
         }
         catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
         {
             return null;
         }
+    }
+
+    /// <summary>
+    /// Checks that a token is signed (design §15.3, §20.7 V1c16): it has three parts, the signature part is not empty, and
+    /// the header holds <c>alg</c> once, as the JSON string RS256, PS256, or ES256.
+    /// </summary>
+    /// <param name="token">The token in its compact form, or <see langword="null"/>.</param>
+    /// <returns><see langword="true"/> when the token is signed with one of the three algorithms.</returns>
+    /// <remarks>
+    /// The OpenIdConnect handler does not require a signature on the code flow's ID token (ASP.NET Core 10.0.14,
+    /// OpenIdConnectHandler.cs, line 839, sets RequireSignedTokens to false). Microsoft.IdentityModel.JsonWebTokens 8.19.2
+    /// takes a token as signed when anything follows its second dot (JsonWebToken.cs, IsSigned), and then checks the
+    /// signature with the keys and ValidAlgorithms. So the empty signature part is what lets an unsigned token through; the
+    /// part count and the algorithm are checked here too, so that this check does not rest on the library's internals.
+    /// </remarks>
+    internal static bool IsSigned(string? token)
+    {
+        string[] parts = token?.Split('.') ?? [];
+        if (parts.Length != 3 || parts[2].Length == 0)
+        {
+            return false;
+        }
+
+        try
+        {
+            using JsonDocument header = JsonDocument.Parse(Base64Url.DecodeFromChars(parts[0]));
+            return OnlyString(header.RootElement, "alg") is string alg && SignatureAlgorithms.Contains(alg, StringComparer.Ordinal);
+        }
+        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
+        {
+            return false;
+        }
+    }
+
+    // The value of a member that a JSON object holds exactly once, as a string; null for anything else. JsonDocument lists a
+    // member written twice twice, which the library's readers would collapse to the last value.
+    private static string? OnlyString(JsonElement element, string name)
+    {
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        int found = 0;
+        string? value = null;
+        foreach (JsonProperty member in element.EnumerateObject())
+        {
+            if (member.NameEquals(name))
+            {
+                found++;
+                value = member.Value.ValueKind == JsonValueKind.String ? member.Value.GetString() : null;
+            }
+        }
+
+        return found == 1 ? value : null;
     }
 
     /// <summary>
