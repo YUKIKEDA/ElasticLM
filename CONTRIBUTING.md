@@ -86,10 +86,10 @@ docker load --input elm-service.tar
 
 On an arm64 machine, use `linux-arm64` and `linux/arm64`. `-Format docker` writes a tar that `docker load` reads, with the image named `elm-service`; without `-Platform` and `-Format`, `Build-Image.ps1` builds both platforms into an OCI layout, as the release does. The builder of the `docker-container` driver is needed because `Build-Image.ps1` writes the image to a tar file, which the default `docker` driver cannot. `-RecordGlibcOnly` lets `Test-Publish.ps1` record the glibc version the executables need instead of failing: the release builds them on glibc 2.28, while your machine's glibc is likely newer. The script replaces an `elm-service` image you already have, and says so. On Windows with WSL containers instead of Docker, build the tar in a Linux distribution as above, then load it with `wslc load --input elm-service.tar`.
 
-To run the steps of the container and PostgreSQL how-to guides as the release workflow's job does, give the script the image, and `-Docker` on a Linux machine with Docker:
+To run the steps of the container, PostgreSQL, and OIDC how-to guides as the release workflow's job does, give the script the image, and `-Docker` on a Linux machine with Docker:
 
 ```shell
-./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmService <elm-service> -Feed <that-folder> -Image <oci-layout.tar> -Docker -Page docs/guide/how-to/run-the-service-in-a-container.md, docs/guide/how-to/run-the-service-on-postgresql.md
+./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmService <elm-service> -Feed <that-folder> -Image <oci-layout.tar> -Docker -Page docs/guide/how-to/run-the-service-in-a-container.md, docs/guide/how-to/run-the-service-on-postgresql.md, docs/guide/how-to/sign-in-with-oidc.md
 ```
 
 `-Image` takes an OCI layout tar of `Build-Image.ps1` without `-Format docker`, such as one built with `-Platform linux/amd64 -OutFile elm-service-oci.tar`; the script loads its linux/amd64 image. On Windows with WSL containers, add `-ContainerCli wslc`. Without `-Docker`, the script skips every page with `docker` lines.

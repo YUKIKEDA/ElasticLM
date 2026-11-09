@@ -152,9 +152,11 @@
       docker would make any other one silently and leave it. Before the page runs, a container or volume
       of such a name that exists already fails the page, so that a developer's own is never removed. One that is still
       there after the removal fails the page, as a folder does.
-      A page that names postgres:18@sha256:..., and its translation, name the digest of .github/workflows/ci.yml, and
-      every PostgreSQL image (postgres: or postgres@, also under docker.io/library/) that a docker line names is that
-      reference, which is checked for every listed page, also one that is skipped (design §20.7, V1c4d2, Q10).
+      A page and its translation name each pinned image by the digest of .github/workflows/ci.yml: PostgreSQL
+      (postgres:18@sha256:...) and Keycloak (quay.io/keycloak/keycloak@sha256:..., with no tag). Any reference on a page
+      line that starts with such a prefix, and every such image that a docker line names (postgres: or postgres@, also
+      under docker.io/library/; quay.io/keycloak/keycloak: or quay.io/keycloak/keycloak@), must be the reference of ci.yml. This is
+      checked for every listed page, also one that is skipped (design §20.7, V1c4d2, Q10; V1c4d2b, review R4).
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
@@ -192,7 +194,7 @@
     The pages to run. Default: README.md, docs/guide/tutorials/*.md, and docs/guide/how-to/*.md at the repository root.
 
 .PARAMETER Docker
-    Runs the pages with docker lines instead of skipping them (above). release.yml's container job passes it with the two
+    Runs the pages with docker lines instead of skipping them (above). release.yml's container job passes it with the
     container pages in -Page.
 
 .PARAMETER Image
@@ -238,9 +240,17 @@ $imageArch = 'amd64'
 $containerCliMap = @{ docker = @{}; wslc = @{ cp = @('container', 'cp') } }
 # A container or volume that a page names, which the end of the page removes by that name.
 $containerName = '[A-Za-z0-9][A-Za-z0-9_.-]*'
-# The PostgreSQL image that a page names is the one of ci.yml (design §20.7, V1c4d2, Q10).
-$postgresReference = 'postgres:18@sha256:'
-$ciPostgres = @([regex]::Matches([IO.File]::ReadAllText((Join-Path $repoRoot '.github/workflows/ci.yml')), "$([regex]::Escape($postgresReference))[0-9a-f]{64}") | ForEach-Object Value | Select-Object -Unique)
+# The images that a page names by the digest of ci.yml (design §20.7, V1c4d2, Q10; V1c4d2b, review R4). Each has its name,
+# the prefix of its pinned reference, which is found on any line of a page, the pattern that finds the image among the
+# words of a docker line, and the references of ci.yml that start with the prefix and end in a digest.
+$ciText = [IO.File]::ReadAllText((Join-Path $repoRoot '.github/workflows/ci.yml'))
+$pinnedImages = @(
+    @{ Name = 'PostgreSQL'; Prefix = 'postgres:18@sha256:'; Pattern = '^(?:docker\.io/)?(?:library/)?postgres[:@]' }
+    @{ Name = 'Keycloak'; Prefix = 'quay.io/keycloak/keycloak@sha256:'; Pattern = '^quay\.io/keycloak/keycloak[:@]' }
+) | ForEach-Object {
+    $_.Reference = @([regex]::Matches($ciText, "$([regex]::Escape($_.Prefix))[0-9a-f]{64}") | ForEach-Object Value | Select-Object -Unique)
+    $_
+}
 $osNames = @('windows', 'linux', 'macos')
 $thisOs = $IsWindows ? 'windows' : ($IsMacOS ? 'macos' : 'linux')
 # The files of the libelasticlm archive (eng/release/Pack-Rid.ps1, release.yml's "Check the libelasticlm zips"): the
@@ -1117,21 +1127,23 @@ function Get-TranslationName([string]$path) {
     return $translated -eq $relative ? $null : $translated
 }
 
-# A page and its translation name the PostgreSQL image by the digest of .github/workflows/ci.yml, so that the server a
-# reader starts is the one the tests run on (design §20.7, V1c4d2, Q10). Checked for every page, also one skipped without
-# -Docker, so that the job without -Docker finds a digest that differs.
-function Test-PostgresDigest([string]$path) {
+# A page and its translation name each image of $pinnedImages by the digest of .github/workflows/ci.yml, so that the
+# server a reader starts is the one the tests run on (design §20.7, V1c4d2, Q10; V1c4d2b, review R4). Checked for every
+# page, also one skipped without -Docker, so that the job without -Docker finds a digest that differs.
+function Test-ImageDigest([string]$path) {
     $translated = Get-TranslationName $path
     foreach ($file in @($path) + @(if ($translated) { Join-Path $repoRoot $translated })) {
         if (-not (Test-Path -LiteralPath $file -PathType Leaf)) { continue }
         $lines = [IO.File]::ReadAllLines($file)
         for ($i = 0; $i -lt $lines.Length; $i++) {
-            foreach ($reference in [regex]::Matches($lines[$i], "$([regex]::Escape($postgresReference))[^\s""'``)\]]*")) {
-                Assert-PostgresReference "$(Get-PageName $file):$($i + 1)" $reference.Value
+            foreach ($image in $pinnedImages) {
+                foreach ($reference in [regex]::Matches($lines[$i], "$([regex]::Escape($image.Prefix))[^\s""'``)\]]*")) {
+                    Assert-ImageReference "$(Get-PageName $file):$($i + 1)" $image $reference.Value
+                }
             }
         }
-        # Every PostgreSQL image that a docker line of a steps:run or steps:background block names, with another tag, with
-        # no digest, or with another digest, read with the readers of Read-Plan.
+        # Every pinned image that a docker line of a steps:run or steps:background block names, with another tag, with no
+        # digest, or with another digest, read with the readers of Read-Plan.
         $name = Get-PageName $file
         foreach ($block in (Get-Page $file).Blocks | Where-Object Marker) {
             if ((Read-Marker "$($name):$($block.Order)" $block.Marker).Kind -cnotin 'run', 'background') { continue }
@@ -1142,17 +1154,19 @@ function Test-PostgresDigest([string]$path) {
                 $words = Split-Step $line
                 if ($words[0] -cne $containerProgram) { continue }
                 foreach ($word in $words | Select-Object -Skip 1) {
-                    if ($word -cmatch '^(?:docker\.io/)?(?:library/)?postgres[:@]') { Assert-PostgresReference "$($name):$($lineNumber)" $word }
+                    foreach ($image in $pinnedImages) {
+                        if ($word -cmatch $image.Pattern) { Assert-ImageReference "$($name):$($lineNumber)" $image $word }
+                    }
                 }
             }
         }
     }
 }
 
-# Fails unless a PostgreSQL image reference is the one of .github/workflows/ci.yml.
-function Assert-PostgresReference([string]$at, [string]$reference) {
-    if ($ciPostgres.Count -ne 1) { throw '.github/workflows/ci.yml does not pin postgres:18 by one digest.' }
-    if ($reference -cne $ciPostgres[0]) { throw "$($at): the PostgreSQL image is not $($ciPostgres[0]), the one of .github/workflows/ci.yml." }
+# Fails unless an image reference is the one of .github/workflows/ci.yml for that pinned image.
+function Assert-ImageReference([string]$at, [hashtable]$image, [string]$reference) {
+    if ($image.Reference.Count -ne 1) { throw ".github/workflows/ci.yml does not pin $($image.Prefix)... by one digest." }
+    if ($reference -cne $image.Reference[0]) { throw "$($at): the $($image.Name) image is not $($image.Reference[0]), the one of .github/workflows/ci.yml." }
 }
 
 function Test-Translation([string]$path, [object]$parsed) {
@@ -1502,7 +1516,7 @@ try {
         }
     }
     foreach ($path in $Page) {
-        Test-PostgresDigest $path
+        Test-ImageDigest $path
         if ($skipped.Contains((Get-PageName $path))) {
             "skip: $(Get-PageName $path)"
             continue

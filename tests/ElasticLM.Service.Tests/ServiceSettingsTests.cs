@@ -518,6 +518,27 @@ public sealed class ServiceSettingsTests : IDisposable
     }
 
     /// <summary>
+    /// The nonce secret's minimum length is the key encryption key's length, so that one file of <c>elm secret create</c>
+    /// serves as either (design §16, V1c4d2b, review R8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - None.
+    ///
+    /// Steps:
+    /// - Compare NonceService.MinSecretLength, the length that elm secret create writes, with WebLoginSettings.KekLength.
+    ///
+    /// Expected:
+    /// - Both are 32 bytes.
+    /// </remarks>
+    [Fact]
+    public void SecretLength_NonceMinimumAndKek_AreBoth32Bytes()
+    {
+        Assert.Equal(WebLoginSettings.KekLength, Issuing.NonceService.MinSecretLength);
+        Assert.Equal(32, WebLoginSettings.KekLength);
+    }
+
+    /// <summary>
     /// The admin UI's sign-in settings are read from the file and the environment and checked (design §14.8, §15.3, M5b).
     /// </summary>
     /// <remarks>
