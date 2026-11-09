@@ -80,12 +80,12 @@ Every route except `GET /v1/admin/oidc` and `GET /health` needs one of these cre
 | Credential | How it is sent | Accepted when |
 | --- | --- | --- |
 | API key | `Authorization: Bearer elm_…`: `elm_` and 43 base64url characters. `elm-service setup` and `POST /v1/admin/api-keys` make keys. | Always. The key works until it expires or is revoked. With `oidc.issuer` set, it also stops when its administrator has not signed in for `apiKeys.inactiveAdminDays` days, counted from the latest of the last sign-in, the administrator's creation, and the key's creation. |
-| OIDC access token | `Authorization: Bearer <token>`, where the value does not start with `elm_`. `elm admin login` gets one. | Only with `oidc.issuer` set. The token is a signed JWT (RS256, PS256, or ES256) of at most 8,192 characters, with `typ` `at+jwt`, `application/at+jwt`, or `JWT`, `iss` equal to `oidc.issuer`, `aud` holding `oidc.audience`, and a valid `exp` (60 seconds of clock skew allowed). Its `iss` and `sub`, each 1 to 255 characters without control characters, name the administrator, and `oidc.roleClaim` (at most 100 values) gives the role through `oidc.roleMap`; a token outside these limits is not valid. |
+| OIDC access token | `Authorization: Bearer <token>`, where the value does not start with `elm_`. `elm admin login` gets one. | Only with `oidc.issuer` set. The token is a signed JWT (RS256, PS256, or ES256) of at most 8,192 characters, with `typ` `at+jwt`, `application/at+jwt`, or `JWT`, `iss` equal to `oidc.issuer`, `aud` holding `oidc.audience`, and a valid `exp` (60 seconds of clock skew allowed). Its `iss` and the claim that `oidc.subjectClaim` names (`sub` by default), each 1 to 255 characters without control characters, name the administrator. That claim must appear once, as a string. `oidc.roleClaim` (at most 100 values) gives the role through `oidc.roleMap`; a token outside these limits is not valid. |
 | Admin UI session | The cookie `__Host-elm-session`, with no `Authorization` header. Requests other than `GET` and `HEAD` also need the header `X-ELM-CSRF: 1`, and an `Origin` header, when present, must be the origin of the admin UI. | Only with the admin UI's sign-in on (`oidc.webClientId` set). The session ends after `session.idleMinutes` without a request or after `session.maxHours`. |
 
 - The scheme name `Bearer` is not case-sensitive. A request with an `Authorization` header is never authenticated by its cookie.
 - A missing, unknown, revoked, or expired credential, a disabled administrator, and an ended session all get the same answer: `401` with `ELM_UNAUTHORIZED`.
-- A valid access token whose role claim maps to no role gets `403` with `ELM_FORBIDDEN`. When the token's `iss` and `sub` are those of `bootstrapOwner` (the first administrator, named in [elm-service configuration](service-configuration.md#bootstrapowner)), the role is `owner` whatever the claim says.
+- A valid access token whose role claim maps to no role gets `403` with `ELM_FORBIDDEN`. When the token's `iss` and its value of the `oidc.subjectClaim` claim are those of `bootstrapOwner` (the first administrator, named in [elm-service configuration](service-configuration.md#bootstrapowner)), the role is `owner` whatever the claim says.
 - A session request without the CSRF header, or from another origin, gets `403` with `ELM_FORBIDDEN`.
 
 The settings are in [elm-service configuration](service-configuration.md#oidc). The sign-in itself (`/auth/login`, `/auth/callback`, `/auth/logout`) is part of the admin UI, not of this API.
@@ -336,7 +336,7 @@ A cloud lease: seats of a cloud-floating license, which is a license whose polic
 | --- | --- | --- |
 | `id` | string | The administrator's ID. |
 | `issuer` | string | The OIDC issuer (`iss`). |
-| `subject` | string | The subject (`sub`) at that issuer. |
+| `subject` | string | The value at that issuer of the claim that `oidc.subjectClaim` names (`sub` by default). |
 | `role` | string | `owner`, `admin`, `support`, `viewer`, or `none`. |
 | `enabled` | boolean | Whether the administrator can authenticate. A disabled administrator's API keys, tokens, and sessions do not work. |
 | `createdAt` | time | When the administrator was created: by `elm-service setup` for `bootstrapOwner`, or at the first sign-in. |
@@ -1723,7 +1723,7 @@ Answers `200`:
 | --- | --- | --- |
 | `id` | string | The administrator's ID. |
 | `issuer` | string | The OIDC issuer. |
-| `subject` | string | The subject at that issuer. |
+| `subject` | string | The value at that issuer of the claim that `oidc.subjectClaim` names (`sub` by default). |
 | `role` | string | `owner`, `admin`, `support`, `viewer`, or `none`. |
 | `permissions` | array of strings | The permissions this request holds, in the order of [Roles and permissions](#roles-and-permissions). For an API key, these are the key's permissions that the role also holds. |
 

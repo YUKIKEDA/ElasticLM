@@ -9,7 +9,15 @@ namespace ElasticLM.Service;
 /// <param name="Kek">The key encryption key: 32 bytes.</param>
 /// <param name="Idle">How long a session lasts without a request (<c>session.idleMinutes</c>).</param>
 /// <param name="Lifetime">The longest a session lasts (<c>session.maxHours</c>).</param>
-internal sealed record WebLoginSettings(string ClientId, string ClientSecret, byte[] Kek, TimeSpan Idle, TimeSpan Lifetime)
+/// <param name="Scopes">The scopes the sign-in asks for (<c>oidc.webScopes</c>, V1c15); <c>openid</c> is one of them.</param>
+internal sealed record WebLoginSettings(
+    string ClientId,
+    string ClientSecret,
+    byte[] Kek,
+    TimeSpan Idle,
+    TimeSpan Lifetime,
+    IReadOnlyList<string> Scopes
+)
 {
     /// <summary>The variable that holds the web client's secret, instead of <c>oidc.webClientSecretFile</c>.</summary>
     public const string ClientSecretVariable = "ELM_OIDC_WEBCLIENTSECRET";
@@ -22,6 +30,9 @@ internal sealed record WebLoginSettings(string ClientId, string ClientSecret, by
 
     private const int MaxClientIdLength = 255;
     private const int MaxSecretLength = 1024;
+
+    /// <summary>Gets the scopes asked for when <c>oidc.webScopes</c> is left out.</summary>
+    public static IReadOnlyList<string> DefaultScopes { get; } = ["openid"];
 
     /// <summary>
     /// Reads the web sign-in's settings; <see langword="null"/> when none of them is set (design §15.3, the enabling
@@ -55,14 +66,18 @@ internal sealed record WebLoginSettings(string ClientId, string ClientSecret, by
         string? kekText = env(KekVariable) ?? (file.DataProtection?.KekFile is string kekFile ? readSecret(kekFile, "dataProtection.kekFile") : null);
         int? idleMinutes = env("ELM_SESSION_IDLEMINUTES") is string idleText ? Whole(idleText, "session.idleMinutes") : file.Session?.IdleMinutes;
         int? maxHours = env("ELM_SESSION_MAXHOURS") is string maxText ? Whole(maxText, "session.maxHours") : file.Session?.MaxHours;
+        IReadOnlyList<string>? scopes = env("ELM_OIDC_WEBSCOPES") is string scopeText
+            ? scopeText.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+            : file.Oidc?.WebScopes;
 
         if (clientId is null && secret is null)
         {
-            // design §15.3: without the web sign-in, a key encryption key or a session setting is a mistake, not a default.
-            return kekText is null && idleMinutes is null && maxHours is null
+            // design §15.3: without the web sign-in, a key encryption key, a session setting, or the sign-in's scopes are a
+            // mistake, not a default.
+            return kekText is null && idleMinutes is null && maxHours is null && scopes is null
                 ? null
                 : throw new ServiceStartException(
-                    "dataProtection.kekFile and session.* are for the admin UI's sign-in; set oidc.webClientId and its secret, or leave them out."
+                    "dataProtection.kekFile, session.*, and oidc.webScopes are for the admin UI's sign-in; set oidc.webClientId and its secret, or leave them out."
                 );
         }
 
@@ -94,6 +109,13 @@ internal sealed record WebLoginSettings(string ClientId, string ClientSecret, by
             throw new ServiceStartException("The web client's secret must be 1 to 1024 printable ASCII characters without spaces.");
         }
 
+        // design §20.7, V1c15 review R8: openid as written; the handler adds nothing after the scopes are cleared.
+        OidcSettings.CheckScopes(scopes ??= DefaultScopes, "oidc.webScopes");
+        if (!scopes.Contains("openid", StringComparer.Ordinal))
+        {
+            throw new ServiceStartException("oidc.webScopes must hold openid.");
+        }
+
         byte[] kek = ParseKek(kekText);
         int idle = idleMinutes ?? 30;
         if (idle is < 5 or > 120)
@@ -116,7 +138,7 @@ internal sealed record WebLoginSettings(string ClientId, string ClientSecret, by
             throw new ServiceStartException($"The admin UI's sign-in needs the first public URL to be https with the path /: '{ui}'.");
         }
 
-        return new WebLoginSettings(clientId, secret, kek, TimeSpan.FromMinutes(idle), TimeSpan.FromHours(max));
+        return new WebLoginSettings(clientId, secret, kek, TimeSpan.FromMinutes(idle), TimeSpan.FromHours(max), [.. scopes]);
     }
 
     private static byte[] ParseKek(string? text)

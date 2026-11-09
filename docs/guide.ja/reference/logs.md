@@ -262,13 +262,13 @@ API キーのような秘密は書き込まない。
 
 | アクション | 記録するもの |
 | --- | --- |
-| `admin.create` | OIDC での最初のサインインで管理者を作った。`detail` には `issuer`、`subject`、`role` が入る。 |
+| `admin.create` | OIDC での最初のサインインで管理者を作った。`detail` には `issuer`、`subject`（`oidc.subjectClaim` が指すクレームの値）、`role` が入る。 |
 | `admin.role` | サインインのときに管理者のロールが変わった。`detail` には `from`、`to` が入る。 |
 | `admin.list` | `GET /v1/admin/admins`。 |
 | `admin.disable` | `POST /v1/admin/admins/{id}/disable`。 |
 | `admin.enable` | `POST /v1/admin/admins/{id}/enable`。 |
 | `admin.me` | 拒否した `GET /v1/admin/me`。 |
-| `session.create` | 管理画面のサインイン。`detail` には、置き換えたセッション（`replaced`）と追い出したセッション（`evicted`）が入る。拒否したサインインは、`issuer` と `subject` を入れた `ELM_FORBIDDEN` になる。 |
+| `session.create` | 管理画面のサインイン。`detail` には、置き換えたセッション（`replaced`）と追い出したセッション（`evicted`）が入る。拒否したサインインは、`issuer` と `subject`（`oidc.subjectClaim` が指すクレームの値）を入れた `ELM_FORBIDDEN` になる。 |
 | `session.list` | `GET /v1/admin/sessions`。`detail` には `adminId` が入る。 |
 | `session.revoke` | `DELETE /v1/admin/sessions/{id}`。 |
 | `session.logout` | 管理画面のサインアウト。 |

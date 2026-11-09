@@ -25,7 +25,7 @@ internal enum DatabaseProvider
 /// The issuer an administrator signs in with and their subject there (design §14.6 <c>bootstrapOwner</c>).
 /// </summary>
 /// <param name="Issuer">The OIDC issuer (<c>iss</c>).</param>
-/// <param name="Subject">The subject (<c>sub</c>).</param>
+/// <param name="Subject">The value of the claim that <c>oidc.subjectClaim</c> names (<c>sub</c> by default, V1c15).</param>
 internal sealed record AdminIdentity(string Issuer, string Subject);
 
 /// <summary>
@@ -373,8 +373,10 @@ internal sealed record ServiceSettings
         Text(file.Oidc?.CliClientId, "oidc.cliClientId");
         List(file.Oidc?.CliScopes, "oidc.cliScopes");
         Text(file.Oidc?.RoleClaim, "oidc.roleClaim");
+        Text(file.Oidc?.SubjectClaim, "oidc.subjectClaim");
         Text(file.Oidc?.WebClientId, "oidc.webClientId");
         PathValue(file.Oidc?.WebClientSecretFile, "oidc.webClientSecretFile");
+        List(file.Oidc?.WebScopes, "oidc.webScopes");
         PathValue(file.DataProtection?.KekFile, "dataProtection.kekFile");
         return file;
     }

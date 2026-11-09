@@ -82,6 +82,7 @@ elm-service backup --out <path> [--config <settings.json>]
 | `dataProtection.kekFile` | `ELM_DATAPROTECTION_KEK` | 鍵暗号化鍵そのもの（base64）。ファイルのパスではない |
 | `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` または `ELM_TRUST_ROOT_KEYS` | `ELM_TRUST_ROOTKEYS` は規則に従い、ファイルのパスを入れる。`ELM_TRUST_ROOT_KEYS` はルート公開鍵を PEM テキストで入れ、ファイルから鍵が 1 つも得られないときだけ読む。**2 つ目の `_` に注意:** 2 つの名前の違いはこれだけだ |
 | `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | スコープを `;` ではなく空白で区切る |
+| `oidc.webScopes` | `ELM_OIDC_WEBSCOPES` | スコープを `;` ではなく空白で区切る |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | `value=role` の組を `;` で区切る。たとえば `elm-owners=owner;elm-support=support`。`;` を含むクレームの値は、代わりにファイルに書く |
 
 ## 最上位の設定
@@ -134,12 +135,12 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `bootstrapOwner.iss` | `ELM_BOOTSTRAPOWNER_ISS` | 文字列 | なし | 最初の `owner` の管理者の OIDC 発行者（issuer）。1 から 255 文字。`iss` と `sub` は両方設定するか、どちらも設定しない。`oidc.issuer` を設定したときは、`oidc.issuer` と同じでなければならない |
-| `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_SUB` | 文字列 | なし | その発行者における、最初の `owner` の管理者のサブジェクト（`sub`）。1 から 255 文字 |
+| `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_SUB` | 文字列 | なし | 最初の `owner` の管理者について、その発行者で `oidc.subjectClaim` が指すクレームの値（既定は `sub`）。1 から 255 文字。どのクレームを指しても、キーの名前は `sub` のまま |
 
 `elm-service setup` には `bootstrapOwner` が必要で、この管理者の API キーを作る。
 
-- OIDC を使うとき（`oidc.issuer` を設定したとき）: `iss` は ID プロバイダーの発行者、`sub` は、最初の `owner` になる人に ID プロバイダーが与えるサブジェクトだ。その人がサインインすると、`oidc.roleMap` の内容にかかわらず `owner` のロールを得る。
-- OIDC を使わないとき: 誰もサインインせず、最初の `owner` は `setup` が作る API キーで操作する。`iss` と `sub` はその管理者に名前を付けるだけなので、`local` と `owner` のように、1 から 255 文字の任意の文字列でよい。あとで OIDC を有効にするかもしれないなら、最初から、その ID プロバイダーの発行者とその人のサブジェクトを使う。OIDC を有効にすると、`bootstrapOwner.iss` は `oidc.issuer` と同じでなければならず、その `sub` を持つ人がサインインのときに `owner` のロールを得る。
+- OIDC を使うとき（`oidc.issuer` を設定したとき）: `iss` は ID プロバイダーの発行者、`sub` は、最初の `owner` になる人に ID プロバイダーが `oidc.subjectClaim` のクレームで与える値だ。既定ではサブジェクト（`sub`）、`oid` にしたときはオブジェクト ID になる。その人がサインインすると、`oidc.roleMap` の内容にかかわらず `owner` のロールを得る。
+- OIDC を使わないとき: 誰もサインインせず、最初の `owner` は `setup` が作る API キーで操作する。`iss` と `sub` はその管理者に名前を付けるだけなので、`local` と `owner` のように、1 から 255 文字の任意の文字列でよい。あとで OIDC を有効にするかもしれないなら、最初から、その ID プロバイダーの発行者と、`oidc.subjectClaim` があとで指すクレーム（既定は `sub`）でのその人の値を使う。OIDC を有効にすると、`bootstrapOwner.iss` は `oidc.issuer` と同じでなければならず、その値を持つ人がサインインのときに `owner` のロールを得る。
 
 ## `nonce`
 
@@ -186,8 +187,12 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | `oidc.cliScopes` | `ELM_OIDC_CLISCOPES` | 文字列のリスト | `openid`、`offline_access` | `elm admin login` が要求するスコープ。1 から 20 個で、それぞれ空白、`"`、`\` を含まない 1 から 100 文字の印字可能な ASCII 文字 |
 | `oidc.roleClaim` | `ELM_OIDC_ROLECLAIM` | 文字列 | `groups` | 値がロールを表すトークンのクレーム。1 から 255 文字 |
 | `oidc.roleMap` | `ELM_OIDC_ROLEMAP` | 文字列のオブジェクト | なし | クレームの値と、その値に与えるロール。1 から 100 個。値は 1 から 255 文字で、ロールは `owner`、`admin`、`support`、`viewer` のいずれか。環境変数では、同じ値を 2 回書かない |
+| `oidc.subjectClaim` | `ELM_OIDC_SUBJECTCLAIM` | 文字列 | `sub` | 管理者を見分けるトークンのクレーム。`sub` か `oid` のどちらか。ほかの値ではサービスが起動しない。サービスはその値を管理者の `subject` にし、`bootstrapOwner.sub` と比べる。クレームがないトークン、2 回以上あるトークン、制御文字を含まない 1 から 255 文字の文字列 1 つになっていないトークンは拒否する。クレームは ID トークンとアクセストークンの両方に、同じ値で入れる。管理者がサインインしたあとで変えると、新しい管理者になる。この表の下の段落を参照 |
 | `oidc.webClientId` | `ELM_OIDC_WEBCLIENTID` | 文字列 | なし。管理画面のサインインは無効 | 管理画面のサインインに使うコンフィデンシャルクライアント。1 から 255 文字。`oidc.issuer` と Web クライアントのシークレットが必要。`oidc.cliClientId` とも `oidc.audience` とも別の値にする |
 | `oidc.webClientSecretFile` | `ELM_OIDC_WEBCLIENTSECRET` | ファイルのパス | なし | Web クライアントのシークレットを入れたファイル。空白を含まない 1 から 1024 文字の印字可能な ASCII 文字。`oidc.webClientId` を設定したときは必須。シークレットだ。[シークレット](#シークレット)を参照 |
+| `oidc.webScopes` | `ELM_OIDC_WEBSCOPES` | 文字列のリスト | `openid` | 管理画面のサインインが要求するスコープ。1 から 20 個で、それぞれ空白、`"`、`\` を含まない 1 から 100 文字の印字可能な ASCII 文字。小文字の `openid` を含める。`oidc.webClientId` が必要。Microsoft Entra ID で `oidc.subjectClaim` を `oid` にするときは `openid profile` にする。Entra ID は、リクエストに `profile` があるときだけトークンに `oid` を入れるからだ |
+
+`oidc.subjectClaim` を変えても、サービスは既存の管理者を新しいクレームの値に移さない。管理者がサインインしたあとで変えると、どの人も次のサインインで新しい管理者になる。古い管理者としては誰もサインインしなくなるので、古い管理者の API キーは、`apiKeys.inactiveAdminDays` の日数が過ぎると使えなくなる。動いているサービスで変える手順は、OIDC のハウツーガイドの[管理者を見分けるクレームを変える](../how-to/sign-in-with-oidc.md#管理者を見分けるクレームを変える)にある。ほとんどの ID プロバイダーでは、`sub` と `oid` の値は形が違う。2 つが同じ値になる ID プロバイダーでも、どの人も自分の管理者のままで、ほかの人の管理者になることはない。
 
 管理画面のサインインを使うには、ID プロバイダーに Web クライアントを次の URL で登録する。`<origin>` は、`publicUrls` の最初の URL（`https://activation.example.com` など）のスキーム、ホスト、ポートだ。`publicUrls` がなければ、ループバックの `listen` の URL のものになる。
 
@@ -196,7 +201,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | リダイレクト URI（コールバック） | `<origin>/auth/callback` |
 | ログアウト後のリダイレクト URI | `<origin>/` |
 
-サインインには PKCE 付きの認可コードフローを使い、スコープは `openid` だけを要求する。サインアウトのときは、ID プロバイダーのディスカバリードキュメントに `end_session_endpoint` があれば、管理画面はブラウザーを `client_id` と `post_logout_redirect_uri` 付きでそのエンドポイントに送る。
+サインインには PKCE 付きの認可コードフローを使い、`oidc.webScopes` のスコープ（既定は `openid`）を要求する。サインアウトのときは、ID プロバイダーのディスカバリードキュメントに `end_session_endpoint` があれば、管理画面はブラウザーを `client_id` と `post_logout_redirect_uri` 付きでそのエンドポイントに送る。
 
 ## `apiKeys`
 

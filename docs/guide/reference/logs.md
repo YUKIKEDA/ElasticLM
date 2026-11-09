@@ -262,13 +262,13 @@ Secrets, such as API keys, are never written.
 
 | Action | Records |
 | --- | --- |
-| `admin.create` | An administrator was created at the first sign-in with OIDC; `detail` has `issuer`, `subject`, `role`. |
+| `admin.create` | An administrator was created at the first sign-in with OIDC; `detail` has `issuer`, `subject` (the value of the claim that `oidc.subjectClaim` names), `role`. |
 | `admin.role` | An administrator's role changed at sign-in; `detail` has `from`, `to`. |
 | `admin.list` | `GET /v1/admin/admins`. |
 | `admin.disable` | `POST /v1/admin/admins/{id}/disable`. |
 | `admin.enable` | `POST /v1/admin/admins/{id}/enable`. |
 | `admin.me` | A refused `GET /v1/admin/me`. |
-| `session.create` | An admin UI sign-in; `detail` has `replaced` and `evicted` sessions. A refused sign-in is `ELM_FORBIDDEN` with `issuer` and `subject`. |
+| `session.create` | An admin UI sign-in; `detail` has `replaced` and `evicted` sessions. A refused sign-in is `ELM_FORBIDDEN` with `issuer` and `subject` (the value of the claim that `oidc.subjectClaim` names). |
 | `session.list` | `GET /v1/admin/sessions`; `detail` has `adminId`. |
 | `session.revoke` | `DELETE /v1/admin/sessions/{id}`. |
 | `session.logout` | An admin UI sign-out. |

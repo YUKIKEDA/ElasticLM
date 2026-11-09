@@ -431,21 +431,22 @@ public sealed class ServiceSettingsTests : IDisposable
         );
 
     /// <summary>
-    /// The oidc settings and apiKeys.inactiveAdminDays (design §14.8, M5a): read from the file and the environment, with the
-    /// defaults, and refused outside their limits, including an audience equal to the CLI client and a bootstrap owner of
-    /// another issuer.
+    /// The oidc settings and apiKeys.inactiveAdminDays (design §14.8, M5a, V1c15): read from the file and the environment,
+    /// with the defaults, and refused outside their limits, including an audience equal to the CLI client, a bootstrap owner
+    /// of another issuer, and a subject claim other than sub and oid.
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A settings file with the required values.
     ///
     /// Steps:
-    /// - Load an oidc section; load it with the ELM_OIDC_* variables and ELM_APIKEYS_INACTIVEADMINDAYS; load a file without
-    ///   oidc; load each invalid value.
+    /// - Load an oidc section; load it with subjectClaim oid; load it with the ELM_OIDC_* variables and
+    ///   ELM_APIKEYS_INACTIVEADMINDAYS; load a file without oidc; load each invalid value.
     ///
     /// Expected:
-    /// - The section's values with the default scopes and role claim, the issuer kept as written; the variables' values;
-    ///   no oidc and 90 days; each invalid value refused with its message.
+    /// - The section's values with the default scopes, role claim, and subject claim sub, the issuer kept as written; the
+    ///   subject claim oid; the variables' values; no oidc and 90 days; each invalid value refused with its message: among
+    ///   them oidc.subjectClaim without oidc.issuer, the subject claims email and OID, and scopes with a space, ", or \.
     /// </remarks>
     [Fact]
     public void Load_Oidc_IsReadAndChecked()
@@ -456,6 +457,9 @@ public sealed class ServiceSettingsTests : IDisposable
         Assert.Equal(("https://idp.example/", "elm-service", "elm-cli", "groups"), (oidc.Issuer, oidc.Audience, oidc.CliClientId, oidc.RoleClaim));
         Assert.Equal(["openid", "offline_access"], oidc.CliScopes);
         Assert.Equal("owner", oidc.RoleMap["admins"]);
+        Assert.Equal("sub", oidc.SubjectClaim);
+        string withOid = Section.Replace("\"roleMap\"", "\"subjectClaim\":\"oid\",\"roleMap\"", StringComparison.Ordinal);
+        Assert.Equal("oid", ServiceSettings.Load(Write(Base(withOid)), _ => null).Oidc!.SubjectClaim);
 
         var environment = new Dictionary<string, string>
         {
@@ -465,6 +469,7 @@ public sealed class ServiceSettingsTests : IDisposable
             ["ELM_OIDC_CLISCOPES"] = "openid api://elm/admin",
             ["ELM_OIDC_ROLECLAIM"] = "roles",
             ["ELM_OIDC_ROLEMAP"] = "a=b=owner; viewers=viewer",
+            ["ELM_OIDC_SUBJECTCLAIM"] = "oid",
             ["ELM_APIKEYS_INACTIVEADMINDAYS"] = "0",
         };
         ServiceSettings env = ServiceSettings.Load(Write(Base(Section)), name => environment.GetValueOrDefault(name));
@@ -474,6 +479,7 @@ public sealed class ServiceSettingsTests : IDisposable
         );
         Assert.Equal(["openid", "api://elm/admin"], env.Oidc.CliScopes);
         Assert.Equal(("owner", "viewer"), (env.Oidc.RoleMap["a=b"], env.Oidc.RoleMap["viewers"]));
+        Assert.Equal("oid", env.Oidc.SubjectClaim);
 
         ServiceSettings plain = ServiceSettings.Load(Write(Base()), _ => null);
         Assert.Equal((null, 90), (plain.Oidc, plain.InactiveAdminDays));
@@ -486,6 +492,10 @@ public sealed class ServiceSettingsTests : IDisposable
             + more
             + "}";
         Assert.Equal("The oidc settings need oidc.issuer.", Refused(",\"oidc\":{\"audience\":\"a\"}"));
+        Assert.Equal("The oidc settings need oidc.issuer.", Refused(",\"oidc\":{\"subjectClaim\":\"oid\"}"));
+        Assert.Equal("oidc.subjectClaim must be sub or oid.", Refused(With("https://idp.example", ",\"subjectClaim\":\"email\"")));
+        Assert.Equal("oidc.subjectClaim must be sub or oid.", Refused(With("https://idp.example", ",\"subjectClaim\":\"OID\"")));
+        Assert.Equal("oidc.subjectClaim must not be empty; leave it out instead.", Refused(With("https://idp.example", ",\"subjectClaim\":\"\"")));
         Assert.StartsWith("oidc.issuer must be an https URL", Refused(With("http://idp.example")), StringComparison.Ordinal);
         Assert.StartsWith("oidc.issuer must be an https URL", Refused(With("https://idp.example/?q=1")), StringComparison.Ordinal);
         Assert.StartsWith(
@@ -506,7 +516,10 @@ public sealed class ServiceSettingsTests : IDisposable
             "oidc.roleMap must map 1 to 100 claim values to roles.",
             Refused(With("https://idp.example").Replace("{\"admins\":\"owner\"}", "{}", StringComparison.Ordinal))
         );
-        Assert.StartsWith("oidc.cliScopes must hold", Refused(With("https://idp.example", ",\"cliScopes\":[\"a b\"]")), StringComparison.Ordinal);
+        const string CliScopes = "oidc.cliScopes must hold 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces, \", or \\.";
+        Assert.Equal(CliScopes, Refused(With("https://idp.example", ",\"cliScopes\":[\"a b\"]")));
+        Assert.Equal(CliScopes, Refused(With("https://idp.example", ",\"cliScopes\":[\"a\\\"b\"]")));
+        Assert.Equal(CliScopes, Refused(With("https://idp.example", ",\"cliScopes\":[\"a\\\\b\"]")));
         Assert.Equal(
             "bootstrapOwner.iss must equal oidc.issuer.",
             Refused(With("https://idp.example") + ",\"bootstrapOwner\":{\"iss\":\"https://idp.example/\",\"sub\":\"boss\"}")
@@ -539,7 +552,8 @@ public sealed class ServiceSettingsTests : IDisposable
     }
 
     /// <summary>
-    /// The admin UI's sign-in settings are read from the file and the environment and checked (design §14.8, §15.3, M5b).
+    /// The admin UI's sign-in settings are read from the file and the environment and checked (design §14.8, §15.3, M5b,
+    /// V1c15).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -550,11 +564,13 @@ public sealed class ServiceSettingsTests : IDisposable
     ///   environment; load without them; then load each setting the design refuses.
     ///
     /// Expected:
-    /// - The values read, with 30 minutes and 12 hours by default; null without them; each refusal a ServiceStartException
-    ///   with its message: a key encryption key or session.* without the web client, the client without its secret, the web
-    ///   client without oidc.issuer, the web client equal to the CLI client or the audience, a secret with a space, a key
-    ///   encryption key of 31 bytes or not base64, no key encryption key, session.idleMinutes 4 and 121, session.maxHours 0
-    ///   and 25, and a first public URL with a path; a first public URL of "/" is taken.
+    /// - The values read, with 30 minutes, 12 hours, and the scope openid by default; the file's and the variable's
+    ///   oidc.webScopes; null without them; each refusal a ServiceStartException with its message: a key encryption key,
+    ///   session.*, or oidc.webScopes without the web client, the client without its secret, the web client without
+    ///   oidc.issuer, the web client equal to the CLI client or the audience, a secret with a space, oidc.webScopes without
+    ///   openid as written or with a scope of a space, a key encryption key of 31 bytes or not base64, no key encryption key,
+    ///   session.idleMinutes 4 and 121, session.maxHours 0 and 25, and a first public URL with a path; a first public URL of
+    ///   "/" is taken.
     /// </remarks>
     [Fact]
     public void Load_WebLogin_IsReadAndChecked()
@@ -584,8 +600,10 @@ public sealed class ServiceSettingsTests : IDisposable
             (read.ClientId, read.ClientSecret, read.Idle, read.Lifetime)
         );
         Assert.Equal(kek, read.Kek);
+        Assert.Equal(["openid", "profile"], ServiceSettings.Load(Write(Base(Web(",\"webScopes\":[\"openid\",\"profile\"]"))), _ => null).Web!.Scopes);
         WebLoginSettings defaults = ServiceSettings.Load(Write(Base(Web())), _ => null).Web!;
         Assert.Equal((TimeSpan.FromMinutes(30), TimeSpan.FromHours(12)), (defaults.Idle, defaults.Lifetime));
+        Assert.Equal(["openid"], defaults.Scopes);
 
         var environment = new Dictionary<string, string>
         {
@@ -594,19 +612,22 @@ public sealed class ServiceSettingsTests : IDisposable
             [WebLoginSettings.KekVariable] = Convert.ToBase64String(kek),
             ["ELM_SESSION_IDLEMINUTES"] = "120",
             ["ELM_SESSION_MAXHOURS"] = "1",
+            ["ELM_OIDC_WEBSCOPES"] = "profile  openid",
         };
         WebLoginSettings env = ServiceSettings.Load(Write(Base(",\"oidc\":{" + Oidc + "}")), name => environment.GetValueOrDefault(name)).Web!;
         Assert.Equal(
             ("web-env", "env-secret", TimeSpan.FromMinutes(120), TimeSpan.FromHours(1)),
             (env.ClientId, env.ClientSecret, env.Idle, env.Lifetime)
         );
+        Assert.Equal(["profile", "openid"], env.Scopes);
         Assert.Null(ServiceSettings.Load(Write(Base(",\"oidc\":{" + Oidc + "}")), _ => null).Web);
 
         string Refused(string json) => Assert.Throws<ServiceStartException>(() => ServiceSettings.Load(Write(Base(json)), _ => null)).Message;
         const string OffOnly =
-            "dataProtection.kekFile and session.* are for the admin UI's sign-in; set oidc.webClientId and its secret, or leave them out.";
+            "dataProtection.kekFile, session.*, and oidc.webScopes are for the admin UI's sign-in; set oidc.webClientId and its secret, or leave them out.";
         Assert.Equal(OffOnly, Refused(",\"oidc\":{" + Oidc + "},\"dataProtection\":{\"kekFile\":" + JsonSerializer.Serialize(kekFile) + "}"));
         Assert.Equal(OffOnly, Refused(",\"oidc\":{" + Oidc + "},\"session\":{\"idleMinutes\":30}"));
+        Assert.Equal(OffOnly, Refused(",\"oidc\":{" + Oidc + ",\"webScopes\":[\"openid\"]}"));
         Assert.Equal(
             "The admin UI's sign-in needs both oidc.webClientId and its secret (ELM_OIDC_WEBCLIENTSECRET or oidc.webClientSecretFile).",
             Refused(",\"oidc\":{" + Oidc + ",\"webClientId\":\"elm-web\"}")
@@ -621,6 +642,12 @@ public sealed class ServiceSettingsTests : IDisposable
         File.WriteAllText(secretFile, "has space");
         Assert.Equal("The web client's secret must be 1 to 1024 printable ASCII characters without spaces.", Refused(Web()));
         File.WriteAllText(secretFile, "s3cret-test-only");
+        Assert.Equal("oidc.webScopes must hold openid.", Refused(Web(",\"webScopes\":[\"profile\"]")));
+        Assert.Equal("oidc.webScopes must hold openid.", Refused(Web(",\"webScopes\":[\"OpenID\",\"profile\"]")));
+        Assert.Equal(
+            "oidc.webScopes must hold 1 to 20 scopes, each 1 to 100 printable ASCII characters without spaces, \", or \\.",
+            Refused(Web(",\"webScopes\":[\"openid\",\"a b\"]"))
+        );
         const string KekForm = "The key encryption key must be 32 bytes in base64.";
         File.WriteAllText(kekFile, Convert.ToBase64String(kek[..31]));
         Assert.Equal(KekForm, Refused(Web()));
