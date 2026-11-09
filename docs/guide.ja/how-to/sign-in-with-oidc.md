@@ -280,7 +280,7 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 - `oidc.issuer` は、テナントの発行者だ。v2.0 のトークンが持つ `iss` は、テナントを示し、`/v2.0` で終わる（同じリファレンスを参照）。
 - API のアプリケーションのマニフェストで、`api.requestedAccessTokenVersion` を `2` にする。そうしないと、Entra ID は v1.0 のアクセストークンを発行する。その `iss` は `/v2.0` で終わらないので、`oidc.issuer` と一致しない（Microsoft の[アプリマニフェストのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/reference-microsoft-graph-app-manifest#api-attribute)を参照）。
 - 管理画面とサービスのアプリケーションのマニフェストで、`groupMembershipClaims` を `SecurityGroup` などに設定し、両方のトークンが `groups` を持つようにする。このクレームにはグループのオブジェクト ID が入るので、`oidc.roleMap` のキーはその ID になる。ユーザーが 200 を超えるグループに入っていると、Entra ID はトークンにこのクレームを入れない。するとサービスには、そのユーザーのロールが見えない。管理者を入れるグループは少なくしておく。
-- `oidc.subjectClaim` を `oid` にする。Entra ID の `sub` は同じユーザーでもアプリケーションごとに違うが、`oid` はテナントのどのアプリケーションでも同じだ（同じリファレンスと、Microsoft の [ID トークンのクレームのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)を参照）。管理画面と `elm admin login` は別々のアプリケーションを使うので、`sub` のままでは 1 人の人が 2 人の管理者になってしまう。
+- `oidc.subjectClaim` を `oid` にする。Entra ID の `sub` は同じユーザーでもアプリケーションごとに違うが、`oid` はテナントのどのアプリケーションでも同じだ（Microsoft のアクセストークンのクレームのリファレンスと、[ID トークンのクレームのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)を参照）。管理画面と `elm admin login` は別々のアプリケーションを使うので、`sub` のままでは 1 人の人が 2 人の管理者になってしまう。
 - Entra ID は、要求に `profile` のスコープがあるときだけトークンに `oid` を入れる（どちらのリファレンスにもそう書かれている）。そこで、`oidc.cliScopes` に `profile` を加え、`oidc.webScopes` を `openid profile` にする。
 - このとき `bootstrapOwner.sub` は、最初のオーナーの `oid`、つまりテナントにおけるそのユーザーのオブジェクト ID になる。
 

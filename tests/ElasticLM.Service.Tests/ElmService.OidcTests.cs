@@ -77,12 +77,14 @@ public sealed class ElmServiceOidcTests
     /// Steps:
     /// - Send tokens: signed by another key, unsigned, of another issuer, of another audience, expired 61 seconds ago, not
     ///   valid for 120 seconds, typ id+jwt, without typ, alg HS256, five parts, a valid token longer than 8,192 characters
-    ///   (a large claim), without sub, with a sub of 256 characters, with the sub the number 12345 (which the library would
-    ///   read as text), with the sub the array ["alice"], with 101 role values; then one that expired 30 seconds ago, one
-    ///   with typ JWT, and one without kid.
+    ///   (a large claim), without sub, with a sub of 256 characters, with the sub the number 12345, with the sub the array
+    ///   ["alice"], with 101 role values; then one that expired 30 seconds ago, one with typ JWT, and one without kid.
     ///
     /// Expected:
     /// - 401 ELM_UNAUTHORIZED with the token message for each refused one; 200 for the last three.
+    /// - The number 12345 is refused by the service: the library reads a numeric sub as the text "12345", and the service
+    ///   reads the payload's JSON type. The array ["alice"] is refused by the library itself, which accepts only a string
+    ///   or a number as sub while it parses the token; the service's own check of an array is in the IdentityOf tests.
     /// </remarks>
     [Fact]
     public async Task Token_EachRefusal_IsUnauthorized()
@@ -135,6 +137,71 @@ public sealed class ElmServiceOidcTests
             using HttpResponseMessage answer = await GetAdminsAsync(test, service, token);
             Assert.Equal(HttpStatusCode.OK, answer.StatusCode);
         }
+    }
+
+    /// <summary>
+    /// The identity is the member that oidc.subjectClaim names, taken only when the payload's JSON holds it once as a string
+    /// of 1 to 255 characters without control characters (design §14.6, §15.3, §20.7 V1c15 review R5). These payloads cannot
+    /// come from the fake provider, whose payload is a dictionary.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A compact token made by the test: a header, the payload in base64url, and a signature part; nothing checks the
+    ///   signature here.
+    ///
+    /// Steps:
+    /// - Read the claim from each payload.
+    ///
+    /// Expected:
+    /// - The value for one string member, also among other members; null for a member given twice (also with the same value,
+    ///   and when the second name is written with an escape, sub), null, a control character, a number, an array of one
+    ///   string, an object, an empty string, a missing member, a JSON array or string, and text that is not JSON.
+    /// </remarks>
+    [Theory]
+    [InlineData("{\"sub\":\"alice\"}", "sub", "alice")]
+    [InlineData("{\"sub\":\"web-alice\",\"oid\":\"oid-alice\"}", "oid", "oid-alice")]
+    [InlineData("{\"sub\":\"alice\",\"sub\":\"bob\"}", "sub", null)]
+    [InlineData("{\"sub\":\"alice\",\"s\\u0075b\":\"bob\"}", "sub", null)]
+    [InlineData("{\"oid\":\"a\",\"oid\":\"a\"}", "oid", null)]
+    [InlineData("{\"sub\":null}", "sub", null)]
+    [InlineData("{\"sub\":\"ali\\u0001ce\"}", "sub", null)]
+    [InlineData("{\"oid\":12345}", "oid", null)]
+    [InlineData("{\"oid\":[\"oid-alice\"]}", "oid", null)]
+    [InlineData("{\"oid\":{\"id\":\"oid-alice\"}}", "oid", null)]
+    [InlineData("{\"sub\":\"\"}", "sub", null)]
+    [InlineData("{\"oid\":\"oid-alice\"}", "sub", null)]
+    [InlineData("[\"sub\",\"alice\"]", "sub", null)]
+    [InlineData("\"alice\"", "sub", null)]
+    [InlineData("not json", "sub", null)]
+    public void IdentityOf_TakesOneStringMemberOnly(string payload, string claim, string? expected) =>
+        Assert.Equal(expected, ElmService.IdentityOf(Compact(payload), claim));
+
+    /// <summary>
+    /// The identity's length limits and a token whose parts are not as compact JWS has them give no identity, and the
+    /// refusal's log reason names the claim (design §14.6, §20.7 V1c15).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Compact tokens made by the test.
+    ///
+    /// Steps:
+    /// - Read sub from payloads with 255 and 256 characters; from a token whose payload part is not base64url; from tokens
+    ///   of two and four parts. Make the refusal reason for oid.
+    ///
+    /// Expected:
+    /// - The value at 255 characters; null for the others; the reason starts with "oid is missing, given more than once".
+    /// </remarks>
+    [Fact]
+    public void IdentityOf_LimitsAndForm_AreChecked()
+    {
+        string longest = new('s', 255);
+        Assert.Equal(longest, ElmService.IdentityOf(Compact("{\"sub\":\"" + longest + "\"}"), "sub"));
+        Assert.Null(ElmService.IdentityOf(Compact("{\"sub\":\"" + longest + "s\"}"), "sub"));
+        Assert.Null(ElmService.IdentityOf("e30.@@@.c2ln", "sub"));
+        string valid = Compact("{\"sub\":\"alice\"}");
+        Assert.Null(ElmService.IdentityOf(valid[..valid.LastIndexOf('.')], "sub"));
+        Assert.Null(ElmService.IdentityOf(valid + ".x", "sub"));
+        Assert.StartsWith("oid is missing, given more than once", ElmService.IdentityRefusal("oid"), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -639,6 +706,9 @@ public sealed class ElmServiceOidcTests
         using JsonDocument page = JsonDocument.Parse(text);
         return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(e => e.Clone())];
     }
+
+    // A compact token around a payload's JSON text, with an empty header object and a placeholder signature.
+    private static string Compact(string payload) => "e30." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload)) + ".c2ln";
 
     private static JsonElement Admin(JsonElement[] admins, string subject) => admins.Single(a => a.GetProperty("subject").GetString() == subject);
 }

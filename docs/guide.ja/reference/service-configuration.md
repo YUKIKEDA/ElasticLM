@@ -140,7 +140,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 `elm-service setup` には `bootstrapOwner` が必要で、この管理者の API キーを作る。
 
 - OIDC を使うとき（`oidc.issuer` を設定したとき）: `iss` は ID プロバイダーの発行者、`sub` は、最初の `owner` になる人に ID プロバイダーが `oidc.subjectClaim` のクレームで与える値だ。既定ではサブジェクト（`sub`）、`oid` にしたときはオブジェクト ID になる。その人がサインインすると、`oidc.roleMap` の内容にかかわらず `owner` のロールを得る。
-- OIDC を使わないとき: 誰もサインインせず、最初の `owner` は `setup` が作る API キーで操作する。`iss` と `sub` はその管理者に名前を付けるだけなので、`local` と `owner` のように、1 から 255 文字の任意の文字列でよい。あとで OIDC を有効にするかもしれないなら、最初から、その ID プロバイダーの発行者とその人のサブジェクトを使う。OIDC を有効にすると、`bootstrapOwner.iss` は `oidc.issuer` と同じでなければならず、その `sub` を持つ人がサインインのときに `owner` のロールを得る。
+- OIDC を使わないとき: 誰もサインインせず、最初の `owner` は `setup` が作る API キーで操作する。`iss` と `sub` はその管理者に名前を付けるだけなので、`local` と `owner` のように、1 から 255 文字の任意の文字列でよい。あとで OIDC を有効にするかもしれないなら、最初から、その ID プロバイダーの発行者と、`oidc.subjectClaim` で選ぶクレーム（既定は `sub`）のその人の値を使う。OIDC を有効にすると、`bootstrapOwner.iss` は `oidc.issuer` と同じでなければならず、その値を持つ人がサインインのときに `owner` のロールを得る。
 
 ## `nonce`
 

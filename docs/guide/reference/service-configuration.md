@@ -140,7 +140,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 `elm-service setup` needs `bootstrapOwner`, and makes its API keys for this administrator.
 
 - With OIDC (`oidc.issuer` set): `iss` is the identity provider's issuer and `sub` is the value that it gives the person who is the first `owner` in the claim that `oidc.subjectClaim` names: the subject (`sub`) by default, or the object ID with `oid`. When that person signs in, they get the `owner` role whatever `oidc.roleMap` says.
-- Without OIDC: nobody signs in, and the first `owner` works with the API keys that `setup` makes. `iss` and `sub` only name that administrator, and any text of 1 to 255 characters works, such as `local` and `owner`. If you may turn on OIDC later, use the identity provider's issuer and the person's subject there from the start: `bootstrapOwner.iss` must then equal `oidc.issuer`, and the person with that `sub` gets the `owner` role at sign-in.
+- Without OIDC: nobody signs in, and the first `owner` works with the API keys that `setup` makes. `iss` and `sub` only name that administrator, and any text of 1 to 255 characters works, such as `local` and `owner`. If you may turn on OIDC later, use the identity provider's issuer and the person's value of the claim that `oidc.subjectClaim` will name (`sub` by default) from the start: `bootstrapOwner.iss` must then equal `oidc.issuer`, and the person with that value gets the `owner` role at sign-in.
 
 ## `nonce`
 

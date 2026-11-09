@@ -207,7 +207,8 @@ internal sealed partial class ElmService
 
     private static bool IsIdentifier(string? value) => value is { Length: >= 1 and <= MaxIdentifierLength } && !value.Any(char.IsControl);
 
-    private static string IdentityRefusal(string claim) =>
+    // The log reason of a refused identity, naming the claim (design §20.7, V1c15).
+    internal static string IdentityRefusal(string claim) =>
         $"{claim} is missing, given more than once, or not one string of 1 to 255 characters without control characters";
 
     /// <summary>
@@ -219,13 +220,15 @@ internal sealed partial class ElmService
     /// <returns>The value, or <see langword="null"/>.</returns>
     /// <remarks>
     /// The payload's JSON is read here instead of the claims that the handlers make, because those claims hide the JSON type
-    /// (design §20.7, V1c15 review R5). Microsoft.IdentityModel.JsonWebTokens 8.19.2, which both handlers use, shows it:
+    /// (design §20.7, V1c15 review R5). Microsoft.IdentityModel.JsonWebTokens 8.19.2, which both handlers use, shows it.
     /// JsonWebToken.PayloadClaimSet.cs (ReadPayloadValue) reads <c>sub</c> with
-    /// <c>JsonSerializerPrimitives.ReadStringOrNumberAsString</c>, so a number becomes a string claim; Json/JsonClaimSet.cs
-    /// (CreateClaimFromObject, CreateClaimFromJsonElement) makes one claim per element of an array, so <c>["x"]</c> gives the
-    /// same string claim as <c>"x"</c>, while a number gives an Integer or Double claim and an object a Json claim; and a
-    /// member written twice keeps only its last value. Here a number, an array of any length, an object, null, and a member
-    /// written twice are all refused.
+    /// <c>JsonSerializerPrimitives.ReadStringOrNumberAsString</c> (Microsoft.IdentityModel.Tokens, Json/JsonSerializerPrimitives.cs):
+    /// a number becomes a string claim, and an array or an object makes the library refuse the token while it parses it.
+    /// Any other name, such as <c>oid</c>, goes through Json/JsonClaimSet.cs (CreateClaimFromObject,
+    /// CreateClaimFromJsonElement): an array becomes one claim per element, so <c>["x"]</c> gives the same string claim as
+    /// <c>"x"</c>, a number gives an Integer or Double claim, and an object a Json claim. In both, a member written twice
+    /// keeps only its last value. Here a number, an array of any length, an object, null, and a member written twice are all
+    /// refused.
     /// </remarks>
     internal static string? IdentityOf(string token, string claim)
     {
@@ -256,7 +259,7 @@ internal sealed partial class ElmService
 
             return found == 1 && IsIdentifier(value) ? value : null;
         }
-        catch (Exception e) when (e is FormatException or JsonException)
+        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
         {
             return null;
         }
