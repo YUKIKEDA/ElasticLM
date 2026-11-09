@@ -108,6 +108,7 @@ Reviewed by Gemini and decided by the owner in V1c1 (Issue #190). The design's t
 | recovery window (reclaim after a restart) | リースの再登録の期間 | 回収の間 |
 | hosted service (`elm-service`) | SaaS 型のサービス | SaaS 型のサービス |
 | copy (of a device or a server) | コピー | 写し |
+| container | コンテナ | コンテナー |
 
 Phrases that read as translations, and what to write instead: "consume a seat" シートを使う (not 消費する), "release a seat" シートを返す, "bound to a machine" マシンに紐付ける (not 縛られる), "fail silently" what happens instead (not 静かに失敗する), "enforce" 制限する・確かめる (not 強制する).
 

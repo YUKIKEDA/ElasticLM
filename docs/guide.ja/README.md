@@ -80,5 +80,5 @@ ElasticLM がなぜこう作られているのかは、[設計上の選択](expl
 ## ほかの資料
 
 - 脆弱性の報告と、ダウンロードしたファイルの確かめ方: [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)。
-- `elm-service` のコンテナイメージのビルドと確かめ方（イメージは、プレリリースでない最初のリリースから公開する）: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md)。動かし方は[サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)を読む。
+- `elm-service` のコンテナイメージのビルドのしかたと確かめ方（イメージは、プレリリースでない最初のリリースから公開する）: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md)。動かし方は[サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)を読む。
 - 設計書（日本語）: [docs/design.ja.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/design.ja.md)。

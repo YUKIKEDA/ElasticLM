@@ -10,7 +10,7 @@ sidebar_position: 19
 
 ## 始める前に
 
-コマンドは、チュートリアルのフォルダーで、その `tools` フォルダーを `PATH` に足した状態で打つ。使うのは Docker のある Linux ホストだ。チュートリアルを Windows や macOS で進めたときは、`tools` にチュートリアルの Linux 用のアーカイブ（`-linux-x64.tar.gz` か `-linux-arm64.tar.gz`）が要る。チュートリアルのサービスは、ポート 8080 で動かしたままでよい。下のコンテナは、ホストのポート 8090 で待ち受ける。
+コマンドは、チュートリアルのフォルダーで、その `tools` フォルダーを `PATH` に足した状態で打つ。使うのは Docker のある Linux ホストだ。チュートリアルを Windows や macOS で進めたときは、`tools` にチュートリアルの Linux 用のアーカイブ（`-linux-x64.tar.gz` か `-linux-arm64.tar.gz`）が要る。下のコンテナはホストのポート 8090 で待ち受けるので、チュートリアルのサービスはポート 8080 で動かしたままでよい。
 
 コマンドでは、イメージを `elm-service` という名前で使う。イメージはまだ公開されていない。最初のリリースまでは、`CONTRIBUTING.md` の [Build the container image](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-the-container-image) のとおりにイメージをビルドする。そうすると、イメージにこの名前が付く。イメージが公開されたら、`ghcr.io/yukikeda/elm-service` からダイジェストを指定して取得し、この名前を付ける。ダイジェストはリリースに示してあり、タグと違って別のイメージに付け替えられない。`docker pull ghcr.io/yukikeda/elm-service@sha256:<digest>` を実行し、続けて `docker tag ghcr.io/yukikeda/elm-service@sha256:<digest> elm-service` を実行する。
 
@@ -90,7 +90,7 @@ docker run --rm --network none -v elm-config:/config busybox@sha256:a7dbc319b143
 
 ## 最初の API キーを作る
 
-終わると自分を削除するコンテナで、`setup` を 1 回実行する。
+終わると削除されるコンテナで、`setup` を 1 回実行する。
 
 <!-- steps:run capture=container-api-key env=ELM_API_KEY -->
 ```shell
@@ -101,14 +101,14 @@ docker run --rm -v elm-config:/config:ro -v elm-data:/data elm-service setup --c
 
 ## サービスを起動する
 
-別のターミナルでサービスを起動する。そのターミナルでは、[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに設定した `ELM_SIGNING_PASSPHRASE` に、署名鍵のパスフレーズが入っている。チュートリアルのサービスがまだ 2 つ目のターミナルで動いているなら、3 つ目のターミナルを使う。
+[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに `ELM_SIGNING_PASSPHRASE` に署名鍵のパスフレーズを設定した、別のターミナルでサービスを起動する。チュートリアルのサービスがまだ 2 つ目のターミナルで動いているなら、3 つ目のターミナルを使う。
 
 <!-- steps:background ready=http://127.0.0.1:8090/health -->
 ```shell
 docker run --rm --name elm-service -p 127.0.0.1:8090:8080 -v elm-config:/config:ro -v elm-data:/data -e ELM_SIGNING_PASSPHRASE elm-service --config /config/container.json
 ```
 
-値を付けない `-e ELM_SIGNING_PASSPHRASE` は、このターミナルの変数をコンテナに渡す。それでも値は `docker inspect elm-service` に表示され、ポッドの定義に値を書いたときはそこにも出る。本番では、代わりにパスフレーズを `elm-config` のファイルに入れ、`signing.passphraseFile` でそのファイルを指定する。`-p 127.0.0.1:8090:8080` は、ホストのループバックアドレスにだけポートを公開する。その前にリバースプロキシか Ingress で TLS を置くか、サービスに `tls.certificate` と `tls.key` を与え、`-e ELM_LISTEN=https://0.0.0.0:8080` で https のアドレスを渡す。イメージは `ELM_LISTEN` を設定していて、これは `container.json` の `listen` より優先される。
+値を付けない `-e ELM_SIGNING_PASSPHRASE` は、このターミナルの変数をコンテナに渡す。それでも値は `docker inspect elm-service` に表示され、ポッドの定義に値を書いたときはそこにも出る。本番では、代わりにパスフレーズを `elm-config` のファイルに入れ、`signing.passphraseFile` でそのファイルを指定する。`-p 127.0.0.1:8090:8080` は、ホストのループバックアドレスにだけポートを公開する。その前にリバースプロキシか Ingress を置いて TLS を終端するか、サービスに `tls.certificate` と `tls.key` を与え、`-e ELM_LISTEN=https://0.0.0.0:8080` で https のアドレスを渡す。イメージは `ELM_LISTEN` を設定していて、これは `container.json` の `listen` より優先される。
 
 サービスはチュートリアルと同じようにログを表示し、最後に `service.started` を出す。`/health` は、サービスがデータベースに接続できるあいだは 200 を返し、接続できないときは 503 を返す。イメージにはシェルがないので、`HEALTHCHECK` もない。`/health` はコンテナの外から確かめる。Kubernetes では、これを `readinessProbe`（`httpGet`、パス `/health`、ポート 8080）に使い、`livenessProbe` には使わない。そちらに使うと、データベースが止まっているあいだ、サービスを何度も再起動してしまう。
 
@@ -126,7 +126,7 @@ elm admin request POST /v1/admin/products --body product.json --url http://127.0
 elm admin request GET /v1/admin/products/<container-product-id> --url http://127.0.0.1:8090
 ```
 
-`elm` は製品 `acme-cad` を表示する。デバイスのプルーフは `publicUrls` のアドレスを指定していなければならないので、アプリは `http://127.0.0.1:8090` を通してはアクティベーションできない。アプリは、リバースプロキシを通して `https://elm.example/` でサービスに接続する。
+`elm` は製品 `acme-cad` を表示する。デバイスのプルーフは `publicUrls` のアドレスを指定していなければならないので、アプリは `http://127.0.0.1:8090` ではアクティベーションできない。アプリは、リバースプロキシを通して `https://elm.example/` でサービスに接続する。
 
 ## データベースをバックアップする
 
@@ -137,7 +137,7 @@ elm admin request GET /v1/admin/products/<container-product-id> --url http://127
 docker run --rm -v elm-config:/config:ro -v elm-data:/data elm-service backup --config /config/container.json --out /data/backup-1.db
 ```
 
-`backup: /data/backup-1.db, schema version 8` か、別のバージョン番号の行が表示される。2 つのコンテナが SQLite のデータベースを共有できるのは、ここのように同じホストのボリュームを通すときだけだ。ネットワークファイルシステム上のボリュームは、SQLite のロックを保たない。[サービスをバックアップして復元する](back-up-and-restore-the-service.md)にあるとおり、バックアップをボリュームからコピーして取り出し、ホストとは別の場所に置く。
+`backup: /data/backup-1.db, schema version 8` か、別のバージョン番号の行が表示される。2 つのコンテナが SQLite のデータベースを共有できるのは、このガイドのように同じホストのボリュームを通すときだけだ。ネットワークファイルシステム上のボリュームでは、SQLite のロックが効かない。[サービスをバックアップして復元する](back-up-and-restore-the-service.md)にあるとおり、バックアップをボリュームからコピーして取り出し、ホストとは別の場所に置く。
 
 <!-- steps:run -->
 ```shell
@@ -148,7 +148,7 @@ docker cp elm-service:/data/backup-1.db backup-1.db
 
 `docker stop elm-service` でサービスを止める。Docker は SIGTERM を送り、サービスは実行中の処理を終えてから終了コード 0 で終わる。そのあと `--rm` がコンテナを削除する。ボリュームは残るので、同じ `docker run` の行でサービスをもう一度起動できる。このガイドで作ったものをすべて消すには、サービスが止まってから `docker volume rm elm-config elm-data` を実行する。
 
-- ここのように、データは名前付きボリュームに置く。`-v elm-data:/data` がないと、Docker は匿名ボリュームを作り、コンテナを作り直すとデータが消える。
+- このガイドのように、データは名前付きボリュームに置く。`-v elm-data:/data` がないと、Docker は匿名ボリュームを作り、コンテナを作り直すとデータが消える。
 - 代わりにホストのフォルダーにデータを置くときは、先にユーザー ID 1654 をそのフォルダーの所有者にする。
 - Kubernetes では、PersistentVolumeClaim はイメージの `/data` の所有者を引き継がない。`securityContext.fsGroup: 1654` を設定する。
 - ルートファイルシステムを読み取り専用にするときは、`/tmp` にも書き込めるボリュームをマウントする。

@@ -16,7 +16,7 @@ sidebar_position: 20
 
 ## 試すための PostgreSQL サーバーを起動する
 
-ホストのループバックアドレスでだけ待ち受けるように、コンテナで PostgreSQL 18 を起動する。パスワードは試すためだけのものだ。使い続けるサーバーには、このような値を決して使わない。自分の PostgreSQL がすでにポート 5432 で待ち受けているなら、`-p 127.0.0.1:5433:5432` のように別のホストのポートを使い、下の接続文字列にもそのポートを書く。
+ホストのループバックアドレスでだけ待ち受けるように、コンテナで PostgreSQL 18 を起動する。パスワードは試すためだけのものだ。使い続けるサーバーには、このような値を決して使わない。ポートが空いていれば、`ss -ltn 'sport = :5432'` は見出しの行だけを表示する。自分の PostgreSQL がすでにポート 5432 で待ち受けているなら、`-p 127.0.0.1:5433:5432` のようにホスト側の別のポートを使い、下の接続文字列にもそのポートを書く。
 
 <!-- steps:run -->
 ```shell
@@ -28,7 +28,7 @@ docker exec elm-postgres sh -c 'until pg_isready -q -h 127.0.0.1 -U postgres; do
 
 ## ロールとデータベースを作る
 
-サービスは自分専用のロールで接続する。このロールはサービスのデータベースを所有し、それ以外は何も所有しない。SQL をファイルに書く。`try-only-elm` の代わりに、自分で決めたパスワードを使う。
+サービスは自分専用のロールで接続する。このロールはサービスのデータベースを所有し、それ以外は何も所有しない。SQL をファイルに書く。`try-only-elm` の代わりに、自分で決めたパスワードを使う。下の接続文字列にも、同じパスワードを使う。
 
 <!-- steps:file path=create-elm.sql -->
 ```sql
@@ -41,11 +41,11 @@ CREATE DATABASE elm_restored OWNER elm;
 
 <!-- steps:run -->
 ```shell
-docker cp create-elm.sql elm-postgres:/tmp/create-elm.sql
+docker cp create-elm.sql elm-postgres:/tmp/
 docker exec elm-postgres psql -U postgres -v ON_ERROR_STOP=1 -f /tmp/create-elm.sql
 ```
 
-自分のサーバーでは、管理者のロールで実行する。`psql -h <host> -U <admin-role> -v ON_ERROR_STOP=1 -f create-elm.sql` だ。データベースのテーブルは、サービスが `setup` を実行するときか起動するときに、自分で作る。
+自分のサーバーでは、管理者のロールで `psql -h <host> -U <admin-role> -v ON_ERROR_STOP=1 -f create-elm.sql` を実行する。データベースのテーブルは、サービスが `setup` を実行するときか起動するときに、自分で作る。
 
 ## サービスの接続先を PostgreSQL にする
 
@@ -111,7 +111,7 @@ elm admin request POST /v1/admin/products --body product.json --url http://127.0
 
 ## pg_dump でバックアップする
 
-`elm-service backup` がコピーできるのは SQLite のデータベースだけだ。PostgreSQL では、PostgreSQL の `pg_dump` を使う。これは、サービスが動いているあいだでも整合性の取れたコピーを取る。サーバーと同じメジャーバージョンか、それより新しい `pg_dump` を使う。ここでは、サーバーのコンテナにあるものを使う。`pg_restore` が読めるカスタム形式（`-Fc`）でコピーを書き、コンテナからコピーして取り出す。
+`elm-service backup` がコピーできるのは SQLite のデータベースだけだ。PostgreSQL では、PostgreSQL の `pg_dump` を使う。これは、サービスが動いているあいだでも整合性の取れたコピーを取る。サーバーと同じメジャーバージョンか、それより新しい `pg_dump` を使う。ここでは、サーバーのコンテナにあるものを使う。`pg_restore` が読めるカスタム形式（`-Fc`）で書き出し、コンテナの外にコピーする。
 
 <!-- steps:run -->
 ```shell
@@ -119,7 +119,7 @@ docker exec elm-postgres pg_dump -U elm -d elm -Fc -f /tmp/elm.dump
 docker cp elm-postgres:/tmp/elm.dump elm.dump
 ```
 
-自分のサーバーでは、PostgreSQL のクライアントツールがあるマシンで `pg_dump -h <host> -U elm -d elm -Fc -f elm.dump` を実行する。[サービスをバックアップして復元する](back-up-and-restore-the-service.md#データベースをバックアップする)が SQLite のファイルについて書いているとおり、コピーは自分だけが読める場所に置く。中身は同じデータだからだ。そのガイドに挙げているとおり、データベースの外にあるファイルも取っておく。
+自分のサーバーでは、PostgreSQL のクライアントツールがあるマシンで `pg_dump -h <host> -U elm -d elm -Fc -f elm.dump` を実行する。[サービスをバックアップして復元する](back-up-and-restore-the-service.md#データベースをバックアップする)が SQLite のファイルについて書いているとおり、コピーは自分だけが読める場所に置く。SQLite のファイルと同じデータが入っているからだ。そのガイドに挙げているとおり、データベースの外にあるファイルも取っておく。
 
 ## pg_restore で復元する
 
@@ -153,11 +153,13 @@ elm admin request GET /v1/admin/products/<pg-product-id> --url http://127.0.0.1:
 
 `elm` は製品 `acme-cad` を表示する。本番で復元するときは、すべてのノードを止め、空のデータベースに復元し（データベースを削除して作り直すか、新しいデータベースを作ってすべてのノードの接続文字列を変える）、ノードをもう一度起動する。[復元で取り消されるもの](back-up-and-restore-the-service.md#復元で取り消されるもの)に挙げているとおり、復元するとバックアップの後のことはすべて取り消される。[バックアップを復元する](back-up-and-restore-the-service.md#バックアップを復元する)のとおりに、先に監査ログを保存しておく。
 
+試し終えたら、`database.connection` を `Database=elm` に戻し、サービスを再起動する。または、`Data Source=service.db` と `"provider": "sqlite"` で、チュートリアルの SQLite に戻す。
+
 ## 複数のノードを動かす
 
 サービスのすべてのノードは同じデータベースに接続し、次のものを同じにしておく。
 
-- ノンスのシークレット（`nonce.secretFile`）。あるノードが出したノンスを、別のノードでも通すためだ。
+- ノンスのシークレット（`nonce.secretFile`）。あるノードが出したノンスを、別のノードでも受け付けられるようにするためだ。
 - 署名鍵とその鍵証明書、そのパスフレーズ。
 - ルート公開鍵と、失効させた鍵 ID（`trust`）。
 - 管理画面のサインインを有効にしているときは、管理画面のサインインに使う鍵暗号化鍵（`dataProtection.kekFile`）。
@@ -174,6 +176,10 @@ elm admin request GET /v1/admin/products/<pg-product-id> --url http://127.0.0.1:
 4. ほかのノードを新しいバージョンで起動する。
 
 新しいバージョンの最初のノードが起動する前に、古いバージョンのノードをすべて止めておく。そうすれば、マイグレーションのあいだに古いバージョンのノードがデータベースで処理をすることはない。古いバージョンに戻すには、[サービスをアップグレードする](upgrade-the-service.md#古いバージョンに戻す)にあるとおり、手順 1 のバックアップを空のデータベースに復元し、古いバージョンを起動する。
+
+## PostgreSQL のコンテナを止めて削除する
+
+このガイドのコンテナは試すためだけのものだ。まずサービスを止め、次にコンテナを止めて、そのデータボリュームと一緒に削除する。データボリュームには、データベースとロールのパスワードのハッシュが入っている。`docker stop elm-postgres` を実行し、続けて `docker rm -v elm-postgres` を実行する。チュートリアルのフォルダーの `elm.dump` と `create-elm.sql` も削除する。
 
 ## 関連するページ
 

@@ -16,7 +16,7 @@ Type the commands in the folder of the tutorial, with its `tools` folder on your
 
 ## Start a PostgreSQL server to try
 
-Start PostgreSQL 18 in a container, on the host's loopback address only. The password is for trying only: never use such a value on a server you keep. If a PostgreSQL of your own already listens on port 5432, use another host port, such as `-p 127.0.0.1:5433:5432`, and that port in the connection string below.
+Start PostgreSQL 18 in a container, on the host's loopback address only. The password is for trying only: never use such a value on a server you keep. `ss -ltn 'sport = :5432'` prints only its header line when the port is free. If a PostgreSQL of your own already listens on port 5432, use another host port, such as `-p 127.0.0.1:5433:5432`, and that port in the connection string below.
 
 <!-- steps:run -->
 ```shell
@@ -28,7 +28,7 @@ The second line waits until the server takes connections over TCP: the container
 
 ## Create the role and the database
 
-The service connects as its own role, which owns its database and nothing else. Write the SQL into a file, with a password of your own in place of `try-only-elm`:
+The service connects as its own role, which owns its database and nothing else. Write the SQL into a file, with a password of your own in place of `try-only-elm`; use the same password in the connection strings below:
 
 <!-- steps:file path=create-elm.sql -->
 ```sql
@@ -41,7 +41,7 @@ The second database, `elm_restored`, is for trying a restore below. Run the file
 
 <!-- steps:run -->
 ```shell
-docker cp create-elm.sql elm-postgres:/tmp/create-elm.sql
+docker cp create-elm.sql elm-postgres:/tmp/
 docker exec elm-postgres psql -U postgres -v ON_ERROR_STOP=1 -f /tmp/create-elm.sql
 ```
 
@@ -153,6 +153,8 @@ elm admin request GET /v1/admin/products/<pg-product-id> --url http://127.0.0.1:
 
 `elm` prints the product `acme-cad`. To restore in production, stop every node, restore into an empty database (drop the database and create it again, or create a new one and change the connection string of every node), and start the nodes again. A restore takes back everything since the backup, as [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists; save the audit log first, as [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup) says.
 
+When you are done trying, point `database.connection` back at `Database=elm`, and restart the service; or go back to the tutorial's SQLite with `Data Source=service.db` and `"provider": "sqlite"`.
+
 ## Run several nodes
 
 Every node of the service connects to the same database, and holds the same:
@@ -174,6 +176,10 @@ A new version applies its database migrations when it starts, under a lock of Po
 4. Start the other nodes with the new version.
 
 Stop every node of the older version before the first node of the new version starts, so that no node of the older version works on the database while it is migrated. To go back to the older version, restore the backup of step 1 into an empty database and start the older version, as [Upgrade the service](upgrade-the-service.md#go-back-to-the-old-version) says.
+
+## Stop and remove the PostgreSQL container
+
+The container of this guide is for trying only. Stop the service first, then stop the container and remove it together with its data volume, which holds the databases and the roles' password hashes: `docker stop elm-postgres`, then `docker rm -v elm-postgres`. Delete `elm.dump` and `create-elm.sql` from the tutorial folder too.
 
 ## See also
 
