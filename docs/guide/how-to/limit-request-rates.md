@@ -23,7 +23,7 @@ The service has four limits, each a number of requests per second. A caller may 
 | `rateLimit.clientPerIp` | `20` | Requests from one source to the device endpoints, which apps call: activations, trials, nonces, offline files, and leases. Counted before the request's proof is checked. |
 | `rateLimit.clientPerKey` | `2` | Device requests of one installation key, that is, of one installation of an app. |
 
-Each value is a whole number from 1 to 10000. Keep `perKey` at or below `perIp`: an API key's requests from one source count against both, so for such a key a larger `perKey` never takes effect.
+One activation or refresh is two device requests, the nonce and the request itself, so the default `clientPerIp` lets one source activate ten devices a second. Each value is a whole number from 1 to 10000. Keep `perKey` at or below `perIp`: an API key's requests from one source count against both, so for such a key a larger `perKey` never takes effect.
 
 ## Set the limits
 
@@ -66,7 +66,7 @@ The service reads its settings only when it starts. Press Ctrl+C in the second t
 elm-service --config service.json
 ```
 
-The log ends with the line `service.started`, as in the tutorial. You can also give a limit as an environment variable, such as `ELM_RATELIMIT_PERIP=100`, which takes the place of the value in the file; [elm-service configuration](../reference/service-configuration.md#how-settings-are-given) says how.
+The log ends with the line `service.started`, as in the tutorial; it does not show the limits. You can also give a limit as an environment variable, such as `ELM_RATELIMIT_PERIP=100`, which takes the place of the value in the file; [elm-service configuration](../reference/service-configuration.md#how-settings-are-given) says how.
 
 ## When a value is out of range
 
@@ -112,7 +112,7 @@ The service checks its settings before it reads the signing key, so it needs no 
 rateLimit.perIp must be between 1 and 10000.
 ```
 
-Delete `rate-check.json` afterwards.
+A value that is not a whole number, such as `2.5` or `"20"`, also stops the service with exit code 2, with a line that starts with `The settings file 'rate-check.json' is not valid:` and names the setting as `$.rateLimit.perIp`. Delete `rate-check.json` afterwards.
 
 ## What a refused caller sees
 
@@ -132,7 +132,7 @@ error: the service answered 429.
 {"type":"about:blank","title":"ELM_RATE_LIMITED","status":429,"detail":"Too many requests with this API key.","code":"ELM_RATE_LIMITED"}
 ```
 
-A script that calls the administration API waits for the `Retry-After` time and sends the request again. In an app, `ActivationClient` returns `ActivationResult.Failed` with the error `ELM_RATE_LIMITED` and its `RetryAfter`, and does not send the request again by itself; [Handle errors](handle-errors.md) shows an app that tells its user to try later, and prints:
+A script that calls the administration API directly waits for the `Retry-After` time and sends the request again; one that uses `elm admin request` sees exit code 1 and `ELM_RATE_LIMITED` on standard error, since `elm` does not print the header, and waits at least one second. In an app, `ActivationClient` returns `ActivationResult.Failed` with the error `ELM_RATE_LIMITED` and its `RetryAfter`, and does not send the request again by itself; [Handle errors](handle-errors.md) shows an app that tells its user to try later, and prints:
 
 ```text
 retry later: ELM_RATE_LIMITED
@@ -140,11 +140,11 @@ retry after: 1 s
 reason: Too many requests with this installation key.
 ```
 
-In the background refresh, the client waits the longer of one hour and `Retry-After` before it tries again.
+In the background refresh, the client tries again an hour later.
 
 ## Behind a proxy
 
-The service takes the source of a request from the connection, and does not read `X-Forwarded-For` or `Forwarded`: those headers can be written by any caller. Behind a reverse proxy or a load balancer, every request then comes from the proxy's address, and `perIp` and `clientPerIp` count all callers together. Raise both to what all your callers send together, and limit each caller at the proxy, if it can. The audit log then names the proxy's address too.
+The service takes the source of a request from the connection, and does not read `X-Forwarded-For` or `Forwarded`: those headers can be written by any caller. Behind a reverse proxy or a load balancer, every request then comes from the proxy's address, and `perIp` and `clientPerIp` count all callers together. Raise both to what all your callers send together, and limit each caller at the proxy, if it can. A load balancer's health checks of `/health` count against `perIp` of its address too. The audit log then names the proxy's address as well.
 
 ## Several nodes and restarts
 

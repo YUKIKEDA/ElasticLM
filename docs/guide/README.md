@@ -29,7 +29,7 @@ Read [Overview](explanation/overview.md) first, whoever you are. It names the pa
 6. [Keep the root key safe](how-to/keep-the-root-key-safe.md) and [Rotate the signing key](how-to/rotate-the-signing-key.md): how-to guides for the key that certifies your signing keys, and for replacing the key with which the service signs.
 7. [Revoke a license](how-to/revoke-a-license.md) and [Revoke a signing key](how-to/revoke-a-signing-key.md): how-to guides for ending a license for good, and for a signing key that leaked.
 8. [Renew a server license](how-to/renew-a-server-license.md): a how-to guide for issuing a server license again before it expires, and what a new file cannot take back.
-9. [Limit request rates](how-to/limit-request-rates.md), [Back up and restore the service](how-to/back-up-and-restore-the-service.md), and [Upgrade the service](how-to/upgrade-the-service.md): how-to guides for running `elm-service` on SQLite.
+9. [Limit request rates](how-to/limit-request-rates.md), [Back up and restore the service](how-to/back-up-and-restore-the-service.md), and [Upgrade the service](how-to/upgrade-the-service.md): how-to guides for the request limits of `elm-service`, and for backing it up and upgrading it on SQLite.
 10. [Trust chain](explanation/trust-chain.md): the root key, signing keys, and how to keep them safe.
 11. [License files and verification](explanation/license-files-and-verification.md): what you issue and what an app checks.
 12. [Activation](explanation/activation.md): how the hosted service binds licenses to devices.
