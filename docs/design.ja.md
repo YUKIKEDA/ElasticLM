@@ -4774,9 +4774,9 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 読み手への書き方（R1）: Tutorial 2 は最後にサービスを止め、2 つの端末を閉じて `ELM_API_KEY` と `ELM_SIGNING_PASSPHRASE` を消させる（`activate-an-app-online.md` の「Stop the service」）。そのため V1c4a の頁は「Tutorial 2 の終わり」を前提にせず、冒頭の段落で前提を状態で書く: 動いている `elm-service`、`ELM_API_KEY`、製品と機能。止めたサービスは Tutorial 2 の「Start the service」のとおりに起動し直すこと、API キーをなくしたら `elm-service setup` で新しいキーを作ること（`setup` は実行のたびに新しいキーを作る。`Setup.cs`）を書き、Tutorial 2 を指す。サービスが動いているあいだに `setup` を流せるか（SQLite）は、実装で一度確かめる。頁の例の値（製品 `acme-cad`、機能 `pro`、`http://127.0.0.1:8080`）は Tutorial 2 と同じにし、本文で「自分の値に替える」と書く。
   - Tutorial の残りに頼らない（R3）: 各頁は、自分で使うライセンス（とポリシー）を自分で作り、Tutorial 2 が手順の途中で残したもの（有効化の台数が埋まったライセンス、試用の記録、`client-data` と `other-data` の有効化、試用のポリシーを外した製品）には頼らない。管理者による解除の頁は、`GET /v1/admin/licenses/{id}/activations` で有効化の ID を取る手順にする。オフラインの有効化のサンプルは、新しいデータのフォルダー（`offline-data`）を使う（`client-data` は有効化を持つので `ELM_INVALID_STATE` で断られる。`ActivationClient.cs`）。
   - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
-    - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置く。`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた）。
+    - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置く。`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた。のちに V1c4d2 で `name=image` を、V1c4f で名指した頁にない `elm-server` と `elm-service` を許した）。
     - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
-    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。V1c4d2 の設計の独立レビューの R3 と R5 で、`steps:prebuilt name=image` を許し、置き換える `steps:background` を複数持てるようにした（同時に動くのは 1 つのまま）。V1c4f の Grill の Q1（下）で、名指した頁にない `elm-server` か `elm-service` の `steps:prebuilt` と、名指した頁と別のプログラムの裏のプロセスを 1 つ同時に動かすことを許した。
+    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた）。V1c4d2 の設計の独立レビューの R3 と R5 で、`steps:prebuilt name=image` を許し、置き換える `steps:background` を複数持てるようにした（同時に動くのは 1 つのまま）。V1c4f の Grill の Q1（下）で、名指した頁にない `elm-server` か `elm-service` の `steps:prebuilt` と、名指した頁と別のプログラムの裏のプロセスを 1 つ同時に動かすことを許した。今の決まりは、同時に動く裏のプロセスが、名指した頁のもの（か、それを置き換えたもの）と、並んで動く別のプログラムのものの 2 つまで、である。
     - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
     - `steps:after` の印は、`steps:prebuilt` と同じく訳の頁にも同じ形で要り、訳の確かめが比べる。
     - 名指した頁が落ちれば、How-to の頁も落ちる。作業フォルダーと鍵は、How-to の頁の終わりに今のとおり消す。
@@ -5037,9 +5037,25 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `elm server status --json` の `autoRefresh` が `true`（取る値の `pattern`。一致しなければ落ちる）。
     - `elm server refresh` の出力の `seq` が 2。
     - `elm server import` の出力の `seq` が 3。
-    - 本文は、自動の更新の時刻（期限から `refreshWindow` を引いた時刻、失敗のあとは 1 時間ごとで最長 24 時間）を §13.7 から書く。
+    - 本文は、自動の更新の時刻（期限から `refreshWindow` を引いた時刻。失敗のあとの試し直しは下の R8）を §13.7 から書く。
   - 置き場所（Q4）: How-to の 22 番目。題は「Activate a server license with elm-service」（日本語は「`elm-service` でサーバーライセンスを有効化する」）。入口の頁のベンダーとサーバー管理者の道筋に足し、`renew-a-server-license.md` の節「Servers activated with elm-service」からリンクする。
   - レビュー（Q5）: 設計の独立レビュー、正しさのレビュー（頁の手順を CI と同じ公開した実行ファイルで流す）、初見の読み手のレビュー、日本語のレビュー（書き手と別）。指摘は表にして、ready の前に Issue か PR に載せる。仕組みの新しい決まりは、許す形を頁で流し、断る形を決まりごとに 1 つ、決まりを破った頁の写しを手元で流して確かめる（仕組みには自動のテストがない）。
+  - 設計の独立レビュー（R1〜R10、Issue #296）で改めた形:
+    - 読み込み直しの確かめ（R1）: `elm server activate`、`refresh`、`import` は、管理 API に届かないときも終了コード 0 で終わり、`The server is not running; it reads the license when it starts.` だけを出す（`ServerLicenseCommands.cs` の `Reload`）。そのため、seq だけでは動いているサーバーが読み込み直したかを見られない。サーバーが止まっている `activate` のあとはこの文を、`refresh` と `import` のあとは `The server reloaded the license.` を `steps:expect` で確かめる。
+    - `autoRefresh` を見る時（R2）: ready の URL は `app.StartAsync` のすぐあとに 200 を返すが、`_activation` を作る `RestartActivationAsync` はそのあとで動く（`ElmServer.cs`）。起動の直後の `status` は `autoRefresh` が `false` のことがあるので、`status --json` は `elm server refresh` のあとに流す。`refresh` が呼ぶ読み込み直しは、クライアントを作り直し終えてから答える（`ElmServer.Admin.cs`）。
+    - 確かめ方（R3）: `status --json` は字下げした JSON で、最後のメンバーが `autoRefresh` なので（`CliOutput.cs` の `WriteIndented`、`ServerJson.cs` の `StatusAnswer`）、`  "autoRefresh": true` の 1 行を `steps:expect` で比べる（印の値は二重引用符を持てないので、`pattern` では書けない）。seq の行は `license <ライセンスの ID>, seq <n>: server.elmlic` で ID が毎回変わるので、`capture` と `pattern="seq (2):"`、`pattern="seq (3):"` で取る（一致しなければ落ちる）。取る名前は Tutorial 2 の名前と重ねない。
+    - 2 つ目の裏のプロセスの決まり（R4）:
+      - 置き場は 2 つ。主の置き場には、名指した頁の写しで起動し直したもの、それを置き換えたもの、`docker` の行を入れる。並んで動く置き場には、名指した頁と別のプログラムのものを入れる。コンテナーは主の置き場だけが持つ。
+      - 並んで動くものは、名指した頁に `steps:background` があるときだけ許す（ないときは今までどおり断る）。
+      - `Read-Plan` が頁の順に決める。並んで動くプログラムの最初の `steps:background` は何も止めずに起動し、2 つ目からは並んで動くものだけを止めて置き換える。主の置き場のものは今までどおり主の置き場のものを置き換える。
+      - `Start-Background` は、ready を待つ前にプロセスをその置き場に入れる（今と同じく、ready を待つ間の失敗でも頁の終わりに止まるため）。
+      - 頁の終わりは、並んで動くものを先に、それぞれ別の `try` で止め、最初の誤りを残して、片づけのあとに投げる。置き換えのときに出す文は、どちらの置き場を止めたかを言う。
+    - 書き換える文（R5）: ランナーの頭の説明（行の一覧に V1c4f、`steps:background` の「A page has at most one … each of which replaces」、`steps:prebuilt` の How-to の頁の決まり、`steps:after` の節の置き換えの文）、`Read-Plan` の誤りの文（How-to の頁の `steps:prebuilt` と置き換えのプログラム）。名指した頁が持つ `steps:prebuilt` の名前を書いたときの誤りは、「given twice on the page」ではなく、名指した頁が持つことを言う別の文にする。
+    - 読み手が用意するもの（R6）: 頁の初めに「Before you start」を置き、次を書く。`elm-server` を Tutorial 2 と同じリリースから `tools` にダウンロードすること（`steps:prebuilt name=elm-server` の印はこの段落のあと）、ポート 7070 と 7071 が空いていること、Tutorial 2 のサービスを起動し直して `ELM_API_KEY` を入れ直すこと、サーバー用に 3 つ目の端末を開くこと。コマンドのオプション: どの `elm server` のコマンドも `--product acme-cad`、`--data server-data`、`--trust root.pub.pem` が要る（CLI はサーバーの設定を読まない）。`activate`、`refresh`、`import` は `--license server.elmlic` も要り、`activate` と `refresh` は `service.url` があっても `--service http://127.0.0.1:8080` が要る。
+    - つなぎ（R7）: 入口の頁の状態の文（英語と日本語）にも足す。`explanation/floating-licenses.md` の有効化と更新の段落からもリンクする。
+    - 再試行の言い方（R8）: 失敗のあとは 1 時間後か、サービスの `Retry-After`（24 時間まで）のあとに試し直し、複製と見なされるか証明が断られるまで続ける、と §13.7 の言い方で書く。
+    - 計測（R9）: `aot` ジョブ（3 つの OS）の Guide steps の時間を、直前の PR #293 の run と比べて PR に書く。Tutorial 2 の写しが 1 つと、`elm-server` の起動が 3 回増える。
+    - 時計の巻き戻し（R10）: §13.7 のとおり、別のプロセスの `elm server refresh` のあとの読み込み直しは `ELM_CLOCK_TAMPERED` で断られうる。頁は `refresh` が必ず通るとは書かず、断られたら次の自動の更新を待つかサーバーを起動し直すと 1 文で書く（書く前に §13.7 とコードで、その 2 つで直ることを確かめる）。
 
 ## 21. 依存
 
