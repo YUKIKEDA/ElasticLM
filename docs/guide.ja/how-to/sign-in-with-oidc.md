@@ -280,11 +280,19 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 - `oidc.issuer` は、テナントの発行者だ。v2.0 のトークンが持つ `iss` は、テナントを示し、`/v2.0` で終わる（同じリファレンスを参照）。
 - API のアプリケーションのマニフェストで、`api.requestedAccessTokenVersion` を `2` にする。そうしないと、Entra ID は v1.0 のアクセストークンを発行する。その `iss` は `/v2.0` で終わらないので、`oidc.issuer` と一致しない（Microsoft の[アプリマニフェストのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/reference-microsoft-graph-app-manifest#api-attribute)を参照）。
 - 管理画面とサービスのアプリケーションのマニフェストで、`groupMembershipClaims` を `SecurityGroup` などに設定し、両方のトークンが `groups` を持つようにする。このクレームにはグループのオブジェクト ID が入るので、`oidc.roleMap` のキーはその ID になる。ユーザーが 200 を超えるグループに入っていると、Entra ID はトークンにこのクレームを入れない。するとサービスには、そのユーザーのロールが見えない。管理者を入れるグループは少なくしておく。
-- `oidc.subjectClaim` を `oid` にする。Entra ID の `sub` は同じユーザーでもアプリケーションごとに違うが、`oid` はテナントのどのアプリケーションでも同じだ（Microsoft のアクセストークンのクレームのリファレンスと、[ID トークンのクレームのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)を参照）。管理画面と `elm admin login` は別々のアプリケーションを使うので、`sub` のままでは 1 人の人が 2 人の管理者になってしまう。
-- Entra ID は、要求に `profile` のスコープがあるときだけトークンに `oid` を入れる（どちらのリファレンスにもそう書かれている）。そこで、`oidc.cliScopes` に `profile` を加え、`oidc.webScopes` を `openid profile` にする。
+- `oidc.subjectClaim` を `oid` にする。Entra ID の `sub` は同じユーザーでもアプリケーションごとに違うが、`oid` はテナントのどのアプリケーションでも同じだ（Microsoft のアクセストークンのクレームのリファレンスと、[ID トークンのクレームのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)を参照）。管理画面と `elm admin login` は別々のアプリケーションを使うので、`sub` のままでは、同じ人が 2 人の管理者になる。
+- Entra ID は、リクエストで `profile` のスコープを求めたときだけ、トークンに `oid` を入れる（どちらのリファレンスにもそう書かれている）。そこで、`oidc.cliScopes` に `profile` を加え、`oidc.webScopes` を `openid profile` にする。
 - このとき `bootstrapOwner.sub` は、最初のオーナーの `oid`、つまりテナントにおけるそのユーザーのオブジェクト ID になる。
 
 このガイドは Entra ID では試していない。各設定は、自分のテナントについての Microsoft のドキュメントと照らし合わせて確かめる。
+
+## 管理者を見分けるクレームを変える
+
+`oidc.subjectClaim` は、値で管理者を見分けるクレームを指定する。既定は `sub` だ。この設定を変えても、サービスは既存の管理者を新しいクレームの値に移さない。変えたあとは、どの人も次のサインインで新しい管理者になる。Entra ID のために `sub` から `oid` に変えるときなど、動いているサービスで変える手順は次のとおり。
+
+1. `oidc.subjectClaim` を変えるのと同じ再起動で、`bootstrapOwner.sub` も、最初のオーナーが新しいクレームで持つ値に変える。
+2. サインインし、新しい管理者として API キーを作り直す。古い管理者としては誰もサインインしなくなるので、古い管理者のキーは、`apiKeys.inactiveAdminDays` の日数が過ぎると使えなくなる。
+3. [チュートリアルのオーナーを無効にする](#チュートリアルのオーナーを無効にする)と同じように、`POST /v1/admin/admins/<id>/disable` で古い管理者を無効にする。
 
 ## どの IdP でも気をつける設定
 

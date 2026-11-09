@@ -286,6 +286,14 @@ With Microsoft Entra ID, register two applications in your tenant: one for `elm 
 
 This guide has not been tried with Entra ID; check each setting against Microsoft's documentation of your tenant.
 
+## Change the identity claim
+
+`oidc.subjectClaim` names the claim whose value identifies an administrator, `sub` by default. The service does not move administrators from one claim to another: after a change, each person becomes a new administrator at their next sign-in. To change it on a running service, such as from `sub` to `oid` for Entra ID:
+
+1. In the same restart that changes `oidc.subjectClaim`, change `bootstrapOwner.sub` to the first owner's value of the new claim.
+2. Sign in, and make the API keys again as the new administrator. The keys of an old administrator stop working after `apiKeys.inactiveAdminDays`, because nobody signs in as that administrator any more.
+3. Disable the old administrators with `POST /v1/admin/admins/<id>/disable`, as in [Retire the tutorial's owner](#retire-the-tutorials-owner).
+
 ## Settings to keep in mind with any IdP
 
 - Show the client's name on the approval page of the device flow, so that an administrator sees which program asks.
