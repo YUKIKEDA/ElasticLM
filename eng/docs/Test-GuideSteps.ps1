@@ -124,9 +124,9 @@
         block whose line starts elm-server or elm-service when the named page's background process is another program,
         such as an elm-server beside the named page's elm-service. The first such block starts its line and stops
         nothing; each later block of the same program replaces the process alongside only, and a block that would run
-        another program alongside fails, so that the page runs one program alongside. A block that replaces stops and waits for the process of its
-        own slot as at the end of a page, and its line is started and waited for as on any page, with the same passphrase
-        and environment. A steps:background block fails when the page has no steps:after, and when the named page has no
+        another program alongside fails, so that the page runs one program alongside. A block that replaces stops and
+        waits for the process of its own slot as at the end of a page, and its line is started and waited for as on any
+        page, with the same passphrase and environment. A steps:background block fails when the page has no steps:after, and when the named page has no
         steps:background. At the end of the page the process alongside is stopped first.
       - A failing step of the named page fails the run, before the How-to page. The named page is checked against its
         translation too. The kept folders are removed after the last How-to page of the run that names the page, and at the
