@@ -15,8 +15,13 @@ function Read-LayoutJson([string]$path) { Get-Content -Raw -LiteralPath $path | 
 # The path of a blob in the extracted layout. The digest comes from the layout's own index and manifests, so it is checked
 # before it becomes part of a path.
 function Get-LayoutBlob([string]$layout, [string]$digest) {
+    Join-Path $layout (Get-LayoutPath $digest)
+}
+
+# The path of a blob relative to the layout, as docker's manifest.json names it, after the same check.
+function Get-LayoutPath([string]$digest) {
     if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$') { throw "The layout names a blob by $digest, which is not a SHA-256 digest." }
-    Join-Path $layout ('blobs/' + $digest.Replace(':', '/'))
+    'blobs/' + $digest.Replace(':', '/')
 }
 
 # The manifest of linux/<Arch> in an extracted layout, with its descriptor (Descriptor, Manifest). The layout's index.json
@@ -44,9 +49,9 @@ function Get-PlatformManifest([string]$layout, [string]$Arch) {
 function New-DockerArchive([string]$layout, [object]$manifest, [string]$Tag, [string]$OutFile) {
     $dockerManifest = @(
         [ordered]@{
-            Config = 'blobs/' + $manifest.config.digest.Replace(':', '/')
+            Config = Get-LayoutPath $manifest.config.digest
             RepoTags = @($Tag)
-            Layers = @($manifest.layers | ForEach-Object { 'blobs/' + $_.digest.Replace(':', '/') })
+            Layers = @($manifest.layers | ForEach-Object { Get-LayoutPath $_.digest })
         }
     )
     ConvertTo-Json -InputObject $dockerManifest -Depth 4 | Set-Content -LiteralPath (Join-Path $layout 'manifest.json') -Encoding utf8NoBOM

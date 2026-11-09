@@ -73,7 +73,8 @@
                     platforms: its linux/amd64 manifest gets a docker manifest.json that names it elm-service, as
                     eng/container/Test-Image.ps1 does (eng/container/ImageLayout.ps1), and docker load reads it. The page's
                     docker lines then name the image elm-service, as a reader names the image they pull or build (design
-                    §20.7, V1c4d2, reviews R3, R8, and R9). The image is not removed at the end.
+                    §20.7, V1c4d2, reviews R3, R8, and R9). The image is not removed at the end; when elm-service named
+                    another image before, the run prints that the name now names this one.
 
     The C lines of Tutorial 4 (design §20.7, V1c3c):
       cl            In an os=windows block only. It runs the cl.exe of the MSVC x64 environment, which the script reads
@@ -146,11 +147,14 @@
       create <name> lines, are removed at the end of the page, also when it fails: each container with rm -f -v, so that
       the anonymous volumes of its image go with it, and then each volume. A name is literal, never a placeholder. A docker
       create line, and a docker run line without --rm or with -d, names its container; the words after the image are not
-      told from docker's options, so a --rm, -d, or --name there counts too. Before the page runs, a container or volume
+      told from docker's options, so a --rm, -d, or --name there counts too. A named volume that -v, --volume, or --mount
+      of a docker run or create line names is one that an earlier docker volume create line of the page makes, since
+      docker would make any other one silently and leave it. Before the page runs, a container or volume
       of such a name that exists already fails the page, so that a developer's own is never removed. One that is still
       there after the removal fails the page, as a folder does.
-      A page that names postgres:18@sha256:..., and its translation, name the digest of .github/workflows/ci.yml, which
-      is checked for every listed page, also one that is skipped (design §20.7, V1c4d2, Q10).
+      A page that names postgres:18@sha256:..., and its translation, name the digest of .github/workflows/ci.yml, and
+      every PostgreSQL image (postgres: or postgres@, also under docker.io/library/) that a docker line names is that
+      reference, which is checked for every listed page, also one that is skipped (design §20.7, V1c4d2, Q10).
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and
     ELM_KEY_PASSPHRASE set to a passphrase made for the run. The package folder is new for each page so that a package
@@ -426,6 +430,36 @@ function Read-ContainerName([string]$at, [string[]]$words, [object]$made) {
         return $null
     }
     if ($subcommand -cnotin 'run', 'create') { return $null }
+    # docker run and create make a named volume that does not exist yet, which the end of the page would not remove: a
+    # volume that -v, --volume, or --mount names must be one that an earlier docker volume create line of the page makes
+    # (review C11). A host path (with /) is a bind mount and a source without ':' an anonymous volume, which rm -v removes.
+    for ($i = 2; $i -lt $words.Count; $i++) {
+        $source = $null
+        if ($words[$i] -cin '-v', '--volume', '--mount') {
+            $option = $words[$i]
+            $value = $i + 1 -lt $words.Count ? $words[$i + 1] : ''
+            $i++
+        }
+        elseif ($words[$i] -cmatch '^(-v|--volume|--mount)=(.*)$') {
+            $option = $Matches[1]
+            $value = $Matches[2]
+        }
+        else {
+            continue
+        }
+        if ($option -ceq '--mount') {
+            $fields = @{}
+            foreach ($field in $value -split ',') { $pair = $field -split '=', 2; $fields[$pair[0]] = $pair.Count -gt 1 ? $pair[1] : '' }
+            if (($fields['type'] ?? 'volume') -ceq 'volume') { $source = $fields['source'] ?? $fields['src'] }
+        }
+        elseif ($value.Contains(':')) {
+            $source = $value.Substring(0, $value.IndexOf(':'))
+            if ($source.Contains('/') -or $source.Contains('\')) { $source = $null }
+        }
+        if ($source -and -not $made.Volumes.Contains($source)) {
+            throw "$($at): the volume $source is not one that an earlier docker volume create line of the page makes; the end of the page removes only those."
+        }
+    }
     $names = [Collections.Generic.List[string]]::new()
     for ($i = 2; $i -lt $words.Count; $i++) {
         if ($words[$i] -ceq '--name') {
@@ -906,9 +940,13 @@ function Invoke-Container([string[]]$arguments) {
     return Invoke-Step (New-StartInfo $containerProgram 'docker' $arguments ([IO.Path]::GetTempPath()) -Own)
 }
 
-# Whether a container or a volume of that name exists.
+# Whether a container, volume, or image of that name exists: inspect exits with 0 when it does and 1 when it does not (docker
+# and wslc 3.0.3). Any other end, such as a timeout or a daemon that cannot be reached, fails, so that it is never taken for
+# absent.
 function Test-Container([string]$type, [string]$objectName) {
-    return (Invoke-Container @($type, 'inspect', $objectName)).ExitCode -eq 0
+    $result = Invoke-Container @($type, 'inspect', $objectName)
+    if ($result.ExitCode -isnot [int] -or $result.ExitCode -notin 0, 1) { throw "$ContainerCli $type inspect $objectName ended with $($result.ExitCode)." }
+    return $result.ExitCode -eq 0
 }
 
 # Loads the image of -Image, an OCI layout tar, for steps:prebuilt name=image: its linux/amd64 manifest gets a docker
@@ -924,6 +962,8 @@ function Import-Image([string]$at) {
         $platform = Get-PlatformManifest $layout $imageArch
         $archive = Join-Path $folder 'docker-archive.tar'
         New-DockerArchive $layout $platform.Manifest $imageName $archive
+        # The name is the one the pages use, so a developer's own image of that name gets moved; the run says so.
+        if (Test-Container 'image' $imageName) { "$($at): $imageName existed and now names the image of -Image." }
         $result = Invoke-Container @('load', '--input', $archive)
         if ($result.ExitCode -ne 0) { throw "$($at): $ContainerCli load exited with $($result.ExitCode)." }
         if (-not (Test-Container 'image' $imageName)) { throw "$($at): $ContainerCli load did not name the image $imageName." }
@@ -1044,10 +1084,15 @@ function Start-Background([string]$name, [object]$step, [hashtable]$values, [str
 # has not ended within the limit of a command (design §20.7, V1c4d2, review R13).
 function Stop-Background {
     if (-not $script:background) { return }
+    # A docker stop that cannot run (the CLI is gone) still lets the tree be killed; its error is thrown after that.
+    $stopError = $null
     try {
         if ($script:backgroundContainer -and -not $script:background.HasExited) {
-            [void](Invoke-Container @('stop', $script:backgroundContainer))
-            if ($script:background.WaitForExit([int]$commandTimeout.TotalMilliseconds)) { return }
+            try {
+                [void](Invoke-Container @('stop', $script:backgroundContainer))
+                if ($script:background.WaitForExit([int]$commandTimeout.TotalMilliseconds)) { return }
+            }
+            catch { $stopError = $_ }
         }
         try { $script:background.Kill($true) } catch [InvalidOperationException] { }
         $script:background.WaitForExit()
@@ -1057,6 +1102,7 @@ function Stop-Background {
         $script:background = $null
         $script:backgroundContainer = $null
     }
+    if ($stopError) { throw $stopError }
 }
 
 # A marked block becomes its content, and a steps:prebuilt or steps:after marker its line without the spaces around it.
@@ -1081,11 +1127,32 @@ function Test-PostgresDigest([string]$path) {
         $lines = [IO.File]::ReadAllLines($file)
         for ($i = 0; $i -lt $lines.Length; $i++) {
             foreach ($reference in [regex]::Matches($lines[$i], "$([regex]::Escape($postgresReference))[^\s""'``)\]]*")) {
-                if ($ciPostgres.Count -ne 1) { throw '.github/workflows/ci.yml does not pin postgres:18 by one digest.' }
-                if ($reference.Value -cne $ciPostgres[0]) { throw "$(Get-PageName $file):$($i + 1): postgres:18 is pinned by another digest than in .github/workflows/ci.yml." }
+                Assert-PostgresReference "$(Get-PageName $file):$($i + 1)" $reference.Value
+            }
+        }
+        # Every PostgreSQL image that a docker line of a steps:run or steps:background block names, with another tag, with
+        # no digest, or with another digest, read with the readers of Read-Plan.
+        $name = Get-PageName $file
+        foreach ($block in (Get-Page $file).Blocks | Where-Object Marker) {
+            if ((Read-Marker "$($name):$($block.Order)" $block.Marker).Kind -cnotin 'run', 'background') { continue }
+            $lineNumber = $block.Line
+            foreach ($line in $block.Lines) {
+                $lineNumber++
+                if ($line.Trim() -eq '') { continue }
+                $words = Split-Step $line
+                if ($words[0] -cne $containerProgram) { continue }
+                foreach ($word in $words | Select-Object -Skip 1) {
+                    if ($word -cmatch '^(?:docker\.io/)?(?:library/)?postgres[:@]') { Assert-PostgresReference "$($name):$($lineNumber)" $word }
+                }
             }
         }
     }
+}
+
+# Fails unless a PostgreSQL image reference is the one of .github/workflows/ci.yml.
+function Assert-PostgresReference([string]$at, [string]$reference) {
+    if ($ciPostgres.Count -ne 1) { throw '.github/workflows/ci.yml does not pin postgres:18 by one digest.' }
+    if ($reference -cne $ciPostgres[0]) { throw "$($at): the PostgreSQL image is not $($ciPostgres[0]), the one of .github/workflows/ci.yml." }
 }
 
 function Test-Translation([string]$path, [object]$parsed) {
@@ -1338,23 +1405,38 @@ function Invoke-Page([string]$path) {
         }
     }
     finally {
-        Stop-Background
+        # A stop or a removal that throws (the container CLI is gone, a daemon error) does not keep the passphrase, the
+        # environment, or the folders with keys: its error is kept, the rest of the cleanup runs, and it is thrown after it.
+        $cleanupError = $null
+        try { Stop-Background }
+        catch { $cleanupError = $_ }
         if ($makes) {
-            $containersLeft = Remove-Container $made
-            if (-not $completed -and $containersLeft) { Write-Host "::error::$(Get-ContainerLeftMessage $name $containersLeft)" }
+            try {
+                $containersLeft = Remove-Container $made
+                if (-not $completed -and $containersLeft) { Write-Host "::error::$(Get-ContainerLeftMessage $name $containersLeft)" }
+            }
+            catch { $cleanupError = $cleanupError ?? $_ }
         }
         $script:passphrase = $null
         foreach ($variable in $saved.Keys) { [Environment]::SetEnvironmentVariable($variable, $saved[$variable]) }
         if (-not $keep) {
             # A copy that failed part way may not have made both folders yet.
-            $made = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
-            if ($made) { Remove-Item -Recurse -Force -LiteralPath $made -ErrorAction Continue }
+            $present = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
+            if ($present) { Remove-Item -Recurse -Force -LiteralPath $present -ErrorAction Continue }
             # A folder that is still there, such as one a process still holds open, would keep keys and secrets. When a step
             # failed, its error is the one that ends the run, so the folders are named here; otherwise the error below names
             # them.
             $left = @(@($work, $packages) | Where-Object { Test-Path -LiteralPath $_ })
             if (-not $completed -and $left) { Write-Host "::error::$(Get-LeftMessage $name $left)" }
         }
+        # When a step failed, its error ends the run and this one is only printed; otherwise it is thrown below.
+        if ($cleanupError -and -not $completed) { Write-Host "::error::$($name): $($cleanupError.Exception.Message)" }
+    }
+    if ($cleanupError) {
+        # Thrown in place of the errors below, which are printed so that none is lost.
+        if ($containersLeft) { Write-Host "::error::$(Get-ContainerLeftMessage $name $containersLeft)" }
+        if ($left) { Write-Host "::error::$(Get-LeftMessage $name $left)" }
+        throw "$($name): $($cleanupError.Exception.Message)"
     }
     if ($containersLeft) {
         if ($left) { Write-Host "::error::$(Get-ContainerLeftMessage $name $containersLeft)" }
