@@ -10,7 +10,7 @@ sidebar_position: 21
 
 ## 始める前に
 
-コマンドは、Docker のある Linux ホストで、チュートリアルのフォルダーで打つ。チュートリアルの `tools` フォルダーは `PATH` に足しておく。チュートリアルを Windows や macOS で進めたときは、`tools` にチュートリアルの Linux 用のアーカイブが要る。
+コマンドは、チュートリアルのフォルダーで、その `tools` フォルダーを `PATH` に足した状態で打つ。使うのは Docker のある Linux ホストだ。チュートリアルを Windows や macOS で進めたときは、`tools` にチュートリアルの Linux 用のアーカイブが要る。
 
 - サービスが止まっているときは、[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに、2 つ目のターミナルでもう一度起動する。
 - ターミナルを閉じたなどの理由で `ELM_API_KEY` が設定されていないときは、`elm-service setup --config service.json` で新しい API キーを作り、[サービスを準備する](../tutorials/activate-an-app-online.md#サービスを準備する)のとおりに `ELM_API_KEY` に読み込む。これは OIDC を有効にする前にする。有効にしたあとは、`setup` は下で指定する新しいオーナーのキーを作るからだ。
@@ -131,9 +131,9 @@ Keycloak は、起動するときにレルムを JSON ファイルから読み�
 それぞれの部分の役割は次のとおりだ。
 
 - グループ `elm-owners` には、`owner` のロールを得る管理者を入れる。ユーザー `alice` はこのグループに入っている。下のサービスの設定でこのユーザーを指定できるように、ここではその `id` を固定している。Keycloak は、これを `sub` としてこのユーザーのトークンに入れる。`realmRoles` は、このユーザーにレルムの既定のロールを与える。インポートで作ったユーザーは、これがないと既定のロールを得られない。既定のロールに `offline_access` が含まれていないと、Keycloak は `elm admin login` が求めるリフレッシュトークンを拒否する。
-- `elm-cli` は `elm admin login` のクライアントだ。シークレットを持たないパブリッククライアントで、デバイス認可フローだけを使う。このクライアントのオーディエンスのマッパーは、サービスの `oidc.audience` の値である `elm-service` を、アクセストークンの `aud` に入れる。サービスは、これがないアクセストークンを拒否する。`name` は Keycloak が承認画面に表示する名前で、管理者はこれを見て、どのプログラムが求めているのかを知る。
+- `elm-cli` は `elm admin login` のクライアントだ。シークレットを持たないパブリッククライアントで、デバイス認可フローだけを使う。このクライアントのオーディエンスのマッパーは、サービスの `oidc.audience` の値である `elm-service` を、アクセストークンの `aud` に入れる。サービスは、これがないアクセストークンを拒否する。`name` は Keycloak が承認画面に表示する名前で、管理者はこれを見て、どのプログラムがアクセスを求めているのかを知る。
 - `elm-web` は管理画面のクライアントだ。シークレットを持つコンフィデンシャルクライアントで、PKCE 付きの認可コードフローだけを使う。リダイレクト URI とサインアウト後のアドレスは、サービスのアドレスにそれぞれ `/auth/callback` と `/` を付けたもので、ワイルドカードを使わずにそのとおりに書く。`fullScopeAllowed` をオフにすると、レルムのほかのロールがこのクライアントのトークンに入らない。
-- どちらのクライアントも、ユーザーのグループを最上位の `groups` クレームに、パスを付けないグループ名（`full.path` をオフ）で入れる。入れる先は、アクセストークンと ID トークンの両方だ。サービスはこのクレームからロールを読むからだ。
+- サービスはここで入れるクレームからロールを読むので、どちらのクライアントも、ユーザーのグループを最上位の `groups` クレームに、パスを付けないグループ名（`full.path` をオフ）で入れる。入れる先は、アクセストークンと ID トークンの両方だ。
 
 ## Keycloak を起動する
 
@@ -147,7 +147,7 @@ docker start elm-keycloak
 docker exec elm-keycloak bash -c 'for i in $(seq 120); do exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /realms/elm/.well-known/openid-configuration HTTP/1.0\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 " && exit 0; sleep 1; done; exit 1'
 ```
 
-`start-dev` は、Keycloak を開発用に動かす。通信は暗号化しない http で、データはコンテナと一緒に消える。最後の行は、Keycloak がレルムについて応答するようになるまで待つ。30 秒ほどかかる。サービスが IdP の設定を読むのは、サインインで初めて必要になったときだけだ。Keycloak が応答するようになる前のサインインは `The identity provider cannot be reached.` で失敗し、次のサインインでもう一度試す。
+`start-dev` は、Keycloak を開発用に動かす。通信は暗号化しない http で、データはコンテナと一緒に消える。最後の行は、Keycloak がレルムへのリクエストに応答するようになるまで待つ。30 秒ほどかかる。サービスが IdP の設定を読むのは、サインインで初めて必要になったときだけだ。Keycloak が応答するようになる前のサインインは `The identity provider cannot be reached.` で失敗し、次のサインインのときにまた読み込みを試す。
 
 ## サービスで OIDC を有効にする
 
@@ -219,7 +219,7 @@ elm-web-try-only
 elm-service --config service.json
 ```
 
-`/auth/login` は、ブラウザーを Keycloak のサインイン画面に送る。この画面が応答すれば、サービスがレルムを読めていて、Keycloak が `elm-web` とそのリダイレクト URI を知っていることがわかる。リダイレクト URI が違うと、Keycloak は代わりにエラーの画面を返す。
+`/auth/login` は、ブラウザーを Keycloak のサインイン画面に送る。この画面が表示されれば、サービスがレルムを読めていて、Keycloak が `elm-web` とそのリダイレクト URI を知っていることがわかる。リダイレクト URI が違うと、Keycloak は代わりにエラーの画面を返す。
 
 サービスは、どこでサインインするかを `elm` に伝える。
 
@@ -234,7 +234,7 @@ elm admin request GET /v1/admin/oidc --url http://127.0.0.1:8080
 {"issuer":"http://127.0.0.1:8180/realms/elm","clientId":"elm-cli","scopes":["openid","offline_access"]}
 ```
 
-チュートリアルの API キーはまだ使える。このキーで、管理者の一覧を読む。
+チュートリアルの API キーはまだ使える。このキーで、管理者の一覧を表示する。
 
 <!-- steps:run capture=tutorial-owner pattern="(tutorial)" -->
 ```shell
@@ -251,13 +251,13 @@ elm admin request GET /v1/admin/admins --url http://127.0.0.1:8080
 elm admin login --url http://127.0.0.1:8080
 ```
 
-`elm` は、Keycloak のアドレスとコード、さらにコードを含んだアドレスを標準エラー出力に表示して待つ。アドレスをブラウザーで開き、求められたらコードを入力し、パスワード `alice-try-only` で `alice` としてサインインする。アクセスの許可を求める画面に `elm command-line tool` と出ていることを確かめてから、Yes を選ぶ。すると `elm` はサインインを保存し、それまでのサインインと置き換える。`elm admin request` は、サインインが終わるまで、このサービスに対してそれを使う。`elm admin request GET /v1/admin/me --url http://127.0.0.1:8080` を試すと、このユーザーの `sub` とロール `owner` が表示される。`elm admin logout` でサインインを終える。サインインを保存する場所などの詳細は、[elm コマンドリファレンス](../reference/elm-cli.md#elm-admin-login)にある。
+`elm` は、Keycloak のアドレスとコード、さらにコードを含んだアドレスを標準エラー出力に表示して待つ。アドレスをブラウザーで開き、求められたらコードを入力し、パスワード `alice-try-only` で `alice` としてサインインする。アクセスの許可を求める画面に `elm command-line tool` と出ていることを確かめてから、Yes を選ぶ。すると `elm` はサインインを保存し、それまでのサインインを置き換える。`elm admin request` は、サインインが終わるまで、このサービスに対してそれを使う。`elm admin request GET /v1/admin/me --url http://127.0.0.1:8080` を試すと、このユーザーの `sub` とロール `owner` が表示される。`elm admin logout` でサインインを終える。サインインを保存する場所などの詳細は、[elm コマンドリファレンス](../reference/elm-cli.md#elm-admin-login)にある。
 
-自分で求めたのではないコードは、決して入力しない。コードとアドレスを送ってくる人は、その人のサインインをあなたにさせようとしている。
+自分で求めたのではないコードは、決して入力しない。コードとアドレスを送ってくる人は、こちらの手で自分をサインインさせようとしている。
 
 ## 管理画面にサインインする
 
-ブラウザーで `http://127.0.0.1:8080/` を開き、`alice` としてサインインする。サービスはサインインをセッション Cookie に保つ。セッションは、リクエストがないまま `session.idleMinutes`（30）が過ぎるか、`session.maxHours`（12）が過ぎると終わる。管理画面からサインアウトすると、サービスのセッションが終わり、Keycloak のサインアウトの画面が開いて確認を求める。Keycloak のセッションは、確認したときだけ終わるので、共用のブラウザーでは必ず確認する。サインインで守れないものは、ほかにも[セキュリティモデル](../explanation/security-model.md#saas-型のサービスとその管理者)に挙げている。
+ブラウザーで `http://127.0.0.1:8080/` を開き、`alice` としてサインインする。サービスは、セッション Cookie でサインインを維持する。セッションは、リクエストがないまま `session.idleMinutes`（30）が過ぎるか、`session.maxHours`（12）が過ぎると終わる。管理画面からサインアウトすると、サービスのセッションが終わり、Keycloak のサインアウトの画面が開いて確認を求める。Keycloak のセッションは、確認したときだけ終わるので、共用のブラウザーでは必ず確認する。サインインで守れないものは、ほかにも[セキュリティモデル](../explanation/security-model.md#saas-型のサービスとその管理者)に挙げている。
 
 BROWSERS_TRIED
 
@@ -286,16 +286,16 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 
 ## どの IdP でも気をつける設定
 
-- デバイスフローの承認画面に、クライアントの名前を表示する。管理者が、どのプログラムが求めているのかわかるようにするためだ。
+- デバイスフローの承認画面に、クライアントの名前を表示する。管理者が、どのプログラムがアクセスを求めているのかをわかるようにするためだ。
 - `oidc.audience` は、どちらのクライアント ID とも違う値にする。同じだと、サービスは起動しない。
 - ロールのクレームは、ID トークンとアクセストークンの両方に入れる。
 - 管理画面のクライアントには認可コードフローだけを許可し、それ以外はすべてオフにする。Keycloak なら、サービスアカウントやダイレクトグラントなどだ（`fullScopeAllowed: false` にすると、関係のないロールがトークンに入らない）。
-- IdP のトークンの有効期間は短くする。サービスはアクセストークンを自分で確かめ、IdP に問い合わせないので、サインアウトしたトークンも期限が切れるまで有効なままだ。
+- IdP のトークンの有効期間は短くする。サービスはアクセストークンを自分で確かめ、IdP に問い合わせないので、サインアウトしても、そのトークンは期限が切れるまで有効なままだ。
 - `apiKeys.inactiveAdminDays`（90）は、その日数サインインしていない管理者の API キーを使えなくする。
 
 ## Keycloak を止める
 
-このガイドのコンテナは試すためだけのもので、`start-dev` はデータをコンテナの中に置く。まず `elm admin logout` を実行してサービスを止め、次にコンテナを止めて削除する。`docker stop elm-keycloak` を実行し、続けて `docker rm -v elm-keycloak` を実行する。チュートリアルのサービスに戻すには、`kek.secret` と `web-client.secret` も削除し、`service.json` から `oidc` と `dataProtection` の設定を取り除き、チュートリアルの `bootstrapOwner`（`https://idp.example`、`tutorial`）を書き戻す。そのあと、チュートリアルの API キーをもう一度 `ELM_API_KEY` に読み込む。チュートリアルのオーナーがまた使えるのは、それを無効にしなかったときだけだ。
+このガイドのコンテナは試すためだけのもので、`start-dev` はデータをコンテナの中に置く。まず `elm admin logout` を実行し、サービスを止める。次にコンテナを止めて削除する。`docker stop elm-keycloak` を実行し、続けて `docker rm -v elm-keycloak` を実行する。チュートリアルのサービスに戻すには、`kek.secret` と `web-client.secret` も削除し、`service.json` から `oidc` と `dataProtection` の設定を取り除き、チュートリアルの `bootstrapOwner`（`https://idp.example`、`tutorial`）を書き戻す。そのあと、チュートリアルの API キーをもう一度 `ELM_API_KEY` に読み込む。チュートリアルのオーナーがまた使えるのは、それを無効にしなかったときだけだ。
 
 ## 関連するページ
 
