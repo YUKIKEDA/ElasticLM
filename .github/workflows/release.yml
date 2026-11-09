@@ -747,6 +747,14 @@ jobs:
           corepack pnpm build
           if ($LASTEXITCODE -ne 0) { exit 1 }
 
+      # design §20.7 (V1c5, Issue #192): every page of both sitemaps, /ja/ included, opened in the runner's headless
+      # Google Chrome in the light and the dark color scheme; each page has as many Mermaid diagrams as its source page,
+      # each with its svg. A tag's run checks it too, before the artifact that the pages job publishes.
+      - name: Check the Mermaid diagrams
+        run: |
+          node check-mermaid.mjs --browser google-chrome
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
       # Kept until the owner approves publish and pages (the action's default is one day; design §20.7).
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
