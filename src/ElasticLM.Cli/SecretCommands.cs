@@ -7,9 +7,9 @@ using ElasticLM.Issuing;
 namespace ElasticLM.Cli;
 
 /// <summary>
-/// <c>elm secret create</c>: writes a random secret of 32 bytes for <c>elm-service</c>, which serves as the nonce secret
-/// (<c>nonce.secretFile</c>) and as the admin UI sign-in's key encryption key (<c>dataProtection.kekFile</c>) (design §14.8,
-/// §15.3, §16).
+/// <c>elm secret create</c>: writes a random secret of 32 bytes for <c>elm-service</c>, which serves as either the nonce
+/// secret (<c>nonce.secretFile</c>) or the admin UI sign-in's key encryption key (<c>dataProtection.kekFile</c>) (design
+/// §14.8, §15.3, §16).
 /// </summary>
 internal static class SecretCommands
 {

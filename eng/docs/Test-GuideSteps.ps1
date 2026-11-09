@@ -153,9 +153,9 @@
       of such a name that exists already fails the page, so that a developer's own is never removed. One that is still
       there after the removal fails the page, as a folder does.
       A page and its translation name each pinned image by the digest of .github/workflows/ci.yml: PostgreSQL
-      (postgres:18@sha256:...) and Keycloak (quay.io/keycloak/keycloak@sha256:..., with no tag). A reference that starts
-      so on any line, and every such image that a docker line names (postgres: or postgres@, also under
-      docker.io/library/; quay.io/keycloak/keycloak: or quay.io/keycloak/keycloak@), is the reference of ci.yml. This is
+      (postgres:18@sha256:...) and Keycloak (quay.io/keycloak/keycloak@sha256:..., with no tag). Any reference on a page
+      line that starts with such a prefix, and every such image that a docker line names (postgres: or postgres@, also
+      under docker.io/library/; quay.io/keycloak/keycloak: or quay.io/keycloak/keycloak@), must be the reference of ci.yml. This is
       checked for every listed page, also one that is skipped (design §20.7, V1c4d2, Q10; V1c4d2b, review R4).
 
     Each page runs in a new work folder outside the clone, with NUGET_PACKAGES set to a new folder of its own and

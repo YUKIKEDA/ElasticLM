@@ -489,7 +489,7 @@ elm offline process --url <url> --in <file> [--out <file>] [options]
 elm secret create --out <file> [options]
 ```
 
-`elm-service` のシークレットのファイルを書く。中身は 32 バイトの乱数を base64 で書いた 1 行だ。このファイルは、ノンスのシークレットとして、サービスの設定 [`nonce.secretFile`](service-configuration.md#nonce) で指定できる。管理画面のサインインの鍵暗号化鍵として、[`dataProtection.kekFile`](service-configuration.md#dataprotection) で指定することもできる。長さは 32 バイトに固定している。ノンスのシークレットにサービスが求める最小の長さで、鍵暗号化鍵の長さでもあるからだ。用途ごとに別のファイルを作ること。`secret file: <file>` を表示する。`--json` を付けると、`file` にファイルのパスを入れたオブジェクトを書く。シークレットそのものは、標準出力にも標準エラー出力にも書かない。Linux と macOS では、ファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、秘密鍵と同じく、新しいファイルで前のファイルを置き換える。
+`elm-service` のシークレットのファイルを書く。中身は 32 バイトの乱数を base64 で書いた 1 行だ。1 つのファイルは、ノンスのシークレットか、管理画面のサインインの鍵暗号化鍵のどちらかとして使う。ノンスのシークレットはサービスの設定 [`nonce.secretFile`](service-configuration.md#nonce) で、鍵暗号化鍵は [`dataProtection.kekFile`](service-configuration.md#dataprotection) で指定する。長さは 32 バイトに固定している。ノンスのシークレットにサービスが求める最小の長さで、鍵暗号化鍵の長さでもあるからだ。用途ごとに別のファイルを作ること。`secret file: <file>` を表示する。`--json` を付けると、`file` にファイルのパスを入れたオブジェクトを書く。シークレットそのものは、標準出力にも標準エラー出力にも書かない。Linux と macOS では、ファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、秘密鍵と同じく、新しいファイルで前のファイルを置き換える。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |

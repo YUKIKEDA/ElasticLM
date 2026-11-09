@@ -482,7 +482,8 @@ jobs:
   guide-containers:
     # design §20.7 (V1c4d2, Q2, Q9, and review R10; V1c4d2b, Q1): the How-to guides that run elm-service in a container,
     # on PostgreSQL, and with sign-in through OIDC (Keycloak), with the image that the image job built and this run's
-    # linux-x64 elm, elm-service, and packages, after the Tutorial they name. The pages start their own containers. Read-only, and it uploads nothing (T22, T27).
+    # linux-x64 elm, elm-service, and packages, after the Tutorial they name. The pages start their own containers.
+    # Read-only, and it uploads nothing (T22, T27).
     name: Guide steps with containers
     needs: [version, build, pack, image]
     runs-on: ubuntu-latest

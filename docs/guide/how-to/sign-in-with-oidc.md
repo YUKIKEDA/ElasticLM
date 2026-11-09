@@ -49,7 +49,8 @@ Keycloak reads a realm, the IdP's settings for one organization, from a JSON fil
           "temporary": false
         }
       ],
-      "groups": ["/elm-owners"]
+      "groups": ["/elm-owners"],
+      "realmRoles": ["default-roles-elm"]
     }
   ],
   "clients": [
@@ -101,6 +102,7 @@ Keycloak reads a realm, the IdP's settings for one organization, from a JSON fil
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "consentRequired": false,
+      "fullScopeAllowed": false,
       "redirectUris": ["http://127.0.0.1:8080/auth/callback"],
       "webOrigins": [],
       "attributes": {
@@ -128,9 +130,9 @@ Keycloak reads a realm, the IdP's settings for one organization, from a JSON fil
 
 What each part is for:
 
-- The group `elm-owners` holds the administrators who get the `owner` role. The user `alice` is in it. Her `id` is fixed here so that the service's settings below can name her; Keycloak puts it in her tokens as `sub`.
+- The group `elm-owners` holds the administrators who get the `owner` role. The user `alice` is in it. Her `id` is fixed here so that the service's settings below can name her; Keycloak puts it in her tokens as `sub`. `realmRoles` gives her the realm's default roles, which a user created by an import does not get otherwise; without `offline_access` among them, Keycloak refuses the refresh token that `elm admin login` asks for.
 - `elm-cli` is the client of `elm admin login`: a public client, with no secret, that uses the device authorization flow only. Its audience mapper puts `elm-service`, the value of the service's `oidc.audience`, in the access token's `aud`; the service refuses an access token without it. Its `name` is what Keycloak shows on the approval page, so that an administrator sees which program asks.
-- `elm-web` is the client of the admin UI: a confidential client with a secret, that uses the authorization code flow with PKCE only. Its redirect URI and the address after sign-out are the service's address with `/auth/callback` and `/`, exactly, without wildcards.
+- `elm-web` is the client of the admin UI: a confidential client with a secret, that uses the authorization code flow with PKCE only. Its redirect URI and the address after sign-out are the service's address with `/auth/callback` and `/`, exactly, without wildcards. `fullScopeAllowed` off keeps the realm's other roles out of its tokens.
 - Both clients put the user's groups in a top-level `groups` claim with plain group names (`full.path` off), in the access token and in the ID token, since the service reads the roles from that claim.
 
 ## Start Keycloak
@@ -145,7 +147,7 @@ docker start elm-keycloak
 docker exec elm-keycloak bash -c 'for i in $(seq 120); do exec 3<>/dev/tcp/127.0.0.1/8080 && printf "GET /realms/elm/.well-known/openid-configuration HTTP/1.0\r\n\r\n" >&3 && head -n 1 <&3 | grep -q " 200 " && exit 0; sleep 1; done; exit 1'
 ```
 
-`start-dev` runs Keycloak for development, with plain http and data that is gone with the container. The last line waits until Keycloak answers for the realm, which takes about half a minute. Start the service only after it: the service reads the IdP's settings at its first sign-in, and while it never could, it tries again at longer and longer intervals.
+`start-dev` runs Keycloak for development, with plain http and data that is gone with the container. The last line waits until Keycloak answers for the realm, which takes about half a minute. The service reads the IdP's settings only when a sign-in first needs them: before Keycloak answers, a sign-in fails with `The identity provider cannot be reached.`, and the next one tries again.
 
 ## Turn OIDC on in the service
 
@@ -239,7 +241,7 @@ The tutorial's API key still works. List the administrators with it:
 elm admin request GET /v1/admin/admins --url http://127.0.0.1:8080
 ```
 
-The list holds the tutorial's owner, `https://idp.example` `tutorial`. `alice` appears once she has signed in.
+The list holds the tutorial's owner, `https://idp.example` `tutorial`. `alice` appears, with her `sub` `6f1c2a4e-5b7d-4e8f-9a0b-1c2d3e4f5a6b`, once she has signed in.
 
 ## Sign in with elm
 
@@ -249,13 +251,13 @@ Remove `ELM_API_KEY` from the first terminal, since `elm` prefers it to a sign-i
 elm admin login --url http://127.0.0.1:8080
 ```
 
-`elm` prints an address of Keycloak and a code on standard error, and waits. Open the address in a browser, check that the page names `elm command-line tool`, enter the code, and sign in as `alice` with the password `alice-try-only`. `elm` then saves the sign-in for this user and this service, and `elm admin request` uses it until it ends: try `elm admin request GET /v1/admin/me --url http://127.0.0.1:8080`, which names `alice` with the role `owner`. `elm admin logout --url http://127.0.0.1:8080` ends it. [elm command reference](../reference/elm-cli.md#elm-admin-login) has the details, such as where the sign-in is saved.
+`elm` prints an address of Keycloak and a code on standard error, and also an address with the code in it, and waits. Open the address in a browser, enter the code if asked, sign in as `alice` with the password `alice-try-only`, and check that the page that asks you to grant access names `elm command-line tool` before you choose Yes. `elm` then saves the sign-in, in place of any earlier one, and `elm admin request` uses it for this service until it ends: try `elm admin request GET /v1/admin/me --url http://127.0.0.1:8080`, which shows her `sub` with the role `owner`. `elm admin logout` ends it. [elm command reference](../reference/elm-cli.md#elm-admin-login) has the details, such as where the sign-in is saved.
 
 Never type a code that you did not ask for yourself: someone who sends you a code and an address is asking you to sign them in.
 
 ## Sign in to the admin UI
 
-Open `http://127.0.0.1:8080/` in a browser, and sign in as `alice`. The service keeps the sign-in in a session cookie, which ends after `session.idleMinutes` (30) without a request, or after `session.maxHours` (12). Signing out of the admin UI ends the service's session; it ends the IdP's session only if the IdP and the browser follow the sign-out page, so on a shared browser sign out of Keycloak too. [Security model](../explanation/security-model.md#around-the-hosted-service-and-its-administrators) lists what else a sign-in does not cover.
+Open `http://127.0.0.1:8080/` in a browser, and sign in as `alice`. The service keeps the sign-in in a session cookie, which ends after `session.idleMinutes` (30) without a request, or after `session.maxHours` (12). Signing out of the admin UI ends the service's session and opens Keycloak's sign-out page, which asks you to confirm; Keycloak's session ends only if you do, so on a shared browser always confirm. [Security model](../explanation/security-model.md#around-the-hosted-service-and-its-administrators) lists what else a sign-in does not cover.
 
 BROWSERS_TRIED
 
@@ -263,7 +265,7 @@ In production, serve the admin UI over https: put TLS in front of the service, o
 
 ## Retire the tutorial's owner
 
-Once `alice` has signed in, the tutorial's owner is no longer needed. Its API key stops anyway after 90 days without a sign-in, since `apiKeys.inactiveAdminDays` applies once OIDC is on, and the key itself expires after 90 days. Signed in as `alice`, find the owner's `id` in `GET /v1/admin/admins`, and disable it:
+Once `alice` has signed in, the tutorial's owner is no longer needed. Its API key expires anyway 90 days after `setup` made it. Signed in as `alice`, find the owner's `id` in `GET /v1/admin/admins`, and disable it:
 
 ```shell
 elm admin request POST /v1/admin/admins/<id>/disable --url http://127.0.0.1:8080
@@ -273,10 +275,11 @@ Its API keys, the tutorial's key included, stop working at once. An owner can di
 
 ## Microsoft Entra ID
 
-With Microsoft Entra ID, register two applications in your tenant: one for `elm admin login`, a public client that uses the device authorization flow, and one for the admin UI, a confidential client with a secret and the redirect URI `<your address>/auth/callback`. Expose an API scope on an application of the service, put that scope in `oidc.cliScopes` beside `openid` and `offline_access`, and set `oidc.audience` to the API's application ID: Entra ID issues an access token for the service only when the request asks for its scope. Then:
+With Microsoft Entra ID, register two applications in your tenant: one for `elm admin login`, a public client that uses the device authorization flow, and one for the admin UI, a confidential client with a secret and the redirect URI `<your address>/auth/callback`. Expose an API scope on a third application that stands for the service, put that scope in `oidc.cliScopes` beside `openid` and `offline_access`, and set `oidc.audience` to that application's client ID, which v2.0 access tokens carry in `aud` (see Microsoft's [access token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)). Then:
 
-- `oidc.issuer` is your tenant's issuer, `https://login.microsoftonline.com/<tenant ID>/v2.0`: v2.0 tokens carry an `iss` that ends in `/v2.0` (see Microsoft's [access token claims reference](https://learn.microsoft.com/en-us/entra/identity-platform/access-token-claims-reference)).
-- The `groups` claim holds the groups' object IDs, so the keys of `oidc.roleMap` are those IDs. When a user is in more than 200 groups, Entra ID leaves the claim out of the token, and the service then sees no role for that user: keep administrators in few groups, or give them app roles in the `roles` claim and set `oidc.roleClaim` to `roles`.
+- `oidc.issuer` is the issuer of your tenant: v2.0 tokens carry an `iss` that names your tenant and ends in `/v2.0` (same reference).
+- In the manifest of the API's application, set `api.requestedAccessTokenVersion` to `2`. Otherwise Entra ID issues v1.0 access tokens, whose `iss` does not end in `/v2.0` and so differs from `oidc.issuer` (see Microsoft's [app manifest reference](https://learn.microsoft.com/en-us/entra/identity-platform/reference-microsoft-graph-app-manifest#api-attribute)).
+- Set `groupMembershipClaims`, for example to `SecurityGroup`, in the manifest of the applications of the admin UI and of the service, so that both tokens carry `groups`. The claim holds the groups' object IDs, so the keys of `oidc.roleMap` are those IDs. When a user is in more than 200 groups, Entra ID leaves the claim out of the token, and the service then sees no role for that user: keep administrators in few groups.
 - Entra ID's `sub` differs between two applications for the same user (the same reference says so). The admin UI and `elm admin login` use two applications, so one person becomes two administrators, and `bootstrapOwner.sub` matches only one of them. Until the service can take another claim as the user's identity (a later change), give each administrator their role through `oidc.roleMap`, and expect two entries per person in `GET /v1/admin/admins`.
 
 This guide has not been tried with Entra ID; check each setting against Microsoft's documentation of your tenant.
@@ -292,7 +295,7 @@ This guide has not been tried with Entra ID; check each setting against Microsof
 
 ## Stop Keycloak
 
-The container of this guide is for trying only, and `start-dev` keeps its data in the container. Stop the service first, then stop the container and remove it: `docker stop elm-keycloak`, then `docker rm -v elm-keycloak`. Delete `kek.secret` and `web-client.secret` too, and remove the `oidc`, `dataProtection`, and new `bootstrapOwner` settings from `service.json` to go back to the tutorial's service. The tutorial's owner works again only if you did not disable it.
+The container of this guide is for trying only, and `start-dev` keeps its data in the container. Run `elm admin logout` and stop the service first, then stop the container and remove it: `docker stop elm-keycloak`, then `docker rm -v elm-keycloak`. Delete `kek.secret` and `web-client.secret` too, remove the `oidc` and `dataProtection` settings from `service.json`, and put back the tutorial's `bootstrapOwner` (`https://idp.example`, `tutorial`) to go back to the tutorial's service; then read the tutorial's API key into `ELM_API_KEY` again. The tutorial's owner works again only if you did not disable it.
 
 ## See also
 
