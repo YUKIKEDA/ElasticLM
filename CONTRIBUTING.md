@@ -73,18 +73,18 @@ To run the marked steps of `README.md`, the tutorials, and the how-to guides as 
 
 ### Build the container image
 
-The how-to guides that run `elm-service` in a container use an image named `elm-service`. No image is published before the first release that is not a prerelease, so build one for your machine's architecture. The NativeAOT executable for Linux is built on Linux: use a Linux machine, or a Linux distribution of WSL, with the .NET 10 SDK, PowerShell 7, `clang`, `zlib1g-dev`, the Node.js of [Requirements](#requirements) for `web/admin/dist`, and Docker with its buildx plugin. In the clone, on an x64 machine:
+The how-to guides that run `elm-service` in a container use an image named `elm-service`. No image is published before the first release that is not a prerelease, so build one for your machine's architecture. The NativeAOT executable for Linux is built on Linux: use a Linux machine, or a Linux distribution of WSL, with the .NET 10 SDK, PowerShell 7, `clang`, `zlib1g-dev`, the Node.js of [Requirements](#requirements) for `web/admin/dist`, and Docker with its buildx plugin. In PowerShell 7 (`pwsh`), in the clone, on an x64 machine:
 
 ```shell
 ./eng/release/Publish-Rid.ps1 -Rid linux-x64 -OutDir publish -LogDir publish-logs
-./eng/release/Test-Publish.ps1 -Rid linux-x64 -PublishDir publish -LogDir publish-logs
+./eng/release/Test-Publish.ps1 -Rid linux-x64 -PublishDir publish -LogDir publish-logs -RecordGlibcOnly
 ./eng/release/Pack-Rid.ps1 -Rid linux-x64 -Version 0.1.0 -PublishDir publish -OutDir archives
 docker buildx create --name elm-builder --driver docker-container --use
 ./eng/container/Build-Image.ps1 -Version 0.1.0 -Revision (git rev-parse HEAD) -ArchiveDir archives -Platform linux/amd64 -Format docker -OutFile elm-service.tar
 docker load --input elm-service.tar
 ```
 
-On an arm64 machine, use `linux-arm64` and `linux/arm64`. `-Format docker` writes a tar that `docker load` reads, with the image named `elm-service`; without `-Platform` and `-Format`, `Build-Image.ps1` builds both platforms into an OCI layout, as the release does. The builder of the `docker-container` driver is needed because the default `docker` driver cannot rewrite the files' times for a reproducible image. On Windows with WSL containers instead of Docker, build the tar in a Linux distribution as above, then load it with `wslc load --input elm-service.tar`.
+On an arm64 machine, use `linux-arm64` and `linux/arm64`. `-Format docker` writes a tar that `docker load` reads, with the image named `elm-service`; without `-Platform` and `-Format`, `Build-Image.ps1` builds both platforms into an OCI layout, as the release does. The builder of the `docker-container` driver is needed because `Build-Image.ps1` writes the image to a tar file, which the default `docker` driver cannot. `-RecordGlibcOnly` lets `Test-Publish.ps1` record the glibc version the executables need instead of failing: the release builds them on glibc 2.28, while your machine's glibc is likely newer. The script replaces an `elm-service` image you already have, and says so. On Windows with WSL containers instead of Docker, build the tar in a Linux distribution as above, then load it with `wslc load --input elm-service.tar`.
 
 To run the steps of the container and PostgreSQL how-to guides as the release workflow's job does, give the script the image, and `-Docker` on a Linux machine with Docker:
 
@@ -92,7 +92,7 @@ To run the steps of the container and PostgreSQL how-to guides as the release wo
 ./eng/docs/Test-GuideSteps.ps1 -Elm <elm> -ElmService <elm-service> -Feed <that-folder> -Image <oci-layout.tar> -Docker -Page docs/guide/how-to/run-the-service-in-a-container.md, docs/guide/how-to/run-the-service-on-postgresql.md
 ```
 
-`-Image` takes the OCI layout of `Build-Image.ps1` without `-Format docker`, as the release builds it. Without `-Docker`, the script skips every page with `docker` lines.
+`-Image` takes an OCI layout tar of `Build-Image.ps1` without `-Format docker`, such as one built with `-Platform linux/amd64 -OutFile elm-service-oci.tar`; the script loads its linux/amd64 image. On Windows with WSL containers, add `-ContainerCli wslc`. Without `-Docker`, the script skips every page with `docker` lines.
 
 ## Versioning
 

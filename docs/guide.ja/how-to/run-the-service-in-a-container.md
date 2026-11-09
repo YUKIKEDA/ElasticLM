@@ -10,9 +10,9 @@ sidebar_position: 19
 
 ## 始める前に
 
-コマンドは、チュートリアルのフォルダーで、その `tools` フォルダーを `PATH` に足した状態で打つ。使うのは Docker のある Linux ホストだ。チュートリアルのサービスは、ポート 8080 で動かしたままでよい。下のコンテナは、ホストのポート 8090 で待ち受ける。
+コマンドは、チュートリアルのフォルダーで、その `tools` フォルダーを `PATH` に足した状態で打つ。使うのは Docker のある Linux ホストだ。チュートリアルを Windows や macOS で進めたときは、`tools` にチュートリアルの Linux 用のアーカイブ（`-linux-x64.tar.gz` か `-linux-arm64.tar.gz`）が要る。チュートリアルのサービスは、ポート 8080 で動かしたままでよい。下のコンテナは、ホストのポート 8090 で待ち受ける。
 
-コマンドでは、イメージを `elm-service` という名前で使う。イメージはまだ公開されていない。最初のリリースまでは、`CONTRIBUTING.md` の [Build the container image](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-the-container-image) のとおりにイメージをビルドする。そうすると、イメージにこの名前が付く。イメージが公開されたら、`ghcr.io/yukikeda/elm-service` からダイジェストを指定して取得し、この名前を付ける。ダイジェストは、タグと違って別のイメージに付け替えられない。`docker pull ghcr.io/yukikeda/elm-service@sha256:<digest>` を実行し、続けて `docker tag ghcr.io/yukikeda/elm-service@sha256:<digest> elm-service` を実行する。
+コマンドでは、イメージを `elm-service` という名前で使う。イメージはまだ公開されていない。最初のリリースまでは、`CONTRIBUTING.md` の [Build the container image](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-the-container-image) のとおりにイメージをビルドする。そうすると、イメージにこの名前が付く。イメージが公開されたら、`ghcr.io/yukikeda/elm-service` からダイジェストを指定して取得し、この名前を付ける。ダイジェストはリリースに示してあり、タグと違って別のイメージに付け替えられない。`docker pull ghcr.io/yukikeda/elm-service@sha256:<digest>` を実行し、続けて `docker tag ghcr.io/yukikeda/elm-service@sha256:<digest> elm-service` を実行する。
 
 <!-- steps:prebuilt name=image -->
 
@@ -51,7 +51,7 @@ sidebar_position: 19
 ```
 
 - `publicUrls` は、デバイスがサービスに接続するときの `https://` のアドレスだ。サービスの前に置くリバースプロキシのアドレスなどがこれに当たる。コンテナでは、サービスはループバック以外のアドレスで待ち受けるので、`publicUrls` がないと `setup` もサービスも起動しない。`https://elm.example/` の代わりに自分のアドレスを使う。
-- `node.name` は、このノードの変わらない名前だ。これがないと、名前はコンテナのホスト名になる。ホスト名はコンテナを作り直すたびに変わり、そうすると利用ログは別のノードのファイルを書き始める。
+- `node.name` は、このノードの変わらない名前だ。これがないと、名前はコンテナのホスト名になる。ホスト名はコンテナを作り直すたびに変わる。`usageLog.directory` を設定していると、そのたびに利用ログは別のノードのファイルを書き始めることになる。
 
 データベースの接続文字列は `container/database.connection` に書く。こうすると、チュートリアルの `database.connection` はそのまま残る。
 
@@ -86,7 +86,7 @@ docker rm elm-config-helper
 docker run --rm --network none -v elm-config:/config busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec chmod -R u=rX,go= /config
 ```
 
-これで `elm-config` にファイルが入り、所有者だけが読める状態になった。Kubernetes では、ポッドの `securityContext.fsGroup: 1654` でシークレットに同じ所有者を与えるか、シークレットの `defaultMode` で読めるようにする。
+これで `elm-config` にファイルが入り、所有者だけが読める状態になった。Kubernetes では、代わりにシークレットをユーザー ID 1654 が読めるようにする。ポッドの `securityContext.fsGroup: 1654` でシークレットにグループ 1654 を与え、シークレットの `defaultMode` を `0440` などにして、そのグループだけが読めるようにする。
 
 ## 最初の API キーを作る
 
@@ -101,14 +101,14 @@ docker run --rm -v elm-config:/config:ro -v elm-data:/data elm-service setup --c
 
 ## サービスを起動する
 
-2 つ目のターミナルでサービスを起動する。そのターミナルでは、[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに、`ELM_SIGNING_PASSPHRASE` に署名鍵のパスフレーズが入っている。
+別のターミナルでサービスを起動する。そのターミナルでは、[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに設定した `ELM_SIGNING_PASSPHRASE` に、署名鍵のパスフレーズが入っている。チュートリアルのサービスがまだ 2 つ目のターミナルで動いているなら、3 つ目のターミナルを使う。
 
 <!-- steps:background ready=http://127.0.0.1:8090/health -->
 ```shell
 docker run --rm --name elm-service -p 127.0.0.1:8090:8080 -v elm-config:/config:ro -v elm-data:/data -e ELM_SIGNING_PASSPHRASE elm-service --config /config/container.json
 ```
 
-値を付けない `-e ELM_SIGNING_PASSPHRASE` は、このターミナルの変数をコンテナに渡す。それでも値は `docker inspect elm-service` に表示され、Kubernetes ではポッドの定義に出る。本番では、代わりにパスフレーズを `elm-config` のファイルに入れ、`signing.passphraseFile` でそのファイルを指定する。`-p 127.0.0.1:8090:8080` は、ホストのループバックアドレスにだけポートを公開する。その前にリバースプロキシか Ingress で TLS を置くか、サービスに `tls.certificate` と `tls.key` を与える。
+値を付けない `-e ELM_SIGNING_PASSPHRASE` は、このターミナルの変数をコンテナに渡す。それでも値は `docker inspect elm-service` に表示され、ポッドの定義に値を書いたときはそこにも出る。本番では、代わりにパスフレーズを `elm-config` のファイルに入れ、`signing.passphraseFile` でそのファイルを指定する。`-p 127.0.0.1:8090:8080` は、ホストのループバックアドレスにだけポートを公開する。その前にリバースプロキシか Ingress で TLS を置くか、サービスに `tls.certificate` と `tls.key` を与え、`-e ELM_LISTEN=https://0.0.0.0:8080` で https のアドレスを渡す。イメージは `ELM_LISTEN` を設定していて、これは `container.json` の `listen` より優先される。
 
 サービスはチュートリアルと同じようにログを表示し、最後に `service.started` を出す。`/health` は、サービスがデータベースに接続できるあいだは 200 を返し、接続できないときは 503 を返す。イメージにはシェルがないので、`HEALTHCHECK` もない。`/health` はコンテナの外から確かめる。Kubernetes では、これを `readinessProbe`（`httpGet`、パス `/health`、ポート 8080）に使い、`livenessProbe` には使わない。そちらに使うと、データベースが止まっているあいだ、サービスを何度も再起動してしまう。
 

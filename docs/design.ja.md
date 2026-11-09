@@ -4903,8 +4903,8 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 確かめ: 管理 API で製品を作って取れること。動いたまま `docker run --rm … backup --out /data/backup-1.db` を流し、`schema version` を取ること。
     - 本文: TLS は前段に置くか `tls.*`、SIGTERM で止まること、`/health` は readinessProbe に使うこと、Kubernetes の `fsGroup`。
   - PostgreSQL の頁（Q8）: Tutorial 2 を名指す。
-    - 流れ: 試すための PostgreSQL 18 を `docker run` で立てる（`ci.yml` と同じ digest）。`docker exec … psql` でロール `elm` とデータベース `elm` を作る。`database.connection` を Npgsql の接続文字列に、`service.json` を `provider: postgres` にする。`elm-service setup` で新しいデータベースの API キーを作る。起動し直してライセンスを作る。
-    - 確かめ: `docker exec … pg_dump -Fc` で写しを作る。別のデータベースに `pg_restore` で戻す。サービスをそこに向けて起動し直し、ライセンスが取れること。
+    - 流れ: 試すための PostgreSQL 18 を `docker run` で立てる（`ci.yml` と同じ digest）。`docker exec … psql` でロール `elm` とデータベース `elm` を作る。`database.connection` を Npgsql の接続文字列に、`service.json` を `provider: postgres` にする。`elm-service setup` で新しいデータベースの API キーを作る。起動し直して製品を作る（V1c4d2a の正しさのレビューの C4 で、ライセンスから製品に改めた。新しいデータベースにはポリシーがなく、製品だけで戻しを確かめられる）。
+    - 確かめ: `docker exec … pg_dump -Fc` で写しを作る。別のデータベースに `pg_restore` で戻す。サービスをそこに向けて起動し直し、製品が取れること。
     - 本文: 対応する版（15〜18）。複数のノードで同じにするもの（ノンスの秘密、署名鍵、KEK）と、ノードごとのもの（`node.name`、利用ログ）。版を更新する順（古いノードを全部止め、新しい版を 1 つ起動して移行させ、残りを起動する。移行のあとは古いノードが終了コード 1 で断る）。戻したときに消えるもの（バックアップの頁を指す）。2 つ目のノードを動かす手順は本文だけ（1 頁に裏のプロセスは 1 つまで）。
   - 手順を流す仕組み（Q9）:
     - `-Docker` を渡したときだけ、`os=linux` のブロックの `docker` の行を流す。渡さない段とほかの OS では、そのブロックを飛ばして `skipped` と出す。

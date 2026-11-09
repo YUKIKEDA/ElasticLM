@@ -10,9 +10,9 @@ This guide is for the vendor's operator who runs `elm-service` as a container on
 
 ## Before you start
 
-Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`, on a Linux host with Docker. The tutorial's service may keep running on port 8080: the container below listens on port 8090 of the host.
+Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`, on a Linux host with Docker. If you followed the tutorial on Windows or macOS, `tools` needs the tutorial's Linux archives (`-linux-x64.tar.gz` or `-linux-arm64.tar.gz`) there. The tutorial's service may keep running on port 8080: the container below listens on port 8090 of the host.
 
-The commands use the image under the name `elm-service`. No image has been published yet: until the first release, build it as described in [Build the container image](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-the-container-image) in `CONTRIBUTING.md`, which gives it that name. Once an image is published, pull it from `ghcr.io/yukikeda/elm-service` by its digest, which cannot be moved to another image as a tag can, and give it the name: `docker pull ghcr.io/yukikeda/elm-service@sha256:<digest>`, then `docker tag ghcr.io/yukikeda/elm-service@sha256:<digest> elm-service`.
+The commands use the image under the name `elm-service`. No image has been published yet: until the first release, build it as described in [Build the container image](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-the-container-image) in `CONTRIBUTING.md`, which gives it that name. Once an image is published, pull it from `ghcr.io/yukikeda/elm-service` by its digest, which the release names, which cannot be moved to another image as a tag can, and give it the name: `docker pull ghcr.io/yukikeda/elm-service@sha256:<digest>`, then `docker tag ghcr.io/yukikeda/elm-service@sha256:<digest> elm-service`.
 
 <!-- steps:prebuilt name=image -->
 
@@ -51,7 +51,7 @@ Inside the container, the service finds its files under `/config` and keeps its 
 ```
 
 - `publicUrls` is the `https://` address under which devices reach the service, such as the address of the reverse proxy in front of it. In a container the service listens on an address other than loopback, and without `publicUrls` neither `setup` nor the service starts. Use your own address in place of `https://elm.example/`.
-- `node.name` is a name for this node that stays the same. Without it, the name is the container's host name, which changes each time the container is made again, and the usage log then starts the file of another node.
+- `node.name` is a name for this node that stays the same. Without it, the name is the container's host name, which changes each time the container is made again; with `usageLog.directory` set, the usage log would then start the file of another node.
 
 The database's connection string goes into `container/database.connection`, so that the tutorial's `database.connection` stays as it is:
 
@@ -86,7 +86,7 @@ docker rm elm-config-helper
 docker run --rm --network none -v elm-config:/config busybox@sha256:a7dbc319b1438115a207e11930dc4bb3e643dcb3ec0bdd694bb36cd8fad289ec chmod -R u=rX,go= /config
 ```
 
-`elm-config` now holds the files, readable by their owner only. With Kubernetes, give the secrets the same owner with the pod's `securityContext.fsGroup: 1654`, or make them readable with the secret's `defaultMode`.
+`elm-config` now holds the files, readable by their owner only. With Kubernetes, make the secrets readable by the user ID 1654 instead: the pod's `securityContext.fsGroup: 1654` gives them the group 1654, and the secret's `defaultMode`, such as `0440`, makes them readable by that group only.
 
 ## Make the first API key
 
@@ -101,14 +101,14 @@ It prints a new API key on the first line, as in the tutorial; the database in `
 
 ## Start the service
 
-Start the service in a second terminal, where `ELM_SIGNING_PASSPHRASE` holds the signing key's passphrase, as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service):
+Start the service in another terminal where `ELM_SIGNING_PASSPHRASE` holds the signing key's passphrase, set as in [Start the service](../tutorials/activate-an-app-online.md#start-the-service): a third one, if the tutorial's service still runs in the second.
 
 <!-- steps:background ready=http://127.0.0.1:8090/health -->
 ```shell
 docker run --rm --name elm-service -p 127.0.0.1:8090:8080 -v elm-config:/config:ro -v elm-data:/data -e ELM_SIGNING_PASSPHRASE elm-service --config /config/container.json
 ```
 
-`-e ELM_SIGNING_PASSPHRASE` without a value hands the variable of this terminal to the container. The value still shows in `docker inspect elm-service`, and in a pod's definition with Kubernetes: in production, put the passphrase in a file of `elm-config` and name it with `signing.passphraseFile` instead. `-p 127.0.0.1:8090:8080` publishes the port on the host's loopback address only; put TLS in front of it with a reverse proxy or an ingress, or give the service `tls.certificate` and `tls.key`.
+`-e ELM_SIGNING_PASSPHRASE` without a value hands the variable of this terminal to the container. The value still shows in `docker inspect elm-service`, and in a pod's definition when the value is written there: in production, put the passphrase in a file of `elm-config` and name it with `signing.passphraseFile` instead. `-p 127.0.0.1:8090:8080` publishes the port on the host's loopback address only; put TLS in front of it with a reverse proxy or an ingress, or give the service `tls.certificate` and `tls.key` and an https address with `-e ELM_LISTEN=https://0.0.0.0:8080`: the image sets `ELM_LISTEN`, which overrides a `listen` in `container.json`.
 
 The service prints its log as in the tutorial, ending with `service.started`. `/health` answers 200 while the service reaches its database, and 503 when it does not. The image has no `HEALTHCHECK`, since it has no shell: check `/health` from outside the container. With Kubernetes, use it as the `readinessProbe` (`httpGet`, path `/health`, port 8080), not as the `livenessProbe`, which would restart the service again and again while the database is down.
 

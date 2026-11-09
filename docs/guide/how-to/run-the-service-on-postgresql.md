@@ -82,7 +82,7 @@ In `service.json`, change `database.provider` to `postgres`:
 }
 ```
 
-The connection string is Npgsql's: [elm-service configuration](../reference/service-configuration.md#database) lists its usual keys, such as `SSL Mode` for a server you reach over a network.
+The connection string is Npgsql's, as in [elm-service configuration](../reference/service-configuration.md#database). For a server you reach over a network, add Npgsql's `SSL Mode` key, as Npgsql's list of connection string parameters describes (https://www.npgsql.org/doc/connection-string-parameters.html).
 
 Prepare the new database and make its first API key, as in the tutorial:
 
@@ -151,7 +151,7 @@ Read the product back:
 elm admin request GET /v1/admin/products/<pg-product-id> --url http://127.0.0.1:8080
 ```
 
-`elm` prints the product `acme-cad`. To restore in production, stop every node, restore into an empty database with the same name (drop and create it first, or restore into a new one and change the connection string of every node), and start the nodes again. A restore takes back everything since the backup, as [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists; save the audit log first, as [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup) says.
+`elm` prints the product `acme-cad`. To restore in production, stop every node, restore into an empty database (drop the database and create it again, or create a new one and change the connection string of every node), and start the nodes again. A restore takes back everything since the backup, as [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists; save the audit log first, as [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup) says.
 
 ## Run several nodes
 
@@ -160,7 +160,7 @@ Every node of the service connects to the same database, and holds the same:
 - nonce secret (`nonce.secretFile`), so that a nonce from one node passes on another;
 - signing key and its certificates, with its passphrase;
 - root public keys and revoked key IDs (`trust`);
-- key-encryption key of the admin UI's sign-in (`dataProtection.kekFile`), when the admin UI's sign-in is on.
+- key encryption key of the admin UI's sign-in (`dataProtection.kekFile`), when the admin UI's sign-in is on.
 
 Each node has its own `node.name`, so that each writes its own usage log file. Put the nodes behind one load balancer whose address is in `publicUrls` of every node, and set the rate limits per node, as [Limit request rates](limit-request-rates.md#several-nodes-and-restarts) says.
 

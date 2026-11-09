@@ -82,7 +82,7 @@ Host=127.0.0.1;Port=5432;Database=elm;Username=elm;Password=try-only-elm
 }
 ```
 
-接続文字列は Npgsql の形式だ。よく使うキーは [elm-service の設定](../reference/service-configuration.md#database)に挙げている。ネットワーク越しに接続するサーバーに使う `SSL Mode` などだ。
+接続文字列は、[elm-service の設定](../reference/service-configuration.md#database)にあるとおり Npgsql の形式だ。ネットワーク越しに接続するサーバーでは、Npgsql の接続文字列のパラメーターの一覧（https://www.npgsql.org/doc/connection-string-parameters.html）にあるとおり、Npgsql の `SSL Mode` キーを足す。
 
 チュートリアルと同じように、新しいデータベースを準備し、最初の API キーを作る。
 
@@ -151,7 +151,7 @@ elm-service --config service.json
 elm admin request GET /v1/admin/products/<pg-product-id> --url http://127.0.0.1:8080
 ```
 
-`elm` は製品 `acme-cad` を表示する。本番で復元するときは、すべてのノードを止め、同じ名前の空のデータベースに復元し（先にデータベースを削除して作り直すか、新しいデータベースに復元してすべてのノードの接続文字列を変える）、ノードをもう一度起動する。[復元で取り消されるもの](back-up-and-restore-the-service.md#復元で取り消されるもの)に挙げているとおり、復元するとバックアップの後のことはすべて取り消される。[バックアップを復元する](back-up-and-restore-the-service.md#バックアップを復元する)のとおりに、先に監査ログを保存しておく。
+`elm` は製品 `acme-cad` を表示する。本番で復元するときは、すべてのノードを止め、空のデータベースに復元し（データベースを削除して作り直すか、新しいデータベースを作ってすべてのノードの接続文字列を変える）、ノードをもう一度起動する。[復元で取り消されるもの](back-up-and-restore-the-service.md#復元で取り消されるもの)に挙げているとおり、復元するとバックアップの後のことはすべて取り消される。[バックアップを復元する](back-up-and-restore-the-service.md#バックアップを復元する)のとおりに、先に監査ログを保存しておく。
 
 ## 複数のノードを動かす
 
