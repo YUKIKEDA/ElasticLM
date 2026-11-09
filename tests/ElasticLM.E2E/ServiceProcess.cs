@@ -126,6 +126,23 @@ internal sealed class ServiceProcess : IAsyncDisposable
     public Task<(int Code, string Out, string Error)> RunAsync(params string[] arguments) =>
         Binaries.RunAsync(Binaries.Service, arguments, _folder, _environment);
 
+    /// <summary>
+    /// Runs the published elm-service to its end like <see cref="RunAsync"/>, with some of the running service's variables
+    /// removed.
+    /// </summary>
+    /// <param name="removed">The variables to remove.</param>
+    /// <param name="arguments">The arguments.</param>
+    public Task<(int Code, string Out, string Error)> RunWithoutAsync(IEnumerable<string> removed, params string[] arguments)
+    {
+        var environment = new Dictionary<string, string?>(_environment);
+        foreach (string name in removed)
+        {
+            environment[name] = null;
+        }
+
+        return Binaries.RunAsync(Binaries.Service, arguments, _folder, environment);
+    }
+
     /// <summary>Returns a loopback port no one listens on now.</summary>
     public static int FreePort()
     {

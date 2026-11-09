@@ -16,14 +16,16 @@ public sealed class ServiceBackupTests
     /// - The published elm-service, set up and running for a vendor, with one license; its settings in the environment.
     ///
     /// Steps:
-    /// - Run <c>backup --out backup.db</c> while the service runs, then the same again; run <c>backup</c> alone,
+    /// - Run <c>backup --out backup.db</c> while the service runs, then the same again; run <c>backup --config
+    ///   settings.json --out second.db</c> (an empty settings file, <c>--config</c> first) without the variables of the
+    ///   signing key, its certificates, its passphrase, the root keys, and bootstrapOwner; run <c>backup</c> alone,
     ///   <c>backup --out</c>, <c>backup --out ""</c>, <c>backup --out a.db --out b.db</c>, <c>setup --out a.db</c>,
     ///   <c>--out a.db backup</c>, and <c>backup --config x.json --config y.json --out a.db</c>.
     ///
     /// Expected:
-    /// - On SQLite: 0 with the one line <c>backup: backup.db, schema version &lt;n&gt;</c> and a file beside the database;
-    ///   then 1 with "The backup file 'backup.db' exists.". On PostgreSQL: 2 with "Use pg_dump to back up a PostgreSQL
-    ///   database." and no file. Then 2 with the usage line for each refused argument list, and 2 with "The backup file path
+    /// - On SQLite: 0 with the one line <c>backup: backup.db, schema version &lt;n&gt;</c> and a non-empty backup.db in the
+    ///   working folder; then 1 with "The backup file 'backup.db' exists."; then 0 with the line for second.db. On
+    ///   PostgreSQL: 2 with "Use pg_dump to back up a PostgreSQL database." and no file. Then 2 with the usage line for each refused argument list, and 2 with "The backup file path
     ///   is empty." for the empty path; none of them makes a.db or b.db.
     /// </remarks>
     /// <param name="database"><c>sqlite</c> or <c>postgres</c>.</param>
@@ -31,7 +33,7 @@ public sealed class ServiceBackupTests
     [MemberData(nameof(ServiceProcess.Databases), MemberType = typeof(ServiceProcess))]
     public async Task Backup_BesideTheRunningService_CopiesOrRefuses(string database)
     {
-        await using Vendor vendor = await Vendor.CreateAsync("license");
+        await using Vendor vendor = await Vendor.CreateAsync("license", "lease", "log");
         await using ServiceProcess service = await ServiceProcess.StartAsync(vendor, database);
         string product = await service.ProductAsync("acme-cad");
         await service.LicenseAsync(await service.PolicyAsync(product));
@@ -44,6 +46,22 @@ public sealed class ServiceBackupTests
             Assert.Equal(string.Empty, error);
             Assert.True(new FileInfo(vendor.File("backup.db")).Length > 0);
             Assert.Equal((1, string.Empty, "The backup file 'backup.db' exists."), Trimmed(await service.RunAsync("backup", "--out", "backup.db")));
+
+            // design §14.2: backup reads the settings as setup does, without the signing settings and bootstrapOwner.
+            await File.WriteAllTextAsync(vendor.File("settings.json"), "{}", TestContext.Current.CancellationToken);
+            string[] signing =
+            [
+                "ELM_SIGNING_KEY",
+                "ELM_SIGNING_CERTIFICATES",
+                "ELM_SIGNING_PASSPHRASE",
+                "ELM_TRUST_ROOTKEYS",
+                "ELM_BOOTSTRAPOWNER_ISS",
+                "ELM_BOOTSTRAPOWNER_SUB",
+            ];
+            (code, output, error) = Trimmed(await service.RunWithoutAsync(signing, "backup", "--config", "settings.json", "--out", "second.db"));
+            Assert.Equal(0, code);
+            Assert.Matches(@"^backup: second\.db, schema version [1-9][0-9]*$", output);
+            Assert.Equal(string.Empty, error);
         }
         else
         {

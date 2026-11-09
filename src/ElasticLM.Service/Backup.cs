@@ -1,7 +1,6 @@
 using System.Data.Common;
 using System.Globalization;
 using System.Security.Cryptography;
-using ElasticLM.Licensing;
 using Microsoft.Data.Sqlite;
 
 namespace ElasticLM.Service;
@@ -21,7 +20,8 @@ internal static class Backup
     /// <param name="settings">The settings, read without the signing settings.</param>
     /// <param name="target">The backup file, as the operator gave it; relative paths are read from the working folder.</param>
     /// <param name="output">Receives the one line that names the backup and its schema version.</param>
-    /// <param name="error">Receives the reason of a failure.</param>
+    /// <param name="error">Receives the reason for a failure.</param>
+    /// <param name="beforeMove">For the tests only: runs with the temporary file's path after the copy and before the move.</param>
     /// <param name="cancellationToken">Stops the backup.</param>
     /// <returns>0 on success, 1 when the database or the backup file fails, 2 when the settings do not allow a backup.</returns>
     public static async Task<int> RunAsync(
@@ -29,6 +29,7 @@ internal static class Backup
         string target,
         TextWriter output,
         TextWriter error,
+        Action<string>? beforeMove = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -45,13 +46,11 @@ internal static class Backup
         SqliteConnectionStringBuilder source;
         try
         {
-            source = new SqliteConnectionStringBuilder(settings.ConnectionString);
+            source = Database.ParseSqlite(settings.ConnectionString);
         }
-        catch (ArgumentException e)
+        catch (ServiceStartException e)
         {
-            await error
-                .WriteLineAsync("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e))
-                .ConfigureAwait(false);
+            await error.WriteLineAsync(e.Message).ConfigureAwait(false);
             return Setup.ExitSettings;
         }
 
@@ -71,6 +70,7 @@ internal static class Backup
         try
         {
             long version = await CopyAsync(source, temporary, cancellationToken).ConfigureAwait(false);
+            beforeMove?.Invoke(temporary);
             File.Move(temporary, target, overwrite: false);
             await output
                 .WriteLineAsync(string.Create(CultureInfo.InvariantCulture, $"backup: {target}, schema version {version}"))
@@ -100,7 +100,8 @@ internal static class Backup
         return Setup.ExitDatabase;
     }
 
-    // design §14.2: only a database file can be copied, and SQLite would create a missing one.
+    // design §14.2: only a database file can be copied, and SQLite would create a missing one. Data Source is read as a path
+    // of the file system only: a URI file name (file:) or |DataDirectory| is not resolved.
     private static string? SourceProblem(SqliteConnectionStringBuilder source)
     {
         string path = source.DataSource;
@@ -114,7 +115,9 @@ internal static class Backup
 
     private static async Task<long> CopyAsync(SqliteConnectionStringBuilder source, string temporary, CancellationToken cancellationToken)
     {
-        await using (SqliteConnection connection = await Database.OpenSqliteFileAsync(source, cancellationToken).ConfigureAwait(false))
+        await using (
+            SqliteConnection connection = await Database.OpenSqliteFileAsync(source, readOnly: false, cancellationToken).ConfigureAwait(false)
+        )
         {
             // Checked before the copy, so that a file of another program is not copied; the version comes from the copy.
             await RequireSchemaAsync(connection, source.DataSource, cancellationToken).ConfigureAwait(false);
@@ -126,7 +129,7 @@ internal static class Backup
         }
 
         var copy = new SqliteConnectionStringBuilder { DataSource = temporary };
-        await using SqliteConnection read = await Database.OpenSqliteFileAsync(copy, cancellationToken).ConfigureAwait(false);
+        await using SqliteConnection read = await Database.OpenSqliteFileAsync(copy, readOnly: true, cancellationToken).ConfigureAwait(false);
         await using DbCommand query = Database.Command(read, null, "SELECT max(version) FROM schema_migrations;");
         return Convert.ToInt64(await query.ExecuteScalarAsync(cancellationToken).ConfigureAwait(false), CultureInfo.InvariantCulture);
     }

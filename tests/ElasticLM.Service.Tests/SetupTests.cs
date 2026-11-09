@@ -113,5 +113,38 @@ public sealed class SetupTests
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM admins"));
     }
 
+    /// <summary>
+    /// A SQLite connection string that sets Password is a setting error of setup and stops the service's start with one
+    /// reason, not an unhandled exception: the SQLite of elm-service does not encrypt.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The test's SQLite connection string with ";Password=x" added.
+    ///
+    /// Steps:
+    /// - Run setup; start the service.
+    ///
+    /// Expected:
+    /// - setup ends with 2 and the line "The database connection string is not valid: Password is set, and the SQLite of
+    ///   elm-service does not encrypt."; the start throws <see cref="ServiceStartException"/> with the same message.
+    /// </remarks>
+    [Fact]
+    public async Task Run_PasswordInTheConnectionString_IsASettingError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        const string Reason = "The database connection string is not valid: Password is set, and the SQLite of elm-service does not encrypt.";
+        ServiceSettings settings = test.Settings(s => s with { ConnectionString = test.ConnectionString + ";Password=x" });
+        var output = new StringWriter();
+        var error = new StringWriter();
+
+        int code = await Setup.RunAsync(settings, test.Time, output, error, TestContext.Current.CancellationToken);
+
+        Assert.Equal((2, string.Empty, Reason), (code, output.ToString(), error.ToString().Trim()));
+        ServiceStartException start = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(settings, test.HostOptions(), TestContext.Current.CancellationToken)
+        );
+        Assert.Equal(Reason, start.Message);
+    }
+
     private static (int Code, string Error) Drop((int Code, string Out, string Error) run) => (run.Code, run.Error);
 }

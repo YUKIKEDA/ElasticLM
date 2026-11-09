@@ -24,7 +24,8 @@ public sealed class BackupTests
     ///
     /// Expected:
     /// - Exit 0 within 5 seconds, the line <c>backup: &lt;path&gt;, schema version &lt;n&gt;</c> with the newest version
-    ///   applied, nothing on standard error; the copy holds the row 1 and not the row 2, and its journal mode is not WAL.
+    ///   applied, nothing on standard error; the copy holds the row 1 and not the row 2, and its journal mode is not WAL; the
+    ///   audit log of the database has as many rows as before; no temporary file is left.
     /// </remarks>
     [Fact]
     public async Task Run_WhileAWriteIsOpen_CopiesTheCommittedRows()
@@ -34,6 +35,7 @@ public sealed class BackupTests
         await test.SetupAsync();
         await test.ExecuteAsync("CREATE TABLE probe (n INTEGER NOT NULL)");
         string target = test.FilePath("backup.db");
+        long auditRows = await test.ScalarAsync("SELECT count(*) FROM audit_log");
 
         await using (var writer = new SqliteConnection(test.ConnectionString))
         {
@@ -54,6 +56,7 @@ public sealed class BackupTests
         }
 
         Assert.Equal("1", await ScalarAsync(target, "SELECT group_concat(n) FROM probe"));
+        Assert.Equal(auditRows, await test.ScalarAsync("SELECT count(*) FROM audit_log"));
         Assert.NotEqual("wal", await ScalarAsync(target, "PRAGMA journal_mode"));
         Assert.Empty(Leftovers(test));
     }
@@ -114,13 +117,15 @@ public sealed class BackupTests
     /// Steps:
     /// - Back up onto the existing file, onto the database itself, into a missing folder; back up a database path that does
     ///   not exist, an empty file, a SQLite database without schema_migrations, one with an empty schema_migrations, an
-    ///   in-memory database; back up with the PostgreSQL provider.
+    ///   in-memory database, an empty Data Source, the test's database with Mode=Memory; back up with a connection string
+    ///   that is not valid, with one that sets Password, and with the PostgreSQL provider.
     ///
     /// Expected:
     /// - 1 with "The backup file '…' exists." and the file unchanged (the database too); 1 with "cannot be written"; 1 with
     ///   "does not exist." and no file made at that path; 1 with "The database cannot be used:" for the empty file and with
-    ///   "is not an elm-service database" for the other two and the in-memory one; 2 with "Use pg_dump to back up a PostgreSQL
-    ///   database."; nothing on standard output in each case, and no temporary file left.
+    ///   "is not an elm-service database" for the other two and the three that name no file; 2 with "The database connection
+    ///   string is not valid:" for the bad string and the password; 2 with "Use pg_dump to back up a PostgreSQL database.";
+    ///   nothing on standard output in each case, and no temporary file left.
     /// </remarks>
     [Fact]
     public async Task Run_RefusedInputs_FailWithTheReason()
@@ -174,6 +179,22 @@ public sealed class BackupTests
         Assert.Equal(
             (1, string.Empty, "The database is not an elm-service database: the connection string names no database file."),
             await RunAsync(test.Settings(s => s with { ConnectionString = "Data Source=:memory:" }), test.FilePath("b5.db"))
+        );
+
+        Assert.Equal(
+            (1, string.Empty, "The database is not an elm-service database: the connection string names no database file."),
+            await RunAsync(test.Settings(s => s with { ConnectionString = "Data Source=" }), test.FilePath("b7.db"))
+        );
+        Assert.Equal(
+            (1, string.Empty, "The database is not an elm-service database: the connection string names no database file."),
+            await RunAsync(test.Settings(s => s with { ConnectionString = test.ConnectionString + ";Mode=Memory" }), test.FilePath("b8.db"))
+        );
+        (code, output, error) = await RunAsync(test.Settings(s => s with { ConnectionString = "Data Source=x;Bogus=1" }), test.FilePath("b9.db"));
+        Assert.Equal((2, string.Empty), (code, output));
+        Assert.StartsWith("The database connection string is not valid: ", error, StringComparison.Ordinal);
+        Assert.Equal(
+            (2, string.Empty, "The database connection string is not valid: Password is set, and the SQLite of elm-service does not encrypt."),
+            await RunAsync(test.Settings(s => s with { ConnectionString = test.ConnectionString + ";Password=x" }), test.FilePath("b10.db"))
         );
 
         Assert.Equal(
@@ -233,17 +254,159 @@ public sealed class BackupTests
         string target = test.FilePath("backup.db");
 
         Assert.Equal(0, (await RunAsync(test.Settings(), target)).Code);
+
+        // CA1416 does not read SkipWhen as a platform check.
         if (!OperatingSystem.IsWindows())
         {
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(target));
         }
     }
 
-    private static async Task<(int Code, string Output, string Error)> RunAsync(ServiceSettings settings, string target)
+    /// <summary>
+    /// A file that appears at the target after the copy and before the move is kept, the backup ends with 1, and the
+    /// temporary file and its journal are removed.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A migrated SQLite database.
+    ///
+    /// Steps:
+    /// - Back up with a hook that, before the move, writes "other" to the target and a journal beside the temporary file.
+    ///
+    /// Expected:
+    /// - 1 with "The backup file '…' exists.", the target still holds "other", the temporary file was named
+    ///   <c>backup.db.&lt;16 hex digits&gt;.tmp</c> in the target's folder, and neither it nor its journal is left.
+    /// </remarks>
+    [Fact]
+    public async Task Run_TargetMadeBeforeTheMove_KeepsItAndRemovesTheTemporaryFiles()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        string target = test.FilePath("backup.db");
+        string? temporary = null;
+        void Race(string path)
+        {
+            temporary = path;
+            File.WriteAllText(target, "other");
+            File.WriteAllText(path + "-journal", "journal");
+        }
+
+        Assert.Equal((1, string.Empty, $"The backup file '{target}' exists."), await RunAsync(test.Settings(), target, Race));
+        Assert.Equal("other", await File.ReadAllTextAsync(target, TestContext.Current.CancellationToken));
+        Assert.NotNull(temporary);
+        Assert.Equal((test.Directory, false, false), (Path.GetDirectoryName(temporary), File.Exists(temporary), File.Exists(temporary + "-journal")));
+        Assert.Matches(@"^backup\.db\.[0-9a-f]{16}\.tmp$", Path.GetFileName(temporary));
+    }
+
+    /// <summary>
+    /// A link at the target counts as a file that exists, also when it points nowhere, and is left as it is.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A migrated SQLite database; a symbolic link at the target to a file that does not exist (skipped where this user
+    ///   cannot make links, such as Windows without developer mode).
+    ///
+    /// Steps:
+    /// - Back up.
+    ///
+    /// Expected:
+    /// - 1 with "The backup file '…' exists.", and the link is still there and still points to the missing file.
+    /// </remarks>
+    [Fact]
+    public async Task Run_LinkAtTheTarget_IsRefused()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        string target = test.FilePath("backup.db");
+        string missing = test.FilePath("missing.db");
+        try
+        {
+            File.CreateSymbolicLink(target, missing);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip("This user cannot make symbolic links here: " + e.Message);
+        }
+
+        Assert.Equal((1, string.Empty, $"The backup file '{target}' exists."), await RunAsync(test.Settings(), target));
+        Assert.Equal((missing, false), (new FileInfo(target).LinkTarget, File.Exists(missing)));
+    }
+
+    /// <summary>
+    /// A database that another connection holds locked is waited for about 5 seconds, and the backup then ends with 1.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A migrated SQLite database; a second connection in exclusive locking mode with an open write.
+    ///
+    /// Steps:
+    /// - Back up while that write is open.
+    ///
+    /// Expected:
+    /// - 1 with a line that starts "The database cannot be used: ", after at least 4 and at most 30 seconds, and no file at
+    ///   the target.
+    /// </remarks>
+    [Fact]
+    public async Task Run_DatabaseLocked_WaitsAndFails()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await test.SetupAsync();
+        string target = test.FilePath("backup.db");
+
+        // The idle connections of setup's pool would keep the exclusive lock from being taken.
+        SqliteConnection.ClearAllPools();
+        await using var writer = new SqliteConnection(new SqliteConnectionStringBuilder(test.ConnectionString) { Pooling = false }.ToString());
+        await writer.OpenAsync(cancel);
+        await ExecuteAsync(writer, "PRAGMA locking_mode = EXCLUSIVE;", cancel);
+        using SqliteTransaction open = writer.BeginTransaction(deferred: false);
+        await ExecuteAsync(writer, "CREATE TABLE probe (n INTEGER NOT NULL);", cancel, open);
+
+        var watch = Stopwatch.StartNew();
+        (int code, string output, string error) = await RunAsync(test.Settings(), target);
+        watch.Stop();
+
+        Assert.Equal((1, string.Empty), (code, output));
+        Assert.StartsWith("The database cannot be used: ", error, StringComparison.Ordinal);
+        Assert.InRange(watch.Elapsed, TimeSpan.FromSeconds(4), TimeSpan.FromSeconds(30));
+        Assert.False(File.Exists(target));
+    }
+
+    /// <summary>
+    /// The connection of the backup opens an existing file only, whatever mode the connection string gives.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A path where no file is.
+    ///
+    /// Steps:
+    /// - Open it with <see cref="Database.OpenSqliteFileAsync"/> from a connection string with Mode=ReadWriteCreate.
+    ///
+    /// Expected:
+    /// - A <see cref="SqliteException"/>, and no file at the path.
+    /// </remarks>
+    [Fact]
+    public async Task OpenSqliteFile_ModeCreateInTheString_DoesNotCreateTheFile()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string path = test.FilePath("absent.db");
+        var builder = new SqliteConnectionStringBuilder { DataSource = path, Mode = SqliteOpenMode.ReadWriteCreate };
+
+        await Assert.ThrowsAsync<SqliteException>(() =>
+            Database.OpenSqliteFileAsync(builder, readOnly: false, TestContext.Current.CancellationToken)
+        );
+        Assert.False(File.Exists(path));
+    }
+
+    private static async Task<(int Code, string Output, string Error)> RunAsync(
+        ServiceSettings settings,
+        string target,
+        Action<string>? beforeMove = null
+    )
     {
         var output = new StringWriter();
         var error = new StringWriter();
-        int code = await Backup.RunAsync(settings, target, output, error, TestContext.Current.CancellationToken);
+        int code = await Backup.RunAsync(settings, target, output, error, beforeMove, TestContext.Current.CancellationToken);
         return (code, output.ToString().Trim(), error.ToString().Trim());
     }
 
