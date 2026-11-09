@@ -209,6 +209,18 @@ Copying a virtual machine copies its installation key, its machine ID, and its `
 
 For each refresh, deactivation, or reactivation, the service compares the `seq` it receives with the last one it issued:
 
+```mermaid
+flowchart TD
+    R[Refresh, deactivation, or reactivation with seq] --> E{seq equals the last issued?}
+    E -- yes --> OK[Normal: issue the next file, seq + 1]
+    E -- no --> O{seq is one lower and retry names<br/>the jti of the request that got the last file?}
+    O -- yes --> RT[Lost answer: return the last file again]
+    O -- no --> CL[Clone detected]
+    CL --> P{cloneStrategy}
+    P -- deny --> D[Write activation.clone to the audit log, stop the activation:<br/>later requests get ELM_CLONE_DETECTED]
+    P -- flag --> F[Write activation.clone to the audit log,<br/>answer as usual]
+```
+
 1. If the two are equal, the request is normal: the service issues the next file with `seq` one higher.
 2. If the received `seq` is one lower and `retry` names the `jti` of the request that got the last file, the answer to that request was lost: the service returns the last file again.
 3. Otherwise a clone is detected, and the policy's `cloneStrategy` decides what happens next (below).
