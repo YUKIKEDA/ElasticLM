@@ -1661,4 +1661,4 @@
 
 - **決定:** `pnpm patch` で、upstream の PR facebook/docusaurus#12454 と同じ直し（描くたびに id に連番）を `@docusaurus/theme-mermaid` 3.10.2 に当てる（持ち主の決定、推奨案 A）。
 - **理由:** 差分が数行で、upstream と同じ直し方なので、upstream の直しを含む版に上げるときに patch を外すだけで済む。上げるときは patch が当たらず install が落ちるので、外し忘れがない。
-- **却下した案:** (B) Mermaid の部品を swizzle（eject）し、SVG の入れ方を変える（Docusaurus の部品の写しをリポジトリが持ち、描き直しの間に図が一瞬消える）。(C) Docusaurus を v4 の試作版に上げる（安定版でない）。(D) ダークの配色をやめる（機能を削る）。
+- **却下した案:** (B) Mermaid の部品を swizzle（eject）し、SVG の入れ方を変える（Docusaurus の部品の写しをリポジトリが持ち、描き直しの間に図が一瞬消える）。(C) Docusaurus を v4 の試作版に上げる（安定版でない）。(D) ダークの配色をやめる（機能を削る）。(E) ライトとダークで Mermaid のテーマを同じにして、配色が変わっても描き直さないようにする（ダークの背景で図が読みにくくなる。設計の独立レビューの R12）。

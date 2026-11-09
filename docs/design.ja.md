@@ -5063,6 +5063,19 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - CI の確かめ（Q3）: `release.yml` のサイトのジョブで、ビルドしたサイトを裏で配り、サイトマップのすべての頁（`/ja/` を含む）を headless の Chrome でライトとダークの両方の配色（DevTools protocol の `Emulation.setEmulatedMedia` の `prefers-color-scheme`）で開き、すべての `.docusaurus-mermaid-container` に `svg` があることを確かめる。空の入れ物があれば落ちる。スクリプトは依存のない Node（組み込みの `fetch` と `WebSocket`）。待ち方は固定の秒数でなく、頁の Mermaid の区画の数と入れ物の数がそろい、どの入れ物も描き終わるまで（上限つき）。直す前の版で、この検査が空の図を見つけることを確かめる。
   - patch を外す時（Q4）: roadmap の行は作らない。`@docusaurus/theme-mermaid` を PR facebook/docusaurus#12454 を含む版に上げるときに外す。上げるときは patch が当たらず `pnpm install` が落ちるので、そこで気づける。このことを patch のそばと `dependencies.mdc` に書く。
   - レビュー（Q5）: 設計の独立レビュー、正しさのレビュー（サイトをビルドして、ライトとダークで図を見る）、初見の読み手のレビュー（戻す 2 つの図）、日本語のレビュー（日本語の頁の図のラベル）。
+  - 設計の独立レビュー（R1〜R14、Issue #192）で改めた形:
+    - 期待する図の数（R1）: ビルドした HTML には図の跡がない（`MermaidRenderer` は結果が出るまで何も返さない）ので、期待する数はソースから取る。頁の `<html>` の class `docs-doc-id-<id>` から `docs/guide/<id>.md`（日本語の頁は `docs/guide.ja/<id>.md`）を引き、その ```` ```mermaid ```` の区画を数える。頁ごとに入れ物の数がその数と等しく、どれにも `svg` があることを求める。サイトマップの頁の集まりとソースの頁の集まりが一致すること（ソースのない `/search/` などは数 0）、サイト全体の入れ物の合計がソースの区画の合計と等しく 0 でないことも確かめる。
+    - 描き終わり（R2）: 空になるのは 2 回目の描画のあとなので、`data-has-hydrated="true"` と数の一致のあと、入れ物の DOM が 2 秒変わらない（`MutationObserver`）のを待ってから判定する。1 頁の上限は 30 秒で、超えたら落とす。直す前の版で検査が落ちることは、CI の Linux の Chrome で、図を戻し patch のない版を流して確かめ、流した回数と run を PR に書く。
+    - 図（R3）: 2 つの図は PR #191 の前の版にそろってはない。Activation の英語の図は beb9f45 の図をもとに今の本文（`cloneStrategy` の説明は下の節）に合わせ、Overview の図と日本語の 2 つの図は新しく書く。図は今の番号つきの文や箇条を置き換えず、その前に並べる（文は図を読めない読み手のために残す）。新しく書く図なので、正しさのレビューで設計とコードと照らす。
+    - patch の中身（R4）: PR facebook/docusaurus#12454 は Mermaid 12 への v4 の大きな更新で、id の直しはその 1 か所である。upstream は `useId()` を使うが、3.10.2 は `useMermaidId()`（`useState` の乱数の `mermaid-svg-N`。`useId` の値は selector にならないとコメントにある）を使うので、差分はそのまま当たらない。3.10.2 の `lib/client/index.js` に、`useRef` の import、描画の連番 `renderCount`、`renderMermaid` の `id` を `${id}-${renderCount.current++}` にする 3 か所を移す。`useMermaidId` は残す。描画の誤りのときの `#d${id}` の掃除も、描画ごとの id で働く。#12454 を含む版は v4 で、Mermaid 12 の ELK や `layout-elk` の扱いも変わり、そのとき `docusaurus.config` の `elasticlm-no-mermaid-elk` も見直す。
+    - 外す時の気づき方（R5）: `pnpm patch-commit` は `pnpm-workspace.yaml` の `patchedDependencies` に版つきのキー（`@docusaurus/theme-mermaid@3.10.2`）を書く。版を変えると、直しを含む版でも含まない版でも `ERR_PNPM_UNUSED_PATCH` で install が落ちる（pnpm 12.13.0 で確かめた。名前だけのキーは黙って当たるので使わない）。落ちたら、新しい版の `lib/client/index.js` が描画ごとに id を変えているかを見て、変えていれば外し、変えていなければ patch を作り直す。
+    - サイトマップ（R6）: 英語は `build/sitemap.xml`、日本語は `build/ja/sitemap.xml`（どちらも `https://yukikeda.github.io/ElasticLM/` の絶対 URL）。両方を読み、オリジンを検査の配り先に替え、それぞれの件数が 0 でないことを確かめる。
+    - ダークの当て方（R7）: Docusaurus は、最初の hydration で `defaultMode` から `prefers-color-scheme` の配色に移る（頁の中の移動では起きない）。そのため、頁ごとに新しいブラウザーの文脈（target）で、読み込みの前に `Emulation.setEmulatedMedia` を設定して頁を全部読み込む。頁ごとに `document.documentElement.dataset.theme` が当てた配色と合うことを確かめ、合わなければ落とす。
+    - 配り方とブラウザー（R8）: 依存のない Node の `http` で `/ElasticLM/` を `build/` に当てて配る（フォルダーは `index.html` を返す）。配る処理は検査のスクリプトの中に持ち、裏のプロセスを残さない。ブラウザーはランナーの Google Chrome（`ubuntu-latest`、版は固定されない）を headless で、`--remote-debugging-pipe` で動かす。sandbox が動かないときだけ `--no-sandbox` を使う（読むのは自分でビルドしたサイトだけなので）と、実装で確かめて決める。
+    - 規則（R9、R10、R13）: `user-docs.mdc` の「V1c5 までは 1 頁に flowchart は 1 つまで、PR で描けた図を数える」を消し、サイトのジョブがすべての頁の図をライトとダークで確かめる、と書く。手元で検査を流す手順も書く。`dependencies.mdc` の npm の節に、`patchedDependencies` の決まりを足す（版つきのキー、配布される `lib` のファイルだけを直す、lock の `patch_hash` の差分を読む、出典と外す条件を `pnpm-workspace.yaml` の YAML コメントと patch の中のコードのコメントに書く）。§21 の `theme-mermaid` の行にも patch と外す条件を足す。`.editorconfig` で `*.patch` の行末の空白を消さない。
+    - 段の置き場と計測（R11）: 検査の段は、サイトのジョブの `upload-pages-artifact` の前に置き、タグの実行でも流す（公開するのはその artifact なので）。今のジョブは約 2 分 14 秒（run 42632240938）で、増えた時間を PR に書く。
+    - 退けた案（R12）: ライトとダークで Mermaid のテーマを同じにする（`useMermaidConfig` が変わらず 2 回目の描画が起きない、とコードから読める）は、ダークの背景で図が読みにくくなるので採らない。design-decisions.md に足す。
+    - 行の説明（R14）: roadmap と §20.7 の表の V1c5 の説明を、「ダークの配色のとき、Mermaid の図が空になる」に直す。
 
 ## 21. 依存
 
@@ -5150,7 +5163,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c15 | 管理者を見分ける OIDC の要求を選ぶ設定（Entra ID の `oid` のため。V1c4d2b の設計の独立レビューの R5） | §14.6 |
 | V1c16 | 管理画面のサインインが、トークンエンドポイントから受けた署名のない ID トークンを受け付ける不具合の修正（V1c15 の正しさのレビューの C3、PR #289 の持ち主の決定 B。V1c15 のあと、V1c4f の前） | §15.3 |
 | V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` を有効化して更新する頁（英語と日本語） | §13.7、§20.7 |
-| V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
+| V1c5 | 文書のサイトで、ダークの配色のとき Mermaid の図が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。あわせて、`elm server reload` の誤りの文でコードが 2 度出る重なり（`error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): …`）を直す（V1c4c の初見の読み手の F6、PR の持ち主の決定 D2）。V1d の前に行う | §20.7 |
 | V1c7 | `elm server status` が、有効期限のないサーバーライセンス（`licenseExpires` を書かない状態の応答）で例外になる不具合の修正と、CLI のほかの `GetProperty` の確かめ（Issue #203。V1c2b で見つけた。V1c2c の前） | §13.7 |
 | V1c8 | `libelasticlm` の Windows のアーカイブにインポートライブラリ（`elasticlm.lib`）を入れて配り、発行の検査（`Test-Publish.ps1`）と `Pack-Rid.ps1` を変え、ビルド時にリンクする試験を CI に足す。Linux と macOS でビルド時にリンクする方法（`-lelasticlm` と実行時の検索パス）とあわせて、事実として C の API の頁に書く（OS ごとの手順は V1c3c。§20.5 の「V1c8 の Grill」の D1）。決めた形は 0.118 と §20.5 の「V1c8 の Grill」（Issue #209。V1c2c で見つけた。V1c3d のあと、V1c3c の前） | §17, §20.5 |
