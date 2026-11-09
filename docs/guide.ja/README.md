@@ -29,11 +29,12 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 6. [ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)と[署名鍵を入れ替える](how-to/rotate-the-signing-key.md): 署名鍵を証明する鍵の保管と、サービスが署名に使う鍵の入れ替えについてのハウツーガイド。
 7. [ライセンスを失効させる](how-to/revoke-a-license.md)と[署名鍵を失効させる](how-to/revoke-a-signing-key.md): ライセンスを完全に終わらせることと、漏れた署名鍵についてのハウツーガイド。
 8. [サーバーライセンスを更新する](how-to/renew-a-server-license.md): サーバーライセンスを期限が切れる前に発行し直すことと、新しいファイルでは取り上げられないものについてのハウツーガイド。
-9. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
-10. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
-11. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
-12. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
-13. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
+9. [リクエストのレートを制限する](how-to/limit-request-rates.md)、[サービスをバックアップして復元する](how-to/back-up-and-restore-the-service.md)、[サービスをアップグレードする](how-to/upgrade-the-service.md): `elm-service` のリクエストの上限と、SQLite で動かすときのバックアップとアップグレードについてのハウツーガイド。
+10. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
+11. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
+12. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
+13. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
+14. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
 
 **ElasticLM をアプリに組み込む場合（開発者）。** アプリにルート公開鍵を組み込み、ライセンス、アクティベーション、リースを確かめる。
 

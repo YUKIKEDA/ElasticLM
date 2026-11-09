@@ -75,7 +75,7 @@ There are no migrations back: an older version does not start on a database to w
 The database has schema version 9, which this elm-service does not know; it is older than the database.
 ```
 
-An update without migrations leaves the database as the older version knows it, and the older version starts on it as before. To go back after migrations, stop the service, restore `before-upgrade.db` as in [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup), put the old version's executable back into `tools`, and start it. Everything since the backup is then gone: [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists it.
+An upgrade without migrations leaves the database as the older version knows it, and the older version starts on it as before. To go back after migrations, stop the service, restore `before-upgrade.db` as in [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup), put the old version's executable back into `tools`, and start it. Everything since the backup is then gone: [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists it.
 
 ## See also
 

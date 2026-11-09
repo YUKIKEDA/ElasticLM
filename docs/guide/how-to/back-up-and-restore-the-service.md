@@ -61,7 +61,7 @@ The database does not hold the service's keys and settings. Keep these too, apar
 - The signing key and its certificates, and its passphrase or `signing.passphraseFile`, kept apart from the key file.
 - The root public keys of `trust.rootKeys`. The root private key belongs offline, never with the service's backups: see [Keep the root key safe](keep-the-root-key-safe.md).
 - The nonce secret.
-- With the admin UI's sign-in, the key-encryption key of `dataProtection.kekFile` and the OIDC client secret. Without the same key-encryption key, the service cannot read the sign-in keys in a restored database and does not start.
+- With the admin UI's sign-in, the key-encryption key of `dataProtection.kekFile` and the web client secret of `oidc.webClientSecretFile`. Without the same key-encryption key, the service cannot read the sign-in keys in a restored database and does not start.
 - The TLS certificate and key, if the service serves https itself.
 - The settings file and the connection string's file.
 - The usage log folder, if `usageLog.directory` is set.

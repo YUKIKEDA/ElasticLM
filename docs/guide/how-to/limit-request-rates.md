@@ -132,7 +132,7 @@ error: the service answered 429.
 {"type":"about:blank","title":"ELM_RATE_LIMITED","status":429,"detail":"Too many requests with this API key.","code":"ELM_RATE_LIMITED"}
 ```
 
-A script that calls the administration API directly waits for the `Retry-After` time and sends the request again; one that uses `elm admin request` sees exit code 1 and `ELM_RATE_LIMITED` on standard error, since `elm` does not print the header, and waits at least one second. In an app, `ActivationClient` returns `ActivationResult.Failed` with the error `ELM_RATE_LIMITED` and its `RetryAfter`, and does not send the request again by itself; [Handle errors](handle-errors.md) shows an app that tells its user to try later, and prints:
+A script that calls the administration API directly waits for the `Retry-After` time and sends the request again; one that uses `elm admin request` does not see the header, since `elm` does not print it: it sees exit code 1 and `ELM_RATE_LIMITED` on standard error, and waits at least one second. In an app, `ActivationClient` returns `ActivationResult.Failed` with the error `ELM_RATE_LIMITED` and its `RetryAfter`, and does not send the request again by itself; [Handle errors](handle-errors.md) shows an app that tells its user to try later, and prints:
 
 ```text
 retry later: ELM_RATE_LIMITED
