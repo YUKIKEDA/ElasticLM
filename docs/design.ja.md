@@ -2508,6 +2508,15 @@ M3c で作った形（0.50。オフラインの更新の要求ファイルは M4
 - 値の持ち方: 時刻は UNIX 秒の整数（両方とも `bigint` 相当）、バイト列は SQLite の `BLOB` と PostgreSQL の `bytea`、真偽は SQLite の `INTEGER`（0 / 1）と PostgreSQL の `boolean` とする。SQLite の接続は外部キーを有効にし、ほかの書き手を 5 秒まで待つ。移行の接続だけは 60 秒まで待つ（2 つのプロセスが同じ空のファイルを同時に移行すると、版ごとにロックを取り合い、待つ方が相手のすべての版を待つことがある。CI の Windows のランナーで 5 秒を超えて移行が止まった。Issue #158、持ち主の決定）。配列と組（ライセンスの `features` と `meta`）は、`ServiceJsonContext` のソース生成で書いた JSON の文字列の列（SQLite は `TEXT`、PostgreSQL は `text`）に持ち、SQL では中を読まない。PostgreSQL の `jsonb` は採らない（中を SQL で読まず、両方のエンジンで同じ形にするため）（PR #59 のレビュー）。SQLite のファイルは、移行のときに先行書き込みログ（WAL）にする。読み手が書き手を待たず、コミットごとの書き出しも減る（§4.2）。
 - スキーマの移行は、版の番号つきの SQL ファイルを実行ファイルに埋め込み、起動時に順に流す。前身はマイグレーションが消えて新しい環境で表が作られなかったため、移行は起動時に必ず行い、テストで空のデータベースから最新まで流す。
 - 移行の形（0.69）: ファイルは `0001_<名前>.sql` の 4 桁の番号から始め、SQLite 用と PostgreSQL 用を別のフォルダーに置く。流した版とファイルの SHA-256 を表 `schema_migrations` に記録し、流した後に書き換えたファイルがあれば起動しない。1 つの版は 1 つのトランザクションで流す。PostgreSQL では助言ロック（`pg_advisory_lock`）を取り、複数のノードが同時に起動しても一度だけ流す。SQLite には助言ロックがないので、各版の書き込みのトランザクションの中で記録を読み直し、ほかのプロセスが先に流した版は流さない（その版の SHA-256 が違えば起動しない）。
+- バックアップ（V1c14 の Grill、Issue #272）: `elm-service backup --config <file> --out <file>` が、SQLite のデータベースを 1 つのファイルに写す。戻し方は下の「戻し方」。
+  - 写し方: SQLite の `VACUUM INTO` で写す（https://sqlite.org/lang_vacuum.html の 2.1。写しは元のデータベースの一貫したスナップショットになり、`VACUUM INTO` は書き込みの操作ではない）。サービスが動いて書き込んでいる間でも、ある一時点のデータベースになり、WAL にまだ残るコミットも含む。WAL では読み手が書き手を止めないので、サービスの書き込みは待たない（https://sqlite.org/wal.html ）。同梱の SQLite（3.54.1）は `SQLITE_OMIT_VACUUM` を付けずにビルドしている（`vendor/sqlite/defines.txt`）。
+  - 設定: `setup` と同じく `ServiceSettings.Load` を `requireSigning: false` で読む。署名鍵、その証明書、ルート鍵、ノンスの秘密、署名鍵のパスフレーズは読まず、`bootstrapOwner` も要らない。使うのはデータベースの設定だけである。
+  - 元のデータベース: 接続文字列に `Mode=ReadWrite` を足して開き、ファイルがなければ断る（空のデータベースを作らない）。移行は流さない。`schema_migrations` の表がなければ `elm-service` のデータベースでないとして断る。この `elm-service` が知らない新しい版のデータベースも断らずに写し、記録の最も大きい版を出力に書く（古い版の実行ファイルでも、新しい版を更新する前の写しを取れる）。ほかの書き手を待つのは、ほかの接続と同じ 5 秒まで（上の「値の持ち方」）。
+  - 書き先: `--out` のファイルがすでにあれば断る。`--force` はない。まず空のファイルを `FileMode.CreateNew` で作り、Unix ではモードを 0600（所有者の読み書きだけ）にし、Windows ではフォルダーの規則を継ぐ（`elm secret create` と同じ、§16）。それから `VACUUM INTO` でそのファイルに書く（`VACUUM INTO` は、ないか空のファイルにだけ書く）。写しは API キーのハッシュ、管理者、監査ログ、ライセンス、有効化を持つので、署名鍵と同じように守る。写すのが途中で落ちたら、作ったファイルを消す。
+  - PostgreSQL: 断って `pg_dump` を使うよう書く（終了コード 2）。
+  - 出力と終了コード: 成功すると、標準出力に `backup: <--out のパス>, schema version <n>` の 1 行を書き、0 で終わる。誤りは標準エラーに 1 行で書く。引数、設定、PostgreSQL は 2、データベースの誤り（ファイルがない、`elm-service` のデータベースでない、書き先がある、書けない、ロックを待ちきれない）は 1 とする（`setup` と同じ分け方、0.80）。監査ログには残さない（データを変えず、データベースのファイルを読める人は写しを取れるため）。
+  - 使い方の行: `Usage: elm-service [setup | backup --out <file>] [--config <file>]`。
+  - 戻し方: 戻すコマンドは作らない。サービスを止め、元のファイルと、その `-wal` と `-shm` のファイルを消すか移し、写しを元の名前で置いて起動する。古い `-wal` を残すと、SQLite がそれを写しに当てて、データベースが壊れる（https://sqlite.org/howtocorrupt.html の 1.4「Mispairing database files and hot journals」: 元のデータベースのジャーナルを消さずに、別のデータベースで上書きすると壊れる）。起動のときの移行で、写しはまた WAL になる。データベースの外にある状態（署名鍵とその証明書、ルート鍵、ノンスの秘密、Data Protection の KEK、設定と接続文字列のファイル、利用ログ）は、このコマンドの外で別に守る。
 - PostgreSQL は 15〜18 に対応し、CI では 18 で同じテストを流す（0.62, 0.81）。Windows と macOS の CI は SQLite だけを流す。
 - 管理の実体（製品、機能、ポリシー、ライセンス、有効化、API キーなど）の ID は UUID 第 7 版とし、SQLite では文字列、PostgreSQL では `uuid` 型で持つ（0.67）。一覧のカーソルには ID の順を使う。ライセンスキー（§9.5）とリース ID（§12.7）は今の形のままとする。
 
@@ -2934,10 +2943,10 @@ M4a1 の設定:
 | `tls.certificate`, `tls.key` | `ELM_TLS_CERTIFICATE`, `ELM_TLS_KEY` | なし | https のときの PEM の証明書と鍵。証明書の拡張キー使用法は §13.5 の規則で確かめる |
 | `database.provider` | `ELM_DATABASE_PROVIDER` | `sqlite` | `sqlite` か `postgres` |
 | `database.connectionFile` | `ELM_DATABASE_CONNECTION`（接続文字列そのもの） | なし（必須） | 接続文字列のファイル（16 KiB まで、末尾の改行は除く） |
-| `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE`（値そのもの）か `signing.passphraseFile` |
-| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE`（パスフレーズそのもの） | なし（`ELM_SIGNING_PASSPHRASE` がなければ必須。`setup` は読まない） | 署名鍵のパスフレーズのファイル（16 KiB まで、末尾の改行は除く。F2、0.111） |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` は読まない） | 署名鍵の証明書のファイル。1〜4 個（§8.6）で、空のファイルは誤り。各ファイルの前後の空白と改行は除いて読む（`elm key certify` は末尾に改行を書く。M4d3 の設計のレビュー R1） |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`（`;` 区切り）、または PEM の本文を `ELM_TRUST_ROOT_KEYS` | なし（必須。`setup` は読まない） | 証明書を確かめるルート鍵（§13.8 と同じ）。`ELM_TRUST_ROOT_KEYS` は、名指したファイルがないときに加えて、名指したファイルに PEM の鍵が 1 つもないときにも読む（`ElmService.ReadTrust`。`elm-server` はファイルがないときだけ） |
+| `signing.key` | `ELM_SIGNING_KEY` | なし（必須。`setup` と `backup` は読まない） | 署名鍵（暗号化した PKCS#8 PEM）。パスフレーズは `ELM_SIGNING_PASSPHRASE`（値そのもの）か `signing.passphraseFile` |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE`（パスフレーズそのもの） | なし（`ELM_SIGNING_PASSPHRASE` がなければ必須。`setup` と `backup` は読まない） | 署名鍵のパスフレーズのファイル（16 KiB まで、末尾の改行は除く。F2、0.111） |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES`（`;` 区切り） | なし（必須。`setup` と `backup` は読まない） | 署名鍵の証明書のファイル。1〜4 個（§8.6）で、空のファイルは誤り。各ファイルの前後の空白と改行は除いて読む（`elm key certify` は末尾に改行を書く。M4d3 の設計のレビュー R1） |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS`（`;` 区切り）、または PEM の本文を `ELM_TRUST_ROOT_KEYS` | なし（必須。`setup` と `backup` は読まない） | 証明書を確かめるルート鍵（§13.8 と同じ）。`ELM_TRUST_ROOT_KEYS` は、名指したファイルがないときに加えて、名指したファイルに PEM の鍵が 1 つもないときにも読む（`ElmService.ReadTrust`。`elm-server` はファイルがないときだけ） |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS`（`;` 区切り） | なし | 無効にした鍵の ID（§13.8 と同じ） |
 | `bootstrapOwner.iss`, `bootstrapOwner.sub` | `ELM_BOOTSTRAPOWNER_ISS`, `ELM_BOOTSTRAPOWNER_SUB` | なし | 最初の `owner`（各 1〜255 文字、両方そろえる） |
 | `rateLimit.perIp` | `ELM_RATELIMIT_PERIP` | 20 | 端末の要求の経路を除くすべての経路（管理 API、管理画面、`/health` など）の、送信元ごとの毎秒の要求（1〜10,000、§14.7） |
@@ -4177,11 +4186,13 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c12 | V1c4c の実装で見つけ、PR の持ち主の決定 D1 で行にした。`elm-server` は `tls.certificate` の PEM の最初の証明書だけを読む（`TlsCertificateFiles.cs` の `X509Certificate2.CreateFromPemFile`）ので、中間 CA の証明書をファイルから送れず、中間 CA で署名する社内の CA の証明書では、アプリのマシンが中間 CA を自分で見つけられなければアプリが断る。V1c12 の Grill（Issue #260）で、`elm-service` も同じ `TlsCertificateFiles` を使うので両方を直すと決めた。決めた形は §13.5 の「運用者の証明書の中間 CA」。V1c4c のあと、V1c4e の前に置く |
 | V1c4e | 決めた形は下の「V1c4 の形」の行の分け方と「V1c4e の Grill」（Issue #264）。アプリの 3 頁とサンプル `samples/ResilientActivation`、手順を流す仕組みの NativeAOT の発行。V1c12 のあとに置く |
 | V1c13 | V1c4d の Grill の Q2 で足した行。手順を流す仕組みが、Tutorial を 1 度だけ流し、その終わりの状態を How-to の頁ごとに写して使う。決めた形は下の「V1c4 の形」の「V1c13 の Grill」（Issue #268）。V1c4e のあと、V1c4d1 の前に置く |
-| V1c4d1 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新）。この行の Grill で頁の細部（バックアップのコマンドがないことの扱い、速さの上限の見せ方、版の更新の流し方）を決める。V1c13 のあとに置く |
+| V1c14 | V1c4d1 の Grill の Q1 で足した行。`elm-service backup` で SQLite のデータベースを写す（§14.2 の「バックアップ」、Issue #272）。V1c13 のあと、V1c4d1 の前に置く |
+| V1c4d1 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新）。決めた形は下の「V1c4 の形」の「V1c4d1 の Grill」（Issue #272）。V1c14 のあとに置く |
 | V1c4d2 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン）。流し方の向きは下の「V1c4 の形」の「V1c4d の Grill」の Q3 で、細部はこの行の Grill で決める。V1c4d1 のあとに置く |
 | V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。V1c4d2 のあとに置く |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
 | V1e | `-rc.N` で確かめることと正式版に進む条件、rc のタグを GitHub のプレリリースだけにする `release.yml` の変更（§20.5 の「V1e で変えること」。V1c3e の記録の途中の持ち主の決定 D2）: `publish` をプレリリースの後ろのない版のタグだけで動かすこと、rc の下書きの Release をどのジョブがどの承認のあとにプレリリースとして公開するか（T22 は Release の公開を environment `release` の承認のあとのジョブに限る）、サイトの公開のジョブを rc でどうするか（今は `needs` で `publish` を待つ）、rc が通さない公開の段（nuget.org と GHCR への push、イメージの証明、GHCR の package を public にすること。§20.5 の「V1e で変えること」）を正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか。V1c3e の設計のレビューの R1）、`docs/releasing.md` の試しの手順（rc のプレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れる。試しの期間の Tutorials の形を指す）、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか（rc は nuget.org に置かないので、`1.0.0-rc.1` にするならその基準の取り方も）、持ち主の試しの記録（rc のプレリリースそのものに対して、試しの期間の形の Tutorial を Windows、Linux、macOS の 3 つで手で一度ずつ流し、OS ごとに、Windows の SmartScreen と Smart App Control が署名のない `.exe` に何を出したか、macOS の quarantine（`SECURITY.md` の `xattr`）、Linux の実行の権限、PATH への足し方を記録する。下の「V1c3 の形」の「V1c3e の Grill」の Q5、V1c3e の設計のレビューの R12）、rc の版にする PR での `SECURITY.md` の「Nothing is released yet.」と `CONTRIBUTING.md` の「Nothing is published yet.」の書き換え（V1c3e の設計のレビューの R10）、利用者の文書を nuget.org の形に切り替える 1 つの PR（正式版のタグの前。頁から `packages` のダウンロード、`nuget.config`、`--prerelease`、`--source packages` を外し、README と `README.ja.md` の Status の 1 行を外し、入口の頁の試しの期間の文と各頁のプレリリースの文を書き換え、CI が頁を流して確かめる。CI が nuget.org の形の頁をどう置き換えるかも決める。V1c3e の記録の途中の持ち主の決定 P3）、その PR の前に nuget.org の ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るか（P3。D3 を改めた決定）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5） |
+| V1e1 | V1c4d1 の Grill の Q3 で足した行。前のリリースの `elm-service` を取ってきてデータベースを作り、新しい版で起動して移行が流れることを確かめる CI の段と、版の更新の How-to の頁をその段で流すこと。どのワークフローに置くか、前のリリースの取り方と確かめ方（`SHA256SUMS`、`gh attestation`）は、この行の Grill で決める。V1e のあとに置く |
 
 行をまたいで決めてあること:
 
@@ -4603,7 +4614,7 @@ V1c3d の Grill（Issue #223、Q1〜Q10）で次を決めた。持ち主の決�
 - 署名鍵のパスフレーズ（Q2）: `elm-service` は、署名鍵のパスフレーズを `ELM_SIGNING_PASSPHRASE` か `signing.passphraseFile` から読む（`src/ElasticLM.Service/ElmService.cs` の `ReadSigningKey`。§14.8）。`elm-service setup` は署名鍵を読まない（`ServiceSettings.Load` の `requireSigning` が偽。§14.8 の表）ので、パスフレーズが要るのはサービスを動かす端末だけになる。
   - 読み手は、`elm-service` を動かす 2 つ目の端末で、`ELM_SIGNING_PASSPHRASE` に署名鍵のパスフレーズを入れる。書き方は `ELM_API_KEY` と同じく、コードブロックの外の文でシェルごとに示す（V1c3b の Grill の Q3 と同じ扱い。上の V1c3 の形の「どのシェルでも同じに打てる形」の例外）。
   - 値を画面とシェルの履歴に残さない読み方（V1c3d の設計のレビューの R6、持ち主の決定）: PowerShell 7.1 以降は `$env:ELM_SIGNING_PASSPHRASE = Read-Host -MaskInput`、bash と zsh は `read -rs ELM_SIGNING_PASSPHRASE; export ELM_SIGNING_PASSPHRASE` と書く。打った値は画面に出ず、コマンドの行に値が入らないので履歴にも残らない。`ELM_API_KEY` も同じ形で読む（下の Q4 の手順 5）。頁は、終わりに 2 つの端末を閉じる（シェルの中の変数が消える）と書く。値をそのまま代入の行に書き、履歴に残ると注記する案は退けた（design-decisions.md）。
-  - CI では、仕組みが自分のランダムなパスフレーズ（`elm` に `ELM_KEY_PASSPHRASE` として渡し、署名鍵を暗号化したもの。`eng/docs/Test-GuideSteps.ps1`）を、頁の外で `ELM_SIGNING_PASSPHRASE` として渡す。渡す先は `steps:background` で立ち上げる `elm-service` のプロセスだけで、`steps:run` の `elm-service setup` の行には渡さない（`setup` は読まないため。V1c3d の設計のレビューの R7）。ほかの `ELM_` の変数は、`elm-server` と同じく渡さない（下の Q5）。
+  - CI では、仕組みが自分のランダムなパスフレーズ（`elm` に `ELM_KEY_PASSPHRASE` として渡し、署名鍵を暗号化したもの。`eng/docs/Test-GuideSteps.ps1`）を、頁の外で `ELM_SIGNING_PASSPHRASE` として渡す。渡す先は `steps:background` で立ち上げる `elm-service` のプロセスだけで、`steps:run` の `elm-service setup` の行には渡さない（`setup` と `backup` は読まないため。V1c3d の設計のレビューの R7）。ほかの `ELM_` の変数は、`elm-server` と同じく渡さない（下の Q5）。
   - `elm` に `--passphrase-file` を足す案と、頁に決まったパスフレーズを書く案は退けた（design-decisions.md）。
 - `elm secret create`（Q3）: `elm secret create --out <ファイル> [--force] [--json]`。
   - 32 バイトの乱数を base64 で 1 行に書く。長さは選べない。32 バイトは、サービスが求める最小の長さ（`ServiceSettings.Load` が `NonceService.MinSecretLength` と比べる。§14.8 の `nonce.secretFile`）。
@@ -4854,6 +4865,16 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 測ることと終わりの条件（Q4）: PR で、3 つのランナーの Guide steps と `aot` ジョブの時間を `main` と比べて書く。`aot` ジョブがどのランナーでも 15 分以下になることを V1c4d1 に進む条件にし、ならなければ持ち主に問い直す。
   - レビュー（Q5）: 設計の独立レビューと、コードの正しさのレビュー（手順を流す仕組みの見出しの文を含む）。利用者の文書の頁は変えないので、初見の読み手と日本語のレビューは行わない。指摘は表にして、PR を ready にする前に PR か Issue に載せる。
 
+- V1c4d1 の Grill（Issue #272 に記録した。Q1〜Q4。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: `elm-service` の運用の、SQLite で流せる 3 頁。
+  - 調べた事実（2026-11-09、`main` の 40a6f34）: `elm` にも `elm-service` にもバックアップのコマンドはなく、手順を流す仕組みはファイルを写せず `sqlite3` も流せない。`steps:file` で `database.connection` を書き換えることはできる。裏の `elm-service` は 1 頁に 1 度だけ止めて起動し直せる（How-to の頁の `steps:background`）。`rateLimit.*`（§14.7）は 1〜10000 の整数（1 秒あたり、バーストも同じ数）で、範囲の外は設定の誤りとして終了コード 2。429 は `ELM_RATE_LIMITED` と決まった `Retry-After: 1`。上限の数はプロセスのメモリーにあり、ノードの間で分けず、起動し直すと消える。版の更新は起動のときの移行（8 つ、戻す移行はない）で、古い版は新しいデータベースを終了コード 1 で断る（§14.2）。公開した版はまだない（`docs/releasing.md`）。
+  - バックアップと戻し（Q1）: バックアップのコマンドを新しい行 V1c14 で足す（§14.2 の「バックアップ」）。頁の CI は、`elm-service backup` で写しを取り、そのあとにライセンスを 1 つ作り、`steps:file` で `database.connection` を写しに向けて、頁の `steps:background` でサービスを起動し直し、あとで作ったライセンスがなく前からのライセンスがあることを管理 API で確かめる。本文には、ふだんの戻し方（§14.2 の「戻し方」）、データベースの外に要るファイルの一覧、写しを署名鍵と同じように守ること（安全性のモデルの頁を指す）を書く。PostgreSQL のバックアップは V1c4d2 の PostgreSQL の頁が持つ。
+  - 速さの上限（Q2）: CI で確かめるのは、`service.json` に `rateLimit` を入れて起動し直せることと、範囲の外の値（`0`）で `elm-service --config …` が終了コード 2 で範囲の文を出すことだけにする。その文が署名鍵を読む前に出るか（`steps:run` の `elm-service` の行には `ELM_SIGNING_PASSPHRASE` が届かない）は実装で確かめ、出なければ報告する。429 を起こす手順は 1 秒の中の時間に頼るので CI では比べず、429 の答え、`Retry-After`、アプリの出力（`samples/ResilientActivation` の `retry later: ELM_RATE_LIMITED`）は本文の例にする。本文には 4 つの鍵の意味、`perKey` は `perIp` 以下でないと効かないこと（§14.7）、プロキシの後ろでは送り元がプロキシになるので `perIp` を上げること（§14.5）、上限の数はノードごとで起動し直すと消えることを書く。
+  - 版の更新（Q3）: 頁は、バックアップを取る（CI で流す）、サービスを止める、実行ファイルを置き換える、起動する（移行が流れ `Schema versions applied` のログが出る）の流れで書く。CI では、置き換えの代わりに同じ版で起動し直し、起動することを確かめる（移行はないのでログの行は出ず、比べない）。本文には、戻す移行はなく古い版に戻すにはバックアップを戻すこと、古い版が新しいデータベースを断る文と終了コード 1、複数のノードでは全部のノードを新しい版にしてから使うことを書く。前のリリースから本当に更新する CI は、新しい行 V1e1（V1e のあと）に回す。複数のノードの細かい順序は V1c4d2 の PostgreSQL の頁が持つ。
+  - 頁の置き場所、レビュー、測ること（Q4）: 3 頁とも Tutorial 2 を名指し、サイドバーの 16〜18 に、速さの上限、バックアップと戻し、版の更新の順に置く。レビューは、設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー、日本語のレビュー（書き手と別）。指摘は表にして、PR を ready にする前に Issue か PR に載せる。PR で、3 つのランナーの Guide steps と `aot` ジョブの時間を `main` と比べて書く。
+- V1c14 の Grill（Issue #272、Q1〜Q6。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: `elm-service backup`。決めた形は §14.2 の「バックアップ」。
+  - コマンドの形（Q1）、書き先（Q2）、元のデータベースの扱い（Q3）、監査とログ（Q4）、戻すコマンドを作らないこと（Q5）は §14.2 に書いた。
+  - 文書、テスト、レビュー（Q6）: Reference の `service-configuration.md`（英語と日本語）のコマンドの節を、この行の PR で直す。テストは `ElasticLM.Service.Tests` に置く: 書き込みの最中に取った写し、書き先がある、元のファイルがない、PostgreSQL、`elm-service` のデータベースでない、新しい版のデータベース、Unix のモード 0600、写しで `elm-service` が起動して取った時点のデータを持つこと。NativeAOT の発行で確かめる。進め方は、設計の部分、設計の独立レビュー、実装、正しさのレビュー、Reference の日本語のレビュー（書き手と別）。
+
 ## 21. 依存
 
 `.cursor/rules/dependencies.mdc` に従い、依存を足す PR はこの表に行を足す。
@@ -4931,6 +4952,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c4c | 利用者の文書の How-to guides の `elm-server` の 4 頁（TLS の証明書、サーバーライセンスの更新、借り出しの上限、利用ログの確かめ。英語と日本語） | §20.7 |
 | V1c4e | 利用者の文書の How-to guides のアプリの 3 頁（誤りの扱い、ネットワークのないときの振る舞い、NativeAOT での発行。英語と日本語） | §20.7 |
 | V1c13 | 手順を流す仕組みが、Tutorial を 1 度だけ流してその終わりの状態を How-to の頁ごとに写す（V1c4d の Grill の Q2） | §20.7 |
+| V1c14 | `elm-service backup` で SQLite のデータベースを写す（V1c4d1 の Grill の Q1） | §14.2 |
 | V1c4d1 | 利用者の文書の How-to guides の `elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新。英語と日本語） | §20.7 |
 | V1c4d2 | 利用者の文書の How-to guides の `elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン。英語と日本語） | §20.7 |
 | V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` を有効化して更新する頁（英語と日本語） | §13.7、§20.7 |
@@ -4944,6 +4966,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c12 | `elm-server`（PEM と PKCS#12）と `elm-service`（PEM）が、TLS の証明書のファイルにある中間 CA の証明書を、サーバーの証明書と一緒に送る（V1c4c の実装で見つけ、PR の持ち主の決定 D1 で行にした。V1c4c のあと、V1c4e の前） | §13.5 |
 | V1d | 安全性の見直し: 独立したレビュアーのエージェントが §5 と §20.2 と `security` の規則に照らして見直す（見つけたものの扱いと Grill で決める点は §20.7） | §4.3, §5, §20.2, §20.7 |
 | V1e | v1 の公開: `VersionPrefix` を `1.0.0` にして `1.0.0-rc.N` から `1.0.0`、rc のタグは GitHub のプレリリースだけを出し、nuget.org と GHCR には正式版だけを push する `release.yml` の変更と、`docs/releasing.md` の rc の試しの手順（§20.5 の「V1e で変えること」）、rc が通さない公開の段を正式版のタグの前にどう確かめるか（同じく）、持ち主の作業、イメージの証明の確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、rc の版にする PR での `SECURITY.md` と `CONTRIBUTING.md` の「まだ出していない」の文の書き換え、rc のプレリリースそのもので試しの期間の形の Tutorial を 3 つの OS で手で一度ずつ流して OS ごとに記録すること（§20.7 の V1c3 の形の「V1c3e の Grill」の Q5）、正式版のタグの前に利用者の文書を nuget.org の形に切り替え、README と `README.ja.md` の Status の 1 行を外す 1 つの PR と、その前に ID の接頭辞を予約するか先に公開して名前を取るかの決定（同じく P3）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5）（Grill で決める点は §20.7） | §5.3（T26）, §20.5, §20.6, §20.7 |
+| V1e1 | 前のリリースの `elm-service` から版を更新する CI の段と、版の更新の How-to の頁をその段で流すこと（V1c4d1 の Grill の Q3。V1e のあと） | §14.2, §20.7 |
 
 ## 23. v1 の範囲外
 
