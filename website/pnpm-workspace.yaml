@@ -27,3 +27,10 @@ auditConfig:
     - GHSA-g3hv-75wg-m249
     # deepmerge 4.3.1 under @svgr/plugin-svgo 8.1.0: no fixed version, and the plugin's dist/index.js never calls it.
     - GHSA-gcqx-w48m-w2h4
+# Patches of shipped files (.cursor/rules/dependencies.mdc). The key keeps its version: raising the package then fails the
+# install with ERR_PNPM_UNUSED_PATCH, where a key without one would go on applying silently.
+patchedDependencies:
+  # Design §20.7 (V1c5, Issue #192): the id fix of facebook/docusaurus#12454 (a new id for every render), moved into
+  # 3.10.2's lib/client/index.js; without it a diagram can render empty in the dark color scheme. Remove it when
+  # @docusaurus/theme-mermaid is raised to a version that contains #12454 (Docusaurus 4); 3.x does not have it.
+  '@docusaurus/theme-mermaid@3.10.2': patches/@docusaurus__theme-mermaid@3.10.2.patch
