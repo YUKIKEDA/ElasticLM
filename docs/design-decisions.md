@@ -1596,3 +1596,15 @@
 - **決定:** 2 頁は Linux のホスト向けと書き、Windows と macOS の読み手には WSL や Linux の VM を案内する（持ち主の決定、推奨案 A）。
 - **理由:** CI で確かめる道と、読み手の道を同じにする。
 - **却下した案:** (B) Windows と macOS の手順も足す（CI で確かめられない）。
+
+### OIDC の頁の realm（V1c4d2b の Grill の Q2、Issue #284）
+
+- **決定:** 頁が `steps:file` で、この頁のための小さな realm の JSON を書き、`docker cp` で Keycloak に入れる（持ち主の決定、推奨案 A）。
+- **理由:** 各設定が何のためかを本文で説明でき、IdP の設定の手本になる。CI の試験用のクライアントやポートが混ざらない。
+- **却下した案:** (B) CI の realm（`tests/keycloak/elm-realm.json`）を GitHub から取らせる。
+
+### OIDC の頁の持ち主の移し方（V1c4d2b の Grill の Q3、Issue #284）
+
+- **決定:** `bootstrapOwner` を Keycloak の発行者と固定したユーザーの ID に書き換え、`roleMap` で `elm-owners` を `owner` にする。Tutorial 2 の持ち主は残し、OIDC で最初にログインしたあとに無効にするよう勧める（持ち主の決定、推奨案 A）。
+- **理由:** `setup` で締め出しから戻る道を残す（§14.6）。
+- **却下した案:** (B) `bootstrapOwner` を外し、`roleMap` だけで持ち主を決める（`setup` が流せなくなる）。
