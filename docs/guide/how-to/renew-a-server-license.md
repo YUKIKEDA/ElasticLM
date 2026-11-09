@@ -122,7 +122,7 @@ A server that got its server license from `elm-service` with `elm server activat
 - Online, when `service.url` names the vendor's `elm-service`: the server renews on its own before the license expires, and `elm server refresh` renews at once.
 - Offline: `elm server refresh-request` writes a request file, the vendor processes it in `elm-service`, and `elm server import` reads the answer.
 
-Do not load a file issued by hand into such a server: a renewal of the activation writes its own license over it. With `service.url`, the server also goes back to the license of its activation within an hour when the file you loaded is an older one of the same license. [Server license commands](../reference/elm-cli.md#server-license-commands) lists the commands, and [`service`](../reference/server-configuration.md#service) the setting.
+Do not load a file issued by hand into such a server: a renewal of the activation writes its own license over it. With `service.url`, the server also goes back to the license of its activation within an hour when the file you loaded is an older one of the same license. [Activate a server license with elm-service](activate-a-server-license-with-elm-service.md) shows both ways step by step; [Server license commands](../reference/elm-cli.md#server-license-commands) lists the commands, and [`service`](../reference/server-configuration.md#service) the setting.
 
 ## See also
 
