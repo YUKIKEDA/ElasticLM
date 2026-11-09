@@ -121,15 +121,15 @@ You do not have to run every part. There are four shapes, and a vendor may use m
 
 ```mermaid
 flowchart TD
-    S{Does the license limit concurrent users, by seats?} -- no --> V{Does the vendor run elm-service?}
+    S{Does the license limit concurrent users (seats)?} -- no --> V{Does the vendor run elm-service?}
     V -- no --> OFF[Offline only]
     V -- yes --> HA[Hosted activation]
-    S -- yes --> R{Can the apps reach the vendor's service,<br/>and may the seats live there?}
+    S -- yes --> R{Can the apps reach the vendor's service,<br/>and does the customer accept the seats there?}
     R -- yes --> CF[Cloud floating]
     R -- no --> OP[On-premises floating]
-    OP --> L{Does the vendor run elm-service?}
-    L -- yes --> LS[The server activates its license with elm-service]
-    L -- no --> LE[The vendor issues the server license with elm]
+    OP --> L{How does the server get its server license?}
+    L -- from elm-service --> LS[Server license: the server activates it<br/>with the vendor's elm-service]
+    L -- by hand --> LE[Server license: the vendor issues it with elm]
 ```
 
 - If the license limits only who may run the app, on which device, and until when, use **offline only** when the vendor runs no service, or **hosted activation** when it does.
