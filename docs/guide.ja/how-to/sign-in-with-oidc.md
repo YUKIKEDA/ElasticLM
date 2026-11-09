@@ -280,7 +280,9 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 - `oidc.issuer` は、テナントの発行者だ。v2.0 のトークンが持つ `iss` は、テナントを示し、`/v2.0` で終わる（同じリファレンスを参照）。
 - API のアプリケーションのマニフェストで、`api.requestedAccessTokenVersion` を `2` にする。そうしないと、Entra ID は v1.0 のアクセストークンを発行する。その `iss` は `/v2.0` で終わらないので、`oidc.issuer` と一致しない（Microsoft の[アプリマニフェストのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/reference-microsoft-graph-app-manifest#api-attribute)を参照）。
 - 管理画面とサービスのアプリケーションのマニフェストで、`groupMembershipClaims` を `SecurityGroup` などに設定し、両方のトークンが `groups` を持つようにする。このクレームにはグループのオブジェクト ID が入るので、`oidc.roleMap` のキーはその ID になる。ユーザーが 200 を超えるグループに入っていると、Entra ID はトークンにこのクレームを入れない。するとサービスには、そのユーザーのロールが見えない。管理者を入れるグループは少なくしておく。
-- Entra ID の `sub` は、同じユーザーでもアプリケーションごとに違う（同じリファレンスにそう書かれている）。管理画面と `elm admin login` は別々のアプリケーションを使うので、1 人の人が 2 人の管理者になり、`bootstrapOwner.sub` はそのうち 1 人にしか一致しない。サービスがユーザーの識別に別のクレームを使えるようになるまで（今後の変更）、各管理者のロールは `oidc.roleMap` で与え、`GET /v1/admin/admins` には 1 人につき 2 つのエントリーがあるものと考えておく。
+- `oidc.subjectClaim` を `oid` にする。Entra ID の `sub` は同じユーザーでもアプリケーションごとに違うが、`oid` はテナントのどのアプリケーションでも同じだ（同じリファレンスと、Microsoft の [ID トークンのクレームのリファレンス](https://learn.microsoft.com/en-us/entra/identity-platform/id-token-claims-reference)を参照）。管理画面と `elm admin login` は別々のアプリケーションを使うので、`sub` のままでは 1 人の人が 2 人の管理者になってしまう。
+- Entra ID は、要求に `profile` のスコープがあるときだけトークンに `oid` を入れる（どちらのリファレンスにもそう書かれている）。そこで、`oidc.cliScopes` に `profile` を加え、`oidc.webScopes` を `openid profile` にする。
+- このとき `bootstrapOwner.sub` は、最初のオーナーの `oid`、つまりテナントにおけるそのユーザーのオブジェクト ID になる。
 
 このガイドは Entra ID では試していない。各設定は、自分のテナントについての Microsoft のドキュメントと照らし合わせて確かめる。
 
@@ -288,7 +290,7 @@ Microsoft Entra ID では、テナントにアプリケーションを 2 つ登�
 
 - デバイスフローの承認画面に、クライアントの名前を表示する。管理者が、どのプログラムがアクセスを求めているのかをわかるようにするためだ。
 - `oidc.audience` は、どちらのクライアント ID とも違う値にする。同じだと、サービスは起動しない。
-- ロールのクレームは、ID トークンとアクセストークンの両方に入れる。
+- ロールのクレームと `oidc.subjectClaim` のクレームは、ID トークンとアクセストークンの両方に、同じ値で入れる。
 - 管理画面のクライアントには認可コードフローだけを許可し、それ以外はすべてオフにする。Keycloak なら、サービスアカウントやダイレクトグラントなどだ（`fullScopeAllowed: false` にすると、関係のないロールがトークンに入らない）。
 - IdP のトークンの有効期間は短くする。サービスはアクセストークンを自分で確かめ、IdP に問い合わせないので、サインアウトしても、そのトークンは期限が切れるまで有効なままだ。
 - `apiKeys.inactiveAdminDays`（90）は、その日数サインインしていない管理者の API キーを使えなくする。
