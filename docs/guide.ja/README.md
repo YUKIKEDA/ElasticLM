@@ -29,7 +29,7 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 6. [ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)と[署名鍵を入れ替える](how-to/rotate-the-signing-key.md): 署名鍵を証明する鍵の保管と、サービスが署名に使う鍵の入れ替えについてのハウツーガイド。
 7. [ライセンスを失効させる](how-to/revoke-a-license.md)と[署名鍵を失効させる](how-to/revoke-a-signing-key.md): ライセンスを完全に終わらせることと、漏れた署名鍵についてのハウツーガイド。
 8. [サーバーライセンスを更新する](how-to/renew-a-server-license.md): サーバーライセンスを期限が切れる前に発行し直すことと、新しいファイルでは取り上げられないものについてのハウツーガイド。
-9. [elm-service でサーバーライセンスをアクティベーションする](how-to/activate-a-server-license-with-elm-service.md): `elm-service` を通してサーバーライセンスを販売し、顧客のサーバーがそこでライセンスをアクティベーションして更新するようにすることについてのハウツーガイド。
+9. [elm-service でサーバーライセンスをアクティベーションする](how-to/activate-a-server-license-with-elm-service.md): `elm-service` を通してサーバーライセンスを販売し、顧客のサーバーがそこでライセンスをアクティベーションして更新するようにするためのハウツーガイド。
 10. [リクエストのレートを制限する](how-to/limit-request-rates.md)、[サービスをバックアップして復元する](how-to/back-up-and-restore-the-service.md)、[サービスをアップグレードする](how-to/upgrade-the-service.md): `elm-service` のリクエストの上限と、SQLite で動かすときのバックアップとアップグレードについてのハウツーガイド。
 11. [サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)と[サービスを PostgreSQL で動かす](how-to/run-the-service-on-postgresql.md): `elm-service` をイメージから動かすことと、複数のノードが共有するデータベースで動かすことについてのハウツーガイド。
 12. [OIDC でサインインする](how-to/sign-in-with-oidc.md): API キーの代わりに、管理者が自社の ID プロバイダーでサインインできるようにするためのハウツーガイド。
