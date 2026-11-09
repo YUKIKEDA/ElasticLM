@@ -1632,3 +1632,9 @@
 - **決定:** 新しい設定 `oidc.webScopes`（既定 `openid`）を足す（持ち主の決定、推奨案 A）。
 - **理由:** 既定の振る舞いを変えず、`oidc.cliScopes` と同じ形で IdP ごとの違い（Entra ID の `oid` に要る `profile`）を表せる。
 - **却下した案:** (B) `oidc.subjectClaim` が `sub` でないときに自動で `profile` を足す。(C) いつも `openid profile` にする。
+
+### 管理者を見分けるのに選べる要求（V1c15 の設計の独立レビューの R4、Issue #288）
+
+- **決定:** `oidc.subjectClaim` は `sub` か `oid` だけを受ける（持ち主の決定、推奨案 B）。
+- **理由:** 利用者が変えられる値（メール、`preferred_username`）を選ぶと `bootstrapOwner` を奪われ、`iss` や `tid` を選ぶと全員が 1 つの管理者になる。今要るのは Entra ID の `oid` だけで、列挙ならテストで閉じられ、受け入れる脅威が要らない。
+- **却下した案:** (A) 名前は自由にし、§5.4 に受け入れる脅威の行と警告を書く。(C) 自由だが、危ない名前（`email`、`preferred_username`、`upn`、`name`、`iss`、`aud`、`azp`、`tid`、`oidc.roleClaim` と同じ名前）を断る。
