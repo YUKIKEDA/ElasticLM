@@ -70,7 +70,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c13 | 手順を流す仕組み（`eng/docs/Test-GuideSteps.ps1`）が、Tutorial を 1 度だけ流し、その終わりの状態を How-to の頁ごとに写して使う（V1c4d の Grill の Q2 で足した。V1c4e のあと、V1c4d1 の前。決めた形は design.ja.md §20.7 の「V1c4 の形」の「V1c13 の Grill」） | done | [#268](https://github.com/YUKIKEDA/ElasticLM/issues/268) |
 | V1c14 | `elm-service backup` で SQLite のデータベースを `VACUUM INTO` で写す（V1c4d1 の Grill の Q1 で足した。V1c13 のあと、V1c4d1 の前。決めた形は design.ja.md §14.2 の「バックアップ」） | in-progress | [#272](https://github.com/YUKIKEDA/ElasticLM/issues/272) |
 | V1c4d1 | 利用者の文書の How-to guides の `elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新。英語と日本語。V1c4d の Grill の Q1 で V1c4d から分けた。V1c14 のあと。決めた形は design.ja.md §20.7 の「V1c4 の形」の「V1c4d1 の Grill」） | not-started | — |
-| V1c4d2 | 利用者の文書の How-to guides の `elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン。英語と日本語。V1c4d の Grill の Q1 で V1c4d から分けた。V1c4d1 のあと。流し方の向きは design.ja.md §20.7 の「V1c4 の形」の「V1c4d の Grill」の Q3、細部はこの行の Grill で決める） | not-started | — |
+| V1c4d2 | 利用者の文書の How-to guides の `elm-service` の運用の、外の環境が要る 3 頁（コンテナーでの運用、PostgreSQL、OIDC での管理者のログイン。英語と日本語。V1c4d の Grill の Q1 で V1c4d から分けた。V1c4d1 のあと。PostgreSQL のバックアップと、複数のノードで版を更新する順を含む。流し方の向きは design.ja.md §20.7 の「V1c4 の形」の「V1c4d の Grill」の Q3、細部はこの行の Grill で決める） | not-started | — |
 | V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` のサーバーライセンスを有効化してオンラインとオフラインで更新する頁（英語と日本語。V1c4c の Grill の Q4 で足した。V1c4d2 のあと。名指す Tutorial と流し方、裏のプロセスを 2 つ持てるようにする手順を流す仕組みの変更はこの行の Grill で決める。design.ja.md §20.7 の表の V1c4f の行） | not-started | — |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の原因を調べて直す（V1e の最初の公開の前。design.ja.md §20.7 の V1c1 の形） | not-started | [#192](https://github.com/YUKIKEDA/ElasticLM/issues/192) |
 | V1c6 | 利用者が見る文（CLI の出力、誤りとログの文、公開する API の XML ドキュメント）から設計の節番号を外す。内部のコメントと公開しない型の XML ドキュメントは残す。`elm server reload` の誤りの文でコードが 2 度出る重なりも直す（V1c4c の PR の持ち主の決定 D2）（V1d の前。design.ja.md §20.7 の V1c2 の形） | not-started | [#198](https://github.com/YUKIKEDA/ElasticLM/issues/198) |
@@ -82,7 +82,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1c12 | `elm-server`（PEM と PKCS#12）と `elm-service`（PEM）が、TLS の証明書のファイルにある中間 CA の証明書を、サーバーの証明書と一緒に送るようにする（今は 1 枚目の証明書だけを読む。`TlsCertificateFiles.cs`）（V1c4c の実装で見つけた。PR の持ち主の決定 D1 で行にした。V1c4c のあと、V1c4e の前。決めた形は design.ja.md §13.5 の「運用者の証明書の中間 CA」） | done | [#260](https://github.com/YUKIKEDA/ElasticLM/issues/260) |
 | V1d | 安全性の見直し（Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e | v1 の公開（`1.0.0-rc.N` から `1.0.0`、rc のタグは GitHub のプレリリースだけを出し nuget.org と GHCR には正式版だけを push する `release.yml` の変更と `docs/releasing.md` の rc の試しの手順、rc が通さない nuget.org と GHCR への push の段を正式版のタグの前にどう確かめるか、持ち主の作業（GitHub Pages の有効化と environment `github-pages` の規則の確かめを含む）、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、rc の版にする PR での `SECURITY.md` と `CONTRIBUTING.md` の「まだ出していない」の文の書き換え、rc のプレリリースで Tutorial を 3 つの OS で手で一度ずつ流して OS ごとに記録する、正式版のタグの前に利用者の文書を nuget.org の形に切り替えて README の Status の 1 行を外す 1 つの PR とその前の ID の接頭辞の扱いの決定、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流す。Grill で決める点は design.ja.md §20.7） | not-started | —     |
-| V1e1 | 前のリリースの `elm-service` から版を更新する CI の段と、版の更新の How-to の頁をその段で流すこと（V1c4d1 の Grill の Q3 で足した。V1e のあと。Grill で決める点は design.ja.md §20.7 の表の V1e1 の行） | not-started | — |
+| V1e1 | 前のリリースの `elm-service` から版を更新する CI の段と、版の更新の How-to の頁をその段で流すこと（手順を流す仕組みで 2 つの版を流す変更を含む。V1c4d1 の Grill の Q3 で足した。V1e のあと。Grill で決める点は design.ja.md §20.7 の表の V1e1 の行） | not-started | — |
 
 ## v1 の後
 
