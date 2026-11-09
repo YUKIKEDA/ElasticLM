@@ -4202,7 +4202,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c4d2b | V1c4d2 の Grill の Q1 で V1c4d2 から分けた行。OIDC での管理者のログインの頁（英語と日本語）。IdP の設定と運用者への勧め（V1c4d の Grill の Q1）と、Entra ID の手順（本文だけ）を持つ。決めた形は下の「V1c4 の形」の「V1c4d2b の Grill」（Issue #284）。V1c4d2a のあとに置く |
 | V1c15 | V1c4d2b の設計の独立レビューの R5 で足した行。管理者を見分ける要求を選ぶ設定 `oidc.subjectClaim` と、管理画面のサインインのスコープの設定 `oidc.webScopes`。Entra ID の `sub` はアプリごとに違う値で、ブラウザーと CLI で同じ人が 2 つの管理者の行になるため、`oid` を選べるようにする。決めた形は下の「V1c4 の形」の「V1c15 の Grill」（Issue #288）。V1c4d2b のあと、V1c4f の前に置く |
 | V1c16 | V1c15 の正しさのレビューの C3 で見つけ、PR #289 の持ち主の決定 B で行にした。管理画面のサインイン（コードフロー）が、トークンエンドポイントから受けた署名のない ID トークン（`alg: none`、または `alg: ES256` で署名が空）を受け付ける。`OpenIdConnectHandler.cs`（ASP.NET Core 10.0.14）がコードフローの ID トークンで `RequireSignedTokens = false` にするためで（OIDC Core §3.1.3.7 の TLS の例外）、§15.3 と T13 の「ID トークンの署名を確かめる」と合わない。決めた形は下の「V1c4 の形」の「V1c16 の Grill」（Issue #292）。V1c15 のあと、V1c4f の前に置く |
-| V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。V1c16 のあとに置く |
+| V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。決めた形は下の「V1c4 の形」の「V1c4f の Grill」（Issue #296）。V1c16 のあとに置く |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
 | V1e | `-rc.N` で確かめることと正式版に進む条件、rc のタグを GitHub のプレリリースだけにする `release.yml` の変更（§20.5 の「V1e で変えること」。V1c3e の記録の途中の持ち主の決定 D2）: `publish` をプレリリースの後ろのない版のタグだけで動かすこと、rc の下書きの Release をどのジョブがどの承認のあとにプレリリースとして公開するか（T22 は Release の公開を environment `release` の承認のあとのジョブに限る）、サイトの公開のジョブを rc でどうするか（今は `needs` で `publish` を待つ）、rc が通さない公開の段（nuget.org と GHCR への push、イメージの証明、GHCR の package を public にすること。§20.5 の「V1e で変えること」）を正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか。V1c3e の設計のレビューの R1）、`docs/releasing.md` の試しの手順（rc のプレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れる。試しの期間の Tutorials の形を指す）、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか（rc は nuget.org に置かないので、`1.0.0-rc.1` にするならその基準の取り方も）、持ち主の試しの記録（rc のプレリリースそのものに対して、試しの期間の形の Tutorial を Windows、Linux、macOS の 3 つで手で一度ずつ流し、OS ごとに、Windows の SmartScreen と Smart App Control が署名のない `.exe` に何を出したか、macOS の quarantine（`SECURITY.md` の `xattr`）、Linux の実行の権限、PATH への足し方を記録する。下の「V1c3 の形」の「V1c3e の Grill」の Q5、V1c3e の設計のレビューの R12）、rc の版にする PR での `SECURITY.md` の「Nothing is released yet.」と `CONTRIBUTING.md` の「Nothing is published yet.」の書き換え（V1c3e の設計のレビューの R10）、利用者の文書を nuget.org の形に切り替える 1 つの PR（正式版のタグの前。頁から `packages` のダウンロード、`nuget.config`、`--prerelease`、`--source packages` を外し、README と `README.ja.md` の Status の 1 行を外し、入口の頁の試しの期間の文と各頁のプレリリースの文を書き換え、CI が頁を流して確かめる。CI が nuget.org の形の頁をどう置き換えるかも決める。V1c3e の記録の途中の持ち主の決定 P3）、その PR の前に nuget.org の ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るか（P3。D3 を改めた決定）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5）、コンテナーの頁の「最初の正式版まではイメージを公開しない」の文を外すこと（V1c4d2 の設計の独立レビューの R19） |
 | V1e1 | V1c4d1 の Grill の Q3 で足した行。前のリリースの `elm-service` を取ってきてデータベースを作り、新しい版で起動して移行が流れることを確かめる CI の段と、版の更新の How-to の頁をその段で流すこと。どのワークフローに置くか、前のリリースの取り方と確かめ方（`SHA256SUMS`、`gh attestation`）、手順を流す仕組みで 2 つの版の `elm-service` を流す変更（今は `-ElmService` のパスと `steps:prebuilt name=elm-service` が 1 つずつ。古い版を受け取る引数と prebuilt の名前）は、この行の Grill で決める。V1e のあとに置く。`1.0.0` の前（rc.N から）に置かないのは、rc と `1.0.0` の間には移行がないと見込まれ、その更新では移行が流れず確かめる意味が薄いためで、最初に移行が流れる `1.0.0` から次の版への更新を確かめる（V1c14 の設計の独立レビューの R15、持ち主の決定 A） |
@@ -4776,7 +4776,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
     - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置く。`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた）。
     - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
-    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。V1c4d2 の設計の独立レビューの R3 と R5 で、`steps:prebuilt name=image` を許し、置き換える `steps:background` を複数持てるようにした（同時に動くのは 1 つのまま）。
+    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。V1c4d2 の設計の独立レビューの R3 と R5 で、`steps:prebuilt name=image` を許し、置き換える `steps:background` を複数持てるようにした（同時に動くのは 1 つのまま）。V1c4f の Grill の Q1（下）で、名指した頁にない `elm-server` か `elm-service` の `steps:prebuilt` と、名指した頁と別のプログラムの裏のプロセスを 1 つ同時に動かすことを許した。
     - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
     - `steps:after` の印は、`steps:prebuilt` と同じく訳の頁にも同じ形で要り、訳の確かめが比べる。
     - 名指した頁が落ちれば、How-to の頁も落ちる。作業フォルダーと鍵は、How-to の頁の終わりに今のとおり消す。
@@ -5016,6 +5016,30 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 認可の応答の ID トークン（R6）と、確かめる文字列の前提（R7）は、上の「調べた事実」に書いた。`TokenEndpointResponse` か `IdToken` がないときは、同じ理由で断る。
     - 出典（R8）は §15.3 に書いた。
     - 利用者の文書（R9、持ち主の決定は推奨案）: 管理画面の ID トークンが RS256・PS256・ES256 で署名されている必要があることは、前からの要件だが、OIDC の How-to の頁にも Reference にも書いていなかった。この行で、OIDC の How-to の「Settings to keep in mind with any IdP」（日本語は「どの IdP でも気をつける設定」）に 1 行足す（英語と日本語）。ID トークンとアクセストークンを 3 つのどれかで署名すること、ほかのアルゴリズムや署名のないトークンは断ること、理由の出るログ（管理画面は Information、アクセストークンは `Debug`）を書く。Q4 の「利用者の文書は変えない」はこれで改める。日本語のレビューを書き手と別のエージェントで行う。1 行の事実なので、初見の読み手のレビューは行わない。
+- V1c4f の Grill（Issue #296 に記録した。Q1〜Q5。持ち主の決定はすべて推奨案で、Q1 の退けた案は design-decisions.md にある）: `elm-service` で `elm-server` のサーバーライセンスを有効化し、オンラインとオフラインで更新する How-to の頁。
+  - 調べた事実（2026-11-09、`main` の 2c5d645）:
+    - 「同時に動く裏のプロセスは 1 つ」（上の Q5 の R4）はまだ効いている。`eng/docs/Test-GuideSteps.ps1` の `Read-Plan` は、How-to の頁の `steps:background` に、名指した頁と同じプログラムか `docker` を求める。実行の側も、裏のプロセスを `$script:background` の 1 つだけ持つ。How-to の頁の `steps:prebuilt` は `name=image` だけである。
+    - `elm-service` を立てるのは Tutorial 2 だけで、サーバーライセンスのポリシーは作らない。`elm-server` を立てるのは Tutorial 3 だけで、ライセンスは手で発行する。
+    - 頁に要るコマンドはすべてある（§13.7: `elm server activate`、`refresh`、`activate-request`、`refresh-request`、`import`。ベンダーの `elm offline process`。ポリシーとライセンスは `elm admin request`）。
+    - 自動の更新は、期限から `refreshWindow` を引いた時刻まで待つ（§13.7）。`elm server status` の文の出力には `autoRefresh` も `seq` も出ず、`--json` でだけ見える。
+  - Tutorial と仕組み（Q1）: Tutorial 2 を名指し、頁の中でお客さんの `elm-server` を立てる。手順を流す仕組みを 2 つ広げる。
+    - `steps:prebuilt`: How-to の頁は、`name=image`（`-Docker` のときだけ）に加えて、名指した頁が持たない `name=elm-server` と `name=elm-service` を持てる。名指した頁が持つ名前を書くと、2 度書いたものとして断る。ほかの名前（`elm`、`packages`、`libelasticlm`）は今までどおり名指した頁から引き継ぐだけで、書くと断る。
+    - 同時に動く 2 つ目の裏のプロセス: How-to の頁の `steps:background` の行が、名指した頁の裏のプロセスと別のプログラム（`elm-server` か `elm-service`。`docker` の行は今までどおり名指した頁のものを置き換える）で始まるとき、それは名指した頁のものを置き換えず、並んで動く。並んで動くプログラムは頁に 1 つだけで、2 つ目からの同じプログラムの `steps:background` は、並んで動くものを止めて置き換える（今の置き換えと同じく、止めて終わるのを待ってから起動する）。別の 2 つ目のプログラムは断る。並んで動くものは、頁の終わりに名指した頁のものより先に止める。`ready=` と環境の決まり（`ELM_*` を渡さない。`elm-service` だけパスフレーズを渡す）は同じ。
+  - 頁の中身（Q2）: 次の順に書く。
+    1. ベンダーが `licenseKind` `server` のポリシー（`binding` は既定の `nodeLocked`）と、機能 `pro` に席を持つライセンスを作る。
+    2. 運用者が `server.json` を書く。`trust.rootKeys` は Tutorial 2 のルート公開鍵 `root.pub.pem`、`service.url` は `http://127.0.0.1:8080`。
+    3. `elm-server` を 1 度起動して、インストール鍵を作る（ライセンスがないので終了コード 1）。
+    4. `elm server activate` で有効化し、`elm-server` を裏で起動する。
+    5. 自動の更新を説明し、`elm server refresh` ですぐ更新する。
+    6. オフラインの節で、サーバーを止めて `service.url` を外して起動し直し、`elm server refresh-request`、ベンダーの `elm offline process`、`elm server import` で更新する。
+    - オフラインの有効化（`elm server activate-request`）は文で触れ、Reference に任せる。手順として流すには、オンラインの有効化を `elm server deactivate` で外す必要があり、頁が 1 つの目的から外れるため。
+  - CI で確かめること（Q3）: 自動の更新は待たない。次を確かめる。
+    - `elm server status --json` の `autoRefresh` が `true`（取る値の `pattern`。一致しなければ落ちる）。
+    - `elm server refresh` の出力の `seq` が 2。
+    - `elm server import` の出力の `seq` が 3。
+    - 本文は、自動の更新の時刻（期限から `refreshWindow` を引いた時刻、失敗のあとは 1 時間ごとで最長 24 時間）を §13.7 から書く。
+  - 置き場所（Q4）: How-to の 22 番目。題は「Activate a server license with elm-service」（日本語は「`elm-service` でサーバーライセンスを有効化する」）。入口の頁のベンダーとサーバー管理者の道筋に足し、`renew-a-server-license.md` の節「Servers activated with elm-service」からリンクする。
+  - レビュー（Q5）: 設計の独立レビュー、正しさのレビュー（頁の手順を CI と同じ公開した実行ファイルで流す）、初見の読み手のレビュー、日本語のレビュー（書き手と別）。指摘は表にして、ready の前に Issue か PR に載せる。仕組みの新しい決まりは、許す形を頁で流し、断る形を決まりごとに 1 つ、決まりを破った頁の写しを手元で流して確かめる（仕組みには自動のテストがない）。
 
 ## 21. 依存
 

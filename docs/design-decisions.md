@@ -1650,3 +1650,9 @@
 - **決定:** `OnTokenValidated` の最初で、`TokenEndpointResponse.IdToken` の生の文字列の部分の数、署名の部分、ヘッダーの `alg` を確かめる（持ち主の決定、推奨案 A）。
 - **理由:** ほかの ID トークンの確かめ（`azp`、`iss`、`oidc.subjectClaim`）と同じ場所で、`IdentityOf` と同じ文字列を読む。ライブラリの中の作り（型の変換、呼ぶオーバーロード）に頼らない。
 - **却下した案:** (B) `context.SecurityToken` の `RawSignature` と `Header.Alg` を見る（`JwtSecurityTokenConverter` が写すことに頼る）。(C) `OnTokenResponseReceived` で、ハンドラーが確かめる前に断る（ノンスの Cookie が 15 分残る）。(D) `JsonWebTokenHandler` を継いだ `TokenHandler` で `RequireSignedTokens` を `true` に戻す（ハンドラーが別のオーバーロードを呼ぶようになると、黙って効かなくなる）。
+
+### `elm-service` で有効化するサーバーの頁の流し方（V1c4f の Grill の Q1、Issue #296）
+
+- **決定:** Tutorial 2 を名指し、頁の中で `elm-server` を立てる。手順を流す仕組みは、名指した頁にない `elm-server` と `elm-service` の `steps:prebuilt` と、名指した頁と別のプログラムの裏のプロセスを 1 つ並んで動かすことを許す（持ち主の決定、推奨案 A）。
+- **理由:** サービス、製品、`license` の用途の署名鍵は Tutorial 2 にもうあり、頁は「サーバーライセンスのポリシーを作る → サーバーを有効化して更新する」に絞れる。仕組みを広げるのは「別のプログラムを 1 つ、同時に」だけで、ほかの決まり（`ready=`、`ELM_*` を渡さない、頁の終わりに止める）は変えない。
+- **却下した案:** (B) Tutorial 3 を名指し、頁の中で `elm-service` を一から立てる（鍵、`setup`、製品、ポリシーまで作るので、1 つの目的の頁でなくなる。V1c4c の Q4 で退けた理由と同じ）。(C) Tutorial を名指さない、ひとりで流れる頁の形を作る（頁の前提を CI が確かめなくなり、Tutorial の手順を頁に写すことになる）。(D) CI で流さず、PR で 1 度だけ手で流す（版が変わったときに頁の誤りを見つけられない）。
