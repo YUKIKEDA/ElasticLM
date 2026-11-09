@@ -121,7 +121,7 @@ You do not have to run every part. There are four shapes, and a vendor may use m
 
 ```mermaid
 flowchart TD
-    S{Does the license limit concurrent users (seats)?} -- no --> V{Does the vendor run elm-service?}
+    S{"Does the license limit concurrent users (seats)?"} -- no --> V{Does the vendor run elm-service?}
     V -- no --> OFF[Offline only]
     V -- yes --> HA[Hosted activation]
     S -- yes --> R{Can the apps reach the vendor's service,<br/>and does the customer accept the seats there?}
