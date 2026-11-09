@@ -3,7 +3,7 @@
     Runs the marked steps of README.md, of every Tutorial page, and of every How-to page with a given elm, elm-server,
     elm-service, and package folder, and builds and runs the C sample of Tutorial 4 with libelasticlm; with -Docker, also
     the pages with docker lines and the elm-service image (design §20.7, V1c1, V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a,
-    V1c4b, V1c4e, V1c13, and V1c4d2).
+    V1c4b, V1c4e, V1c13, V1c4d2, and V1c4f).
 
 .DESCRIPTION
     A step is a fenced code block whose opening line comes right after a marker: <!-- steps:<kind> key=value ... -->. A
@@ -36,11 +36,12 @@
                                       when a GET of the ready URL answers 200; the GETs come every 0.5 s with a 5 s limit
                                       each, for at most 60 s. The URL's host is 127.0.0.1, localhost, or [::1]: https for
                                       elm-server, with the server's self-signed certificate accepted; https or http for
-                                      elm-service and docker. A page has at most one, and a How-to page any number, each
-                                      of which replaces the background process of the page that steps:after names or of
-                                      the block before it (below). The process tree is stopped at the end of the page; a
-                                      docker background is stopped with docker stop <name>, and its docker process is then
-                                      waited for, and killed only after the limit of a command (10 minutes).
+                                      elm-service and docker. A page has at most one. A How-to page may have any number:
+                                      each replaces the process of its slot, that of the page that steps:after names or of
+                                      the block before it, or starts the one other program alongside it (below). The
+                                      process trees are stopped at the end of the page, the one alongside first; a docker
+                                      background is stopped with docker stop <name>, and its docker process is then waited
+                                      for, and killed only after the limit of a command (10 minutes).
       steps:file path=<path>          The block's content is written to that path, relative to the work folder, with each
                                       <name> captured earlier on the page replaced by its value. A <name> that the page
                                       captures later, or captures with env, fails before anything runs; any other <...>
@@ -57,8 +58,9 @@
 
     <!-- steps:prebuilt name=<name> --> stands on a line of its own, from the start of the line, after the paragraph that
     tells the reader to download what it names. It fails when the next line that is not blank is a code block's opening
-    line, when it is indented, without name, with a name other than these, when a page names the same name twice, and on a
-    How-to page with a name other than image:
+    line, when it is indented, without name, with a name other than these, when a page names the same name twice, on a
+    How-to page with a name other than image, elm-server, and elm-service, and on a How-to page with a name that the page
+    its steps:after names has already (below):
       elm           The page's elm lines run -Elm. An elm line needs no marker.
       elm-server    The page's elm-server lines run -ElmServer. An elm-server line needs this marker before it.
       elm-service   The page's elm-service lines run -ElmService. An elm-service line needs this marker before it.
@@ -112,12 +114,20 @@
         as on the named page. A How-to page that captures a name the named page captured fails, as a name captured twice.
       - The named page's passphrase carries over too, since its keys were made with it. Its background process, started
         again in the copy, runs into the How-to page's steps, and stops at the end of the How-to page. A How-to page has no
-        steps:prebuilt marker of its own other than name=image. Each of its steps:background blocks replaces the process
-        that runs at that point, so that one runs at a time (design §20.7, V1c4b, Q1; V1c4d2, review R5): at the block,
-        the running process is stopped and waited for as at the end of a page, and the block's line is started and waited
-        for as on any page, with the same passphrase. The block fails when the page has no steps:after, when the named page
-        has no steps:background, and when its line starts another program than the named page's (elm-service replaces
-        elm-service), unless it is a docker line (design §20.7, V1c4d2, review R4).
+        steps:prebuilt marker of its own other than name=image, and name=elm-server and name=elm-service when the named
+        page does not have that name; a name that the named page has fails, since the page takes it from there (design
+        §20.7, V1c4d2, review R3; V1c4f, Q1 and review R5).
+      - A How-to page runs at most two background processes at a time, in two slots (design §20.7, V1c4f, Q1 and review
+        R4). The main slot holds the named page's background process, started again in the copy, and what replaces it:
+        a steps:background block whose line starts the named page's program again (elm-service replaces elm-service), or
+        a docker line (design §20.7, V1c4b, Q1; V1c4d2, reviews R4 and R5). The alongside slot holds a steps:background
+        block whose line starts elm-server or elm-service when the named page's background process is another program,
+        such as an elm-server beside the named page's elm-service. The first such block starts its line and stops
+        nothing; each later block of the same program replaces the process alongside only, and a block that would run
+        another program alongside fails, so that the page runs one program alongside. A block that replaces stops and waits for the process of its
+        own slot as at the end of a page, and its line is started and waited for as on any page, with the same passphrase
+        and environment. A steps:background block fails when the page has no steps:after, and when the named page has no
+        steps:background. At the end of the page the process alongside is stopped first.
       - A failing step of the named page fails the run, before the How-to page. The named page is checked against its
         translation too. The kept folders are removed after the last How-to page of the run that names the page, and at the
         end of the run, also after a failure; a folder that is still there fails the run. A Tutorial page that no listed
@@ -656,6 +666,8 @@ function Read-Plan([string]$name, [object]$parsed) {
     $containerPage = Test-ContainerParsed $name $parsed
     $made = [pscustomobject]@{ Containers = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal); Volumes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal) }
     $plan = [Collections.Generic.List[object]]::new()
+    # The program that a How-to page runs alongside the background process of the page that steps:after names, or $null.
+    $alongside = $null
     $previous = $null
     $previousOs = $null
     foreach ($block in Get-Marked $parsed) {
@@ -671,7 +683,7 @@ function Read-Plan([string]$name, [object]$parsed) {
             $marker = Read-Marker $at $block.Marker
         }
         $attributes = $marker.Attributes
-        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null; Replaces = $false; Container = $null }
+        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null; Replaces = $false; Slot = 'main'; Container = $null }
         switch ($marker.Kind) {
             'run' {
                 if ($attributes.ContainsKey('os')) {
@@ -716,12 +728,13 @@ function Read-Plan([string]$name, [object]$parsed) {
                 }
             }
             'background' {
-                # A How-to page's steps:background stops the background process of the page that steps:after names, or of
-                # the page's steps:background before it, and starts this line instead, such as elm-service with a rewritten
-                # service.json; only one runs at a time (design §20.7, V1c4b, Q1; V1c4d2, review R5).
+                # A How-to page's steps:background either goes into the main slot, where it stops the background process
+                # of the page that steps:after names, or of the page's main-slot block before it, and starts this line
+                # instead, such as elm-service with a rewritten service.json (design §20.7, V1c4b, Q1; V1c4d2, review R5);
+                # or it runs another program alongside it (below; design §20.7, V1c4f, Q1 and review R4).
                 if ($isHowTo) {
-                    if (-not $after) { throw "$($at): a How-to page's steps:background replaces the background process of the page that steps:after names, and the page has no steps:after." }
-                    if (-not ($after.Plan.Steps | Where-Object Kind -EQ 'background')) { throw "$($at): a How-to page's steps:background replaces the background process of $($after.Name), which has no steps:background." }
+                    if (-not $after) { throw "$($at): a How-to page's steps:background replaces or runs alongside the background process of the page that steps:after names, and the page has no steps:after." }
+                    if (-not ($after.Plan.Steps | Where-Object Kind -EQ 'background')) { throw "$($at): a How-to page's steps:background replaces or runs alongside the background process of $($after.Name), which has no steps:background." }
                     $step.Replaces = $true
                 }
                 if (-not $attributes.ContainsKey('ready')) { throw "$($at): steps:background takes ready=<url>." }
@@ -742,11 +755,23 @@ function Read-Plan([string]$name, [object]$parsed) {
                         throw "$($lineAt): a docker line of steps:background is docker run --rm --name <name>, without -d."
                     }
                 }
-                elseif ($step.Replaces) {
-                    # The page restarts the program that the named page started, such as elm-service with new settings; a
-                    # container may replace it instead.
+                elseif ($isHowTo) {
+                    # The page restarts the program that the named page started, such as elm-service with new settings, in
+                    # the main slot; a container may replace it instead. elm-server or elm-service, when the named page
+                    # started the other one, goes into the alongside slot: its first block stops nothing, and a later block
+                    # of the same program stops and replaces only it. A page runs one program alongside (design §20.7,
+                    # V1c4f, Q1 and review R4).
                     $replaced = @($after.Plan.Steps | Where-Object Kind -EQ 'background')[0].Commands[0].Words[0]
-                    if ($program -cne $replaced) { throw "$($lineAt): a How-to page's steps:background starts $replaced again, as $($after.Name) does, or docker run, not $program." }
+                    if ($program -cne $replaced) {
+                        $step.Slot = 'alongside'
+                        if (-not $alongside) {
+                            $alongside = $program
+                            $step.Replaces = $false
+                        }
+                        elseif ($program -cne $alongside) {
+                            throw "$($lineAt): a How-to page runs one program alongside the background process of $($after.Name); it runs $alongside alongside already, not $program."
+                        }
+                    }
                 }
                 # elm-server always serves https, with a certificate of its own key; elm-service serves http unless it is
                 # given a certificate, and http on a loopback address is what its clients take outside production. A
@@ -789,8 +814,13 @@ function Read-Plan([string]$name, [object]$parsed) {
             'prebuilt' {
                 if (-not $attributes.ContainsKey('name') -or $attributes['name'] -cnotin $prebuiltNames) { throw "$($at): steps:prebuilt takes name=elm, name=elm-server, name=elm-service, name=packages, name=libelasticlm, or name=image." }
                 # A How-to page takes the other names from the page that steps:after names; the image is its own (design
-                # §20.7, V1c4d2, review R3).
-                if ($isHowTo -and $attributes['name'] -cne 'image') { throw "$($at): a How-to page has no steps:prebuilt other than name=image; it takes the other names of the page that steps:after names." }
+                # §20.7, V1c4d2, review R3), and so are elm-server and elm-service when the named page does not have them,
+                # such as an elm-server that the page runs alongside the named page's elm-service (design §20.7, V1c4f, Q1
+                # and review R5).
+                if ($isHowTo) {
+                    if ($attributes['name'] -cnotin 'image', 'elm-server', 'elm-service') { throw "$($at): a How-to page has no steps:prebuilt other than name=image, name=elm-server, and name=elm-service; it takes the other names of the page that steps:after names." }
+                    if ($after -and $after.Plan.Prebuilt.Contains($attributes['name'])) { throw "$($at): $($after.Name) has steps:prebuilt name=$($attributes['name']) already, and the page takes it from there." }
+                }
                 if ($attributes['name'] -ceq 'image' -and -not $Docker) { throw "$($at): steps:prebuilt name=image runs only with -Docker." }
                 if (-not $prebuilt.Add($attributes['name'])) { throw "$($at): steps:prebuilt name=$($attributes['name']) is given twice on the page." }
             }
@@ -1045,16 +1075,16 @@ function Get-CapturedValue([string]$at, [object]$step, [object]$result) {
     return $value
 }
 
-# Starts the background command and waits until its ready URL answers 200.
+# Starts the background command in the step's slot and waits until its ready URL answers 200.
 function Start-Background([string]$name, [object]$step, [hashtable]$values, [string]$folder) {
     $command = $step.Commands[0]
     $at = "$($name):$($command.Line)"
     $info = New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $folder -Background
     try { $process = [Diagnostics.Process]::Start($info) }
     catch { throw "$($at): $($command.Shown) could not be started." }
-    # Set before anything else can fail, so that the end of the page stops the process, and a container by its name.
-    $script:background = $process
-    $script:backgroundContainer = $step.Container
+    # Put into its slot before anything else can fail, so that the end of the page stops the process, and a container by
+    # its name (design §20.7, V1c4f, review R4).
+    $script:background[$step.Slot] = [pscustomobject]@{ Process = $process; Container = $step.Container }
     $process.StandardInput.Close()
     # Read and drop the output, so that a full pipe never stops the server.
     [void]$process.StandardOutput.BaseStream.CopyToAsync([IO.Stream]::Null)
@@ -1089,28 +1119,28 @@ function Start-Background([string]$name, [object]$step, [hashtable]$values, [str
     "ok: $($at): $($command.Shown) (background, process $($process.Id))"
 }
 
-# Stops the background process tree and waits for it to end. A container is stopped with docker stop <name>, which sends
-# its process SIGTERM, and the docker CLI that runs it in the foreground then ends; the tree is killed only when the CLI
-# has not ended within the limit of a command (design §20.7, V1c4d2, review R13).
-function Stop-Background {
-    if (-not $script:background) { return }
+# Stops the background process tree of a slot (main or alongside) and waits for it to end. A container is stopped with
+# docker stop <name>, which sends its process SIGTERM, and the docker CLI that runs it in the foreground then ends; the
+# tree is killed only when the CLI has not ended within the limit of a command (design §20.7, V1c4d2, review R13).
+function Stop-Background([string]$slot) {
+    $running = $script:background[$slot]
+    if (-not $running) { return }
     # A docker stop that cannot run (the CLI is gone) still lets the tree be killed; its error is thrown after that.
     $stopError = $null
     try {
-        if ($script:backgroundContainer -and -not $script:background.HasExited) {
+        if ($running.Container -and -not $running.Process.HasExited) {
             try {
-                [void](Invoke-Container @('stop', $script:backgroundContainer))
-                if ($script:background.WaitForExit([int]$commandTimeout.TotalMilliseconds)) { return }
+                [void](Invoke-Container @('stop', $running.Container))
+                if ($running.Process.WaitForExit([int]$commandTimeout.TotalMilliseconds)) { return }
             }
             catch { $stopError = $_ }
         }
-        try { $script:background.Kill($true) } catch [InvalidOperationException] { }
-        $script:background.WaitForExit()
+        try { $running.Process.Kill($true) } catch [InvalidOperationException] { }
+        $running.Process.WaitForExit()
     }
     finally {
-        $script:background.Dispose()
-        $script:background = $null
-        $script:backgroundContainer = $null
+        $running.Process.Dispose()
+        $script:background[$slot] = $null
     }
     if ($stopError) { throw $stopError }
 }
@@ -1233,9 +1263,9 @@ function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$w
             'background' {
                 if ($step.Replaces) {
                     # Stopped and waited for as at the end of a page, so that the new process can open the same database file
-                    # and listen on the same port.
-                    Stop-Background
-                    "ok: $($name):$($block.Line - 1): stopped the background process"
+                    # and listen on the same port. Only the block's own slot is stopped (design §20.7, V1c4f, review R4).
+                    Stop-Background $step.Slot
+                    "ok: $($name):$($block.Line - 1): stopped the background process of the $($step.Slot) slot"
                 }
                 Start-Background $name $step $values $work
             }
@@ -1422,8 +1452,11 @@ function Invoke-Page([string]$path) {
         # A stop or a removal that throws (the container CLI is gone, a daemon error) does not keep the passphrase, the
         # environment, or the folders with keys: its error is kept, the rest of the cleanup runs, and it is thrown after it.
         $cleanupError = $null
-        try { Stop-Background }
-        catch { $cleanupError = $_ }
+        # The process alongside stops first, before the main slot's, each in its own try (design §20.7, V1c4f, review R4).
+        foreach ($slot in 'alongside', 'main') {
+            try { Stop-Background $slot }
+            catch { $cleanupError = $cleanupError ?? $_ }
+        }
         if ($makes) {
             try {
                 $containersLeft = Remove-Container $made
@@ -1484,9 +1517,10 @@ function Get-LeftMessage([string]$name, [string[]]$folders) {
     return $folders.Count -eq 1 ? "$($name): the folder $($folders[0]) was not removed." : "$($name): the folders $($folders -join ' and ') were not removed."
 }
 
-$script:background = $null
-# The container that the background process runs, or $null.
-$script:backgroundContainer = $null
+# The background process of each slot, with the container it runs (or $null), or $null. The main slot holds a page's
+# background process, or the one that a How-to page restarted or replaced; the alongside slot holds the program that a
+# How-to page runs beside it (design §20.7, V1c4f, review R4).
+$script:background = @{ main = $null; alongside = $null }
 $script:msvc = $null
 # The run's passphrase of the page that runs: ELM_KEY_PASSPHRASE of its elm lines, and the background elm-service's
 # ELM_SIGNING_PASSPHRASE.
