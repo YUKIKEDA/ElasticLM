@@ -37,11 +37,11 @@
                                       each, for at most 60 s. The URL's host is 127.0.0.1, localhost, or [::1]: https for
                                       elm-server, with the server's self-signed certificate accepted; https or http for
                                       elm-service and docker. A page has at most one. A How-to page may have any number:
-                                      each either replaces the background process of the page that steps:after names, or
-                                      runs one other program alongside it (below). The process trees are stopped at the
-                                      end of the page, the one alongside first; a docker background is stopped with docker
-                                      stop <name>, and its docker process is then waited for, and killed only after the
-                                      limit of a command (10 minutes).
+                                      each replaces the process of its slot, that of the page that steps:after names or of
+                                      the block before it, or starts the one other program alongside it (below). The
+                                      process trees are stopped at the end of the page, the one alongside first; a docker
+                                      background is stopped with docker stop <name>, and its docker process is then waited
+                                      for, and killed only after the limit of a command (10 minutes).
       steps:file path=<path>          The block's content is written to that path, relative to the work folder, with each
                                       <name> captured earlier on the page replaced by its value. A <name> that the page
                                       captures later, or captures with env, fails before anything runs; any other <...>

@@ -5053,7 +5053,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 書き換える文（R5）: ランナーの頭の説明（行の一覧に V1c4f、`steps:background` の「A page has at most one … each of which replaces」、`steps:prebuilt` の How-to の頁の決まり、`steps:after` の節の置き換えの文）、`Read-Plan` の誤りの文（How-to の頁の `steps:prebuilt` と置き換えのプログラム）。名指した頁が持つ `steps:prebuilt` の名前を書いたときの誤りは、「given twice on the page」ではなく、名指した頁が持つことを言う別の文にする。
     - 読み手が用意するもの（R6）: 頁の初めに「Before you start」を置き、次を書く。`elm-server` を Tutorial 2 と同じリリースから `tools` にダウンロードすること（`steps:prebuilt name=elm-server` の印はこの段落のあと）、ポート 7070 と 7071 が空いていること、Tutorial 2 のサービスを起動し直して `ELM_API_KEY` を入れ直すこと、サーバー用に 3 つ目の端末を開くこと。コマンドのオプション: どの `elm server` のコマンドも `--product acme-cad`、`--data server-data`、`--trust root.pub.pem` が要る（CLI はサーバーの設定を読まない）。`activate`、`refresh`、`import` は `--license server.elmlic` も要り、`activate` と `refresh` は `service.url` があっても `--service http://127.0.0.1:8080` が要る。
     - つなぎ（R7）: 入口の頁の状態の文（英語と日本語）にも足す。`explanation/floating-licenses.md` の有効化と更新の段落からもリンクする。
-    - 再試行の言い方（R8）: 失敗のあとは 1 時間後か、サービスの `Retry-After`（24 時間まで）のあとに試し直し、複製と見なされるか証明が断られるまで続ける、と §13.7 の言い方で書く。
+    - 再試行の言い方（R8）: 失敗のあとは 1 時間後か、サービスの `Retry-After`（24 時間まで）のあとに試し直す。止めるのは、サービスが有効化を知らないとき（`ELM_ACTIVATION_NOT_FOUND`。保存した有効化を消す）、複製と見なしたとき、証明を断ったときである（`ActivationClient.cs` の `Refuse`。正しさのレビューの C3）。§13.7 の言い方で書く。
     - 計測（R9）: `aot` ジョブ（3 つの OS）の Guide steps の時間を、直前の PR #293 の run と比べて PR に書く。Tutorial 2 の写しが 1 つと、`elm-server` の起動が 3 回増える。
     - 時計の巻き戻し（R10）: §13.7 のとおり、別のプロセスの `elm server refresh` のあとの読み込み直しは `ELM_CLOCK_TAMPERED` で断られうる。頁は `refresh` が必ず通るとは書かず、断られたら次の自動の更新を待つかサーバーを起動し直すと 1 文で書く（書く前に §13.7 とコードで、その 2 つで直ることを確かめる）。
 
