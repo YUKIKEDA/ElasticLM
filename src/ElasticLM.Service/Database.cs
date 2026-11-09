@@ -50,7 +50,9 @@ internal abstract partial class Database : IAsyncDisposable
                 EnsureSqlite();
 
                 // Parsed here so that a bad string stops the start, not the first request.
-                var builder = new SqliteConnectionStringBuilder(connectionString) { ForeignKeys = true, DefaultTimeout = 5 };
+                SqliteConnectionStringBuilder builder = ParseSqlite(connectionString);
+                builder.ForeignKeys = true;
+                builder.DefaultTimeout = 5;
                 return new ServiceStore<SqliteDialect>(provider, new SqliteSource(builder.ToString()));
             }
 
@@ -191,6 +193,68 @@ internal abstract partial class Database : IAsyncDisposable
     {
         await Source.DisposeAsync().ConfigureAwait(false);
         GC.SuppressFinalize(this);
+    }
+
+    /// <summary>
+    /// Parses a SQLite connection string. The SQLite built into elm-service has no encryption, and Microsoft.Data.Sqlite would
+    /// refuse a password only when it opens the database, with an <see cref="InvalidOperationException"/>; it is refused here.
+    /// </summary>
+    /// <exception cref="ServiceStartException">The connection string is not valid, or it sets a password.</exception>
+    public static SqliteConnectionStringBuilder ParseSqlite(string connectionString)
+    {
+        SqliteConnectionStringBuilder builder;
+        try
+        {
+            builder = new SqliteConnectionStringBuilder(connectionString);
+        }
+        catch (ArgumentException e)
+        {
+            throw new ServiceStartException("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e));
+        }
+
+        return builder.Password.Length == 0
+            ? builder
+            : throw new ServiceStartException(
+                "The database connection string is not valid: Password is set, and the SQLite of elm-service does not encrypt."
+            );
+    }
+
+    /// <summary>
+    /// Opens a SQLite connection that neither creates the file nor joins SQLite's connection pool, for
+    /// <c>elm-service backup</c> (design §14.2): the mode is read-write (or read-only) whatever the connection string says, and the
+    /// connection waits up to 5 seconds when the database is busy, as the service's connections do.
+    /// </summary>
+    /// <param name="connectionString">The connection string, which the caller has parsed.</param>
+    /// <param name="readOnly">Whether to open the file read-only instead, as for reading a copy back.</param>
+    /// <param name="cancellationToken">Stops the open.</param>
+    /// <exception cref="SqliteException">The file cannot be opened.</exception>
+    public static async Task<SqliteConnection> OpenSqliteFileAsync(
+        SqliteConnectionStringBuilder connectionString,
+        bool readOnly,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(connectionString);
+        EnsureSqlite();
+        var builder = new SqliteConnectionStringBuilder(connectionString.ToString())
+        {
+            Mode = readOnly ? SqliteOpenMode.ReadOnly : SqliteOpenMode.ReadWrite,
+            DefaultTimeout = 5,
+            Pooling = false,
+        };
+        var connection = new SqliteConnection(builder.ToString());
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using DbCommand pragma = Command(connection, null, "PRAGMA busy_timeout = 5000;");
+            await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
     }
 
     // SQLite is built from vendor/sqlite (design §14.2); the provider binds to it by name, once per process.

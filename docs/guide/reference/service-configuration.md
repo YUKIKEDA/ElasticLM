@@ -10,14 +10,17 @@ This page lists every setting of `elm-service`, the hosted activation service th
 
 ```text
 elm-service [setup] [--config <settings.json>]
+elm-service backup --out <path> [--config <settings.json>]
 ```
 
 | Argument | Meaning |
 | --- | --- |
 | `setup` | Prepares the database and makes the first API key instead of starting the service. It must be the first argument. It creates or updates the database tables, then makes a new API key for the administrator in `bootstrapOwner`, with the `owner` permissions, valid for 90 days, and records it in the audit log. The key alone goes to standard output, so `elm-service setup > key.txt` keeps it; the key ID, its first characters, the owner, and the expiry go to standard error. Each run makes another key. |
-| `--config <path>` | The JSON configuration file, for the service and for `setup` alike. Without it, the settings come from environment variables only. See [How settings are given](#how-settings-are-given). |
+| `backup` | Copies the SQLite database into one file instead of starting the service. It must be the first argument, and needs `--out`. The copy is a consistent copy of the database at one moment, also while the service runs and writes; it does not stop the service's writes. `backup` neither migrates the database nor changes its data, does not create a missing database file, and records nothing in the audit log. It reads `Data Source` as a file path only: a URI file name (`file:`) and `|DataDirectory|` are not resolved. It reads the settings as `setup` does, without the signing key, its certificates, `trust.rootKeys`, or the signing key's passphrase, and needs no `bootstrapOwner`. On success it prints one line to standard output, `backup: <path>, schema version <n>`, with the path as given and the newest schema version recorded in the copy. A PostgreSQL database is refused with `Use pg_dump to back up a PostgreSQL database.` |
+| `--out <path>` | With `backup` only: the file to write the copy to. A relative path is read from the working folder. The file must not exist, and its folder must: `backup` does not overwrite a file and does not create folders. The copy is first written under a temporary name in the same folder, `<name>.<random hex>.tmp`, and then renamed to the path. On Linux and macOS the file can be read and written by its owner only (mode 0600); on Windows it takes the access rules of its folder. |
+| `--config <path>` | The JSON configuration file, for the service, `setup`, and `backup` alike. Without it, the settings come from environment variables only. See [How settings are given](#how-settings-are-given). |
 
-Any other argument, `setup` in another place, or `--config` without a path prints the usage (`Usage: elm-service [setup] [--config <file>]`) and exits with 2. There is no `--help`.
+Any other argument, `setup` or `backup` in another place, `--config` or `--out` without a path, `--out` without `backup` or given twice, `--config` given twice with `backup`, or `backup` without `--out` prints the usage (`Usage: elm-service [setup | backup --out <file>] [--config <file>]`) and exits with 2. An `--out` that is empty or white space only prints `The backup file path is empty.` and exits with 2. There is no `--help`.
 
 Exit codes of the service:
 
@@ -35,13 +38,21 @@ Exit codes of `setup`:
 | --- | --- |
 | 0 | The API key was made. |
 | 1 | The database fails: it cannot be used, its schema is newer than this version of `elm-service` or was changed differently by another version, the administrator in `bootstrapOwner` exists but is disabled or holds another role, or the key cannot be recorded. |
-| 2 | The arguments are not valid, a setting error as for the service, `bootstrapOwner` is not set, or the `database` settings cannot be used. |
+| 2 | The arguments are not valid, a setting error as for the service, `bootstrapOwner` is not set, or the `database` settings cannot be used, such as a connection string that sets `Password`: the SQLite built into `elm-service` does not encrypt. |
+
+Exit codes of `backup`:
+
+| Exit code | Meaning |
+| --- | --- |
+| 0 | The copy was written to the `--out` path. |
+| 1 | The database or the backup file fails: the database file does not exist, the connection string names no database file (such as `Data Source=:memory:`), the file is not an `elm-service` database (it has no `schema_migrations` table, or no migration was applied to it), the database cannot be used, the `--out` file exists, or the copy cannot be written. The temporary file is removed. |
+| 2 | The arguments are not valid, a setting error as for the service, the connection string is not valid, or the database is PostgreSQL. |
 
 Before it exits with 1 or 2, `elm-service` prints the reason to standard error.
 
 ## How settings are given
 
-- Settings come from a JSON configuration file, from environment variables, or from both. Pass the file with `--config`, for the service and for `setup` alike:
+- Settings come from a JSON configuration file, from environment variables, or from both. Pass the file with `--config`, for the service, `setup`, and `backup` alike:
 
   ```text
   elm-service --config /etc/elm-service/settings.json
@@ -53,7 +64,7 @@ Before it exits with 1 or 2, `elm-service` prints the reason to standard error.
 - The file is at most 64 KiB. A key that the file does not know (for example a misspelt one) is an error. Key names are case-sensitive.
 - A value in the file may be left out, but not left empty: an empty string, or an empty or `null` entry in a list, is an error, not the default.
 - Secrets are never written in the configuration file. See [Secrets](#secrets).
-- `elm-service setup` does not need `signing.*`, `trust.*`, or the nonce secret. It uses the `database` settings and `bootstrapOwner`.
+- `elm-service setup` does not need `signing.*`, `trust.*`, or the nonce secret. It uses the `database` settings and `bootstrapOwner`. `elm-service backup` uses the `database` settings only.
 - A setting error stops `elm-service` before it starts, and it prints the reason. The exit codes are in [Command line and exit codes](#command-line-and-exit-codes).
 
 ### Environment variable names
