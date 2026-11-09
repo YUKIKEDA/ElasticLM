@@ -4,8 +4,10 @@
 // diagrams comes from the source pages, because the built HTML holds no trace of them until the browser draws them.
 //
 // Usage: node check-mermaid.mjs [--build <folder>] [--browser <executable>] [--jobs <n>]
-// The browser defaults to google-chrome on Linux and to Microsoft Edge on Windows; --browser or the environment
-// variable MERMAID_CHECK_BROWSER names another Chromium-based browser. Only Node.js built-ins are used.
+// The browser defaults to Microsoft Edge on Windows, the Google Chrome app on macOS, and google-chrome on Linux;
+// --browser or the environment variable MERMAID_CHECK_BROWSER names another Chromium-based browser. A page that does
+// not settle within the page limit is checked once more in a new browser context, and the line says so. Only Node.js
+// built-ins are used.
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -124,6 +126,12 @@ function launch(executable, profile) {
     'about:blank',
   ];
   const child = spawn(executable, args, { stdio: ['ignore', 'ignore', 'pipe', 'pipe', 'pipe'] });
+  // A missing executable is reported asynchronously; nothing is written to the pipe before the process has started.
+  const started = new Promise((done, reject) => {
+    child.once('spawn', done);
+    child.once('error', (error) => reject(new Error(`cannot start the browser: ${executable} (${error.message})`)));
+  });
+  started.catch(() => {});
   let stderr = '';
   child.stderr.on('data', (chunk) => {
     stderr = (stderr + chunk).slice(-4000);
@@ -140,8 +148,20 @@ function launch(executable, profile) {
     }
     pending.clear();
   };
-  child.on('error', fail);
-  child.on('exit', (code) => fail(new Error(`The browser exited (${code}). ${stderr.trim()}`)));
+  child.on('error', (error) =>
+    fail(
+      child.pid === undefined
+        ? new Error(`cannot start the browser: ${executable} (${error.message})`)
+        : new Error(`the browser failed: ${error.message}`),
+    ),
+  );
+  child.on('exit', (code, signal) =>
+    fail(new Error(`the browser exited (${signal ?? code}) during the check. ${stderr.trim()}`.trim())),
+  );
+  // A write to or a read from a pipe of a browser that is gone fails the connection instead of the process.
+  for (const pipe of [child.stdio[3], child.stdio[4]]) {
+    pipe?.on('error', (error) => fail(new Error(`the connection to the browser failed: ${error.message}`)));
+  }
   child.stdio[4].on('data', (chunk) => {
     buffer = Buffer.concat([buffer, chunk]);
     let end;
@@ -163,9 +183,10 @@ function launch(executable, profile) {
       }
     }
   });
-  const send = (method, params = {}, sessionId = undefined) => {
+  const send = async (method, params = {}, sessionId = undefined) => {
+    await started;
     if (closed) {
-      return Promise.reject(closed);
+      throw closed;
     }
     const id = nextId++;
     return new Promise((resolveCall, reject) => {
@@ -173,16 +194,22 @@ function launch(executable, profile) {
       child.stdio[3].write(`${JSON.stringify({ id, method, params, sessionId })}\0`);
     });
   };
+  // Waits for the process only while it runs: a process that has exited, was killed by a signal, or never started
+  // emits no further exit event.
   const close = async () => {
-    if (child.exitCode === null) {
-      const exited = new Promise((done) => child.once('exit', done));
-      await send('Browser.close').catch(() => {});
-      const timer = setTimeout(() => child.kill('SIGKILL'), 5000);
-      await exited;
-      clearTimeout(timer);
+    if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
+      return;
+    }
+    const exited = new Promise((done) => child.once('exit', done));
+    await Promise.race([send('Browser.close').catch(() => {}), exited, sleep(5000)]);
+    if (child.exitCode === null && child.signalCode === null) {
+      child.kill('SIGKILL');
+      if ((await Promise.race([exited.then(() => true), sleep(5000).then(() => false)])) === false) {
+        throw new Error(`the browser (process ${child.pid}) did not exit after SIGKILL`);
+      }
     }
   };
-  return { send, listeners, close };
+  return { send, listeners, close, started, closed: () => closed };
 }
 
 // Installed in each page before its scripts run: the time of the last change inside or of a diagram container.
@@ -214,14 +241,41 @@ const probe = `(() => {
 
 const sleep = (ms) => new Promise((done) => setTimeout(done, ms));
 
+// The page's console errors, uncaught exceptions, and error log entries, as one line each.
+function pageError(message) {
+  const { method, params } = message;
+  if (method === 'Runtime.consoleAPICalled' && params.type === 'error') {
+    return `console: ${params.args.map((arg) => arg.value ?? arg.description ?? arg.type).join(' ')}`;
+  }
+  if (method === 'Runtime.exceptionThrown') {
+    const details = params.exceptionDetails;
+    return `exception: ${details.exception?.description ?? details.text}`;
+  }
+  if (method === 'Log.entryAdded' && params.entry.level === 'error') {
+    return `log: ${params.entry.text}${params.entry.url ? ` (${params.entry.url})` : ''}`;
+  }
+  return null;
+}
+
 async function checkPage(browser, url, scheme, expected) {
   const { browserContextId } = await browser.send('Target.createBrowserContext');
+  const errors = [];
+  let listener = null;
   try {
     const { targetId } = await browser.send('Target.createTarget', { url: 'about:blank', browserContextId });
     const { sessionId } = await browser.send('Target.attachToTarget', { targetId, flatten: true });
+    listener = (message) => {
+      const error = message.sessionId === sessionId ? pageError(message) : null;
+      if (error !== null) {
+        errors.push(error.replace(/\s+/g, ' ').slice(0, 300));
+      }
+    };
+    browser.listeners.add(listener);
     const send = (method, params) => browser.send(method, params, sessionId);
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: scheme }] });
     await send('Page.enable');
+    await send('Runtime.enable');
+    await send('Log.enable');
     await send('Page.addScriptToEvaluateOnNewDocument', { source: observer });
     const started = performance.now();
     await send('Page.navigate', { url });
@@ -229,7 +283,13 @@ async function checkPage(browser, url, scheme, expected) {
     let matchedAt = null;
     while (performance.now() - started < pageLimitMs) {
       await sleep(100);
-      const { result } = await send('Runtime.evaluate', { expression: probe, returnByValue: true }).catch(() => ({}));
+      // An evaluation can fail while the page navigates; once the connection to the browser is gone, nothing will.
+      const { result } = await send('Runtime.evaluate', { expression: probe, returnByValue: true }).catch((error) => {
+        if (browser.closed() !== null) {
+          throw error;
+        }
+        return {};
+      });
       state = result?.value ?? null;
       if (state === null || !state.hydrated || state.drawn.length !== expected) {
         matchedAt = null;
@@ -256,11 +316,19 @@ async function checkPage(browser, url, scheme, expected) {
         problems.push(`no svg in container ${empty.join(', ')}`);
       }
     }
-    if (elapsed >= pageLimitMs) {
+    const timedOut = elapsed >= pageLimitMs;
+    if (timedOut) {
       problems.push(`not settled within ${pageLimitMs / 1000} s`);
     }
-    return { containers: state?.drawn.length ?? 0, elapsed, problems };
+    if (problems.length > 0 && errors.length > 0) {
+      const shown = errors.slice(0, 5).join(' | ');
+      problems.push(`page errors: ${shown}${errors.length > 5 ? ` | and ${errors.length - 5} more` : ''}`);
+    }
+    return { containers: state?.drawn.length ?? 0, elapsed, problems, timedOut };
   } finally {
+    if (listener !== null) {
+      browser.listeners.delete(listener);
+    }
     await browser.send('Target.disposeBrowserContext', { browserContextId }).catch(() => {});
   }
 }
@@ -330,24 +398,39 @@ async function main() {
     const worker = async () => {
       while (next < work.length) {
         const { page, scheme } = work[next++];
-        const result = await checkPage(browser, origin + page.path, scheme, page.expected);
+        let result = await checkPage(browser, origin + page.path, scheme, page.expected);
+        // A page that did not settle is checked once more in a new browser context; a second timeout fails.
+        let retried = '';
+        if (result.timedOut) {
+          console.log(`retry ${scheme.padEnd(5)} ${page.path}: ${result.problems.join('; ')}`);
+          result = await checkPage(browser, origin + page.path, scheme, page.expected);
+          retried = ' (retried)';
+        }
         totals[scheme] += result.containers;
         const status = result.problems.length === 0 ? 'ok  ' : 'FAIL';
         const detail = result.problems.length === 0 ? '' : `: ${result.problems.join('; ')}`;
         console.log(
           `${status} ${scheme.padEnd(5)} ${page.path} ${result.containers}/${page.expected} diagrams, ` +
-            `${(result.elapsed / 1000).toFixed(1)} s${detail}`,
+            `${(result.elapsed / 1000).toFixed(1)} s${retried}${detail}`,
         );
         if (result.problems.length > 0) {
-          failures.push(`${scheme} ${page.path}${detail}`);
+          failures.push(`${scheme} ${page.path}${retried}${detail}`);
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(jobs, work.length) }, worker));
   } finally {
-    await browser.close();
-    server.close();
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    // Each step runs even if the one before it fails, so neither the server nor the profile folder is left behind.
+    try {
+      await browser.close();
+    } finally {
+      try {
+        server.closeAllConnections();
+        server.close();
+      } finally {
+        rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      }
+    }
   }
 
   for (const scheme of schemes) {
@@ -366,4 +449,9 @@ async function main() {
   }
 }
 
-await main();
+try {
+  await main();
+} catch (error) {
+  console.error(`check-mermaid: ${error.message}`);
+  process.exitCode = 1;
+}
