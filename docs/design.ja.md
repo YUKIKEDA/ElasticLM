@@ -4151,7 +4151,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 ほかに変えるもの:
 
 - Dependabot に `docker`（`/eng/container`）を足す。`cooldown` は、MCR では公開の日を取れないので今は効かないが、MCR が出すようになれば効くので、ほかの ecosystem とそろえて 7 日を書く（T27）。
-- 運用の文書 `docs/container.md`（英語）:
+- 運用の文書 `docs/container.md`（英語）。V1c4d2 の Grill の Q5 で、下の利用者向けの中身は How-to の頁（V1c4d2a）に移し、`docs/container.md` にはイメージの作り方と確かめ方だけを残す:
   - `docker run` と Kubernetes の例。`docker run … <イメージ> setup --config <ファイル>` の形（`setup` が先。`elm-service` の引数は `[setup] [--config <file>]`）と、`setup` にも `ELM_PUBLICURLS` が要ること。
   - 設定ファイルと秘密のファイルのマウント。秘密のファイルは UID 1654 が読める必要がある（Kubernetes の Secret では `defaultMode` か `fsGroup`）。環境変数は `docker inspect` や Pod の定義に見えるので、ファイルを勧める。
   - `/data`: 名前つきのボリュームをつなぐ（試しで確かめた形）。何もつながずに起動すると無名のボリュームになり、コンテナを作り直すとデータを失う。Kubernetes の PersistentVolumeClaim では `securityContext.fsGroup: 1654`、ホストのフォルダーをつなぐなら UID 1654 に持ち主を変える。
@@ -4197,10 +4197,10 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1c14 | V1c4d1 の Grill の Q1 で足した行。`elm-service backup` で SQLite のデータベースを写す（§14.2 の「バックアップ」、Issue #272）。V1c13 のあと、V1c4d1 の前に置く |
 | V1c4d1 | V1c4d の Grill の Q1 で V1c4d から分けた行。`elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新）。決めた形は下の「V1c4 の形」の「V1c4d1 の Grill」（Issue #272）。V1c14 のあとに置く |
 | V1c4d2a | V1c4d2 の Grill の Q1 で V1c4d2 から分けた行。`elm-service` をコンテナーで動かす頁と PostgreSQL で動かす頁（英語と日本語）、その手順を流す `release.yml` の Linux の新しいジョブ、手順を流す仕組みの `docker` の行、`docs/container.md` の中身を頁に移すこと、`CONTRIBUTING.md` のイメージを手元で作る節。決めた形は下の「V1c4 の形」の「V1c4d2 の Grill」（Issue #280）。V1c4d1 の Grill から、PostgreSQL のバックアップ（`pg_dump`。`elm-service backup` は PostgreSQL を断る、§14.2）と、複数のノードで版を更新する順（移行の助言ロック、古い版のノードが新しいデータベースを断ること）を引き継ぐ。コンテナーで `elm-service backup` を流す書き方（イメージの `ENTRYPOINT` と `/data`）もこの行の頁が持つ（V1c14 の設計の独立レビューの R14、R16）。V1c4d1 のあとに置く |
-| V1c4d2b | V1c4d2 の Grill の Q1 で V1c4d2 から分けた行。OIDC での管理者のログインの頁（英語と日本語）。IdP の設定と運用者への勧め（V1c4d の Grill の Q1）と、Entra ID の手順（本文だけ）を持つ。CI が確かめる範囲は、承認より前と承認の要らない道まで（V1c4d2 の Grill の Q4）で、細部はこの行の Grill で決める。V1c4d2a のあとに置く |
+| V1c4d2b | V1c4d2 の Grill の Q1 で V1c4d2 から分けた行。OIDC での管理者のログインの頁（英語と日本語）。IdP の設定と運用者への勧め（V1c4d の Grill の Q1）と、Entra ID の手順（本文だけ）を持つ。CI が確かめる範囲は、承認より前と承認の要らない道まで（V1c4d2 の Grill の Q4）。この行の Grill で決める点: 流すジョブ（V1c4d2a の Linux のジョブに足すか）、読み手が Keycloak の realm をどう手に入れるか（`tests/keycloak/elm-realm.json` は読み手の手元にない）、名指す Tutorial、Keycloak のポート（`ci.yml` は 8180）、Web のクライアントの秘密の置き方（V1c4d2 の設計の独立レビューの R20）。V1c4d2a のあとに置く |
 | V1c4f | V1c4c の Grill の Q4 で足した行。`elm-service` で `elm-server` のサーバーライセンスを有効化し、オンライン（`service.url`、`elm server refresh`）とオフライン（`elm server refresh-request` と `import`）で更新する How-to の頁（英語と日本語）。どの Tutorial もこのサーバーを作らないので、名指す Tutorial と流し方はこの行の Grill で決める。頁は `elm-service` と `elm-server` を同時に動かすので、1 頁に裏のプロセスは 1 つまでの手順を流す仕組みの決まり（上の「V1c4 の形」の Q5 の R4）を変えるかも、この行で決める（V1c4c の設計の独立レビューの R10）。V1c4d2b のあとに置く |
 | V1d | 見直しの範囲（コード、テスト、計測、文書、ワークフロー）、レビュアーの数と分け方 |
-| V1e | `-rc.N` で確かめることと正式版に進む条件、rc のタグを GitHub のプレリリースだけにする `release.yml` の変更（§20.5 の「V1e で変えること」。V1c3e の記録の途中の持ち主の決定 D2）: `publish` をプレリリースの後ろのない版のタグだけで動かすこと、rc の下書きの Release をどのジョブがどの承認のあとにプレリリースとして公開するか（T22 は Release の公開を environment `release` の承認のあとのジョブに限る）、サイトの公開のジョブを rc でどうするか（今は `needs` で `publish` を待つ）、rc が通さない公開の段（nuget.org と GHCR への push、イメージの証明、GHCR の package を public にすること。§20.5 の「V1e で変えること」）を正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか。V1c3e の設計のレビューの R1）、`docs/releasing.md` の試しの手順（rc のプレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れる。試しの期間の Tutorials の形を指す）、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか（rc は nuget.org に置かないので、`1.0.0-rc.1` にするならその基準の取り方も）、持ち主の試しの記録（rc のプレリリースそのものに対して、試しの期間の形の Tutorial を Windows、Linux、macOS の 3 つで手で一度ずつ流し、OS ごとに、Windows の SmartScreen と Smart App Control が署名のない `.exe` に何を出したか、macOS の quarantine（`SECURITY.md` の `xattr`）、Linux の実行の権限、PATH への足し方を記録する。下の「V1c3 の形」の「V1c3e の Grill」の Q5、V1c3e の設計のレビューの R12）、rc の版にする PR での `SECURITY.md` の「Nothing is released yet.」と `CONTRIBUTING.md` の「Nothing is published yet.」の書き換え（V1c3e の設計のレビューの R10）、利用者の文書を nuget.org の形に切り替える 1 つの PR（正式版のタグの前。頁から `packages` のダウンロード、`nuget.config`、`--prerelease`、`--source packages` を外し、README と `README.ja.md` の Status の 1 行を外し、入口の頁の試しの期間の文と各頁のプレリリースの文を書き換え、CI が頁を流して確かめる。CI が nuget.org の形の頁をどう置き換えるかも決める。V1c3e の記録の途中の持ち主の決定 P3）、その PR の前に nuget.org の ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るか（P3。D3 を改めた決定）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5） |
+| V1e | `-rc.N` で確かめることと正式版に進む条件、rc のタグを GitHub のプレリリースだけにする `release.yml` の変更（§20.5 の「V1e で変えること」。V1c3e の記録の途中の持ち主の決定 D2）: `publish` をプレリリースの後ろのない版のタグだけで動かすこと、rc の下書きの Release をどのジョブがどの承認のあとにプレリリースとして公開するか（T22 は Release の公開を environment `release` の承認のあとのジョブに限る）、サイトの公開のジョブを rc でどうするか（今は `needs` で `publish` を待つ）、rc が通さない公開の段（nuget.org と GHCR への push、イメージの証明、GHCR の package を public にすること。§20.5 の「V1e で変えること」）を正式版のタグの前にどう確かめるか（落ちたら `1.0.1` に進むことを受け入れるか、テストのフィードなどで前もって試すか。V1c3e の設計のレビューの R1）、`docs/releasing.md` の試しの手順（rc のプレリリースの `.nupkg` を置いたフォルダーをローカルのフィードにして入れる。試しの期間の Tutorials の形を指す）、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則の記録（V1c1 から移した。持ち主が Pages の source を設定していなかったため）、`PackageValidationBaselineVersion` の基準を `1.0.0-rc.1` と `1.0.0` のどちらにするか（rc は nuget.org に置かないので、`1.0.0-rc.1` にするならその基準の取り方も）、持ち主の試しの記録（rc のプレリリースそのものに対して、試しの期間の形の Tutorial を Windows、Linux、macOS の 3 つで手で一度ずつ流し、OS ごとに、Windows の SmartScreen と Smart App Control が署名のない `.exe` に何を出したか、macOS の quarantine（`SECURITY.md` の `xattr`）、Linux の実行の権限、PATH への足し方を記録する。下の「V1c3 の形」の「V1c3e の Grill」の Q5、V1c3e の設計のレビューの R12）、rc の版にする PR での `SECURITY.md` の「Nothing is released yet.」と `CONTRIBUTING.md` の「Nothing is published yet.」の書き換え（V1c3e の設計のレビューの R10）、利用者の文書を nuget.org の形に切り替える 1 つの PR（正式版のタグの前。頁から `packages` のダウンロード、`nuget.config`、`--prerelease`、`--source packages` を外し、README と `README.ja.md` の Status の 1 行を外し、入口の頁の試しの期間の文と各頁のプレリリースの文を書き換え、CI が頁を流して確かめる。CI が nuget.org の形の頁をどう置き換えるかも決める。V1c3e の記録の途中の持ち主の決定 P3）、その PR の前に nuget.org の ID の接頭辞 `ElasticLM.` を予約するか、先に公開して名前を取るか（P3。D3 を改めた決定）、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流すこと（Q5）、コンテナーの頁の「最初の正式版まではイメージを公開しない」の文を外すこと（V1c4d2 の設計の独立レビューの R19） |
 | V1e1 | V1c4d1 の Grill の Q3 で足した行。前のリリースの `elm-service` を取ってきてデータベースを作り、新しい版で起動して移行が流れることを確かめる CI の段と、版の更新の How-to の頁をその段で流すこと。どのワークフローに置くか、前のリリースの取り方と確かめ方（`SHA256SUMS`、`gh attestation`）、手順を流す仕組みで 2 つの版の `elm-service` を流す変更（今は `-ElmService` のパスと `steps:prebuilt name=elm-service` が 1 つずつ。古い版を受け取る引数と prebuilt の名前）は、この行の Grill で決める。V1e のあとに置く。`1.0.0` の前（rc.N から）に置かないのは、rc と `1.0.0` の間には移行がないと見込まれ、その更新では移行が流れず確かめる意味が薄いためで、最初に移行が流れる `1.0.0` から次の版への更新を確かめる（V1c14 の設計の独立レビューの R15、持ち主の決定 A） |
 
 行をまたいで決めてあること:
@@ -4208,7 +4208,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 - V1d は、V1a〜V1c4 のコード、テスト、計測、文書を見直す。見つかったものはそれぞれ Issue にし、V1e は、そのすべてが直されるか（それぞれのバグの PR）、§5.4 の受け入れた脅威に書かれるまで公開しない。V1e で足す文書と変更は、V1e の設計のレビューで見る。
 - V1b のあとの修正（V1d の見つけたものを含む）が §4.2 の目標に関わるなら、その PR で測り直す（§4.2 の「各行の PR で測る」）。
 - V1e は、版を `1.0.0` にする PR で、`Directory.Build.props` の `VersionPrefix` を `1.0.0` にし、`CHANGELOG.md` と `CONTRIBUTING.md` の `1.0` より前の決まり（0.x のマイナー版で公開 API・ライセンストークンの形式・プロトコルを壊してよい）を外す。
-- V1e の最初の rc より前に、手順を実際に流すレビュー（V1c3d と V1c3c の初見の読み手、V1c4d2 の How-to の頁のうち、その行の Grill で PR で一度流すと決めたもの（外の環境の要らない How-to の頁は CI の `aot` ジョブで流す。下の「V1c4 の形」の Q2））は、`aot` ジョブと同じく発行した実行ファイルとライブラリと、プレリリースの版（`-p:VersionSuffix=ci.<番号>`）で pack した `.nupkg` を使い、頁のとおり `tools` と `packages` に置いて流す。ダウンロードの段落は読むだけにする（V1c3e の設計のレビューの R12。V1c3e の初見の読み手と同じ形。下の「V1c3 の形」の「V1c3e の Grill」の「レビュー」）。
+- V1e の最初の rc より前に、手順を実際に流すレビュー（V1c3d と V1c3c の初見の読み手（How-to の頁は CI で流す。外の環境の要らない頁は `aot` ジョブで、コンテナーと PostgreSQL の頁は `release.yml` の Linux のジョブで。下の「V1c4 の形」の Q2 と「V1c4d2 の Grill」））は、`aot` ジョブと同じく発行した実行ファイルとライブラリと、プレリリースの版（`-p:VersionSuffix=ci.<番号>`）で pack した `.nupkg` を使い、頁のとおり `tools` と `packages` に置いて流す。ダウンロードの段落は読むだけにする（V1c3e の設計のレビューの R12。V1c3e の初見の読み手と同じ形。下の「V1c3 の形」の「V1c3e の Grill」の「レビュー」）。
 
 #### V1a の形（0.113）
 
@@ -4378,7 +4378,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
   - サイトは `i18n.locales` に `en` と `ja` を置き、英語を `/ElasticLM/`、日本語を `/ElasticLM/ja/` に出し、上のバーの `localeDropdown` で切り替える。検索の plugin の `language` を `en` と `ja` にし、日本語の索引も作る（V1c1 で確かめた）。
   - Docusaurus は、言語ごとの文書を `i18n/<言語>/docusaurus-plugin-content-docs/current/` からしか読まない（`@docusaurus/utils` の `getPluginI18nPath`）。設定ではほかの場所を向けられないので、`website/sync-guide-ja.mjs` が、ビルドと `start` の前に `docs/guide.ja/` をそこへ写す。写した先は git に入れない。サイトの区分の名前などの訳は `website/i18n/ja/docusaurus-plugin-content-docs/current.json` に置き、テーマの文言は Docusaurus に入っている日本語を使う。
   - まだ訳のない英語の頁があると、日本語のサイトで、その頁からのリンクが解決できずにビルドが落ちた。英語と日本語の頁は同じ PR でそろえる。
-- `docs/container.md` と `SECURITY.md` は今の場所に残し、頁から GitHub のその文書を指す（Q8）。リンクは `main` を指す。サイトはタグから作るので、出していない版の手順が見えることがあるが、1.0 まではそれを受け入れ、版を指すリンクは版ごとの公開（roadmap の A-6）で扱う（持ち主の決定、Issue #190 の R7）。
+- `docs/container.md` と `SECURITY.md` は今の場所に残し、頁から GitHub のその文書を指す（Q8）。リンクは `main` を指す。サイトはタグから作るので、出していない版の手順が見えることがあるが、1.0 まではそれを受け入れ、版を指すリンクは版ごとの公開（roadmap の A-6）で扱う（持ち主の決定、Issue #190 の R7）。（V1c4d2 の Grill の Q5 で、利用者向けの中身を How-to の頁に移すと改めた）
 - Docusaurus 3.10 は 3 の系統の最後の版で、4 が出ると 3 は重い安全性の修正だけを 3 か月受けて終わる（https://docusaurus.io/community/release-process 、https://docusaurus.io/blog/releases/3.10 ）。4 への移行は roadmap の A-9。
 
 #### V1c2 の形
@@ -4772,7 +4772,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - CI での流し方: 新しい印 `<!-- steps:after page=<頁> -->` を、How-to の頁の手順の印より前に 1 つ置く。手順を流す仕組みは、同じ作業フォルダーで先にその頁の手順を流し、その頁の裏のプロセス（Tutorial 2 の `elm-service`）を止めずに、続けて How-to の手順を流し、How-to の頁の終わりに止める。決まり（R4）:
     - 印は `docs/guide/how-to/` の頁にだけ、1 つだけ、独立の行として、ほかのどの手順の印よりも前に置く。`page` はリポジトリの直下からのパスで書く（`sample:` の印と同じ。実装で決めた）。名指せるのは `docs/guide/tutorials/` の頁だけで、Tutorials の頁は `steps:after` を持てないので、連鎖しない。How-to の頁は、`steps:after` の有無によらず `steps:prebuilt` を持てない（実装で決めた）。
     - 名指した頁の `steps:prebuilt` と、`capture` で取った値（`env` で取った `ELM_API_KEY` を含む）を引き継ぐ。How-to の頁の `dotnet add … package` の行と `<product-id>` などは、その引き継いだもので通る。
-    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。
+    - How-to の頁は `steps:prebuilt` を持たない。`steps:background` は、V1c4b の Grill の Q1（下）で、引き継いだ裏のプロセスを置き換える 1 つだけを持てるようにした（それまでは持たないとしていた。1 頁に裏のプロセスは 1 つまでの決まりは続く）。V1c4d2 の設計の独立レビューの R3 と R5 で、`steps:prebuilt name=image` を許し、置き換える `steps:background` を複数持てるようにした（同時に動くのは 1 つのまま）。
     - 名指した頁と同じ名前の値を How-to の頁がもう一度取れば、今のとおり「2 度取った」として落ちる。
     - `steps:after` の印は、`steps:prebuilt` と同じく訳の頁にも同じ形で要り、訳の確かめが比べる。
     - 名指した頁が落ちれば、How-to の頁も落ちる。作業フォルダーと鍵は、How-to の頁の終わりに今のとおり消す。
@@ -4884,7 +4884,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - コマンドの形（Q1）、書き先（Q2）、元のデータベースの扱い（Q3）、監査とログ（Q4）、戻すコマンドを作らないこと（Q5）は §14.2 に書いた。
   - 文書、テスト、レビュー（Q6）: Reference の `service-configuration.md`（英語と日本語）のコマンドの節を、この行の PR で直す。テストは `ElasticLM.Service.Tests` に置く: 書き込みの最中に取った写し、書き先がある、元のファイルがない、PostgreSQL、`elm-service` のデータベースでない、新しい版のデータベース、Unix のモード 0600、写しで `elm-service` が起動して取った時点のデータを持つこと。NativeAOT の発行で確かめる。進め方は、設計の部分、設計の独立レビュー、実装、正しさのレビュー、Reference の日本語のレビュー（書き手と別）。
 
-- V1c4d2 の Grill（Issue #280 に記録した。Q1〜Q12。持ち主の決定はすべて推奨案で、退けた案は design-decisions.md にある）: `elm-service` の運用の、外の環境が要る頁。
+- V1c4d2 の Grill（Issue #280 に記録した。Q1〜Q12。持ち主の決定はすべて推奨案で、Q1〜Q6 の退けた案は design-decisions.md にある。そのあと設計の独立レビュー（R1〜R24）で改めた（下の箇条））: `elm-service` の運用の、外の環境が要る頁。
   - 調べた事実（2026-11-09、`main` の 3d2eeb2）:
     - PostgreSQL 18 と Keycloak 26.8.0 は、`ci.yml` の Linux の段で `docker run` で立てる（digest で固定）。realm は `tests/keycloak/elm-realm.json`（`elm-cli`、`elm-web`、`elm-test-direct`、ユーザー `alice`、グループ `elm-owners`）。
     - イメージは `release.yml` の `image` ジョブが作り、PR でも流れる。`image-test` は amd64 と arm64 で起動を確かめる。`ci.yml` はイメージを作らない。
@@ -4915,6 +4915,27 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - イメージの固定（Q10）: PostgreSQL と Keycloak は `ci.yml` と同じ digest にし、補助コンテナーは `busybox` を digest で固定する。頁と `ci.yml` の digest がそろうことを確かめる（手順を流す仕組みのテストか `Test-GuideSteps.ps1` の確かめ）。
   - イメージを手元で作る手順（Q11）: `CONTRIBUTING.md` の「Build from source」に節を足す（`eng/release/Publish-Rid.ps1 -Rid linux-x64` と圧縮ファイル、`eng/container/Build-Image.ps1` で 1 つのアーキテクチャーのイメージ、`docker load`。Windows では WSL の中で流す）。`Build-Image.ps1` が 1 つのアーキテクチャーで作れるかは実装で確かめ、作れなければ引数を足す。
   - 測ることとレビュー（Q12）: PR で、新しいジョブの時間と `release.yml` の全体の時間を `main` と比べて書く。レビューは、設計の独立レビュー、正しさのレビュー、初見の読み手のレビュー（手元の Windows で `wslc` を使い、頁の `docker` を `wslc` に読み替えて流し、違いを書く。`testing.mdc` は Docker でなく `wslc` を使う）、日本語のレビュー（書き手と別）。指摘は表にして、PR を ready にする前に PR か Issue に載せる。
+  - 設計の独立レビュー（R1〜R24、Issue #280）で改めた形。持ち主の決定（R2、R5、R9〜R11、R14〜R16）はすべて推奨案:
+    - 飛ばし方（R1）: `docker` の行を 1 つでも持つ頁は、`-Docker` がなければ頁ごと飛ばして `skip: <頁>` と出す。`steps:after` が名指す Tutorial を写しの元として数えるときも、その頁を外す。新しいジョブは `-Docker -Page <2 頁>` で流す。
+    - `docker` の行と値の取り出し（R2、持ち主の決定 A）: `docker` の行を持つ頁は全体を Linux 向けにする（R14）。`docker` の行は `os` のないブロックに置けるようにし、`capture`（API キーの `env=ELM_API_KEY` を含む）を許す。
+    - イメージの印（R3）: How-to の頁にも、`steps:prebuilt` のうち `name=image` だけを許す（上の「V1c4a の Grill」の Q5 の R4 の「How-to の頁は `steps:prebuilt` を持たない」を、この 1 つについて改める）。
+    - 裏のプロセス（R4）: `steps:background` の `docker run --rm --name <名前> …` は、名指した頁の `elm-service` を置き換える（同じプログラムでなくてよい、`docker` の行のときだけ）。ready は `http://127.0.0.1:<port>/health`。8090 を使うのは、読み手が Tutorial 2 のサービスを 8080 で止めずに残せるためで、頁にもそう書く（CI では置き換えで Tutorial 2 のサービスは止まる）。
+    - 起動し直しの数（R5、持ち主の決定 A）: How-to の頁は `steps:background` を複数持てる。それぞれ前のものを止めて置き換え、同時に動くのは 1 つのまま。上の「V1c4b の Grill」の Q1 の「1 つだけ」を改める。
+    - `publicUrls` と `node.name`（R6）: `container.json` に書く。`setup` と `backup` も `ServiceSettings.Load` を通り、イメージの `ELM_LISTEN`（`0.0.0.0:8080`）はループバックでないので、`publicUrls` がないと終了コード 2 になるため。3 つの `docker run` が同じ設定を読む。
+    - シェルを通さない形（R7）: 手順を流す仕組みは行をシェルに渡さないので、`$PWD`、`$(…)`、行の継続、`<`、`|` を使わない。秘密のファイルと設定は、`docker create`（補助コンテナー、`--network none`）、`docker cp`、そのコンテナーでの `chown 1654` と `chmod 0400` の順で `elm-config` に入れる。SQL は `steps:file` で `.sql` を書き、`docker cp` で入れて `psql -f` で流す。二重引用符の中の `'` は使わない。
+    - イメージの読み込み（R8）: `-Image` の OCI layout の tar（2 つのアーキテクチャー）は、amd64 の manifest から docker の `manifest.json` を書いてから `docker load` する（Docker 28 の classic image store は OCI layout を読まない、PR #170）。変換は `eng/container/Test-Image.ps1` と共通の関数にする。
+    - イメージの名前（R9、持ち主の決定 A）: 頁の行は決まった名前 `elm-service` を使う。読み手は本文の手順で digest を指定して pull し、`docker tag` でその名前を付ける。正式版の前は `CONTRIBUTING.md` の手順でその名前で作る。CI では `steps:prebuilt name=image` がその名前を付ける。
+    - 新しいジョブ（R10、持ち主の決定 A）: `needs: [version, build, pack, image]`。setup-dotnet（`DOTNET_SDK_VERSION`）、`archives-linux-x64` の `.tar.gz` の展開、`packages` の `.nupkg`、`-Page` で 2 頁だけ（`-ElmServer` と `-Library` は渡さない）。権限は `contents: read` だけで、何もアップロードしない（T22、T27）。`checksums` の `needs` に入れ、頁が落ちたら下書きを作らない。`timeout-minutes` は実装で測って決め、PR に書く。
+    - パスフレーズ（R11、持ち主の決定 A）: 試しでは値を書かない `-e ELM_SIGNING_PASSPHRASE` のままにし、値が `docker inspect` に見えることを頁に書いて、本番では `signing.passphraseFile` を勧める。
+    - 補助のイメージ（R12）: §21 に `postgres:18` と `busybox` の行を足し、digest の更新の手順を書く。補助コンテナーは `--network none` で動かす。
+    - 片づけ（R13）: 頁が作ったコンテナーは `docker rm -f -v` で消し（postgres のイメージの無名のボリュームも消す）、頁が落ちたときも `finally` で消す。頁の前に同じ名前のコンテナーかボリュームがあれば落とす（開発者の手元のものを消さないため）。`docker stop` のあとは CLI のプロセスの終わりを待つ。
+    - OS（R14、持ち主の決定 A）: 2 頁は冒頭で「Linux のホスト向け」と書き、Windows と macOS の読み手には WSL や Linux の VM を案内する。
+    - イメージを手元で作る道（R15、持ち主の決定）: `Build-Image.ps1` に `-Platform`（1 つのアーキテクチャー）と docker 形式の出力の引数を足す。`CONTRIBUTING.md` には、Linux（WSL の distro を含む）で Docker を使い、`Publish-Rid.ps1 -Rid linux-x64`、`Pack-Rid.ps1`、`Build-Image.ps1` で作る手順を書く。`wslc build` で作れるかは実装で試して書く。
+    - 頁を手元で流す道（R16、持ち主の決定）: 手順を流す仕組みに `-ContainerCli`（既定は `docker`）を足す。`wslc` が要る subcommand（`volume`、`exec`、`cp`、`load`）に応じれば、手元の確かめと初見の読み手のレビューは `wslc` で流す。応じなければ、一時のワークフローで流して PR に書く。
+    - 頁の細部（R21、R22）: PostgreSQL は `-p 127.0.0.1:5432:5432` で立てる（手元に PostgreSQL がある読み手は 5432 がぶつかると書く）。写しはコンテナーの中にできるので `docker cp` で取り出して別に置く。自分のサーバーの読み手には、`docker exec` を使わない形（サーバーと同じ版の `pg_dump`）を書く。`pg_restore` は `--no-owner` で戻す。パスワードを含む接続のファイルは 0600 を勧める。コンテナーの頁は、`database.connection` の写しに `Data Source=/data/service.db` を書き、`backup` の写しはボリュームから外へ取り出して別に置くと書く。SQLite の WAL を 2 つのコンテナーで共有できるのは同じホストのボリュームだけと書く。`publicUrls` が `https://elm.example/` なので、アプリは `http://127.0.0.1:8090` では有効化できない（管理 API は通る）と書く。
+    - 頁の名前（R23）: `run-the-service-in-a-container` と `run-the-service-on-postgresql`。サイドバーの 19 と 20。
+    - 期限つきの文（R19）: 「最初の正式版まではイメージを公開しない」はイメージのことだけを言う形にし、外すことを V1e の行に足した。
+    - 退けた案（R18）: design-decisions.md には、Q1〜Q6 と、このレビューの持ち主の決定の退けた案がある。Q7〜Q12 は推奨案だけを示した。
 
 ## 21. 依存
 
@@ -4941,6 +4962,8 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
 | `mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot`（ダイジェストで固定） | `release.yml` の `linux-musl-x64` のビルドの道具 | musl の NativeAOT の道具（clang、build-base、zlib-dev）が入った Microsoft の SDK のイメージ（§20.5）。Alpine 3.24 のサポートは 2028-06-01 まで（https://alpinelinux.org/releases/ ）。版は `release.yml` の `DOTNET_SDK_VERSION` とそろえる | 対象外（ビルドの道具） |
 | `mcr.microsoft.com/dotnet/runtime-deps:10.0-noble-chiseled`（ダイジェストで固定） | `elm-service` のコンテナイメージのベース（§20.6） | glibc、libssl、CA の束だけを持つ Microsoft のイメージで、UID 1654 で動く。.NET 10 のサポートは 2028-11-14 まで（https://dotnet.microsoft.com/en-us/platform/support/policy/dotnet-core ）、Ubuntu 24.04 の標準のセキュリティ保守は 2029-05 まで（https://ubuntu.com/about/release-cycle ）。ダイジェストは Dependabot が上げる | 対象外（実行の土台） |
 | `moby/buildkit` v0.34.1（ダイジェストで固定） | `release.yml` の `image` のジョブのビルドの道具（§20.6） | OCI layout の出力と `rewrite-timestamp`（v0.13 以降）に使う。イメージには入らない。ダイジェストはリリースの前に持ち主が合わせる（`docs/releasing.md`） | 対象外（ビルドの道具） |
+| `postgres:18`（ダイジェストで固定、`ci.yml` と同じ値） | `ci.yml` の PostgreSQL の試験、`release.yml` の Linux のジョブで流す PostgreSQL の頁（V1c4d2a）、読み手が試すためのサーバー | PostgreSQL 18 の公式イメージ。`pg_dump`、`pg_restore`、`psql` もサーバーと同じ版のものを使う。PostgreSQL 18 のサポートは 2030-11 まで（https://www.postgresql.org/support/versioning/ ）。ダイジェストは Dependabot が上げず、`ci.yml` と頁を同じ PR で持ち主が合わせる | 対象外（試験と頁の道具） |
+| `busybox`（ダイジェストで固定） | コンテナーの頁（V1c4d2a）の補助コンテナー。秘密のファイルを UID 1654 の 0400 でボリュームに入れる | `--network none` で動かし、`chown` と `chmod` だけを使う。署名鍵のファイルに触れるので、ダイジェストで固定し、更新は頁の PR で持ち主が合わせる | 対象外（頁の道具） |
 
 ## 22. 段階
 
@@ -4996,7 +5019,7 @@ v1 までの行。行の ID と状態は [roadmap.md](./roadmap.md) が正本で
 | V1c14 | `elm-service backup` で SQLite のデータベースを写す（V1c4d1 の Grill の Q1） | §14.2 |
 | V1c4d1 | 利用者の文書の How-to guides の `elm-service` の運用の、SQLite で流せる 3 頁（速さの上限、バックアップと戻し、版の更新。英語と日本語） | §20.7 |
 | V1c4d2a | 利用者の文書の How-to guides の、`elm-service` をコンテナーで動かす頁と PostgreSQL で動かす頁（英語と日本語。PostgreSQL のバックアップと、複数のノードで版を更新する順を含む）と、その手順を流す `release.yml` の Linux のジョブ | §20.7 |
-| V1c4d2b | 利用者の文書の How-to guides の、OIDC での管理者のログインの頁（英語と日本語） | §14.6, §15.3, §20.7 |
+| V1c4d2b | 利用者の文書の How-to guides の、OIDC での管理者のログインの頁（英語と日本語） | §14.6、§15.3、§20.7 |
 | V1c4f | 利用者の文書の How-to guides の、`elm-service` で `elm-server` を有効化して更新する頁（英語と日本語） | §13.7、§20.7 |
 | V1c5 | 文書のサイトで、頁の 2 つ目以降の Mermaid の flowchart が空になる問題の調べと修正（Issue #192。V1e の前） | §20.7 |
 | V1c6 | 利用者が見る文（`elm` と `elm-server` と `elm-service` の出力、誤りとログの文、`ElasticLM.Licensing` と `ElasticLM.Client` の公開する API の XML ドキュメント）から設計の節番号（`design §`）を外す。内部のコメントと公開しない型の XML ドキュメントは、開発者のための参照として残す。V1c2a で見つけた（Issue #198、持ち主の決定）。あわせて、`elm server reload` の誤りの文でコードが 2 度出る重なり（`error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): …`）を直す（V1c4c の初見の読み手の F6、PR の持ち主の決定 D2）。V1d の前に行う | §20.7 |
