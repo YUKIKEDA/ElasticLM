@@ -4367,7 +4367,7 @@ V1c1 の Grill（Issue #190、Q1〜Q10）で決め、`website/` を手元で作�
   - `core-js` 3.51.0 の `postinstall` は寄付の案内を出すだけ（`postinstall.js`）なので、`allowBuilds` で見たうえで走らせないと書く（`strictDepBuilds` の守り、T28）。
   - 確かめた: `../docs/guide` の読み込み、CommonMark の形（`markdown.format: 'detect'`）での表、リンク、見出しへのリンク、Mermaid（`mermaid` のコンポーネントに変わる）、検索の索引。
   - V1c の形で V1c1 が確かめるとした点のうち、GitHub Pages を有効にしたときに GitHub が environment `github-pages` に置く既定の規則は、持ち主が Pages の source を設定していないので記録できなかった。V1e の持ち主の作業に移す（§20.7 の表の V1e、`docs/releasing.md` の確かめのコマンド）。走らせ直しの戻し方は V1c1 で試した（上の V1c の形）。
-  - 頁の 2 つ目以降の flowchart（と state 図）が、サイトでは空になることがあった（headless の Edge。Mermaid 12.2.0 の単体では描ける）。原因は分かっておらず、V1c1 ではその図を消すか番号つきの文に替えた。原因を調べて直すのは roadmap の V1c5（Issue #192）で、V1e の最初の公開の前に行う。それまでは、1 つの頁に flowchart と state 図を合わせて 1 つまでにし、PR で頁ごとに描けた図を数える。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
+  - 頁の 2 つ目以降の flowchart（と state 図）が、サイトでは空になることがあった（headless の Edge。Mermaid 12.2.0 の単体では描ける）。原因は分かっておらず、V1c1 ではその図を消すか番号つきの文に替えた。原因を調べて直すのは roadmap の V1c5（Issue #192）で、V1e の最初の公開の前に行う。それまでは、1 つの頁に flowchart と state 図を合わせて 1 つまでにし、PR で頁ごとに描けた図を数える（V1c5 で直し、この決まりと数える手順は、`release.yml` の図の検査に替えた。下の「V1c5 の Grill」）。壊れたリンクと壊れた見出しへのリンクで、ビルドが落ちる。lock は 1,287 個のパッケージ（Windows）。
 - npm の依存（`dependencies.mdc` に書く）: 直接の依存（上の Docusaurus の 3 つ、検索の plugin、React、react-dom、`@mdx-js/react`）を §21 に並べ、直接の依存を足すときだけ設計の Issue にする。推移的な依存は lock の差分のレビューで見る（持ち主の決定、Issue #190 の Q5）。
 - 依存の脆弱性: `pnpm audit` を、CI の管理画面のジョブと、`release.yml` の `site` の PR と `workflow_dispatch` の実行で流し、見つかれば落とす。タグの実行では流さない。そのタグの lock はマージの前の PR で audit を通っており、マージのあとに公表された勧告でタグの実行を落としても、そのタグのサイトがずっと出なくなるだけで、前のサイトは残り、読み手の守りは増えない（持ち主の決定、Issue #190 の R4）。V1c1 の時点で、Docusaurus 3.10.2 の木に 8 件あった。
   - 8 件の内訳は、直した版に上書きする 5 件と、見たうえで受け入れる 3 件である。上書きの行と受け入れの行には、勧告の ID と理由を書く。
@@ -5056,6 +5056,13 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 再試行の言い方（R8）: 失敗のあとは 1 時間後か、サービスの `Retry-After`（24 時間まで）のあとに試し直す。止めるのは、サービスが有効化を知らないとき（`ELM_ACTIVATION_NOT_FOUND`。保存した有効化を消す）、複製と見なしたとき、証明を断ったときである（`ActivationClient.cs` の `Refuse`。正しさのレビューの C3）。§13.7 の言い方で書く。
     - 計測（R9）: `aot` ジョブ（3 つの OS）の Guide steps の時間を、直前の PR #293 の run と比べて PR に書く。Tutorial 2 の写しが 1 つと、`elm-server` の起動が 3 回増える。
     - 時計の巻き戻し（R10）: §13.7 のとおり、別のプロセスの `elm server refresh` のあとの読み込み直しは `ELM_CLOCK_TAMPERED` で断られうる。頁は `refresh` が必ず通るとは書かず、断られたら次の自動の更新を待つかサーバーを起動し直すと 1 文で書く（書く前に §13.7 とコードで、その 2 つで直ることを確かめる）。
+- V1c5 の Grill（Issue #192 に記録した。Q1〜Q5。持ち主の決定はすべて推奨案）: 文書のサイトで、頁の 2 つ目以降の Mermaid の図が空になる不具合。
+  - 原因（2026-11-09、`main` の 27461f4 で再現して確かめた。Issue #192 の「Cause」）: ブラウザがダークの配色だと、頁を開いたときに colorMode が SSR の `light` から `dark` に移る。`@docusaurus/theme-mermaid` 3.10.2 の `lib/client/index.js` は、部品ごとに 1 つの固定の id で、`config`（`theme` が colorMode に従う）が変わるたびに `renderMermaid` を呼び直すので、各図を同じ id で 2 回描く。Mermaid 12.2.0 は描く前に同じ id の要素を DOM から消す（`removeExistingElements`）ので、2 回目の描画が、React が入れた 1 回目の SVG を消す。2 回目の SVG が 1 回目と同じ文字列だと、React は `dangerouslySetInnerHTML` を入れ直さず、入れ物が空のまま残る。ライトの配色では描画は 1 回で、起きない。upstream は Docusaurus の main（v4）の PR facebook/docusaurus#12454 で、描くたびに id に連番を付けて直した。3.x には入っていない。
+  - 直し方（Q1）: `website/` で `pnpm patch` を使い、PR facebook/docusaurus#12454 と同じ直し（描くたびに id に連番）を `@docusaurus/theme-mermaid` 3.10.2 に当て、`pnpm-workspace.yaml` の `patchedDependencies` に載せる。退けた案は design-decisions.md にある。npm の依存に patch を当てるときの決まりを `.cursor/rules/dependencies.mdc` に足す（patch の中身を PR で読む、upstream の直しの出典と外す条件を patch のそばに書く）。
+  - 図を戻す（Q2）: V1c1 で避けた 2 つの図を、英語と日本語で図に戻す。Overview の置き方の選び方の flowchart と、Activation の複製の検出の flowchart である（PR #191 の前の版から取る）。
+  - CI の確かめ（Q3）: `release.yml` のサイトのジョブで、ビルドしたサイトを裏で配り、サイトマップのすべての頁（`/ja/` を含む）を headless の Chrome でライトとダークの両方の配色（DevTools protocol の `Emulation.setEmulatedMedia` の `prefers-color-scheme`）で開き、すべての `.docusaurus-mermaid-container` に `svg` があることを確かめる。空の入れ物があれば落ちる。スクリプトは依存のない Node（組み込みの `fetch` と `WebSocket`）。待ち方は固定の秒数でなく、頁の Mermaid の区画の数と入れ物の数がそろい、どの入れ物も描き終わるまで（上限つき）。直す前の版で、この検査が空の図を見つけることを確かめる。
+  - patch を外す時（Q4）: roadmap の行は作らない。`@docusaurus/theme-mermaid` を PR facebook/docusaurus#12454 を含む版に上げるときに外す。上げるときは patch が当たらず `pnpm install` が落ちるので、そこで気づける。このことを patch のそばと `dependencies.mdc` に書く。
+  - レビュー（Q5）: 設計の独立レビュー、正しさのレビュー（サイトをビルドして、ライトとダークで図を見る）、初見の読み手のレビュー（戻す 2 つの図）、日本語のレビュー（日本語の頁の図のラベル）。
 
 ## 21. 依存
 
