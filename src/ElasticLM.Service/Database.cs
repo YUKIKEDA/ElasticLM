@@ -193,6 +193,42 @@ internal abstract partial class Database : IAsyncDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>
+    /// Opens a SQLite connection that neither creates the file nor joins SQLite's connection pool, for
+    /// <c>elm-service backup</c> (design §14.2): the mode is read-write whatever the connection string says, and the
+    /// connection waits up to 5 seconds when the database is busy, as the service's connections do.
+    /// </summary>
+    /// <param name="connectionString">The connection string, which the caller has parsed.</param>
+    /// <param name="cancellationToken">Stops the open.</param>
+    /// <exception cref="SqliteException">The file cannot be opened.</exception>
+    public static async Task<SqliteConnection> OpenSqliteFileAsync(
+        SqliteConnectionStringBuilder connectionString,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(connectionString);
+        EnsureSqlite();
+        var builder = new SqliteConnectionStringBuilder(connectionString.ToString())
+        {
+            Mode = SqliteOpenMode.ReadWrite,
+            DefaultTimeout = 5,
+            Pooling = false,
+        };
+        var connection = new SqliteConnection(builder.ToString());
+        try
+        {
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using DbCommand pragma = Command(connection, null, "PRAGMA busy_timeout = 5000;");
+            await pragma.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
+            return connection;
+        }
+        catch
+        {
+            await connection.DisposeAsync().ConfigureAwait(false);
+            throw;
+        }
+    }
+
     // SQLite is built from vendor/sqlite (design §14.2); the provider binds to it by name, once per process.
     private static void EnsureSqlite()
     {

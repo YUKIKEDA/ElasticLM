@@ -27,10 +27,23 @@ internal sealed class ServiceProcess : IAsyncDisposable
     private readonly Process _process;
     private readonly StringBuilder _log;
     private readonly string? _database;
+    private readonly Dictionary<string, string?> _environment;
+    private readonly string _folder;
 
-    private ServiceProcess(Process process, StringBuilder log, Uri url, HttpClient admin, string? database, string usageLog)
+    private ServiceProcess(
+        Process process,
+        StringBuilder log,
+        Uri url,
+        HttpClient admin,
+        string? database,
+        string usageLog,
+        Dictionary<string, string?> environment,
+        string folder
+    )
     {
         _process = process;
+        _environment = environment;
+        _folder = folder;
         _log = log;
         Url = url;
         Admin = admin;
@@ -80,7 +93,7 @@ internal sealed class ServiceProcess : IAsyncDisposable
         Process process = Binaries.StartLogged(Binaries.Service, [], vendor.Folder, environment, log);
         var admin = new HttpClient { BaseAddress = url };
         admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        var service = new ServiceProcess(process, log, url, admin, created, usageLog);
+        var service = new ServiceProcess(process, log, url, admin, created, usageLog, environment, vendor.Folder);
         try
         {
             using var probe = new HttpClient { BaseAddress = url };
@@ -104,6 +117,14 @@ internal sealed class ServiceProcess : IAsyncDisposable
         (_, Dictionary<string, string?> environment, _, _, _) = await SetUpAsync(vendor, "sqlite", port);
         return await Binaries.RunAsync(Binaries.Service, [], vendor.Folder, environment);
     }
+
+    /// <summary>
+    /// Runs the published elm-service once more to its end with the running service's settings, in the vendor's folder, for a
+    /// command beside the running service such as <c>backup</c>.
+    /// </summary>
+    /// <param name="arguments">The arguments.</param>
+    public Task<(int Code, string Out, string Error)> RunAsync(params string[] arguments) =>
+        Binaries.RunAsync(Binaries.Service, arguments, _folder, _environment);
 
     /// <summary>Returns a loopback port no one listens on now.</summary>
     public static int FreePort()
