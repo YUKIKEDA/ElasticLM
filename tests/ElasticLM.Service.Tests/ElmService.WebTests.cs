@@ -475,13 +475,14 @@ public sealed class ElmServiceWebTests
     /// - Let the token endpoint send ID tokens: alg none with an empty signature part; ES256 with an empty signature part;
     ///   RS256 with an empty signature part; an empty signature part with azp of another client. Then signed ones: alg none
     ///   with the signature kept; ES256 signed by another key; the signature of another valid ID token; alg HS256 signed by
-    ///   the provider's ES256 key; alg RS256 signed by that key.
+    ///   the provider's ES256 key; alg RS256 signed by that key; alg ES384 signed by that key with SHA-384, which the library
+    ///   takes for a P-256 key, so that only ValidAlgorithms refuses it.
     ///
     /// Expected:
-    /// - 400 with the fixed text for each, and no session row.
+    /// - 400 with the fixed text for each, no session cookie in the answer, and no session row.
     /// - For the first four, the azp one included: the log reason "The ID token is not signed with RS256, PS256, or ES256.",
     ///   and an answer that removes the nonce cookie.
-    /// - For the signed ones: a library reason (IDX) in the log.
+    /// - For the signed ones: the library's reason IDX10511 (signature validation failed) in the log.
     /// </remarks>
     [Fact]
     public async Task Callback_IdTokenNotSigned_IsBadRequest()
@@ -494,17 +495,19 @@ public sealed class ElmServiceWebTests
         string anotherSignature = idp.IdToken(FakeIdp.WebClientId, "another-nonce", idp.Subject, idp.Groups).Split('.')[2];
         const string NotSigned = "The ID token is not signed with RS256, PS256, or ES256.";
 
-        (Action Set, bool Unsigned)[] cases =
+        // design §20.7 V1c16, R2: the empty signature parts are refused by the service; a token with a signature is refused
+        // by the library with IDX10511, whose caught exceptions (hidden as PII) differ by case.
+        (Action Set, string Reason)[] cases =
         [
-            (() => idp.IdTokenRewrite = t => WithHeader(Unsigned(t), "{\"alg\":\"none\",\"typ\":\"JWT\"}"), true),
-            (() => idp.IdTokenRewrite = Unsigned, true),
+            (() => idp.IdTokenRewrite = t => WithHeader(Unsigned(t), "{\"alg\":\"none\",\"typ\":\"JWT\"}"), NotSigned),
+            (() => idp.IdTokenRewrite = Unsigned, NotSigned),
             (
                 () =>
                 {
                     idp.IdTokenHeaderChange = h => h["alg"] = "RS256";
                     idp.IdTokenRewrite = Unsigned;
                 },
-                true
+                NotSigned
             ),
             (
                 () =>
@@ -512,35 +515,45 @@ public sealed class ElmServiceWebTests
                     idp.IdTokenChange = p => p["azp"] = "other-client";
                     idp.IdTokenRewrite = Unsigned;
                 },
-                true
+                NotSigned
             ),
-            (() => idp.IdTokenHeaderChange = h => h["alg"] = "none", false),
+            (() => idp.IdTokenHeaderChange = h => h["alg"] = "none", "IDX10511:"),
             (
                 () => idp.IdTokenRewrite = t => Unsigned(t) + Base64Url.EncodeToString(other.SignData(SigningInput(t), HashAlgorithmName.SHA256)),
-                false
+                "IDX10511:"
             ),
-            (() => idp.IdTokenRewrite = t => Unsigned(t) + anotherSignature, false),
-            (() => idp.IdTokenHeaderChange = h => h["alg"] = "HS256", false),
-            (() => idp.IdTokenHeaderChange = h => h["alg"] = "RS256", false),
+            (() => idp.IdTokenRewrite = t => Unsigned(t) + anotherSignature, "IDX10511:"),
+            (() => idp.IdTokenHeaderChange = h => h["alg"] = "HS256", "IDX10511:"),
+            (() => idp.IdTokenHeaderChange = h => h["alg"] = "RS256", "IDX10511:"),
+            (
+                () =>
+                {
+                    idp.IdTokenHeaderChange = h => h["alg"] = "ES384";
+                    idp.IdTokenHash = HashAlgorithmName.SHA384;
+                },
+                "IDX10511:"
+            ),
         ];
-        foreach ((Action set, bool unsigned) in cases)
+        foreach ((Action set, string expected) in cases)
         {
             idp.IdTokenChange = null;
             idp.IdTokenHeaderChange = null;
             idp.IdTokenRewrite = null;
+            idp.IdTokenHash = HashAlgorithmName.SHA256;
             set();
             using var browser = new WebBrowser();
             using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
             using HttpResponseMessage back = await browser.FollowAsync(login);
             await AssertPageAsync(await browser.FollowAsync(back), HttpStatusCode.BadRequest, SignInFailed);
+            Assert.DoesNotContain(browser.LastSetCookies, c => c.StartsWith(ElmService.SessionCookie + "=", StringComparison.Ordinal));
 
             string reason = log.Entries.Last(e => e.Message.StartsWith("An admin UI sign-in was refused:", StringComparison.Ordinal)).Message;
-            if (unsigned)
+            if (expected == NotSigned)
             {
                 Assert.EndsWith(NotSigned, reason, StringComparison.Ordinal);
 
                 // design §20.7 V1c16, R5: the handler reads and removes the nonce cookie before OnTokenValidated. When the
-                // library refuses the token, which it checks first, the cookie stays until it ends.
+                // library refuses the token, which it checks first, the cookie stays until it expires (15 minutes).
                 Assert.Contains(
                     browser.LastSetCookies,
                     c =>
@@ -550,8 +563,7 @@ public sealed class ElmServiceWebTests
             }
             else
             {
-                Assert.DoesNotContain(NotSigned, reason, StringComparison.Ordinal);
-                Assert.Contains("IDX", reason, StringComparison.Ordinal);
+                Assert.StartsWith("An admin UI sign-in was refused: " + expected, reason, StringComparison.Ordinal);
             }
         }
 
@@ -1191,15 +1203,17 @@ public sealed class ElmServiceWebTests
         return (await service.Database.FindSessionAsync(ApiKeys.HashOf(value), TestContext.Current.CancellationToken))!;
     }
 
-    // A sign-in in a new browser, up to the callback's answer.
-    // The token up to and with its second dot: the signing input and the dot before an empty signature part.
+    // The token up to and with its second dot: the token with an empty signature part.
     private static string Unsigned(string token) => token[..(token.LastIndexOf('.') + 1)];
 
+    // The bytes a token's signature covers: its header and payload parts with the dot between them.
     private static byte[] SigningInput(string token) => Encoding.ASCII.GetBytes(token[..token.LastIndexOf('.')]);
 
+    // The token with its header part replaced by a header's JSON text.
     private static string WithHeader(string token, string header) =>
         Base64Url.EncodeToString(Encoding.UTF8.GetBytes(header)) + token[token.IndexOf('.', StringComparison.Ordinal)..];
 
+    // A sign-in in a new browser, up to the callback's answer.
     private static async Task<HttpResponseMessage> TrySignInAsync(ElmService service)
     {
         using var browser = new WebBrowser();

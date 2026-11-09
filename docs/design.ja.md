@@ -5000,9 +5000,10 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
       - 別の有効な ID トークンの署名を付け替えたもの
       - `alg: HS256` で署名があるもの
       - ヘッダーを `alg: RS256` にして ES256 の署名を付けたもの
+      - `alg: ES384` で、P-256 の鍵で SHA-384 の署名を付けたもの（正しさのレビューの C1）。`alg: HS256` と `alg: RS256` は、ライブラリーが鍵の種類と合わないとして `ValidAlgorithms` より前（`JsonWebTokenHandler.ValidateToken.cs` の 347 行、`IsSupportedAlgorithm`）に断るので、`ValidAlgorithms` を外しても落ちない。EC の鍵は ES384 も受けるので、このトークンを断るのは `ValidAlgorithms` だけである。CLI のアクセストークンのテストにも同じ形を足す。
     - ログの理由（R2）: `ServiceHostOptions` に、`elm-server` の `ServerHostOptions` と同じ `LoggerProvider`（テストがホストのログを読むための、もう 1 つのロガーの提供元）を足す。断る理由は Information の `SignInRefused` で出るので、そのテストはログの水準を Information にする。期待する理由は次のとおり。
       - 署名の部分が空の 3 つ: 「The ID token is not signed with RS256, PS256, or ES256.」
-      - `alg: none` で署名の部分が空でないものと、R1 の 4 つ: ライブラリーの署名の確かめの失敗（`kid` が合えば IDX10511 など）。サービスの理由ではないことを確かめる。
+      - `alg: none` で署名の部分が空でないものと、R1 の 5 つ: ライブラリーの IDX10511（署名の確かめの失敗）。中の例外は場合ごとに違うが、PII として隠れる。テストは理由が IDX10511 で始まることを確かめる（実装で確かめた。正しさのレビューの C4）。
     - 順番（R3）: 署名の部分が空で、かつ `azp` が別のクライアントの ID トークンを送り、ログの理由が署名の理由であることを確かめる。
     - 単体テスト（R4）: 単体テストの対象は、`alg` を読む部分だけでなく、確かめ全体の関数（`internal`）にする。各条件に、その条件だけが捕まえる入力を置く。
       - 部分の数: 2、4、5 つ

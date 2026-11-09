@@ -252,7 +252,7 @@ internal sealed partial class ElmService
             string? value = OnlyString(payload.RootElement, claim);
             return IsIdentifier(value) ? value : null;
         }
-        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
+        catch (Exception e) when (e is FormatException or JsonException)
         {
             return null;
         }
@@ -263,7 +263,10 @@ internal sealed partial class ElmService
     /// the header holds <c>alg</c> once, as the JSON string RS256, PS256, or ES256.
     /// </summary>
     /// <param name="token">The token in its compact form, or <see langword="null"/>.</param>
-    /// <returns><see langword="true"/> when the token is signed with one of the three algorithms.</returns>
+    /// <returns>
+    /// <see langword="true"/> when the token has a signature part and its header names RS256, PS256, or ES256; the signature
+    /// itself is left to the library.
+    /// </returns>
     /// <remarks>
     /// The OpenIdConnect handler does not require a signature on the code flow's ID token (ASP.NET Core 10.0.14,
     /// OpenIdConnectHandler.cs, line 839, sets RequireSignedTokens to false). Microsoft.IdentityModel.JsonWebTokens 8.19.2
@@ -284,14 +287,14 @@ internal sealed partial class ElmService
             using JsonDocument header = JsonDocument.Parse(Base64Url.DecodeFromChars(parts[0]));
             return OnlyString(header.RootElement, "alg") is string alg && SignatureAlgorithms.Contains(alg, StringComparer.Ordinal);
         }
-        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
+        catch (Exception e) when (e is FormatException or JsonException)
         {
             return false;
         }
     }
 
-    // The value of a member that a JSON object holds exactly once, as a string; null for anything else. JsonDocument lists a
-    // member written twice twice, which the library's readers would collapse to the last value.
+    // The value of a member that a JSON object holds exactly once, as a string; null for anything else. JsonDocument lists
+    // each copy of a member written twice; Microsoft.IdentityModel.JsonWebTokens 8.19.2 keeps the last (see IdentityOf).
     private static string? OnlyString(JsonElement element, string name)
     {
         if (element.ValueKind != JsonValueKind.Object)
