@@ -118,15 +118,15 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `signing.key` | `ELM_SIGNING_KEY` | file path | none (required; `setup` does not need it) | The signing key: an encrypted PKCS#8 PEM file of a P-256 key. |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` does not need it) | The signing key's key certificate files: 1 to 4, none empty. The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
-| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | file path | none (required when `ELM_SIGNING_PASSPHRASE` is not set; `setup` does not need it) | The file that holds the signing key's passphrase. A secret: see [Secrets](#secrets). |
+| `signing.key` | `ELM_SIGNING_KEY` | file path | none (required; `setup` and `backup` do not need it) | The signing key: an encrypted PKCS#8 PEM file of a P-256 key. |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` and `backup` do not need it) | The signing key's key certificate files: 1 to 4, none empty. The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | file path | none (required when `ELM_SIGNING_PASSPHRASE` is not set; `setup` and `backup` do not need it) | The file that holds the signing key's passphrase. A secret: see [Secrets](#secrets). |
 
 ## `trust`
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required; `setup` does not need it) | PEM files of the vendor's root public keys, which the signing key's certificates are checked against. Instead of files, `ELM_TRUST_ROOT_KEYS` can hold the PEM text. Without either, the service does not start. |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required; `setup` and `backup` do not need it) | PEM files of the vendor's root public keys, which the signing key's certificates are checked against. Instead of files, `ELM_TRUST_ROOT_KEYS` can hold the PEM text. Without either, the service does not start. |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | list of strings | none | Key IDs (`kid`) that the service no longer trusts. |
 
 ## `bootstrapOwner`
@@ -145,7 +145,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `nonce.secretFile` | `ELM_NONCE_SECRET` | file path | none (required; `setup` does not need it) | The file that holds the nonce secret: at least 32 random bytes in base64. Every node holds the same value. There is no default and the service does not make one; [`elm secret create`](elm-cli.md#elm-secret-create) makes such a file. A secret: see [Secrets](#secrets). |
+| `nonce.secretFile` | `ELM_NONCE_SECRET` | file path | none (required; `setup` and `backup` do not need it) | The file that holds the nonce secret: at least 32 random bytes in base64. Every node holds the same value. There is no default and the service does not make one; [`elm secret create`](elm-cli.md#elm-secret-create) makes such a file. A secret: see [Secrets](#secrets). |
 
 ## `rateLimit`
 

@@ -44,7 +44,7 @@ elm-service backup --out <path> [--config <settings.json>]
 
 | 終了コード | 意味 |
 | --- | --- |
-| 0 | 写しを `--out` のパスに書いた |
+| 0 | コピーを `--out` のパスに書いた |
 | 1 | データベースかバックアップのファイルでエラーが起きた。データベースのファイルがない、接続文字列がデータベースのファイルを指していない（`Data Source=:memory:` など）、ファイルが `elm-service` のデータベースでない（`schema_migrations` のテーブルがないか、マイグレーションが 1 つも適用されていない）、データベースを使えない、`--out` のファイルがすでにある、コピーを書けない、のいずれか。一時ファイルは削除する |
 | 2 | 引数が有効でない、サービスと同じ設定のエラーがある、接続文字列が有効でない、またはデータベースが PostgreSQL である |
 
@@ -118,15 +118,15 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
-| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
+| `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` と `backup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
+| `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` と `backup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `trust`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須。`setup` には不要） | ベンダーのルート公開鍵の PEM ファイル。署名鍵の証明書を、この鍵で確かめる。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS` に PEM テキストを入れてもよい。どちらもなければ、サービスは起動しない |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | ベンダーのルート公開鍵の PEM ファイル。署名鍵の証明書を、この鍵で確かめる。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS` に PEM テキストを入れてもよい。どちらもなければ、サービスは起動しない |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | 文字列のリスト | なし | サービスがもう信頼しない鍵 ID（`kid`） |
 
 ## `bootstrapOwner`
@@ -145,7 +145,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `nonce.secretFile` | `ELM_NONCE_SECRET` | ファイルのパス | なし（必須。`setup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。[`elm secret create`](elm-cli.md#elm-secret-create) でこの形のファイルを作れる。シークレットだ。[シークレット](#シークレット)を参照 |
+| `nonce.secretFile` | `ELM_NONCE_SECRET` | ファイルのパス | なし（必須。`setup` と `backup` には不要） | ノンスのシークレットを入れたファイル。32 バイト以上の乱数を base64 で書く。すべてのノードで同じ値にする。既定値はなく、サービスが作ることもない。[`elm secret create`](elm-cli.md#elm-secret-create) でこの形のファイルを作れる。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `rateLimit`
 
