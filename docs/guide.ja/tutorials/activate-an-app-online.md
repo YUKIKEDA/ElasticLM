@@ -530,7 +530,7 @@ ELM_TRIAL_NOT_OFFERED: The product does not offer a trial.
 | `ELM_NETWORK_ERROR` | サービスに接続できない。サービスが動いていないか、URL が間違っている。メッセージは `The service cannot be reached:` で始まる。 | [サービスを起動する](#サービスを起動する)のとおりにサービスを起動し、`http://127.0.0.1:8080` を渡す。 |
 | `ELM_TRIAL_NOT_OFFERED` | 製品にトライアルのポリシーが指定されていない。 | [製品とライセンスを作る](#製品とライセンスを作る)のとおりに、製品の `trialPolicyId` を設定する。 |
 
-トライアルには、マシンフィンガープリントも 1 つ以上要る。`/etc/machine-id` のない Linux のコンテナーのように、マシンフィンガープリントを読めない場所では、サービスはトライアルを `ELM_FINGERPRINT_UNAVAILABLE` で拒否する。アプリが `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]` と表示したときは、引数が 3 つでも 4 つでもなかった。`error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、2 つ目の引数が公開鍵のファイルではない。`error: Invalid URI` は、1 つ目の引数が URL ではないことを示し、`error: The service URL must be an absolute https URL, or http on a loopback address. (Parameter 'options')` は、ループバックでないホストへの http の URL であることを示す。どの場合も、引数の順序と URL を確かめる。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。
+トライアルには、マシンフィンガープリントも 1 つ以上要る。`/etc/machine-id` のない Linux のコンテナのように、マシンフィンガープリントを読めない場所では、サービスはトライアルを `ELM_FINGERPRINT_UNAVAILABLE` で拒否する。アプリが `usage: app <service-url> <root-public-key.pem> <data-folder> [license-key]` と表示したときは、引数が 3 つでも 4 つでもなかった。`error: A root key is not a P-256 public key in PEM.` で始まる行を表示したときは、2 つ目の引数が公開鍵のファイルではない。`error: Invalid URI` は、1 つ目の引数が URL ではないことを示し、`error: The service URL must be an absolute https URL, or http on a loopback address. (Parameter 'options')` は、ループバックでないホストへの http の URL であることを示す。どの場合も、引数の順序と URL を確かめる。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。
 
 ## サービスを止める
 

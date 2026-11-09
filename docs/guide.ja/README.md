@@ -2,7 +2,7 @@
 
 ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセンスを発行し、顧客のマシンでそのライセンスを検証し、同時使用数を数えられる。このドキュメントの読者は、ライセンスを発行する人、アプリに検証を組み込む開発者、ライセンスサーバーを運用する管理者だ。自分が使うプラットフォームの知識は前提にするが、設計書を読んでいることは前提にしない。
 
-> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md)、[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)、[ライセンスを発行して C のアプリで確かめる](tutorials/verify-a-license-in-c.md)は書き終えている。ハウツーガイドはまだ執筆中だが、[ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md)、[ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)、[署名鍵を入れ替える](how-to/rotate-the-signing-key.md)、[ライセンスを失効させる](how-to/revoke-a-license.md)、[署名鍵を失効させる](how-to/revoke-a-signing-key.md)、[自分の TLS 証明書を使う](how-to/use-your-own-tls-certificate.md)、[サーバーライセンスを更新する](how-to/renew-a-server-license.md)、[借用を制限する](how-to/limit-borrowing.md)、[利用ログを検証する](how-to/verify-the-usage-log.md)、[エラーを処理する](how-to/handle-errors.md)、[ネットワークがなくても動かす](how-to/run-without-a-network.md)、[NativeAOT で発行する](how-to/publish-with-nativeaot.md)、[リクエストのレートを制限する](how-to/limit-request-rates.md)、[サービスをバックアップして復元する](how-to/back-up-and-restore-the-service.md)、[サービスをアップグレードする](how-to/upgrade-the-service.md)は書き終えている。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
+> **状況:** 試験公開のあいだ、ElasticLM は [Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)で GitHub のプレリリースとして配布する。そこにプレリリースがまだなければ、チュートリアルでダウンロードするプログラムとパッケージは、`CONTRIBUTING.md` の [Build from source](https://github.com/YUKIKEDA/ElasticLM/blob/main/CONTRIBUTING.md#build-from-source) に従って自分でビルドできる。各ページは `main` ブランチの内容を説明している。チュートリアルはまだ執筆中だが、[ライセンスを発行して .NET のアプリで確かめる](tutorials/verify-a-license-offline.md)、[SaaS 型のアクティベーションサービスを動かして .NET のアプリをオンラインでアクティベーションする](tutorials/activate-an-app-online.md)、[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](tutorials/use-a-floating-license.md)、[ライセンスを発行して C のアプリで確かめる](tutorials/verify-a-license-in-c.md)は書き終えている。ハウツーガイドはまだ執筆中だが、[ポリシーを設定する](how-to/set-up-a-policy.md)、[トライアルを提供する](how-to/offer-a-trial.md)、[ネットワークにつながらないデバイスをアクティベーションする](how-to/activate-a-device-without-a-network.md)、[デバイスのアクティベーションを解除する](how-to/deactivate-a-device.md)、[ルート鍵を安全に保管する](how-to/keep-the-root-key-safe.md)、[署名鍵を入れ替える](how-to/rotate-the-signing-key.md)、[ライセンスを失効させる](how-to/revoke-a-license.md)、[署名鍵を失効させる](how-to/revoke-a-signing-key.md)、[自分の TLS 証明書を使う](how-to/use-your-own-tls-certificate.md)、[サーバーライセンスを更新する](how-to/renew-a-server-license.md)、[借用を制限する](how-to/limit-borrowing.md)、[利用ログを検証する](how-to/verify-the-usage-log.md)、[エラーを処理する](how-to/handle-errors.md)、[ネットワークがなくても動かす](how-to/run-without-a-network.md)、[NativeAOT で発行する](how-to/publish-with-nativeaot.md)、[リクエストのレートを制限する](how-to/limit-request-rates.md)、[サービスをバックアップして復元する](how-to/back-up-and-restore-the-service.md)、[サービスをアップグレードする](how-to/upgrade-the-service.md)、[サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)、[サービスを PostgreSQL で動かす](how-to/run-the-service-on-postgresql.md)は書き終えている。リファレンスは、`elm` のコマンド、`elm-server` と `elm-service` の設定、管理 API、デバイスのプロトコル、トークンとファイルの形式、エラーコード、ログ、.NET API、C API の部分を書き終えている。下に挙げる解説のページは、ElasticLM の仕組みを説明している。
 
 ## ドキュメントの構成
 
@@ -30,11 +30,12 @@ ElasticLM を使うと、.NET や C/C++ アプリのベンダーは、ライセ�
 7. [ライセンスを失効させる](how-to/revoke-a-license.md)と[署名鍵を失効させる](how-to/revoke-a-signing-key.md): ライセンスを完全に終わらせることと、漏れた署名鍵についてのハウツーガイド。
 8. [サーバーライセンスを更新する](how-to/renew-a-server-license.md): サーバーライセンスを期限が切れる前に発行し直すことと、新しいファイルでは取り上げられないものについてのハウツーガイド。
 9. [リクエストのレートを制限する](how-to/limit-request-rates.md)、[サービスをバックアップして復元する](how-to/back-up-and-restore-the-service.md)、[サービスをアップグレードする](how-to/upgrade-the-service.md): `elm-service` のリクエストの上限と、SQLite で動かすときのバックアップとアップグレードについてのハウツーガイド。
-10. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
-11. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
-12. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
-13. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
-14. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
+10. [サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)と[サービスを PostgreSQL で動かす](how-to/run-the-service-on-postgresql.md): `elm-service` をイメージから動かすことと、複数のノードが共有するデータベースで動かすことについてのハウツーガイド。
+11. [トラストチェーン](explanation/trust-chain.md): ルート鍵と署名鍵、その鍵を安全に保つ方法。
+12. [ライセンスファイルと検証](explanation/license-files-and-verification.md): 何を発行し、アプリが何を確かめるか。
+13. [アクティベーション](explanation/activation.md): SaaS 型のサービスがライセンスをデバイスに紐付ける仕組み。
+14. [フローティングライセンス](explanation/floating-licenses.md): シート、リース、サーバーライセンス。
+15. [セキュリティモデル](explanation/security-model.md): 何を守り、何を守らないか。ベンダーの責任は何か。
 
 **ElasticLM をアプリに組み込む場合（開発者）。** アプリにルート公開鍵を組み込み、ライセンス、アクティベーション、リースを確かめる。
 
@@ -79,5 +80,5 @@ ElasticLM がなぜこう作られているのかは、[設計上の選択](expl
 ## ほかの資料
 
 - 脆弱性の報告と、ダウンロードしたファイルの確かめ方: [SECURITY.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md)。
-- `elm-service` のコンテナイメージの動かし方（イメージは、プレリリースでない最初のリリースから公開する）: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md)。
+- `elm-service` のコンテナイメージのビルドのしかたと確かめ方（イメージは、プレリリースでない最初のリリースから公開する）: [docs/container.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md)。動かし方は[サービスをコンテナで動かす](how-to/run-the-service-in-a-container.md)を読む。
 - 設計書（日本語）: [docs/design.ja.md](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/design.ja.md)。

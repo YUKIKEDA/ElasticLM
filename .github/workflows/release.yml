@@ -479,10 +479,64 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: ./eng/container/Test-Image.ps1 -ImageTar elm-service-image.tar -ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
 
+  guide-containers:
+    # design §20.7 (V1c4d2, Q2, Q9, and review R10): the How-to guides that run elm-service in a container and on PostgreSQL,
+    # with the image that the image job built and this run's linux-x64 elm, elm-service, and packages, after the Tutorial
+    # they name. The pages start their own containers. Read-only, and it uploads nothing (T22, T27).
+    name: Guide steps with containers
+    needs: [version, build, pack, image]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-linux-x64
+          path: archives
+
+      # The script copies only the .nupkg files of the folder, as a reader downloads them.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: packages
+          path: packages
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: image-oci
+          path: image
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
+          cache: false
+
+      - name: Extract elm and elm-service
+        env:
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          foreach ($name in 'elm', 'elm-service') {
+            New-Item -ItemType Directory -Force "tools/$name" | Out-Null
+            tar -xzf "archives/$name-$env:VERSION-linux-x64.tar.gz" -C "tools/$name"
+            if ($LASTEXITCODE -ne 0) { exit 1 }
+          }
+
+      - name: Guide steps
+        # Without -Docker, ci.yml's aot job skips these pages.
+        run: ./eng/docs/Test-GuideSteps.ps1 -Elm tools/elm/elm -ElmService tools/elm-service/elm-service -Feed packages -Image image/elm-service-image.tar -Docker -Page docs/guide/how-to/run-the-service-in-a-container.md, docs/guide/how-to/run-the-service-on-postgresql.md
+
   checksums:
     name: SHA256SUMS
-    # The image test is here too, so that no draft is made when the image fails (design §20.6).
-    needs: [build, pack, consume, sbom, image-test]
+    # The image test and the container pages are here too, so that no draft is made when the image or a page fails (design
+    # §20.6; §20.7, V1c4d2, review R10).
+    needs: [build, pack, consume, sbom, image-test, guide-containers]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

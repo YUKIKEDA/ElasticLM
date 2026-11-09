@@ -211,8 +211,8 @@ jobs:
         # design §20.7 (V1c1, V1c3a, V1c3b, V1c3e, V1c3d, V1c3c, V1c4a, V1c4b, V1c4e, V1c13): the marked steps of README.md,
         # of each Tutorial, and of each How-to guide, run in a work folder outside the clone. Each Tutorial runs once; a How-to
         # guide runs in a copy of the end state of the Tutorial that its steps:after marker names, whose background process
-        # starts again in the copy, and the Tutorial's folders are removed after the last guide that names it (V1c13); a How-to
-        # guide's one steps:background block stops that process and starts its own line instead. Where a
+        # starts again in the copy, and the Tutorial's folders are removed after the last guide that names it (V1c13); each
+        # steps:background block of a How-to guide stops the process that runs and starts its own line instead. Where a
         # page has the reader download from a GitHub prerelease, its steps:prebuilt marker puts the published elm,
         # elm-server, elm-service, and libelasticlm, and the packages packed here, in their place. The packages get a prerelease version, as release.yml gives a pull request's run, so that the page's dotnet add
         # --prerelease finds only prerelease versions in its packages folder, as a reader of a prerelease does.
@@ -222,7 +222,10 @@ jobs:
         # tree at the end of the page. Tutorial 4 builds its C sample with cl on Windows (the script reads the MSVC x64
         # environment for that line and the app's line only) and with cc on Linux and macOS, and skips the blocks of the
         # other systems. A How-to guide publishes the Tutorial 1 app with NativeAOT and runs it; on Windows the script puts the
-        # Visual Studio Installer folder on PATH for that dotnet line, as the Publish step does (V1c4e).
+        # Visual Studio Installer folder on PATH for that dotnet line, as the Publish step does (V1c4e). Without -Docker, a page
+        # with docker lines (the container and PostgreSQL guides) is skipped as a whole and printed as skip: <page>;
+        # release.yml's guide-containers job runs them with this run's image (V1c4d2). The PostgreSQL digest that such a page
+        # names is still checked here against the one of the PostgreSQL steps above (V1c4d2, Q10).
         run: |
           foreach ($project in 'src/ElasticLM.Licensing', 'src/ElasticLM.Client') {
             dotnet pack $project -c Release -o guide-feed -nologo "-p:VersionSuffix=ci.$env:GITHUB_RUN_NUMBER"

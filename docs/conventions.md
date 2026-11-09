@@ -23,7 +23,7 @@ tests/                       テスト（src/ の各プロジェクトに対応�
 samples/                     利用例と NativeAOT の確認用のアプリ
 tools/                       ロードマップの行が要るときに足す道具（tools/ElasticLM.Measure/: §4.2 の参照機での計測）
 eng/release/                 リリース（release.yml）と CI の NativeAOT のジョブが共有するスクリプト（design §20.5）
-eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）
+eng/container/               elm-service のコンテナイメージの Dockerfile と、イメージを作るスクリプトと試すスクリプト（design §20.6）。OCI layout を docker load で読める形にする関数（ImageLayout.ps1）は、試すスクリプトと Test-GuideSteps.ps1 が使う（design §20.7 の V1c4d2）
 eng/docs/                    利用者の文書の確かめのスクリプト（README、Tutorials、How-to guides の手順を流す Test-GuideSteps.ps1。How-to の頁は、印で名指した Tutorial の手順のあとに同じ作業フォルダーで流す。design §20.7）
 eng/Get-MsvcEnvironment.ps1  Windows の MSVC の環境（vcvarsall.bat が設定する変数）を返すスクリプト。tests/native/run.ps1 と Test-GuideSteps.ps1 が使う（design §20.7 の V1c3c）
 vendor/sqlite/               SQLite のアマルガム（版と SHA-256 を固定）とビルドのスクリプト（Windows は build.ps1、Linux と macOS は build.sh、オプションは defines.txt）。elm-service が組み込む（design §14.2）
