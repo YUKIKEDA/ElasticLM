@@ -5,7 +5,10 @@
   <ItemGroup>
     <PackageReference Include="xunit.v3" />
     <PackageReference Include="Microsoft.Extensions.TimeProvider.Testing" />
-    <!-- design §20.7, V1c6: the string literals of src/ are read from the syntax tree. -->
+    <!--
+      design §20.7, V1c6: the string literals of src/ and the names of the test methods under tests/ are read from the
+      syntax tree.
+    -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>
   <ItemGroup>

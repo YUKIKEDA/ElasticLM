@@ -5,9 +5,9 @@ namespace ElasticLM.Licensing.Tests;
 
 /// <summary>
 /// Finds the identifiers that only this repository explains (design section numbers, decision numbers, threat and attacker IDs,
-/// roadmap row names, and Issue and PR numbers) in text that users read: the string literals under <c>src/</c>, the XML
-/// documentation files of the packages, and the C header (design §20.7, V1c6). Each test project that checks such text links this
-/// file.
+/// roadmap row names, Issue and PR numbers, and test names) in text that users read: the string literals under <c>src/</c>, the
+/// XML documentation files of the packages, and the C header (design §20.7, V1c6). Each test project that checks such text links
+/// this file.
 /// </summary>
 internal static partial class InternalReferences
 {
@@ -17,7 +17,7 @@ internal static partial class InternalReferences
     /// <param name="text">The text a user reads.</param>
     /// <returns>
     /// One item per match, with the name of the pattern and the text it matched, in the order section, design-number,
-    /// decision-number, threat, roadmap, issue; empty when the text holds none.
+    /// decision-number, threat, roadmap, issue, test-name; empty when the text holds none.
     /// </returns>
     public static IReadOnlyList<(string Pattern, string Text)> Find(string text)
     {
@@ -29,6 +29,7 @@ internal static partial class InternalReferences
             ("threat", Threat()),
             ("roadmap", Roadmap()),
             ("issue", Issue()),
+            ("test-name", TestName()),
         ];
         return [.. patterns.SelectMany(pattern => pattern.Pattern.Matches(text).Select(match => (pattern.Name, match.Value)))];
     }
@@ -42,6 +43,17 @@ internal static partial class InternalReferences
     {
         Match match = Roadmap().Match(id);
         return match.Success && match.Length == id.Length;
+    }
+
+    /// <summary>
+    /// Returns whether a whole text is a test name as the test-name pattern knows them.
+    /// </summary>
+    /// <param name="name">The name of a test method.</param>
+    /// <returns><see langword="true"/> when the pattern matches the name from its first character to its last.</returns>
+    public static bool IsTestName(string name)
+    {
+        Match match = TestName().Match(name);
+        return match.Success && match.Length == name.Length;
     }
 
     /// <summary>
@@ -88,13 +100,19 @@ internal static partial class InternalReferences
     private static partial Regex Threat();
 
     // The row names of docs/roadmap.md as they are given today (D0, W0, F1, M4c3, V1c11, A-1). A test compares the pattern with
-    // the roadmap's rows, so a row named another way fails there.
+    // the roadmap's rows and fails when a row is named another way.
     [GeneratedRegex(@"(?<!\w)(?:D0|W0|F[0-2]|M[1-6](?:[a-z]\d?)?|V1(?:[a-z][0-9a-z]*)?|A-\d+)(?!\w)", RegexOptions.CultureInvariant)]
     private static partial Regex Roadmap();
 
     // Issue and PR numbers. In "PKCS#8" a word character stands before the '#'.
     [GeneratedRegex(@"(?<!\w)#\d+(?!\w)", RegexOptions.CultureInvariant)]
     private static partial Regex Issue();
+
+    // The names of this repository's tests (Verify_JwsRuleBroken_IsRejected): two or more parts joined by '_', each starting
+    // with a capital letter. A name with no lower-case letter, such as ELM_NO_SEATS, is not one. A test compares the pattern
+    // with the names of the test methods under tests/ and fails when a test is named another way.
+    [GeneratedRegex(@"(?<!\w)(?=[A-Za-z0-9_]*[a-z])[A-Z][A-Za-z0-9]*(?:_[A-Z][A-Za-z0-9]*)+(?!\w)", RegexOptions.CultureInvariant)]
+    private static partial Regex TestName();
 
     [GeneratedRegex(@"\s+")]
     private static partial Regex WhiteSpace();

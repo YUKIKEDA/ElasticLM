@@ -19,7 +19,8 @@ public sealed partial class InternalReferencesTests
     /// Preconditions:
     /// - One text per case with one kind of identifier: section signs with and without "design", a design number without the
     ///   sign in both letter cases, decision numbers in the singular and the plural, a threat and an attacker ID, roadmap row
-    ///   names of every prefix (D0, W0, F2, M1, M4c, M4c3, V1, V1c11, V1c4d2b, A-1), and Issue numbers.
+    ///   names of every prefix (D0, W0, F2, M1, M4c, M4c3, V1, V1c11, V1c4d2b, A-1), Issue numbers, and test names of two,
+    ///   three, and four parts, one of them with a first part of capital letters and digits only.
     ///
     /// Steps:
     /// - Find the internal identifiers of the text.
@@ -52,6 +53,11 @@ public sealed partial class InternalReferencesTests
     [InlineData("The row A-1.", "roadmap", "A-1")]
     [InlineData("Issue #198.", "issue", "#198")]
     [InlineData("(#7)", "issue", "#7")]
+    [InlineData("A DER signature included (Verify_JwsRuleBroken_IsRejected, der-signature).", "test-name", "Verify_JwsRuleBroken_IsRejected")]
+    [InlineData("Sweep_RemovesEndedSessions covers it.", "test-name", "Sweep_RemovesEndedSessions")]
+    [InlineData("Activate_Check_Deactivate_WithCallbacks", "test-name", "Activate_Check_Deactivate_WithCallbacks")]
+    [InlineData("Rule_Broken and Rule_Kept.", "test-name", "Rule_Broken|Rule_Kept")]
+    [InlineData("ES256_WrongCurve_IsRejected", "test-name", "ES256_WrongCurve_IsRejected")]
     public void Find_OneKindOfIdentifier_OnlyItsPatternMatches(string text, string pattern, string matched)
     {
         IReadOnlyList<(string Pattern, string Text)> found = InternalReferences.Find(text);
@@ -60,14 +66,18 @@ public sealed partial class InternalReferencesTests
     }
 
     /// <summary>
-    /// Names of public standards, settings, addresses, routes, algorithms, and plain numbers are not internal identifiers.
+    /// Names of public standards, settings, addresses, routes, and algorithms, plain numbers, and names joined by '_' that are
+    /// not test names are not internal identifiers.
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - One text per case that is near a pattern and must pass: an RFC's section, PKCS#8, an environment variable, an IP
     ///   address, a route with a lower-case v1, algorithm and curve names, a format string, years, a threat-like ID of three
     ///   digits or inside a word, roadmap-like names outside the roadmap's ranges (M7, F3, V2, D1), lower-case forms, "design"
-    ///   and "decision" not followed by a number, and a '#' that no number follows or that follows a word character.
+    ///   and "decision" not followed by a number, a '#' that no number follows or that follows a word character, and names
+    ///   joined by '_' that are not test names: names with no lower-case letter (an error code, a registry key, an algorithm
+    ///   name), names in lower case (a C function, a column), a name whose first or later part starts in lower case or with a
+    ///   digit, a test-like name inside a longer word, and words with no second part.
     ///
     /// Steps:
     /// - Find the internal identifiers of the text.
@@ -99,6 +109,15 @@ public sealed partial class InternalReferencesTests
     [InlineData("The decision is 3.")]
     [InlineData("C# and #include and a#1")]
     [InlineData("#12a")]
+    [InlineData("ELM_NO_SEATS and HKEY_LOCAL_MACHINE and SHA256_P256")]
+    [InlineData("elm_activation_destroy and expires_at")]
+    [InlineData("camel_Case")]
+    [InlineData("Pascal_case")]
+    [InlineData("xVerify_Jws_IsRejected")]
+    [InlineData("Verify_Jws_isRejected")]
+    [InlineData("2Verify_Parts")]
+    [InlineData("Verify_2Parts_Works")]
+    [InlineData("Verify_ and _Verify and Verify")]
     [InlineData("")]
     public void Find_NoInternalIdentifier_ReturnsNone(string text)
     {
@@ -119,8 +138,8 @@ public sealed partial class InternalReferencesTests
     /// Expected:
     /// - The roadmap has such rows.
     /// - The roadmap pattern matches each first cell from its first character to its last; the message lists those it does
-    ///   not. A row named in a new way, or written in another form (bold, a link), fails here, so that the pattern is widened
-    ///   with it.
+    ///   not. This test fails when a row is named in a new way or written in another form (bold, a link), so that the pattern
+    ///   is widened with it.
     /// </remarks>
     [Fact]
     public void RoadmapPattern_EveryRowOfTheRoadmap_MatchesInFull()
@@ -137,6 +156,62 @@ public sealed partial class InternalReferencesTests
         Assert.NotEmpty(ids);
         string[] unknown = [.. ids.Where(id => !InternalReferences.IsRoadmapRow(id))];
         Assert.True(unknown.Length == 0, "docs/roadmap.md: row names the roadmap pattern does not match: '" + string.Join("', '", unknown) + "'");
+    }
+
+    /// <summary>
+    /// The test-name pattern knows the name of every xUnit test method under tests/.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Every .cs file under tests/ of the repository, except those in a bin or obj folder.
+    ///
+    /// Steps:
+    /// - Parse each file and take the name of every method that has an attribute whose name, a trailing Attribute removed,
+    ///   ends in Fact or Theory.
+    ///
+    /// Expected:
+    /// - No file has a syntax error; the message names the files that have.
+    /// - No file has an #if directive; the message names the files that have. The methods of a branch that is not compiled
+    ///   are not read, so the check would pass without their names.
+    /// - Test methods were found.
+    /// - The test-name pattern matches each name from its first character to its last; the message lists those it does not,
+    ///   with their files. This test fails when a test is named another way, so that the pattern is widened with it or the
+    ///   test is renamed.
+    /// </remarks>
+    [Fact]
+    public void TestNamePattern_EveryTestMethodUnderTests_MatchesInFull()
+    {
+        var broken = new List<string>();
+        var conditional = new List<string>();
+        var tests = new List<(string File, string Name)>();
+        foreach ((string relative, string full) in SourceFiles("tests"))
+        {
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(File.ReadAllText(full), cancellationToken: TestContext.Current.CancellationToken);
+            if (tree.GetDiagnostics(TestContext.Current.CancellationToken).Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
+            {
+                broken.Add(relative);
+                continue;
+            }
+
+            SyntaxNode syntax = tree.GetRoot(TestContext.Current.CancellationToken);
+            if (syntax.GetFirstDirective(directive => directive is IfDirectiveTriviaSyntax) is not null)
+            {
+                conditional.Add(relative);
+            }
+
+            tests.AddRange(
+                syntax.DescendantNodes().OfType<MethodDeclarationSyntax>().Where(IsTest).Select(method => (relative, method.Identifier.ValueText))
+            );
+        }
+
+        Assert.True(broken.Count == 0, "Files under tests/ with syntax errors: " + string.Join(", ", broken));
+        Assert.True(conditional.Count == 0, "Files under tests/ with an #if directive: " + string.Join(", ", conditional));
+        Assert.True(tests.Count > 0, "No test method was found under tests/.");
+        string[] unknown = [.. tests.Where(test => !InternalReferences.IsTestName(test.Name)).Select(test => $"{test.File}: {test.Name}")];
+        Assert.True(
+            unknown.Length == 0,
+            unknown.Length + " test names the test-name pattern does not match:" + Environment.NewLine + string.Join(Environment.NewLine, unknown)
+        );
     }
 
     /// <summary>
@@ -162,22 +237,15 @@ public sealed partial class InternalReferencesTests
     [Fact]
     public void SourceStrings_EveryStringLiteralUnderSrc_HoldsNoInternalIdentifier()
     {
-        string root = ReferencePages.RepositoryFile("src");
         var broken = new List<string>();
         var conditional = new List<string>();
         var found = new List<string>();
         int files = 0;
         int tokens = 0;
-        foreach (string file in Directory.EnumerateFiles(root, "*.cs", SearchOption.AllDirectories).Order(StringComparer.Ordinal))
+        foreach ((string relative, string full) in SourceFiles("src"))
         {
-            string relative = "src/" + Path.GetRelativePath(root, file).Replace('\\', '/');
-            if (relative.Split('/').Any(part => part is "bin" or "obj"))
-            {
-                continue;
-            }
-
             files++;
-            SyntaxTree tree = CSharpSyntaxTree.ParseText(File.ReadAllText(file), cancellationToken: TestContext.Current.CancellationToken);
+            SyntaxTree tree = CSharpSyntaxTree.ParseText(File.ReadAllText(full), cancellationToken: TestContext.Current.CancellationToken);
             if (tree.GetDiagnostics(TestContext.Current.CancellationToken).Any(diagnostic => diagnostic.Severity == DiagnosticSeverity.Error))
             {
                 broken.Add(relative);
@@ -241,6 +309,26 @@ public sealed partial class InternalReferencesTests
             found.Count + " internal identifiers in ElasticLM.Licensing.xml:" + Environment.NewLine + string.Join(Environment.NewLine, found)
         );
     }
+
+    // The .cs files under a folder of the repository in ordinal order, each with its path from the repository root. Files in
+    // the build's bin and obj folders are left out.
+    private static IEnumerable<(string Relative, string Full)> SourceFiles(string folder)
+    {
+        string root = ReferencePages.RepositoryFile(folder);
+        return Directory
+            .EnumerateFiles(root, "*.cs", SearchOption.AllDirectories)
+            .Order(StringComparer.Ordinal)
+            .Select(file => (Relative: folder + "/" + Path.GetRelativePath(root, file).Replace('\\', '/'), Full: file))
+            .Where(file => !file.Relative.Split('/').Any(part => part is "bin" or "obj"));
+    }
+
+    // Whether a method is a test: it has an attribute whose name, a trailing Attribute removed, ends in Fact or Theory.
+    private static bool IsTest(MethodDeclarationSyntax method) =>
+        method
+            .AttributeLists.SelectMany(list => list.Attributes)
+            .Select(attribute => attribute.Name.ToString())
+            .Select(name => name.EndsWith("Attribute", StringComparison.Ordinal) ? name[..^"Attribute".Length] : name)
+            .Any(name => name.EndsWith("Fact", StringComparison.Ordinal) || name.EndsWith("Theory", StringComparison.Ordinal));
 
     private static bool IsStringText(SyntaxToken token) =>
         token.Kind()

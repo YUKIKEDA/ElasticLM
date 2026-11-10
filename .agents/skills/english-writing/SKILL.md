@@ -33,7 +33,7 @@ Read this before writing. When a review corrects wording, add the general rule h
 
 - One sentence that names the condition that failed, with the same terms as the design and the XML docs.
 - A message never contains key material, a full license token, or a secret. It may name a key ID or a license ID.
-- Text a user reads (a string literal under `src/`, the XML docs of `ElasticLM.Licensing` and `ElasticLM.Client`, `include/elasticlm.h`) names no design section, decision number, threat or attacker ID, roadmap row, or Issue or PR number. Write the value or the place itself: "at most 100 years", not "the limit of design §8.6". A public standard stays, written as `RFC 7515 §2`. Where the reference for developers goes is in `.cursor/rules/csharp.mdc`.
+- Text a user reads (a string literal under `src/`, the XML docs of `ElasticLM.Licensing` and `ElasticLM.Client`, `include/elasticlm.h`) names no design section, decision number, threat or attacker ID, roadmap row, Issue or PR number, or test of this repository. Write the value or the place itself: "at most 100 years", not "the limit of design §8.6". A public standard stays, written as `RFC 7515 §2`. Where the reference for developers goes is in `.cursor/rules/csharp.mdc`. The same holds for `SECURITY.md`, `docs/container.md`, and the text of an MSBuild `<Error>` or `<Warning>`. No test reads these three, so the review of the PR does.
 
 ## Terminology
 

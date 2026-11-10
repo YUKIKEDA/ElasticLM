@@ -1,8 +1,8 @@
 # The elm-service container image
 
-`ghcr.io/yukikeda/elm-service` is the hosted activation service as a container image (design §20.6). Nothing has been
+`ghcr.io/yukikeda/elm-service` is the hosted activation service as a container image. Nothing has been
 published yet: the first image comes with the first release that is not a prerelease, such as `v1.0.0`; a prerelease
-such as `v1.0.0-rc.1` pushes no image (roadmap row V1e, design §20.5).
+such as `v1.0.0-rc.1` pushes no image.
 
 This file is for the people who build and check the image. To run it, read
 [Run the service in a container](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/guide/how-to/run-the-service-in-a-container.md)
@@ -28,4 +28,4 @@ container and PostgreSQL how-to guides on that image. To build one platform on y
 ## Checking the image
 
 The release workflow attests the image's index digest. The command to check it from the registry is tried with the first
-release (V1e) and then written here and in `SECURITY.md`.
+release and then written here and in `SECURITY.md`.

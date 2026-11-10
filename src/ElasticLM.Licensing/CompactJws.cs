@@ -114,10 +114,12 @@ internal sealed class CompactJws
     /// </summary>
     public bool Verify(ECDsa key) => VerifyEs256(SigningInput, Signature, key);
 
+    // Verify_JwsRuleBroken_IsRejected (der-signature) is the test of a DER signature.
+
     /// <summary>
     /// Verifies an ES256 signature in IEEE P1363 form (r || s, 64 bytes) over the signing input (RFC 7518 §3.4).
     /// <see cref="ECDsa.VerifyData(byte[], byte[], HashAlgorithmName, DSASignatureFormat)"/> returns false for a signature of
-    /// another length, a DER signature included (Verify_JwsRuleBroken_IsRejected, der-signature).
+    /// another length, a DER signature included.
     /// </summary>
     internal static bool VerifyEs256(byte[] signingInput, byte[] signature, ECDsa key) =>
         key.VerifyData(signingInput, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
