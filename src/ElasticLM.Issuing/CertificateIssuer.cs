@@ -62,7 +62,8 @@ public static class CertificateIssuer
         long notBeforeSeconds = notBefore.ToUnixTimeSeconds();
         if (!Limits.IsTime(notBeforeSeconds) || !Limits.IsTime(notBeforeSeconds + (long)validity.TotalSeconds))
         {
-            throw new ArgumentException("The validity period must lie between 1970 and 9999 (design §8.6).", nameof(notBefore));
+            // design §8.6.
+            throw new ArgumentException("The validity period must lie between 1970 and 9999.", nameof(notBefore));
         }
 
         ECParameters signing = signingPublicKey.ExportParameters(false);

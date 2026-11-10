@@ -1,7 +1,9 @@
 namespace ElasticLM.Licensing;
 
+// design §9.3, §9.6.
+
 /// <summary>
-/// The kind of a license (design §9.3, §9.6).
+/// The kind of a license.
 /// </summary>
 public enum LicenseKind
 {
@@ -15,8 +17,10 @@ public enum LicenseKind
     Server,
 }
 
+// design §9.3 CloneStrategy, §10.4.
+
 /// <summary>
-/// What a server does when it detects a cloned installation (design §9.3 <c>CloneStrategy</c>, §10.4).
+/// What a server does when it detects a cloned installation.
 /// </summary>
 public enum CloneStrategy
 {

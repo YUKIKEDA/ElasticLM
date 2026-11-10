@@ -3,9 +3,11 @@ using System.Text;
 
 namespace ElasticLM.Licensing;
 
+// design §10.3.
+
 /// <summary>
 /// Computes machine fingerprints: OS machine IDs hashed with a per-product value, so the raw IDs never leave the machine
-/// and products cannot track a machine across each other (design §10.3).
+/// and products cannot track a machine across each other.
 /// </summary>
 public static class MachineFingerprint
 {

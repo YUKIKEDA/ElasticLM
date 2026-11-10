@@ -1,12 +1,16 @@
 namespace ElasticLM.Licensing;
 
+// design §19.
+
 /// <summary>
-/// Converts <see cref="ErrorCode"/> values to their wire names (design §19).
+/// Converts <see cref="ErrorCode"/> values to their wire names.
 /// </summary>
 public static class ErrorCodes
 {
+    // design §19.
+
     /// <summary>
-    /// Reads a wire name such as <c>ELM_NO_SEATS</c> (design §19).
+    /// Reads a wire name such as <c>ELM_NO_SEATS</c>.
     /// </summary>
     /// <param name="wireName">The wire name.</param>
     /// <param name="code">The code; <see cref="ErrorCode.InternalError"/> when the name is unknown.</param>

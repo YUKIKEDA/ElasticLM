@@ -27,10 +27,11 @@ internal static partial class ServiceLog
     [LoggerMessage(EventId = 3, Level = LogLevel.Information, Message = "Schema versions applied: {Versions}")]
     public static partial void Migrated(ILogger log, string versions);
 
+    // design §7.5.
     [LoggerMessage(
         EventId = 4,
         Level = LogLevel.Warning,
-        Message = "The signing key's certificates end at {End}, within 30 days; issue new certificates and restart (design §7.5)."
+        Message = "The signing key's certificates end at {End}, within 30 days; issue new certificates and restart."
     )]
     public static partial void CertificateEndsSoon(ILogger log, DateTimeOffset end);
 

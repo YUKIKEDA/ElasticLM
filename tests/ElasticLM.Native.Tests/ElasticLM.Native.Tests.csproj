@@ -13,6 +13,8 @@
     <Compile Include="..\ElasticLM.Licensing.Tests\TestIssuer.cs" Link="TestIssuer.cs" />
     <!-- design §20.7, V1c2c: the functions of include/elasticlm.h are compared with the C API reference page. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
+    <!-- design §20.7, V1c6: include/elasticlm.h is searched for internal identifiers. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\InternalReferences.cs" Link="InternalReferences.cs" />
     <!-- design §17.5: the activation tests run against a real elm-service on loopback, as ElasticLM.Client.Tests do. -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />

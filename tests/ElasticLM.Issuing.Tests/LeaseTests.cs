@@ -183,7 +183,7 @@ public sealed class LeaseTests : IDisposable
     ///   an ID of 22 characters using each kind of character, and with the smallest seats, sequence, and duration.
     ///
     /// Expected:
-    /// - ArgumentException each time, for the IDs "The lease ID must be 22 characters of base64url (design §8.4.3)."; the
+    /// - ArgumentException each time, for the IDs "The lease ID must be 22 characters of base64url."; the
     ///   last two are issued.
     /// </remarks>
     [Fact]
@@ -198,13 +198,57 @@ public sealed class LeaseTests : IDisposable
         foreach (string id in new[] { @"..\..\AAAAAAAAAAAAAAAA", "lease-1-AAAAAAAAAAAAA.", "lease-1-AAAAAAAAAAAAA", "lease-1-AAAAAAAAAAAAAAA" })
         {
             Assert.Equal(
-                "The lease ID must be 22 characters of base64url (design §8.4.3). (Parameter 'spec')",
+                "The lease ID must be 22 characters of base64url. (Parameter 'spec')",
                 Assert.Throws<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { LeaseId = id }, _time)).Message
             );
         }
 
         Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { LeaseId = "Az09-_Az09-_Az09-_Az09" }, _time));
         Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Seats = 1, Sequence = 0, Duration = TimeSpan.FromSeconds(1) }, _time));
+    }
+
+    /// <summary>
+    /// A lease is issued at the longest duration and at the earliest and the latest end, and refused one second past each
+    /// with a message that states the limit itself (design §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid lease spec.
+    ///
+    /// Steps:
+    /// - Issue with a duration of 500 ms, of 3,162,240,000 s (100 years of 366 days), and of one second more; issue at
+    ///   9999-12-31T23:59:58Z with a duration of 1 s and of 2 s; issue with a duration of 1 s at 1969-12-31T23:59:59Z and a
+    ///   second earlier.
+    ///
+    /// Expected:
+    /// - "The lease duration must be at least one second and at most 100 years. (Parameter 'spec')" for 500 ms and for one
+    ///   second more, a lease for the limit; a lease that ends at 9999-12-31T23:59:59Z, and "The lease must end between 1970
+    ///   and 9999. (Parameter 'spec')" for 2 s; a lease that ends at 1970-01-01T00:00:00Z, and the same message for the one
+    ///   that would end a second earlier.
+    /// </remarks>
+    [Fact]
+    public void LeaseIssuer_DurationAndEndAtTheirLimits_IssuesAndRefusesOnePast()
+    {
+        LeaseSpec spec = Spec(Server());
+        const string Duration = "The lease duration must be at least one second and at most 100 years. (Parameter 'spec')";
+        var longest = TimeSpan.FromSeconds(Limits.MaxDurationSeconds);
+        string Refusal(TimeSpan duration, DateTimeOffset issuedAt) =>
+            Assert.Throws<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { Duration = duration }, issuedAt)).Message;
+
+        Assert.Equal(3_162_240_000L, Limits.MaxDurationSeconds);
+        Assert.Equal(Duration, Refusal(TimeSpan.FromMilliseconds(500), Now));
+        Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Duration = longest }, Now));
+        Assert.Equal(Duration, Refusal(longest + TimeSpan.FromSeconds(1), Now));
+
+        var beforeTheEnd = new DateTimeOffset(9999, 12, 31, 23, 59, 58, TimeSpan.Zero);
+        Assert.Equal(Limits.MaxUnixSeconds, beforeTheEnd.ToUnixTimeSeconds() + 1);
+        Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Duration = TimeSpan.FromSeconds(1) }, beforeTheEnd));
+        const string End = "The lease must end between 1970 and 9999. (Parameter 'spec')";
+        Assert.Equal(End, Refusal(TimeSpan.FromSeconds(2), beforeTheEnd));
+
+        var beforeTheEpoch = new DateTimeOffset(1969, 12, 31, 23, 59, 59, TimeSpan.Zero);
+        Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Duration = TimeSpan.FromSeconds(1) }, beforeTheEpoch));
+        Assert.Equal(End, Refusal(TimeSpan.FromSeconds(1), beforeTheEpoch.AddSeconds(-1)));
     }
 
     /// <summary>

@@ -100,7 +100,7 @@ The leases and borrows that the server lent stay as they are.
 If the new file does not pass a check, the server keeps the old license in use, and `elm` prints `error:`, the error code, and the reason, and ends with exit code 1. For example, a file bound to another installation key gives:
 
 ```text
-error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
+error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
 ```
 
 Put the old file back at the path of `license`, here from `server.elmlic.old`, until you have a file that passes: the server reads the file again at its next start, and with a file that does not verify, it does not start. [Error codes](../reference/error-codes.md) lists every code.

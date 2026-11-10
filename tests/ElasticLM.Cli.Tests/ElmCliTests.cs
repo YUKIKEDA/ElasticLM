@@ -520,7 +520,8 @@ public sealed class ElmCliTests : IDisposable
     /// - Issue with --expires never; verify.
     ///
     /// Expected:
-    /// - Exit 0, a warning naming the missing expiry; verification exit 0 with "expires: never".
+    /// - Exit 0; standard error is the one line "warning: The license has no expiry. It cannot be revoked once delivered.";
+    ///   verification exit 0 with "expires: never".
     /// </remarks>
     [Fact]
     public void Issue_NoExpiry_WarnsAndVerifies()
@@ -531,7 +532,7 @@ public sealed class ElmCliTests : IDisposable
 
         (int code, _, string error) = Run(issue);
         Assert.Equal(0, code);
-        Assert.Contains("warning: The license has no expiry", error, StringComparison.Ordinal);
+        Assert.Equal("warning: The license has no expiry. It cannot be revoked once delivered." + Environment.NewLine, error);
 
         (int verifyCode, string verifyOut, _) = Run([.. Verify(P("never.elmlic"))]);
         Assert.Equal(0, verifyCode);

@@ -15,5 +15,7 @@
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
     <!-- design §20.7, V1c2c: the public types and members are compared with the .NET API reference page. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
+    <!-- design §20.7, V1c6: the XML documentation file of ElasticLM.Client is searched for internal identifiers. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\InternalReferences.cs" Link="InternalReferences.cs" />
   </ItemGroup>
 </Project>

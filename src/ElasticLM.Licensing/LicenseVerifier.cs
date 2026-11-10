@@ -4,9 +4,10 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §11, §11.2.
+
 /// <summary>
-/// Verifies license files offline (design §11). The steps and their order are those of design §11.2; the result names the
-/// first step that failed.
+/// Verifies license files offline. The steps run in a fixed order; the result names the first step that failed.
 /// </summary>
 public sealed class LicenseVerifier
 {
@@ -45,10 +46,12 @@ public sealed class LicenseVerifier
         _options = new LicenseVerifierOptions { ClockSkew = options.ClockSkew, AcceptTrialAsStandard = options.AcceptTrialAsStandard };
     }
 
+    // design §8.5.
+
     /// <summary>
     /// Verifies a license file against a requirement.
     /// </summary>
-    /// <param name="licenseFile">The license file bytes (UTF-8 JSON, design §8.5).</param>
+    /// <param name="licenseFile">The license file bytes (UTF-8 JSON).</param>
     /// <param name="requirement">What the app requires.</param>
     /// <returns><see cref="LicenseVerificationResult.Valid"/>, or <see cref="LicenseVerificationResult.Invalid"/> with the first failed check.</returns>
     /// <exception cref="ArgumentException">The requirement has an empty product ID or a feature version that is not <c>major.minor[.patch]</c>.</exception>

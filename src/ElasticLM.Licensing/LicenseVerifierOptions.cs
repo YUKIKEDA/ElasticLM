@@ -8,8 +8,10 @@ public sealed class LicenseVerifierOptions
     /// <summary>The largest allowed clock skew.</summary>
     public static readonly TimeSpan MaxClockSkew = TimeSpan.FromHours(1);
 
+    // design §11.3.
+
     /// <summary>
-    /// Gets or sets the allowed clock skew between this machine and the issuer (design §11.3). The default is 5 minutes. It
+    /// Gets or sets the allowed clock skew between this machine and the issuer. The default is 5 minutes. It
     /// must be between zero and <see cref="MaxClockSkew"/>; <see cref="LicenseVerifier"/> checks it when it is created.
     /// </summary>
     public TimeSpan ClockSkew { get; set; } = TimeSpan.FromMinutes(5);

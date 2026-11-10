@@ -79,12 +79,14 @@ public static class LicenseIssuer
         var warnings = new List<string>();
         if (payload.Exp is null)
         {
-            warnings.Add("The license has no expiry. It cannot be revoked once delivered (design 5.4).");
+            // design §5.4.
+            warnings.Add("The license has no expiry. It cannot be revoked once delivered.");
         }
 
         if (spec.Kind == LicenseKind.Server && payload.Exp is null)
         {
-            warnings.Add("A server license without expiry is never refreshed, so a cloned server cannot be detected (design 9.6).");
+            // design §9.6.
+            warnings.Add("A server license without expiry is never refreshed, so a cloned server cannot be detected.");
         }
 
         string token = JwsWriter.Sign(signingKey, TokenTypes.License, payload, LicensingJsonContext.Default.LicensePayload);

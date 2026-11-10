@@ -35,7 +35,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - 設定で指定したファイル（ルート鍵、サーバーライセンス、TLS 証明書）を読めないか、有効でない。
 - TLS 証明書に拡張キー使用法（証明書を使ってよい用途の一覧）があり、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication`、日本語の Windows では「サーバー認証」と表示される）がない。
 - TLS 証明書のファイルで、サーバーの証明書のあとにある証明書が CA の証明書ではない。メッセージは、ファイルの中で何枚目かと、そのサブジェクトを示す: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
-- サーバーライセンスの検証に失敗した。
+- サーバーライセンスの検証に失敗した。`error:` のあとのメッセージは、失敗した確認のエラーコードで始まる。たとえば、別のインストール鍵に紐付いたライセンスでは `error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is <thumbprint>.` となる。すべてのコードは[エラーコード](error-codes.md)に挙げている。
 - `service.url` を設定しているのに、サーバーライセンスを書き込めない。
 - 借用の記録が壊れているか、読み書きできない。
 - 利用ログを書き込めない。

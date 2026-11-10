@@ -99,6 +99,39 @@ public sealed class ElmCommandsTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// elm server reload prints a refused license's error code once, before the server's sentence (design §13.7, V1c6 Q5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server; a license bound to another installation key written over its license file.
+    ///
+    /// Steps:
+    /// - elm server reload.
+    ///
+    /// Expected:
+    /// - Exit 1, nothing on standard output, and the one line "error: ELM_WRONG_INSTALLATION: The server license does not
+    ///   verify: The license is bound to another installation key. This server's installation key is {thumbprint}.".
+    /// </remarks>
+    [Fact]
+    public async Task ServerReload_LicenseOfAnotherKey_PrintsTheCodeOnce()
+    {
+        string data = _deployment.NewFolder("server");
+        ElmServer server = await _deployment.StartServerAsync(data);
+        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder("elsewhere"));
+        _deployment.WriteServerLicense(data, spec => spec with { InstallationKeyThumbprint = otherKey });
+
+        (int code, string output, string error) = Run(["server", "reload", "--url", server.AdminUrl.ToString(), "--data", data]);
+
+        Assert.Equal(1, code);
+        Assert.Equal(string.Empty, output);
+        Assert.Equal(
+            "error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. "
+                + $"This server's installation key is {Deployment.ServerKeyId(data)}.{Environment.NewLine}",
+            error
+        );
+    }
+
+    /// <summary>
     /// elm log verify checks a folder of usage logs and of the borrow record, and fails on a changed line.
     /// </summary>
     /// <remarks>

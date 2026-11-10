@@ -447,7 +447,8 @@ internal sealed partial class ElmService
 
         if (request.Fingerprints.Count == 0)
         {
-            return ClientResult.Fail(ErrorCode.FingerprintUnavailable, "A trial needs at least one fingerprint (design §12.9).");
+            // design §12.9.
+            return ClientResult.Fail(ErrorCode.FingerprintUnavailable, "A trial needs at least one fingerprint.");
         }
 
         const string NotOffered = "The product does not offer a trial.";

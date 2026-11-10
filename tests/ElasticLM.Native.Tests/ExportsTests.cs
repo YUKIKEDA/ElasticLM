@@ -100,6 +100,39 @@ public sealed unsafe partial class ExportsTests : IDisposable
     }
 
     /// <summary>
+    /// include/elasticlm.h, which ships with libelasticlm, holds no identifier that only this repository explains (design §20.7,
+    /// V1c6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - include/elasticlm.h under the repository root.
+    ///
+    /// Steps:
+    /// - Find the internal identifiers of every line of the file, code and comments alike.
+    ///
+    /// Expected:
+    /// - The header has lines.
+    /// - No line holds an internal identifier; the message names the line, the pattern, and the matched text of each.
+    /// </remarks>
+    [Fact]
+    public void Header_EveryLine_HoldsNoInternalIdentifier()
+    {
+        string[] lines = File.ReadAllLines(ReferencePages.RepositoryFile("include/elasticlm.h"));
+
+        Assert.NotEmpty(lines);
+        string[] found =
+        [
+            .. lines.SelectMany(
+                (line, index) => InternalReferences.Find(line).Select(hit => $"include/elasticlm.h:{index + 1}: {hit.Pattern} '{hit.Text}'")
+            ),
+        ];
+        Assert.True(
+            found.Length == 0,
+            found.Length + " internal identifiers in include/elasticlm.h:" + Environment.NewLine + string.Join(Environment.NewLine, found)
+        );
+    }
+
+    /// <summary>
     /// An unbound license verifies, and every value function reads it.
     /// </summary>
     /// <remarks>

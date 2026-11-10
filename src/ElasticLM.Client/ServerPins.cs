@@ -5,8 +5,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §13.5 step 3.
+
 /// <summary>
-/// The pins of design §13.5 step 3: for each server URL, the server license ID and the server key thumbprint seen first (or
+/// The server pins: for each server URL, the server license ID and the server key thumbprint seen first (or
 /// accepted under a configured license ID). They live next to the installation key, one file per URL, in <c>servers/</c>.
 /// </summary>
 internal sealed class ServerPins(string directory)

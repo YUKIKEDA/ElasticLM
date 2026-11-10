@@ -1,11 +1,15 @@
 namespace ElasticLM.Licensing;
 
+// design §8.6.
+
 /// <summary>
-/// Input limits (design §8.6).
+/// Input limits.
 /// </summary>
 internal static class Limits
 {
-    /// <summary>The largest early-return count a server license may allow in 30 days (design §8.6, <c>brl</c>).</summary>
+    // design §8.6.
+
+    /// <summary>The largest early-return count a server license may allow in 30 days (<c>brl</c>).</summary>
     public const int MaxBorrowReturns = 1_000;
 
     public const int MaxTokenLength = 16 * 1024;
@@ -30,11 +34,15 @@ internal static class Limits
 
     public static bool IsDuration(long? value) => value is null or (>= 0 and <= MaxDurationSeconds);
 
-    /// <summary>The length of a lease ID: 128 random bits in base64url without padding (design §8.4.3, §14.2).</summary>
+    // design §8.4.3, §14.2.
+
+    /// <summary>The length of a lease ID: 128 random bits in base64url without padding.</summary>
     public const int LeaseIdLength = 22;
 
+    // design §8.4.3.
+
     /// <summary>
-    /// Returns whether a lease ID has the form of design §8.4.3: 22 characters of <c>[A-Za-z0-9_-]</c>. A client names a
+    /// Returns whether a lease ID has its form: 22 characters of <c>[A-Za-z0-9_-]</c>. A client names a
     /// borrow's file after it, so a path (<c>..\x</c>, a rooted path) must never pass.
     /// </summary>
     public static bool IsLeaseId(string? id) =>

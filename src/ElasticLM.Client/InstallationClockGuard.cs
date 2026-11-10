@@ -3,8 +3,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §11.4.
+
 /// <summary>
-/// A clock guard that keeps its state in a file and signs it with its own copy of an installation key (design §11.4), made
+/// A clock guard that keeps its state in a file and signs it with its own copy of an installation key, made
 /// by <see cref="InstallationKey.CreateClockGuard"/>. Disposing it destroys the copy.
 /// </summary>
 public sealed class InstallationClockGuard : IClockGuard, IDisposable

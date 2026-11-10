@@ -4,8 +4,10 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Licensing;
 
+// design §8.4.1.
+
 /// <summary>
-/// An EC P-256 public key as a JWK with only <c>kty</c>, <c>crv</c>, <c>x</c>, and <c>y</c> (design §8.4.1).
+/// An EC P-256 public key as a JWK with only <c>kty</c>, <c>crv</c>, <c>x</c>, and <c>y</c>.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class EcPublicJwk
@@ -37,8 +39,10 @@ internal sealed class EcPublicJwk
             Y = Base64UrlCodec.Encode(parameters.Q.Y),
         };
 
+    // design §7.4.
+
     /// <summary>
-    /// Returns the RFC 7638 JWK thumbprint (SHA-256, base64url), which is the key ID (design §7.4).
+    /// Returns the RFC 7638 JWK thumbprint (SHA-256, base64url), which is the key ID.
     /// </summary>
     public static string Thumbprint(ECParameters parameters)
     {

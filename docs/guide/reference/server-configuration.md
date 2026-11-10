@@ -35,7 +35,7 @@ Exit code 1 means, for example:
 - A file that a setting names (a root key, the server license, a TLS certificate) cannot be read or is not valid.
 - The TLS certificate has an Extended Key Usage, the list of purposes the certificate may be used for, that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`).
 - A certificate after the server's in the TLS certificate file is not a CA certificate. The message names its place in the file and its subject: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
-- The server license does not verify.
+- The server license does not verify. The message after `error:` begins with the error code of the check that failed. For example, a license bound to another installation key gives `error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is <thumbprint>.` [Error codes](error-codes.md) lists every code.
 - The server license cannot be written while `service.url` is set.
 - The borrow record is broken, or cannot be read or written.
 - The usage log cannot be written.

@@ -4,8 +4,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §10.2.
+
 /// <summary>
-/// Creates and reads the installation key of a product (design §10.2). Windows protects the key with DPAPI; Linux and
+/// Creates and reads the installation key of a product. Windows protects the key with DPAPI; Linux and
 /// macOS keep it in a file only the owner can read. A key that exists but cannot be read is never replaced, because a new
 /// key would use one more activation.
 /// </summary>
@@ -14,12 +16,14 @@ public sealed partial class InstallationKeyStore
     private const string KeyFileName = "installation.key";
     private const int MaxKeyFileLength = 16 * 1024;
 
+    // design §9.1, §10.2.
+
     /// <summary>
     /// Initializes a new instance of the <see cref="InstallationKeyStore"/> class.
     /// </summary>
-    /// <param name="productId">The product ID: lowercase letters, digits, and '-', at most 64 characters (design §9.1).</param>
+    /// <param name="productId">The product ID: lowercase letters, digits, and '-', at most 64 characters.</param>
     /// <param name="scope">For the user or the machine.</param>
-    /// <param name="directory">A directory to use instead of the default of design §10.2, or <see langword="null"/>.</param>
+    /// <param name="directory">A directory to use instead of the default folder of the scope, or <see langword="null"/>.</param>
     /// <exception cref="ArgumentException"><paramref name="productId"/> is not a product ID.</exception>
     public InstallationKeyStore(string productId, KeyScope scope = KeyScope.User, string? directory = null)
     {
@@ -112,12 +116,14 @@ public sealed partial class InstallationKeyStore
         return TryLoad(out key, out error);
     }
 
+    // design §10.2.
+
     /// <summary>
     /// Reads the key.
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
     /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when there is no key or it cannot be read, or when another
-    /// user could have read or replaced the machine-scope folder (design §10.2).</param>
+    /// user could have read or replaced the machine-scope folder.</param>
     /// <returns><see langword="true"/> when the key was read.</returns>
     public bool TryLoad(out InstallationKey? key, out LicenseError? error)
     {
@@ -180,8 +186,10 @@ public sealed partial class InstallationKeyStore
         return true;
     }
 
+    // design §12.6.
+
     /// <summary>
-    /// Deletes the key, as after a deactivation (design §12.6). Nothing happens when there is no key.
+    /// Deletes the key, as after a deactivation. Nothing happens when there is no key.
     /// </summary>
     public void Delete()
     {

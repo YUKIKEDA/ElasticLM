@@ -1,7 +1,9 @@
 namespace ElasticLM.Licensing;
 
+// design §8.4.
+
 /// <summary>
-/// The <c>typ</c> header values (design §8.4).
+/// The <c>typ</c> header values.
 /// </summary>
 public static class TokenTypes
 {

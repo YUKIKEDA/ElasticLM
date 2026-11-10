@@ -3,8 +3,10 @@ using System.Text;
 
 namespace ElasticLM.Licensing;
 
+// design §12.1.
+
 /// <summary>
-/// Normalizes the target URI that a request proof signs as <c>htu</c> (design §12.1). Clients and servers apply the same
+/// Normalizes the target URI that a request proof signs as <c>htu</c>. Clients and servers apply the same
 /// steps, so a proof made for a URI matches the server's own form of it.
 /// </summary>
 public static class HttpTargetUri

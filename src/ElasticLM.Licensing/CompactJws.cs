@@ -4,8 +4,10 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §8.2.
+
 /// <summary>
-/// A parsed JWS in compact serialization whose signature has not been verified yet (design §8.2). The payload is kept as
+/// A parsed JWS in compact serialization whose signature has not been verified yet. The payload is kept as
 /// bytes and is not interpreted as JSON until <see cref="Verify"/> succeeds.
 /// </summary>
 internal sealed class CompactJws
@@ -31,8 +33,10 @@ internal sealed class CompactJws
 
     public byte[] Signature { get; }
 
+    // design §8.2 rules 1 to 4.
+
     /// <summary>
-    /// Parses a compact JWS and checks the header against rules 1 to 4 of design §8.2: three base64url segments, only
+    /// Parses a compact JWS and checks its form and its header: three base64url segments, only
     /// <c>alg</c>, <c>kid</c>, <c>typ</c>, <c>alg</c> is <c>ES256</c>, and <c>typ</c> is the one the caller expects.
     /// </summary>
     public static bool TryParse(string text, string expectedTyp, out CompactJws? jws, out LicenseError? error)
@@ -102,9 +106,11 @@ internal sealed class CompactJws
         return true;
     }
 
+    // design §8.2 rules 5 and 6.
+
     /// <summary>
-    /// Verifies the ES256 signature (IEEE P1363, 64 bytes) over the received <c>header.payload</c> bytes (design §8.2 rules 5
-    /// and 6). DER signatures are rejected by their length.
+    /// Verifies the ES256 signature (IEEE P1363, 64 bytes) over the received <c>header.payload</c> bytes. DER signatures are
+    /// rejected by their length.
     /// </summary>
     public bool Verify(ECDsa key) => VerifyEs256(SigningInput, Signature, key);
 
@@ -116,11 +122,13 @@ internal sealed class CompactJws
     internal static bool VerifyEs256(byte[] signingInput, byte[] signature, ECDsa key) =>
         key.VerifyData(signingInput, signature, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation);
 
+    // design §8.2 rule 6, exception.
+
     /// <summary>
-    /// Verifies the signature with the public key carried in the payload's <c>jwk</c> member. This is the exception of design
-    /// §8.2 rule 6 for <c>elm-proof+jws</c> and <c>elm-actreq+jws</c> when the verifier does not know the key yet: only
-    /// <c>jwk</c> is read before the signature is verified, its thumbprint must equal the header <c>kid</c>, and the point must
-    /// be on the curve.
+    /// Verifies the signature with the public key carried in the payload's <c>jwk</c> member. A payload is not read before its
+    /// signature verifies; this is the exception for <c>elm-proof+jws</c> and <c>elm-actreq+jws</c> when the verifier does not
+    /// know the key yet: only <c>jwk</c> is read before the signature is verified, its thumbprint must equal the header
+    /// <c>kid</c>, and the point must be on the curve.
     /// </summary>
     public bool TryVerifyWithEmbeddedKey(out ECParameters key)
     {
@@ -142,9 +150,11 @@ internal sealed class CompactJws
         return false;
     }
 
+    // design §8.2 rule 6, exception.
+
     /// <summary>
     /// Reads the payload's <c>jwk</c> without verifying the signature, and checks that its thumbprint is the header
-    /// <c>kid</c>. Only <c>jwk</c> is read (design §8.2 rule 6, exception); the caller verifies the signature next.
+    /// <c>kid</c>. Only <c>jwk</c> is read; the caller verifies the signature next.
     /// </summary>
     public bool TryReadEmbeddedKey(out ECParameters key)
     {
