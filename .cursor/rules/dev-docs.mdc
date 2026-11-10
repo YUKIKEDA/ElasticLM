@@ -8,7 +8,7 @@ alwaysApply: false
 
 This rule covers the documents at the top of `docs/` and the ADRs. The user documentation in `docs/guide/` follows its own rules, which V1c1 writes (design §20.7).
 
-- Figures: a fenced `mermaid` block (sequence diagrams for protocols, state diagrams for leases and activations). No ASCII-art diagrams. A directory tree, a code signature, or a byte layout in a code block is not a diagram.
+- Figures: a fenced `mermaid` block (sequence diagrams for protocols, state diagrams for leases and activations). No ASCII-art diagrams. A directory tree, a code signature, or a byte layout in a code block is not a diagram. A flowchart label that holds parentheses, brackets, or braces is written in double quotes (`.cursor/rules/user-docs.mdc`); the site job's check reads only the user documentation, so it does not catch a diagram of the design that does not parse.
 - Math: inline `$...$`, display `$$...$$`. Do not use `\(` or `\[`. Do not put `$` inside a code block.
 - An ordered list (the steps of verification, the steps of checkout) is written in one place. A section that adds to it names the steps it follows and points back.
 - Code in the design is C# pseudo-code that follows `.cursor/rules/csharp.mdc` naming, so it can be copied into an implementation without renaming. Wire examples are JSON or HTTP in code blocks, with fake keys and IDs.
