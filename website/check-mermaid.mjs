@@ -22,6 +22,7 @@ const publicOrigin = 'https://yukikeda.github.io';
 const schemes = ['light', 'dark'];
 const settleMs = 2000;
 const pageLimitMs = 30000;
+const closeLimitMs = 5000;
 const sources = {
   en: join(site, '..', 'docs', 'guide'),
   ja: join(site, '..', 'docs', 'guide.ja'),
@@ -112,8 +113,8 @@ function serve() {
 }
 
 // The DevTools protocol over --remote-debugging-pipe: Chrome reads commands on fd 3 and writes on fd 4, each message
-// ending with a NUL byte. The sandbox stays on: --no-sandbox is added only if the runner cannot start Chrome without it
-// (design §20.7, V1c5 R8), and then with the reason here.
+// ending with a NUL byte. The sandbox stays on: the runner's Chrome starts with it (design §20.7, V1c5 R8; run
+// 42641207052).
 function launch(executable, profile) {
   const args = [
     '--headless',
@@ -194,19 +195,30 @@ function launch(executable, profile) {
       child.stdio[3].write(`${JSON.stringify({ id, method, params, sessionId })}\0`);
     });
   };
-  // Waits for the process only while it runs: a process that has exited, was killed by a signal, or never started
-  // emits no further exit event.
+  // Asks the browser to exit and waits for the process, not for the answer: Browser.close is answered before the
+  // browser has exited, and a browser killed at that moment leaves processes that still write to the profile folder
+  // while it is removed. Only a browser that has not exited within the limit is killed. A process that has exited, was
+  // killed by a signal, or never started emits no further exit event, so there is nothing to wait for.
   const close = async () => {
     if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) {
       return;
     }
     const exited = new Promise((done) => child.once('exit', done));
-    await Promise.race([send('Browser.close').catch(() => {}), exited, sleep(5000)]);
-    if (child.exitCode === null && child.signalCode === null) {
-      child.kill('SIGKILL');
-      if ((await Promise.race([exited.then(() => true), sleep(5000).then(() => false)])) === false) {
-        throw new Error(`the browser (process ${child.pid}) did not exit after SIGKILL`);
-      }
+    const exitsWithin = (ms) =>
+      new Promise((done) => {
+        const timer = setTimeout(() => done(false), ms);
+        exited.then(() => {
+          clearTimeout(timer);
+          done(true);
+        });
+      });
+    send('Browser.close').catch(() => {});
+    if (await exitsWithin(closeLimitMs)) {
+      return;
+    }
+    child.kill('SIGKILL');
+    if (!(await exitsWithin(closeLimitMs))) {
+      throw new Error(`the browser (process ${child.pid}) did not exit after SIGKILL`);
     }
   };
   return { send, listeners, close, started, closed: () => closed };
@@ -420,15 +432,23 @@ async function main() {
     };
     await Promise.all(Array.from({ length: Math.min(jobs, work.length) }, worker));
   } finally {
-    // Each step runs even if the one before it fails, so neither the server nor the profile folder is left behind.
-    try {
-      await browser.close();
-    } finally {
-      try {
+    // Each step runs even if the one before it fails, so neither the server nor the profile folder is left behind. A
+    // step that fails is a warning: it says what is left behind, and neither hides nor changes the result of the check.
+    const steps = [
+      () => browser.close(),
+      () => {
         server.closeAllConnections();
         server.close();
-      } finally {
-        rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      },
+      () => rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }),
+    ];
+    for (const step of steps) {
+      try {
+        await step();
+      } catch (error) {
+        console.error(
+          `check-mermaid: warning: a cleanup step failed (this does not change the result): ${error.message}`,
+        );
       }
     }
   }
