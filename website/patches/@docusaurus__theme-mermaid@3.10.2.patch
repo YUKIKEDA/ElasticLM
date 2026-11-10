@@ -1,0 +1,34 @@
+diff --git a/lib/client/index.js b/lib/client/index.js
+index 0dc44e6e1731baad84a81cbee15eada4f18557b8..4711efbc9005e65b7beb08c02d7786c40ec767c6 100644
+--- a/lib/client/index.js
++++ b/lib/client/index.js
+@@ -4,7 +4,7 @@
+  * This source code is licensed under the MIT license found in the
+  * LICENSE file in the root directory of this source tree.
+  */
+-import { useState, useEffect, useMemo } from 'react';
++import { useState, useEffect, useMemo, useRef } from 'react';
+ import { useColorMode, useThemeConfig } from '@docusaurus/theme-common';
+ import { loadMermaid } from './loadMermaid';
+ // Stable className to allow users to easily target with CSS
+@@ -63,6 +63,7 @@ async function renderMermaid({ id, text, config, }) {
+ export function useMermaidRenderResult({ text, config: providedConfig, }) {
+     const [result, setResult] = useState(null);
+     const id = useMermaidId();
++    const renderCount = useRef(0);
+     /*
+     For flexibility, we allow the hook to receive a custom Mermaid config
+     The user could inject a modified version of the default config for example
+@@ -70,7 +71,11 @@ export function useMermaidRenderResult({ text, config: providedConfig, }) {
+     const defaultMermaidConfig = useMermaidConfig();
+     const config = providedConfig ?? defaultMermaidConfig;
+     useEffect(() => {
+-        renderMermaid({ id, text, config })
++        // ElasticLM patch (design §20.7, V1c5, Issue #192): the id fix of facebook/docusaurus#12454. Mermaid removes
++        // the element with the render's id first, so a second render with the same id (the color mode changing on
++        // hydration) removed the drawn SVG, and React did not put back identical markup. Every render gets its own id.
++        // Remove this patch when @docusaurus/theme-mermaid is raised to a version that contains #12454.
++        renderMermaid({ id: `${id}-${renderCount.current++}`, text, config })
+             // TODO maybe try to use Suspense here and throw the promise?
+             // See also https://github.com/pmndrs/suspend-react
+             .then(setResult)

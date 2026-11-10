@@ -119,6 +119,19 @@ You do not have to run every part. There are four shapes, and a vendor may use m
 
 "Lease" means a seat lent for a short, fixed time. To pick a shape:
 
+```mermaid
+flowchart TD
+    S{"Does the license limit concurrent users (seats)?"} -- no --> V{Does the vendor run elm-service?}
+    V -- no --> OFF[Offline only]
+    V -- yes --> HA[Hosted activation]
+    S -- yes --> R{Can the apps reach the vendor's service,<br/>and does the customer accept the seats there?}
+    R -- yes --> CF[Cloud floating]
+    R -- no --> OP[On-premises floating]
+    OP --> L{How does the server get its server license?}
+    L -- from elm-service --> LS[Server license: the server activates it<br/>with the vendor's elm-service]
+    L -- by hand --> LE[Server license: the vendor issues it with elm]
+```
+
 - If the license limits only who may run the app, on which device, and until when, use **offline only** when the vendor runs no service, or **hosted activation** when it does.
 - If the license limits concurrent users (seats), use **cloud floating** when the apps can reach the vendor's service, or **on-premises floating** when they cannot or the customer wants the seats on site.
 - An on-premises server gets its server license either from `elm-service` (see "On-premises floating with elm-service", below) or from `elm`, issued by hand.
