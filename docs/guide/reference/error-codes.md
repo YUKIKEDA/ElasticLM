@@ -87,7 +87,7 @@ In `ELM_CONFLICT`, an unbound license is one whose policy has `binding`: `unboun
 
 | Code | Number | HTTP status | Returned by | Meaning | What to do |
 | --- | --- | --- | --- | --- | --- |
-| `ELM_UNAUTHORIZED` | 50 | 401 | `elm-server`, `elm-service` | Administrator authentication failed: a missing or wrong administrator token, API key, access token, or session. | Check the token, API key, or sign-in. |
+| `ELM_UNAUTHORIZED` | 50 | 401 | `elm-server`, `elm-service` | Administrator authentication failed: a missing or wrong administrator token, API key, access token, or session. | Check the token, API key, or sign-in. For the `elm server` commands, check that `--data` or `--product` and `--url` name the same server ([Server license commands](elm-cli.md#server-license-commands)). |
 | `ELM_FORBIDDEN` | 51 | 403 | `elm-server`, `elm-service` | The administrator lacks the permission, the access token maps to no role, the CSRF header is missing, or `elm-server`'s `allow` / `deny` settings refuse the address, host, or user. | Use a key or role with the permission named in the message, or change the server's access settings. |
 | `ELM_RATE_LIMITED` | 52 | 429 | `elm-server`, `elm-service` | Too many requests from this address, installation key, API key, or administrator. The answer has `Retry-After`. | Wait for the `Retry-After` time and try again. |
 | `ELM_SERVER_BUSY` | 53 | 503 | `elm-server` | The server holds as many used proof IDs (`jti`) as it can, 100,000, and refuses requests with a proof until some of them expire. | Try again later. |

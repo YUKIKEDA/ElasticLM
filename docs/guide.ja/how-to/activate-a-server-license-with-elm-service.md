@@ -247,7 +247,7 @@ The server reloaded the license.
 
 サービスに一度も接続しないサーバーも、ファイルでアクティベーションする。このとき `server.json` には `service` を書かない。上と同じように、サーバーを一度起動して鍵を作らせる。そのあと、`elm server activate-request --key <server-license-key>` がリクエストを書き、ベンダーが `elm offline process` でそれに応え、`elm server import` がレスポンスを読んでライセンスファイルを書く。サーバーは、そのあとで起動する。以降は、上と同じようにオフラインで更新する。
 
-ライセンスを別のサーバーに移すには、まずサーバーを止め、そのアクティベーションの枠を空ける。オンラインでは `elm server deactivate` で空ける。オフラインでは、`elm server deactivate-proof` がアクティベーションを削除してアクティベーション解除のプルーフを書き、ベンダーがそれを `elm offline process` で処理する。サービスがそれを受け取ったら、`elm server forget-proof` で、サーバーはもう一度アクティベーションできるようになる。`server-data` を削除するだけで済ませてはならない。サービスはそのアクティベーションを数え続け、`maxActivations` が 1 では、そのライセンスでほかのサーバーをアクティベーションできなくなる。これらのコマンドのすべてのオプションは、[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に挙げている。
+ライセンスを別のサーバーに移すには、まずサーバーを止め、そのアクティベーションの枠を空ける。オンラインでは `elm server deactivate` で空ける。同じマシンの別の `elm-server` が既定の `--url`（`http://127.0.0.1:7071`）で待ち受けているなら、`elm server deactivate` と `elm server deactivate-proof` に `--url` で、止めたサーバー自身の `admin.listen`（いまは何も待ち受けていない）を渡す。渡さないと、これらのコマンドは `ELM_UNAUTHORIZED` で止まる。オフラインでは、`elm server deactivate-proof` がアクティベーションを削除してアクティベーション解除のプルーフを書き、ベンダーがそれを `elm offline process` で処理する。サービスがそれを受け取ったら、`elm server forget-proof` で、サーバーはもう一度アクティベーションできるようになる。`server-data` を削除するだけで済ませてはならない。サービスはそのアクティベーションを数え続け、`maxActivations` が 1 では、そのライセンスでほかのサーバーをアクティベーションできなくなる。これらのコマンドのすべてのオプションは、[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に挙げている。
 
 試し終えたら、3 つ目のターミナルで Ctrl+C を押してサーバーを止め、2 つ目のターミナルで Ctrl+C を押してサービスを止める。
 

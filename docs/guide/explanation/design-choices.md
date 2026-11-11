@@ -102,7 +102,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 ## Clones are found by sequence numbers
 
-**Choice.** Every activation and every lease carries a sequence number (`seq`). Each refresh or renewal sends the last `seq` the client received, and the server raises it by one. If a request arrives with an older `seq`, another copy has moved ahead, and the server treats it as a clone. The policy's `cloneStrategy` decides what follows: `deny` stops the activation, and `flag` only records it. OAuth refresh token rotation uses the same idea.
+**Choice.** Every activation and every lease carries a sequence number (`seq`). Each refresh or renewal sends the last `seq` the client received, and the server raises it by one. If a request arrives with an older `seq`, another copy has moved ahead, and the server treats it as a clone. The policy's `cloneStrategy` decides what follows: `deny` stops the activation or the lease, and `flag` only records it. OAuth refresh token rotation uses the same idea.
 
 **Reason.** A cloned virtual machine has the same installation key, so the key alone cannot tell the copies apart, but the copies cannot both keep the latest `seq`. A client whose answer was lost in the network can prove it is retrying, so a lost answer does not count as a clone; a clone cannot make that proof.
 

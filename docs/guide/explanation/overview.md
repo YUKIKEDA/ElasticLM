@@ -142,7 +142,7 @@ The vendor runs `elm license issue` and sends the `.elmlic` file to the customer
 
 The file can be node-locked to one device. Each device has an **installation key**: a key pair that the client creates on the device and keeps there, and whose **thumbprint** (a short hash of the public key) names the device. Each device also has **machine fingerprints**, values derived from the operating system's machine ID. [Devices and proofs](devices-and-proofs.md) explains both. `elm license issue` takes `--bind-key` (the thumbprint) and `--fingerprint` (the fingerprints), which the vendor must first get from the customer's device. `elm` has no command that prints them for an app's device, so the app must show them: in .NET, `InstallationKey.Thumbprint` from an `InstallationKeyStore` and `MachineFingerprint.Compute(productId)`; C exposes only the thumbprint, with `elm_installation_thumbprint`. Without `--bind-key` and `--fingerprint`, the file works on any device.
 
-There is no refresh and no revocation in this shape. A file is good until its expiry plus its grace period (`elm license issue --grace-days`, 7 days by default; a trial always has 0). A file issued with `--expires never` is good forever; `elm` warns when it writes one. Choose expiry dates with that in mind.
+There is no refresh and no revocation in this shape. A file is good until its expiry plus its grace period (`elm license issue --grace-days`, 7 days by default; a trial always has 0). A file issued with `--expires never` is good forever; `elm` warns when it writes one ([`elm license issue`](../reference/elm-cli.md#elm-license-issue)). Choose expiry dates with that in mind.
 
 ### Hosted activation
 

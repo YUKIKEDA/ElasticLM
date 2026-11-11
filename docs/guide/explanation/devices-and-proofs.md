@@ -19,9 +19,9 @@ The operating system's machine ID is not the identity because it does not tell d
 
 ## The installation key
 
-The installation key is an ECDSA P-256 key pair. The app makes it at the first activation, lease, or trial. The private key never leaves the device. The public key is sent to the server inside the first signed request that needs it, and the server keeps it.
+The installation key is an ECDSA P-256 key pair. The app makes it at the first activation, lease, or trial. The private key never leaves the device. The public key is sent to the server inside the first signed request that needs it, and the server keeps it. `elm-server` has an installation key of its own, which it makes when it first starts; the [server license](floating-licenses.md#the-server-license-how-the-client-trusts-an-on-premises-server) is bound to that key ([Running `elm-server`](floating-licenses.md#running-elm-server)).
 
-The key's identifier is its thumbprint: the JWK thumbprint of the public key (RFC 7638, SHA-256, base64url; see [Key IDs](../reference/formats.md#key-ids)). Anyone can compute it from the public key, so a request that claims a thumbprint but carries a different key is caught by comparing the two. A license token bound to a device carries the thumbprint in its `cnf.jkt` claim, and verification fails with `ELM_WRONG_INSTALLATION` when the app's own key has a different thumbprint.
+The key's identifier is its thumbprint: the JWK thumbprint of the public key (RFC 7638, SHA-256, base64url; see [Key IDs](../reference/formats.md#key-ids)), 43 characters long. Anyone can compute it from the public key, so a request that claims a thumbprint but carries a different key is caught by comparing the two. A license token bound to a device carries the thumbprint in its `cnf.jkt` claim, and verification fails with `ELM_WRONG_INSTALLATION` when the app's own key has a different thumbprint.
 
 ### Where the key is stored
 

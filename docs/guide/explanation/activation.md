@@ -77,7 +77,7 @@ A vendor chooses these settings per policy. The names and values are as the admi
 | `refreshWindow` | seconds | 20 days | When fewer than this remain before the file's expiry, the app refreshes |
 | `gracePeriod` | seconds | 7 days | How long the app keeps working after the file's expiry |
 | `fingerprintMatching` | `ignore`, `any`, `all` | `any` | How machine fingerprints are matched (see [Devices and proofs](devices-and-proofs.md)) |
-| `cloneStrategy` | `deny`, `flag` | `deny` | What happens when a clone is detected (below) |
+| `cloneStrategy` | `deny`, `flag` | `deny` | What happens when a clone is detected (below). A policy for cloud floating applies it to a cloned lease too, and a policy for server licenses also writes it into the server license ([Retries and clones](floating-licenses.md#retries-and-clones)) |
 | `floating` | `none`, `onPremises`, `cloud` | `none` | Whether seats are lent as leases, by the customer's `elm-server` or by `elm-service` |
 | `leaseDuration` | 2 minutes to 24 hours, in seconds | 10 minutes | How long one lease lasts before it must be renewed |
 | `overage` | percent, or none | none | How many seats above the bought number may be lent |

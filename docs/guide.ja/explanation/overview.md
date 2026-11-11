@@ -142,7 +142,7 @@ flowchart TD
 
 ファイルは 1 台のデバイスにノードロックできる。各デバイスには**インストール鍵**がある。クライアントがデバイス上で作り、そのデバイスに保管する鍵ペアで、その**サムプリント**（公開鍵の短いハッシュ）がデバイスの名前になる。各デバイスには**マシンフィンガープリント**もある。OS のマシン ID から導いた値だ。どちらも[デバイスとプルーフ](devices-and-proofs.md)で説明する。`elm license issue` には `--bind-key`（サムプリント）と `--fingerprint`（マシンフィンガープリント）を渡す。ベンダーは、この 2 つを先に顧客のデバイスから入手しておく必要がある。アプリが動くデバイスのこれらの値を表示するコマンドは `elm` にないので、アプリ側で表示しなければならない。.NET では `InstallationKeyStore` から得た `InstallationKey.Thumbprint` と、`MachineFingerprint.Compute(productId)` を使う。C で取得できるのはサムプリントだけで、`elm_installation_thumbprint` を使う。`--bind-key` と `--fingerprint` を付けなければ、ファイルはどのデバイスでも使える。
 
-このパターンには、トークンの更新も失効もない。ファイルは、有効期限に猶予期間を足した時点まで使える（猶予期間は `elm license issue --grace-days` で指定し、既定は 7 日。トライアルは常に 0 日）。`--expires never` で発行したファイルは無期限に使える。`elm` は、そうしたファイルを書き出すときに警告する。有効期限は、このことを踏まえて決める。
+このパターンには、トークンの更新も失効もない。ファイルは、有効期限に猶予期間を足した時点まで使える（猶予期間は `elm license issue --grace-days` で指定し、既定は 7 日。トライアルは常に 0 日）。`--expires never` で発行したファイルは無期限に使える。`elm` は、そうしたファイルを書き出すときに警告する（[`elm license issue`](../reference/elm-cli.md#elm-license-issue)）。有効期限は、このことを踏まえて決める。
 
 ### SaaS 型のアクティベーション
 

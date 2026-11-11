@@ -1,4 +1,5 @@
 using System.CommandLine;
+using System.Net;
 using System.Net.Http.Headers;
 using System.Text.Json;
 using ElasticLM.Client;
@@ -224,11 +225,7 @@ internal static class ServerLicenseCommands
                 () =>
                 {
                     string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "--key") : null;
-                    if (
-                        Status(host, common, parse) is JsonElement status
-                        && status.TryGetProperty("autoRefresh", out JsonElement auto)
-                        && auto.GetBoolean()
-                    )
+                    if (Status(host, common, parse) is true)
                     {
                         return Refused(
                             host,
@@ -366,19 +363,27 @@ internal static class ServerLicenseCommands
     // design §13.7: a running server reads the new file; one that is not running reads it when it starts.
     private static int Reload(CliHost host, Common common, ParseResult parse, string tokenId)
     {
-        if (Send(common, parse, HttpMethod.Post, "admin/v1/license/reload") is not (bool ok, JsonElement answer))
+        if (Send(common, parse, HttpMethod.Post, "admin/v1/license/reload") is not (HttpStatusCode status, JsonElement answer))
         {
             host.Out.WriteLine("The server is not running; it reads the license when it starts.");
             return ExitCodes.Success;
         }
 
-        if (!ok)
+        // 409 with an error code is the server's refusal of the file. Any other answer that is not the reload's own says
+        // nothing about the file, so the line names the answer and says that the file is written.
+        if (status == HttpStatusCode.Conflict && Text(answer, "code") is string refused)
         {
-            host.Error.WriteLine($"error: the server kept its license: {Text(answer, "code")}: {Text(answer, "detail")}");
+            host.Error.WriteLine($"error: the server kept its license: {refused}: {Text(answer, "detail")}");
             return ExitCodes.VerificationFailed;
         }
 
-        if (Text(answer, "licenseToken") != tokenId)
+        if (!IsSuccess(status) || Text(answer, "licenseToken") is not string loaded)
+        {
+            host.Error.WriteLine($"error: {Unexpected(status, answer)} The license file is written; the server did not confirm a reload.");
+            return ExitCodes.VerificationFailed;
+        }
+
+        if (loaded != tokenId)
         {
             host.Error.WriteLine("error: The server reads another license file than --license; pass its setting license.");
             return ExitCodes.VerificationFailed;
@@ -397,12 +402,35 @@ internal static class ServerLicenseCommands
         }
     }
 
-    // The running server's status, or null when it does not run (no administrator token, nothing answers).
-    private static JsonElement? Status(CliHost host, Common common, ParseResult parse) =>
-        Send(common, parse, HttpMethod.Get, "admin/v1/status") is (true, JsonElement status) ? status : null;
+    // Whether the running server refreshes its license on its own (the status's autoRefresh), or null when no server runs
+    // (no administrator token that can be read, nothing answers). An answer that is not a status (a wrong token, another
+    // program on the port) does not show that no server runs, so the command stops: going on would skip the checks that a
+    // running server calls for (R8, R9).
+    private static bool? Status(CliHost host, Common common, ParseResult parse)
+    {
+        if (Send(common, parse, HttpMethod.Get, "admin/v1/status") is not (HttpStatusCode status, JsonElement answer))
+        {
+            return null;
+        }
+
+        return
+            IsSuccess(status)
+            && answer.ValueKind == JsonValueKind.Object
+            && answer.TryGetProperty("autoRefresh", out JsonElement auto)
+            && auto.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? auto.GetBoolean()
+            : throw new CliException(Unexpected(status, answer), ExitCodes.VerificationFailed);
+    }
+
+    private static bool IsSuccess(HttpStatusCode status) => (int)status is >= 200 and <= 299;
+
+    // An answer of the administration API that is not the one asked for: its error code and detail, as elm server reload
+    // prints an answer that has them, or else its status code.
+    private static string Unexpected(HttpStatusCode status, JsonElement answer) =>
+        Text(answer, "code") is string code ? $"{code}: {Text(answer, "detail")}" : $"The server's administration API answered {(int)status}.";
 
     // One call to the local administration API; null when the server does not run.
-    private static (bool Ok, JsonElement Answer)? Send(Common common, ParseResult parse, HttpMethod method, string path)
+    private static (HttpStatusCode Status, JsonElement Answer)? Send(Common common, ParseResult parse, HttpMethod method, string path)
     {
         string folder = Folder(parse, common);
         string? token = AdminToken.Read(folder);
@@ -417,7 +445,9 @@ internal static class ServerLicenseCommands
             return null;
         }
 
-        using var http = new HttpClient { BaseAddress = baseUri, Timeout = RequestTimeout };
+        // No redirects: the answer of another address is not the answer of the server at --url, and --url is checked to be
+        // a loopback address.
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = baseUri, Timeout = RequestTimeout };
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         try
@@ -425,8 +455,16 @@ internal static class ServerLicenseCommands
             using HttpResponseMessage response = http.Send(request);
             using var reader = new StreamReader(response.Content.ReadAsStream());
             string body = reader.ReadToEnd();
-            using var document = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
-            return (response.IsSuccessStatusCode, document.RootElement.Clone());
+            try
+            {
+                using var document = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
+                return (response.StatusCode, document.RootElement.Clone());
+            }
+            catch (JsonException) when (!response.IsSuccessStatusCode)
+            {
+                // Another program on the port answers an error with a page; the status code is all there is to tell.
+                return (response.StatusCode, default);
+            }
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {

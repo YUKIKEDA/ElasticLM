@@ -129,7 +129,8 @@ internal static class ServerCommands
             throw new CliException($"--url must be an http URL: '{url}'.");
         }
 
-        using var http = new HttpClient { BaseAddress = baseUri, Timeout = RequestTimeout };
+        // No redirects: the answer of another address is not the answer of the server at --url.
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = baseUri, Timeout = RequestTimeout };
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         HttpResponseMessage response;

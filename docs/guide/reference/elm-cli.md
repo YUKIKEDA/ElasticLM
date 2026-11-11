@@ -170,7 +170,7 @@ Issues a license file signed by a certified signing key; the file is verified wi
 | `--lease-minutes` | Number, fractions allowed | `10` | No | Server licenses only: the lease duration in minutes. |
 | `--borrow-days` | Number, fractions allowed | `0` | No | Server licenses only: the borrow limit in days; `0` disallows borrowing. |
 | `--overage` | Integer, 0 to 1000 | `0` | No | Server licenses only: the overage percentage. |
-| `--clone` | `deny`, `flag` | `deny` | No | Server licenses only: deny or flag a detected clone. |
+| `--clone` | `deny`, `flag` | `deny` | No | Server licenses only. What `elm-server` does when a copied app installation renews the same lease as the original: `deny` stops the lease for both copies, and `flag` records the clone in the usage log and renews as usual ([Retries and clones](../explanation/floating-licenses.md#retries-and-clones)). |
 | `--borrow-returns` | Integer, 0 to 1000 | `2` | No | Server licenses only: early returns of borrows one installation may make in 30 days. |
 | `--meta` | `key=value` | — | No | Vendor metadata. Repeat for several. |
 | `--out` | File path | — | Yes | The license file to write. |
@@ -312,7 +312,19 @@ The commands below manage the server license through the activation kept in the 
 | `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
 | `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
 
-When a command writes a new license file and the server is running, it asks the server to reload it; when the server is not running, the server reads the file when it starts.
+When a command writes a new license file and the server is running, it asks the server's [local administration API](administration-api.md#elm-server-local-administration-api) to reload it; when the server is not running, the server reads the file when it starts. In each of the cases below the file is written, the error is one line on standard error, and the exit code is 1.
+
+| The answer to the reload request | The line |
+| --- | --- |
+| The server read the new file and refused it (`409`; the codes are those of [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload)) | `error: the server kept its license: <code>: <reason>` |
+| Another error with a code: the request itself was refused, the server has not read the file, and it still uses its license. `ELM_UNAUTHORIZED` means that `--data` or `--product` names the folder of another server than the one at `--url` | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` |
+| An answer that is not a reload's answer and has no error code, as another program on that port gives | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` |
+
+When `--license` is the `license` setting of the server whose folder was named, that server reads the written file when it next starts, or at `elm server reload` with its own `--url`.
+
+`deactivate`, `deactivate-proof`, `activate-request`, and `refresh-request` first ask the same API for the server's status. Without a readable administrator token in the folder, or when `--url` gives no HTTP answer within 30 seconds (nothing listens there, or the connection fails), they take the server as not running; the reload request does the same. An answer that is not a status stops them with `error: <code>: <reason>`, or `error: The server's administration API answered <status>.` for an answer without a code; they write nothing, and the exit code is 1. A stopped server's folder keeps its administrator token: while another server listens at the default `--url`, these commands need a `--url` where nothing answers, such as the stopped server's own `admin.listen`.
+
+A success answer whose body is not JSON stops the reload request and the status question alike with `error: The server's administration API answered with a body that is not JSON.` and exit code 3.
 
 ### elm server activate
 

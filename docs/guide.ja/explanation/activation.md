@@ -77,7 +77,7 @@ stateDiagram-v2
 | `refreshWindow` | 秒 | 20 日 | ファイルの有効期限までの残りがこれより短くなると、アプリがトークンの更新をする |
 | `gracePeriod` | 秒 | 7 日 | ファイルの有効期限が切れたあと、アプリが動き続けられる期間 |
 | `fingerprintMatching` | `ignore`、`any`、`all` | `any` | マシンフィンガープリントの照合方法（[デバイスとプルーフ](devices-and-proofs.md)を参照） |
-| `cloneStrategy` | `deny`、`flag` | `deny` | クローンを検出したときの動作（後述） |
+| `cloneStrategy` | `deny`、`flag` | `deny` | クローンを検出したときの動作（後述）。クラウドのフローティングのポリシーは、クローンされたリースにもこれを適用する。サーバーライセンス用のポリシーは、これをサーバーライセンスに書き込むこともする（[再試行とクローン](floating-licenses.md#再試行とクローン)） |
 | `floating` | `none`、`onPremises`、`cloud` | `none` | シートをリースとして貸し出すか。貸し出すなら、顧客の `elm-server` と `elm-service` のどちらが貸し出すか |
 | `leaseDuration` | 2 分〜24 時間（秒で指定） | 10 分 | 1 つのリースの有効期間。この期間内にリースの更新が必要になる |
 | `overage` | パーセント、またはなし | なし | 購入したシート数を超えて貸し出せるシートの数 |
