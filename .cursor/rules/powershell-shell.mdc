@@ -69,6 +69,12 @@ In a GitHub Actions step with `shell: pwsh`, the exit code of the last native co
 
 Before `git worktree remove` on Windows, run `dotnet build-server shutdown`. A build server that still holds files in the worktree makes the removal stop with "Permission denied" after git has dropped the worktree, and the folder stays behind (after M3d). The same happens when the shell's current directory is inside the worktree: move out of it first (after PR #39). It happened again after PR #175, where the shutdown came after the removal.
 
+`git worktree remove` can also stop with "Filename too long" after git has dropped the worktree, when `website/node_modules` was installed in it. The folder that stays holds only that `node_modules`: look at what is left, then remove it in a call of its own with `Remove-Item -LiteralPath '\\?\<absolute path>' -Recurse -Force` (after PR #307).
+
+Run the lint of the `natural-japanese` skill from Bash with `PYTHONUTF8=1` and send its output to a file: `PYTHONUTF8=1 uv run .claude/skills/natural-japanese/scripts/lint.py "$(cygpath -w <file>)" > <out>`. Without the variable it stops with a cp932 error where it prints the paragraph list (PR #307).
+
+A script that makes several replacements, in one file or in many, checks that every text to replace occurs exactly once and writes no file unless all of them do. A script that writes each file as it goes leaves the earlier files changed when a later one fails (PR #307).
+
 A process that does not end by itself (a dev server, a watcher) is started as a background run of the agent's tool and stopped through that run, not started with `&` inside a Bash call. A `&` process outlives the call and holds its files. In W0 a Vite dev server started that way kept listening on `localhost` (IPv6) while a check on `127.0.0.1` saw nothing, and a later removal of `node_modules` failed with `EPERM` until the process was found and stopped (PR #95).
 
 A helper function in a PowerShell script does not take a name that a built-in alias already has. One-letter names are the trap: `r` is `Invoke-History`, `h` is `Get-History`. In PR #179 a script defined `R` for its replacements, every call ran `Invoke-History` and failed, and the script wrote the file back unchanged. Give helpers a verb-noun name (`Set-Text`).
