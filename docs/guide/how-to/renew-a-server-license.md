@@ -42,7 +42,7 @@ leases: 1
 expires: 2099-12-31 00:00:00Z
 ```
 
-`license` is the license ID and the token ID of the file in use, and `expires` its expiry. `key` is the thumbprint of the server's installation key, which the new file must be bound to.
+`license` is the license ID and the token ID of the file in use, and `expires` its expiry. `key` is the [thumbprint](../explanation/devices-and-proofs.md#the-installation-key) of the server's installation key, which the new file must be bound to.
 
 ## Issue the new file
 
@@ -102,6 +102,8 @@ If the new file does not pass a check, the server keeps the old license in use, 
 ```text
 error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
 ```
+
+The thumbprint at the end of the message is the one that `elm server status` prints as `key`. Send it to the vendor, who issues the file again with this value for `--bind-key`.
 
 Put the old file back at the path of `license`, here from `server.elmlic.old`, until you have a file that passes: the server reads the file again at its next start, and with a file that does not verify, it does not start. [Error codes](../reference/error-codes.md) lists every code.
 

@@ -168,7 +168,7 @@ Those checks limit what a stolen server key can do. A person who takes the serve
 
 When the vendor runs `elm-service` and a customer runs `elm-server`, the server activates its server license with the service like any device (`elm server activate`, or a request file when the server has no internet access). The server license expires (by default after 30 days) and the server refreshes it from the service, online when `service.url` is set, or through files (`elm server refresh-request`, then `elm server import`). Each refresh lets the service notice a copied server.
 
-Without `elm-service`, the vendor issues the server license by hand with `elm license issue --kind server`. Such a license is never refreshed, so a copied server is not detected; only the license's expiry ends a copy's use. `elm` warns when such a license has no expiry.
+Without `elm-service`, the vendor issues the server license by hand with `elm license issue --kind server`. Such a license is never refreshed, so a copied server is not detected; only the license's expiry ends a copy's use. `elm` prints two warnings when it issues such a license without an expiry ([`elm license issue`](../reference/elm-cli.md#elm-license-issue)).
 
 ## Who holds which secret
 

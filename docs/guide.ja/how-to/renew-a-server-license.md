@@ -42,7 +42,7 @@ leases: 1
 expires: 2099-12-31 00:00:00Z
 ```
 
-`license` は使用中のファイルのライセンス ID とトークン ID で、`expires` はその期限だ。`key` はサーバーのインストール鍵のサムプリントで、新しいファイルはこの鍵に紐付けなければならない。
+`license` は使用中のファイルのライセンス ID とトークン ID で、`expires` はその期限だ。`key` はサーバーのインストール鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)で、新しいファイルはこの鍵に紐付けなければならない。
 
 ## 新しいファイルを発行する
 
@@ -102,6 +102,8 @@ expires: 2100-12-31 00:00:00Z
 ```text
 error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
 ```
+
+メッセージの最後にあるサムプリントは、`elm server status` が `key` として表示する値と同じものだ。これをベンダーに送ると、ベンダーはこの値を `--bind-key` に指定してファイルを発行し直す。
 
 確認に通るファイルが手に入るまで、`license` のパスに古いファイルを戻しておく。ここでは `server.elmlic.old` から戻す。サーバーは次に起動するときにファイルを読み直し、検証に通らないファイルでは起動しない。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。
 

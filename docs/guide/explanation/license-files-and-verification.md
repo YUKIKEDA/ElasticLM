@@ -41,7 +41,7 @@ The license claims carry:
 - `lic`: the license ID; `prd`: the product ID (the product's `code`); `kind`: `standard`, `trial`, or `server`.
 - `feat`: the features, possibly none. Each has an `id` and may have `ver` (an allowed version range) and `exp` (the feature's own expiry). Each feature has `seats` when, and only when, the license is `kind: server`.
 - `exp`: the token's expiry, if it has one. With `exp` come `grace` (how long after `exp` the license is still usable; `0` for a trial) and, for tokens refreshed online, `refresh` (how long before `exp` the client starts to refresh).
-- `cnf` and `fp`, `fpm`: the machine binding of a node-locked token. `cnf` holds the thumbprint of the device's installation key; `fp` holds machine fingerprints and `fpm` says how they are compared.
+- `cnf` and `fp`, `fpm`: the machine binding of a node-locked token. `cnf` holds the [thumbprint](devices-and-proofs.md#the-installation-key) of the device's installation key; `fp` holds machine fingerprints and `fpm` says how they are compared.
 - `seq`: the activation's sequence number, used for clone detection; `areq`: the nonce of the offline request this token answers.
 - For a server license, the lease period, borrow limit, overage, and clone strategy that the on-premises server must keep.
 - `meta`: vendor strings that the verifier does not interpret.

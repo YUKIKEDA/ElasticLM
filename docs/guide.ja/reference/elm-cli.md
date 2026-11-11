@@ -161,10 +161,10 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | `--license-id` | ライセンス ID | — | はい | ライセンス ID |
 | `--kind` | `standard`、`trial`、`server` | `standard` | いいえ | ライセンスの種類 |
 | `--feature` | `ID[;ver=RANGE][;seats=N][;exp=DATE]` | — | いいえ | 機能。バージョンの範囲、シート数、有効期限を任意で付けられる（[機能の値](#機能の値)を参照）。複数を指定するときは繰り返す |
-| `--expires` | ISO 8601 の日付または時刻、または `never` | — | はい | トークンの有効期限。`never` を指定すると警告を書く。有効期限のないライセンスは失効させられないからだ |
+| `--expires` | ISO 8601 の日付または時刻、または `never` | — | はい | トークンの有効期限。`never` を指定すると、警告 `The license has no expiry. It cannot be revoked once delivered.` を書く。`--kind server` のときは、2 つ目の警告 `A server license issued by hand is never refreshed, so a cloned server cannot be detected. Without an expiry, a clone works for as long as the original.` も書く |
 | `--grace-days` | 数値（小数も可） | `7`（`trial` では `0`） | いいえ | 猶予期間の日数 |
 | `--refresh-days` | 数値（小数も可） | — | いいえ | 有効期限の何日前から、クライアントがオンラインでトークンの更新を始めるか |
-| `--bind-key` | サムプリント | — | いいえ | ライセンスを紐付けるインストール鍵のサムプリント（[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照） |
+| `--bind-key` | サムプリント | — | いいえ | ライセンスを紐付けるインストール鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)（[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照） |
 | `--fingerprint` | フィンガープリント | — | いいえ | ライセンスを紐付けるマシンフィンガープリント（[紐付けに使う値の入手先](#紐付けに使う値の入手先)を参照）。複数を指定するときは繰り返す |
 | `--fingerprint-matching` | `any`、`all`、`ignore` | `any` | いいえ | マシンフィンガープリントをどう照合するか |
 | `--lease-minutes` | 数値（小数も可） | `10` | いいえ | サーバーライセンスのみ。リースの期間（分） |

@@ -72,7 +72,7 @@ The key members of the first line say which key signs the file:
 
 | Program | Members |
 | --- | --- |
-| `elm-server` | `license` (the server license file) and `key` (here the server's public key as a JWK, not a thumbprint). The server signs with its installation key. |
+| `elm-server` | `license` (the server license file) and `key` (here the server's public key as a JWK, not a [thumbprint](../explanation/devices-and-proofs.md#the-installation-key)). The server signs with its installation key. |
 | `elm-service` | `node` (the node name) and `certificates` (one to four `elm-cert+jws` certificates of the service's signing key for logs). |
 
 The payload of an `auth` token:

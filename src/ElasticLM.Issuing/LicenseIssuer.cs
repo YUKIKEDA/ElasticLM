@@ -86,7 +86,9 @@ public static class LicenseIssuer
         if (spec.Kind == LicenseKind.Server && payload.Exp is null)
         {
             // design §9.6.
-            warnings.Add("A server license without expiry is never refreshed, so a cloned server cannot be detected.");
+            warnings.Add(
+                "A server license issued by hand is never refreshed, so a cloned server cannot be detected. Without an expiry, a clone works for as long as the original."
+            );
         }
 
         string token = JwsWriter.Sign(signingKey, TokenTypes.License, payload, LicensingJsonContext.Default.LicensePayload);

@@ -338,6 +338,82 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Equal(2L, server.Engine.Server.License.Sequence);
     }
 
+    /// <summary>
+    /// When the running server refuses the file that elm server activate wrote, the command prints one line with the code and
+    /// the server's reason, and the server keeps its license.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a server data folder whose key a first start made; a server running there with a
+    ///   license issued by hand for that key, on a clock that the test can set.
+    ///
+    /// Steps:
+    /// - Set the server's clock two days on and reload its license, so that its clock guard sees the later time; set the
+    ///   clock back; activate with elm server, writing to the server's license path and naming its administration URL.
+    ///
+    /// Expected:
+    /// - The reload answers 200. The activation exits 1, and standard error is the one line "error: the server kept its
+    ///   license: ELM_CLOCK_TAMPERED: The server license does not verify: The clock has been set back. This server's
+    ///   installation key is " followed by the server's thumbprint and a period. Standard output names the written file. The
+    ///   server still uses the hand license, and the file at its license path is the new one.
+    /// </remarks>
+    [Fact]
+    public async Task Activate_RunningServerRefusesTheFile_PrintsTheKeptLine()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = _deployment.NewFolder("server");
+        string license = Path.Combine(folder, "server.elmlic");
+        ServerSettings settings = Settings(test, folder);
+        await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+        byte[] hand = HandLicense(test, Deployment.ServerKeyId(folder));
+        File.WriteAllBytes(license, hand);
+        var clock = new SettableTime(test.Time.GetUtcNow());
+        ElmServer server = await StartAsync(test, settings, clock);
+
+        // elm passes the new file, since it keeps no clock state; the server's clock guard remembers the later time.
+        clock.Now += TimeSpan.FromDays(2);
+        using (HttpClient admin = Deployment.AdminHttp(server))
+        {
+            using HttpResponseMessage reloaded = await admin.PostAsync("admin/v1/license/reload", null, TestContext.Current.CancellationToken);
+            Assert.Equal(HttpStatusCode.OK, reloaded.StatusCode);
+        }
+
+        clock.Now -= TimeSpan.FromDays(2);
+        (int code, string output, string error) = Run(
+            test,
+            [
+                "server",
+                "activate",
+                key,
+                .. Common(folder),
+                "--service",
+                service.Url.ToString(),
+                "--license",
+                license,
+                "--url",
+                server.AdminUrl.ToString(),
+            ]
+        );
+
+        Assert.Equal(
+            "error: the server kept its license: ELM_CLOCK_TAMPERED: The server license does not verify: The clock has been set "
+                + $"back. This server's installation key is {Deployment.ServerKeyId(folder)}.",
+            error.Trim()
+        );
+        Assert.Equal(1, code);
+        Assert.Contains(license, output, StringComparison.Ordinal);
+        Assert.Equal("lic-hand", server.Engine.Server.License.LicenseId);
+        Assert.NotEqual(hand, File.ReadAllBytes(license));
+    }
+
+    // A clock that a test sets forward and back; FakeTimeProvider refuses to go back.
+    private sealed class SettableTime(DateTimeOffset now) : TimeProvider
+    {
+        public DateTimeOffset Now { get; set; } = now;
+
+        public override DateTimeOffset GetUtcNow() => Now;
+    }
+
     // A server license issued by hand (elm license issue's way) for a server key, signed by the service's signing key.
     private static byte[] HandLicense(TestService test, string keyId)
     {
@@ -448,11 +524,12 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             TrustRootKeyFiles = [test.FilePath("root.pub.pem")],
         };
 
-    private async Task<ElmServer> StartAsync(TestService test, ServerSettings settings)
+    // The server reads the service's clock unless the test gives it one of its own.
+    private async Task<ElmServer> StartAsync(TestService test, ServerSettings settings, TimeProvider? time = null)
     {
         var host = new ServerHostOptions
         {
-            Time = test.Time,
+            Time = time ?? test.Time,
             Environment = _ => null,
             MinimumLogLevel = LogLevel.Warning,
         };

@@ -158,7 +158,13 @@ license 01960000-0000-7000-8000-000000000302, seq 2: server.elmlic
 The server reloaded the license.
 ```
 
-If the server keeps its old license instead, `elm` prints `error: the server kept its license:` with the code and the reason, and ends with exit code 1; the new file is written all the same. One such code is `ELM_CLOCK_TAMPERED`, when the server's clock was set forward and back again. A renewal by the server itself hands the server the service's time, which clears this; `elm` is a separate program and cannot. Correct the clock. The server then takes a new license at its next online renewal, or reads this file when it starts again.
+If the server keeps its old license instead, `elm` prints `error: the server kept its license:` with the code and the reason, and ends with exit code 1; the new file is written all the same. One such code is `ELM_CLOCK_TAMPERED`, when the server's clock was set forward and back again:
+
+```text
+error: the server kept its license: ELM_CLOCK_TAMPERED: The server license does not verify: The clock has been set back. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
+```
+
+Every message of a license that does not verify ends with the server's installation key; the key is not the cause here. A renewal by the server itself hands the server the service's time, which clears the error; `elm` is a separate program and cannot. Correct the clock. The server then takes a new license at its next online renewal, or reads this file when it starts again.
 
 `elm server status --json` shows whether the server renews on its own. Like the other `elm server` commands that ask the running server, it needs only the data folder:
 

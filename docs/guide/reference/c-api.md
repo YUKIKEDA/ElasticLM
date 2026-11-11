@@ -98,7 +98,7 @@ Each table lists the functions in the order of the header, and the block under i
 | Function | Returns | What it does |
 | --- | --- | --- |
 | `elm_installation_open` | Error number | Opens this installation's key for a product, or creates it when `create` is `1` and there is none, and reads the machine fingerprints. With `create` `0`, as in a zero-filled `elm_installation_options`, a missing key is `ELM_INSTALLATION_KEY_UNREADABLE`. When no OS ID can be read, the fingerprint list is empty and licenses with fingerprints fail with `ELM_FINGERPRINT_UNAVAILABLE`. |
-| `elm_installation_thumbprint` | `const char*`; `NULL` for `NULL` | The thumbprint of the installation key. |
+| `elm_installation_thumbprint` | `const char*`; `NULL` for `NULL` | The [thumbprint](../explanation/devices-and-proofs.md#the-installation-key) of the installation key. |
 | `elm_verifier_create` | Error number | Makes a verifier from the vendor's root keys, the revoked key IDs, and a clock guard. The installation may be freed right after the call. |
 | `elm_verifier_verify` | Error number | Verifies a license file against an `elm_requirement` and gives a new `elm_license`. A file larger than 65,536 bytes is `ELM_MALFORMED`. The library keeps nothing of the file. |
 

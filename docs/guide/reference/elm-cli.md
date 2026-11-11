@@ -161,10 +161,10 @@ Issues a license file signed by a certified signing key; the file is verified wi
 | `--license-id` | License ID | — | Yes | The license ID. |
 | `--kind` | `standard`, `trial`, `server` | `standard` | No | The kind of license. |
 | `--feature` | `ID[;ver=RANGE][;seats=N][;exp=DATE]` | — | No | A feature, with an optional version range, seat count, and expiry (see [Feature values](#feature-values)). Repeat for several. |
-| `--expires` | ISO 8601 date or time, or `never` | — | Yes | The token's expiry. `never` writes a warning: a license without expiry cannot be revoked. |
+| `--expires` | ISO 8601 date or time, or `never` | — | Yes | The token's expiry. `never` writes the warning `The license has no expiry. It cannot be revoked once delivered.` With `--kind server` it writes a second one: `A server license issued by hand is never refreshed, so a cloned server cannot be detected. Without an expiry, a clone works for as long as the original.` |
 | `--grace-days` | Number, fractions allowed | `7`; `0` for `trial` | No | The grace period in days. |
 | `--refresh-days` | Number, fractions allowed | — | No | Days before expiry when clients start refreshing online. |
-| `--bind-key` | Thumbprint | — | No | The installation key thumbprint to bind the license to (see [where the binding values come from](#where-the-binding-values-come-from)). |
+| `--bind-key` | Thumbprint | — | No | The installation key [thumbprint](../explanation/devices-and-proofs.md#the-installation-key) to bind the license to (see [where the binding values come from](#where-the-binding-values-come-from)). |
 | `--fingerprint` | Fingerprint | — | No | A machine fingerprint to bind the license to (see [where the binding values come from](#where-the-binding-values-come-from)). Repeat for several. |
 | `--fingerprint-matching` | `any`, `all`, `ignore` | `any` | No | How the machine fingerprints must match. |
 | `--lease-minutes` | Number, fractions allowed | `10` | No | Server licenses only: the lease duration in minutes. |

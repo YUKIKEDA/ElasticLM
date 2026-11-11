@@ -38,7 +38,8 @@ public sealed class IssuingTests : IDisposable
     /// Expected:
     /// - Valid, with the license ID and kind of the spec. The warnings are: none with an expiry; without one, "The license
     ///   has no expiry. It cannot be revoked once delivered."; for a server license without one, that and then "A server
-    ///   license without expiry is never refreshed, so a cloned server cannot be detected.".
+    ///   license issued by hand is never refreshed, so a cloned server cannot be detected. Without an expiry, a clone works for
+    ///   as long as the original.".
     /// </remarks>
     [Theory]
     [InlineData(LicenseKind.Standard, true, true)]
@@ -66,7 +67,7 @@ public sealed class IssuingTests : IDisposable
             (false, LicenseKind.Server) =>
             [
                 "The license has no expiry. It cannot be revoked once delivered.",
-                "A server license without expiry is never refreshed, so a cloned server cannot be detected.",
+                "A server license issued by hand is never refreshed, so a cloned server cannot be detected. Without an expiry, a clone works for as long as the original.",
             ],
             (false, _) => ["The license has no expiry. It cannot be revoked once delivered."],
         };

@@ -36,7 +36,7 @@ The verification library. It has no dependency outside the .NET base class libra
 | `FileClockGuard` | Class | A clock guard that keeps the last time seen in a file. See [below](#fileclockguard). |
 | `HttpTargetUri` | Static class | `Normalize` returns the form of a request URI that a proof signs: scheme and host in lowercase, no default port, uppercase percent-encodings, no query or fragment. |
 | `IClockGuard` | Interface | A clock guard. `Observe` checks the current time against the last time seen and records it when the check passes; `AcceptServerTime` takes the service's time after an online refresh (by default it does nothing). |
-| `InstallationIdentity` | Class | This installation, for a license bound to a device: the installation key's thumbprint and the current machine fingerprints. See [below](#installationidentity). |
+| `InstallationIdentity` | Class | This installation, for a license bound to a device: the installation key's [thumbprint](../explanation/devices-and-proofs.md#the-installation-key) and the current machine fingerprints. See [below](#installationidentity). |
 | `KeyIds` | Static class | `Of` returns the key ID of a P-256 key: its JWK thumbprint (RFC 7638), base64url. |
 | `LeaseExpectation` | Record | What a lease must be for: `ProductId` and `InstallationKeyThumbprint`. |
 | `LeaseVerificationResult` | Abstract record | The result of a lease check: the case `Valid` holds a `VerifiedLease` (`Lease`), the case `Invalid` a `LicenseError` (`Error`). |

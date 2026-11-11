@@ -36,7 +36,7 @@ sidebar_position: 9
 | `FileClockGuard` | クラス | 最後に確認した時刻をファイルに保存する時刻巻き戻し対策。[後述](#fileclockguard)。 |
 | `HttpTargetUri` | 静的クラス | `Normalize` は、プルーフが署名するリクエストの URI の形を返す。スキームとホストは小文字にし、既定のポートを省き、パーセントエンコードは大文字にし、クエリとフラグメントを除く。 |
 | `IClockGuard` | インターフェース | 時刻巻き戻し対策。`Observe` は、現在時刻を最後に確認した時刻と比べ、確認に通ればその時刻を記録する。`AcceptServerTime` は、オンラインでのトークンの更新のあとにサービスの時刻を受け取る（既定では何もしない）。 |
-| `InstallationIdentity` | クラス | デバイスに紐付いたライセンスのための、このインストール。インストール鍵のサムプリントと、現在のマシンフィンガープリントを持つ。[後述](#installationidentity)。 |
+| `InstallationIdentity` | クラス | デバイスに紐付いたライセンスのための、このインストール。インストール鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)と、現在のマシンフィンガープリントを持つ。[後述](#installationidentity)。 |
 | `KeyIds` | 静的クラス | `Of` は P-256 の鍵の鍵 ID を返す。鍵の JWK サムプリント（RFC 7638）を base64url にしたものだ。 |
 | `LeaseExpectation` | レコード | リースが対象としていなければならないもの。`ProductId` と `InstallationKeyThumbprint`。 |
 | `LeaseVerificationResult` | 抽象レコード | リースの確認の結果。`Valid` の場合は `VerifiedLease`（`Lease`）を、`Invalid` の場合は `LicenseError`（`Error`）を持つ。 |
