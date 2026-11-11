@@ -33,6 +33,7 @@ Read this before writing. When a review corrects wording, add the general rule h
 
 - One sentence that names the condition that failed, with the same terms as the design and the XML docs.
 - A message never contains key material, a full license token, or a secret. It may name a key ID or a license ID.
+- A message that says "never", "nothing", or "only" is checked against every other mechanism that brings the same result, and names fewer when one exists. In V1c17 the first wording of a warning said "Without an expiry, nothing ends a clone's use", while a revoked signing key and a feature's own expiry end it too; it became "a clone works for as long as the original" (PR #311).
 - Text a user reads (a string literal under `src/`, the XML docs of `ElasticLM.Licensing` and `ElasticLM.Client`, `include/elasticlm.h`) names no design section, decision number, threat or attacker ID, roadmap row, Issue or PR number, or test of this repository. Write the value or the place itself: "at most 100 years", not "the limit of design §8.6". A public standard stays, written as `RFC 7515 §2`. Where the reference for developers goes is in `.cursor/rules/csharp.mdc`. The same holds for `SECURITY.md`, `docs/container.md`, the sections of `CONTRIBUTING.md` that the user documentation links to, the text of an MSBuild `<Error>` or `<Warning>`, and the failure messages of `eng/release/Test-Publish.ps1`. No test reads these, so the review of the PR does.
 
 ## Terminology
