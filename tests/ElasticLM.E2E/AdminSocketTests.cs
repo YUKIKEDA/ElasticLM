@@ -409,7 +409,10 @@ public sealed class AdminSocketTests
         string user = "elm-" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4));
         string password = "Aa1!" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(16));
         string net = Path.Combine(Environment.SystemDirectory, "net.exe");
-        (int addCode, _, string addError) = await Binaries.RunAsync(net, ["user", user, password, "/add"], vendor.Folder);
+
+        // For a password of more than 14 characters net.exe asks whether to go on, and without an answer it ends with
+        // "No valid response was provided." (run 43081605974 on windows-latest); /y answers it.
+        (int addCode, _, string addError) = await Binaries.RunAsync(net, ["user", user, password, "/add", "/y"], vendor.Folder);
         try
         {
             // The command's arguments hold the password, so only its exit code and its error text go into the message.
