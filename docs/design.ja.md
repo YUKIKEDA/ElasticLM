@@ -1390,6 +1390,8 @@ public static class ErrorCodes
 - ライセンスキーを送るクライアント（`LicenseClient`、`ActivationClient`、`elm offline process`）はリダイレクトに従わない。`3xx` は誤りの応答として扱う（`ELM_INTERNAL_ERROR`）。設定を誤ったプロキシの `307` や `308` に従うと、ライセンスキーを含む本文を別の送り先へ送り直してしまうためである。証明の `htu` で要求はそこで失敗するが、キーはもう届いている（M4d2 の設計のレビュー R5、持ち主が受けた）。
 - サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
 - 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。`ELM_RATE_LIMITED` の `Retry-After` は、どちらのプログラムでもいつも `1` である（`elm-server` の `GuardAsync`、`elm-service` の `WriteProblemAsync`）。
+- クライアント（`LicenseClient`、`ActivationClient`）が問題の応答の `code` から受け取るのは、§19 の表の HTTP の列に、問題の応答の状態コードがあるコードだけである（番号で 1、2、7、10〜14、20〜22、24、30〜37、39〜44、50〜56、99 の 34 個。`ElasticLM.Client` の中の、公開しない `ProblemCodes` が、この一覧と、§19 の回収の応答の一覧を持つ）。ほかの 15 個は受け取らない: `ELM_OK`（0）、クライアントやライブラリだけが作る 15、18、19、23、38、90、`elm-server` のサーバーライセンスの再読み込みの `409` でしか返らない 3、4、5、6、8、9、16、17 である。受け取らないコード、知らない名前、`code` のない本文、JSON でない本文は、どれも `ELM_INTERNAL_ERROR` と「The server answered <状態コード> without a known error code.」として読み、`detail` は使わない。問題の応答には署名がなく、中継や偽のサーバーが作れる（§5.4）。成功のコードや、クライアント自身が作る誤りのコードを、そこから受け取らないためである（V1d1 の Grill の Q1 と Q2）。応答の状態コードは、§19 の表のそのコードの値と比べない。`3xx` は、本文によらず `ELM_INTERNAL_ERROR` である（上の項）。受け取らないコードの応答でも、`Retry-After` と `ELM-Nonce` のヘッダーは、いままでどおり読む。
+- 受け取ったコードの `detail` は、1〜512 文字のときだけ使い、ほかは「The server answered <状態コード>.」にする。オンプレミスのクライアントが、サーバーライセンスを確かめる前に受け取る問題の応答（`GET /v1/server/license` の答え、§13.5）は、コードは上の規則で受け取り、`detail` は使わずに、いつも「The server answered <状態コード>.」にする。この接続はどの証明書も受け取るので、経路の上の誰でも答えられ、その相手が選んだ文をアプリの誤りの文にしないためである（V1d1 の Grill の Q3）。
 - `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
 - クライアント（`ActivationClient` と `LicenseClient`）は、ヘッダーのノンスも、`GET /v1/nonce` の本文のノンスと同じく 1 文字以上 128 文字以下に限り、外れた値はヘッダーがないのと同じに扱う（1 つの関数 `LicenseClient.ValidNonce`。V1c11 の Grill、Issue #242。持ち主の決定はすべて推奨案）。空のヘッダーと空白だけのヘッダーは、どちらも `HttpClient` で空の文字列になる（2026-11-08、.NET 10.0.14 で生の HTTP の応答を返して測った）。前は長さの上限しか見ず、空のノンスで次の要求の証明を作ろうとして、`ProofBuilder.Create` が `ArgumentException` を投げていた（C では `ELM_INVALID_ARGUMENT`。V1c10 の実装で見つけた）。ヘッダーがないときの動き（前のノンスを使い、`ELM_NONCE_REQUIRED` なら新しいノンスで 1 回だけ送り直し、ノンスがなければ `GET /v1/nonce`）は変えない。ノンスはその有効期間（§12.2）のあいだ何度でも使えるので、範囲の外のヘッダーを受けたクライアントは、期間の中では前のノンスで送り、切れていれば `ELM_NONCE_REQUIRED` のあと `GET /v1/nonce` で取り直す（V1c11 の設計の独立レビューと正しさのレビューの A2、持ち主の決定で、Issue の Done when をこの動きに合わせて読む）。ノンスの文字の種類は確かめない。サーバーのノンスはどれも `NonceService` が作る 75 文字の base64url だが、利用者の文書はノンスを中身を読まない文字列（opaque string）とし、文字の正しくない値はサーバーが `ELM_NONCE_REQUIRED` で断って今の送り直しの流れで直るため（レビューの R4、持ち主の決定）。
 
@@ -1684,7 +1686,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 
 - `TryCreate` は、インストール鍵があれば読み（読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。鍵がなければ作らず、最初の `ActivateAsync` か `StartTrialAsync` が送る前に、鍵とそのフォルダーを作る（§10.2 の「最初の有効化・試用のときに作る」）。鍵を持たないクライアントは、操作のたびに、同じ端末のほかのプロセスが作った鍵があれば読む。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。`ServiceUrl` が `null` のクライアントは、オンラインの操作（有効化・試用・更新・解除）を送らずに `ELM_INVALID_STATE`（「No service URL is set; use the offline requests.」）を返し、自動の更新のタイマーを置かない（M4c2）。
 - 内部の設定（`elm-server` と `elm` だけが使う、M4c3）: `RequiredKind`（受け取るファイルの種類を 1 つに絞る。保存した有効化がその種類でなければ、どの操作も `ELM_INVALID_STATE`）、`CreateKey`（`false` なら鍵を作らない）、`LicenseKept`（新しいファイルを保存するたびに、そのバイト列で呼ぶ）。§13.7 のとおりに使う。
-- 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。
+- 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード（受け取るコードは §12.1）、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。クライアントが返す `Failed` と `LicenseError` は、`ELM_OK` を持たない。`DeactivateAsync` と `ForgetDeactivationProofAsync` の成功は、内部でも、誤りのコードの値では表さない（V1d1 の Grill の Q5）。
 - TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（1 文字以上 128 文字まで。外れれば無いとみなす。§12.1）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
 - 送るもの: 有効化と試用は、製品の `code`（`product`）、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、どちらかが 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。クライアントは有効化の前にポリシーを知らず、トークンも `ClientInfoStrategy` を持たないので、`client` を送るかはアプリが決め、残すかはサービスがポリシーで決める（§4.4）。
 
@@ -1864,6 +1866,7 @@ stateDiagram-v2
 - 失敗したら、15 秒から始めて倍にし、60 秒を上限として、期限まで再試行する。Cryptlex が「期限の 30 秒以上前に同期せよ」と書く（https://cryptlex.com/docs/licensing-models/floating-licenses/hosted-floating-licenses ）ように、1 回の遅れで席を失わない間隔にする。
 - 期限が来たら `Lost` にし、アプリに通知する。アプリが何をするか（保存を促す、機能を止める）はアプリが決める。
 - `ELM_CLONE_DETECTED` は再試行しても変わらないので、すぐに `Lost` にする。それ以外の失敗（通信の失敗、`5xx`、サーバーのピンの不一致を含む）は期限まで再試行する。
+- 更新の問題の応答から受け取るコードは、§12.1 の一覧のものだけである。
 - SaaS 型では、更新が `ELM_UNKNOWN_LEASE` で断られたら、すぐに `Lost` にする。サービスは状態をデータベースに持ち、再起動で失わないので、回収はない（回収の経路もない。`404`、0.93）。
 - オンプレミスで更新が `ELM_UNKNOWN_LEASE` で断られたら `Reclaiming` にし、そのサーバーから借りているリースを 1 回の要求でまとめて回収する（0.44）。回収できたリースはそのまま、断られたリースは `Lost` にし、回収できたら更新をやり直す。回収の要求自体が失敗したら `Retrying` にする。
 
@@ -2265,7 +2268,7 @@ V1c9 の設計の独立レビュー（R1〜R11。持ち主はどれも推奨案�
 1. 起動から「回収の時間」のあいだ、新しいリースの取得を `503` と `ELM_SERVER_RECOVERING`（`Retry-After` つき）で断る。
 2. その間、クライアントは手元の有効なリーストークンを `POST /v1/leases/reclaim` で申告する。サーバーは、トークンの署名が自分のインストール鍵であること、期限内であること、証明のインストール鍵が `cnf.jkt` と一致することを確かめて、状態に戻す。
 3. 回収の時間は、サーバーライセンスの `lease`（リースの期間）とする。既定のポリシーなら 10 分である。回収した席と借り出しの記録から戻した席の合計が、すべての機能で席数に達したら、その時点で回収の時間を終える（それ以上の回収は来ないか、来ても席がないため）。
-4. クライアントは、更新が `ELM_UNKNOWN_LEASE` で断られたら回収を送る。
+4. クライアントは、更新が `ELM_UNKNOWN_LEASE` で断られたら回収を送る。回収の応答の各リースの `code` としてクライアントが受け取るコードは、§19 にある。
 5. 回収の時間が終わった後に届いた回収（ネットワークが遅れた端末、スリープから戻った端末）も、手順 2 と同じ検査をして受け付ける。ただし、その時点の空き席に収まるときだけで、収まらなければ `ELM_NO_SEATS` を返す。クライアントは回収が断られたら、そのリースを `Lost` にする（§12.7.3）。
 
 回収の要求と応答（0.44）:
@@ -2321,7 +2324,7 @@ POST /v1/leases/reclaim + 証明（jwk つき）
 
 どちらの方式でも、クライアントは次を行う（オンプレミスのサーバーに対して。SaaS 型のモード（0.94）は、サーバーライセンスもピンも持たないので、手順 1〜3 を行わない）。
 
-1. `GET /v1/server/license` でサーバーライセンスのファイルと、サーバーの公開鍵を受け取る（自己署名のときは TLS の検証を保留する）。応答は `{"license": <ライセンスファイル>, "key": <公開鍵の JWK（§8.4.1 と同じ EC P-256 の 4 メンバー）>}` である。サーバーライセンスには公開鍵の拇印（`cnf.jkt`）しかなく、リースの署名を確かめるには公開鍵そのものが要る（M3a、Issue #15 で足した）。
+1. `GET /v1/server/license` でサーバーライセンスのファイルと、サーバーの公開鍵を受け取る（自己署名のときは TLS の検証を保留する）。この要求に問題の応答が返ったときの読み方は、§12.1 にある（`detail` は使わない）。応答は `{"license": <ライセンスファイル>, "key": <公開鍵の JWK（§8.4.1 と同じ EC P-256 の 4 メンバー）>}` である。サーバーライセンスには公開鍵の拇印（`cnf.jkt`）しかなく、リースの署名を確かめるには公開鍵そのものが要る（M3a、Issue #15 で足した）。
 2. ルート鍵から §11.2 で検証する。要求の `Kind` は `Server` である（T18）。受け取った公開鍵の拇印が `cnf.jkt` と一致しなければ、`ELM_SERVER_PIN_MISMATCH` とする。
 3. クライアントの設定は、接続するサーバーの URL と、期待するサーバーライセンスの `lic` を持つ。`lic` を設定しないときは、最初に受け取った `lic` と `cnf.jkt` を保存し、以後それと一致することを求める（最初の接続を信じる方式）。一致しなければ `ELM_SERVER_PIN_MISMATCH`。
 4. 以後、そのサーバーのリーストークンを `cnf.jkt` の鍵で検証する（§12.7.5）。
@@ -3384,7 +3387,7 @@ M6 の Grill（Issue #133）で、M6 を 3 行に分け、すべての関数に�
   - 先に確かめるもの（Q3）: どの値の誤りかを文が言わないものは、各入口がライブラリを呼ぶ前に確かめ、名前を挙げた文で断る。C は、空の `revoked_key_ids` の要素、空の `product_id`（検証の要件、インストール、有効化、クライアントのオプション）、空の `feature_id`、空の `license_key`、空か空白だけの `directory` と `clock_guard_path`（Windows の `Path.GetFullPath` は空白だけのパスも「The path is empty.」で断る。レビューの R3。Linux と macOS では空白だけのパスも正しい相対パスだが、空白だけのフォルダー名はまず打ち間違いで、OS によって結果が変わらないよう、どの OS でも断る。正しさのレビューの A4、持ち主の決定。ヘッダー `elasticlm.h` と C の API の頁に、空か空白だけの値は `ELM_INVALID_ARGUMENT` だと書く）、1 より小さい `count`（文の先頭に .NET の名前が入るため。R7）を、C の引数かメンバーの名前を挙げた `NativeException`（`ELM_INVALID_ARGUMENT`）で断る。`elm` は、空の `--revoked` の値、空のライセンスキー、空の `--product`、空の `--key-thumbprint`、空の `--bind-key`（正しさのレビューの A2）を、オプションの名前を挙げた `CliException` で断る（R2）。`elm-server` は、設定の失効した鍵の ID の空の要素と、空か空白だけの `dataDirectory`、`license`、`trust.rootKeys` の要素、`tls.certificate`、`tls.key` を（`trust.rootKeys` と `tls.*` は正しさのレビューの A1 で、持ち主の決定で足した）、設定の名前を挙げた起動の誤り（`error:` の 1 行と終了コード 1）で断る（R5、持ち主の決定。`license` は実装で見つけ、持ち主の決定 D3 で足した。空のパスは `new FileInfo` などで扱わない例外になる）。`elm-service` の、失効した鍵の ID の空の要素は、設定を読む段（`ServiceSettings.Load`）がすでに「trust.revokedKeyIds must not hold an empty or null entry.」で断る。この断り方は `elm-service` の設定の誤りのいつもの形（`error:` を付けず、終了コード 2）で、文は設定の名前を含み、.NET の名前は付かないので、そのままにする（実装で分かり、持ち主の決定 D1 で、設計の「起動の誤りで断る」を改めた）。`elm-service` の空白だけの `trust.rootKeys`、`tls.certificate`、`tls.key`、`usageLog.directory` は、Windows では設定の確かめ（`ServiceSettings` の `Check`。空だけを見る）を通り抜けて「The path is empty.」になるので、同じ確かめで空か空白だけを断る（正しさのレビューの A1、持ち主の決定。設定の誤りのいつもの形）。実装で、`elm-service` のほかのパスの設定（`database.connectionFile`、`signing.key`、`signing.certificates` の要素、`signing.passphraseFile`、`nonce.secretFile`、`oidc.webClientSecretFile`、`dataProtection.kekFile` など）にも同じ穴が見つかり、環境変数から来た値は設定ファイルの確かめを通らないことも分かったので、同じ種類の問題として（`.cursor/rules/similar-findings.mdc`）、`elm-server` と `elm-service` のすべてのパスの設定を、環境変数で置き換えたあとの値で、同じ形で確かめる。`elm` のファイルのパスを受け取るオプションと引数（`elm license verify ""`、`--out ""` など）は、名前を外すと「The path is empty.」か「The value cannot be an empty string.」だけになるので、1 つの共通の確かめ（`CliPaths.AsPath`。System.CommandLine の検証で、パースの誤りとして `error:` の行のあとに「Run 'elm --help' for usage.」が続き、終了コードは 2）で、空か空白だけのパスを、オプションか引数の名前を挙げて断る（実装で見つけ、持ち主の決定 D2 で足した。`--data` もこの確かめで断る。PR #241 の持ち主の再レビューの P5）。ほかの誤りの文は、もともと何が誤りかを言う（「A root key is not a P-256 public key in PEM.」、製品 ID の形、URL の形など）ので、名前の部分を外すだけにする。実装は、3 か所に届く `ArgumentException` を投げる所をすべて洗い出し、各所が「名前を外すだけで足りる」か「先に確かめる」かを PR に書く。
   - 試験（Q4）: `ElasticLM.Native.Tests` で、調べた事実の C の各経路を呼び、`elm_last_error_message` に `(Parameter` がないこと、先に確かめる誤りの文が C の名前を含むことを、文の全体で確かめる。共通の関数は、名前のない例外、`ArgumentOutOfRangeException`（`Actual value` の行も外れる）、終わりが一致しない文（そのまま残る）で試す。`ArgumentNullException` と、`Message` を上書きする派生型（終わりが一致せず、文がそのまま残る）も試す（R6）。`elm` は、先に確かめるオプションごとに 1 つずつ（`--revoked ""`、空のライセンスキー、`--product ""`、`--key-thumbprint ""`、`--data ""`）と P-256 でない鍵で、文にオプションの名前があり `(Parameter` がないことを確かめる（R9）。`elm-server` と `elm-service` は、起動のトラストの設定の誤りと空の失効した鍵 ID、`elm-server` の空の `dataDirectory`（扱わない例外でなく `error:` の 1 行と終了コード 1）、`elm-service` の誤った接続の文字列で、文に `(Parameter` がないことを確かめる。発行した `libelasticlm` でも確かめるため、`tests/native/run.ps1` の C の試験に、`elm_verifier_create` に PEM でない鍵を渡して `elm_last_error_message` の文の全体を比べる 1 件を足す（R9。`UseSystemResourceKeys` はどこにも設定していないので、NativeAOT でも英語の文になるはずだが、試験で確かめる）。
   - 文書（Q5）: `docs/guide/reference/error-codes.md` と `docs/guide.ja/reference/error-codes.md` の `ELM_INVALID_ARGUMENT` の「the message names the argument」を、誤った引数か値を C の引数の名前か何が誤りかで示す文に直す（日本語の頁はレビューの R8 で足した）。C の API の頁の `elm_last_error_message` に、`ELM_INVALID_ARGUMENT` の文は C の引数かメンバーの名前を挙げるか、値の何が誤りかを言うと書く（英語と日本語）。約束は読み手が見るものの形で書き、ライブラリの実装の言語には触れない（PR #241 の持ち主のレビューの P3）。約束は `ELM_INVALID_ARGUMENT` の文に限る。`ELM_INTERNAL_ERROR` の文は、内部の例外の文をそのまま続けるので、約束しない（R8）。Tutorial 1 と 4 の「`error: A root key …` で始まる」の文は、直したあとも正しいので変えない。
-- 誤りの番号: 戻り値は `ElasticLM.Licensing.ErrorCode` の値をそのまま返す。この列挙の値は §19 の番号と同じである。
+- 誤りの番号: 戻り値は `ElasticLM.Licensing.ErrorCode` の値をそのまま返す。この列挙の値は §19 の番号と同じである。ただし、失敗の結果のコードが 0（`ELM_OK`）のときは、99（`ELM_INTERNAL_ERROR`）を返し、誤りの文は渡されたままにする。0 は成功だけを表す（`NativeErrors.Fail`。クライアントは `ELM_OK` を持つ失敗を作らないので、通らないはずの道の守りである。V1d1 の Grill の Q4）。
 - 結果の中身: 検証と有効化の結果は不透明なハンドル `elm_license` で返し、取り出しの関数（ID、製品、種類、期限、猶予期間の中か、機能の数と各機能（コード、版の範囲、席数、期限）、`meta`）で読む。猶予期間の中かは `VerifiedLicense` ではなく `LicenseVerificationResult.Valid` にあるので、`elm_license` が持つ。JSON の文字列では返さない（C の利用者に JSON の解析器を求めないため）。
 - 構造体の版:
   - オプションと要件の構造体は、先頭に `uint32_t struct_size` を置き、呼び出し側は `sizeof` を入れる。
@@ -3924,7 +3927,7 @@ M3c で作った形:
 | 99 | `ELM_INTERNAL_ERROR` | 内部の誤り | 500 |
 
 - HTTP の列は、各経路がそのコードを誤りの応答で返すときの状態コードである。例外は `elm-server` の `POST /admin/v1/license/reload`（§13.1, §13.7）で、新しいサーバーライセンスを断るとき、理由のコードを列の値によらず `409` で返す（古いライセンスのまま。`ElmServer.ReloadAsync`）。返しうるのは、ファイルの読み取りと検証の 2, 3, 4, 5, 6, 7, 8, 9, 10, 14, 16, 17, 30 と、借り出しの記録に書けないときの 99 である（`ElmServer.ReloadLicense`）。
-- `elm-server` の回収の応答（§13.4）は `200` で、各リースの `code` に 2, 4, 6, 7, 8, 10, 18, 36, 40, 42 を入れうる。4, 6, 7, 8, 18 を `elm-server` が返すのは、この回収の応答と、（18 を除き）上の再読み込みの `409` だけである（7 の `400` は `elm-service` の有効化とリースの取得のもの）。
+- `elm-server` の回収の応答（§13.4）は `200` で、各リースの `code` に 2, 4, 6, 7, 8, 10, 18, 36, 40, 42 を入れうる。4, 6, 7, 8, 18 を `elm-server` が返すのは、この回収の応答と、（18 を除き）上の再読み込みの `409` だけである（7 の `400` は `elm-service` の有効化とリースの取得のもの）。クライアントは、各リースの `code` として、`ELM_OK` とこの 10 個だけを受け取る。ほかのコード、知らない名前、`code` のない項目は `ELM_INTERNAL_ERROR` として読み、そのリースを `Lost` にする（`ProblemCodes`。V1d1 の Grill の Q6）。
 
 番号とコードは公開後に変えない。新しいコードは空いている番号に足す。
 
@@ -5239,6 +5242,17 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 指摘は、このまま公開の Issue に書く（問 13）。このリポジトリは公開で、`SECURITY.md` は、脆弱性を公開の Issue に書かないよう求めているが、まだリリースがなく、配った版を使っている人がいない。そこで、見直しの指摘は、ほかの行と同じ形で Issue と PR にする。
   - 見つけたものの行き先: Issue #318 の一覧の F01〜F48（F17 と F18 は使っていない番号）、R8 の指摘、T15 の補いのレビューの指摘は、どれも、V1d1〜V1d30 の行か、§5.4 の行（F34）にある。V1e は、V1d1〜V1d30 が `done` になるまで公開しない（上の「行をまたいで決めてあること」）。
   - §5.3 の脅威と §20.2 の一覧: T1〜T28 のそれぞれを見たレビュアーと結果は、Issue #318 にある。§20.2 の各項のテストと、検査を外すと落ちるかの表も、そこにある。§20.2 の表は、R8 が読んだ見立てで、走らせて確かめたのは、重さが中の 4 件と低の 1 件である。
+- V1d1 の Grill（Issue #319 に記録した。Q1〜Q6。持ち主の決定はすべて推奨案 A）: 問題の応答の署名のない `code` が `ELM_OK` だと、クライアントがそれを成功のコードとして読み、C の関数が 0 を返すこと（V1d の指摘 R2-1、F01）を直す。退けた案は design-decisions.md にある。
+  - 受け取るコード（Q1）: クライアントが問題の応答から受け取るのは、§19 の表の HTTP の列に、問題の応答の状態コードがある 34 個だけである（§12.1）。一覧は 1 つで、`ElasticLM.Client` の中の `ProblemCodes` が持ち、`LicenseClient.ProblemOf` が使う。`ErrorCodes.TryParseWireName`（公開の API。49 個の名前を全部読む）は変えない。
+  - 受け取らないコードの読み方（Q2）: 名前を知らないコードと同じで、`ELM_INTERNAL_ERROR` と「The server answered <状態コード> without a known error code.」。`detail` は使わない。
+  - サーバーを確かめる前の問題の応答（Q3）: オンプレミスのクライアントが、サーバーライセンスを確かめる前に受け取る問題の応答（`GET /v1/server/license` の答え。サーバーライセンスを取りに行くたびに通る）では、コードは Q1 の一覧で受け取り、`detail` は使わずに「The server answered <状態コード>.」にする（§12.1）。
+  - C の関数の守り（Q4）: `NativeErrors.Fail` は、失敗の結果のコードが 0 のとき、99 を返す（§17）。
+  - `DeactivateAsync` の成功の印（Q5）: `DeactivateAsync` と `ForgetDeactivationProofAsync` は、内部で成功を `ErrorCode.Ok` の失敗の結果で表すのをやめる。公開の形（成功は `null`）と `ErrorCode.Ok` は変えない（§12.6.2）。
+  - 回収の応答のリースごとの `code`（Q6）: `ELM_OK` と、§19 が挙げる 10 個だけを受け取り、ほかは `ELM_INTERNAL_ERROR` として読む（§19）。
+  - 設計のレビューのあとで足した 2 点: 受け取らないコードの応答でも、`Retry-After` と `ELM-Nonce` は、いままでどおり読む。`3xx` は、本文によらず `ELM_INTERNAL_ERROR` にする（§12.1 は前からそう書いていて、コードは、受け取るコードを持つ `3xx` を、そのコードで返していた）。
+  - テスト: 49 個のコードのそれぞれを問題の応答の `code` に入れ、一覧の 34 個はそのコードで、15 個は `ELM_INTERNAL_ERROR` で返ることを確かめる。一覧は、テストが §19 の表の HTTP の列と照らす（列が `4xx` か `5xx` の状態コードで始まるコードが、一覧の 34 個である。`2xx` の `ELM_OK` と、「—」で始まるコードは入らない）。`3xx` の応答が、受け取るコードを持っていても `ELM_INTERNAL_ERROR` になることも確かめる。サーバーを確かめる前の問題の応答が `detail` を返さないこと、回収の応答の一覧にないコードが `ELM_INTERNAL_ERROR` になること、`DeactivateAsync` が `ELM_OK` の問題の応答で成功を返さず、有効化を消さないこと、C の関数（リースの取得と借り出し、有効化）が `ELM_OK` の問題の応答で 0 を返さないこと、`NativeErrors.Fail` がコード 0 で 99 を返すことも確かめる。それぞれの検査を外すと、テストが落ちることを確かめる。
+  - 利用者の文書: 誤りのコードの頁の `ELM_INTERNAL_ERROR` の行は、いま「A server answer with an unknown code also becomes this code in the client.」と書く。これを、サーバーが問題の応答で返さないコードも同じ扱いになる、と分かる文にする（英語と日本語）。誤りの扱いの How-to の頁（`how-to/handle-errors.md`）の `ELM_INTERNAL_ERROR` の行は、クライアントがこのコードを返すのはデータフォルダーに書けないとき、とだけ書いている。受け取るコードのない問題の応答でも返ることと、そのときの文の始まり（「The server answered」）を足す。
+  - 同じ種類を探した範囲: `ErrorCodes.TryParseWireName` を呼ぶのは、`ProblemOf` と、回収の応答の読み手の 2 か所だけである。`elm` は、`code` を文字のまま出し、成功の判定には使わない。`ErrorCode.Ok` を成功の印に使う失敗の結果は、`DeactivateAsync` と `ForgetDeactivationProofAsync` だけにある。C の側が 0 を「誤りなし」に使う場所（`elm_lease_last_error`、状態のコールバック）は、`Fail` を通らず、クライアントが `ELM_OK` を持つ失敗を作らなくなれば、誤りのあるときに 0 にならない。
 
 ## 21. 依存
 

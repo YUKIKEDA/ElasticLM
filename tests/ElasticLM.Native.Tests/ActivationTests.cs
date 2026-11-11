@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text;
 using System.Text.Json;
+using ElasticLM.Client.Tests;
 using ElasticLM.Service;
 using ElasticLM.Service.Tests;
 
@@ -373,6 +374,41 @@ public sealed class ActivationTests : IAsyncLifetime
         nint b = Create("a");
         await _test.WaitWithClockAsync(() => Task.FromResult(!StateCallbacks.Seen.IsEmpty));
         ActivationApi.Destroy(b);
+    }
+
+    /// <summary>
+    /// elm_activation_activate does not return 0 when the service's answer is a problem that names ELM_OK (design §12.1,
+    /// §17.3, the V1d1 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on loopback http that answers every request, the first one for a nonce included, with 400 and the problem
+    ///   {"code":"ELM_OK", "detail":"Done."}, as a relay on the path can; an activation with its URL.
+    ///
+    /// Steps:
+    /// - Activate with a license key; read the state and what the server was asked.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR (99) with out NULL and exactly "The server answered 400 without a known error code."; the state
+    ///   is NONE (0); the server was asked for GET /v1/nonce only.
+    /// </remarks>
+    [Fact]
+    public async Task Activate_ProblemNamesElmOk_Returns99AndNoLicense()
+    {
+        await using ProblemServer forged = ProblemServer.Start(
+            tls: false,
+            HttpStatusCode.BadRequest,
+            """{"type":"about:blank","title":"ELM_OK","status":400,"detail":"Done.","code":"ELM_OK"}"""
+        );
+        nint activation = Create("a", forged.Url.AbsoluteUri);
+
+        Assert.Equal(
+            (99, (nint)0, "The server answered 400 without a known error code."),
+            (ActivationApi.Activate(_api, activation, UnknownKey, out nint license, out _), license, NativeApi.LastError)
+        );
+        Assert.Equal(0, ActivationApi.State(activation));
+        Assert.Equal(["GET /v1/nonce"], forged.Requests);
+        ActivationApi.Destroy(activation);
     }
 
     private async Task<(string Id, string Key)> LicenseAsync(string policyMembers)

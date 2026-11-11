@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Native.Tests;
@@ -7,7 +8,9 @@ namespace ElasticLM.Native.Tests;
 /// The message of <c>ELM_INVALID_ARGUMENT</c> carries no .NET parameter name (design §17.3, V1c10): the refusals of the
 /// .NET library keep their sentence without it, and the empty values whose sentence would not say which value it is are
 /// refused first with the C argument's or member's name. The lease paths that need a server are in
-/// <see cref="LeaseTests.Failures_RetryAfterArgumentsAndOwner"/>.
+/// <see cref="LeaseTests.Failures_RetryAfterArgumentsAndOwner"/>. A failure never returns 0 (design §17.3, the V1d1 Grill);
+/// the functions that get a problem answer naming <c>ELM_OK</c> are in <see cref="LeaseTests"/> and
+/// <see cref="ActivationTests"/>.
 /// </summary>
 [Collection(NativeClock.Name)]
 public sealed unsafe class NativeErrorsTests : IDisposable
@@ -182,6 +185,27 @@ public sealed unsafe class NativeErrorsTests : IDisposable
         AssertRefused(LeaseApi.Acquire(_api, client, "pro", 0, out _, out _), "count must be at least 1.");
         AssertRefused(LeaseApi.Borrow(_api, client, "pro", 60, out _, out _, count: 0), "count must be at least 1.");
         LeaseApi.Destroy(client);
+    }
+
+    /// <summary>
+    /// A failure never returns 0: one whose code is ELM_OK returns ELM_INTERNAL_ERROR (99) and keeps the message it was
+    /// given, so 0 stands for success only (design §17.3, the V1d1 Grill, Q4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - None; the client makes no failure with ELM_OK, so NativeErrors.Fail is called directly.
+    ///
+    /// Steps:
+    /// - Fail with ELM_OK and "x"; fail with ELM_NO_SEATS and "y".
+    ///
+    /// Expected:
+    /// - 99 with the message "x"; 40 with the message "y".
+    /// </remarks>
+    [Fact]
+    public void Fail_CodeIsOk_Returns99AndKeepsTheMessage()
+    {
+        Assert.Equal((99, "x"), (NativeErrors.Fail(ErrorCode.Ok, "x"), NativeApi.LastError));
+        Assert.Equal((40, "y"), (NativeErrors.Fail(ErrorCode.NoSeats, "y"), NativeApi.LastError));
     }
 
     private static void AssertRefused(int code, string message) => Assert.Equal((1, message), (code, NativeApi.LastError));

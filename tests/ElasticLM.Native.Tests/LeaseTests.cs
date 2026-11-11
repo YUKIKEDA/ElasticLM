@@ -1,4 +1,6 @@
+using System.Net;
 using System.Text.Json;
+using ElasticLM.Client.Tests;
 using ElasticLM.Licensing;
 using ElasticLM.Server;
 using ElasticLM.Server.Tests;
@@ -141,6 +143,40 @@ public sealed class LeaseTests : IAsyncLifetime
         LeaseApi.Free(lease);
         LeaseApi.Destroy(a);
         LeaseApi.Destroy(b);
+    }
+
+    /// <summary>
+    /// elm_client_acquire_lease and elm_client_borrow_lease do not return 0 when the answer to the request for the server
+    /// license is a problem that names ELM_OK (design §12.1, §17.3, the V1d1 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on loopback TLS with a self-signed certificate made in the test, which answers every request with 400 and
+    ///   the problem {"code":"ELM_OK", "detail":"Done."}, as a false server on the path can; an on-premises client of it.
+    ///
+    /// Steps:
+    /// - Acquire pro; borrow pro for an hour; read what the server was asked.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR (99) both times, with out NULL and exactly "The server answered 400 without a known error
+    ///   code.".
+    /// - The server was asked for GET /v1/server/license twice and for nothing else.
+    /// </remarks>
+    [Fact]
+    public async Task AcquireAndBorrow_ServerLicenseProblemNamesElmOk_Return99AndNoLease()
+    {
+        const string Message = "The server answered 400 without a known error code.";
+        await using ProblemServer forged = ProblemServer.Start(
+            tls: true,
+            HttpStatusCode.BadRequest,
+            """{"type":"about:blank","title":"ELM_OK","status":400,"detail":"Done.","code":"ELM_OK"}"""
+        );
+        nint client = Create(forged.Url.AbsoluteUri);
+
+        Assert.Equal((99, (nint)0, Message), (LeaseApi.Acquire(_api, client, "pro", 1, out nint lease, out _), lease, NativeApi.LastError));
+        Assert.Equal((99, (nint)0, Message), (LeaseApi.Borrow(_api, client, "pro", 3600, out nint borrow, out _), borrow, NativeApi.LastError));
+        Assert.Equal(["GET /v1/server/license", "GET /v1/server/license"], forged.Requests);
+        LeaseApi.Destroy(client);
     }
 
     /// <summary>

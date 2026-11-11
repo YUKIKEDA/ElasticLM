@@ -400,13 +400,15 @@ public sealed class ActivationClient : IAsyncDisposable
             return new LicenseError(ErrorCode.InvalidState, NoService);
         }
 
-        ActivationResult result = await WithLockAsync(
+        // The operation's result is the error, and null when deactivated: success is not one of the error codes, so no
+        // code that an answer names can stand for it.
+        return await WithLockAsync<LicenseError?>(
                 createKey: false,
                 async (stored, events) =>
                 {
                     if (stored?.ActivationId is not string id || _key is null)
                     {
-                        return Fail(ErrorCode.InvalidState, "No activation is kept.");
+                        return new LicenseError(ErrorCode.InvalidState, "No activation is kept.");
                     }
 
                     Reply reply = await SendRecordedAsync(
@@ -422,22 +424,23 @@ public sealed class ActivationClient : IAsyncDisposable
                     if (reply.Error is LicenseError error && error.Code != ErrorCode.ActivationNotFound)
                     {
                         Refuse(error, events, refreshing: false);
-                        return new ActivationResult.Failed(error, reply.RetryAfter);
+                        return error;
                     }
 
                     if (!TryRemoveKept())
                     {
-                        return Fail(ErrorCode.InternalError, "The activation file cannot be removed.");
+                        return new LicenseError(ErrorCode.InternalError, "The activation file cannot be removed.");
                     }
 
                     StopTimer();
                     SetState(ActivationState.None, null, events);
-                    return Fail(ErrorCode.Ok, "Deactivated.");
+                    return null;
                 },
+                e => e,
+                noFolder: null,
                 cancellationToken
             )
             .ConfigureAwait(false);
-        return result is ActivationResult.Failed { Error.Code: not ErrorCode.Ok } failed ? failed.Error : null;
     }
 
     // design §12.8.1, §12.8.5, §9.5.
@@ -529,7 +532,7 @@ public sealed class ActivationClient : IAsyncDisposable
             createKey: false,
             (stored, events) => Task.FromResult(Damaged() ? Fail(ErrorCode.Malformed, DamagedFile) : Import(stored, bytes, events)),
             e => new ActivationResult.Failed(e, null),
-            new LicenseError(ErrorCode.RequestMismatch, NotWaited),
+            () => Fail(ErrorCode.RequestMismatch, NotWaited),
             cancellationToken
         );
     }
@@ -569,15 +572,17 @@ public sealed class ActivationClient : IAsyncDisposable
     public async Task<LicenseError?> ForgetDeactivationProofAsync(CancellationToken cancellationToken = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
-        ActivationResult result = await WithLockAsync<ActivationResult>(
+
+        // The operation's result is the error, and null when no proof is kept any more, a folder that does not exist
+        // included: success is not one of the error codes.
+        return await WithLockAsync<LicenseError?>(
                 createKey: false,
-                (stored, _) => Task.FromResult<ActivationResult>(Damaged() ? Fail(ErrorCode.Malformed, DamagedFile) : Forget(stored)),
-                e => new ActivationResult.Failed(e, null),
-                new LicenseError(ErrorCode.Ok, "Nothing is kept."),
+                (stored, _) => Task.FromResult(Damaged() ? new LicenseError(ErrorCode.Malformed, DamagedFile) : Forget(stored)),
+                e => e,
+                () => null,
                 cancellationToken
             )
             .ConfigureAwait(false);
-        return result is ActivationResult.Failed { Error.Code: not ErrorCode.Ok } failed ? failed.Error : null;
     }
 
     // design §11.2.
@@ -879,12 +884,12 @@ public sealed class ActivationClient : IAsyncDisposable
         CancellationToken cancellationToken
     ) => WithLockAsync(createKey, operation, e => new ActivationResult.Failed(e, null), null, cancellationToken);
 
-    // noFolder answers when there is neither a key nor its folder: by default "No activation is kept.".
+    // noFolder gives the result when there is neither a key nor its folder: by default the failure "No activation is kept.".
     private async Task<T> WithLockAsync<T>(
         bool createKey,
         Func<StoredActivation?, List<ActivationStateChangedEventArgs>, Task<T>> operation,
         Func<LicenseError, T> fail,
-        LicenseError? noFolder,
+        Func<T>? noFolder,
         CancellationToken cancellationToken
     )
     {
@@ -908,7 +913,7 @@ public sealed class ActivationClient : IAsyncDisposable
             }
             else if (!Directory.Exists(_keys.Directory))
             {
-                return fail(noFolder ?? new LicenseError(ErrorCode.InvalidState, "No activation is kept."));
+                return noFolder is null ? fail(new LicenseError(ErrorCode.InvalidState, "No activation is kept.")) : noFolder();
             }
 
             (IDisposable? held, LicenseError? lockError) = await _files.LockAsync(cancellationToken).ConfigureAwait(false);
@@ -1078,7 +1083,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 return Reply.Failure(new LicenseError(ErrorCode.Malformed, "The service's answer is larger than the limit."));
             }
 
-            LicenseError? error = response.IsSuccessStatusCode ? null : LicenseClient.ProblemOf(response.StatusCode, content);
+            LicenseError? error = response.IsSuccessStatusCode ? null : LicenseClient.ProblemOf(response.StatusCode, content, keepDetail: true);
             return new Reply(content, error, LicenseClient.ValidNonce(nonce), retryAfter);
         }
         catch (HttpRequestException e)
@@ -1302,11 +1307,12 @@ public sealed class ActivationClient : IAsyncDisposable
     }
 
     // The proof is dropped; the activation requests that got no answer stay recorded, for the next activation to name.
-    private ActivationResult.Failed Forget(StoredActivation? stored)
+    // Returns null when no proof is kept any more.
+    private LicenseError? Forget(StoredActivation? stored)
     {
         if (stored?.DeactivationProof is null)
         {
-            return Fail(ErrorCode.Ok, "Nothing is kept.");
+            return null;
         }
 
         try
@@ -1320,11 +1326,11 @@ public sealed class ActivationClient : IAsyncDisposable
                 _files.Write(stored with { DeactivationProof = null });
             }
 
-            return Fail(ErrorCode.Ok, "Forgotten.");
+            return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
+            return new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
         }
     }
 
