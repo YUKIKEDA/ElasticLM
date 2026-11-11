@@ -169,6 +169,84 @@ public sealed class LeaseClientTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// From a lease's code in a reclaim answer, the client takes only ELM_OK and the ten codes a server refuses a reclaim
+    /// with; any other code, a name that is not a code, and an item without a code lose that lease alone with
+    /// ELM_INTERNAL_ERROR (design §13.4, §19, the V1d1 Grill, Q6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 100 seats on port P; one client holding 6 leases, acquired in order; the server restarted on P.
+    /// - The client's HTTP handler passes the reclaim request to the server and then replaces the body of its answer by six
+    ///   items in the leases' order: ELM_OK; ELM_NETWORK_ERROR, a code only a client makes; no code; ELM_NO_SEATS, one of
+    ///   the ten; ELM_SOMETHING, not a code; a null code.
+    ///
+    /// Steps:
+    /// - Advance 200 s so every lease renews: the first renewal gets ELM_UNKNOWN_LEASE and the client reclaims all six.
+    ///
+    /// Expected:
+    /// - The handler replaced one reclaim answer.
+    /// - The first lease is kept and renews to sequence 2.
+    /// - The fourth is Lost with ELM_NO_SEATS.
+    /// - The second, third, fifth, and sixth are Lost with ELM_INTERNAL_ERROR.
+    /// </remarks>
+    [Fact]
+    public async Task Reclaim_LeaseCodeOutsideTheList_LosesThatLeaseWithInternalError()
+    {
+        string data = _deployment.NewFolder("server");
+        _deployment.WriteServerLicense(data, s => s with { Features = [new FeatureSpec("pro", Seats: 100)] });
+        ElmServer before = await StartOpenServerAsync(data);
+        int port = before.PublicUrls[0].Port;
+        var forged = new ForgedReclaim(
+            """{"code":"ELM_OK"}""",
+            """{"code":"ELM_NETWORK_ERROR"}""",
+            "{}",
+            """{"code":"ELM_NO_SEATS"}""",
+            """{"code":"ELM_SOMETHING"}""",
+            """{"code":null}"""
+        );
+        LicenseClient client = _deployment.Client(
+            before.PublicUrls[0],
+            change: o => new LicenseClientOptions
+            {
+                ProductId = o.ProductId,
+                ServerUrl = o.ServerUrl,
+                Trust = o.Trust,
+                DataDirectory = o.DataDirectory,
+                ClockGuard = o.ClockGuard,
+                TimeProvider = o.TimeProvider,
+                WrapHandler = inner =>
+                {
+                    forged.InnerHandler = inner;
+                    return forged;
+                },
+            }
+        );
+        var leases = new List<Lease>();
+        for (int i = 0; i < 6; i++)
+        {
+            leases.Add(Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)));
+        }
+
+        await before.DisposeAsync();
+        await _deployment.StartServerAsync(data, s => With(s, port));
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+
+        await Deployment.WaitUntilAsync(() => forged.Replaced == 1 && leases[0].Token.Sequence == 2);
+        Assert.Equal(1, forged.Replaced);
+        Assert.Equal(LeaseState.Held, leases[0].State);
+        Assert.Equal(
+            [
+                (LeaseState.Lost, ErrorCode.InternalError),
+                (LeaseState.Lost, ErrorCode.InternalError),
+                (LeaseState.Lost, ErrorCode.NoSeats),
+                (LeaseState.Lost, ErrorCode.InternalError),
+                (LeaseState.Lost, ErrorCode.InternalError),
+            ],
+            leases.Skip(1).Select(l => (l.State, l.LastError?.Code ?? ErrorCode.Ok))
+        );
+    }
+
+    /// <summary>
     /// A server moved to another machine (another key, the same license ID) is refused by the pin until the pin is reset; a
     /// client configured with the license ID accepts it (design §13.5).
     /// </summary>
@@ -567,6 +645,30 @@ public sealed class LeaseClientTests : IAsyncDisposable
             HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
             response.Headers.Remove("ELM-Nonce");
             response.Headers.TryAddWithoutValidation("ELM-Nonce", value);
+            return response;
+        }
+    }
+
+    /// <summary>
+    /// Passes requests on and replaces the body of each successful reclaim answer by the given items, as a relay on the path
+    /// can: the answer carries no signature. The answer's headers, the next nonce among them, stay the server's.
+    /// </summary>
+    private sealed class ForgedReclaim(params string[] items) : DelegatingHandler
+    {
+        private int _replaced;
+
+        public int Replaced => Volatile.Read(ref _replaced);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            if (response.IsSuccessStatusCode && request.RequestUri!.AbsolutePath.EndsWith("/v1/leases/reclaim", StringComparison.Ordinal))
+            {
+                response.Content.Dispose();
+                response.Content = new StringContent("{\"results\":[" + string.Join(',', items) + "]}");
+                Interlocked.Increment(ref _replaced);
+            }
+
             return response;
         }
     }

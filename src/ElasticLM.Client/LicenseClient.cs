@@ -725,7 +725,20 @@ public sealed class LicenseClient : IAsyncDisposable
         return buffer.ToArray();
     }
 
-    internal static LicenseError ProblemOf(HttpStatusCode status, byte[] body)
+    // design §12.1 (the V1d1 Grill, Q1 to Q3). The status is not compared with the code's own status in design §19.
+
+    /// <summary>
+    /// Reads an answer that is not a success as an error. The answer carries no signature, so only a code that a server sends
+    /// in a problem answer is taken from it. Any other code, a name that is not a code, a body without a code or that is
+    /// not JSON, and every redirect are <c>ELM_INTERNAL_ERROR</c> with a message that holds nothing of the body.
+    /// </summary>
+    /// <param name="status">The answer's status.</param>
+    /// <param name="body">The answer's body.</param>
+    /// <param name="keepDetail"><see langword="true"/> to use the answer's <c>detail</c>, when it is 1 to 512 characters
+    /// long, as the message of a code that is taken. <see langword="false"/> for an answer from a server that is not
+    /// verified yet: the message then never holds text the answer chose.</param>
+    /// <returns>The error.</returns>
+    internal static LicenseError ProblemOf(HttpStatusCode status, byte[] body, bool keepDetail)
     {
         ProblemBody? problem = null;
         try
@@ -737,10 +750,13 @@ public sealed class LicenseClient : IAsyncDisposable
             problem = null;
         }
 
-        string detail = problem?.Detail is { Length: > 0 and <= 512 } text ? text : $"The server answered {(int)status}.";
-        return ErrorCodes.TryParseWireName(problem?.Code, out ErrorCode code)
-            ? new LicenseError(code, detail)
-            : new LicenseError(ErrorCode.InternalError, $"The server answered {(int)status} without a known error code.");
+        int number = (int)status;
+        if (number is >= 300 and < 400 || !ErrorCodes.TryParseWireName(problem?.Code, out ErrorCode code) || !ProblemCodes.InProblemAnswer(code))
+        {
+            return new LicenseError(ErrorCode.InternalError, $"The server answered {number} without a known error code.");
+        }
+
+        return new LicenseError(code, keepDetail && problem?.Detail is { Length: > 0 and <= 512 } text ? text : $"The server answered {number}.");
     }
 
     // Accepts a connection that the OS validates (an operator's certificate) or whose key is the pinned server key (the
@@ -838,9 +854,11 @@ public sealed class LicenseClient : IAsyncDisposable
                 body = await ReadLimitedAsync(response.Content).ConfigureAwait(false);
                 if (!response.IsSuccessStatusCode)
                 {
+                    // This connection takes any certificate, so anyone on the path can answer it: the code is read, and the
+                    // detail, which that party would choose, never becomes the app's message (design §12.1).
                     return body is null
                         ? new LicenseError(ErrorCode.Malformed, "The server's answer is larger than the limit.")
-                        : ProblemOf(response.StatusCode, body);
+                        : ProblemOf(response.StatusCode, body, keepDetail: false);
                 }
             }
             catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
@@ -1181,10 +1199,14 @@ public sealed class LicenseClient : IAsyncDisposable
 
         for (int i = 0; i < batch.Length; i++)
         {
-            ReclaimItemBody result = answer.Results[i];
-            if (result.Code != ErrorCodes.ToWireName(ErrorCode.Ok))
+            // design §19: a lease is kept only for ELM_OK. A code a server does not give a lease here, a name that is not a
+            // code, and an item without a code are read as ELM_INTERNAL_ERROR, and the lease is lost.
+            ErrorCode code =
+                ErrorCodes.TryParseWireName(answer.Results[i].Code, out ErrorCode parsed) && ProblemCodes.InReclaimAnswer(parsed)
+                    ? parsed
+                    : ErrorCode.InternalError;
+            if (code != ErrorCode.Ok)
             {
-                ErrorCode code = ErrorCodes.TryParseWireName(result.Code, out ErrorCode parsed) ? parsed : ErrorCode.InternalError;
                 SetState(batch[i], LeaseState.Lost, new LicenseError(code, "The server refused to reclaim the lease."), events);
             }
         }
@@ -1329,7 +1351,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 return Reply.Failure(new LicenseError(ErrorCode.Malformed, "The server's answer is larger than the limit."));
             }
 
-            LicenseError? error = response.IsSuccessStatusCode ? null : ProblemOf(response.StatusCode, content);
+            LicenseError? error = response.IsSuccessStatusCode ? null : ProblemOf(response.StatusCode, content, keepDetail: true);
             return new Reply(content, error, ValidNonce(nonce), serverLicense, retryAfter);
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)

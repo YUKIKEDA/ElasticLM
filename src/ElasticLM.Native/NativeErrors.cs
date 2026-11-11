@@ -67,7 +67,11 @@ internal static unsafe class NativeErrors
         saved.CopyTo(_message, 0);
     }
 
-    /// <summary>Keeps a message and returns its number.</summary>
+    /// <summary>
+    /// Keeps a failure's message and returns its number. A failure whose code is <c>ELM_OK</c> returns
+    /// <c>ELM_INTERNAL_ERROR</c> (99) with the message as it was passed: 0 stands for success only, whatever a later
+    /// change to the client hands in as a failure (design §17.3).
+    /// </summary>
     public static int Fail(ErrorCode code, string message)
     {
         int length = Encoding.UTF8.GetByteCount(message);
@@ -78,7 +82,7 @@ internal static unsafe class NativeErrors
 
         Encoding.UTF8.GetBytes(message, _message);
         _message[length] = 0;
-        return (int)code;
+        return (int)(code == ErrorCode.Ok ? ErrorCode.InternalError : code);
     }
 
     /// <summary>

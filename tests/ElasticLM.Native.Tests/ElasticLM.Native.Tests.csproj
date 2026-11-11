@@ -22,5 +22,7 @@
     <!-- design §17.6: the lease tests run against a real elm-server on loopback TLS, as ElasticLM.Server.Tests do. -->
     <ProjectReference Include="..\..\src\ElasticLM.Server\ElasticLM.Server.csproj" />
     <Compile Include="..\ElasticLM.Server.Tests\Deployment.cs" Link="Deployment.cs" />
+    <!-- design §17.3, the V1d1 Grill: a server that answers with a forged problem, as the client tests use it. -->
+    <Compile Include="..\ElasticLM.Client.Tests\ProblemServer.cs" Link="ProblemServer.cs" />
   </ItemGroup>
 </Project>

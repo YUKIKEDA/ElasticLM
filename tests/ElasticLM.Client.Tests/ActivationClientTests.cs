@@ -732,6 +732,127 @@ public sealed partial class ActivationClientTests
         await TestService.WaitForAsync(async () => (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64() == 3);
     }
 
+    /// <summary>
+    /// A problem answer that names ELM_OK does not deactivate: the deactivation returns an error and nothing is removed.
+    /// The answer carries no signature, so the success code is not taken from it (design §12.1, §12.6.2, the V1d1 Grill,
+    /// Q1 and Q5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license of 1 activation; an activated client whose HTTP handler, once armed, answers every POST with 400 and
+    ///   the problem {"code":"ELM_OK", "detail":"Deactivated."} without sending it, as a relay on the path can.
+    ///
+    /// Steps:
+    /// - Arm the handler; deactivate; read the state, the ID, the kept file, the offline check, and the service's count of
+    ///   activations. Disarm the handler; deactivate again.
+    ///
+    /// Expected:
+    /// - The first deactivation returns an error, not null: ELM_INTERNAL_ERROR with exactly "The server answered 400 without a
+    ///   known error code.". The state stays Active with the same ID, the kept file still holds the activation, the check
+    ///   is Valid, and the service counts 1 activation.
+    /// - The second deactivation, which reaches the service, returns null, and the service counts none.
+    /// </remarks>
+    [Fact]
+    public async Task Deactivate_ProblemAnswerNamesElmOk_ReturnsAnErrorAndKeepsTheActivation()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string licenseId, string key) = await vendor.LicenseWithIdAsync("\"maxActivations\":1");
+        var forged = new ForgedProblem("ELM_OK", "Deactivated.");
+        await using ActivationClient client = vendor.Client("a", forged);
+        Activated(await client.ActivateAsync(key, Cancel));
+        string id = client.ActivationId!;
+
+        forged.Armed = true;
+        LicenseError? error = await client.DeactivateAsync(Cancel);
+
+        Assert.NotNull(error);
+        Assert.Equal((ErrorCode.InternalError, "The server answered 400 without a known error code."), (error.Code, error.Message));
+        Assert.Equal((ActivationState.Active, id), (client.State, client.ActivationId));
+        Assert.Equal(id, vendor.Kept("a").ActivationId);
+        Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
+        Assert.Equal(1, await vendor.ActivationCountAsync(licenseId));
+
+        forged.Armed = false;
+        Assert.Null(await client.DeactivateAsync(Cancel));
+        Assert.Equal(0, await vendor.ActivationCountAsync(licenseId));
+    }
+
+    /// <summary>
+    /// A problem answer that names ELM_OK fails an activation with ELM_INTERNAL_ERROR, and the answer's Retry-After still
+    /// reaches the result: the headers of an answer are read whether its code is taken or not (design §12.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client that never activated, whose HTTP handler answers every POST with 400, Retry-After 7, and the
+    ///   problem {"code":"ELM_OK", "detail":"Activated."} without sending it.
+    ///
+    /// Steps:
+    /// - Activate with the key; read the state and the service's count of activations.
+    ///
+    /// Expected:
+    /// - Failed with ELM_INTERNAL_ERROR, exactly "The server answered 400 without a known error code.", and a Retry-After of
+    ///   7 seconds; the state is None, no ID is kept, and the service counts no activation.
+    /// </remarks>
+    [Fact]
+    public async Task Activate_ProblemAnswerNamesElmOk_FailsWithInternalErrorAndKeepsRetryAfter()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string licenseId, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        var forged = new ForgedProblem("ELM_OK", "Activated.") { Armed = true };
+        await using ActivationClient client = vendor.Client("a", forged);
+
+        var failed = Assert.IsType<ActivationResult.Failed>(await client.ActivateAsync(key, Cancel));
+
+        Assert.Equal((ErrorCode.InternalError, "The server answered 400 without a known error code."), (failed.Error.Code, failed.Error.Message));
+        Assert.Equal(TimeSpan.FromSeconds(7), failed.RetryAfter);
+        Assert.Equal((ActivationState.None, (string?)null), (client.State, client.ActivationId));
+        Assert.Equal(0, await vendor.ActivationCountAsync(licenseId));
+    }
+
+    /// <summary>
+    /// The <c>ELM-Nonce</c> header of an answer is kept also when the answer's code is not taken: the next request uses that
+    /// nonce (design §12.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An activated client, which holds the nonce of the activation's answer; a handler that counts the client's POSTs and
+    ///   its GETs of /v1/nonce and, once armed, answers a POST with 400, the problem {"code":"ELM_OK"}, and an
+    ///   <c>ELM-Nonce</c> header with a new nonce that the handler gets from the service.
+    ///
+    /// Steps:
+    /// - Advance the clock 301 seconds, past the 300 seconds of the nonce the client holds; arm the handler and refresh;
+    ///   disarm it and refresh again.
+    ///
+    /// Expected:
+    /// - The first refresh is Failed with ELM_INTERNAL_ERROR.
+    /// - The second refresh succeeds at sequence 2 with exactly one POST and no GET of /v1/nonce by the client: it used the
+    ///   nonce of the refused answer. With the old nonce the service answers ELM_NONCE_REQUIRED, which costs a second POST,
+    ///   and with no nonce the client sends a GET.
+    /// </remarks>
+    [Fact]
+    public async Task Refresh_AnswerWithACodeNotTakenCarriesANonce_UsesThatNonceNext()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var forged = new ForgedProblem("ELM_OK", "Refreshed.") { FreshNonce = true };
+        await using ActivationClient client = vendor.Client("a", forged);
+        Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal(1, forged.NonceGets);
+        vendor.Test.Time.Advance(TimeSpan.FromSeconds(301));
+
+        forged.Armed = true;
+        Task<ActivationResult> refused = client.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refused);
+        Assert.Equal(ErrorCode.InternalError, Failed(await refused).Code);
+
+        forged.Armed = false;
+        int posts = forged.Posts;
+        Task<ActivationResult> refresh = client.RefreshAsync(Cancel);
+        await vendor.AdvanceUntilAsync(refresh);
+        Assert.Equal(2L, Activated(await refresh).Sequence);
+        Assert.Equal((1, 1), (forged.Posts - posts, forged.NonceGets));
+    }
+
     private static CancellationToken Cancel => TestContext.Current.CancellationToken;
 
     // How far a wait moves the clock every 10 polls: a timer set an hour late (the retry interval) comes within 6 steps,
@@ -865,6 +986,58 @@ public sealed partial class ActivationClientTests
             }
 
             return base.SendAsync(request, cancellationToken);
+        }
+    }
+
+    // While armed, answers every POST with 400, Retry-After 7, and a problem of the given code and detail, without sending it:
+    // what a relay between the client and the service can answer, since a problem answer carries no signature. With
+    // FreshNonce, the answer also carries an ELM-Nonce header with a nonce the handler itself gets from the service. Counts
+    // the client's POSTs and its GETs of /v1/nonce.
+    private sealed class ForgedProblem(string code, string detail) : DelegatingHandler
+    {
+        private int _posts;
+        private int _nonceGets;
+
+        public volatile bool Armed;
+
+        public bool FreshNonce { get; init; }
+
+        public int Posts => Volatile.Read(ref _posts);
+
+        public int NonceGets => Volatile.Read(ref _nonceGets);
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.EndsWith("/v1/nonce", StringComparison.Ordinal))
+            {
+                Interlocked.Increment(ref _nonceGets);
+            }
+
+            if (request.Method != HttpMethod.Post)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            Interlocked.Increment(ref _posts);
+            if (!Armed)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            var response = new HttpResponseMessage(HttpStatusCode.BadRequest)
+            {
+                Content = new StringContent($$"""{"type":"about:blank","title":"{{code}}","status":400,"detail":"{{detail}}","code":"{{code}}"}"""),
+            };
+            response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
+            if (FreshNonce)
+            {
+                using var ask = new HttpRequestMessage(HttpMethod.Get, new Uri(request.RequestUri!, "/v1/nonce"));
+                using HttpResponseMessage answer = await base.SendAsync(ask, cancellationToken);
+                using JsonDocument nonce = JsonDocument.Parse(await answer.Content.ReadAsStringAsync(cancellationToken));
+                response.Headers.Add("ELM-Nonce", nonce.RootElement.GetProperty("nonce").GetString());
+            }
+
+            return response;
         }
     }
 

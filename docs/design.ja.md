@@ -5251,7 +5251,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 回収の応答のリースごとの `code`（Q6）: `ELM_OK` と、§19 が挙げる 10 個だけを受け取り、ほかは `ELM_INTERNAL_ERROR` として読む（§19）。
   - 設計のレビューのあとで足した 2 点: 受け取らないコードの応答でも、`Retry-After` と `ELM-Nonce` は、いままでどおり読む。`3xx` は、本文によらず `ELM_INTERNAL_ERROR` にする（§12.1 は前からそう書いていて、コードは、受け取るコードを持つ `3xx` を、そのコードで返していた）。
   - テスト: 49 個のコードのそれぞれを問題の応答の `code` に入れ、一覧の 34 個はそのコードで、15 個は `ELM_INTERNAL_ERROR` で返ることを確かめる。一覧は、テストが §19 の表の HTTP の列と照らす（列が `4xx` か `5xx` の状態コードで始まるコードが、一覧の 34 個である。`2xx` の `ELM_OK` と、「—」で始まるコードは入らない）。`3xx` の応答が、受け取るコードを持っていても `ELM_INTERNAL_ERROR` になることも確かめる。サーバーを確かめる前の問題の応答が `detail` を返さないこと、回収の応答の一覧にないコードが `ELM_INTERNAL_ERROR` になること、`DeactivateAsync` が `ELM_OK` の問題の応答で成功を返さず、有効化を消さないこと、C の関数（リースの取得と借り出し、有効化）が `ELM_OK` の問題の応答で 0 を返さないこと、`NativeErrors.Fail` がコード 0 で 99 を返すことも確かめる。それぞれの検査を外すと、テストが落ちることを確かめる。
-  - 利用者の文書: 誤りのコードの頁の `ELM_INTERNAL_ERROR` の行は、いま「A server answer with an unknown code also becomes this code in the client.」と書く。これを、サーバーが問題の応答で返さないコードも同じ扱いになる、と分かる文にする（英語と日本語）。
+  - 利用者の文書: 誤りのコードの頁の `ELM_INTERNAL_ERROR` の行は、いま「A server answer with an unknown code also becomes this code in the client.」と書く。これを、サーバーが問題の応答で返さないコードも同じ扱いになる、と分かる文にする（英語と日本語）。誤りの扱いの How-to の頁（`how-to/handle-errors.md`）の `ELM_INTERNAL_ERROR` の行は、クライアントがこのコードを返すのはデータフォルダーに書けないとき、とだけ書いている。受け取るコードのない問題の応答でも返ることと、そのときの文の始まり（「The server answered」）を足す。
   - 同じ種類を探した範囲: `ErrorCodes.TryParseWireName` を呼ぶのは、`ProblemOf` と、回収の応答の読み手の 2 か所だけである。`elm` は、`code` を文字のまま出し、成功の判定には使わない。`ErrorCode.Ok` を成功の印に使う失敗の結果は、`DeactivateAsync` と `ForgetDeactivationProofAsync` だけにある。C の側が 0 を「誤りなし」に使う場所（`elm_lease_last_error`、状態のコールバック）は、`Fail` を通らず、クライアントが `ELM_OK` を持つ失敗を作らなくなれば、誤りのあるときに 0 にならない。
 
 ## 21. 依存

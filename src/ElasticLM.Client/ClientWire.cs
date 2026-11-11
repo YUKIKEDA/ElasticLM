@@ -59,9 +59,9 @@ internal sealed class ReclaimItemBody
     [JsonPropertyName("lease")]
     public string? Lease { get; set; }
 
+    // design §19: an item without a code loses its lease alone, so the member is not required.
     [JsonPropertyName("code")]
-    [JsonRequired]
-    public string Code { get; set; } = string.Empty;
+    public string? Code { get; set; }
 }
 
 /// <summary><c>GET /v1/nonce</c>.</summary>

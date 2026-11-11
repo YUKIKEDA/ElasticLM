@@ -49,7 +49,7 @@ ElasticLM の API は、失敗を例外ではなく結果として伝える。
 | トークンの更新 | [`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md)、[`ELM_LICENSE_REVOKED`](../reference/error-codes.md)、[`ELM_EXPIRED`](../reference/error-codes.md) | 保存したファイルは期限まで使える。ベンダーに問い合わせるよう、ユーザーに頼む。 |
 | トークンの更新 | [`ELM_ACTIVATION_NOT_FOUND`](../reference/error-codes.md) | ベンダーがアクティベーションを消し、クライアントは保存したファイルを消した。もう一度アクティベーションするよう、ユーザーに頼む。 |
 | トークンの更新 | [`ELM_INVALID_STATE`](../reference/error-codes.md) | アクティベーションが保存されていない。アクティベーションするよう、ユーザーに頼む。ほかの場合は、メッセージに書いてある。 |
-| すべて | [`ELM_INTERNAL_ERROR`](../reference/error-codes.md) | クライアントから返ったときは、クライアントがデータフォルダーに書き込めない。フォルダーの権限とディスクの空き容量を確かめる。サービスから返ったときは、ベンダーに伝える。どちらなのかはメッセージに書いてある。 |
+| すべて | [`ELM_INTERNAL_ERROR`](../reference/error-codes.md) | 場合は 3 つあり、どの場合なのかはメッセージに書いてある。クライアントがデータフォルダーに書き込めないとき: フォルダーの権限とディスクの空き容量を確かめる。サービスの処理が失敗したとき: ベンダーに伝える。失敗したリクエストへのレスポンスに、サーバーが拒否のときに送るエラーコードがなかったとき（メッセージは「without a known error code」で終わる。サービスのときも、メッセージは「server」と書く）: サービスの URL が、プロキシやほかのプログラムではなくサービスそのものに届いているか、クライアントのライブラリがサービスより古くないかを確かめる。どちらも問題がなければ、メッセージを添えてベンダーに伝える。 |
 | すべて | それ以外のコード。[`ELM_CLONE_DETECTED`](../reference/error-codes.md) や [`ELM_PROOF_INVALID`](../reference/error-codes.md) など | コードとメッセージを添えて、ベンダーに伝える。 |
 
 `ELM_INVALID_STATE` は、サービスの URL を持たないクライアントで、`RefreshAsync` のようにサービスの URL が要るメソッドをアプリが呼んだときにも返る。これはアプリのコードの誤りだ。16 件のリクエストが続けてレスポンスを受け取らなかったあとにも返り、このときはベンダーの管理者の対応が要る。どちらなのかはメッセージに書いてある。各コードが返るすべての場合は、[エラーコード](../reference/error-codes.md)に挙げている。
