@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 
 namespace ElasticLM.Licensing;
 
+// design §7.4.
+
 /// <summary>
-/// Computes key IDs: the RFC 7638 JWK thumbprint of a P-256 public key (design §7.4). Licenses and leases name an
+/// Computes key IDs: the RFC 7638 JWK thumbprint of a P-256 public key. Licenses and leases name an
 /// installation key by this value in <c>cnf.jkt</c>.
 /// </summary>
 public static class KeyIds

@@ -2,8 +2,10 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Licensing;
 
+// design §8.4.3.
+
 /// <summary>
-/// The payload of a lease token (<c>elm-lease+jws</c>, design §8.4.3).
+/// The payload of a lease token (<c>elm-lease+jws</c>).
 /// </summary>
 internal sealed class LeasePayload
 {
@@ -67,8 +69,10 @@ internal sealed class LeasePayload
     public long Seq { get; set; }
 }
 
+// design §12.2.
+
 /// <summary>
-/// The payload of a request proof (<c>elm-proof+jws</c>, design §12.2).
+/// The payload of a request proof (<c>elm-proof+jws</c>).
 /// </summary>
 internal sealed class ProofPayload
 {
@@ -104,8 +108,10 @@ internal sealed class ProofPayload
     public EcPublicJwk? Jwk { get; set; }
 }
 
+// design §8.4.6.
+
 /// <summary>
-/// The payload of a log signature (<c>elm-log+jws</c>, design §8.4.6): it closes the lines written since the previous one.
+/// The payload of a log signature (<c>elm-log+jws</c>): it closes the lines written since the previous one.
 /// </summary>
 internal sealed class LogPayload
 {

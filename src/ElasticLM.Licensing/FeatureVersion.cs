@@ -2,8 +2,10 @@ using System.Globalization;
 
 namespace ElasticLM.Licensing;
 
+// design §9.2.
+
 /// <summary>
-/// A feature version <c>major.minor[.patch]</c> with numbers only (design §9.2). A missing patch is 0.
+/// A feature version <c>major.minor[.patch]</c> with numbers only. A missing patch is 0.
 /// </summary>
 internal readonly record struct FeatureVersion(int Major, int Minor, int Patch) : IComparable<FeatureVersion>
 {
@@ -59,8 +61,10 @@ internal readonly record struct FeatureVersion(int Major, int Minor, int Patch) 
     }
 }
 
+// design §9.2.
+
 /// <summary>
-/// A version range such as <c>&gt;=2.0 &lt;3.0</c>: comparators separated by spaces, all of which must hold (design §9.2).
+/// A version range such as <c>&gt;=2.0 &lt;3.0</c>: comparators separated by spaces, all of which must hold.
 /// </summary>
 internal sealed class FeatureVersionRange
 {

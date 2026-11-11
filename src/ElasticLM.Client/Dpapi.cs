@@ -3,8 +3,10 @@ using System.Runtime.Versioning;
 
 namespace ElasticLM.Client;
 
+// design §10.2.
+
 /// <summary>
-/// Windows DPAPI through <c>CryptProtectData</c> and <c>CryptUnprotectData</c> in crypt32.dll (design §10.2).
+/// Windows DPAPI through <c>CryptProtectData</c> and <c>CryptUnprotectData</c> in crypt32.dll.
 /// </summary>
 [SupportedOSPlatform("windows")]
 internal static unsafe partial class Dpapi

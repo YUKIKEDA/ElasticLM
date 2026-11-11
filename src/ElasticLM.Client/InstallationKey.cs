@@ -3,8 +3,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §10.2.
+
 /// <summary>
-/// Where an installation key is kept: for the user, or for the whole machine (design §10.2).
+/// Where an installation key is kept: for the user, or for the whole machine.
 /// </summary>
 public enum KeyScope
 {
@@ -15,9 +17,11 @@ public enum KeyScope
     Machine,
 }
 
+// design §10.2.
+
 /// <summary>
-/// The key pair an installation creates on its first activation, lease, or trial: the installation's real identifier
-/// (design §10.2). It signs request proofs.
+/// The key pair an installation creates on its first activation, lease, or trial: the installation's real identifier.
+/// It signs request proofs.
 /// </summary>
 public sealed class InstallationKey : IDisposable
 {
@@ -30,7 +34,9 @@ public sealed class InstallationKey : IDisposable
         Thumbprint = KeyIds.Of(key);
     }
 
-    /// <summary>Gets the key's JWK thumbprint (design §7.4), which licenses and leases bind to as <c>cnf.jkt</c>.</summary>
+    // design §7.4.
+
+    /// <summary>Gets the key's JWK thumbprint, which licenses and leases bind to as <c>cnf.jkt</c>.</summary>
     public string Thumbprint { get; }
 
     /// <summary>
@@ -40,8 +46,10 @@ public sealed class InstallationKey : IDisposable
     /// <returns>The identity.</returns>
     public InstallationIdentity Identity(IReadOnlyList<string> fingerprints) => new(Thumbprint, fingerprints);
 
+    // design §11.4 step 3.
+
     /// <summary>
-    /// Returns a clock guard that keeps its state in a file and signs it with a copy of this key (design §11.4 step 3), as the
+    /// Returns a clock guard that keeps its state in a file and signs it with a copy of this key, as the
     /// clients and <c>elm-server</c> do. The guard owns the copy; dispose the guard to destroy it.
     /// </summary>
     /// <param name="path">The state file path, usually <c>clock</c> in the key's folder. The directory must exist.</param>
@@ -65,8 +73,10 @@ public sealed class InstallationKey : IDisposable
 
     internal ECParameters PublicParameters() => _key.ExportParameters(false);
 
+    // design §11.4 step 3.
+
     /// <summary>
-    /// Returns a copy of the key for the clock guard to sign its state with (design §11.4 step 3). The guard keeps its key, so
+    /// Returns a copy of the key for the clock guard to sign its state with. The guard keeps its key, so
     /// it gets its own; the caller disposes it.
     /// </summary>
     internal ECDsa CopyForClockGuard() =>

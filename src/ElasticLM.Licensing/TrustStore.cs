@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 
 namespace ElasticLM.Licensing;
 
+// design §7.1, §7.5.
+
 /// <summary>
-/// The root keys an app trusts, and the key IDs it has revoked (design §7.1, §7.5). Apps build it from keys compiled into
+/// The root keys an app trusts, and the key IDs it has revoked. Apps build it from keys compiled into
 /// the app.
 /// </summary>
 public sealed class TrustStore
@@ -17,8 +19,10 @@ public sealed class TrustStore
         _revoked = revoked;
     }
 
+    // design §7.4.
+
     /// <summary>
-    /// Gets the key IDs (JWK thumbprints, design §7.4) of the trusted root keys.
+    /// Gets the key IDs (JWK thumbprints) of the trusted root keys.
     /// </summary>
     public IReadOnlyCollection<string> RootKeyIds => _roots.Keys;
 

@@ -2,9 +2,11 @@ using System.Security.Cryptography;
 
 namespace ElasticLM.Licensing;
 
+// The measurement below: M1, Issue #7.
+
 /// <summary>
 /// A P-256 public key kept as one <see cref="ECDsa"/> object for repeated verification. Creating the object costs about
-/// 275 µs under NativeAOT on Windows, against about 110 µs for one verification (measured for M1, Issue #7), so keys that
+/// 275 µs under NativeAOT on Windows, against about 110 µs for one verification, so keys that
 /// verify many tokens are created once. The documentation does not promise that one <see cref="ECDsa"/> may verify on
 /// several threads at once, so verification takes a lock.
 /// </summary>

@@ -4,8 +4,10 @@ using Microsoft.Win32;
 
 namespace ElasticLM.Licensing;
 
+// design §10.3.
+
 /// <summary>
-/// Reads the OS machine IDs as 16-byte values (design §10.3). An ID that is missing, uninitialized, all zeros, or all ones
+/// Reads the OS machine IDs as 16-byte values. An ID that is missing, uninitialized, all zeros, or all ones
 /// is left out.
 /// </summary>
 internal static partial class MachineIdSources

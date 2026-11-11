@@ -2,8 +2,10 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Licensing;
 
+// design §8.2.
+
 /// <summary>
-/// The JWS protected header: exactly <c>alg</c>, <c>kid</c>, and <c>typ</c> (design §8.2).
+/// The JWS protected header: exactly <c>alg</c>, <c>kid</c>, and <c>typ</c>.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class JwsHeader
@@ -21,8 +23,10 @@ internal sealed class JwsHeader
     public string Typ { get; set; } = string.Empty;
 }
 
+// design §8.4.1.
+
 /// <summary>
-/// The payload of a key certificate (<c>elm-cert+jws</c>, design §8.4.1).
+/// The payload of a key certificate (<c>elm-cert+jws</c>).
 /// </summary>
 internal sealed class KeyCertificatePayload
 {
@@ -59,8 +63,10 @@ internal sealed class KeyCertificatePayload
     public long Exp { get; set; }
 }
 
+// design §8.4.2.
+
 /// <summary>
-/// A feature in a license token (design §8.4.2).
+/// A feature in a license token.
 /// </summary>
 internal sealed class FeatureClaim
 {
@@ -78,8 +84,10 @@ internal sealed class FeatureClaim
     public long? Exp { get; set; }
 }
 
+// design §8.4.2.
+
 /// <summary>
-/// The confirmation claim that binds a token to an installation key (design §8.4.2).
+/// The confirmation claim that binds a token to an installation key.
 /// </summary>
 internal sealed class ConfirmationClaim
 {
@@ -88,8 +96,10 @@ internal sealed class ConfirmationClaim
     public string Jkt { get; set; } = string.Empty;
 }
 
+// design §8.4.2.
+
 /// <summary>
-/// The payload of a license token (<c>elm-license+jws</c>, design §8.4.2).
+/// The payload of a license token (<c>elm-license+jws</c>).
 /// </summary>
 internal sealed class LicensePayload
 {
@@ -168,8 +178,10 @@ internal sealed class LicensePayload
     public Dictionary<string, string>? Meta { get; set; }
 }
 
+// design §8.5.
+
 /// <summary>
-/// The license file envelope (design §8.5).
+/// The license file envelope.
 /// </summary>
 internal sealed class LicenseFileEnvelope
 {
@@ -190,8 +202,10 @@ internal sealed class LicenseFileEnvelope
     public List<string> Certificates { get; set; } = [];
 }
 
+// design §8.2 rule 6, exception.
+
 /// <summary>
-/// Reads only the <c>jwk</c> member of a payload, for the embedded-key exception of design §8.2 rule 6.
+/// Reads only the <c>jwk</c> member of a payload, for a token that is verified with the key its own payload carries.
 /// </summary>
 internal sealed class EmbeddedJwkPayload
 {
@@ -199,8 +213,10 @@ internal sealed class EmbeddedJwkPayload
     public EcPublicJwk? Jwk { get; set; }
 }
 
+// design §11.4.
+
 /// <summary>
-/// The persisted clock guard state (design §11.4).
+/// The persisted clock guard state.
 /// </summary>
 internal sealed class ClockState
 {

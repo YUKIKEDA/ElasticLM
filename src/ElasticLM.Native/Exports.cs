@@ -5,6 +5,8 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Native;
 
+// The reason of the suppression below: design §17.3.
+
 /// <summary>
 /// The functions <c>libelasticlm</c> exports (design §17, §17.4; <c>include/elasticlm.h</c>). Functions that return a
 /// number empty the thread's message first, write it on a failure, set their outputs to <see langword="null"/> and 0 on
@@ -13,7 +15,7 @@ namespace ElasticLM.Native;
 [SuppressMessage(
     "Design",
     "CA1031:Do not catch general exception types",
-    Justification = "design §17.3: no exception may leave an exported function; each becomes ELM_INTERNAL_ERROR."
+    Justification = "No exception may leave an exported function; each becomes ELM_INTERNAL_ERROR."
 )]
 public static unsafe partial class Exports
 {

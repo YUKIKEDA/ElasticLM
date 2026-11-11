@@ -100,7 +100,7 @@ expires: 2100-12-31 00:00:00Z
 新しいファイルが確認に通らないときは、サーバーは古いライセンスを使い続ける。`elm` は `error:`、エラーコード、理由を表示し、終了コード 1 で終わる。たとえば、別のインストール鍵に紐付いたファイルでは次のようになる。
 
 ```text
-error: ELM_WRONG_INSTALLATION: The server license does not verify (ELM_WRONG_INSTALLATION): The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
+error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is FAKE-SERVER-KEY-00000000000000000000000000K.
 ```
 
 確認に通るファイルが手に入るまで、`license` のパスに古いファイルを戻しておく。ここでは `server.elmlic.old` から戻す。サーバーは次に起動するときにファイルを読み直し、検証に通らないファイルでは起動しない。すべてのコードは[エラーコード](../reference/error-codes.md)に挙げている。

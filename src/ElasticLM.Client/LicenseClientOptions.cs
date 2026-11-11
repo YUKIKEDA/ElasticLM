@@ -17,34 +17,46 @@ public sealed class LicenseClientOptions
     /// </summary>
     public required Uri ServerUrl { get; init; }
 
+    // design §12.7.6, §12.7.5 steps 1, 2, and 6.
+
     /// <summary>
-    /// Gets the license key that leases from <c>elm-service</c> (design §12.7.6), or <see langword="null"/> for an
+    /// Gets the license key that leases from <c>elm-service</c>, or <see langword="null"/> for an
     /// on-premises server. With a key, the client checks TLS with the OS's trust, keeps no server pin, and verifies leases
-    /// with the certificates the service sends (§12.7.5 steps 1, 2, and 6). The key is held in memory only and sent only
+    /// with the certificates the service sends. The key is held in memory only and sent only
     /// with an acquisition.
     /// </summary>
     public string? LicenseKey { get; init; }
 
-    /// <summary>Gets the vendor's trust store, from which the server license (design §13.5 step 2) or, with
-    /// <see cref="LicenseKey"/>, the certificates of the service's leases (§12.7.5 step 1) are verified.</summary>
+    // design §13.5 step 2, §12.7.5 step 1.
+
+    /// <summary>Gets the vendor's trust store, from which the server license or, with
+    /// <see cref="LicenseKey"/>, the certificates of the service's leases are verified.</summary>
     public required TrustStore Trust { get; init; }
+
+    // design §13.5 step 3.
 
     /// <summary>
     /// Gets the server license ID the server must hold, or <see langword="null"/> to accept the first one seen and require it
-    /// afterwards (design §13.5 step 3). With an ID, a server moved to another machine is accepted under the same ID. Not
+    /// afterwards. With an ID, a server moved to another machine is accepted under the same ID. Not
     /// with <see cref="LicenseKey"/>.
     /// </summary>
     public string? ExpectedServerLicenseId { get; init; }
 
-    /// <summary>Gets where the installation key and the server pins are kept (design §10.2).</summary>
+    // design §10.2.
+
+    /// <summary>Gets where the installation key and the server pins are kept.</summary>
     public KeyScope KeyScope { get; init; } = KeyScope.User;
 
-    /// <summary>Gets the folder of the installation key and the pins, or <see langword="null"/> for the default of design §10.2.</summary>
+    // design §10.2.
+
+    /// <summary>Gets the folder of the installation key and the pins, or <see langword="null"/> for the default folder of the scope.</summary>
     public string? DataDirectory { get; init; }
+
+    // design §4.4.
 
     /// <summary>
     /// Gets a value indicating whether the host name and OS user name are sent with each new lease
-    /// (<c>ClientInfoStrategy: HostAndUser</c>, design §4.4). Off by default.
+    /// (<c>ClientInfoStrategy: HostAndUser</c>). Off by default.
     /// </summary>
     public bool SendClientInfo { get; init; }
 

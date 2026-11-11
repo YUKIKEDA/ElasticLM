@@ -2,8 +2,10 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §12.7.5.
+
 /// <summary>
-/// Checks lease tokens on the client (design §12.7.5): when a lease arrives, and before a borrowed lease is used.
+/// Checks lease tokens on the client: when a lease arrives, and before a borrowed lease is used.
 /// </summary>
 public sealed class LeaseVerifier
 {
@@ -13,13 +15,15 @@ public sealed class LeaseVerifier
     private readonly IClockGuard _clockGuard;
     private readonly LicenseVerifierOptions _options;
 
+    // design §11.4 item 5.
+
     /// <summary>
     /// Initializes a new instance of the <see cref="LeaseVerifier"/> class.
     /// </summary>
     /// <param name="trust">The trust store, for the certificates of hosted leases. Certificates that verified are kept for the
     /// life of the verifier, as in <see cref="LicenseVerifier"/>.</param>
     /// <param name="time">The time provider.</param>
-    /// <param name="clockGuard">The clock guard (design §11.4 item 5: leases are guarded like licenses).</param>
+    /// <param name="clockGuard">The clock guard: leases are guarded like licenses.</param>
     /// <param name="options">The options, or <see langword="null"/> for the defaults. Only <see cref="LicenseVerifierOptions.ClockSkew"/> is used.</param>
     /// <exception cref="ArgumentOutOfRangeException">The clock skew is negative or more than <see cref="LicenseVerifierOptions.MaxClockSkew"/>.</exception>
     public LeaseVerifier(TrustStore trust, TimeProvider time, IClockGuard clockGuard, LicenseVerifierOptions? options = null)
@@ -40,9 +44,11 @@ public sealed class LeaseVerifier
         _options = new LicenseVerifierOptions { ClockSkew = options.ClockSkew };
     }
 
+    // design §12.7.5 steps 1 to 6.
+
     /// <summary>
     /// Checks a lease issued by an on-premises server: the signature with the server's key, and that the lease stays inside
-    /// the server license (design §12.7.5 steps 1 to 6).
+    /// the server license.
     /// </summary>
     /// <param name="leaseToken">The lease token.</param>
     /// <param name="server">The server, built from its verified server license.</param>
@@ -51,8 +57,10 @@ public sealed class LeaseVerifier
     public LeaseVerificationResult VerifyOnPremises(string leaseToken, ServerIdentity server, LeaseExpectation expect) =>
         VerifyOnPremises(leaseToken, server, expect, requireCurrentServerLicense: true);
 
+    // design §13.4.
+
     /// <summary>
-    /// Checks a lease token that a server issued itself, for a reclaim after a restart (design §13.4): the same checks as
+    /// Checks a lease token that a server issued itself, for a reclaim after a restart: the same checks as
     /// <see cref="VerifyOnPremises(string, ServerIdentity, LeaseExpectation)"/>, except that the token may name an earlier
     /// server license of the same server. Only that server's key could have signed it, and the token must still fit the
     /// current server license, so a server license replaced while the server was down does not cost the clients their seats.
@@ -60,8 +68,10 @@ public sealed class LeaseVerifier
     internal LeaseVerificationResult VerifyOwnLease(string leaseToken, ServerIdentity server, LeaseExpectation expect) =>
         VerifyOnPremises(leaseToken, server, expect, requireCurrentServerLicense: false);
 
+    // design §13.4.
+
     /// <summary>
-    /// Reads a lease token that a server signed itself, for its own record of borrows (design §13.4): the signature and the
+    /// Reads a lease token that a server signed itself, for its own record of borrows: the signature and the
     /// payload only. The record restores borrows even when the server license changed since, because their seats are taken
     /// until they expire.
     /// </summary>
@@ -143,9 +153,12 @@ public sealed class LeaseVerifier
         return CheckTime(payload, leaseToken);
     }
 
+    // design §12.7.5 steps 1, 2, and 6; steps 3 to 5 are for on-premises servers only.
+
     /// <summary>
     /// Checks a lease issued by the hosted service: the signature with a signing key certified for <c>lease</c> by a trusted
-    /// root (design §12.7.5 steps 1, 2, and 6; steps 3 to 5 are for on-premises servers only).
+    /// root, the product and the installation key, and the times. The checks against a server license are for on-premises
+    /// servers only.
     /// </summary>
     /// <param name="leaseToken">The lease token.</param>
     /// <param name="certificates">The certificates sent with the lease.</param>

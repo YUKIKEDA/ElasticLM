@@ -1,16 +1,20 @@
 namespace ElasticLM.Licensing;
 
+// design §8.4.2, §9.2.
+
 /// <summary>
-/// A feature granted by a verified license (design §8.4.2).
+/// A feature granted by a verified license.
 /// </summary>
 /// <param name="Id">The feature ID.</param>
-/// <param name="VersionRange">The allowed version range (design §9.2), or <see langword="null"/> for every version.</param>
+/// <param name="VersionRange">The allowed version range, or <see langword="null"/> for every version.</param>
 /// <param name="Seats">The seat count for server licenses, otherwise <see langword="null"/>.</param>
 /// <param name="ExpiresAt">The feature's own expiry, or <see langword="null"/>.</param>
 public sealed record LicensedFeature(string Id, string? VersionRange, int? Seats, DateTimeOffset? ExpiresAt);
 
+// design §11.2.
+
 /// <summary>
-/// A license that passed signature verification and every check of design §11.2. It can be created only by
+/// A license that passed signature verification and every other check of the verifier. It can be created only by
 /// <see cref="LicenseVerifier"/>.
 /// </summary>
 public sealed class VerifiedLicense
@@ -80,10 +84,14 @@ public sealed class VerifiedLicense
     /// <summary>Gets the machine fingerprints in the license.</summary>
     public IReadOnlyList<string> Fingerprints { get; }
 
-    /// <summary>Gets the activation sequence number (design §10.4), or <see langword="null"/>.</summary>
+    // design §10.4.
+
+    /// <summary>Gets the activation sequence number, or <see langword="null"/>.</summary>
     public long? Sequence { get; }
 
-    /// <summary>Gets the nonce of the offline request this license answers (design §12.8), or <see langword="null"/>.</summary>
+    // design §12.8.
+
+    /// <summary>Gets the nonce of the offline request this license answers, or <see langword="null"/>.</summary>
     public string? OfflineRequestNonce { get; }
 
     /// <summary>Gets the lease duration for server licenses, or <see langword="null"/>.</summary>
@@ -95,9 +103,11 @@ public sealed class VerifiedLicense
     /// <summary>Gets the overage percentage for server licenses, or <see langword="null"/>.</summary>
     public int? OveragePercent { get; }
 
+    // design §9.3 BorrowReturnLimit, §12.7.4.
+
     /// <summary>
     /// Gets how many borrowed leases one installation key may return early in 30 days, for server licenses, or
-    /// <see langword="null"/> (design §9.3 <c>BorrowReturnLimit</c>, §12.7.4).
+    /// <see langword="null"/>.
     /// </summary>
     public int? BorrowReturnLimit { get; }
 

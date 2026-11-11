@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing.Tests;
 using ElasticLM.Server.Tests;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Service.Tests;
 
@@ -81,6 +82,43 @@ public sealed class ElmServiceTests
 
         ElmService service = await test.StartAsync();
         Assert.Equal((KeyFiles.KeyId(test.SigningKey), KeyUses.License | KeyUses.Lease), (service.Signing.KeyId, service.Signing.Uses));
+    }
+
+    /// <summary>
+    /// A start with certificates that end in less than 30 days writes one warning that says when they end and what to do
+    /// (design §7.5); at exactly 30 days it writes none.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A signing key; a certificate that ends 30 days after the test's time, and one that ends a second earlier.
+    ///
+    /// Steps:
+    /// - Start a service with each, its log recorded.
+    ///
+    /// Expected:
+    /// - No warning with the first. With the second, one warning: "The signing key's certificates end at 10/30/2026 23:59:59
+    ///   +00:00, within 30 days; issue new certificates and restart.".
+    /// </remarks>
+    [Fact]
+    public async Task Start_CertificatesEndWithin30Days_LogsOneWarning()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        DateTimeOffset notBefore = TestService.Start.AddDays(-1);
+        KeyUses uses = KeyUses.License | KeyUses.Lease;
+        async Task<string[]> Warnings(string certificate)
+        {
+            using var log = new RecordingLoggerProvider();
+            ServiceSettings settings = test.Settings(s => s with { SigningCertificateFiles = [certificate] });
+            await using (await ElmService.StartAsync(settings, test.HostOptions(log: log), TestContext.Current.CancellationToken)) { }
+
+            return [.. log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message)];
+        }
+
+        Assert.Empty(await Warnings(test.WriteCertificate("thirty-days", uses, notBefore, TimeSpan.FromDays(31))));
+        Assert.Equal(
+            ["The signing key's certificates end at 10/30/2026 23:59:59 +00:00, within 30 days; issue new certificates and restart."],
+            await Warnings(test.WriteCertificate("a-second-less", uses, notBefore, TimeSpan.FromDays(31) - TimeSpan.FromSeconds(1)))
+        );
     }
 
     /// <summary>

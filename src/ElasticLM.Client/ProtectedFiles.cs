@@ -5,8 +5,10 @@ using System.Security.Principal;
 
 namespace ElasticLM.Client;
 
+// design §10.2.
+
 /// <summary>
-/// Folders and secret files that only their owner can read (design §10.2): the installation key, the pins, the borrowed
+/// Folders and secret files that only their owner can read: the installation key, the pins, the borrowed
 /// leases, and the server's administrator token.
 /// </summary>
 /// <remarks>
@@ -18,9 +20,11 @@ namespace ElasticLM.Client;
 /// </remarks>
 internal static class ProtectedFiles
 {
+    // design §10.2.
+
     /// <summary>
     /// Checks that a machine-scope folder can be read and changed only by Administrators, SYSTEM, and the user running this
-    /// program (design §10.2). On Windows the folder's owner and its parent's owner must be one of them, the folder must not
+    /// program. On Windows the folder's owner and its parent's owner must be one of them, the folder must not
     /// inherit its access list, and every rule that allows access must name one of them. On Linux and macOS the folder must
     /// give no access to group or others, and its parent must not be writable by them.
     /// </summary>

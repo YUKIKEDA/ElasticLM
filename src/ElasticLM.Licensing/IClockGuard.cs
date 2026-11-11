@@ -1,7 +1,9 @@
 namespace ElasticLM.Licensing;
 
+// design §11.4.
+
 /// <summary>
-/// Detects a clock set back past the last time a token was accepted (design §11.4).
+/// Detects a clock set back past the last time a token was accepted.
 /// </summary>
 public interface IClockGuard
 {
@@ -14,8 +16,10 @@ public interface IClockGuard
     /// <returns><see langword="true"/> when the clock has not been set back; otherwise <see langword="false"/>.</returns>
     bool Observe(DateTimeOffset now, DateTimeOffset tokenIssuedAt, TimeSpan allowedSkew);
 
+    // design §11.4 step 4.
+
     /// <summary>
-    /// Takes the service's time as the last time seen, after a successful online refresh (design §11.4 step 4), so a device
+    /// Takes the service's time as the last time seen, after a successful online refresh, so a device
     /// whose clock was set forward and back recovers. The time is the <c>iat</c> of a token checked without this guard. A
     /// guard without state does nothing.
     /// </summary>
@@ -23,9 +27,10 @@ public interface IClockGuard
     void AcceptServerTime(DateTimeOffset serverTime) { }
 }
 
+// design §11.2 step 6.
+
 /// <summary>
-/// A clock guard without state. It accepts every time; the verifier still rejects a token issued in the future (design
-/// §11.2 step 6).
+/// A clock guard without state. It accepts every time; the verifier still rejects a token issued in the future.
 /// </summary>
 public sealed class StatelessClockGuard : IClockGuard
 {

@@ -205,10 +205,20 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 EnsureWritable(settings.LicensePath);
             }
 
-            (VerifiedLicense? license, byte[]? licenseFile, LicenseError? licenseError) = TryVerifyLicense(settings, key!, trust, guard, host.Time);
-            if (licenseError is not null)
+            IReadOnlyList<string> fingerprints = MachineFingerprint.Compute(settings.Product);
+            (byte[]? licenseFile, LicenseError? fileError) = TryReadLicense(settings, key!, fingerprints);
+            if (fileError is not null)
             {
-                throw new ServerStartException(licenseError.Message);
+                throw new ServerStartException(fileError.Message);
+            }
+
+            var verifier = new LicenseVerifier(trust, host.Time, guard);
+            (VerifiedLicense? license, LicenseError? refusal) = TryVerifyLicense(licenseFile!, settings, key!, fingerprints, verifier);
+            if (refusal is not null)
+            {
+                // The verifier's refusal starts with its error code, which says which check failed; the other start failures
+                // carry none (design §20.7, V1c6 Q5).
+                throw new ServerStartException(ErrorCodes.ToWireName(refusal.Code) + ": " + refusal.Message);
             }
 
             byte[] keyJwk = key!.WithPrivateKey(KeyFiles.ExportPublicJwk);
@@ -395,10 +405,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <returns><see langword="null"/> when the new license is in place, otherwise why it was not.</returns>
     public LicenseError? ReloadLicense()
     {
-        (VerifiedLicense? license, byte[]? file, LicenseError? error) = TryVerifyLicense(_settings, _key, _trust, _guard, Time);
-        if (error is not null)
+        IReadOnlyList<string> fingerprints = MachineFingerprint.Compute(_settings.Product);
+        (byte[]? file, LicenseError? fileError) = TryReadLicense(_settings, _key, fingerprints);
+        if (fileError is not null)
         {
-            return error;
+            return fileError;
+        }
+
+        var verifier = new LicenseVerifier(_trust, Time, _guard);
+        (VerifiedLicense? license, LicenseError? refusal) = TryVerifyLicense(file!, _settings, _key, fingerprints, verifier);
+        if (refusal is not null)
+        {
+            return refusal;
         }
 
         if (!ServerIdentity.TryCreate(license!, _keyJwk, out ServerIdentity? identity, out LicenseError? identityError))
@@ -534,18 +552,14 @@ internal sealed partial class ElmServer : IAsyncDisposable
         RefuseBlank(settings.TlsKey, "tls.key");
     }
 
-    // design §13.1 step 3: the server license must verify for this installation; at the start a failure stops the server,
-    // at a reload it keeps the old license.
-    private static (VerifiedLicense? License, byte[]? File, LicenseError? Error) TryVerifyLicense(
+    // design §13.1 step 3, first half: reads the server license file. A file that is missing, too large, or unreadable is
+    // not the verifier's refusal, and the start shows its message without an error code (design §20.7, V1c6 Q5).
+    private static (byte[]? File, LicenseError? Error) TryReadLicense(
         ServerSettings settings,
         InstallationKey key,
-        TrustStore trust,
-        IClockGuard guard,
-        TimeProvider time
+        IReadOnlyList<string> fingerprints
     )
     {
-        IReadOnlyList<string> fingerprints = MachineFingerprint.Compute(settings.Product);
-        byte[] file;
         try
         {
             var info = new FileInfo(settings.LicensePath);
@@ -555,32 +569,41 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     $"The server license '{settings.LicensePath}' does not exist. Ask the vendor for a server license bound to "
                     + $"this server: installation key {key.Thumbprint}, fingerprints {string.Join(", ", fingerprints)}. Or activate one "
                     + "with elm server activate, or elm server activate-request offline.";
-                return (null, null, new LicenseError(ErrorCode.LicenseNotFound, missing));
+                return (null, new LicenseError(ErrorCode.LicenseNotFound, missing));
             }
 
             if (info.Length > MaxLicenseFileLength)
             {
-                return (null, null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
+                return (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
             }
 
-            file = File.ReadAllBytes(settings.LicensePath);
+            return (File.ReadAllBytes(settings.LicensePath), null);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return (null, null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' cannot be read: {e.Message}"));
+            return (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' cannot be read: {e.Message}"));
         }
+    }
 
-        var verifier = new LicenseVerifier(trust, time, guard);
+    // design §13.1 step 3, second half: the server license must verify for this installation; at the start a failure stops
+    // the server, at a reload it keeps the old license. The message holds no code; each caller shows the code once (design
+    // §20.7, V1c6 Q5).
+    private static (VerifiedLicense? License, LicenseError? Error) TryVerifyLicense(
+        byte[] file,
+        ServerSettings settings,
+        InstallationKey key,
+        IReadOnlyList<string> fingerprints,
+        LicenseVerifier verifier
+    )
+    {
         var requirement = new LicenseRequirement(settings.Product, LicenseKind.Server, null, null, key.Identity(fingerprints));
         switch (verifier.Verify(file, requirement))
         {
             case LicenseVerificationResult.Valid valid:
-                return (valid.License, file, null);
+                return (valid.License, null);
             case LicenseVerificationResult.Invalid invalid:
-                string message =
-                    $"The server license does not verify ({ErrorCodes.ToWireName(invalid.Error.Code)}): {invalid.Error.Message} "
-                    + $"This server's installation key is {key.Thumbprint}.";
-                return (null, null, new LicenseError(invalid.Error.Code, message));
+                string message = $"The server license does not verify: {invalid.Error.Message} This server's installation key is {key.Thumbprint}.";
+                return (null, new LicenseError(invalid.Error.Code, message));
             default:
                 throw new InvalidOperationException("Unknown license verification result.");
         }

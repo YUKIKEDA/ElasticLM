@@ -5,8 +5,10 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §11.4.
+
 /// <summary>
-/// A clock guard that keeps the last time seen in a file (design §11.4). With an installation key the state is signed, and a
+/// A clock guard that keeps the last time seen in a file. With an installation key the state is signed, and a
 /// state whose signature fails is treated as missing. A missing, edited, or unreadable state falls back to the token's
 /// <c>iat</c>, so the clock can never go below a token's issue time.
 /// </summary>

@@ -1,5 +1,5 @@
 /*
- * elasticlm.h: the C ABI of libelasticlm (ElasticLM design §17).
+ * elasticlm.h: the C ABI of libelasticlm.
  *
  * The library is elasticlm.dll on Windows, libelasticlm.so on Linux, and libelasticlm.dylib on macOS. It is a NativeAOT
  * library: it cannot be unloaded (do not call FreeLibrary or dlclose on it).
@@ -7,7 +7,7 @@
  * Rules for every function:
  * - Strings are UTF-8 and end with NUL, both ways. Strings from the caller must be valid UTF-8; a PEM may be at most
  *   16 KiB and any other string at most 1 KiB before its NUL.
- * - Functions that return int32_t under "functions that return a number" return an ElasticLM error number (design §19):
+ * - Functions that return int32_t under "functions that return a number" return an ElasticLM error number:
  *   0 (ELM_OK) is success. They empty this thread's error message when they start and write it when they fail. On every
  *   failure they set their outputs to NULL and 0; an elm_feature with a right struct_size gets its other members set to
  *   NULL and 0. A NULL output argument is ELM_INVALID_ARGUMENT (1). Exceptions are named at the function:
@@ -35,7 +35,7 @@ extern "C" {
 /* The version of this ABI. A new version may add functions and add members at the end of structs. */
 #define ELM_ABI_VERSION 1
 
-/* Error numbers (design §19). */
+/* Error numbers. */
 #define ELM_OK 0
 #define ELM_INVALID_ARGUMENT 1
 #define ELM_MALFORMED 2
@@ -91,18 +91,18 @@ extern "C" {
 #define ELM_KIND_TRIAL 1
 #define ELM_KIND_SERVER 2
 
-/* Where an installation key is kept (design §10.2). */
+/* Where an installation key is kept. */
 #define ELM_SCOPE_USER 0
 #define ELM_SCOPE_MACHINE 1
 
-/* The state of an activation (design §12.6.2). */
+/* The state of an activation. */
 #define ELM_STATE_NONE 0
 #define ELM_STATE_ACTIVE 1
 #define ELM_STATE_REFRESH_FAILING 2
 #define ELM_STATE_REFUSED 3
 #define ELM_STATE_CLONE_DETECTED 4
 
-/* The state of a lease (design §12.7.3). */
+/* The state of a lease. */
 #define ELM_LEASE_HELD 0
 #define ELM_LEASE_RETRYING 1
 #define ELM_LEASE_RECLAIMING 2
@@ -129,7 +129,7 @@ typedef struct elm_verifier elm_verifier;
 /* A verified license. Every string it returns is valid until elm_license_free. */
 typedef struct elm_license elm_license;
 
-/* This installation's activation with the hosted service (design §12.6, §17.5). */
+/* This installation's activation with the hosted service. */
 typedef struct elm_activation elm_activation;
 
 /*
@@ -144,7 +144,7 @@ typedef struct elm_activation elm_activation;
  */
 typedef void (*elm_state_callback)(void* user, int32_t previous, int32_t current, int32_t error, const char* message);
 
-/* A client of an on-premises license server or of the hosted service's leases (design §12.7, §17.6). */
+/* A client of an on-premises license server or of the hosted service's leases. */
 typedef struct elm_client elm_client;
 
 /*
@@ -170,7 +170,7 @@ typedef struct {
     uint32_t struct_size;
     const char* product_id; /* required */
     int32_t scope;          /* ELM_SCOPE_* */
-    const char* directory;  /* NULL for the default folder of design §10.2; empty or only white space:
+    const char* directory;  /* NULL for the default folder of the scope; empty or only white space:
                              * ELM_INVALID_ARGUMENT */
     int32_t create;         /* 1: create the key when there is none; 0: ELM_INSTALLATION_KEY_UNREADABLE */
 } elm_installation_options;
@@ -217,9 +217,9 @@ typedef struct {
     const char* const* revoked_key_ids;   /* key IDs revoked by the vendor: 0 to 1024 */
     size_t revoked_key_count;
     int32_t scope;                        /* ELM_SCOPE_* */
-    const char* directory;                /* NULL for the default folder of design §10.2; empty or only white space:
+    const char* directory;                /* NULL for the default folder of the scope; empty or only white space:
                                            * ELM_INVALID_ARGUMENT */
-    int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
+    int32_t send_client_info;             /* 1: send the host and user names */
     const char* app_version;              /* NULL, or at most 64 bytes */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
     int32_t reject_trial_as_standard;     /* 0 (default): a standard requirement also accepts a trial license */
@@ -240,11 +240,11 @@ typedef struct {
     size_t root_key_count;
     const char* const* revoked_key_ids;   /* key IDs revoked by the vendor: 0 to 1024 */
     size_t revoked_key_count;
-    const char* expected_server_license_id; /* NULL, or the server license to pin (design §13.5); not with license_key */
+    const char* expected_server_license_id; /* NULL, or the server license to pin; not with license_key */
     int32_t scope;                        /* ELM_SCOPE_* */
-    const char* directory;                /* NULL for the default folder of design §10.2; empty or only white space:
+    const char* directory;                /* NULL for the default folder of the scope; empty or only white space:
                                            * ELM_INVALID_ARGUMENT */
-    int32_t send_client_info;             /* 1: send the host and user names (design §4.4) */
+    int32_t send_client_info;             /* 1: send the host and user names */
     const char* app_version;              /* NULL, or at most 64 bytes */
     int32_t clock_skew_seconds;           /* 0: the default, 300; otherwise 1 to 3600 */
     int32_t reject_trial_as_standard;     /* 0 or 1; no effect: a client verifies only server licenses and leases */
@@ -298,7 +298,7 @@ ELM_FUNCTION(int32_t, elm_activation_deactivate, (elm_activation* activation))
 ELM_FUNCTION(int32_t, elm_activation_check, (elm_activation* activation, const char* feature_id, const char* feature_version, int32_t kind, elm_license** out))
 
 /*
- * Offline files (design §12.8). *out is the file's text; free it with elm_string_free, which clears it first. An
+ * Offline files. *out is the file's text; free it with elm_string_free, which clears it first. An
  * activation request holds the license key: keep it as you keep the key. *replaced is 1 when a waiting request was
  * replaced, otherwise 0; elm_activation_create_deactivation_proof always sets it to 0. renew is 0 or 1.
  */
@@ -341,7 +341,7 @@ ELM_FUNCTION(int32_t, elm_client_release_lease, (elm_client* client, elm_lease* 
  * handles together with elm_lease_list_free, with the same count; freeing an element first is undefined behavior. */
 ELM_FUNCTION(int32_t, elm_client_get_borrowed_leases, (elm_client* client, elm_lease*** out, size_t* count))
 
-/* Deletes the pin of a server (design §13.5): *deleted is 1 when a pin was deleted. A client with a license key has no
+/* Deletes the pin of a server: *deleted is 1 when a pin was deleted. A client with a license key has no
  * pin (always 0). server_url is an absolute http or https URL. */
 ELM_FUNCTION(int32_t, elm_client_reset_server_pin, (elm_client* client, const char* server_url, int32_t* deleted))
 

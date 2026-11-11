@@ -2,8 +2,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §12.7.3.
+
 /// <summary>
-/// The state of a held lease (design §12.7.3).
+/// The state of a held lease.
 /// </summary>
 public enum LeaseState
 {
@@ -13,7 +15,9 @@ public enum LeaseState
     /// <summary>The last renewal failed; the client retries from 15 seconds, doubling up to 60, until the lease expires.</summary>
     Retrying,
 
-    /// <summary>The server did not know the lease (it restarted); the client is reclaiming it (design §13.4).</summary>
+    // design §13.4.
+
+    /// <summary>The server did not know the lease (it restarted); the client is reclaiming it.</summary>
     Reclaiming,
 
     /// <summary>The lease expired, its reclaim was refused, or a clone was detected. The app decides what to do.</summary>
@@ -55,11 +59,15 @@ public sealed class Lease
     /// <summary>Gets the number of seats.</summary>
     public int Seats { get; }
 
-    /// <summary>Gets the current lease token, verified as design §12.7.5 says.</summary>
+    // design §12.7.5.
+
+    /// <summary>Gets the current lease token, which passed the checks of <see cref="LeaseVerifier"/>.</summary>
     public VerifiedLease Token => _token;
 
+    // design §12.7.4.
+
     /// <summary>Gets a value indicating whether the lease is a borrow: valid until it expires without renewal, kept on the disk
-    /// for use without the server (design §12.7.4).</summary>
+    /// for use without the server.</summary>
     public bool IsBorrow => _token.IsBorrow;
 
     /// <summary>Gets the expiry of the current token.</summary>
@@ -82,9 +90,11 @@ public sealed class Lease
 
     internal TimeSpan RetryDelay { get; private set; } = FirstRetry;
 
+    // design §10.4.
+
     /// <summary>
     /// Gets the jti of renewal attempts that got no answer since the last token, newest last, at most 16. A retry names them,
-    /// so the server can give the token one of them produced again without taking the retry for a clone (design §10.4).
+    /// so the server can give the token one of them produced again without taking the retry for a clone.
     /// </summary>
     internal List<string> UnansweredProofIds { get; } = [];
 

@@ -6,8 +6,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §12.6.2.
+
 /// <summary>
-/// The state of this installation's activation (design §12.6.2).
+/// The state of this installation's activation.
 /// </summary>
 public enum ActivationState
 {
@@ -23,7 +25,9 @@ public enum ActivationState
     /// <summary>The service refused the license: revoked, suspended, or expired. The kept file is used until it ends.</summary>
     Refused,
 
-    /// <summary>The service found another copy of this installation (design §10.4). The kept file is used until it ends.</summary>
+    // design §10.4.
+
+    /// <summary>The service found another copy of this installation. The kept file is used until it ends.</summary>
     CloneDetected,
 }
 
@@ -57,9 +61,11 @@ public abstract record ActivationResult
     /// <param name="License">The verified license.</param>
     public sealed record Activated(VerifiedLicense License) : ActivationResult
     {
+        // design §12.8.5, §17.5.
+
         /// <summary>
         /// Gets a value indicating whether the license is past its expiry but inside its grace period when it was checked. An
-        /// offline answer can be days old (design §12.8.5, §17.5).
+        /// offline answer can be days old.
         /// </summary>
         public bool InGracePeriod { get; init; }
     }
@@ -70,8 +76,10 @@ public abstract record ActivationResult
     public sealed record Failed(LicenseError Error, TimeSpan? RetryAfter) : ActivationResult;
 }
 
+// design §12.8.5.
+
 /// <summary>
-/// The result of making an offline request or deactivation proof (design §12.8.5): <see cref="Created"/> or
+/// The result of making an offline request or deactivation proof: <see cref="Created"/> or
 /// <see cref="Failed"/>.
 /// </summary>
 public abstract record OfflineRequestResult
@@ -90,11 +98,13 @@ public abstract record OfflineRequestResult
     public sealed record Failed(LicenseError Error) : OfflineRequestResult;
 }
 
+// design §12.4 to §12.6.2, §12.9, §12.8, §12.8.5.
+
 /// <summary>
-/// A client of the hosted activation service <c>elm-service</c> (design §12.4 to §12.6.2, §12.9): it activates this
+/// A client of the hosted activation service <c>elm-service</c>: it activates this
 /// installation with a license key or starts a trial, keeps the license file beside the installation key, refreshes it while
 /// it runs, deactivates it, and checks it offline. A device that cannot reach the service makes request files and imports
-/// their answers instead (design §12.8, §12.8.5).
+/// their answers instead.
 /// </summary>
 /// <remarks>
 /// The methods may be called from several threads; the calls of one client run one at a time, and the requests of one device,
@@ -190,8 +200,10 @@ public sealed class ActivationClient : IAsyncDisposable
     /// <summary>Gets the kept activation's ID, or <see langword="null"/>.</summary>
     public string? ActivationId => _activationId;
 
+    // design §10.2.
+
     /// <summary>
-    /// Creates a client: reads the installation key when there is one (design §10.2; a new one is made by the first
+    /// Creates a client: reads the installation key when there is one (a new one is made by the first
     /// activation or trial), computes the machine fingerprints, reads the kept activation, and schedules its refresh. It
     /// does not contact the service.
     /// </summary>
@@ -236,11 +248,13 @@ public sealed class ActivationClient : IAsyncDisposable
         return true;
     }
 
+    // design §12.4, §9.5.
+
     /// <summary>
-    /// Activates this installation with a license key (design §12.4). With an activation kept that is not a trial, it sends
+    /// Activates this installation with a license key. With an activation kept that is not a trial, it sends
     /// nothing and answers <c>ELM_INVALID_STATE</c>: deactivate first. A kept trial is replaced on success.
     /// </summary>
-    /// <param name="licenseKey">The license key (design §9.5).</param>
+    /// <param name="licenseKey">The license key.</param>
     /// <param name="cancellationToken">Cancels the waits and the request; a canceled request ends as <c>ELM_NETWORK_ERROR</c>.</param>
     /// <returns>The license, or why there is none.</returns>
     /// <exception cref="ArgumentException">The license key is empty.</exception>
@@ -293,8 +307,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.9.
+
     /// <summary>
-    /// Starts a trial of the product (design §12.9). With an activation kept, a trial included, it sends nothing and answers
+    /// Starts a trial of the product. With an activation kept, a trial included, it sends nothing and answers
     /// <c>ELM_INVALID_STATE</c>.
     /// </summary>
     /// <param name="cancellationToken">Cancels the waits and the request.</param>
@@ -343,8 +359,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.5.
+
     /// <summary>
-    /// Refreshes the kept activation now (design §12.5). The client also refreshes on its own when the token's refresh window
+    /// Refreshes the kept activation now. The client also refreshes on its own when the token's refresh window
     /// starts.
     /// </summary>
     /// <param name="cancellationToken">Cancels the waits and the request.</param>
@@ -365,9 +383,11 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.6, §12.6.2.
+
     /// <summary>
-    /// Deactivates this installation (design §12.6): the service frees its place and the kept license file is removed. The
-    /// installation key stays (design §12.6.2). An activation the service no longer has counts as deactivated.
+    /// Deactivates this installation: the service frees its place and the kept license file is removed. The
+    /// installation key stays. An activation the service no longer has counts as deactivated.
     /// </summary>
     /// <param name="cancellationToken">Cancels the waits and the request.</param>
     /// <returns><see langword="null"/> when deactivated, otherwise why not; nothing is removed then.</returns>
@@ -420,14 +440,16 @@ public sealed class ActivationClient : IAsyncDisposable
         return result is ActivationResult.Failed { Error.Code: not ErrorCode.Ok } failed ? failed.Error : null;
     }
 
+    // design §12.8.1, §12.8.5, §9.5.
+
     /// <summary>
-    /// Makes an offline activation request (design §12.8.1, §12.8.5) for a device that cannot reach the service. The same
+    /// Makes an offline activation request for a device that cannot reach the service. The same
     /// request is returned, signed again, until it expires (7 days) or its answer is imported; a new one names the requests
     /// before it, so an answer the service gave to one of them is not taken for a clone. The license key is not kept: each
     /// call passes it, and another key makes another request. With an activation kept that is not a trial, or a deactivation
     /// proof kept, nothing is made (<c>ELM_INVALID_STATE</c>).
     /// </summary>
-    /// <param name="licenseKey">The license key (design §9.5). The request holds it.</param>
+    /// <param name="licenseKey">The license key. The request holds it.</param>
     /// <param name="renew"><see langword="true"/> makes a new request before the waiting one expires: for when the service
     /// answered <c>ELM_REQUEST_EXPIRED</c> because this device's clock is behind.</param>
     /// <param name="cancellationToken">Cancels the wait for the lock.</param>
@@ -458,8 +480,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.8.3, §12.8.5.
+
     /// <summary>
-    /// Makes an offline refresh request for the kept activation (design §12.8.3, §12.8.5). The same request is returned until
+    /// Makes an offline refresh request for the kept activation. The same request is returned until
     /// it expires or its answer is imported. Without an activation, nothing is made (<c>ELM_INVALID_STATE</c>). The refresh is
     /// due when the kept token's expiry less its <see cref="VerifiedLicense.RefreshWindow"/> has passed (see <see cref="Check"/>).
     /// </summary>
@@ -484,8 +508,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.8.1 step 4, §12.8.5.
+
     /// <summary>
-    /// Imports the service's answer to the waiting offline request (design §12.8.1 step 4, §12.8.5): it is checked like an
+    /// Imports the service's answer to the waiting offline request: it is checked like an
     /// online answer and kept. Importing the kept answer again changes nothing.
     /// </summary>
     /// <param name="response">The answer's text (<c>.elmresp</c>), at most 256 KiB.</param>
@@ -508,8 +534,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.8.2, §12.8.5.
+
     /// <summary>
-    /// Makes an offline deactivation proof (design §12.8.2, §12.8.5) and removes the kept activation; the installation key
+    /// Makes an offline deactivation proof and removes the kept activation; the installation key
     /// stays. The proof is kept, and returned again, until <see cref="ForgetDeactivationProofAsync"/>; while it is kept,
     /// activations and trials are refused, as the service still counts the activation until it gets the proof.
     /// </summary>
@@ -528,8 +556,10 @@ public sealed class ActivationClient : IAsyncDisposable
         );
     }
 
+    // design §12.8.5.
+
     /// <summary>
-    /// Forgets the kept deactivation proof once the user has passed it to the service (design §12.8.5), so this installation
+    /// Forgets the kept deactivation proof once the user has passed it to the service, so this installation
     /// may activate again. Without a proof it does nothing.
     /// </summary>
     /// <param name="cancellationToken">Cancels the wait for the lock.</param>
@@ -550,8 +580,10 @@ public sealed class ActivationClient : IAsyncDisposable
         return result is ActivationResult.Failed { Error.Code: not ErrorCode.Ok } failed ? failed.Error : null;
     }
 
+    // design §11.2.
+
     /// <summary>
-    /// Checks the kept license file offline (design §11.2), bound to this installation's key and its machine fingerprints
+    /// Checks the kept license file offline, bound to this installation's key and its machine fingerprints
     /// now. It reads the file again at each call and does not contact the service.
     /// </summary>
     /// <param name="featureId">The feature to check, or <see langword="null"/>.</param>
@@ -576,8 +608,10 @@ public sealed class ActivationClient : IAsyncDisposable
             : new LicenseVerificationResult.Invalid(new LicenseError(ErrorCode.LicenseNotFound, "No activation is kept."));
     }
 
+    // design §17.2.
+
     /// <summary>
-    /// Stops the refresh timer, cancels a refresh that has started, and waits at most 5 seconds for it (design §17.2). The
+    /// Stops the refresh timer, cancels a refresh that has started, and waits at most 5 seconds for it. The
     /// activation stays. A handler of <see cref="StateChanged"/> may call it.
     /// </summary>
     /// <returns>A task that ends when the client is disposed.</returns>

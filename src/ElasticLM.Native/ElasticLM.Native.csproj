@@ -52,7 +52,7 @@
     <PropertyGroup>
       <_ElmImportLibrary>$(NativeOutputPath)$(TargetName).lib</_ElmImportLibrary>
     </PropertyGroup>
-    <Error Condition="!Exists('$(_ElmImportLibrary)')" Text="The NativeAOT publish wrote no import library at $(_ElmImportLibrary) (design §17.4)." />
+    <Error Condition="!Exists('$(_ElmImportLibrary)')" Text="The NativeAOT publish wrote no import library at $(_ElmImportLibrary)." />
     <Copy SourceFiles="$(_ElmImportLibrary)" DestinationFolder="$(PublishDir)" />
   </Target>
 </Project>

@@ -1,7 +1,9 @@
 namespace ElasticLM.Client;
 
+// design §13.7, M4c3.
+
 /// <summary>
-/// Writes a server license file where <c>elm-server</c> reads it (design §13.7, M4c3): to a temporary file beside it, then in
+/// Writes a server license file where <c>elm-server</c> reads it: to a temporary file beside it, then in
 /// its place, so a reader never sees half a file. <c>elm-server</c> and <c>elm server</c> both use it.
 /// </summary>
 internal static class LicenseFiles

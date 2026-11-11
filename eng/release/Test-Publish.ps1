@@ -113,7 +113,8 @@ foreach ($name in @('elm', 'elm-server', 'elm-service', 'libelasticlm')) {
     $size = (Get-Item $path).Length
     $limit = $limits[$name]
     $sizeText = if ($limit) { "$size bytes (limit $limit)" } else { "$size bytes (no limit)" }
-    if ($limit -and $size -gt $limit) { $failures.Add("$name is $size bytes, over the limit of $limit (design §4.2).") }
+    # design §4.2: the size limits.
+    if ($limit -and $size -gt $limit) { $failures.Add("$name is $size bytes, over the limit of $limit.") }
 
     # Runtime dependencies.
     $dependencies = @()
@@ -142,13 +143,15 @@ foreach ($name in @('elm', 'elm-server', 'elm-service', 'libelasticlm')) {
         $versions = @((& objdump -T $path) | Select-String -Pattern 'GLIBC_([0-9]+(\.[0-9]+)+)' -AllMatches | ForEach-Object { $_.Matches } | ForEach-Object { [version]$_.Groups[1].Value } | Sort-Object -Unique)
         $newest = if ($versions.Count -gt 0) { $versions[-1] } else { [version]'0.0' }
         $extraText = "; newest GLIBC_ $newest"
-        if (-not $RecordGlibcOnly -and $newest -gt [version]'2.28') { $failures.Add("$name needs GLIBC_$newest, newer than 2.28 (design §4.1).") }
+        # design §4.1: the oldest glibc the Linux binaries run on.
+        if (-not $RecordGlibcOnly -and $newest -gt [version]'2.28') { $failures.Add("$name needs GLIBC_$newest, newer than 2.28.") }
     }
     if ($mac) {
         $signature = (& codesign -dv $path 2>&1 | Out-String)
         $adhoc = $signature -match 'Signature=adhoc'
         $extraText = "; signature $(if ($adhoc) { 'ad-hoc' } else { 'none or other' })"
-        if ($Rid -eq 'osx-arm64' -and -not $adhoc) { $failures.Add("$name has no ad-hoc signature (design §5.4).") }
+        # design §5.4: an osx-arm64 binary carries an ad-hoc signature.
+        if ($Rid -eq 'osx-arm64' -and -not $adhoc) { $failures.Add("$name has no ad-hoc signature.") }
     }
 
     $lines.Add("- ${name}: $binary, $sizeText$extraText; depends on $($dependencies -join ', ')")

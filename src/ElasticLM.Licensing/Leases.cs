@@ -3,9 +3,11 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §13.5.
+
 /// <summary>
 /// An on-premises license server as the client knows it: a verified server license and the server's public key, whose
-/// thumbprint is the license's <c>cnf.jkt</c> (design §13.5).
+/// thumbprint is the license's <c>cnf.jkt</c>.
 /// </summary>
 public sealed class ServerIdentity : IDisposable
 {
@@ -66,8 +68,10 @@ public sealed class ServerIdentity : IDisposable
         return true;
     }
 
+    // design §13.5 step 2, §11.2.
+
     /// <summary>
-    /// Verifies a server license received from a server, as a client does (design §13.5 step 2): §11.2 with the kind
+    /// Verifies a server license received from a server, as a client does: the license verifier's checks with the kind
     /// <see cref="LicenseKind.Server"/>, its <c>cnf.jkt</c> equal to the thumbprint of the key the server sent, and without
     /// the fingerprints, which belong to the server machine and which the server checks at start.
     /// </summary>
@@ -146,15 +150,19 @@ public sealed class ServerIdentity : IDisposable
     }
 }
 
+// design §12.7.5 step 2.
+
 /// <summary>
-/// What the client expects of a lease: its product and its installation key (design §12.7.5 step 2).
+/// What the client expects of a lease: its product and its installation key.
 /// </summary>
 /// <param name="ProductId">The product ID.</param>
 /// <param name="InstallationKeyThumbprint">The thumbprint of this installation's key.</param>
 public sealed record LeaseExpectation(string ProductId, string InstallationKeyThumbprint);
 
+// design §12.7.5.
+
 /// <summary>
-/// A lease token that passed the checks of design §12.7.5.
+/// A lease token that passed the checks of <see cref="LeaseVerifier"/>.
 /// </summary>
 public sealed class VerifiedLease
 {
@@ -202,7 +210,9 @@ public sealed class VerifiedLease
     /// <summary>Gets the token ID of the server license the lease was issued under, or <see langword="null"/> for hosted leases.</summary>
     public string? ServerLicenseTokenId { get; }
 
-    /// <summary>Gets the lease sequence number (design §10.4).</summary>
+    // design §10.4.
+
+    /// <summary>Gets the lease sequence number.</summary>
     public long Sequence { get; }
 
     /// <summary>Gets the time the lease was issued.</summary>

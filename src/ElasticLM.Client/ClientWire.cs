@@ -2,7 +2,9 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Client;
 
-/// <summary><c>POST /v1/leases</c> (design §12.3, §12.7.1); the license key and the product only to <c>elm-service</c> (§12.7.6).</summary>
+// design §12.3, §12.7.1, §12.7.6.
+
+/// <summary><c>POST /v1/leases</c>; the license key and the product only to <c>elm-service</c>.</summary>
 internal sealed record AcquireRequestBody(
     [property: JsonPropertyName("feature")] string Feature,
     [property: JsonPropertyName("version")] string? Version,
@@ -15,7 +17,9 @@ internal sealed record AcquireRequestBody(
     [property: JsonPropertyName("product")] string? Product
 );
 
-/// <summary>The host name and OS user name, sent only when the app enables it (design §4.4).</summary>
+// design §4.4.
+
+/// <summary>The host name and OS user name, sent only when the app enables it.</summary>
 internal sealed record ClientInfoBody([property: JsonPropertyName("host")] string Host, [property: JsonPropertyName("user")] string User);
 
 /// <summary><c>POST /v1/leases/{id}/renew</c>.</summary>
@@ -24,7 +28,9 @@ internal sealed record RenewRequestBody(
     [property: JsonPropertyName("retry")] IReadOnlyList<string>? Retry
 );
 
-/// <summary><c>POST /v1/leases/reclaim</c> (design §13.4).</summary>
+// design §13.4.
+
+/// <summary><c>POST /v1/leases/reclaim</c>.</summary>
 internal sealed record ReclaimRequestBody([property: JsonPropertyName("leases")] IReadOnlyList<string> Leases);
 
 /// <summary>The answer to an acquire or a renewal.</summary>
@@ -66,7 +72,9 @@ internal sealed class NonceAnswerBody
     public string Nonce { get; set; } = string.Empty;
 }
 
-/// <summary>An RFC 9457 problem with the §19 code; only the members the client reads.</summary>
+// design §19.
+
+/// <summary>An RFC 9457 problem with the ElasticLM error code; only the members the client reads.</summary>
 internal sealed class ProblemBody
 {
     [JsonPropertyName("code")]
@@ -76,7 +84,9 @@ internal sealed class ProblemBody
     public string? Detail { get; set; }
 }
 
-/// <summary>A server pin (design §13.5): the server license ID and the server key thumbprint for one server URL.</summary>
+// design §13.5.
+
+/// <summary>A server pin: the server license ID and the server key thumbprint for one server URL.</summary>
 internal sealed class PinFile
 {
     [JsonPropertyName("url")]
@@ -92,9 +102,11 @@ internal sealed class PinFile
     public string Jkt { get; set; } = string.Empty;
 }
 
+// design §8.6.
+
 /// <summary>
 /// Source-generated JSON for what the client reads from a server and from its pin files, which are untrusted: nullable
-/// annotations are enforced, duplicate members are refused, and the depth is limited (design §8.6).
+/// annotations are enforced, duplicate members are refused, and the depth is limited.
 /// </summary>
 [JsonSourceGenerationOptions(
     RespectNullableAnnotations = true,

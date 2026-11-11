@@ -1,7 +1,9 @@
 namespace ElasticLM.Licensing;
 
+// design §11.1.
+
 /// <summary>
-/// What the app requires from a license (design §11.1).
+/// What the app requires from a license.
 /// </summary>
 /// <param name="ProductId">The product ID the license must be for.</param>
 /// <param name="Kind">The license kind. <see cref="LicenseKind.Standard"/> also accepts trials unless <see cref="LicenseVerifierOptions.AcceptTrialAsStandard"/> is off.</param>

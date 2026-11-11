@@ -14,8 +14,10 @@ public abstract record LicenseVerificationResult
     /// <param name="InGracePeriod"><see langword="true"/> when the token is past its expiry but inside the grace period.</param>
     public sealed record Valid(VerifiedLicense License, bool InGracePeriod) : LicenseVerificationResult;
 
+    // design §11.2.
+
     /// <summary>
-    /// The license failed a check. The error names the first check that failed (design §11.2).
+    /// The license failed a check. The error names the first check that failed.
     /// </summary>
     /// <param name="Error">The error.</param>
     public sealed record Invalid(LicenseError Error) : LicenseVerificationResult;

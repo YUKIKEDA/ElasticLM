@@ -9,11 +9,13 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §12.7, §13.5, §12.7.6, decision 0.94.
+
 /// <summary>
-/// A client of an on-premises license server (design §12.7, §13.5): it checks the server against the vendor's trust store
+/// A client of an on-premises license server: it checks the server against the vendor's trust store
 /// and its pin, acquires leases, renews them every third of their duration, reclaims them after a server restart, and
-/// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead (design
-/// §12.7.6, decision 0.94): TLS is checked with the OS's trust, leases with the service's certificates, and a lease the
+/// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead: TLS is
+/// checked with the OS's trust, leases with the service's certificates, and a lease the
 /// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI: <see cref="DisposeAsync"/> stops the
 /// timers and returns the leases it holds that are not borrows.
 /// </summary>
@@ -104,8 +106,10 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <summary>Gets the thumbprint of this installation's key, which leases are bound to.</summary>
     public string InstallationKeyThumbprint => _key.Thumbprint;
 
+    // design §10.2.
+
     /// <summary>
-    /// Creates a client: loads or creates the installation key (design §10.2) and computes the machine fingerprints. It does
+    /// Creates a client: loads or creates the installation key and computes the machine fingerprints. It does
     /// not contact the server.
     /// </summary>
     /// <param name="options">The settings.</param>
@@ -157,10 +161,12 @@ public sealed class LicenseClient : IAsyncDisposable
         return true;
     }
 
+    // design §12.7.1, §13.5, §12.7.5.
+
     /// <summary>
-    /// Acquires a lease (design §12.7.1) and starts renewing it. From an on-premises server, the first call fetches and checks
-    /// the server license and the server's key (design §13.5); from <c>elm-service</c>, each lease is checked with the
-    /// certificates of its answer (design §12.7.5).
+    /// Acquires a lease and starts renewing it. From an on-premises server, the first call fetches and checks
+    /// the server license and the server's key; from <c>elm-service</c>, each lease is checked with the
+    /// certificates of its answer.
     /// </summary>
     /// <param name="featureId">The feature.</param>
     /// <param name="version">The app's version of the feature (<c>major.minor[.patch]</c>), or <see langword="null"/>.</param>
@@ -178,8 +184,10 @@ public sealed class LicenseClient : IAsyncDisposable
         return AcquireCoreAsync(featureId, version, count, borrow: null, cancellationToken);
     }
 
+    // design §12.7.4.
+
     /// <summary>
-    /// Borrows a lease for a period (design §12.7.4): it is not renewed, is valid until it expires, and is saved next to the
+    /// Borrows a lease for a period: it is not renewed, is valid until it expires, and is saved next to the
     /// installation key with what verifies it (the server license and key, or the certificates from <c>elm-service</c>), so
     /// <see cref="GetBorrowedLeases"/> finds it after a restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules.
     /// </summary>
@@ -207,9 +215,11 @@ public sealed class LicenseClient : IAsyncDisposable
         return AcquireCoreAsync(featureId, version, count, (long)period.TotalSeconds, cancellationToken);
     }
 
+    // design §12.7.5.
+
     /// <summary>
-    /// Reads the borrowed leases saved for this server (at most 1,000 files) and checks each as when it was borrowed (design
-    /// §12.7.5): with the server license and key saved beside it and against the server pin or the expected server license,
+    /// Reads the borrowed leases saved for this server (at most 1,000 files) and checks each as when it was borrowed: with
+    /// the server license and key saved beside it and against the server pin or the expected server license,
     /// or, from <c>elm-service</c>, with the certificates saved beside it; no request is sent. A client reads only the files
     /// of its own URL and mode. Expired borrows are deleted; a file that does not verify is left alone and not returned.
     /// </summary>
@@ -316,8 +326,10 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
+    // design §12.7.1.
+
     /// <summary>
-    /// Returns a lease to the server (design §12.7.1) and stops renewing it. A lease that is not a borrow is
+    /// Returns a lease to the server and stops renewing it. A lease that is not a borrow is
     /// <see cref="LeaseState.Released"/> afterwards even when the server could not be reached; the server then drops it at its
     /// expiry. A borrow that the server refuses to take back or cannot be reached for, other than with
     /// <c>ELM_UNKNOWN_LEASE</c>, keeps its state and its file. A lease that is already lost or released is not sent again.
@@ -354,8 +366,10 @@ public sealed class LicenseClient : IAsyncDisposable
         return error;
     }
 
+    // design §13.5.
+
     /// <summary>
-    /// Deletes the pin of a server (design §13.5), for a server that was moved to another machine on purpose. The next
+    /// Deletes the pin of a server, for a server that was moved to another machine on purpose. The next
     /// request checks the server again as on the first connection.
     /// </summary>
     /// <param name="serverUrl">The server URL.</param>
@@ -379,11 +393,13 @@ public sealed class LicenseClient : IAsyncDisposable
         return deleted;
     }
 
+    // design §17.6.
+
     /// <summary>
     /// Stops the renewal timers, returns the leases the client holds that are not borrows, and releases the key and the
     /// connections. It gives up returning after 5 seconds and ignores failures; the server drops a lease not returned at its expiry, and
     /// a borrow stays valid and on the disk. No new event starts once it has begun; an event already being raised may still
-    /// run around the time it returns (design §17.6).
+    /// run around the time it returns.
     /// </summary>
     /// <returns>A task that completes when the leases are returned or the 5 seconds have passed.</returns>
     public async ValueTask DisposeAsync()
@@ -1261,9 +1277,11 @@ public sealed class LicenseClient : IAsyncDisposable
         return reply;
     }
 
+    // design §12.6.2, V1c11.
+
     /// <summary>
     /// Returns <paramref name="nonce"/> when it is 1 to 128 characters long, and <see langword="null"/> otherwise, for a nonce
-    /// from an answer's body or its <c>ELM-Nonce</c> header alike (design §12.6.2, V1c11). A value outside that range is taken
+    /// from an answer's body or its <c>ELM-Nonce</c> header alike. A value outside that range is taken
     /// as no nonce, so the next request fetches one instead of building a proof that <see cref="ProofBuilder"/> refuses.
     /// </summary>
     /// <param name="nonce">The nonce the server sent, or <see langword="null"/>.</param>

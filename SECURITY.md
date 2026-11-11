@@ -14,7 +14,7 @@ ElasticLM handles signing keys, license tokens, and activation data. Do not incl
 ## Checking a download
 
 Every file of a GitHub Release is listed in its `SHA256SUMS`, and every file and `SHA256SUMS` itself carry a build
-provenance attestation made by the release workflow (design §20.5). To check a file you downloaded:
+provenance attestation made by the release workflow. To check a file you downloaded:
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS

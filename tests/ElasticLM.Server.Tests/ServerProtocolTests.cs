@@ -102,6 +102,81 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A start that the license verifier refused says so in a message that begins with the verifier's error code and holds
+    /// it once; a license file that is missing, too large, or unreadable stops the start with a message without a code
+    /// (design §13.1, V1c6 Q5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Data folders with: a server license bound to another installation key; a license file of 65,536 zero bytes; one of
+    ///   65,537 zero bytes; no license; a valid license that another handle holds open without sharing.
+    ///
+    /// Steps:
+    /// - Start a server on each.
+    ///
+    /// Expected:
+    /// - ServerStartException with: "ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to
+    ///   another installation key. This server's installation key is {thumbprint}."; a message that begins "ELM_MALFORMED:
+    ///   The server license does not verify: ", ends with the thumbprint sentence, and holds "ELM_" once; "The server
+    ///   license '{path}' is larger than 64 KiB."; a message that begins "The server license '{path}' does not exist. ",
+    ///   names the thumbprint, and holds no "ELM_"; a message that begins "The server license '{path}' cannot be read: "
+    ///   and holds no "ELM_". "ELM_" is counted in the message without the thumbprint.
+    /// </remarks>
+    [Fact]
+    public async Task Start_LicenseRefused_OnlyTheVerifiersRefusalBeginsWithItsCode()
+    {
+        async Task<string> StartError(string data)
+        {
+            var e = await Assert.ThrowsAsync<ServerStartException>(() =>
+                ElmServer.StartAsync(_deployment.Settings(data), _deployment.HostOptions(), TestContext.Current.CancellationToken)
+            );
+            return e.Message;
+        }
+
+        // The thumbprint is random base64url and may itself hold "ELM_", so it is taken out before the count.
+        static int Codes(string message, string thumbprint) =>
+            message.Replace(thumbprint, "{thumbprint}", StringComparison.Ordinal).Split("ELM_").Length - 1;
+
+        string other = _deployment.NewFolder("other");
+        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder("elsewhere"));
+        _deployment.WriteServerLicense(other, s => s with { InstallationKeyThumbprint = otherKey });
+        Assert.Equal(
+            "ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. "
+                + $"This server's installation key is {Deployment.ServerKeyId(other)}.",
+            await StartError(other)
+        );
+
+        string atLimit = _deployment.NewFolder("at-limit");
+        string atLimitKey = Deployment.ServerKeyId(atLimit);
+        File.WriteAllBytes(Path.Combine(atLimit, "server.elmlic"), new byte[64 * 1024]);
+        string refused = await StartError(atLimit);
+        Assert.StartsWith("ELM_MALFORMED: The server license does not verify: ", refused, StringComparison.Ordinal);
+        Assert.EndsWith($" This server's installation key is {atLimitKey}.", refused, StringComparison.Ordinal);
+        Assert.Equal(1, Codes(refused, atLimitKey));
+
+        string large = _deployment.NewFolder("large");
+        string largePath = Path.Combine(large, "server.elmlic");
+        File.WriteAllBytes(largePath, new byte[(64 * 1024) + 1]);
+        Assert.Equal($"The server license '{largePath}' is larger than 64 KiB.", await StartError(large));
+
+        string missing = _deployment.NewFolder("missing");
+        string missingKey = Deployment.ServerKeyId(missing);
+        string none = await StartError(missing);
+        Assert.StartsWith($"The server license '{Path.Combine(missing, "server.elmlic")}' does not exist. ", none, StringComparison.Ordinal);
+        Assert.Contains($"installation key {missingKey}, ", none, StringComparison.Ordinal);
+        Assert.Equal(0, Codes(none, missingKey));
+
+        string held = _deployment.NewFolder("held");
+        string heldPath = _deployment.WriteServerLicense(held);
+        using (new FileStream(heldPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            string unreadable = await StartError(held);
+            Assert.StartsWith($"The server license '{heldPath}' cannot be read: ", unreadable, StringComparison.Ordinal);
+            Assert.Equal(0, Codes(unreadable, Deployment.ServerKeyId(held)));
+        }
+    }
+
+    /// <summary>
     /// The root keys may come from ELM_TRUST_ROOT_KEYS instead of files (design §13.8).
     /// </summary>
     /// <remarks>

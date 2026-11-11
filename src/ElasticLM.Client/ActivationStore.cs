@@ -4,32 +4,44 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §12.6.2, §10.4 step 2.
+
 /// <summary>
-/// An activation as kept on the disk (design §12.6.2): its ID, last sequence number, and kind (<c>standard</c>,
-/// <c>trial</c>, <c>server</c>), the license file it got, and the <c>jti</c> of requests sent and not yet answered (design
-/// §10.4 step 2). A request sent before the first activation has no ID, kind, or license, and sequence number 0.
+/// An activation as kept on the disk: its ID, last sequence number, and kind (<c>standard</c>,
+/// <c>trial</c>, <c>server</c>), the license file it got, and the <c>jti</c> of requests sent and not yet answered. A
+/// request sent before the first activation has no ID, kind, or license, and sequence number 0.
 /// </summary>
 internal sealed record StoredActivation(string? ActivationId, long Seq, string? Kind, byte[]? License, IReadOnlyList<string> Retry)
 {
-    /// <summary>Gets the most <c>jti</c> kept (design §8.6).</summary>
+    // design §8.6.
+
+    /// <summary>Gets the most <c>jti</c> kept.</summary>
     public const int MaxRetry = 16;
+
+    // design §12.6.2.
 
     /// <summary>
     /// Gets the <c>jti</c> of activations and trials sent and not yet answered, kept apart from <see cref="Retry"/> (the kept
-    /// activation's refreshes and deactivations), so the success of one does not drop the other's (design §12.6.2).
+    /// activation's refreshes and deactivations), so the success of one does not drop the other's.
     /// </summary>
     public IReadOnlyList<string> Pending { get; init; } = [];
 
+    // design §12.6.2.
+
     /// <summary>
     /// Gets the hash (SHA-256, base64url) of the last file the service answered and this installation did not keep, or null.
-    /// The same file answered again means the service took the request for a resend, so its jti is not kept (design §12.6.2).
+    /// The same file answered again means the service took the request for a resend, so its jti is not kept.
     /// </summary>
     public string? Unkept { get; init; }
 
-    /// <summary>Gets the offline request waiting for its answer, or <see langword="null"/> (design §12.8.5).</summary>
+    // design §12.8.5.
+
+    /// <summary>Gets the offline request waiting for its answer, or <see langword="null"/>.</summary>
     public OfflineRequest? Offline { get; init; }
 
-    /// <summary>Gets the offline deactivation proof not yet passed to the service, or <see langword="null"/> (design §12.8.5).</summary>
+    // design §12.8.5.
+
+    /// <summary>Gets the offline deactivation proof not yet passed to the service, or <see langword="null"/>.</summary>
     public string? DeactivationProof { get; init; }
 
     /// <summary>Returns the list a kind of request keeps its jti in.</summary>
@@ -48,8 +60,10 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
             };
 }
 
+// design §12.8.5.
+
 /// <summary>
-/// An offline request waiting for its answer (design §12.8.5), kept without the license key: its claims, from which the same
+/// An offline request waiting for its answer, kept without the license key: its claims, from which the same
 /// signing input is made again, and the SHA-256 (base64url) of the license key an activation request holds.
 /// </summary>
 internal sealed record OfflineRequest(
@@ -64,13 +78,17 @@ internal sealed record OfflineRequest(
     IReadOnlyList<string> Fingerprints
 );
 
+// design §12.5, §12.6.2.
+
 /// <summary>
 /// The file <c>activation.json</c> beside the installation key, and the lock file <c>activation.lock</c> that makes the
-/// processes of one device send their activation requests one at a time (design §12.5, §12.6.2).
+/// processes of one device send their activation requests one at a time.
 /// </summary>
 internal sealed class ActivationStore(string directory, TimeProvider time)
 {
-    /// <summary>The largest activation file read (design §12.6.2).</summary>
+    // design §12.6.2.
+
+    /// <summary>The largest activation file read.</summary>
     public const int MaxLength = 256 * 1024;
 
     /// <summary>How long a request waits for another process's lock.</summary>

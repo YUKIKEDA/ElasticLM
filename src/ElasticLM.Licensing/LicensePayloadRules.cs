@@ -7,10 +7,12 @@ namespace ElasticLM.Licensing;
 /// </summary>
 internal static class LicensePayloadRules
 {
+    // design §8.6, §8.4.2, §9.3.
+
     /// <summary>
-    /// Returns whether a license payload has every claim its kind needs and stays inside the limits of design §8.6 and the
-    /// rules of §8.4.2 and §9.3. The verifier applies it after the signature is verified; the issuer applies it before
-    /// signing, so it never issues a token the verifier rejects.
+    /// Returns whether a license payload has every claim its kind needs, with each value allowed and inside its limit. The
+    /// verifier applies it after the signature is verified; the issuer applies it before signing, so it never issues a token
+    /// the verifier rejects.
     /// </summary>
     public static bool IsValid(LicensePayload payload, out LicenseKind kind)
     {

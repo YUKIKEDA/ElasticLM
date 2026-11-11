@@ -328,8 +328,10 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///   usage log.
     ///
     /// Expected:
-    /// - 200 with the new license's jti; the lease's next token names the new license; 409 ELM_WRONG_INSTALLATION with the
-    ///   status still on the new license; the usage log is intact with one key.changed line.
+    /// - 200 with the new license's jti; the lease's next token names the new license; 409 with code ELM_WRONG_INSTALLATION
+    ///   and detail "The server license does not verify: The license is bound to another installation key. This server's
+    ///   installation key is {thumbprint}." (no code in it), with the status still on the new license; the usage log is
+    ///   intact with one key.changed line.
     /// </remarks>
     [Fact]
     public async Task Reload_ReplacesTheLicenseOfThisServerOnly()
@@ -362,6 +364,11 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
             Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
             using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(cancel));
             Assert.Equal("ELM_WRONG_INSTALLATION", problem.RootElement.GetProperty("code").GetString());
+            Assert.Equal(
+                "The server license does not verify: The license is bound to another installation key. This server's installation "
+                    + $"key is {Deployment.ServerKeyId(serverData)}.",
+                problem.RootElement.GetProperty("detail").GetString()
+            );
         }
 
         Assert.Equal(newToken, server.Engine.Server.License.TokenId);

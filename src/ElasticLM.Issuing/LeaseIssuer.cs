@@ -81,7 +81,8 @@ public static class LeaseIssuer
 
         if (!Limits.IsLeaseId(spec.LeaseId))
         {
-            throw new ArgumentException("The lease ID must be 22 characters of base64url (design §8.4.3).", nameof(spec));
+            // design §8.4.3.
+            throw new ArgumentException("The lease ID must be 22 characters of base64url.", nameof(spec));
         }
 
         if (spec.Seats < 1 || spec.Sequence < 0)
@@ -92,13 +93,15 @@ public static class LeaseIssuer
         long seconds = (long)Math.Floor(spec.Duration.TotalSeconds);
         if (seconds < 1 || !Limits.IsDuration(seconds))
         {
-            throw new ArgumentException("The lease duration must be at least one second and at most the limit of design §8.6.", nameof(spec));
+            // The limit of design §8.6: Limits.MaxDurationSeconds, 100 years of 366 days.
+            throw new ArgumentException("The lease duration must be at least one second and at most 100 years.", nameof(spec));
         }
 
         long now = issuedAt.ToUnixTimeSeconds();
         if (!Limits.IsTime(now + seconds))
         {
-            throw new ArgumentException("The lease would end after the latest time of design §8.6.", nameof(spec));
+            // The times of design §8.6: from 1970-01-01T00:00:00Z to Limits.MaxUnixSeconds, 9999-12-31T23:59:59Z.
+            throw new ArgumentException("The lease must end between 1970 and 9999.", nameof(spec));
         }
 
         string kid = KeyFiles.KeyId(signingKey);

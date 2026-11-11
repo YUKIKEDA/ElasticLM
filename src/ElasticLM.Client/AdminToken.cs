@@ -2,8 +2,10 @@ using System.Security.Cryptography;
 
 namespace ElasticLM.Client;
 
+// design §13.7.
+
 /// <summary>
-/// The administrator token of an on-premises server (design §13.7): 256 random bits in a file next to the server's
+/// The administrator token of an on-premises server: 256 random bits in a file next to the server's
 /// installation key, protected as the key is. <c>elm-server</c> creates it at the first start; <c>elm server</c> reads it on
 /// the same machine and sends it as <c>Authorization: Bearer</c>.
 /// </summary>

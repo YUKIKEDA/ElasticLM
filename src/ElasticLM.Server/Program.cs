@@ -19,7 +19,9 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "--help" or "-h":
             Console.WriteLine("Usage: elm-server [--config <settings.json>] [--set-aside-broken-records]");
-            Console.WriteLine("Settings: design §13.8; each key can also be set as ELM_<KEY>, for example ELM_PRODUCT.");
+
+            // The settings: design §13.8.
+            Console.WriteLine("Settings: the JSON file given with --config; each key can also be set as ELM_<KEY>, for example ELM_PRODUCT.");
             return 0;
         default:
             Console.Error.WriteLine($"error: unknown argument '{args[i]}'. Usage: elm-server [--config <settings.json>]");

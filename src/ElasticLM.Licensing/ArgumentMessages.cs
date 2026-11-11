@@ -1,9 +1,11 @@
 namespace ElasticLM.Licensing;
 
+// design §17.3, V1c10.
+
 /// <summary>
 /// The message of an argument exception without the part .NET appends for the parameter, for the places that show it to
 /// someone who does not call the .NET API: <c>elm_last_error_message</c>, the <c>error:</c> line of <c>elm</c>, and the start
-/// errors of <c>elm-server</c> and <c>elm-service</c> (design §17.3, V1c10).
+/// errors of <c>elm-server</c> and <c>elm-service</c>.
 /// </summary>
 internal static class ArgumentMessages
 {

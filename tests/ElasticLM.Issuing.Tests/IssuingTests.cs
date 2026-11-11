@@ -36,7 +36,9 @@ public sealed class IssuingTests : IDisposable
     /// - Issue the license described by the case and verify it with the matching requirement.
     ///
     /// Expected:
-    /// - Valid, with the license ID and kind of the spec.
+    /// - Valid, with the license ID and kind of the spec. The warnings are: none with an expiry; without one, "The license
+    ///   has no expiry. It cannot be revoked once delivered."; for a server license without one, that and then "A server
+    ///   license without expiry is never refreshed, so a cloned server cannot be detected.".
     /// </remarks>
     [Theory]
     [InlineData(LicenseKind.Standard, true, true)]
@@ -44,6 +46,7 @@ public sealed class IssuingTests : IDisposable
     [InlineData(LicenseKind.Standard, false, false)]
     [InlineData(LicenseKind.Trial, true, true)]
     [InlineData(LicenseKind.Server, true, true)]
+    [InlineData(LicenseKind.Server, true, false)]
     public void Issue_EachKind_PassesVerifier(LicenseKind kind, bool bound, bool expires)
     {
         LicenseSpec spec = Spec(kind, bound, expires);
@@ -57,7 +60,17 @@ public sealed class IssuingTests : IDisposable
         Assert.Equal(issued.TokenId, valid.License.TokenId);
         Assert.Equal(spec.CloneStrategy, valid.License.CloneStrategy);
         Assert.Equal(spec.BorrowReturnLimit, valid.License.BorrowReturnLimit);
-        Assert.Equal(expires ? 0 : 1, issued.Warnings.Count(w => w.Contains("no expiry", StringComparison.Ordinal)));
+        string[] warnings = (expires, kind) switch
+        {
+            (true, _) => [],
+            (false, LicenseKind.Server) =>
+            [
+                "The license has no expiry. It cannot be revoked once delivered.",
+                "A server license without expiry is never refreshed, so a cloned server cannot be detected.",
+            ],
+            (false, _) => ["The license has no expiry. It cannot be revoked once delivered."],
+        };
+        Assert.Equal(warnings, issued.Warnings);
     }
 
     /// <summary>
@@ -218,14 +231,27 @@ public sealed class IssuingTests : IDisposable
     /// - A root and a signing key.
     ///
     /// Steps:
-    /// - Certify with not-before in 1969, and with not-before 9999-12-01 and 60 days of validity.
+    /// - Certify with not-before in 1969, and with not-before 9999-12-01 and 60 days of validity; then at the bounds: one
+    ///   day from 1969-12-31T23:59:59Z and from 1970-01-01T00:00:00Z, and one day from 9999-12-31T00:00:00Z and from
+    ///   9999-12-30T23:59:59Z.
     ///
     /// Expected:
-    /// - ArgumentException both times.
+    /// - ArgumentException both times; at the bounds, "The validity period must lie between 1970 and 9999. (Parameter
+    ///   'notBefore')" for the first of each pair, and a certificate for the second.
     /// </remarks>
     [Fact]
     public void IssueCertificate_PeriodOutsideTimes_Throws()
     {
+        string Certify(DateTimeOffset notBefore) => CertificateIssuer.Issue(_root, _signing, KeyUses.License, notBefore, TimeSpan.FromDays(1), _time);
+
+        const string Refusal = "The validity period must lie between 1970 and 9999. (Parameter 'notBefore')";
+        var epoch = new DateTimeOffset(1970, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var lastDay = new DateTimeOffset(9999, 12, 31, 0, 0, 0, TimeSpan.Zero);
+        Assert.Equal(Refusal, Assert.Throws<ArgumentException>(() => Certify(epoch.AddSeconds(-1))).Message);
+        Assert.NotEmpty(Certify(epoch));
+        Assert.Equal(Refusal, Assert.Throws<ArgumentException>(() => Certify(lastDay)).Message);
+        Assert.NotEmpty(Certify(lastDay.AddSeconds(-1)));
+
         AssertThrows(
             "1970 and 9999",
             () =>

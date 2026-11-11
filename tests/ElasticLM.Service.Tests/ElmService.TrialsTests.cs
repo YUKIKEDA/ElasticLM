@@ -74,7 +74,7 @@ public sealed class ElmServiceTrialsTests
             await b.TrialAsync("app", []),
             HttpStatusCode.BadRequest,
             "ELM_FINGERPRINT_UNAVAILABLE",
-            "A trial needs at least one fingerprint (design §12.9)."
+            "A trial needs at least one fingerprint."
         );
         const string NotOffered = "The product does not offer a trial.";
         ElmServiceActivationsTests.AssertProblem(await b.TrialAsync("other", second), HttpStatusCode.NotFound, "ELM_TRIAL_NOT_OFFERED", NotOffered);

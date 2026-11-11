@@ -1,9 +1,11 @@
 namespace ElasticLM.Licensing;
 
+// design §19.
+
 /// <summary>
 /// Describes why a license or token was rejected.
 /// </summary>
-/// <param name="Code">The error code (design §19).</param>
+/// <param name="Code">The error code.</param>
 /// <param name="Message">One English sentence for people. It never contains key material or a full token.</param>
 public sealed record LicenseError(ErrorCode Code, string Message)
 {

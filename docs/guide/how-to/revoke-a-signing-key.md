@@ -38,7 +38,7 @@ elm license issue --signing-key signing.key.pem --certificate signing.cert --pro
 
 ```text
 Passphrase for 'signing.key.pem':
-warning: The license has no expiry. It cannot be revoked once delivered (design 5.4).
+warning: The license has no expiry. It cannot be revoked once delivered.
 license file: old-key.elmlic
 license ID: old-key-license
 token ID: FAKEjti000000000000002

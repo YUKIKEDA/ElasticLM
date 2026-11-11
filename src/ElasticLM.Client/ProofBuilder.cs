@@ -7,8 +7,10 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
+// design §12.2.
+
 /// <summary>
-/// Creates the <c>ELM-Proof</c> of a request (design §12.2): an <c>elm-proof+jws</c> signed by the installation key over
+/// Creates the <c>ELM-Proof</c> of a request: an <c>elm-proof+jws</c> signed by the installation key over
 /// the method, the normalized target URI, the server's nonce, and the SHA-256 of the body.
 /// </summary>
 public static class ProofBuilder
@@ -16,12 +18,14 @@ public static class ProofBuilder
     /// <summary>The name of the request header that carries the proof.</summary>
     public const string HeaderName = "ELM-Proof";
 
+    // design §12.1.
+
     /// <summary>
     /// Creates a proof.
     /// </summary>
     /// <param name="key">The installation key.</param>
     /// <param name="method">The request method, such as <c>POST</c>.</param>
-    /// <param name="target">The absolute request URI. It is normalized (design §12.1).</param>
+    /// <param name="target">The absolute request URI. It is normalized.</param>
     /// <param name="nonce">The nonce the server gave.</param>
     /// <param name="body">The exact request body bytes; empty when there is none.</param>
     /// <param name="includePublicKey"><see langword="true"/> for a first request, when the server does not know the key yet.</param>
@@ -38,9 +42,10 @@ public static class ProofBuilder
         TimeProvider time
     ) => Create(key, method, target, nonce, body, includePublicKey, time, out _);
 
+    // design §10.4.
+
     /// <summary>
-    /// Creates a proof and returns its <c>jti</c>, which the client names when it retries a renewal that got no answer
-    /// (design §10.4).
+    /// Creates a proof and returns its <c>jti</c>, which the client names when it retries a renewal that got no answer.
     /// </summary>
     internal static string Create(
         InstallationKey key,

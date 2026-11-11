@@ -4,14 +4,18 @@ using System.Text.Json;
 
 namespace ElasticLM.Licensing;
 
+// design §8.4.1.
+
 /// <summary>
-/// A key certified by a root for one use, with the certificate's validity period (design §8.4.1).
+/// A key certified by a root for one use, with the certificate's validity period.
 /// </summary>
 internal sealed record CertifiedKey(VerificationKey Key, long Nbf, long Exp);
 
+// design §11.2 step 3.
+
 /// <summary>
 /// Verifies key certificates against a trust store for one use (<c>license</c> or <c>lease</c>), and keeps the ones that
-/// verified (design §11.2 step 3).
+/// verified.
 /// </summary>
 internal sealed class CertificateSet(TrustStore trust, string use)
 {

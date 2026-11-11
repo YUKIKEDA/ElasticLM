@@ -3,8 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace ElasticLM.Licensing;
 
+// design §0.5.
+
 /// <summary>
-/// Source-generated JSON metadata for every type the library reads or writes (NativeAOT, design §0.5).
+/// Source-generated JSON metadata for every type the library reads or writes (NativeAOT).
 /// </summary>
 // RespectNullableAnnotations turns a JSON null in a non-nullable member into a JsonException. [JsonRequired] alone lets a null
 // through as a present value. Collection elements are not covered and are checked where the payloads are read.
