@@ -11,10 +11,13 @@ sidebar_position: 3
 次のものが要る。
 
 - .NET 10 SDK。`dotnet --list-sdks` の一覧に、`10.` で始まるバージョンがなければならない。
-- マシンのポート 7070 と 7071 が空いていること。サーバーはこの両方で待ち受ける。両方が空いていれば、PowerShell の `Get-NetTCPConnection -LocalPort 7070,7071 -ErrorAction SilentlyContinue` も、Linux と macOS の `lsof -i :7070 -i :7071` も、何も表示しない。
+- マシンのポート 7070 が空いていること。サーバーはこのポートで待ち受ける。空いていれば、PowerShell の `Get-NetTCPConnection -LocalPort 7070 -ErrorAction SilentlyContinue` も、Linux と macOS の `lsof -i :7070` も、何も表示しない。
 - ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
+- Windows では、Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降。`elm-server` に要る。
 
 このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
+
+フォルダーのパスは短くする。絶対パスは、UTF-8 で、Windows と Linux では 84 バイトまで、macOS では 80 バイトまでにする。ASCII 以外の文字は、1 文字で 2〜4 バイトを使う。サーバーはこのフォルダーの中の `server-data` にソケットのファイルを置き、ソケットのファイルのパスには上限がある（[データフォルダー](../reference/server-configuration.md#データフォルダー)）。
 
 Linux と macOS では、このフォルダーにグループやほかのユーザーが書き込めてはならない。サーバーが自分の秘密鍵を、この中のフォルダーに置くからだ。そのフォルダーで `chmod go-w .` と打てば、グループとほかのユーザーは確実に書き込めなくなる。
 
@@ -146,7 +149,7 @@ valid: 2026-01-15 09:30:00Z to 2027-01-15 09:30:00Z
 - `dataDirectory` は、サーバーが自分の鍵と記録を置くフォルダーだ。
 - `trust.rootKeys` は、サーバーがサーバーライセンスを受け入れるルート公開鍵の一覧だ。
 
-パスは、サーバーを起動したフォルダーからの相対パスだ。また、`elm server` のコマンドのために、サーバーは `http://127.0.0.1:7071` でも待ち受ける。これは既定の値なので、設定は要らない。すべての設定は [elm-server の設定](../reference/server-configuration.md)に挙げている。
+パスは、サーバーを起動したフォルダーからの相対パスだ。また、サーバーは、`elm server` のコマンドのために、ソケットのファイル（`server-data` の `admin.sock`）でも待ち受ける。このマシンのプログラムどうしが、ポートの代わりに接続に使うファイルだ。これに設定は要らない。すべての設定は [elm-server の設定](../reference/server-configuration.md)に挙げている。
 
 サーバーライセンスは、サーバーのインストール鍵を通して 1 つのサーバーに紐付く。インストール鍵は、サーバーが初めて起動したときに作る鍵ペアだ。鍵を作り、そのサムプリント（鍵の短い名前）を見るために、サーバーを一度起動する。
 
@@ -164,6 +167,8 @@ error: The server license 'server.elmlic' does not exist. Ask the vendor for a s
 `installation key` のあとの値がサムプリントだ。43 文字で、`-` と `_` を含むことがある。鍵そのものは `server-data` に残る。`fingerprints` のあとの値は、このマシンのマシンフィンガープリントだ。`--fingerprint` を付けて発行したライセンスはマシンにも紐付くが、このチュートリアルではこの値を使わない。実際の運用では、顧客の管理者がこのサムプリントをベンダーに送り、ベンダーがサーバーライセンスを発行する。
 
 Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めると、サーバーは代わりに `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.` と、それに続くもう 1 文を表示し、やはり終了コード 1 で終わる。チュートリアルのフォルダーで `chmod go-w .` と打ち、同じ `elm-server` コマンドをもう一度打つ。先に `server-data` を消す必要はない。
+
+サーバーが代わりに `error: The path of the administration socket …` と表示したときは、チュートリアルのフォルダーのパスが長すぎる。フォルダーをパスの短い場所に移し、そこでターミナルを開く。その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
 
 サーバーライセンスを発行する。機能 `pro` のシートを 2 つ含み、サーバーの鍵に紐付けたライセンスだ。`<server-key>` は、サーバーが表示したサムプリントに置き換える。43 文字すべてを正確に写す。
 
@@ -198,7 +203,7 @@ token ID: FAKEjti000000000000002
 elm-server --config server.json
 ```
 
-サーバーは動き続け、ログを表示する。各エントリーは、`info:` で始まってエントリーの出どころを示す行と、そのあとにインデントして続くメッセージからなる。最初のいくつかのエントリーは、サーバーが動く Web ホストが出す。待ち受ける 2 つのアドレス、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、`Content root path` だ。`Content root path` は `elm-server` の実行ファイルがあるフォルダーで、`server.json` の中のパスとは関係ない。探す行は `server.started` で、サーバーが起動したことを示す。
+サーバーは動き続け、ログを表示する。各エントリーは、`info:` で始まってエントリーの出どころを示す行と、そのあとにインデントして続くメッセージからなる。最初のいくつかのエントリーは、サーバーが動く Web ホストが出す。待ち受けるアドレスとソケットのファイル、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、`Content root path` だ。`Content root path` は `elm-server` の実行ファイルがあるフォルダーで、`server.json` の中のパスとは関係ない。探す行は `server.started` で、サーバーが起動したことを示す。
 
 ```text
 info: elm-server[1]
@@ -207,7 +212,7 @@ info: elm-server[1]
 
 最後の時刻は、`+00:00` が示すとおり UTC だ。
 
-ポート 7070 か 7071 がふさがっていると、サーバーは代わりに、長いスタックトレースつきで失敗をログに出し、終了コード 1 で終わる。最後の行は `error: elm-server cannot listen on https://127.0.0.1:7070/ and http://127.0.0.1:7071/: Failed to bind to address https://127.0.0.1:7070: address already in use.` だ。7071 だけがふさがっているときは、`Failed to bind to address` のあとのアドレスが `http://127.0.0.1:7071` になる。そのポートを使っているプログラムを止めてから、サーバーをもう一度起動する。
+ポート 7070 がふさがっていると、サーバーは代わりに、長いスタックトレースつきで失敗をログに出し、終了コード 1 で終わる。最後の行は `error: elm-server cannot listen on https://127.0.0.1:7070/ and` で始まり、`server-data` のソケットのファイル `admin.sock` を絶対パスで示し、`Failed to bind to address https://127.0.0.1:7070: address already in use.` で終わる。そのポートを使っているプログラムを止めてから、サーバーをもう一度起動する。
 
 起動してから最初のリースの期間（このライセンスでは 1 分）のあいだ、サーバーは新しいリースを拒否する。再起動のあと、それまでリースを保持していたアプリがリースを再登録するのに、その時間が要るからだ。サーバーは動かしたままにして、残りの手順は 1 つ目のターミナルで進める。アプリを作るあいだに、この 1 分のほとんどが過ぎる。
 
@@ -381,7 +386,7 @@ borrowed: pro for 1 hour
 elm server status --data server-data
 ```
 
-`elm` は、サーバーの管理者トークンを `server-data` から読み、ポート 7071 でサーバーに尋ねる。ほかの行に混じって、次の行を表示する。
+`elm` は、サーバーの管理者トークンを `server-data` から読み、同じフォルダーのソケットのファイル `admin.sock` を通してサーバーに尋ねる。ほかの行に混じって、次の行を表示する。
 
 <!-- steps:expect -->
 ```text

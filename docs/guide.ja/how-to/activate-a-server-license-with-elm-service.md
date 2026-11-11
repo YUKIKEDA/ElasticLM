@@ -16,8 +16,9 @@ sidebar_position: 22
 - サービスが止まっていたら、[サービスを起動する](../tutorials/activate-an-app-online.md#サービスを起動する)のとおりに、2 つ目のターミナルでもう一度起動する。
 - `ELM_API_KEY` が設定されていなければ、`elm-service setup --config service.json` で新しい API キーを作り、[サービスを準備する](../tutorials/activate-an-app-online.md#サービスを準備する)のとおりに `ELM_API_KEY` に読み込む。`elm-service setup` は、サービスが動いているときも含め、実行するたびに新しいキーを作る。前に作ったキーも有効なままだ。
 - 製品 `acme-cad` の ID が要る。チュートリアルで製品を作ったときに表示された ID で、下では `<product-id>` と書く。手元に残っていなければ、`elm admin request GET /v1/admin/products --url http://127.0.0.1:8080` で製品とその ID を一覧できる。
-- ポート 7070 と 7071 が空いていなければならない。サーバーはこの両方で待ち受ける。ほかのプログラムが使っていれば、フローティングライセンスのチュートリアルの[サーバーを起動する](../tutorials/use-a-floating-license.md#サーバーを起動する)にあるとおり、サーバーは起動するときにそう表示する。
+- ポート 7070 が空いていなければならない。サーバーはこのポートで待ち受ける。ほかのプログラムが使っていれば、フローティングライセンスのチュートリアルの[サーバーを起動する](../tutorials/use-a-floating-license.md#サーバーを起動する)にあるとおり、サーバーは起動するときにそう表示する。
 - Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めてはならない。サーバーが自分の秘密鍵を、この中のフォルダーに置くからだ。そのフォルダーで `chmod go-w .` と打てば、確実に書き込めなくなる。
+- チュートリアルのフォルダーの絶対パスは、UTF-8 で、Windows と Linux では 84 バイトまで、macOS では 80 バイトまででなければならない。ASCII 以外の文字は、1 文字で 2〜4 バイトを使う。サーバーはこのフォルダーの中の `server-data` にソケットのファイルを置き、ソケットのファイルのパスには上限があるからだ（[データフォルダー](../reference/server-configuration.md#データフォルダー)）。サーバーが起動するときに `error: The path of the administration socket …` と表示したら、フォルダーをパスの短い場所に移す。
 
 `elm-server` は、チュートリアルのツールと同じリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)にあるアーカイブ `elm-server-<version>-<RID>` で、名前が `-symbols` で終わるほうではない。`SECURITY.md` の [Checking a download](https://github.com/YUKIKEDA/ElasticLM/blob/main/SECURITY.md#checking-a-download) のとおりに確かめてから、`tools` に展開する。Windows の PowerShell では `Expand-Archive elm-server-<version>-<RID>.zip -DestinationPath tools -Force` と打つ。`-Force` を付けると、すでにある `LICENSE` ファイルを上書きできる。Linux と macOS では `tar -xzf elm-server-<version>-<RID>.tar.gz -C tools` と打つ。
 
@@ -247,7 +248,7 @@ The server reloaded the license.
 
 サービスに一度も接続しないサーバーも、ファイルでアクティベーションする。このとき `server.json` には `service` を書かない。上と同じように、サーバーを一度起動して鍵を作らせる。そのあと、`elm server activate-request --key <server-license-key>` がリクエストを書き、ベンダーが `elm offline process` でそれに応え、`elm server import` がレスポンスを読んでライセンスファイルを書く。サーバーは、そのあとで起動する。以降は、上と同じようにオフラインで更新する。
 
-ライセンスを別のサーバーに移すには、まずサーバーを止め、そのアクティベーションの枠を空ける。オンラインでは `elm server deactivate` で空ける。同じマシンの別の `elm-server` が既定の `--url`（`http://127.0.0.1:7071`）で待ち受けているなら、`elm server deactivate` と `elm server deactivate-proof` に `--url` で、止めたサーバー自身の `admin.listen`（いまは何も待ち受けていない）を渡す。渡さないと、これらのコマンドは `ELM_UNAUTHORIZED` で止まる。オフラインでは、`elm server deactivate-proof` がアクティベーションを削除してアクティベーション解除のプルーフを書き、ベンダーがそれを `elm offline process` で処理する。サービスがそれを受け取ったら、`elm server forget-proof` で、サーバーはもう一度アクティベーションできるようになる。`server-data` を削除するだけで済ませてはならない。サービスはそのアクティベーションを数え続け、`maxActivations` が 1 では、そのライセンスでほかのサーバーをアクティベーションできなくなる。これらのコマンドのすべてのオプションは、[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に挙げている。
+ライセンスを別のサーバーに移すには、まずサーバーを止め、そのアクティベーションの枠を空ける。オンラインでは `elm server deactivate` で空ける。オフラインでは、`elm server deactivate-proof` がアクティベーションを削除してアクティベーション解除のプルーフを書き、ベンダーがそれを `elm offline process` で処理する。サービスがそれを受け取ったら、`elm server forget-proof` で、サーバーはもう一度アクティベーションできるようになる。`server-data` を削除するだけで済ませてはならない。サービスはそのアクティベーションを数え続け、`maxActivations` が 1 では、そのライセンスでほかのサーバーをアクティベーションできなくなる。これらのコマンドのすべてのオプションは、[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に挙げている。
 
 試し終えたら、3 つ目のターミナルで Ctrl+C を押してサーバーを止め、2 つ目のターミナルで Ctrl+C を押してサービスを止める。
 

@@ -74,8 +74,8 @@ The app developer embeds the trust store and the client.
 The customer's administrator runs `elm-server`.
 
 - **The server cannot lend beyond its server license.** Seats are counted under a lock, after a restart new leases wait until running apps have reclaimed theirs, and borrows come back from the signed borrow record. The apps refuse any lease outside the server license.
-- **The local admin API is for administrators only.** It listens only on loopback, needs a 256-bit token compared in constant time, and counts failed attempts per minute instead of logging each one, so they cannot fill the log.
-- **The data folder is closed to other users.** On Windows it allows only Administrators, SYSTEM, and the user who created it; on Linux and macOS its mode is `0700`. The server will not use a folder that another user created first.
+- **The local administration API is for administrators only.** It listens on no TCP port, only on a socket file in the server's data folder (a file that programs on the same machine connect through, instead of a port), so a web page in a browser on the machine cannot reach it. No other user's program can stand in for the server. The `elm server` commands send the administrator token only to that socket file, and only the users that the data folder admits can create or open it. Those are the server's user and root on Linux and macOS, and the server's user, the Administrators group, and SYSTEM on Windows. A program that listens on a network port never receives the token. The API also needs the administrator token, 256 random bits, which is compared in constant time and made anew at every start of the server, so a token that leaked stops working at the next start. It counts failed attempts per minute instead of logging each one, so they cannot fill the log. Whoever can write to the data folder can replace the socket file and receive the token; that user can read the token and the server's key anyway.
+- **The data folder is closed to other users.** On Windows it allows only the Administrators group, SYSTEM, and the server's user; on Linux and macOS its mode is `0700`. The server will not use a folder that another user created first.
 - **Edits to the usage log are found.** The log is signed in blocks with the server's key and each file is chained to the previous one, so `elm log verify` finds edited, missing, and cut-off files.
 - **Floods are limited.** Requests are limited per source IP (`rateLimit.perIp`, 20 per second by default).
 
@@ -182,7 +182,7 @@ The cryptography holds only if each role does its part.
 ### The customer's administrator
 
 - Protect the server machine: anyone with root on it can take the server's key.
-- Keep the data folder and the admin token readable only by the service account and administrators. `admin.listen` must stay on loopback (the server refuses anything else).
+- Keep the data folder and the administrator token as the server creates them: readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Keep the data folder on a local file system, and start only one server on it ([Data folder](../reference/server-configuration.md#data-folder)).
 - Give the server its own `dataDirectory` when an app of the same product runs on the machine.
 - Rely on IP rules in `allow` and `deny`. Behind a reverse proxy, apply IP rules at the proxy and raise `rateLimit.perIp` to match the machines behind it.
 - Use `--set-aside-broken-records` only after finding out why the borrow record broke; it frees borrowed seats.

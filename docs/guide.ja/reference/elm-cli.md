@@ -243,7 +243,17 @@ elm license verify <license-file> --product <id> [options]
 
 ## elm server
 
-`elm server` のコマンドは、同じマシン上のオンプレミスのライセンスサーバーを管理する。サーバーのデータフォルダーから管理者トークンを読むので、サーバーと同じユーザーで実行する。`--data` がなければ、データフォルダーは `--product` のマシン全体用のフォルダーになる。Windows では `%ProgramData%\ElasticLM\<product>`、Linux では `/var/lib/elasticlm/<product>`、macOS では `/Library/Application Support/ElasticLM/<product>` だ。各リクエストは 30 秒でタイムアウトする。
+`elm server` のコマンドは、同じマシン上のオンプレミスのライセンスサーバーを管理する。どのコマンドも、指定したデータフォルダーのサーバー 1 つだけを対象にする。`--data` がなければ、データフォルダーは `--product` のマシン全体用のフォルダーになる。Windows では `%ProgramData%\ElasticLM\<product>`、Linux では `/var/lib/elasticlm/<product>`、macOS では `/Library/Application Support/ElasticLM/<product>` だ。各リクエストは 30 秒でタイムアウトする。
+
+`elm server` のコマンドは、`elm-server` を動かしているユーザーで実行する。コマンドはサーバーのデータフォルダーから管理者トークンを読み、Linux と macOS では、このフォルダーを開けるのがサーバーのユーザーと root だけだからだ（たとえば `sudo -u <server user> elm server status --product <id>`。root でも実行できる）。Windows では、フォルダーのアクセス制御リストが Administrators グループと SYSTEM にもアクセスを許し、管理者トークンは 1 人のユーザーではなくマシンに対して保護してある。そのため、これらのアカウントもトークンを読める。
+
+Windows では、[サーバーライセンスのコマンド](#サーバーライセンスのコマンド)は、サーバーのユーザー自身で実行する。これらのコマンドはサーバーのインストール鍵も読み、その前にデータフォルダーを確かめる。フォルダーの所有者と、アクセス制御リストがアクセスを許すアカウントは、どれも、コマンドを実行するユーザー、Administrators グループ、SYSTEM のどれかでなければならない。別の管理者として実行すると、サーバーライセンスのコマンドは、終了コード 1 で、`error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '<folder>' is not safe for secrets` で始まる行を出して止まる。フォルダーのアクセス制御リストが、コマンドを実行しているのとは別のアカウントであるサーバーのユーザーに、アクセスを許しているからだ。この行は、フォルダーを消すか制限するようにと続くが、この場合はそうしない。サーバーのユーザーでコマンドを実行する。所有者とアクセス制御リストにあるのが Administrators グループと SYSTEM だけのフォルダーは、どの管理者が実行しても確認を通る（[データフォルダー](server-configuration.md#データフォルダー)）。
+
+`elm server` のコマンドは、同じデータフォルダーにあるソケットのファイル `admin.sock` を通して、サーバーの[ローカルの管理 API](administration-api.md#elm-server-のローカルの管理-api) に接続する（Unix ドメインソケット。同じマシンのプログラムどうしが、ポートの代わりに接続に使うファイルだ）。ほかの経路は使わない。TCP の接続は開かず、アドレスも受け取らず、別のマシンのサーバーは管理できない。`elm` は、`elm-server` と同じリリースのものを使う。Windows では、Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降が要る。Unix ドメインソケットのないシステムでは、`elm server` のどのコマンドも、`error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` と終了コード 2 で止まる。
+
+`admin.sock` のパスには上限がある。UTF-8 で、Windows と Linux では 107 バイト、macOS では 103 バイトだ。そのため、データフォルダー自体の絶対パスは、Windows と Linux では 96 バイトまで、macOS では 92 バイトまでになる。ASCII 以外の文字は 1 文字で 2〜4 バイトを使い、相対パスの `--data` は、先に作業フォルダーからの絶対パスに直す（[データフォルダー](server-configuration.md#データフォルダー)）。パスがこれより長いデータフォルダーに対しては、`elm server` のどのコマンドも、管理者トークンを読む前に、`error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` と終了コード 2 で止まる。サーバー自身は、そのようなフォルダーでは起動せず、終了コード 1 で終わる。
+
+コマンドが `ELM_UNAUTHORIZED` を表示したときは、`elm` が読んだ管理者トークンが、実行中のサーバーが持つものではない。読んでからリクエストを送るまでのあいだにサーバーが起動し直したか、`admin.token` が手で置き換えられたか、バックアップから戻されている。コマンドをもう一度実行する。`elm` はトークンを読み直す。同じコードがまた出るなら、サーバーを再起動する。サーバーは新しいトークンを書く。
 
 ### サーバー管理のオプション
 
@@ -251,10 +261,21 @@ elm license verify <license-file> --product <id> [options]
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `--url` | `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API（サーバーの設定 `admin.listen`） |
 | `--product` | 製品 ID | — | `--data` か `--product` | サーバーの製品 ID。既定の場所からデータフォルダーを探すのに使う |
 | `--data` | フォルダーのパス | — | `--data` か `--product` | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
 | `--json` | — | オフ | いいえ | レスポンスを JSON で書く |
+
+下のどの場合も、この 5 つのコマンドは、標準エラー出力に 1 行を出して止まる。
+
+| 場合 | コマンドが出す行 | 終了コード | すること |
+| --- | --- | --- | --- |
+| フォルダーに読める管理者トークンがない。指定したフォルダーがサーバーのものではない、サーバーがサーバーライセンスを持って起動したことがない（サーバーは、ライセンスの検証が通ってからトークンを作る）、またはコマンドを実行しているユーザーがトークンを読めない | `error: The administrator token cannot be read in '<folder>'. Run elm server as the server's user, on its machine.` | 2 | サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する。または、サーバーを起動するか、サーバーのユーザーでコマンドを実行する |
+| フォルダーに `admin.sock` がない。サーバーが実行中ではない | `error: The server cannot be reached: the administration socket '<path>' does not exist.` | 3 | サーバーを起動する。または、サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する |
+| 接続に失敗した、または 30 秒以内にレスポンスが返らない。強制終了されたサーバーが残したソケットのファイルは、接続を拒否する | `error: The server cannot be reached: <reason>` | 3 | 行の理由が、接続が拒否されたことを示すときは、サーバーを起動する。または、サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する。強制終了されたサーバーが残したソケットのファイルは、消さなくてよい。サーバーの次の起動が消す。30 秒以内にレスポンスが返らなかったときは、サーバーは動いているが答えていない。コマンドをもう一度実行し、変わらなければサーバーを再起動する |
+| 成功でもエラーでも、レスポンスの本文が JSON でない | `error: The server answered <status> with a body that is not JSON.` | 3 | そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることと、`elm` と `elm-server` が同じリリースのものであることを確かめる。そのあと、サーバーを再起動する |
+| サーバーが管理者トークンを拒否した（`401`） | `error: ELM_UNAUTHORIZED: The administrator token is missing or wrong.` | 1 | コマンドをもう一度実行する。上の説明を参照 |
+| エラーコードのある、そのほかのエラーのレスポンス | `error: <code>: <reason>` | 1 | [エラーコード](error-codes.md)の、そのコードの行を参照 |
+| 本文が JSON か空で、エラーコードのないエラーのレスポンス | `error: The server's administration API answered <status>.` | 1 | そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることを確かめ、サーバーと同じリリースの `elm` を使う |
 
 ### elm server status
 
@@ -310,21 +331,32 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 | `--data` | フォルダーのパス | `--product` のマシン全体用のデータフォルダー | いいえ | サーバーのデータフォルダー（サーバーの設定 `dataDirectory`） |
 | `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
 | `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 
 新しいライセンスファイルを書いたとき、サーバーが実行中なら、コマンドはサーバーの[ローカルの管理 API](administration-api.md#elm-server-のローカルの管理-api) にファイルの読み直しを求める。サーバーが止まっていれば、サーバーは起動するときにファイルを読む。下のどの場合も、ファイルは書かれていて、エラーは標準エラー出力の 1 行で、終了コードは 1 だ。
 
-| 読み直しのリクエストへのレスポンス | コマンドが出す行 |
-| --- | --- |
-| サーバーが新しいファイルを読んで、それを拒否した（`409`。コードは [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload) のもの） | `error: the server kept its license: <code>: <reason>` |
-| コードのあるほかのエラー。リクエストそのものが拒否され、サーバーはファイルを読んでおらず、それまでのライセンスを使い続けている。`ELM_UNAUTHORIZED` は、`--data` か `--product` が、`--url` のサーバーとは別のサーバーのフォルダーを指しているということだ | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` |
-| 読み直しのレスポンスではなく、エラーコードもないレスポンス。そのポートで待ち受ける別のプログラムが返すようなレスポンスだ | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` |
+| 読み直しのリクエストへのレスポンス | コマンドが出す行 | すること |
+| --- | --- | --- |
+| サーバーが新しいファイルを読んで、それを拒否した（`409`。コードは [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload) のもの） | `error: the server kept its license: <code>: <reason>` | [エラーコード](error-codes.md)のそのコードの行に従って、コードが示す問題を直す。そのあと `elm server reload` を実行する |
+| コードのあるほかのエラー。リクエストそのものが拒否され、サーバーはファイルを読んでおらず、それまでのライセンスを使い続けている | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` | `ELM_UNAUTHORIZED` なら、`elm server reload` を実行する。このとき `elm` は管理者トークンを読み直す。同じコードがまた出るなら、`admin.token` は実行中のサーバーのものではない（手で置き換えられたか、バックアップから戻されている）。サーバーを再起動する。サーバーは新しいトークンを書き、ライセンスファイルを読む。ほかのコードなら、[エラーコード](error-codes.md)のそのコードの行を参照 |
+| 読み直しのレスポンスではなく、エラーコードもないレスポンス。そのソケットで待ち受ける別のプログラムが返すようなレスポンスだ | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` | `--data` か `--product` がサーバーのフォルダーを指していることを確かめる。指していれば、サーバーを再起動する。サーバーは、起動するときに、書かれたライセンスファイルを読む |
+| サーバーは読み直したが、そのライセンスは書いたものではない | `error: The server reads another license file than --license; pass its setting license.` | サーバーの設定 `license` のパスを `--license` に指定して、コマンドをもう一度実行する |
 
-`--license` が、フォルダーを指定したほうのサーバーの設定 `license` であれば、そのサーバーは、次に起動するとき、またはそのサーバー自身の `--url` を付けた `elm server reload` のときに、書かれたファイルを読む。
+`--license` が、フォルダーを指定したサーバーの設定 `license` であれば、そのサーバーは、次に起動するとき、または `elm server reload` のときに、書かれたファイルを読む。
 
-`deactivate`、`deactivate-proof`、`activate-request`、`refresh-request` は、最初に同じ API にサーバーの状態を問い合わせる。フォルダーに読める管理者トークンがないとき、または `--url` への接続が拒否されたとき（何も待ち受けていない）は、サーバーは実行中でないとみなす。読み直しのリクエストでも同じだ。何かが待ち受けていて、30 秒以内にレスポンスが最後まで返らないときは、これらのコマンドは `error: The server's administration API did not answer in time.` か `error: The server's administration API gave no whole answer.` で止まり、何も書かず、終了コードは 3 だ。ファイルを書いたあとの読み直しのリクエストは、同じ行に続けて `The license file is written; the server did not confirm a reload.` を出し、終了コード 3 で終わる。状態ではないレスポンスが返ると、これらのコマンドは `error: <code>: <reason>` で止まる。コードのないレスポンスなら `error: The server's administration API answered <status>.` で止まる。どちらの場合も何も書かず、終了コードは 1 だ。止めたサーバーのフォルダーには、管理者トークンが残る。別のサーバーが既定の `--url` で待ち受けているあいだは、これらのコマンドには、何も待ち受けていない `--url` を指定する必要がある。止めたサーバー自身の `admin.listen` がその例だ。
+`deactivate`、`deactivate-proof`、`activate-request`、`refresh-request` は、最初に同じ API にサーバーの状態を問い合わせる。この問い合わせと、ファイルを書いたあとの読み直しのリクエストは、状態も読み直しのレスポンスも得られないとき、次のどれかになる。
 
-成功のレスポンスの本文が JSON でないときは、状態の問い合わせは `error: The server's administration API answered with a body that is not JSON.` と終了コード 3 で止まる。読み直しのリクエストは、その行に `The license file is written; the server did not confirm a reload.` を付ける。
+| 場合 | コマンドの動作 | コマンドが出す行 | 終了コード |
+| --- | --- | --- | --- |
+| フォルダーに読める管理者トークンがない、フォルダーに `admin.sock` がない、または `admin.sock` への接続が拒否された（強制終了されたサーバーが残したソケットのファイル） | サーバーは実行中でないとみなす。状態の問い合わせのあとなら、コマンドは処理を続ける | 状態の問い合わせのあとは、なし。ファイルを書いたあとは、標準出力に `The server is not running; it reads the license when it starts.` | コマンドの処理の結果による。ファイルを書いたあとは 0 |
+| 接続がほかの理由で失敗した、または、レスポンスが最後まで届く前に接続が終わった。どちらも同じ行になる | 止まる | `error: The server's administration API gave no whole answer.` | 3 |
+| 何かが接続を受け付けたが、30 秒以内にレスポンスが最後まで返らない | 止まる | `error: The server's administration API did not answer in time.` | 3 |
+| 成功のレスポンスの本文が JSON でない | 止まる | `error: The server's administration API answered with a body that is not JSON.` | 3 |
+| 状態の問い合わせに、`ELM_UNAUTHORIZED` など、コードのあるエラーが返った | 止まる | `error: <code>: <reason>` | 1 |
+| 状態の問い合わせに、状態ではなく、エラーコードもないレスポンスが返った | 止まる | `error: The server's administration API answered <status>.` | 1 |
+
+状態の問い合わせで止まったコマンドは、何も書かない。ファイルを書いたあとは、終了コード 3 のどの行でも、その行に続けて `The license file is written; the server did not confirm a reload.` が出る。読み直しのリクエストへのレスポンスのうち終了コード 1 になるものは、上の表にある。
+
+上の表の、終了コード 3 の行と最後の行の場合は、何かがソケットのファイルで待ち受けているかもしれないので、サーバーが実行中かもしれない。`deactivate` と `deactivate-proof` では、サーバーを止めて、コマンドをもう一度実行する。ほかのコマンドでは、コマンドをもう一度実行し、同じ行がまた出るなら、サーバーを再起動する。`ELM_UNAUTHORIZED` については、[elm server](#elm-server) の冒頭を参照。
 
 ### elm server activate
 

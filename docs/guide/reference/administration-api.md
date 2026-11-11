@@ -1806,9 +1806,23 @@ Audit action: `session.revoke`.
 
 ## `elm-server` local administration API
 
-The local administration API of `elm-server` is used by the `elm server` commands on the server's machine. It answers only on the `admin.listen` address: plain `http` on a loopback address, by default `http://127.0.0.1:7071` (see [elm-server configuration](server-configuration.md#admin)). The lease protocol is not served there, and a request to `/admin/` on the server's `https` address gets `404` without a body.
+The local administration API of `elm-server` is used by the `elm server` commands on the server's machine. It answers only on the socket file `admin.sock` in the server's data folder (a Unix domain socket: a file that programs on the same machine connect through, instead of a port), with plain `http` over that socket, on Windows, Linux, and macOS alike; it has no TCP port and no setting (see [elm-server configuration](server-configuration.md#ports)). The connection never leaves the machine, so it is not encrypted; the data folder's permissions and the administrator token protect it (see [Security model](../explanation/security-model.md#for-the-customers-administrator)). The lease protocol is not served there, and a request for `/admin/…` on the server's `https` address gets `404` without a body.
 
-- Authentication: `Authorization: Bearer <token>`, where the token is the 32 random bytes kept in `admin.token` in the server's data folder, written in base64url (43 characters). The server makes the file at its first start. On Windows the file holds the bytes protected with DPAPI; elsewhere it holds them as they are, readable and writable only by its owner. The header must start with `Bearer` and one space exactly as written here: the scheme name is case-sensitive. A missing or wrong token gets `401` with `ELM_UNAUTHORIZED`. Whoever can read the file can administer the server (see [elm-server configuration](server-configuration.md#data-folder)).
+Authentication is `Authorization: Bearer <token>`, where the token is the administrator token: the 32 random bytes kept in `admin.token` in the server's data folder, written in base64url without padding (43 characters). The server makes a new token at every start and replaces the file, so a program of your own reads the file again after each start of the server; the token of an earlier start gets `401`. On Linux and macOS the file holds the 32 bytes as they are, readable and writable only by its owner. On Windows the file holds them protected with DPAPI for the machine, so a script cannot use its bytes as they are; see below. The header must start with `Bearer` and one space exactly as written here: the scheme name is case-sensitive. A missing or wrong token gets `401` with `ELM_UNAUTHORIZED`. Whoever can read the file can administer the server (see [elm-server configuration](server-configuration.md#data-folder)).
+
+On Linux and macOS, a program of your own calls the API through the socket file, as the server's user. With curl, the first line below makes the token from the file, and the second sends a request:
+
+```text
+token=$(base64 < "<data folder>/admin.token" | tr '+/' '-_' | tr -d '=\n')
+curl --unix-socket "<data folder>/admin.sock" -H "Authorization: Bearer $token" http://elm-server.invalid/admin/v1/status
+```
+
+curl sends the request to the socket file. The host of the URL is not used: `elm-server.invalid` only fills the request's `Host` header, which the server does not read.
+
+On Windows, a script uses the `elm server` commands with `--json` instead ([Server administration options](elm-cli.md#server-administration-options)): `elm server status`, `elm server leases`, and `elm server reload` then print the API's answer as it came.
+
+For every route:
+
 - There are no roles and no paging. The `allow` and `deny` settings and `rateLimit.perIp` do not apply.
 - No route reads a body.
 - An error is a problem response (`application/problem+json`) with the members described in [Errors](#errors).

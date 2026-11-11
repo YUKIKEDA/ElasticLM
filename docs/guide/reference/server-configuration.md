@@ -6,6 +6,8 @@ sidebar_position: 2
 
 This page lists every setting of `elm-server`, the on-premises license server that hands out floating license seats on a customer's network. It is for the operator who installs and runs the server. For what the server does and how seats, leases, and borrowing work, read [Floating licenses](../explanation/floating-licenses.md) first.
 
+On Windows, `elm-server` and the `elm server` commands need Windows 10 version 1803 or Windows Server 2019, or later. The server's local administration API listens on a Unix domain socket: a file through which programs on the same machine connect, with no network port (see [Ports](#ports)). Windows has Unix domain sockets too, from those versions on. This page calls the file the socket file.
+
 ## Command line and exit codes
 
 ```text
@@ -24,14 +26,19 @@ Any other argument, or `--config` without a path, is an error.
 | --- | --- |
 | 0 | The server stopped normally (Ctrl+C, `SIGTERM`, or a service stop), or `--help` printed the usage. |
 | 1 | The server cannot start. The reasons are listed below. |
-| 2 | An unknown argument, `--config` without a path, or a setting error: the configuration file does not exist, cannot be read, is larger than 64 KiB, or is not valid; a value is not valid; or `product` is missing. |
+| 2 | An unknown argument, `--config` without a path, or a setting error: the configuration file does not exist, cannot be read, is larger than 64 KiB, or is not valid; a value is not valid; `product` is missing; or [`admin.listen`](#admin), which is not a setting, has a value. |
 
 Before it exits with 1 or 2, `elm-server` prints `error:` and the reason to standard error.
 
 Exit code 1 means, for example:
 
 - There is no server license yet. This is what happens at the first start: the server makes its installation key, and the message gives the key's [thumbprint](../explanation/devices-and-proofs.md#the-installation-key) and the machine fingerprints. Send them to the vendor, who issues the server license; or activate the server license with the vendor's license key, online with [`elm server activate`](elm-cli.md#elm-server-activate), or offline with [`elm server activate-request`](elm-cli.md#elm-server-activate-request) and [`elm server import`](elm-cli.md#elm-server-import). [Floating licenses](../explanation/floating-licenses.md#running-elm-server) explains what the server needs from the vendor.
+- The path of the socket file, `admin.sock` in the data folder, is longer than the system allows. The message is `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` The server checks this before it reads the root keys or creates the data folder, so such a start leaves nothing. See [Data folder](#data-folder).
+- The system has no Unix domain sockets, as on a Windows older than the versions at the top of this page: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` The server checks this at the same point, after the length of the path.
 - No root public keys are given.
+- Another `elm-server` runs on the same data folder: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` Stop that server, or give this one a `dataDirectory` of its own. On Windows the same line appears while another program, such as a backup or an antivirus scan, has `server.lock` open: start the server again, and exclude `server.lock` from that program ([Data folder](#data-folder) lists the files to exclude). Where the file lock does not hold (see [Data folder](#data-folder)), a second server stops instead with `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.`
+- The lock file `server.lock` cannot be opened, for a reason other than another program holding it: a missing permission, a full disk, or a read-only file system, for example. `error: The lock file '<path>' cannot be opened: <reason>`. The reason names the cause: check that the server's user may write in the data folder, and that `server.lock` is a file.
+- What is at the path of `admin.sock` can be neither used nor removed, such as a folder of that name: `error: The administration socket '<path>' cannot be used: <reason>`. Remove what is at that path, and start the server again.
 - A file that a setting names (a root key, the server license, a TLS certificate) cannot be read or is not valid.
 - The TLS certificate has an Extended Key Usage, the list of purposes the certificate may be used for, that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`).
 - A certificate after the server's in the TLS certificate file is not a CA certificate. The message names its place in the file and its subject: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
@@ -39,7 +46,8 @@ Exit code 1 means, for example:
 - The server license cannot be written while `service.url` is set.
 - The borrow record is broken, or cannot be read or written.
 - The usage log cannot be written.
-- The server cannot listen on `listen` or `admin.listen`: another program uses the port, the server has no permission to listen there, or this machine does not have the address. The last line is `error: elm-server cannot listen on <listen> and <admin.listen>: <reason>`. It gives both URLs as the server reads them, each ending in `/`.
+- The administrator token cannot be written: `error: The administrator token in '<folder>' cannot be created or read.` On Windows this also happens when another program keeps `admin.token` open for longer than 2 seconds while the server starts: start the server again, and if it happens again, exclude `admin.token` from the program that opens it, such as an antivirus scan.
+- The server cannot listen on the `listen` address or on the socket file: another program uses the port, the server has no permission to listen there, this machine does not have the address, or the file system of the data folder cannot hold a socket file. The last line is `error: elm-server cannot listen on <listen> and <socket path>: <reason>`. It gives the `listen` URL as the server reads it, ending in `/`, and the absolute path of `admin.sock`.
 
 ## How settings are given
 
@@ -75,7 +83,8 @@ Two environment variables do not follow this rule:
 | Setting | Default | For |
 | --- | --- | --- |
 | `listen` | `https://0.0.0.0:7070`: port 7070 on every IPv4 address | Clients: the lease protocol, over TLS. |
-| `admin.listen` | `http://127.0.0.1:7071`: port 7071 on the loopback address | The local administration API, which the `elm server` commands use. It answers only on the server's machine. |
+
+The local administration API, which the `elm server` commands use, has no port and no setting. The server listens for it on the socket file `admin.sock` in its [data folder](#data-folder), on Windows, Linux, and macOS alike, with plain `http` over that socket. The connection never leaves the machine, so it is not encrypted; the data folder's permissions and the administrator token protect it (see [Security model](../explanation/security-model.md#for-the-customers-administrator)). Only a process on the server's machine that may open the data folder can connect. See [`elm-server` local administration API](administration-api.md#elm-server-local-administration-api).
 
 ## Top-level settings
 
@@ -87,7 +96,7 @@ Two environment variables do not follow this rule:
 | `license` | `ELM_LICENSE` | file path | `server.elmlic` in the folder of the `elm-server` executable | The server license file. With `service.url` set, the server must be able to write this file. See the notes below. |
 | `allow` | `ELM_ALLOW` | list of strings | none | Entries that allow lease requests. See [Access rules](#access-rules). |
 | `deny` | `ELM_DENY` | list of strings | none | Entries that refuse lease requests. See [Access rules](#access-rules). |
-| `dataDirectory` | `ELM_DATADIRECTORY` | folder path | `%ProgramData%\ElasticLM\<product>` on Windows, `/Library/Application Support/ElasticLM/<product>` on macOS, `/var/lib/elasticlm/<product>` on Linux | The server's data folder. See [Data folder](#data-folder). |
+| `dataDirectory` | `ELM_DATADIRECTORY` | folder path | `%ProgramData%\ElasticLM\<product>` on Windows, `/Library/Application Support/ElasticLM/<product>` on macOS, `/var/lib/elasticlm/<product>` on Linux | The server's data folder. Its path has a limit, and it belongs on a local file system. See [Data folder](#data-folder). |
 
 Notes:
 
@@ -97,18 +106,26 @@ Notes:
 
 ### Data folder
 
-`elm-server` keeps these files in its data folder. Back up the whole folder, and let only the server's user read it.
+`elm-server` keeps these files in its data folder. Back up the folder without `admin.sock`, `server.lock`, and `admin.token`: the first two hold nothing, and the server makes a new token at every start. Exclude the same three files from an antivirus scan of the folder. On Windows, a program that reads `admin.sock` or `server.lock` while the server runs gets an error.
 
 | File | Holds |
 | --- | --- |
 | `installation.key` | The server's installation key, made at the first start. The server license is bound to it, so a new key needs a new server license. On Windows it is protected with DPAPI. |
 | `clock` | The clock state, signed with the installation key, with which the server notices a clock that was set back. |
 | `activation.json` | The activation that `elm server activate` or `elm server import` got from `elm-service`, which renews the server license. It exists only after one of those commands. `activation.lock` beside it is a lock file. |
-| `admin.token` | The administrator token that the `elm server` commands send to the administration API. Whoever can read it can administer the server. |
+| `admin.token` | The administrator token that the `elm server` commands send to the administration API. The server makes a new token at every start and replaces the file, so the token of an earlier start is refused; the file stays after the server stops. Whoever can read it can administer the server. |
+| `admin.sock` | The socket file of the local administration API. It is there while the server runs: the server removes it when it stops, and a server that was killed leaves it, for the next start to remove. It holds no secret. |
+| `server.lock` | The lock file, empty, that the server holds open while it runs, so that a second `elm-server` does not start on the same folder. It stays after the server stops. Do not delete it while the server runs. |
 | `borrows-<UTC time>.jsonl` | The borrow record. See [Logs](logs.md#borrow-record-elm-server). |
 | `usage-<UTC time>.jsonl` | The usage log, unless `log.usage` names another folder. See [Logs](logs.md#usage-log). |
 
-The server creates the folder so that only its own user can open it: on Linux and macOS with mode `0700`; on Windows with an access list of the server's user, Administrators, and SYSTEM. It does not use an existing folder that other users can read or change; it stops with a message that says what to fix.
+The data folder and `admin.token` are readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Here the server's user is the user who started the server when it created the folder. The server creates the folder that way: on Linux and macOS with mode `0700`, and `admin.token` with mode `0600`; on Windows with an access list of those three, and `admin.token` protected with DPAPI for the machine, not for one user. Only the same users can connect to `admin.sock`. The server does not use an existing folder that other users can read or change; it stops with a message that says what to fix.
+
+Keep the data folder on a local file system. The file lock on `server.lock` keeps a second server off the folder. On Linux and macOS, that lock holds only where the file system has file locks, and some network file systems have none. On Linux and macOS it does not hold either when the environment variable `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` is `1` or `true` in the server's environment; leave it unset. Where the lock does not hold, two servers started on one folder at almost the same moment can both run, and `elm server deactivate` can then take a running server for a stopped one.
+
+The absolute path of `admin.sock` is at most 107 bytes in UTF-8 on Windows and Linux, and 103 on macOS. The name and its separator take 11 of them, so the data folder's own absolute path is at most 96 bytes on Windows and Linux, and 92 on macOS; a character outside ASCII takes 2 to 4 bytes. A relative `dataDirectory` is made absolute from the working folder first. With a longer path, the server does not start and exits with 1; the `elm server` commands stop with the same message and exit with 2. The default folder is within the limit on Windows and Linux for every product ID. On macOS it is within the limit only for a product ID of up to 53 characters: a server with a longer one needs a `dataDirectory` with a shorter path, and the `elm server` commands for it need `--data`, since `--product` names the default folder.
+
+The installation key is in the data folder, so a server started on a new, empty folder makes a new key, which the server license does not match. A data folder that is moved must still pass the server's check at the new path, or the server stops with a line that starts `error: The folder '<folder>' is not safe for secrets`. On Linux and macOS, the folder must give no access to group or others (mode `0700`), and its parent folder must not be writable by group or others; the files in it, such as `installation.key`, have mode `0600`, so the folder must also keep its owner. On Windows, the folder's owner and its parent's owner must each be the server's user, the Administrators group, or SYSTEM; the access list must admit no one else, and must not be inherited from the parent folder. A copy of the folder takes the access list of its new parent, and is refused. `admin.sock`, `admin.token`, and `server.lock` need not be moved.
 
 ### Access rules
 
@@ -168,9 +185,7 @@ Intermediate CA certificates:
 
 ## `admin`
 
-| Setting | Environment variable | Type | Default | Range and notes |
-| --- | --- | --- | --- | --- |
-| `admin.listen` | `ELM_ADMIN_LISTEN` | URL | `http://127.0.0.1:7071` | Where the local administration API listens. An `http` URL on a loopback address (or `localhost`), without path or query. |
+`elm-server` has no `admin` settings: the local administration API listens on the socket file (see [Ports](#ports)). A configuration file that gives `admin.listen` a value other than `null`, or an `ELM_ADMIN_LISTEN` that is not empty, stops the start with `error: admin.listen is no longer a setting: the administration API listens on the socket file admin.sock in the data folder. Remove admin.listen (ELM_ADMIN_LISTEN).` and exit code 2. Any other key under `admin` is an unknown key.
 
 ## `service`
 

@@ -154,6 +154,16 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 
 **Cost.** A server that cannot refresh stops lending when its server license's grace period ends. A copied server is found only at its next refresh, which can be up to 30 days away with the defaults. A server license issued by hand with `elm` is never refreshed, so only its expiry ends a copy's use.
 
+## The administration API of elm-server listens on a socket file, not a port
+
+**Choice.** The local administration API of `elm-server`, which the `elm server` commands use, listens only on a socket file in the server's data folder: a Unix domain socket, a file that programs on the same machine connect through. It is the same on Windows, Linux, and macOS, and the API has no TCP port.
+
+**Reason.** The commands send the administrator token only to a file in the folder that also holds the token, and only the users that the folder admits can create a file there. A loopback TCP port can be taken by any local user's program while the server is stopped, and that program would then receive the token; a web page in a browser on the machine can also send requests to a loopback port.
+
+**Rejected.** A loopback TCP port.
+
+**Cost.** On Windows, `elm-server` and the `elm server` commands need Windows 10 version 1803 or Windows Server 2019, or later. The path of the data folder has a limit on its length ([Data folder](../reference/server-configuration.md#data-folder)). As with a loopback port, the `elm server` commands run only on the server's machine.
+
 ## HTTPS and JSON, not gRPC
 
 **Choice.** Clients and servers talk JSON over HTTPS under `/v1/`, with errors in RFC 9457 problem form.
@@ -168,7 +178,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 
 **Rejected.** Targeting .NET 8 as well: its support ends in November 2026, and NativeAOT support in .NET 10 is further along. Writing parts in another language, such as a client or a key library in Rust: a server that loads a library written in another language cannot be a single binary, and every string and buffer that crosses the boundary needs agreed rules for termination and freeing. Native callers get `libelasticlm` instead, which is .NET code published as a NativeAOT shared library. SQLite as a separate library beside `elm-service`: that breaks the single binary.
 
-**Cost.** The Linux builds need glibc 2.28 or later, and the macOS builds macOS 12.0 or later. The executables and `libelasticlm` carry no Authenticode or Developer ID signature in v1 (the `osx-arm64` files carry only the ad-hoc signature that the linker adds); you check them with the published `SHA256SUMS` and the build provenance attestations instead.
+**Cost.** The Linux builds need glibc 2.28 or later, and the macOS builds macOS 12.0 or later. On Windows, `elm-server` and the `elm server` commands need Windows 10 version 1803 or Windows Server 2019, or later, because of [the socket file of the administration API](#the-administration-api-of-elm-server-listens-on-a-socket-file-not-a-port). The executables and `libelasticlm` carry no Authenticode or Developer ID signature in v1 (the `osx-arm64` files carry only the ad-hoc signature that the linker adds); you check them with the published `SHA256SUMS` and the build provenance attestations instead.
 
 ## Cryptography from the base class library only
 
