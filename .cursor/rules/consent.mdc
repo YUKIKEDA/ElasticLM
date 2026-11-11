@@ -24,6 +24,8 @@ Count the questions after writing them. A report that says how many questions fo
 
 A reason that names a kind ("no text of this kind is left", "it is fixed because users reach it from the documentation") is checked by listing every member of that kind before the question goes to the owner, and the question names them all. In V1c6 question 2 gave as the advantage of its recommended option that no text a tool shows would keep a design reference, while three failure messages of `eng/release/Test-Publish.ps1` kept one; question 1 named two files that the user documentation links to, and `CONTRIBUTING.md` is linked the same way. The second design review found both (R1, R2), and the owner was asked two more questions (PR #307).
 
+An option whose text changes after the question went out is a new question: say what changed, and ask again. In PR #315 a review's suggestion was added to option A in the PR body after the owner had answered; the answer on record was to the earlier text, and who decided the added part had to be written down afterwards.
+
 Before recommending a design, search `docs/design-decisions.md` for a rejection of the same shape, and say how the recommendation differs from it.
 
 Before recommending where an operation lives (an API of a component, a command, a service), check that the place runs at the first moment the operation is needed. In M4c3 the recommendation put the server license's activation in the server's local API, but the server does not start without a license, so the first activation could not run there; the answer had to go back to the owner (PR #79).
