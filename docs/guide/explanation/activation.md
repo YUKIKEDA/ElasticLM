@@ -23,7 +23,7 @@ A vendor sells a license with a limit, for example "this customer may use the pr
 - A **feature** is a part of a product that a license can grant on its own, also named by a `code`. An app checks for a feature by that code.
 - A **policy** is a set of rules for licenses of one product: what kind of license it is, how many devices may use it, how long a license file lasts, how it is bound to a device, and whether its seats float. One product usually has a few policies, for example "standard, one device", "site, ten devices", and "trial".
 - A **license** is what a customer bought. It follows one policy and lists the features it grants, each with an optional version range and expiry. It has a name (for example the customer's), an optional expiry, an optional `maxActivations` that overrides the policy's, and optional `meta` values that are copied into the token. The service has no customer records of its own; the billing system keeps the link between its customer and the license ID.
-- An **activation** is one device that holds the license, named by its installation key's thumbprint. Floating seats are lent as leases instead (see [Floating licenses](floating-licenses.md)).
+- An **activation** is one device that holds the license, named by its installation key's [thumbprint](devices-and-proofs.md#the-installation-key). Floating seats are lent as leases instead (see [Floating licenses](floating-licenses.md)).
 
 ### The license key
 

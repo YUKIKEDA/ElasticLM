@@ -44,7 +44,7 @@ license ID: old-key-license
 token ID: FAKEjti000000000000002
 ```
 
-The warning is about revoking the license: once the file is delivered, revoking its license in the service cannot stop it, since the file never expires. Revoking the key that signed it does, as below.
+The warning says that this file cannot be revoked on its own. The service has no record of a file issued by hand, so there is nothing to revoke there, and without an expiry the file never stops being valid. Revoking the key that signed it stops it in every app and server whose trust store lists the key as revoked, as below.
 
 ## Find the key ID
 

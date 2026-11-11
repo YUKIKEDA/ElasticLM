@@ -22,7 +22,7 @@ The examples use the values of the tutorial: the product `acme-cad`, its feature
 elm admin request GET /v1/admin/products --url http://127.0.0.1:8080
 ```
 
-In the outputs below, the IDs, the license key, the thumbprints, the fingerprints, and the times are fake. On your machine they are different every time.
+In the outputs below, the IDs, the license key, the [thumbprints](../explanation/devices-and-proofs.md#the-installation-key), the fingerprints, and the times are fake. On your machine they are different every time.
 
 ## Prepare a device to deactivate
 

@@ -22,7 +22,7 @@ sidebar_position: 4
 elm admin request GET /v1/admin/products --url http://127.0.0.1:8080
 ```
 
-下の出力にある ID、ライセンスキー、サムプリント、フィンガープリント、日時は架空の値だ。手元のマシンでは毎回違う値になる。
+下の出力にある ID、ライセンスキー、[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)、フィンガープリント、日時は架空の値だ。手元のマシンでは毎回違う値になる。
 
 ## 解除するデバイスを準備する
 

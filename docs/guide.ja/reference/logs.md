@@ -72,7 +72,7 @@ info: elm-server[2]
 
 | プログラム | 項目 |
 | --- | --- |
-| `elm-server` | `license`（サーバーライセンスのファイル）と `key`（ここでは、サムプリントではなく、JWK で表したサーバーの公開鍵）。サーバーはインストール鍵で署名する。 |
+| `elm-server` | `license`（サーバーライセンスのファイル）と `key`（ここでは、[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)ではなく、JWK で表したサーバーの公開鍵）。サーバーはインストール鍵で署名する。 |
 | `elm-service` | `node`（ノード名）と `certificates`（サービスのログ用の署名鍵の鍵証明書。`elm-cert+jws` を 1〜4 個）。 |
 
 `auth` トークンのペイロードは次のとおり。

@@ -98,7 +98,7 @@ sidebar_position: 10
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
 | `elm_installation_open` | エラー番号 | 製品についてのこのインストールの鍵を開くか、`create` が `1` で鍵がなければ作り、マシンフィンガープリントを読む。0 で埋めた `elm_installation_options` のように `create` が `0` なら、鍵がないと `ELM_INSTALLATION_KEY_UNREADABLE` になる。OS の ID を読めないときは、フィンガープリントの一覧が空になり、フィンガープリントを持つライセンスは `ELM_FINGERPRINT_UNAVAILABLE` で失敗する。 |
-| `elm_installation_thumbprint` | `const char*`。`NULL` には `NULL` | インストール鍵のサムプリント。 |
+| `elm_installation_thumbprint` | `const char*`。`NULL` には `NULL` | インストール鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)。 |
 | `elm_verifier_create` | エラー番号 | ベンダーのルート鍵、失効した鍵 ID、時刻巻き戻し対策から検証器を作る。インストールは、呼び出しの直後に解放してよい。 |
 | `elm_verifier_verify` | エラー番号 | `elm_requirement` に照らしてライセンスファイルを検証し、新しい `elm_license` を返す。65,536 バイトより大きいファイルは `ELM_MALFORMED` になる。ライブラリはファイルの中身を何も保持しない。 |
 
