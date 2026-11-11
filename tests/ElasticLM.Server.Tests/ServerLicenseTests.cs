@@ -617,10 +617,116 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Equal((1, "error: ?:"), (status302, statusError.Trim()));
     }
 
-    // Runs elm against a listener on a loopback port that reads one request and answers it with the given bytes. The
-    // listener stops after the run, so a command that never calls fails on its assertions instead of waiting.
-    private static async Task<(int Code, string Out, string Error)> RunAgainstAsync(TestService test, string answer, Func<string, string[]> command)
+    /// <summary>
+    /// Something that listens at the administration URL and gives no whole answer in time does not count as "no server
+    /// runs": the commands stop with a network error.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a data folder that holds a stopped server's installation key and administrator
+    ///   token (the helper also leaves a server running, which this test does not use); a listener on a loopback port that
+    ///   reads one request and then either answers with a body cut short and closes, or keeps the connection open
+    ///   without answering.
+    ///
+    /// Steps:
+    /// - With that folder and the listener as the administration URL: run elm server deactivate-proof against the listener
+    ///   that cuts its answer short; run it against the listener that keeps the connection open and moves the clock 30
+    ///   seconds on once it has read the request; activate with elm server against such a listener; run deactivate-proof,
+    ///   and then refresh, against a listener that answers 200 with an HTML body.
+    ///
+    /// Expected:
+    /// - deactivate-proof exits 3 with the one line "error: The server's administration API gave no whole answer.", then
+    ///   with the one line "error: The server's administration API did not answer in time."; it writes no file. The activation exits 3 with "error: The server's administration API did not
+    ///   answer in time. The license file is written; the server did not confirm a reload." and names the written file on
+    ///   standard output. Against the HTML body, deactivate-proof exits 3 with "error: The server's administration API
+    ///   answered with a body that is not JSON." and writes no file, and the refresh exits 3 with that line followed by "The
+    ///   license file is written; the server did not confirm a reload.".
+    /// </remarks>
+    [Fact]
+    public async Task ServerCommands_ListenerWithoutAWholeAnswer_StopWithANetworkError()
     {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        (_, string other) = await RunningServerAndAnotherFolderAsync(test);
+        string made = Path.Combine(other, "made.file");
+        string license = Path.Combine(other, "server.elmlic");
+
+        // The wait of the commands, to the second: a longer wait would not end at this move of the clock.
+        TimeSpan wait = TimeSpan.FromSeconds(30);
+
+        // The answer ends inside its body. A connection closed before any byte of the answer is tried again by the HTTP
+        // client on a new connection, which this listener never accepts, so that case ends as the next one does.
+        (int code, _, string error) = await RunAgainstAsync(
+            test,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{",
+            url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url]
+        );
+
+        Assert.Equal((3, "error: The server's administration API gave no whole answer."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, _, error) = await RunAgainstAsync(
+            test,
+            null,
+            url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url],
+            wait
+        );
+
+        Assert.Equal((3, "error: The server's administration API did not answer in time."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, string output, error) = await RunAgainstAsync(
+            test,
+            null,
+            url => ["server", "activate", key, .. Common(other), "--service", service.Url.ToString(), "--license", license, "--url", url],
+            wait
+        );
+
+        Assert.Equal(
+            (
+                3,
+                "error: The server's administration API did not answer in time. The license file is written; the server did not confirm a "
+                    + "reload."
+            ),
+            (code, error.Trim())
+        );
+        Assert.Contains(license, output, StringComparison.Ordinal);
+
+        // A success with a body that is not JSON: the answer cannot be read.
+        const string Page = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\nConnection: close\r\n\r\n<html></html>";
+        (code, _, error) = await RunAgainstAsync(test, Page, url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url]);
+
+        Assert.Equal((3, "error: The server's administration API answered with a body that is not JSON."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, output, error) = await RunAgainstAsync(
+            test,
+            Page,
+            url => ["server", "refresh", .. Common(other), "--service", service.Url.ToString(), "--license", license, "--url", url]
+        );
+
+        Assert.Equal(
+            (
+                3,
+                "error: The server's administration API answered with a body that is not JSON. The license file is written; the server did "
+                    + "not confirm a reload."
+            ),
+            (code, error.Trim())
+        );
+        Assert.Contains(license, output, StringComparison.Ordinal);
+    }
+
+    // Runs elm against a listener on a loopback port that reads one request and answers it with the given bytes, after
+    // which the connection closes. With no answer (null), the listener moves the test's clock on by the given time and
+    // keeps the connection open until the command has ended. The listener stops after the run, so a command that never
+    // calls fails on its assertions instead of waiting.
+    private static async Task<(int Code, string Out, string Error)> RunAgainstAsync(
+        TestService test,
+        string? answer,
+        Func<string, string[]> command,
+        TimeSpan? clockAdvance = null
+    )
+    {
+        var ended = new TaskCompletionSource();
         using var listener = new TcpListener(IPAddress.Loopback, 0);
         listener.Start();
         int port = ((IPEndPoint)listener.LocalEndpoint).Port;
@@ -643,7 +749,20 @@ public sealed class ServerLicenseTests : IAsyncDisposable
                     received.AddRange(buffer.AsSpan(0, read));
                 }
 
-                await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(answer));
+                if (answer is not null)
+                {
+                    await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(answer));
+                    return true;
+                }
+
+                // The command counts its wait on the test's clock. A command that does not give up at that time gets an
+                // answer after ten seconds of the real clock, so that the test fails on its assertions and does not hang.
+                test.Time.Advance(clockAdvance ?? TimeSpan.Zero);
+                if (await Task.WhenAny(ended.Task, Task.Delay(TimeSpan.FromSeconds(10))) != ended.Task)
+                {
+                    await stream.WriteAsync("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray());
+                }
+
                 return true;
             }
             catch (Exception e) when (e is SocketException or ObjectDisposedException or IOException)
@@ -652,10 +771,19 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             }
         });
 
-        (int Code, string Out, string Error) result = Run(test, command($"http://127.0.0.1:{port}/"));
-        listener.Stop();
-        Assert.True(await answered, "The command did not call the administration API.");
-        return result;
+        try
+        {
+            (int Code, string Out, string Error) result = Run(test, command($"http://127.0.0.1:{port}/"));
+            ended.SetResult();
+            listener.Stop();
+            Assert.True(await answered, "The command did not call the administration API.");
+            return result;
+        }
+        finally
+        {
+            ended.TrySetResult();
+            listener.Stop();
+        }
     }
 
     // A loopback port where nothing listens: a listener takes it and stops.

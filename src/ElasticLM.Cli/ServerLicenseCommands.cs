@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Licensing;
@@ -15,6 +16,8 @@ namespace ElasticLM.Cli;
 internal static class ServerLicenseCommands
 {
     private const int MaxAnswerBytes = 256 * 1024;
+
+    // How long a call to the server's local administration API waits for the whole answer.
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
     public static void Add(Command server, CliHost host)
@@ -363,7 +366,20 @@ internal static class ServerLicenseCommands
     // design §13.7: a running server reads the new file; one that is not running reads it when it starts.
     private static int Reload(CliHost host, Common common, ParseResult parse, string tokenId)
     {
-        if (Send(common, parse, HttpMethod.Post, "admin/v1/license/reload") is not (HttpStatusCode status, JsonElement answer))
+        const string Written = "The license file is written; the server did not confirm a reload.";
+        (HttpStatusCode Status, JsonElement Answer)? sent;
+        try
+        {
+            sent = Send(host, common, parse, HttpMethod.Post, "admin/v1/license/reload");
+        }
+        catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
+        {
+            // Something listens at --url and gave no answer that can be read: the file is written all the same.
+            host.Error.WriteLine($"error: {e.Message} {Written}");
+            return ExitCodes.NetworkError;
+        }
+
+        if (sent is not (HttpStatusCode status, JsonElement answer))
         {
             host.Out.WriteLine("The server is not running; it reads the license when it starts.");
             return ExitCodes.Success;
@@ -379,7 +395,7 @@ internal static class ServerLicenseCommands
 
         if (!IsSuccess(status) || Text(answer, "licenseToken") is not string loaded)
         {
-            host.Error.WriteLine($"error: {Unexpected(status, answer)} The license file is written; the server did not confirm a reload.");
+            host.Error.WriteLine($"error: {Unexpected(status, answer)} {Written}");
             return ExitCodes.VerificationFailed;
         }
 
@@ -403,12 +419,12 @@ internal static class ServerLicenseCommands
     }
 
     // Whether the running server refreshes its license on its own (the status's autoRefresh), or null when no server runs
-    // (no administrator token that can be read, nothing answers). An answer that is not a status (a wrong token, another
-    // program on the port) does not show that no server runs, so the command stops: going on would skip the checks that a
-    // running server calls for (R8, R9).
+    // (no administrator token that can be read, or nothing listens at --url). An answer that is not a status (a wrong
+    // token, another program on the port), and no answer from something that listens, do not show that no server runs, so
+    // the command stops: going on would skip the checks that a running server calls for (R8, R9).
     private static bool? Status(CliHost host, Common common, ParseResult parse)
     {
-        if (Send(common, parse, HttpMethod.Get, "admin/v1/status") is not (HttpStatusCode status, JsonElement answer))
+        if (Send(host, common, parse, HttpMethod.Get, "admin/v1/status") is not (HttpStatusCode status, JsonElement answer))
         {
             return null;
         }
@@ -429,8 +445,10 @@ internal static class ServerLicenseCommands
     private static string Unexpected(HttpStatusCode status, JsonElement answer) =>
         Text(answer, "code") is string code ? $"{code}: {Text(answer, "detail")}" : $"The server's administration API answered {(int)status}.";
 
-    // One call to the local administration API; null when the server does not run.
-    private static (HttpStatusCode Status, JsonElement Answer)? Send(Common common, ParseResult parse, HttpMethod method, string path)
+    // One call to the local administration API; null when the server does not run: the folder has no administrator token
+    // that can be read, or the connection to --url is refused. When something listens there and gives no whole answer in
+    // time, the call stops with a network error: a server that is slow or stopping still runs.
+    private static (HttpStatusCode Status, JsonElement Answer)? Send(CliHost host, Common common, ParseResult parse, HttpMethod method, string path)
     {
         string folder = Folder(parse, common);
         string? token = AdminToken.Read(folder);
@@ -447,12 +465,18 @@ internal static class ServerLicenseCommands
 
         // No redirects: the answer of another address is not the answer of the server at --url, and --url is checked to be
         // a loopback address.
-        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = baseUri, Timeout = RequestTimeout };
+        // The wait is counted on the host's clock, not on the HTTP client's own timer.
+        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+        {
+            BaseAddress = baseUri,
+            Timeout = Timeout.InfiniteTimeSpan,
+        };
+        using var waited = new CancellationTokenSource(RequestTimeout, host.Time);
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         try
         {
-            using HttpResponseMessage response = http.Send(request);
+            using HttpResponseMessage response = http.Send(request, waited.Token);
             using var reader = new StreamReader(response.Content.ReadAsStream());
             string body = reader.ReadToEnd();
             try
@@ -466,9 +490,18 @@ internal static class ServerLicenseCommands
                 return (response.StatusCode, default);
             }
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (HttpRequestException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused })
         {
             return null;
+        }
+        catch (HttpRequestException)
+        {
+            // Every other failure to get an HTTP answer: something took the connection, so a server may run there.
+            throw new CliException("The server's administration API gave no whole answer.", ExitCodes.NetworkError);
+        }
+        catch (OperationCanceledException)
+        {
+            throw new CliException("The server's administration API did not answer in time.", ExitCodes.NetworkError);
         }
         catch (JsonException)
         {

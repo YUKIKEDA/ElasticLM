@@ -322,9 +322,9 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 
 `--license` が、フォルダーを指定したほうのサーバーの設定 `license` であれば、そのサーバーは、次に起動するとき、またはそのサーバー自身の `--url` を付けた `elm server reload` のときに、書かれたファイルを読む。
 
-`deactivate`、`deactivate-proof`、`activate-request`、`refresh-request` は、最初に同じ API にサーバーの状態を問い合わせる。フォルダーに読める管理者トークンがないとき、または `--url` から 30 秒以内に HTTP のレスポンスが返らないとき（何も待ち受けていない、または接続が失敗する）は、サーバーは実行中でないとみなす。読み直しのリクエストでも同じだ。状態ではないレスポンスが返ると、これらのコマンドは `error: <code>: <reason>` で止まる。コードのないレスポンスなら `error: The server's administration API answered <status>.` で止まる。どちらの場合も何も書かず、終了コードは 1 だ。止めたサーバーのフォルダーには、管理者トークンが残る。別のサーバーが既定の `--url` で待ち受けているあいだは、これらのコマンドには、何も応答しない `--url` を指定する必要がある。止めたサーバー自身の `admin.listen` がその例だ。
+`deactivate`、`deactivate-proof`、`activate-request`、`refresh-request` は、最初に同じ API にサーバーの状態を問い合わせる。フォルダーに読める管理者トークンがないとき、または `--url` への接続が拒否されたとき（何も待ち受けていない）は、サーバーは実行中でないとみなす。読み直しのリクエストでも同じだ。何かが待ち受けていて、30 秒以内にレスポンスが最後まで返らないときは、これらのコマンドは `error: The server's administration API did not answer in time.` か `error: The server's administration API gave no whole answer.` で止まり、何も書かず、終了コードは 3 だ。ファイルを書いたあとの読み直しのリクエストは、同じ行に続けて `The license file is written; the server did not confirm a reload.` を出し、終了コード 3 で終わる。状態ではないレスポンスが返ると、これらのコマンドは `error: <code>: <reason>` で止まる。コードのないレスポンスなら `error: The server's administration API answered <status>.` で止まる。どちらの場合も何も書かず、終了コードは 1 だ。止めたサーバーのフォルダーには、管理者トークンが残る。別のサーバーが既定の `--url` で待ち受けているあいだは、これらのコマンドには、何も待ち受けていない `--url` を指定する必要がある。止めたサーバー自身の `admin.listen` がその例だ。
 
-成功のレスポンスの本文が JSON でないときは、読み直しのリクエストも状態の問い合わせも、`error: The server's administration API answered with a body that is not JSON.` と終了コード 3 で止まる。
+成功のレスポンスの本文が JSON でないときは、状態の問い合わせは `error: The server's administration API answered with a body that is not JSON.` と終了コード 3 で止まる。読み直しのリクエストは、その行に `The license file is written; the server did not confirm a reload.` を付ける。
 
 ### elm server activate
 
