@@ -238,7 +238,7 @@ Every member is present, the defaults included. What each setting decides is in 
 | `refreshWindow` | number | Seconds before a file's expiry from which the app refreshes it. |
 | `gracePeriod` | number | Seconds an app keeps working after the file's expiry. |
 | `fingerprintMatching` | string | `ignore`, `any`, or `all`. |
-| `cloneStrategy` | string | `deny` or `flag`. |
+| `cloneStrategy` | string | `deny` or `flag`: what the service does when it detects a copy of an activated installation ([Clone detection with the sequence number](../explanation/activation.md#clone-detection-with-the-sequence-number)). In a policy with `licenseKind` `server`, the activated installation is an `elm-server`, and the value also becomes the `clone` claim of the server license: what that server does when a copied app installation renews the same lease ([Retries and clones](../explanation/floating-licenses.md#retries-and-clones)). In a policy with `floating` `cloud`, it is also what the service does with such a lease. |
 | `floating` | string | `none`, `onPremises`, or `cloud`. |
 | `leaseDuration` | number | Seconds one lease lasts. |
 | `overage` | number or `null` | Percent of seats that may be lent above the licensed seats; `null` for none. |
@@ -811,7 +811,7 @@ Permission: `policy.write`.
 | `refreshWindow` | number | No | Seconds: 0 to 3,162,240,000, and less than `tokenLifetime`. Default 1,728,000 (20 days). |
 | `gracePeriod` | number | No | Seconds: 0 to 3,162,240,000. Default 604,800 (7 days). |
 | `fingerprintMatching` | string | No | `ignore`, `any` (default), or `all`. |
-| `cloneStrategy` | string | No | `deny` (default) or `flag`. |
+| `cloneStrategy` | string | No | `deny` (default) or `flag`; see `cloneStrategy` of the [policy](#policy). |
 | `floating` | string | No | `none` (default), `onPremises`, or `cloud`. |
 | `leaseDuration` | number | No | Seconds: 120 to 86,400. Default 600. |
 | `overage` | number or `null` | No | Percent: 0 to 1,000. Default `null`: none. |

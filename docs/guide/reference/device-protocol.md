@@ -637,7 +637,7 @@ The codes of a result:
 
 | Code | When |
 | --- | --- |
-| `ELM_OK` | The lease is held again, or it was already held with the same `seq`, or a clone was recorded under the server license's `cloneStrategy` `flag`. |
+| `ELM_OK` | The lease is held again, or it was already held with the same `seq`, or a clone was recorded under the server license's `clone` `flag`. |
 | `ELM_MALFORMED` | The token cannot be read. |
 | `ELM_BAD_SIGNATURE` | The token is not signed by this server's key. |
 | `ELM_LEASE_OUT_OF_BOUNDS` | The token does not fit the current server license: another license ID, a feature or seat count it does not have, too long, or lasting past the server license's expiry plus its grace period. |
@@ -647,7 +647,7 @@ The codes of a result:
 | `ELM_EXPIRED` | The token has expired. |
 | `ELM_BORROW_NOT_ALLOWED` | The token is a borrow; borrows come back from the borrow record. |
 | `ELM_NO_SEATS` | No seats are free for it. |
-| `ELM_CLONE_DETECTED` | The lease is stopped, or the server holds it with another `seq` under `cloneStrategy` `deny`; it is stopped until it expires. |
+| `ELM_CLONE_DETECTED` | The lease is stopped, or the server holds it with another `seq` under the server license's `clone` `deny`; it is stopped until it expires. |
 
 Errors of the request itself: only the common ones (a body with more than 64 tokens, or a `null` token, gets `400` with `ELM_MALFORMED`).
 
@@ -682,7 +682,7 @@ The new token lasts the server license's lease period, cut as on acquire.
 | `403` | `ELM_EXPIRED` | The server license's expiry plus its grace period has passed. |
 | `403` | `ELM_FEATURE_NOT_LICENSED`, `ELM_FEATURE_EXPIRED` | The server license no longer grants the feature, or the feature has expired. |
 | `409` | `ELM_NO_SEATS` | The server license now allows fewer seats than are held. |
-| `409` | `ELM_CLONE_DETECTED` | A wrong `seq` under the server license's `cloneStrategy` `deny`; the lease is stopped until it expires. |
+| `409` | `ELM_CLONE_DETECTED` | A wrong `seq` under the server license's `clone` `deny`; the lease is stopped until it expires. |
 | `403` | `ELM_EXPIRED` | Less than one second would be left before the server license's expiry plus its grace period. |
 
 ### `DELETE /v1/leases/{id}` on `elm-server`

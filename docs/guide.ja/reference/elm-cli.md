@@ -170,7 +170,7 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | `--lease-minutes` | 数値（小数も可） | `10` | いいえ | サーバーライセンスのみ。リースの期間（分） |
 | `--borrow-days` | 数値（小数も可） | `0` | いいえ | サーバーライセンスのみ。借用の上限（日）。`0` なら借用を許さない |
 | `--overage` | 整数（0 から 1000） | `0` | いいえ | サーバーライセンスのみ。超過を許すパーセント |
-| `--clone` | `deny`、`flag` | `deny` | いいえ | サーバーライセンスのみ。検出したクローンを拒否するか、印を付けるか |
+| `--clone` | `deny`、`flag` | `deny` | いいえ | サーバーライセンスのみ。コピーされたアプリのインストールが、コピー元と同じリースを更新したときに `elm-server` がすること。`deny` なら両方のコピーのリースを止め、`flag` ならクローンを利用ログに記録して通常どおりリースを更新する（[再試行とクローン](../explanation/floating-licenses.md#再試行とクローン)） |
 | `--borrow-returns` | 整数（0 から 1000） | `2` | いいえ | サーバーライセンスのみ。1 つのインストールが 30 日間に借用を早期返却できる回数 |
 | `--meta` | `key=value` | — | いいえ | ベンダーのメタデータ。複数を指定するときは繰り返す |
 | `--out` | ファイルのパス | — | はい | 書き出すライセンスファイル |
@@ -312,7 +312,19 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 | `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
 | `--url` | ループバックアドレスの `http` の URL | `http://127.0.0.1:7071` | いいえ | サーバーの管理 API |
 
-新しいライセンスファイルを書いたとき、サーバーが実行中なら、コマンドはサーバーにファイルを読み直させる。サーバーが止まっていれば、サーバーは起動するときにファイルを読む。
+新しいライセンスファイルを書いたとき、サーバーが実行中なら、コマンドはサーバーの[ローカルの管理 API](administration-api.md#elm-server-のローカルの管理-api) にファイルの読み直しを求める。サーバーが止まっていれば、サーバーは起動するときにファイルを読む。下のどの場合も、ファイルは書かれていて、エラーは標準エラー出力の 1 行で、終了コードは 1 だ。
+
+| 読み直しのリクエストへのレスポンス | コマンドが出す行 |
+| --- | --- |
+| サーバーが新しいファイルを読んで、それを拒否した（`409`。コードは [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload) のもの） | `error: the server kept its license: <code>: <reason>` |
+| コードのあるほかのエラー。リクエストそのものが拒否され、サーバーはファイルを読んでおらず、それまでのライセンスを使い続けている。`ELM_UNAUTHORIZED` は、`--data` か `--product` が、`--url` のサーバーとは別のサーバーのフォルダーを指しているということだ | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` |
+| 読み直しのレスポンスではなく、エラーコードもないレスポンス。そのポートで待ち受ける別のプログラムが返すようなレスポンスだ | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` |
+
+`--license` が、フォルダーを指定したほうのサーバーの設定 `license` であれば、そのサーバーは、次に起動するとき、またはそのサーバー自身の `--url` を付けた `elm server reload` のときに、書かれたファイルを読む。
+
+`deactivate`、`deactivate-proof`、`activate-request`、`refresh-request` は、最初に同じ API にサーバーの状態を問い合わせる。フォルダーに読める管理者トークンがないとき、または `--url` への接続が拒否されたとき（何も待ち受けていない）は、サーバーは実行中でないとみなす。読み直しのリクエストでも同じだ。何かが待ち受けていて、30 秒以内にレスポンスが最後まで返らないときは、これらのコマンドは `error: The server's administration API did not answer in time.` か `error: The server's administration API gave no whole answer.` で止まり、何も書かず、終了コードは 3 だ。ファイルを書いたあとの読み直しのリクエストは、同じ行に続けて `The license file is written; the server did not confirm a reload.` を出し、終了コード 3 で終わる。状態ではないレスポンスが返ると、これらのコマンドは `error: <code>: <reason>` で止まる。コードのないレスポンスなら `error: The server's administration API answered <status>.` で止まる。どちらの場合も何も書かず、終了コードは 1 だ。止めたサーバーのフォルダーには、管理者トークンが残る。別のサーバーが既定の `--url` で待ち受けているあいだは、これらのコマンドには、何も待ち受けていない `--url` を指定する必要がある。止めたサーバー自身の `admin.listen` がその例だ。
+
+成功のレスポンスの本文が JSON でないときは、状態の問い合わせは `error: The server's administration API answered with a body that is not JSON.` と終了コード 3 で止まる。読み直しのリクエストは、その行に `The license file is written; the server did not confirm a reload.` を付ける。
 
 ### elm server activate
 

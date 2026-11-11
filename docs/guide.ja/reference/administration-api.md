@@ -238,7 +238,7 @@ sidebar_position: 6
 | `refreshWindow` | 数値 | ファイルの有効期限の何秒前から、アプリがトークンの更新をするか。 |
 | `gracePeriod` | 数値 | ファイルの有効期限が切れたあと、アプリが動き続ける秒数。 |
 | `fingerprintMatching` | 文字列 | `ignore`、`any`、`all` のいずれか。 |
-| `cloneStrategy` | 文字列 | `deny` か `flag`。 |
+| `cloneStrategy` | 文字列 | `deny` か `flag`。アクティベーション済みのインストールのコピーを検出したときに、サービスがすること（[シーケンス番号によるクローン検出](../explanation/activation.md#シーケンス番号によるクローン検出)）。`licenseKind` が `server` のポリシーでは、アクティベーション済みのインストールは `elm-server` で、この値はサーバーライセンスの `clone` クレームにもなる。つまり、コピーされたアプリのインストールが同じリースを更新したときに、そのサーバーがすることだ（[再試行とクローン](../explanation/floating-licenses.md#再試行とクローン)）。`floating` が `cloud` のポリシーでは、そうしたリースに対してサービスがすることでもある。 |
 | `floating` | 文字列 | `none`、`onPremises`、`cloud` のいずれか。 |
 | `leaseDuration` | 数値 | 1 つのリースが続く秒数。 |
 | `overage` | 数値または `null` | 購入したシート数を超えて貸し出せるシートの割合（パーセント）。`null` なら超えて貸し出さない。 |
@@ -811,7 +811,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `refreshWindow` | 数値 | いいえ | 秒数。0 から 3,162,240,000 で、`tokenLifetime` より小さい値。既定は 1,728,000（20 日）。 |
 | `gracePeriod` | 数値 | いいえ | 秒数。0 から 3,162,240,000。既定は 604,800（7 日）。 |
 | `fingerprintMatching` | 文字列 | いいえ | `ignore`、`any`（既定）、`all` のいずれか。 |
-| `cloneStrategy` | 文字列 | いいえ | `deny`（既定）か `flag`。 |
+| `cloneStrategy` | 文字列 | いいえ | `deny`（既定）か `flag`。[ポリシー](#ポリシー)の `cloneStrategy` を参照。 |
 | `floating` | 文字列 | いいえ | `none`（既定）、`onPremises`、`cloud` のいずれか。 |
 | `leaseDuration` | 数値 | いいえ | 秒数。120 から 86,400。既定は 600。 |
 | `overage` | 数値または `null` | いいえ | パーセント。0 から 1,000。既定は `null` で、超えて貸し出さない。 |

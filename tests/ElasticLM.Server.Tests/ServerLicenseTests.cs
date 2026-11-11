@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using ElasticLM.Cli;
 using ElasticLM.Client;
@@ -111,10 +112,14 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Equal((1, "error: Stop elm-server before deactivating its license."), (code, error.Trim()));
         await server.DisposeAsync();
 
-        // A file put there by hand is not the activation's, so it stays (design §13.7).
+        // A file put there by hand is not the activation's, so it stays (design §13.7). The stopped server's own address is
+        // named, where nothing listens now: at the default one, another server of this machine could answer.
         string hand = Path.Combine(folder, "hand.elmlic");
         File.WriteAllText(hand, "{}");
-        (code, output, error) = Run(test, ["server", "deactivate", .. Common(folder), "--service", service.Url.ToString(), "--license", hand]);
+        (code, output, error) = Run(
+            test,
+            ["server", "deactivate", .. Common(folder), "--service", service.Url.ToString(), "--license", hand, "--url", server.AdminUrl.ToString()]
+        );
         Assert.True(code == 0, error);
         Assert.True(File.Exists(hand));
         Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
@@ -167,7 +172,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         string proof = Path.Combine(folder, "p.elmdeact");
         Assert.Equal(1, Run(test, ["server", "deactivate-proof", .. Common(folder), "--out", proof, "--url", admin]).Code);
         await server.DisposeAsync();
-        Assert.Equal(0, Run(test, ["server", "deactivate-proof", .. Common(folder), "--out", proof, "--license", license]).Code);
+        Assert.Equal(0, Run(test, ["server", "deactivate-proof", .. Common(folder), "--out", proof, "--license", license, "--url", admin]).Code);
         Assert.False(File.Exists(license));
         using (var http = new HttpClient { BaseAddress = service.Url })
         {
@@ -404,6 +409,417 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Contains(license, output, StringComparison.Ordinal);
         Assert.Equal("lic-hand", server.Engine.Server.License.LicenseId);
         Assert.NotEqual(hand, File.ReadAllBytes(license));
+    }
+
+    /// <summary>
+    /// An answer of the administration API that is not the server's status does not count as "no server runs": the
+    /// commands that a running server restricts stop with that answer.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a running server with a license issued by hand; a second data folder that holds
+    ///   the administrator token of another server, which ran there and has stopped.
+    ///
+    /// Steps:
+    /// - With the second folder and the running server's administration URL, run elm server deactivate, deactivate-proof,
+    ///   activate-request, and refresh-request.
+    ///
+    /// Expected:
+    /// - Each exits 1 with the one line "error: ELM_UNAUTHORIZED: The administrator token is missing or wrong." on standard
+    ///   error. The two request commands and deactivate-proof write no file, and deactivate leaves the license file.
+    /// </remarks>
+    [Fact]
+    public async Task ServerCommands_AnotherServersToken_StopWithTheApisAnswer()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        (ElmServer server, string other) = await RunningServerAndAnotherFolderAsync(test);
+        string url = server.AdminUrl.ToString();
+        string made = Path.Combine(other, "made.file");
+        string[][] commands =
+        [
+            [
+                "server",
+                "deactivate",
+                .. Common(other),
+                "--service",
+                service.Url.ToString(),
+                "--license",
+                Path.Combine(other, "server.elmlic"),
+                "--url",
+                url,
+            ],
+            ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url],
+            ["server", "activate-request", "--key", key, .. Common(other), "--out", made, "--url", url],
+            ["server", "refresh-request", .. Common(other), "--out", made, "--url", url],
+        ];
+
+        foreach (string[] command in commands)
+        {
+            (int code, _, string error) = Run(test, command);
+
+            Assert.Equal((1, "error: ELM_UNAUTHORIZED: The administrator token is missing or wrong."), (code, error.Trim()));
+            if (command[1] == "deactivate")
+            {
+                Assert.True(File.Exists(Path.Combine(other, "server.elmlic")));
+            }
+            else
+            {
+                Assert.False(File.Exists(made), command[1]);
+            }
+        }
+    }
+
+    /// <summary>
+    /// When the administration API refuses the caller after elm server activate, refresh, or import wrote the file, the
+    /// command prints that answer, not that the server kept its license: the server said nothing about the file.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a running server with a license issued by hand; a second data folder with its
+    ///   own installation key and the administrator token of another server, which ran there and has stopped.
+    ///
+    /// Steps:
+    /// - For the second folder, writing to that folder's license path and naming the running server's administration URL:
+    ///   activate with elm server; refresh; make a refresh request against a port where nothing listens, process it, and
+    ///   import the answer.
+    ///
+    /// Expected:
+    /// - Each of the three exits 1 with the one line "error: ELM_UNAUTHORIZED: The administrator token is missing or wrong.
+    ///   The license file is written; the server did not confirm a reload." on standard error, names the written file on
+    ///   standard output, and leaves a file that differs from the one before; the first replaces the hand
+    ///   license.
+    /// </remarks>
+    [Fact]
+    public async Task ActivateRefreshImport_AdministrationApiRefusesTheCaller_PrintItsAnswer()
+    {
+        const string Line =
+            "error: ELM_UNAUTHORIZED: The administrator token is missing or wrong. The license file is written; the server did not "
+            + "confirm a reload.";
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        (ElmServer server, string other) = await RunningServerAndAnotherFolderAsync(test);
+        string license = Path.Combine(other, "server.elmlic");
+        string request = Path.Combine(other, "refresh.elmreq");
+        string[] tail = [.. Common(other), "--license", license, "--url", server.AdminUrl.ToString()];
+        byte[] before = File.ReadAllBytes(license);
+
+        (int Code, string Out, string Error) activated = Run(test, ["server", "activate", key, "--service", service.Url.ToString(), .. tail]);
+        byte[] first = File.ReadAllBytes(license);
+        (int Code, string Out, string Error) refreshed = Run(test, ["server", "refresh", "--service", service.Url.ToString(), .. tail]);
+        byte[] second = File.ReadAllBytes(license);
+        (int made, _, string makeError) = Run(
+            test,
+            ["server", "refresh-request", .. Common(other), "--out", request, "--url", $"http://127.0.0.1:{ClosedPort()}/"]
+        );
+        Assert.True(made == 0, makeError);
+        (int Code, string Out, string Error) imported = Run(test, ["server", "import", await ProcessAsync(service, request), .. tail]);
+        byte[] third = File.ReadAllBytes(license);
+
+        foreach ((int code, string output, string error) in new[] { activated, refreshed, imported })
+        {
+            Assert.Equal((1, Line), (code, error.Trim()));
+            Assert.Contains(license, output, StringComparison.Ordinal);
+        }
+
+        Assert.NotEqual(before, first);
+        Assert.NotEqual(first, second);
+        Assert.NotEqual(second, third);
+    }
+
+    /// <summary>
+    /// An answer of the administration port that is not the server's, as another program on that port gives, stops the
+    /// command with the status code; after a written file, the line also says that the file is written.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a data folder that holds a stopped server's installation key and administrator
+    ///   token (the helper also leaves a server running, which this test does not use); a listener on a loopback port that
+    ///   answers one request with a given answer.
+    ///
+    /// Steps:
+    /// - With that folder and the listener as the administration URL: run elm server deactivate-proof against 404 with no
+    ///   body, against 502 with an HTML body, against 200 with an empty JSON object, against 302 to a port where nothing
+    ///   listens, against 200 with a JSON array, and against 500 with a body that holds autoRefresh and licenseToken; then
+    ///   activate with elm server against the 404, refresh against the 500, and run elm server status against the 302.
+    ///
+    /// Expected:
+    /// - deactivate-proof exits 1 each time with the one line "error: The server's administration API answered 404." (502,
+    ///   200, 302, 200, 500) and writes no file. The activation and the refresh exit 1 with "error: The server's administration API
+    ///   answered 404. The license file is written; the server did not confirm a reload." (500) and name the written file
+    ///   on standard output.
+    ///   elm server status exits 1 with "error: ?:", the form of that command for an answer without a code.
+    /// </remarks>
+    [Fact]
+    public async Task ServerCommands_AnswerThatIsNotTheServers_StopWithTheStatusCode()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        (_, string other) = await RunningServerAndAnotherFolderAsync(test);
+        string made = Path.Combine(other, "made.file");
+        string license = Path.Combine(other, "server.elmlic");
+
+        // The last answer: followed, the redirect would end at a port where nothing listens, and the command would take the
+        // server as not running.
+        (string Answer, int Status)[] answers =
+        [
+            ("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", 404),
+            ("HTTP/1.1 502 Bad Gateway\r\nContent-Type: text/html\r\nContent-Length: 13\r\nConnection: close\r\n\r\n<html></html>", 502),
+            ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}", 200),
+            ($"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:{ClosedPort()}/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n", 302),
+            ("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\nConnection: close\r\n\r\n[]", 200),
+            (
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: 40\r\nConnection: close\r\n\r\n"
+                    + "{\"autoRefresh\":false,\"licenseToken\":\"x\"}",
+                500
+            ),
+        ];
+
+        foreach ((string answer, int status) in answers)
+        {
+            (int code, _, string error) = await RunAgainstAsync(
+                test,
+                answer,
+                url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url]
+            );
+
+            Assert.Equal((1, $"error: The server's administration API answered {status}."), (code, error.Trim()));
+            Assert.False(File.Exists(made));
+        }
+
+        // The folder is activated once; the second file comes from a refresh, which asks for the reload the same way.
+        string[] first = ["server", "activate", key];
+        string[] second = ["server", "refresh"];
+        foreach ((string[] head, (string answer, int status)) in new[] { (first, answers[0]), (second, answers[5]) })
+        {
+            (int activated, string output, string activateError) = await RunAgainstAsync(
+                test,
+                answer,
+                url => [.. head, .. Common(other), "--service", service.Url.ToString(), "--license", license, "--url", url]
+            );
+
+            Assert.Equal(
+                (
+                    1,
+                    $"error: The server's administration API answered {status}. The license file is written; the server did not confirm a "
+                        + "reload."
+                ),
+                (activated, activateError.Trim())
+            );
+            Assert.Contains(license, output, StringComparison.Ordinal);
+        }
+
+        // elm server status and its sibling commands do not follow the redirect either: followed, it would end in "The
+        // server cannot be reached" and exit code 3.
+        (int status302, _, string statusError) = await RunAgainstAsync(
+            test,
+            answers[3].Answer,
+            url => ["server", "status", .. Common(other), "--url", url]
+        );
+
+        Assert.Equal((1, "error: ?:"), (status302, statusError.Trim()));
+    }
+
+    /// <summary>
+    /// Something that listens at the administration URL and gives no whole answer in time does not count as "no server
+    /// runs": the commands stop with a network error.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a data folder that holds a stopped server's installation key and administrator
+    ///   token (the helper also leaves a server running, which this test does not use); a listener on a loopback port that
+    ///   reads one request and then either answers with a body cut short and closes, or keeps the connection open
+    ///   without answering.
+    ///
+    /// Steps:
+    /// - With that folder and the listener as the administration URL: run elm server deactivate-proof against the listener
+    ///   that cuts its answer short; run it against the listener that keeps the connection open and moves the clock 30
+    ///   seconds on once it has read the request; activate with elm server against such a listener; run deactivate-proof,
+    ///   and then refresh, against a listener that answers 200 with an HTML body.
+    ///
+    /// Expected:
+    /// - deactivate-proof exits 3 with the one line "error: The server's administration API gave no whole answer.", then
+    ///   with the one line "error: The server's administration API did not answer in time."; it writes no file. The activation exits 3 with "error: The server's administration API did not
+    ///   answer in time. The license file is written; the server did not confirm a reload." and names the written file on
+    ///   standard output. Against the HTML body, deactivate-proof exits 3 with "error: The server's administration API
+    ///   answered with a body that is not JSON." and writes no file, and the refresh exits 3 with that line followed by "The
+    ///   license file is written; the server did not confirm a reload.".
+    /// </remarks>
+    [Fact]
+    public async Task ServerCommands_ListenerWithoutAWholeAnswer_StopWithANetworkError()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        (_, string other) = await RunningServerAndAnotherFolderAsync(test);
+        string made = Path.Combine(other, "made.file");
+        string license = Path.Combine(other, "server.elmlic");
+
+        // The wait of the commands, to the second: a longer wait would not end at this move of the clock.
+        TimeSpan wait = TimeSpan.FromSeconds(30);
+
+        // The answer ends inside its body. A connection closed before any byte of the answer is tried again by the HTTP
+        // client on a new connection, which this listener never accepts, so that case ends as the next one does.
+        (int code, _, string error) = await RunAgainstAsync(
+            test,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 40\r\n\r\n{",
+            url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url]
+        );
+
+        Assert.Equal((3, "error: The server's administration API gave no whole answer."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, _, error) = await RunAgainstAsync(
+            test,
+            null,
+            url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url],
+            wait
+        );
+
+        Assert.Equal((3, "error: The server's administration API did not answer in time."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, string output, error) = await RunAgainstAsync(
+            test,
+            null,
+            url => ["server", "activate", key, .. Common(other), "--service", service.Url.ToString(), "--license", license, "--url", url],
+            wait
+        );
+
+        Assert.Equal(
+            (
+                3,
+                "error: The server's administration API did not answer in time. The license file is written; the server did not confirm a "
+                    + "reload."
+            ),
+            (code, error.Trim())
+        );
+        Assert.Contains(license, output, StringComparison.Ordinal);
+
+        // A success with a body that is not JSON: the answer cannot be read.
+        const string Page = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: 13\r\nConnection: close\r\n\r\n<html></html>";
+        (code, _, error) = await RunAgainstAsync(test, Page, url => ["server", "deactivate-proof", .. Common(other), "--out", made, "--url", url]);
+
+        Assert.Equal((3, "error: The server's administration API answered with a body that is not JSON."), (code, error.Trim()));
+        Assert.False(File.Exists(made));
+
+        (code, output, error) = await RunAgainstAsync(
+            test,
+            Page,
+            url => ["server", "refresh", .. Common(other), "--service", service.Url.ToString(), "--license", license, "--url", url]
+        );
+
+        Assert.Equal(
+            (
+                3,
+                "error: The server's administration API answered with a body that is not JSON. The license file is written; the server did "
+                    + "not confirm a reload."
+            ),
+            (code, error.Trim())
+        );
+        Assert.Contains(license, output, StringComparison.Ordinal);
+    }
+
+    // Runs elm against a listener on a loopback port that reads one request and answers it with the given bytes, after
+    // which the connection closes. With no answer (null), the listener moves the test's clock on by the given time and
+    // keeps the connection open until the command has ended. The listener stops after the run, so a command that never
+    // calls fails on its assertions instead of waiting.
+    private static async Task<(int Code, string Out, string Error)> RunAgainstAsync(
+        TestService test,
+        string? answer,
+        Func<string, string[]> command,
+        TimeSpan? clockAdvance = null
+    )
+    {
+        var ended = new TaskCompletionSource();
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        Task<bool> answered = Task.Run(async () =>
+        {
+            try
+            {
+                using TcpClient client = await listener.AcceptTcpClientAsync();
+                NetworkStream stream = client.GetStream();
+                var received = new List<byte>();
+                var buffer = new byte[4096];
+                while (!System.Text.Encoding.ASCII.GetString([.. received]).Contains("\r\n\r\n", StringComparison.Ordinal))
+                {
+                    int read = await stream.ReadAsync(buffer);
+                    if (read == 0)
+                    {
+                        return false;
+                    }
+
+                    received.AddRange(buffer.AsSpan(0, read));
+                }
+
+                if (answer is not null)
+                {
+                    await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(answer));
+                    return true;
+                }
+
+                // The command counts its wait on the test's clock. A command that does not give up at that time gets an
+                // answer after ten seconds of the real clock, so that the test fails on its assertions and does not hang.
+                test.Time.Advance(clockAdvance ?? TimeSpan.Zero);
+                if (await Task.WhenAny(ended.Task, Task.Delay(TimeSpan.FromSeconds(10))) != ended.Task)
+                {
+                    await stream.WriteAsync("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"u8.ToArray());
+                }
+
+                return true;
+            }
+            catch (Exception e) when (e is SocketException or ObjectDisposedException or IOException)
+            {
+                return false;
+            }
+        });
+
+        try
+        {
+            (int Code, string Out, string Error) result = Run(test, command($"http://127.0.0.1:{port}/"));
+            ended.SetResult();
+            listener.Stop();
+            Assert.True(await answered, "The command did not call the administration API.");
+            return result;
+        }
+        finally
+        {
+            ended.TrySetResult();
+            listener.Stop();
+        }
+    }
+
+    // A loopback port where nothing listens: a listener takes it and stops.
+    private static int ClosedPort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        int port = ((IPEndPoint)listener.LocalEndpoint).Port;
+        listener.Stop();
+        return port;
+    }
+
+    // A running server, and the data folder of a second server that ran with a hand license and has stopped: the folder
+    // holds that server's installation key, license, and administrator token.
+    private async Task<(ElmServer Running, string OtherFolder)> RunningServerAndAnotherFolderAsync(TestService test)
+    {
+        var folders = new string[2];
+        ElmServer? running = null;
+        for (int i = 0; i < folders.Length; i++)
+        {
+            folders[i] = _deployment.NewFolder(i == 0 ? "server" : "other");
+            ServerSettings settings = Settings(test, folders[i]);
+            await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+            File.WriteAllBytes(Path.Combine(folders[i], "server.elmlic"), HandLicense(test, Deployment.ServerKeyId(folders[i])));
+            ElmServer server = await StartAsync(test, settings);
+            if (i == 0)
+            {
+                running = server;
+            }
+            else
+            {
+                await server.DisposeAsync();
+            }
+        }
+
+        return (running!, folders[1]);
     }
 
     // A clock that a test sets forward and back; FakeTimeProvider refuses to go back.
