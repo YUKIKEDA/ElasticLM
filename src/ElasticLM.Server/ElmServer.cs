@@ -10,9 +10,11 @@ using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Connections.Features;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -42,7 +44,7 @@ internal sealed class ServerHostOptions
 /// <summary>
 /// The on-premises license server (design §13): it starts as §13.1 says, serves the nonce, the server license, and the
 /// lease protocol (§12.7, §13.4), writes the usage log and the borrow record (§13.4, §18.1), and answers the local
-/// administration API on a loopback address (§13.7).
+/// administration API on a socket file in its data folder (§13.7).
 /// </summary>
 internal sealed partial class ElmServer : IAsyncDisposable
 {
@@ -62,6 +64,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan SealInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SyncInterval = TimeSpan.FromHours(1);
+
+    // design §13.7 (V1d2): the mark of a connection that came in on the listener this server bound to admin.sock. Only the
+    // connection middleware of that listener puts it into a connection's items, so a listener added through configuration
+    // (Kestrel:Endpoints) has none.
+    private static readonly object AdminListener = new();
 
     private readonly WebApplication _app;
     private readonly ServerSettings _settings;
@@ -83,12 +90,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private readonly Lock _reloadLock = new();
     private readonly FileClockGuard _guard;
     private readonly System.Security.Cryptography.ECDsa _guardKey;
+    private readonly FileStream _lock;
     private byte[] _licenseFile;
     private ITimer? _cleanup;
     private ITimer? _seal;
     private ITimer? _sync;
     private IReadOnlyList<Uri> _publicUrls;
-    private Uri? _adminUrl;
     private bool _stopped;
     private bool _disposed;
 
@@ -119,6 +126,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _log = parts.Log;
         _guard = parts.Guard;
         _guardKey = parts.GuardKey;
+        _lock = parts.Lock;
+        AdminSocketPath = parts.AdminSocketPath;
     }
 
     /// <summary>
@@ -157,8 +166,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <summary>Gets the URLs clients use; proofs name one of them (design §12.1).</summary>
     public IReadOnlyList<Uri> PublicUrls => _publicUrls;
 
-    /// <summary>Gets the URL of the local administration API.</summary>
-    public Uri AdminUrl => _adminUrl!;
+    /// <summary>Gets the absolute path of the socket file on which the local administration API listens (design §13.7).</summary>
+    public string AdminSocketPath { get; }
 
     /// <summary>Gets the installation key thumbprint, which is the server license's <c>cnf.jkt</c>.</summary>
     public string KeyId => Engine.Server.KeyId;
@@ -175,19 +184,28 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private SigningKeyAccess KeyAccess => use => _key.WithPrivateKey(use);
 
     /// <summary>
-    /// Starts the server as design §13.1 says: settings, installation key, trust store, server license, the borrow record,
-    /// TLS, the usage log, then listening with the reclaim window open.
+    /// Starts the server as design §13.1 says: settings and the length of the administration socket's path, trust store,
+    /// installation key, the lock file and a socket file that is left, server license, the borrow record, a new administrator
+    /// token, TLS, the usage log, then listening with the reclaim window open.
     /// </summary>
-    /// <exception cref="ServerStartException">The server cannot start, including when it cannot listen on <c>listen</c> or
-    /// <c>admin.listen</c>; the message says why.</exception>
+    /// <exception cref="ServerStartException">The server cannot start, including when another server runs on the data
+    /// folder and when it cannot listen on <c>listen</c> or on the administration socket; the message says why.</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
         ArgumentNullException.ThrowIfNull(host);
         long started = host.Time.GetTimestamp();
         CheckPaths(settings);
-        TrustStore trust = ReadTrust(settings, host.Environment);
         var store = new InstallationKeyStore(settings.Product, KeyScope.Machine, settings.DataDirectory);
+
+        // design §13.1 step 1 (V1d2): before the data folder and the key are made, so a path that is too long leaves nothing.
+        string adminSocketPath = AdminSocket.PathIn(store.Directory);
+        if (!AdminSocket.TryCreateEndPoint(adminSocketPath, out UnixDomainSocketEndPoint? adminEndPoint, out string? tooLong))
+        {
+            throw new ServerStartException(tooLong);
+        }
+
+        TrustStore trust = ReadTrust(settings, host.Environment);
         if (!store.TryLoadOrCreate(out InstallationKey? key, out LicenseError? keyError))
         {
             throw new ServerStartException(keyError!.Message);
@@ -200,6 +218,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
         var disposables = new List<IDisposable> { key!, guardKey };
         try
         {
+            // design §13.1 step 3 (V1d2): the lock comes before everything that writes to the data folder or removes from it,
+            // so a start that does not get it changes nothing.
+            FileStream serverLock = OpenLock(store.Directory);
+            disposables.Add(serverLock);
+            await RemoveLeftSocketAsync(store.Directory, adminSocketPath, adminEndPoint, cancellationToken).ConfigureAwait(false);
             if (settings.ServiceUrl is not null)
             {
                 EnsureWritable(settings.LicensePath);
@@ -230,8 +253,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
             disposables.Add(identity!);
             BorrowJournal journal = Journal(() => BorrowJournal.Load(store.Directory, trust, identity!, host.SetAsideBrokenRecords, host.Time));
             disposables.Add(journal);
+
+            // design §13.1 step 6 (V1d2): a new token at every start, so one that leaked is void from the next start on.
             string adminToken =
-                AdminToken.LoadOrCreate(store.Directory)
+                await AdminToken.CreateAsync(store.Directory, host.Time, cancellationToken).ConfigureAwait(false)
                 ?? throw new ServerStartException($"The administrator token in '{store.Directory}' cannot be created or read.");
             IReadOnlyList<Uri> publicUrls =
                 settings.PublicUrls.Count > 0 ? settings.PublicUrls : DefaultPublicUrls(settings.Listen, settings.Listen.Port);
@@ -240,7 +265,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 : new TlsServerCertificate(TlsCertificates.SelfSigned(key, publicUrls, host.Time), []);
             disposables.Add(certificate);
 
-            WebApplication app = Build(settings, certificate, host);
+            WebApplication app = Build(settings, certificate, host, adminSocketPath);
 
             // design §13.1 (V1c9, R2): a failed start disposes the host too, which writes out the console log before Program
             // prints the last line.
@@ -304,7 +329,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     host.Time,
                     log,
                     guard,
-                    guardKey
+                    guardKey,
+                    serverLock,
+                    adminSocketPath
                 )
             );
             server.Map();
@@ -318,7 +345,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 // release/10.0); other socket errors, such as an address this machine does not have, stay SocketException
                 // (Socket.Bind to 192.0.2.1: SocketError.AddressNotAvailable on Windows 11 with .NET 10 and on Ubuntu 22.04
                 // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, V1c9).
-                throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {settings.AdminListen}: {e.Message}");
+                // Kestrel has closed the socket listener by then, which removes admin.sock (design §13.7).
+                throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {adminSocketPath}: {e.Message}");
             }
 
             server.AfterStart(host.Time.GetElapsedTime(started));
@@ -367,13 +395,22 @@ internal sealed partial class ElmServer : IAsyncDisposable
             await _sync.DisposeAsync().ConfigureAwait(false);
         }
 
-        await _app.StopAsync().ConfigureAwait(false);
-        int leases = Engine.LeaseCount;
-        _usage.WriteDenials();
-        _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
-        ServerLog.Stopped(_log, leases);
-        _usage.Dispose();
-        _journal.Dispose();
+        try
+        {
+            await _app.StopAsync().ConfigureAwait(false);
+            int leases = Engine.LeaseCount;
+            _usage.WriteDenials();
+            _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
+            ServerLog.Stopped(_log, leases);
+            _usage.Dispose();
+            _journal.Dispose();
+        }
+        finally
+        {
+            // design §13.7: the lock is released last, also when the stop throws, and its file stays; the next start locks
+            // the same file.
+            _lock.Dispose();
+        }
     }
 
     public async ValueTask DisposeAsync()
@@ -552,7 +589,73 @@ internal sealed partial class ElmServer : IAsyncDisposable
         RefuseBlank(settings.TlsKey, "tls.key");
     }
 
-    // design §13.1 step 3, first half: reads the server license file. A file that is missing, too large, or unreadable is
+    // design §13.1 step 3 and §13.7 (V1d2): one server on a data folder. The file is held open, shared with nobody, until the
+    // server stops, and the OS releases it when the process is killed. It has no content and is never deleted: on Linux and
+    // macOS a new file would be a new lock beside the one a running server still holds.
+    private static FileStream OpenLock(string directory)
+    {
+        string path = Path.Combine(directory, "server.lock");
+        try
+        {
+            return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        }
+        catch (IOException e) when (IsHeldByAnother(e))
+        {
+            throw new ServerStartException($"Another elm-server is running on the data folder '{directory}': it holds the lock file '{path}'.");
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            throw new ServerStartException($"The lock file '{path}' cannot be opened: {e.Message}");
+        }
+    }
+
+    // Whether opening the lock file failed because another handle holds it. On Windows that is the sharing violation,
+    // ERROR_SHARING_VIOLATION as an HRESULT (measured on Windows 11 with .NET 10.0.14). On Linux and macOS .NET takes the
+    // lock with flock and throws only for EWOULDBLOCK (SafeFileHandle.Unix.cs lines 351 to 362, dotnet/runtime
+    // release/10.0), as an IOException whose HResult is the raw errno (Interop.IOErrors.cs lines 149 to 152): EWOULDBLOCK
+    // is EAGAIN, 11 on Linux and 35 on macOS (errno.h of each; not run here).
+    private static bool IsHeldByAnother(IOException e) =>
+        OperatingSystem.IsWindows() ? e.HResult == unchecked((int)0x80070020) : e.HResult == (OperatingSystem.IsMacOS() ? 35 : 11);
+
+    // design §13.7 (V1d2, Q4 and question D): the second guard, for where the file lock does not hold. A socket file that is
+    // left is tried with a connection that sends nothing: no request and no token go to a peer that is not verified. Only a
+    // file whose connection is refused, as a killed server leaves it, is deleted; Kestrel does not delete it before it binds.
+    private static async Task RemoveLeftSocketAsync(
+        string directory,
+        string path,
+        UnixDomainSocketEndPoint endPoint,
+        CancellationToken cancellationToken
+    )
+    {
+        if (!Path.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            using var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+            try
+            {
+                await socket.ConnectAsync(endPoint, cancellationToken).ConfigureAwait(false);
+            }
+            catch (SocketException e) when (e.SocketErrorCode == SocketError.ConnectionRefused)
+            {
+                File.Delete(path);
+                return;
+            }
+        }
+        catch (Exception e) when (e is SocketException or IOException or UnauthorizedAccessException)
+        {
+            throw new ServerStartException($"The administration socket '{path}' cannot be used: {e.Message}");
+        }
+
+        throw new ServerStartException(
+            $"Another elm-server is running on the data folder '{directory}': its administration socket '{path}' accepts connections."
+        );
+    }
+
+    // design §13.1 step 4, first half: reads the server license file. A file that is missing, too large, or unreadable is
     // not the verifier's refusal, and the start shows its message without an error code (design §20.7, V1c6 Q5).
     private static (byte[]? File, LicenseError? Error) TryReadLicense(
         ServerSettings settings,
@@ -585,7 +688,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         }
     }
 
-    // design §13.1 step 3, second half: the server license must verify for this installation; at the start a failure stops
+    // design §13.1 step 4, second half: the server license must verify for this installation; at the start a failure stops
     // the server, at a reload it keeps the old license. The message holds no code; each caller shows the code once (design
     // §20.7, V1c6 Q5).
     private static (VerifiedLicense? License, LicenseError? Error) TryVerifyLicense(
@@ -620,7 +723,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         return [new UriBuilder(listen) { Port = port, Path = "/" }.Uri];
     }
 
-    private static WebApplication Build(ServerSettings settings, TlsServerCertificate certificate, ServerHostOptions host)
+    private static WebApplication Build(ServerSettings settings, TlsServerCertificate certificate, ServerHostOptions host, string adminSocketPath)
     {
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
@@ -639,6 +742,21 @@ internal sealed partial class ElmServer : IAsyncDisposable
             // what is far larger.
             kestrel.Limits.MaxRequestBodySize = 1024 * 1024;
 
+            // design §13.7 (V1d2): the administration API listens on the socket file only, http without TLS, and its listener
+            // marks each connection it accepts. It is added first, so Kestrel, which binds in this order, has bound it when
+            // listen fails.
+            kestrel.ListenUnixSocket(
+                adminSocketPath,
+                options =>
+                    options.Use(next =>
+                        connection =>
+                        {
+                            connection.Features.GetRequiredFeature<IConnectionItemsFeature>().Items[AdminListener] = AdminListener;
+                            return next(connection);
+                        }
+                    )
+            );
+
             // ServerSettings.Load checks the hosts already; settings built in code are checked here.
             // design §13.5 (V1c12): the intermediates of the operator's file go with the certificate. Kestrel builds the chain
             // from them, and on Windows .NET puts them in the CA store, from which SChannel sends them.
@@ -652,7 +770,6 @@ internal sealed partial class ElmServer : IAsyncDisposable
                         https.ServerCertificateChain = certificate.Intermediates;
                     })
             );
-            kestrel.Listen(ServerSettings.ListenAddress(settings.AdminListen), settings.AdminListen.Port);
         });
         return builder.Build();
     }
@@ -736,10 +853,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
         IServerAddressesFeature? addresses = _app
             .Services.GetRequiredService<Microsoft.AspNetCore.Hosting.Server.IServer>()
             .Features.Get<IServerAddressesFeature>();
-        Uri[] bound = [.. addresses?.Addresses.Select(a => new Uri(a)) ?? []];
-        int port = bound.FirstOrDefault(u => u.Scheme == Uri.UriSchemeHttps)?.Port ?? _settings.Listen.Port;
-        int adminPort = bound.FirstOrDefault(u => u.Scheme == Uri.UriSchemeHttp)?.Port ?? _settings.AdminListen.Port;
-        _adminUrl = new UriBuilder(_settings.AdminListen) { Port = adminPort }.Uri;
+
+        // The address of the administration socket is "http://unix:" and the file's path, which is no URI on Windows
+        // (UriFormatException for "http://unix:C:\…" on Windows 11 with .NET 10.0.15), so only the https address is read.
+        string? bound = addresses?.Addresses.FirstOrDefault(a => a.StartsWith("https://", StringComparison.Ordinal));
+        int port = bound is null ? _settings.Listen.Port : new Uri(bound).Port;
         if (_settings.PublicUrls.Count == 0)
         {
             _publicUrls = DefaultPublicUrls(_settings.Listen, port);
@@ -808,12 +926,16 @@ internal sealed partial class ElmServer : IAsyncDisposable
         MapAdmin();
     }
 
-    // The administration API answers only on its loopback http listener, and the lease protocol only on the https one. The
-    // IP rules and the rate limit come before any other work of the lease protocol (design §13.8, T16).
+    // The administration API answers only requests that came in on the listener this server bound to admin.sock, and the
+    // lease protocol only on the https one (design §13.7). A request is not taken for an administration request because it
+    // came without TLS: a listener added through configuration has no TLS either. The IP rules and the rate limit come
+    // before any other work of the lease protocol (design §13.8, T16).
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
-        bool adminPath = context.Request.Path.StartsWithSegments("/admin", StringComparison.Ordinal);
-        if (!context.Request.IsHttps)
+        // Routing matches a path without regard to case, so the guard does too: "/Admin/v1/status" is an administration
+        // route as well.
+        bool adminPath = context.Request.Path.StartsWithSegments("/admin", StringComparison.OrdinalIgnoreCase);
+        if (context.Features.Get<IConnectionItemsFeature>()?.Items.ContainsKey(AdminListener) == true)
         {
             if (!adminPath)
             {
@@ -825,7 +947,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
-        if (adminPath)
+        if (adminPath || !context.Request.IsHttps)
         {
             context.Response.StatusCode = StatusCodes.Status404NotFound;
             return;
@@ -1183,6 +1305,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
         TimeProvider Time,
         ILogger Log,
         FileClockGuard Guard,
-        System.Security.Cryptography.ECDsa GuardKey
+        System.Security.Cryptography.ECDsa GuardKey,
+        FileStream Lock,
+        string AdminSocketPath
     );
 }

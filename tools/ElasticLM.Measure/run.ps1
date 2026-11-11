@@ -46,7 +46,17 @@ $ErrorActionPreference = 'Stop'
 $Bin = (Resolve-Path $Bin).Path
 $Out = [IO.Path]::GetFullPath($Out)
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
-$work = Join-Path ([IO.Path]::GetTempPath()) ('elm-measure-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6)))
+# design §20.7 (the V1d2 Grill): the work folder is elm-<8 hex digits> and elm-server's data folder in it has a name of two
+# characters, so that the path of the server's administration socket (admin.sock in the data folder, design §13.7) stays
+# within the system's limit: 103 bytes on macOS, 107 on Windows and Linux.
+$work = Join-Path ([IO.Path]::GetTempPath()) ('elm-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(4)).ToLowerInvariant())
+$serverData = Join-Path $work 'sd'
+$socketPath = Join-Path $serverData 'admin.sock'
+$socketBytes = [Text.Encoding]::UTF8.GetByteCount($socketPath)
+$socketLimit = $IsMacOS ? 103 : 107
+if ($socketBytes -gt $socketLimit) {
+    throw "The socket file of the measured elm-server would be '$socketPath': $socketBytes bytes in UTF-8, and this system allows $socketLimit. Run the measurement with a shorter temporary folder."
+}
 New-Item -ItemType Directory $work | Out-Null
 $exe = $IsWindows ? '.exe' : ''
 $library = $IsWindows ? 'elasticlm.dll' : 'libelasticlm.so'
@@ -178,15 +188,12 @@ try {
     $leaseMinutes = $Small ? '0.25' : '10'
     $seats = $Small ? 20 : 10000
     $serverUrl = "https://127.0.0.1:$(Get-FreePort)"
-    $adminUrl = "http://127.0.0.1:$(Get-FreePort)"
-    $serverData = Join-Path $work 'server-data'
     $serverSettings = Write-Settings 'server.json' ([ordered]@{
             product = 'acme-cad'
             listen = $serverUrl
             license = (Join-Path $work 'server.elmlic')
             dataDirectory = $serverData
             trust = @{ rootKeys = @($rootKey) }
-            admin = @{ listen = $adminUrl }
             # design §20.7: the loopback load is one source; the limit is raised to its upper bound for the measurement only.
             rateLimit = @{ perIp = 10000 }
         })
@@ -220,7 +227,7 @@ try {
         $leaseJson = Join-Path $work 'leases.json'
         $load = $Small ? @('--keys', '5', '--per-key', '4', '--acquire-rate', '2.5', '--renew-seconds', '8', '--cycles', '2') : @('--keys', '100', '--per-key', '100', '--acquire-rate', '50', '--renew-seconds', '200', '--cycles', '2')
         Invoke-Load (@('leases', '--url', $serverUrl, '--trust', $rootKey, '--work', (Join-Path $work 'lease-keys'), '--out', $leaseJson) + $load)
-        $status = (& $elm server status --json --url $adminUrl --data $serverData) | ConvertFrom-Json
+        $status = (& $elm server status --json --data $serverData) | ConvertFrom-Json
         if ($IsLinux) {
             $group = (& systemctl show -p ControlGroup --value elm-measure-server.scope).Trim()
             $serverPid = @(Get-Content "/sys/fs/cgroup$group/cgroup.procs")[0].Trim()

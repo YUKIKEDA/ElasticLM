@@ -42,7 +42,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     public async Task Borrow_IsKeptForUseWithoutTheServer()
     {
         ElmServer server = await StartOpenServerAsync();
-        string data = _deployment.NewFolder("client");
+        string data = _deployment.NewFolder();
         LicenseClient first = _deployment.Client(server.PublicUrls[0], data);
         Lease borrowed = Acquired(await first.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
         Assert.True(borrowed.IsBorrow);
@@ -108,11 +108,11 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task Borrow_SurvivesARestartWithItsReturnLimit()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         _deployment.WriteServerLicense(serverData, s => s with { BorrowReturnLimit = 1 });
         ElmServer before = await StartOpenServerAsync(serverData);
         int port = before.PublicUrls[0].Port;
-        string data = _deployment.NewFolder("client");
+        string data = _deployment.NewFolder();
         LicenseClient first = _deployment.Client(before.PublicUrls[0], data);
         Lease returned = Acquired(await first.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
         Assert.Null(await first.ReleaseLeaseAsync(returned, TestContext.Current.CancellationToken));
@@ -147,7 +147,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task Restart_ReclaimsLeasesButNotBorrows()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(serverData);
         int port = before.PublicUrls[0].Port;
         LicenseClient client = _deployment.Client(before.PublicUrls[0]);
@@ -180,10 +180,10 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task RestoredBorrow_CanBeReturnedEarly()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(serverData);
         int port = before.PublicUrls[0].Port;
-        string data = _deployment.NewFolder("client");
+        string data = _deployment.NewFolder();
         LicenseClient first = _deployment.Client(before.PublicUrls[0], data);
         Acquired(await first.BorrowLeaseAsync("pro", Day, count: 2, cancellationToken: TestContext.Current.CancellationToken));
         await first.DisposeAsync();
@@ -216,7 +216,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task BrokenRecord_StopsTheStartUnlessSetAside()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(serverData);
         Acquired(
             await _deployment.Client(before.PublicUrls[0]).BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken)
@@ -241,8 +241,51 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// The administration API answers only with the administrator token, only on its loopback http listener, records every
-    /// authorized operation in the usage log, and counts the unauthorized requests on one line.
+    /// The guard takes a path for an administration path without regard to case, as routing does: on the TLS listener
+    /// "/Admin/…" and "/ADMIN/…" are not served even with the right token, and nothing is recorded for them; on the socket a
+    /// lease path in another case is not served either (design §13.7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server and its administrator token.
+    ///
+    /// Steps:
+    /// - On the https listener, with the token: GET Admin/v1/status and ADMIN/v1/status. On the socket, with the token:
+    ///   GET V1/nonce, then GET Admin/v1/status. Stop the server and verify the usage log.
+    ///
+    /// Expected:
+    /// - 404 for the two requests on the https listener and for V1/nonce on the socket; 200 for Admin/v1/status on the
+    ///   socket, which routing matches.
+    /// - The usage log is intact, holds one admin.action line (the socket's status) and no admin.denied line: the guard's
+    ///   404 records nothing.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_PathInAnotherCase_IsServedOnTheSocketOnly()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using HttpClient admin = Deployment.AdminHttp(server);
+
+        using (HttpClient https = Deployment.RawHttp(server.PublicUrls[0]))
+        {
+            https.DefaultRequestHeaders.Authorization = admin.DefaultRequestHeaders.Authorization;
+            Assert.Equal(HttpStatusCode.NotFound, (await https.GetAsync("Admin/v1/status", cancel)).StatusCode);
+            Assert.Equal(HttpStatusCode.NotFound, (await https.GetAsync("ADMIN/v1/status", cancel)).StatusCode);
+        }
+
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("V1/nonce", cancel)).StatusCode);
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("Admin/v1/status", cancel)).StatusCode);
+
+        await server.DisposeAsync();
+        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        Assert.True(usage.Intact);
+        Assert.Single(usage.Entries, e => e.Type == "admin.action");
+        Assert.DoesNotContain(usage.Entries, e => e.Type == "admin.denied");
+    }
+
+    /// <summary>
+    /// The administration API answers only with the administrator token, only on the listener of its socket file, records
+    /// every authorized operation in the usage log, and counts the unauthorized requests on one line (design §13.7).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -250,12 +293,12 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///
     /// Steps:
     /// - Get the status without a token and with a wrong one; get the status, the leases; force-release an unknown lease and
-    ///   the lease; seal the log; ask the https listener for /admin/v1/status and the admin listener for /v1/nonce; stop and
-    ///   verify the usage log.
+    ///   the lease; seal the log; ask the https listener for /admin/v1/status with the right token, and the socket for the
+    ///   lease paths /v1/nonce and /v1/server/license; stop and verify the usage log.
     ///
     /// Expected:
     /// - 401 ELM_UNAUTHORIZED twice; the status shows the license and 1 seat in use; the lease list has the lease; 404
-    ///   ELM_UNKNOWN_LEASE, then 204 and no seat in use; 204; 404 on both wrong listeners; the usage log is intact, has an
+    ///   ELM_UNKNOWN_LEASE, then 204 and no seat in use; 204; 404 for each path on the wrong listener; the usage log is intact, has an
     ///   admin.action line for each authorized operation, and one admin.denied line with count 2.
     /// </remarks>
     [Fact]
@@ -293,10 +336,12 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
         using (HttpClient https = Deployment.RawHttp(server.PublicUrls[0]))
         {
+            https.DefaultRequestHeaders.Authorization = admin.DefaultRequestHeaders.Authorization;
             Assert.Equal(HttpStatusCode.NotFound, (await https.GetAsync("admin/v1/status", cancel)).StatusCode);
         }
 
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("v1/nonce", cancel)).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("v1/server/license", cancel)).StatusCode);
 
         await server.DisposeAsync();
         LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
@@ -336,7 +381,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task Reload_ReplacesTheLicenseOfThisServerOnly()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer server = await StartOpenServerAsync(serverData);
         Lease lease = Acquired(
             await _deployment.Client(server.PublicUrls[0]).AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
@@ -357,7 +402,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         _deployment.Time.Advance(TimeSpan.FromSeconds(200));
         await Deployment.WaitUntilAsync(() => lease.Token.ServerLicenseTokenId == newToken);
 
-        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder("elsewhere"));
+        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder());
         _deployment.WriteServerLicense(serverData, s => s with { InstallationKeyThumbprint = otherKey });
         using (HttpResponseMessage refused = await admin.PostAsync("admin/v1/license/reload", null, cancel))
         {
@@ -395,7 +440,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task BorrowRecord_LinesOfAnotherShape_AreSkipped()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         await (await StartOpenServerAsync(serverData)).DisposeAsync();
         using (ServerRecord record = ServerRecord.Open(serverData, _deployment.Time))
         {
@@ -477,7 +522,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task BorrowRecord_UnsignedReturn_IsDropped()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer server = await StartOpenServerAsync(serverData);
         Lease borrow = Acquired(
             await _deployment.Client(server.PublicUrls[0]).BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken)
@@ -511,9 +556,9 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task BorrowRecord_OfAnotherServer_StopsTheStart()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         _deployment.WriteServerLicense(serverData);
-        string otherData = _deployment.NewFolder("other");
+        string otherData = _deployment.NewFolder();
         _deployment.WriteServerLicense(otherData, s => s with { LicenseId = "lic-other" });
         using (ServerRecord record = ServerRecord.Open(otherData, _deployment.Time, serverData))
         {
@@ -541,7 +586,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task BorrowRecord_OfThisKeyUnderANewLicense_IsRead()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(serverData);
         Acquired(
             await _deployment.Client(before.PublicUrls[0]).BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken)
@@ -572,7 +617,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [InlineData("{\"type\":\"chain.st")]
     public async Task EmptyRecord_IsABrokenRecord(string content)
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         await (await StartOpenServerAsync(serverData)).DisposeAsync();
         File.WriteAllText(Path.Combine(serverData, "borrows-29991231T000000000Z.jsonl"), content);
 
@@ -601,7 +646,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     [Fact]
     public async Task UsageLog_NamesReleasesAndOverage()
     {
-        string serverData = _deployment.NewFolder("server");
+        string serverData = _deployment.NewFolder();
         _deployment.WriteServerLicense(serverData, s => s with { OveragePercent = 50 });
         ElmServer server = await StartOpenServerAsync(serverData);
         LicenseClient client = _deployment.Client(server.PublicUrls[0]);
@@ -686,7 +731,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     public async Task Borrow_BeyondTheSavedLimit_IsRefused()
     {
         ElmServer server = await StartOpenServerAsync();
-        string data = _deployment.NewFolder("client");
+        string data = _deployment.NewFolder();
         LicenseClient client = _deployment.Client(server.PublicUrls[0], data);
         string folder = Path.Combine(data, "borrows");
         Directory.CreateDirectory(folder);
@@ -765,7 +810,6 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         new()
         {
             Product = settings.Product,
-            AdminListen = settings.AdminListen,
             Listen = new Uri($"https://127.0.0.1:{port}"),
             LicensePath = settings.LicensePath,
             TrustRootKeyFiles = settings.TrustRootKeyFiles,

@@ -47,8 +47,7 @@ public sealed class SettingsTests : IDisposable
               "deny": ["user:guest"],
               "dataDirectory": "data",
               "borrow": { "maxDuration": "3.00:00:00", "reserve": 2 },
-              "log": { "usage": "logs/usage.jsonl" },
-              "admin": { "listen": "http://[::1]:7099" }
+              "log": { "usage": "logs/usage.jsonl" }
             }
             """
         );
@@ -69,7 +68,6 @@ public sealed class SettingsTests : IDisposable
         Assert.Equal(TimeSpan.FromDays(3), settings.BorrowMaxDuration);
         Assert.Equal(2, settings.BorrowReserve);
         Assert.Equal("logs/usage.jsonl", settings.UsageLog);
-        Assert.Equal(new Uri("http://[::1]:7099"), settings.AdminListen);
         Assert.True(settings.Access.AllowsAddress(IPAddress.Parse("10.1.2.3")));
         Assert.False(settings.Access.AllowsAddress(IPAddress.Parse("192.168.0.1")));
         Assert.False(settings.Access.AllowsClient(null, "guest"));
@@ -118,7 +116,7 @@ public sealed class SettingsTests : IDisposable
     ///
     /// Expected:
     /// - ServerStartException naming: the unknown key, product, listen (http, and a host name other than localhost),
-    ///   rateLimit.perIp (0 and 10001), the allow entry, admin.listen (not loopback, https), borrow.maxDuration (not a
+    ///   rateLimit.perIp (0 and 10001), the allow entry, borrow.maxDuration (not a
     ///   duration, zero), borrow.reserve (-1), log.usage (no file name; three spaces in the file and in ELM_LOG_USAGE), and the
     ///   missing file.
     /// </remarks>
@@ -140,8 +138,6 @@ public sealed class SettingsTests : IDisposable
         AssertError("""{"product":"acme-cad","rateLimit":{"perIp":0}}""", "rateLimit.perIp");
         AssertError("""{"product":"acme-cad"}""", "rateLimit.perIp", new() { ["ELM_RATELIMIT_PERIP"] = "10001" });
         AssertError("""{"product":"acme-cad","allow":["somewhere"]}""", "somewhere");
-        AssertError("""{"product":"acme-cad","admin":{"listen":"http://0.0.0.0:7071"}}""", "admin.listen");
-        AssertError("""{"product":"acme-cad","admin":{"listen":"https://127.0.0.1:7071"}}""", "admin.listen");
         AssertError("""{"product":"acme-cad","borrow":{"maxDuration":"7 days"}}""", "borrow.maxDuration");
         AssertError("""{"product":"acme-cad","borrow":{"maxDuration":"00:00:00"}}""", "borrow.maxDuration");
         AssertError("""{"product":"acme-cad","borrow":{"reserve":-1}}""", "borrow.reserve");
@@ -151,6 +147,72 @@ public sealed class SettingsTests : IDisposable
         AssertError("""{"product":"acme-cad","product":"acme-cam"}""", "not valid");
         var e = Assert.Throws<ServerStartException>(() => ServerSettings.Load(Path.Combine(_directory, "none.json"), _ => null));
         Assert.Contains("does not exist", e.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// admin.listen is no longer a setting: a value that is left, in the file or in ELM_ADMIN_LISTEN, stops the start with the
+    /// line that says where the administration API listens now, whatever the value is (design §13.8, V1d2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Settings files of the product with: admin.listen set to the earlier default http://127.0.0.1:7071; set to another
+    ///   URL; set to the number 7071; set to an object; set to an empty string; set to an array that holds an object; set to
+    ///   true; set to false; set to null; an admin section with a member "port" and no listen; an admin section with listen
+    ///   set to an object and then a member "port"; no admin section.
+    ///
+    /// Steps:
+    /// - Load the first eight; load the last with ELM_ADMIN_LISTEN set to the earlier default; load the one with null; load
+    ///   the last with an empty ELM_ADMIN_LISTEN; load the two with the other member.
+    ///
+    /// Expected:
+    /// - The first nine throw ServerStartException with exactly "admin.listen is no longer a setting: the administration API
+    ///   listens on the socket file admin.sock in the data folder. Remove admin.listen (ELM_ADMIN_LISTEN).": the value's type
+    ///   does not matter.
+    /// - The null value and the empty variable load. The other member is an unknown key in both files: "… is not valid: …",
+    ///   and the message names "port".
+    /// </remarks>
+    [Fact]
+    public void Load_AdminListenLeft_StopsWithTheLine()
+    {
+        const string Line =
+            "admin.listen is no longer a setting: the administration API listens on the socket file admin.sock in the data folder. "
+            + "Remove admin.listen (ELM_ADMIN_LISTEN).";
+        string plain = Write("""{"product":"acme-cad"}""");
+        static string? Variable(string name, string value) => name == "ELM_ADMIN_LISTEN" ? value : null;
+
+        string[] left =
+        [
+            Write("""{"product":"acme-cad","admin":{"listen":"http://127.0.0.1:7071"}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":"http://[::1]:7099"}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":7071}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":{"port":7071}}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":""}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":[7071,{"a":[null]}]}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":true}}"""),
+            Write("""{"product":"acme-cad","admin":{"listen":false}}"""),
+        ];
+        foreach (string file in left)
+        {
+            Assert.Equal(Line, Assert.Throws<ServerStartException>(() => ServerSettings.Load(file, _ => null)).Message);
+        }
+
+        Assert.Equal(
+            Line,
+            Assert.Throws<ServerStartException>(() => ServerSettings.Load(plain, name => Variable(name, "http://127.0.0.1:7071"))).Message
+        );
+
+        Assert.Equal("acme-cad", ServerSettings.Load(Write("""{"product":"acme-cad","admin":{"listen":null}}"""), _ => null).Product);
+        Assert.Equal("acme-cad", ServerSettings.Load(plain, name => Variable(name, string.Empty)).Product);
+        string unknown = Write("""{"product":"acme-cad","admin":{"port":7071}}""");
+        string refusal = Assert.Throws<ServerStartException>(() => ServerSettings.Load(unknown, _ => null)).Message;
+        Assert.Contains("is not valid", refusal, StringComparison.Ordinal);
+        Assert.Contains("port", refusal, StringComparison.Ordinal);
+
+        // The value is skipped whole: the member after it is still read, and refused as unknown.
+        string after = Write("""{"product":"acme-cad","admin":{"listen":{"a":[1,2]},"port":7071}}""");
+        refusal = Assert.Throws<ServerStartException>(() => ServerSettings.Load(after, _ => null)).Message;
+        Assert.Contains("is not valid", refusal, StringComparison.Ordinal);
+        Assert.Contains("port", refusal, StringComparison.Ordinal);
     }
 
     /// <summary>

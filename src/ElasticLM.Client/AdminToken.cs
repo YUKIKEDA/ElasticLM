@@ -6,8 +6,9 @@ namespace ElasticLM.Client;
 
 /// <summary>
 /// The administrator token of an on-premises server: 256 random bits in a file next to the server's
-/// installation key, protected as the key is. <c>elm-server</c> creates it at the first start; <c>elm server</c> reads it on
-/// the same machine and sends it as <c>Authorization: Bearer</c>.
+/// installation key, protected as the key is. <c>elm-server</c> makes a new one at every start, so the token of an earlier
+/// start is void; <c>elm server</c> reads the file at each call, on the same machine, and sends the token as
+/// <c>Authorization: Bearer</c>.
 /// </summary>
 internal static class AdminToken
 {
@@ -16,32 +17,84 @@ internal static class AdminToken
     private const int Length = 32;
     private static readonly byte[] Purpose = "ElasticLM admin token v1"u8.ToArray();
 
+    // On Windows the replacement is refused while another process has the old file open for reading, as elm server does
+    // for a moment (File.Move with overwrite: UnauthorizedAccessException, HResult 0x80070005, on Windows 11 with .NET
+    // 10.0.14); it passes once the reader has closed the file.
+    private static readonly TimeSpan ReplaceInterval = TimeSpan.FromMilliseconds(100);
+    private static readonly TimeSpan ReplaceLimit = TimeSpan.FromSeconds(2);
+
     /// <summary>
-    /// Reads the token of a server data folder, creating it when there is none.
+    /// Makes a new token for a server data folder and puts it in place of the one that is there, if any. The token is
+    /// written to a new file beside the old one, which then replaces it, so a reader never sees a half-written file.
     /// </summary>
-    /// <returns>The token as base64url, or <see langword="null"/> when it cannot be created or read.</returns>
-    public static string? LoadOrCreate(string directory)
+    /// <param name="directory">The server's data folder.</param>
+    /// <param name="time">The clock that counts the wait for a reader of the old file on Windows: the replacement is tried
+    /// again every 100 milliseconds, for at most 2 seconds.</param>
+    /// <param name="cancellationToken">Cancels the wait.</param>
+    /// <returns>The new token as base64url, or <see langword="null"/> when it cannot be written or put in place; the new
+    /// file is then deleted.</returns>
+    /// <exception cref="OperationCanceledException">The wait was cancelled; the new file is deleted.</exception>
+    public static async Task<string?> CreateAsync(string directory, TimeProvider time, CancellationToken cancellationToken = default)
     {
         string path = Path.Combine(directory, FileName);
-        if (!File.Exists(path))
+        string fresh = path + ".new";
+        byte[] secret = RandomNumberGenerator.GetBytes(Length);
+        try
         {
-            byte[] secret = RandomNumberGenerator.GetBytes(Length);
-            try
-            {
-                ProtectedFiles.CreateDirectory(directory, KeyScope.Machine);
-                ProtectedFiles.TryCreateSecret(path, secret, KeyScope.Machine, Purpose);
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            ProtectedFiles.CreateDirectory(directory, KeyScope.Machine);
+
+            // A start that ended between the two steps left its new file.
+            File.Delete(fresh);
+            if (!ProtectedFiles.TryCreateSecret(fresh, secret, KeyScope.Machine, Purpose))
             {
                 return null;
             }
-            finally
-            {
-                CryptographicOperations.ZeroMemory(secret);
-            }
-        }
 
-        return Read(directory);
+            try
+            {
+                long started = time.GetTimestamp();
+                while (true)
+                {
+                    try
+                    {
+                        File.Move(fresh, path, overwrite: true);
+                        break;
+                    }
+                    catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows() && time.GetElapsedTime(started) < ReplaceLimit)
+                    {
+                        await Task.Delay(ReplaceInterval, time, cancellationToken).ConfigureAwait(false);
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
+            {
+                // The new file holds a token that no server takes; it does not stay behind.
+                DeleteQuietly(fresh);
+                throw;
+            }
+
+            return System.Buffers.Text.Base64Url.EncodeToString(secret);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(secret);
+        }
+    }
+
+    private static void DeleteQuietly(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The next start deletes it before it writes its own.
+        }
     }
 
     /// <summary>

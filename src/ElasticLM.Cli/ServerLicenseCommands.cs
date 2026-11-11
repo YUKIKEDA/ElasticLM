@@ -50,6 +50,7 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
+                    CheckSocketPath(parse, common);
                     Uri url = ServiceUrl(parse.GetValue(service)!);
                     string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "<license-key>") : null;
                     return Kept(
@@ -77,6 +78,7 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
+                    CheckSocketPath(parse, common);
                     string text = CliFiles.ReadText(parse.GetValue(answer)!, MaxAnswerBytes);
                     return Kept(host, common, parse, null, client => client.ImportResponseAsync(text), parse.GetValue(license)!);
                 }
@@ -184,7 +186,9 @@ internal static class ServerLicenseCommands
             CommonOptions.Run(
                 host,
                 () =>
-                    WithClient(
+                {
+                    CheckSocketPath(parse, common);
+                    return WithClient(
                         host,
                         common,
                         parse,
@@ -199,7 +203,8 @@ internal static class ServerLicenseCommands
                             host.Out.WriteLine("forgotten");
                             return ExitCodes.Success;
                         }
-                    )
+                    );
+                }
             )
         );
         return command;
@@ -374,7 +379,7 @@ internal static class ServerLicenseCommands
         }
         catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
         {
-            // Something listens at --url and gave no answer that can be read: the file is written all the same.
+            // Something took the connection to the socket and gave no answer that can be read: the file is written all the same.
             host.Error.WriteLine($"error: {e.Message} {Written}");
             return ExitCodes.NetworkError;
         }
@@ -395,7 +400,7 @@ internal static class ServerLicenseCommands
 
         if (!IsSuccess(status) || Text(answer, "licenseToken") is not string loaded)
         {
-            host.Error.WriteLine($"error: {Unexpected(status, answer)} {Written}");
+            host.Error.WriteLine($"error: {ServerAdminApi.Unexpected(status, answer)} {Written}");
             return ExitCodes.VerificationFailed;
         }
 
@@ -419,9 +424,10 @@ internal static class ServerLicenseCommands
     }
 
     // Whether the running server refreshes its license on its own (the status's autoRefresh), or null when no server runs
-    // (no administrator token that can be read, or nothing listens at --url). An answer that is not a status (a wrong
-    // token, another program on the port), and no answer from something that listens, do not show that no server runs, so
-    // the command stops: going on would skip the checks that a running server calls for (R8, R9).
+    // (no administrator token that can be read, no socket file, or a socket file that refuses the connection). An answer
+    // that is not a status (a wrong token, another program on the socket), and no answer from something that listens, do
+    // not show that no server runs, so the command stops: going on would skip the checks that a running server calls for
+    // (R8, R9).
     private static bool? Status(CliHost host, Common common, ParseResult parse)
     {
         if (Send(host, common, parse, HttpMethod.Get, "admin/v1/status") is not (HttpStatusCode status, JsonElement answer))
@@ -435,42 +441,36 @@ internal static class ServerLicenseCommands
             && answer.TryGetProperty("autoRefresh", out JsonElement auto)
             && auto.ValueKind is JsonValueKind.True or JsonValueKind.False
             ? auto.GetBoolean()
-            : throw new CliException(Unexpected(status, answer), ExitCodes.VerificationFailed);
+            : throw new CliException(ServerAdminApi.Unexpected(status, answer), ExitCodes.VerificationFailed);
     }
 
     private static bool IsSuccess(HttpStatusCode status) => (int)status is >= 200 and <= 299;
 
-    // An answer of the administration API that is not the one asked for: its error code and detail, as elm server reload
-    // prints an answer that has them, or else its status code.
-    private static string Unexpected(HttpStatusCode status, JsonElement answer) =>
-        Text(answer, "code") is string code ? $"{code}: {Text(answer, "detail")}" : $"The server's administration API answered {(int)status}.";
+    // design §13.7 (V1d2): the commands that do not ask the server before their own work check the length of the socket's
+    // path first, as the others do through Send, so that a folder whose path is too long is never taken for one whose
+    // server does not run.
+    private static void CheckSocketPath(ParseResult parse, Common common) => _ = ServerAdminApi.SocketOf(Folder(parse, common));
 
-    // One call to the local administration API; null when the server does not run: the folder has no administrator token
-    // that can be read, or the connection to --url is refused. When something listens there and gives no whole answer in
-    // time, the call stops with a network error: a server that is slow or stopping still runs.
+    // One call to the local administration API, on the socket file of the folder that holds the token; null when the server
+    // does not run: the folder has no administrator token that can be read, it has no socket file, or the connection to
+    // the socket file is refused (a file that a killed server left). The server's lock file is not looked at. Every other
+    // connection error, and something that listens there and gives no whole answer in time, stops the call with a network
+    // error: a server that is slow or stopping still runs.
     private static (HttpStatusCode Status, JsonElement Answer)? Send(CliHost host, Common common, ParseResult parse, HttpMethod method, string path)
     {
         string folder = Folder(parse, common);
-        string? token = AdminToken.Read(folder);
-        string text = parse.GetValue(common.Admin) ?? "http://127.0.0.1:7071/";
-        if (!Uri.TryCreate(text, UriKind.Absolute, out Uri? baseUri) || baseUri.Scheme != Uri.UriSchemeHttp || !baseUri.IsLoopback)
-        {
-            throw new CliException($"--url must be an http URL on a loopback address: '{text}'.");
-        }
+        (string socketPath, UnixDomainSocketEndPoint endPoint) = ServerAdminApi.SocketOf(folder);
 
-        if (token is null)
+        // Without the file, a connection is refused on Windows (measured on Windows 11). On Linux and macOS it fails with
+        // ENOENT, which .NET maps to SocketError.AddressNotAvailable, not ConnectionRefused (SocketErrorPal.Unix.cs,
+        // dotnet/runtime release/10.0), and would read as a network error below. So the file is looked for first.
+        if (AdminToken.Read(folder) is not string token || !File.Exists(socketPath))
         {
             return null;
         }
 
-        // No redirects: the answer of another address is not the answer of the server at --url, and --url is checked to be
-        // a loopback address.
         // The wait is counted on the host's clock, not on the HTTP client's own timer.
-        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
-        {
-            BaseAddress = baseUri,
-            Timeout = Timeout.InfiniteTimeSpan,
-        };
+        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, Timeout.InfiniteTimeSpan);
         using var waited = new CancellationTokenSource(RequestTimeout, host.Time);
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
@@ -486,7 +486,7 @@ internal static class ServerLicenseCommands
             }
             catch (JsonException) when (!response.IsSuccessStatusCode)
             {
-                // Another program on the port answers an error with a page; the status code is all there is to tell.
+                // Another program on the socket answers an error with a page; the status code is all there is to tell.
                 return (response.StatusCode, default);
             }
         }
@@ -570,13 +570,11 @@ internal static class ServerLicenseCommands
             Description = $"A root public key file to trust. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
         }.AsPath();
         var revoked = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
-        var admin = new Option<string?>("--url") { Description = "The server's administration API. Default: http://127.0.0.1:7071." };
         command.Options.Add(product);
         command.Options.Add(data);
         command.Options.Add(trust);
         command.Options.Add(revoked);
-        command.Options.Add(admin);
-        return new Common(product, data, trust, revoked, admin);
+        return new Common(product, data, trust, revoked);
     }
 
     private static Option<string> ServiceOption(Command command)
@@ -604,11 +602,5 @@ internal static class ServerLicenseCommands
         return license;
     }
 
-    private sealed record Common(
-        Option<string> Product,
-        Option<string?> Data,
-        Option<string[]> Trust,
-        Option<string[]> Revoked,
-        Option<string?> Admin
-    );
+    private sealed record Common(Option<string> Product, Option<string?> Data, Option<string[]> Trust, Option<string[]> Revoked);
 }

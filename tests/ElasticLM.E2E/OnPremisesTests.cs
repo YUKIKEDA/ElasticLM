@@ -40,7 +40,7 @@ public sealed class OnPremisesTests
     {
         await using Vendor vendor = await Vendor.CreateAsync("license", "lease");
         string license = vendor.File("server.elmlic");
-        await using ServerProcess server = ServerProcess.Prepare(vendor, "server", "acme-cad", license);
+        await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license);
         string serverKey = await server.InstallationKeyAsync();
         string expires = DateTimeOffset.UtcNow.AddDays(30).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         await vendor.ElmOkAsync(

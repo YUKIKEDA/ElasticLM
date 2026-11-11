@@ -184,13 +184,47 @@ internal sealed class LogSection
 }
 
 /// <summary>
-/// <c>admin</c>.
+/// <c>admin</c>. It is read only to stop a start whose file still sets <c>admin.listen</c> (design §13.8, V1d2). The value is
+/// not looked at, so it may be of any JSON type; only <c>null</c> counts as not set.
 /// </summary>
 [JsonUnmappedMemberHandling(JsonUnmappedMemberHandling.Disallow)]
 internal sealed class AdminSection
 {
+    /// <summary>Gets or sets a value indicating whether the file gives <c>admin.listen</c> a value other than
+    /// <c>null</c>.</summary>
     [JsonPropertyName("listen")]
-    public string? Listen { get; set; }
+    [JsonConverter(typeof(PresenceConverter))]
+    public bool Listen { get; set; }
+}
+
+/// <summary>
+/// Reads any JSON value as "it is there": <see langword="true"/> for every value but <c>null</c>, whose content is skipped
+/// whole. A <see cref="System.Text.Json.JsonElement"/> in its place made <c>elm-server.exe</c> 57,344 bytes larger
+/// (win-x64 NativeAOT, SDK 10.0.404).
+/// </summary>
+internal sealed class PresenceConverter : JsonConverter<bool>
+{
+    public override bool HandleNull => true;
+
+    public override bool Read(ref System.Text.Json.Utf8JsonReader reader, Type typeToConvert, System.Text.Json.JsonSerializerOptions options)
+    {
+        if (reader.TokenType == System.Text.Json.JsonTokenType.Null)
+        {
+            return false;
+        }
+
+        // The settings file is read whole, so an object or an array can be skipped to its end; the reader's depth limit
+        // still holds inside it.
+        if (!reader.TrySkip())
+        {
+            throw new System.Text.Json.JsonException();
+        }
+
+        return true;
+    }
+
+    public override void Write(System.Text.Json.Utf8JsonWriter writer, bool value, System.Text.Json.JsonSerializerOptions options) =>
+        writer.WriteBooleanValue(value);
 }
 
 /// <summary>

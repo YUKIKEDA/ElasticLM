@@ -22,6 +22,12 @@ internal sealed class CliHost
     /// </summary>
     public Action<TimeSpan>? Wait { get; init; }
 
+    /// <summary>
+    /// Gets how <c>elm server</c> connects to a server's administration socket (design §13.7); <see langword="null"/> connects a
+    /// Unix domain socket. Tests replace it to raise a connection error that the OS gives only to another user.
+    /// </summary>
+    public Func<System.Net.Sockets.UnixDomainSocketEndPoint, CancellationToken, ValueTask<Stream>>? ConnectAdminSocket { get; init; }
+
     /// <summary>Waits for a time: with <see cref="Wait"/> when set, otherwise on a timer of <see cref="Time"/>.</summary>
     public void Pause(TimeSpan time)
     {

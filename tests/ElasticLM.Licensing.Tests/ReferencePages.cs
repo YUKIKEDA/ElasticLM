@@ -381,7 +381,7 @@ internal static partial class ReferencePages
     }
 
     // A name runs on through letters, digits, '_', '-', and '.': ELM_OK is not found in ELM_OK_X, --key not in --key-file, and
-    // listen not in admin.listen.
+    // perIp not in rateLimit.perIp.
     private static bool IsNameCharacter(char c) => char.IsAsciiLetterOrDigit(c) || c is '_' or '-' or '.';
 
     [GeneratedRegex("(?<!`)(?<ticks>`+)(?!`)(?<code>.+?)(?<!`)\\k<ticks>(?!`)")]

@@ -28,11 +28,33 @@ internal sealed class Vendor : IAsyncDisposable
     /// <summary>Gets the environment elm needs for this vendor's keys.</summary>
     public IReadOnlyDictionary<string, string?> Environment { get; } = new Dictionary<string, string?> { ["ELM_KEY_PASSPHRASE"] = Passphrase };
 
+    /// <summary>
+    /// Gets the longest path of a socket file that this system takes, in UTF-8 bytes (design §13.7): 103 on macOS, 107 on
+    /// Windows and Linux.
+    /// </summary>
+    public static int SocketPathLimit => OperatingSystem.IsMacOS() ? 103 : 107;
+
     /// <summary>Makes a new folder with a root key, a signing key, and a certificate for the uses given.</summary>
     /// <param name="uses">The uses of the certificate, as <c>elm key certify --use</c> takes them.</param>
-    public static async Task<Vendor> CreateAsync(params string[] uses)
+    public static Task<Vendor> CreateAsync(params string[] uses) => CreateInAsync(Path.GetTempPath(), uses);
+
+    /// <summary>
+    /// Makes a new folder under <paramref name="parent"/> with a root key, a signing key, and a certificate for the uses
+    /// given. The folder is <c>elm-{8 hex digits}</c>, and a server's data folder in it has a name of two characters, so that
+    /// the path of the server's socket file stays within the system's limit (design §20.7, the V1d2 Grill); the method fails
+    /// when <paramref name="parent"/> is too long for that.
+    /// </summary>
+    /// <param name="parent">The folder that gets the new folder.</param>
+    /// <param name="uses">The uses of the certificate, as <c>elm key certify --use</c> takes them.</param>
+    public static async Task<Vendor> CreateInAsync(string parent, params string[] uses)
     {
-        string folder = Path.Combine(Path.GetTempPath(), "elm-e2e-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)));
+        string folder = Path.Combine(Path.GetFullPath(parent), "elm-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
+        string longest = Path.Combine(folder, "zz", "admin.sock");
+        int bytes = System.Text.Encoding.UTF8.GetByteCount(longest);
+        Assert.True(
+            bytes <= SocketPathLimit,
+            $"The socket file of a test server would be '{longest}': {bytes} bytes in UTF-8, and this system allows {SocketPathLimit}."
+        );
         Directory.CreateDirectory(folder);
         var vendor = new Vendor(folder);
         try

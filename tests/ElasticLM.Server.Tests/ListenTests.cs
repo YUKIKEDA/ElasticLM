@@ -37,15 +37,16 @@ public sealed class ListenTests : IAsyncDisposable
     ///   again on the same port; stop it; read and verify both logs.
     ///
     /// Expected:
-    /// - ServerStartException whose message begins "elm-server cannot listen on https://127.0.0.1:{port}/ and
-    ///   http://127.0.0.1:0/: "; the failed start's usage log file and borrow record file both end with an auth line.
+    /// - ServerStartException whose message begins "elm-server cannot listen on https://127.0.0.1:{port}/ and " followed by
+    ///   the absolute path of admin.sock in the data folder and ": "; the failed start's usage log file and borrow record file
+    ///   both end with an auth line.
     /// - The second start runs with the borrow restored; its usage log file begins with chain.start whose prev.file names the
     ///   failed start's file; both logs verify as intact.
     /// </remarks>
     [Fact]
     public async Task Start_ListenPortHeld_ThrowsAndTheNextStartContinues()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         await BorrowAndStopAsync(data);
         using var holder = new TcpListener(IPAddress.Loopback, 0);
         holder.Start();
@@ -53,7 +54,7 @@ public sealed class ListenTests : IAsyncDisposable
 
         var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(data, s => s with { Listen = Https(port) }));
         Assert.StartsWith(
-            $"elm-server cannot listen on https://127.0.0.1:{port}/ and http://127.0.0.1:0/: ",
+            $"elm-server cannot listen on https://127.0.0.1:{port}/ and {Path.Combine(data, "admin.sock")}: ",
             refused.Message,
             StringComparison.Ordinal
         );
@@ -96,7 +97,7 @@ public sealed class ListenTests : IAsyncDisposable
     [Fact]
     public async Task Start_ListenPortHeld_DisposesTheHost()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data);
         using var holder = new TcpListener(IPAddress.Loopback, 0);
         holder.Start();
@@ -118,48 +119,53 @@ public sealed class ListenTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// An admin.listen port that another socket holds stops the start with the same message, after Kestrel has started on the
-    /// listen port; Kestrel releases that port, so the next start takes both ports again.
+    /// A start that cannot listen on its listen port fails after Kestrel has bound the administration socket, which is added
+    /// first: Kestrel removes the socket file, the start releases the lock, and the administrator token is already the new
+    /// one; the next start takes the folder again (design §13.1, §13.7, V1d2).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Two ports the OS picked for two TcpListeners on 127.0.0.1; the first listener stopped (its port becomes listen), the
-    ///   second kept (its port becomes admin.listen). Kestrel listens in the order the server adds the endpoints, listen first,
-    ///   so it has started on listen when admin.listen fails.
-    /// - Between a listener's stop and the server's next start another process could take the port; the window is a few
+    /// - A data folder in which a server ran and stopped, so it holds an administrator token; a TcpListener on 127.0.0.1
+    ///   holding the port given as listen.
+    /// - Between the listener's stop and the server's next start another process could take the port; the window is a few
     ///   milliseconds, and the test would then fail with that port in its message.
     ///
     /// Steps:
-    /// - Start the server with both ports; stop the second listener; start the server again with the same two ports.
+    /// - Read admin.token; start the server on the held port; look at the folder; stop the listener; start the server again
+    ///   on the same port.
     ///
     /// Expected:
-    /// - ServerStartException whose message begins "elm-server cannot listen on https://127.0.0.1:{listen}/ and
-    ///   http://127.0.0.1:{admin}/: "; then a running server whose public URL has the listen port and whose admin URL has the
-    ///   admin port.
+    /// - ServerStartException whose message begins "elm-server cannot listen on https://127.0.0.1:{port}/ and " followed by
+    ///   the absolute path of admin.sock and ": ".
+    /// - After it: no admin.sock in the folder; the test can open server.lock sharing it with nobody; admin.token differs from
+    ///   the one read before, and no admin.token.new is left.
+    /// - Then a running server whose public URL has the port.
     /// </remarks>
     [Fact]
-    public async Task Start_AdminPortHeld_ThrowsAndReleasesTheListenPort()
+    public async Task Start_ListenPortHeld_RemovesTheSocketFileAndReleasesTheLock()
     {
-        string data = _deployment.NewFolder("server");
-        using var released = new TcpListener(IPAddress.Loopback, 0);
+        string data = _deployment.NewFolder();
+        await (await _deployment.StartServerAsync(data)).DisposeAsync();
+        string socket = Path.Combine(data, "admin.sock");
+        string? before = AdminToken.Read(data);
+        Assert.NotNull(before);
         using var holder = new TcpListener(IPAddress.Loopback, 0);
-        released.Start();
         holder.Start();
-        int port = ((IPEndPoint)released.LocalEndpoint).Port;
-        int adminPort = ((IPEndPoint)holder.LocalEndpoint).Port;
-        released.Stop();
-        ServerSettings Ports(ServerSettings s) => s with { Listen = Https(port), AdminListen = new Uri($"http://127.0.0.1:{adminPort}") };
+        int port = ((IPEndPoint)holder.LocalEndpoint).Port;
 
-        var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(data, Ports));
-        Assert.StartsWith(
-            $"elm-server cannot listen on https://127.0.0.1:{port}/ and http://127.0.0.1:{adminPort}/: ",
-            refused.Message,
-            StringComparison.Ordinal
-        );
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(data, s => s with { Listen = Https(port) }));
+
+        Assert.StartsWith($"elm-server cannot listen on https://127.0.0.1:{port}/ and {socket}: ", refused.Message, StringComparison.Ordinal);
+        Assert.False(Path.Exists(socket));
+        using (new FileStream(Path.Combine(data, "server.lock"), FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
+        string? after = AdminToken.Read(data);
+        Assert.NotNull(after);
+        Assert.NotEqual(before, after);
+        Assert.False(Path.Exists(Path.Combine(data, "admin.token.new")));
 
         holder.Stop();
-        ElmServer server = await _deployment.StartServerAsync(data, Ports);
-        Assert.Equal((port, adminPort), (server.PublicUrls[0].Port, server.AdminUrl.Port));
+        ElmServer server = await _deployment.StartServerAsync(data, s => s with { Listen = Https(port) });
+        Assert.Equal(port, server.PublicUrls[0].Port);
     }
 
     /// <summary>
@@ -183,7 +189,7 @@ public sealed class ListenTests : IAsyncDisposable
     [Fact]
     public async Task Start_SetAsideAndListenPortHeld_RecordsTheSetAside()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         await BorrowAndStopAsync(data);
         string record = SignedLog.FindFiles(data, "borrows")[^1];
         string[] lines = File.ReadAllLines(record);
@@ -227,8 +233,8 @@ public sealed class ListenTests : IAsyncDisposable
     /// - Start the server with listen https://192.0.2.1:0.
     ///
     /// Expected:
-    /// - ServerStartException whose message begins "elm-server cannot listen on https://192.0.2.1:0/ and
-    ///   http://127.0.0.1:0/: ".
+    /// - ServerStartException whose message begins "elm-server cannot listen on https://192.0.2.1:0/ and " followed by the
+    ///   absolute path of admin.sock in the data folder and ": ".
     /// </remarks>
     [Fact]
     public async Task Start_AddressNotOnThisMachine_Throws()
@@ -242,10 +248,15 @@ public sealed class ListenTests : IAsyncDisposable
             );
         }
 
+        string data = _deployment.NewFolder();
         var refused = await Assert.ThrowsAsync<ServerStartException>(() =>
-            _deployment.StartServerAsync(change: s => s with { Listen = new Uri("https://192.0.2.1:0") })
+            _deployment.StartServerAsync(data, s => s with { Listen = new Uri("https://192.0.2.1:0") })
         );
-        Assert.StartsWith("elm-server cannot listen on https://192.0.2.1:0/ and http://127.0.0.1:0/: ", refused.Message, StringComparison.Ordinal);
+        Assert.StartsWith(
+            $"elm-server cannot listen on https://192.0.2.1:0/ and {Path.Combine(data, "admin.sock")}: ",
+            refused.Message,
+            StringComparison.Ordinal
+        );
     }
 
     /// <summary>

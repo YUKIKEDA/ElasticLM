@@ -30,7 +30,7 @@ public sealed class ElmServerTests : IAsyncDisposable
     [Fact]
     public async Task Start_TrustSettingsNotValid_ThrowsWithoutParameterName()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         using ECDsa p384 = ECDsa.Create(ECCurve.NamedCurves.nistP384);
         string p384File = _deployment.FilePath("p384.pub.pem");
         File.WriteAllText(p384File, p384.ExportSubjectPublicKeyInfoPem() + "\n");
@@ -63,7 +63,7 @@ public sealed class ElmServerTests : IAsyncDisposable
     [Fact]
     public async Task Start_DataDirectoryBlank_ThrowsNamingTheSetting()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         foreach (string blank in new[] { string.Empty, "   " })
         {
             var refused = await Assert.ThrowsAsync<ServerStartException>(() =>
@@ -92,7 +92,7 @@ public sealed class ElmServerTests : IAsyncDisposable
     [Fact]
     public async Task Start_TrustOrTlsPathBlank_ThrowsNamingTheSetting()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         foreach (string blank in new[] { string.Empty, "   " })
         {
             Assert.Equal(
@@ -124,7 +124,7 @@ public sealed class ElmServerTests : IAsyncDisposable
     [Fact]
     public async Task Start_LicenseBlank_ThrowsNamingTheSetting()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         foreach (string blank in new[] { string.Empty, "   " })
         {
             var refused = await Assert.ThrowsAsync<ServerStartException>(() =>

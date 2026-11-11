@@ -107,7 +107,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     [Fact]
     public async Task Restart_ClientReclaimsAndRenews()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(data);
         int port = before.PublicUrls[0].Port;
         LicenseClient client = _deployment.Client(before.PublicUrls[0]);
@@ -148,7 +148,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     [Fact]
     public async Task Restart_MoreThan64Leases_AreReclaimedInBatches()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data, s => s with { Features = [new FeatureSpec("pro", Seats: 100)] });
         ElmServer before = await StartOpenServerAsync(data);
         int port = before.PublicUrls[0].Port;
@@ -192,7 +192,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     [Fact]
     public async Task Reclaim_LeaseCodeOutsideTheList_LosesThatLeaseWithInternalError()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data, s => s with { Features = [new FeatureSpec("pro", Seats: 100)] });
         ElmServer before = await StartOpenServerAsync(data);
         int port = before.PublicUrls[0].Port;
@@ -322,10 +322,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
             File.WriteAllBytes(pfx, certificate.Export(X509ContentType.Pkcs12));
         }
 
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         ElmServer proxied = await StartOpenServerAsync(data, s => With(s, tlsCertificate: pfx));
         int port = proxied.PublicUrls[0].Port;
-        string clientData = _deployment.NewFolder("client");
+        string clientData = _deployment.NewFolder();
         LicenseClient client = _deployment.Client(proxied.PublicUrls[0], clientData);
 
         Assert.Equal(
@@ -358,7 +358,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     public async Task DamagedPin_RefusesTheServerUntilReset()
     {
         ElmServer server = await StartOpenServerAsync();
-        string data = _deployment.NewFolder("client");
+        string data = _deployment.NewFolder();
         LicenseClient first = _deployment.Client(server.PublicUrls[0], data);
         Assert.Null(
             await first.ReleaseLeaseAsync(
@@ -713,7 +713,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     [Fact]
     public async Task Dispose_DuringAReclaimEvent_StopsTheNextEvent()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(data);
         int port = before.PublicUrls[0].Port;
         LicenseClient client = _deployment.Client(before.PublicUrls[0]);
@@ -788,7 +788,6 @@ public sealed class LeaseClientTests : IAsyncDisposable
         new()
         {
             Product = settings.Product,
-            AdminListen = settings.AdminListen,
             Listen = port is int p ? new Uri($"https://127.0.0.1:{p}") : settings.Listen,
             LicensePath = settings.LicensePath,
             TrustRootKeyFiles = settings.TrustRootKeyFiles,

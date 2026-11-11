@@ -1344,6 +1344,10 @@ function Copy-Protected([string]$source, [string]$target) {
     # On Windows the folder's rules come first, so that what is copied into it inherits them as in the source.
     if ($IsWindows) { Copy-Protection $folder.FullName $target -Folder }
     foreach ($item in $folder.EnumerateFileSystemInfos()) {
+        # elm-server's administration socket (design §13.7) is not copied. This script ends a page's server by its process,
+        # which leaves the file, where a reader's Ctrl+C removes it; the server that starts in the copy would remove one that
+        # is left. It also cannot be copied: on Windows it is a reparse point, and on Linux and macOS a socket.
+        if ($item -isnot [IO.DirectoryInfo] -and $item.Name -ceq 'admin.sock') { continue }
         if ($item.Attributes.HasFlag([IO.FileAttributes]::ReparsePoint)) { throw "The work folder holds a link, $($item.FullName), which the copy does not follow." }
         $to = Join-Path $target $item.Name
         if ($item -is [IO.DirectoryInfo]) {
@@ -1406,6 +1410,15 @@ function Invoke-Page([string]$path) {
 
     $suffix = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6))
     $work = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-$suffix"
+    # design §20.7 (the V1d2 Grill): the pages give elm-server the data folder server-data in the work folder, and the
+    # server's administration socket, admin.sock in that folder, has a path limit of 103 bytes on macOS and 107 on Windows
+    # and Linux (design §13.7). A temporary folder too long for it would stop the server with a line the pages do not show.
+    $socketPath = Join-Path $work 'server-data' 'admin.sock'
+    $socketBytes = [Text.Encoding]::UTF8.GetByteCount($socketPath)
+    $socketLimit = $IsMacOS ? 103 : 107
+    if ($socketBytes -gt $socketLimit) {
+        throw "$($name): the socket file of the page's elm-server would be '$socketPath': $socketBytes bytes in UTF-8, and this system allows $socketLimit. Run the steps with a shorter temporary folder."
+    }
     $packages = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-packages-$suffix"
     $saved = @{}
     foreach ($variable in 'ELM_KEY_PASSPHRASE', 'NUGET_PACKAGES', 'MSBUILDDISABLENODEREUSE', 'DOTNET_CLI_TELEMETRY_OPTOUT', 'DOTNET_NOLOGO') {

@@ -1,4 +1,5 @@
 using System.Net.Security;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
@@ -12,6 +13,11 @@ namespace ElasticLM.Server.Tests;
 /// A vendor (root key, signing key, certificate), temporary folders, and one fake clock, from which the tests start servers
 /// on loopback ports and create clients. Keys and licenses are made in the test and deleted with the folders.
 /// </summary>
+/// <remarks>
+/// A server's data folder holds the socket file of its administration API, whose path has a limit of 103 bytes on macOS and
+/// 107 on Windows and Linux (design §13.7). So the folders are short: <c>{temporary folder}/elm-{8 hex digits}/{2 characters}</c>
+/// (design §20.7, the V1d2 Grill), and the constructor fails when the temporary folder is too long for that.
+/// </remarks>
 internal sealed class Deployment : IAsyncDisposable
 {
     public static readonly DateTimeOffset Start = new(2026, 10, 1, 0, 0, 0, TimeSpan.Zero);
@@ -20,10 +26,17 @@ internal sealed class Deployment : IAsyncDisposable
     private readonly ECDsa _signing = KeyFiles.CreateKey();
     private readonly string _certificate;
     private readonly List<IAsyncDisposable> _owned = [];
+    private int _folders;
 
     public Deployment()
     {
-        Directory = Path.Combine(Path.GetTempPath(), "elm-server-tests-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)));
+        Directory = Path.Combine(Path.GetTempPath(), "elm-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
+        string longest = AdminSocket.PathIn(Path.Combine(Directory, "zz"));
+        int bytes = System.Text.Encoding.UTF8.GetByteCount(longest);
+        string tooLong =
+            $"The socket file of a test server would be '{longest}': {bytes} bytes in UTF-8, and this system allows {AdminSocket.MaxPathBytes}. "
+            + "Run the tests with a shorter temporary folder.";
+        Assert.True(bytes <= AdminSocket.MaxPathBytes, tooLong);
         System.IO.Directory.CreateDirectory(Directory);
         RootKeyFile = Path.Combine(Directory, "root.pub.pem");
         File.WriteAllText(RootKeyFile, KeyFiles.ExportPublic(_root));
@@ -80,7 +93,6 @@ internal sealed class Deployment : IAsyncDisposable
         new()
         {
             Product = "acme-cad",
-            AdminListen = new Uri("http://127.0.0.1:0"),
             Listen = new Uri($"https://127.0.0.1:{port}"),
             LicensePath = System.IO.Path.Combine(dataDirectory, "server.elmlic"),
             TrustRootKeyFiles = [RootKeyFile],
@@ -95,7 +107,7 @@ internal sealed class Deployment : IAsyncDisposable
         bool setAside = false
     )
     {
-        dataDirectory ??= NewFolder("server");
+        dataDirectory ??= NewFolder();
         if (!File.Exists(System.IO.Path.Combine(dataDirectory, "server.elmlic")))
         {
             WriteServerLicense(dataDirectory);
@@ -116,10 +128,11 @@ internal sealed class Deployment : IAsyncDisposable
             SetAsideBrokenRecords = setAside,
         };
 
-    /// <summary>An HTTP client of a server's administration API: with the given token, with none, or with the real one.</summary>
+    /// <summary>An HTTP client of a server's administration API, on its socket file: with the given token, with none, or with
+    /// the real one.</summary>
     public static HttpClient AdminHttp(ElmServer server, bool authenticate = true, string? token = null)
     {
-        var http = new HttpClient { BaseAddress = server.AdminUrl };
+        HttpClient http = SocketHttp(server.AdminSocketPath);
         string? bearer = !authenticate ? null : token ?? AdminToken.Read(server.DataDirectory);
         if (bearer is not null)
         {
@@ -129,10 +142,46 @@ internal sealed class Deployment : IAsyncDisposable
         return http;
     }
 
-    /// <summary>Creates a new folder that only this user can use, as a machine-scope data folder must be (design §10.2).</summary>
-    public string NewFolder(string name)
+    /// <summary>An HTTP client whose every connection goes to a Unix domain socket file, whatever the request's host.</summary>
+    public static HttpClient SocketHttp(string socketPath) =>
+        new(
+            new SocketsHttpHandler
+            {
+                UseProxy = false,
+                ConnectCallback = async (_, cancellationToken) =>
+                {
+                    var socket = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    try
+                    {
+                        await socket.ConnectAsync(new UnixDomainSocketEndPoint(socketPath), cancellationToken);
+                        return new NetworkStream(socket, ownsSocket: true);
+                    }
+                    catch
+                    {
+                        socket.Dispose();
+                        throw;
+                    }
+                },
+            }
+        )
+        {
+            BaseAddress = new Uri("http://elm-server.invalid/"),
+        };
+
+    /// <summary>Returns the path of the next folder, which does not exist yet: two characters, so that a server's socket file
+    /// stays within the system's limit.</summary>
+    public string NextFolderPath()
     {
-        string path = System.IO.Path.Combine(Directory, name + "-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
+        const string Digits = "0123456789abcdefghijklmnopqrstuvwxyz";
+        int number = Interlocked.Increment(ref _folders) - 1;
+        Assert.True(number < Digits.Length * Digits.Length, "A test makes more folders than two characters can name.");
+        return System.IO.Path.Combine(Directory, $"{Digits[number / Digits.Length]}{Digits[number % Digits.Length]}");
+    }
+
+    /// <summary>Creates a new folder that only this user can use, as a machine-scope data folder must be (design §10.2).</summary>
+    public string NewFolder()
+    {
+        string path = NextFolderPath();
         ProtectedFiles.CreateDirectory(path, KeyScope.Machine);
         return path;
     }
@@ -145,7 +194,7 @@ internal sealed class Deployment : IAsyncDisposable
             ProductId = "acme-cad",
             ServerUrl = serverUrl,
             Trust = Trust,
-            DataDirectory = dataDirectory ?? NewFolder("client"),
+            DataDirectory = dataDirectory ?? NewFolder(),
             ClockGuard = StatelessClockGuard.Instance,
             TimeProvider = Time,
         };

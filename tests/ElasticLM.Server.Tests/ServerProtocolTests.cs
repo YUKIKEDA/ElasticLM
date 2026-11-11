@@ -46,7 +46,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             return e.Message;
         }
 
-        string standard = _deployment.NewFolder("standard");
+        string standard = _deployment.NewFolder();
         _deployment.WriteServerLicense(
             standard,
             s =>
@@ -62,7 +62,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         );
         Assert.Contains("ELM_WRONG_KIND", await StartError(standard), StringComparison.Ordinal);
 
-        string trial = _deployment.NewFolder("trial");
+        string trial = _deployment.NewFolder();
         _deployment.WriteServerLicense(
             trial,
             s =>
@@ -79,21 +79,20 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         );
         Assert.Contains("ELM_WRONG_KIND", await StartError(trial), StringComparison.Ordinal);
 
-        string other = _deployment.NewFolder("other");
-        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder("elsewhere"));
+        string other = _deployment.NewFolder();
+        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder());
         _deployment.WriteServerLicense(other, s => s with { InstallationKeyThumbprint = otherKey });
         Assert.Contains("ELM_WRONG_INSTALLATION", await StartError(other), StringComparison.Ordinal);
 
-        string missing = _deployment.NewFolder("missing");
+        string missing = _deployment.NewFolder();
         Assert.Contains(Deployment.ServerKeyId(missing), await StartError(missing), StringComparison.Ordinal);
 
-        string untrusted = _deployment.NewFolder("untrusted");
+        string untrusted = _deployment.NewFolder();
         _deployment.WriteServerLicense(untrusted);
         static ServerSettings WithoutTrust(ServerSettings s) =>
             new()
             {
                 Product = s.Product,
-                AdminListen = s.AdminListen,
                 Listen = s.Listen,
                 LicensePath = s.LicensePath,
                 DataDirectory = s.DataDirectory,
@@ -137,8 +136,8 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         static int Codes(string message, string thumbprint) =>
             message.Replace(thumbprint, "{thumbprint}", StringComparison.Ordinal).Split("ELM_").Length - 1;
 
-        string other = _deployment.NewFolder("other");
-        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder("elsewhere"));
+        string other = _deployment.NewFolder();
+        string otherKey = Deployment.ServerKeyId(_deployment.NewFolder());
         _deployment.WriteServerLicense(other, s => s with { InstallationKeyThumbprint = otherKey });
         Assert.Equal(
             "ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. "
@@ -146,7 +145,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             await StartError(other)
         );
 
-        string atLimit = _deployment.NewFolder("at-limit");
+        string atLimit = _deployment.NewFolder();
         string atLimitKey = Deployment.ServerKeyId(atLimit);
         File.WriteAllBytes(Path.Combine(atLimit, "server.elmlic"), new byte[64 * 1024]);
         string refused = await StartError(atLimit);
@@ -154,19 +153,19 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.EndsWith($" This server's installation key is {atLimitKey}.", refused, StringComparison.Ordinal);
         Assert.Equal(1, Codes(refused, atLimitKey));
 
-        string large = _deployment.NewFolder("large");
+        string large = _deployment.NewFolder();
         string largePath = Path.Combine(large, "server.elmlic");
         File.WriteAllBytes(largePath, new byte[(64 * 1024) + 1]);
         Assert.Equal($"The server license '{largePath}' is larger than 64 KiB.", await StartError(large));
 
-        string missing = _deployment.NewFolder("missing");
+        string missing = _deployment.NewFolder();
         string missingKey = Deployment.ServerKeyId(missing);
         string none = await StartError(missing);
         Assert.StartsWith($"The server license '{Path.Combine(missing, "server.elmlic")}' does not exist. ", none, StringComparison.Ordinal);
         Assert.Contains($"installation key {missingKey}, ", none, StringComparison.Ordinal);
         Assert.Equal(0, Codes(none, missingKey));
 
-        string held = _deployment.NewFolder("held");
+        string held = _deployment.NewFolder();
         string heldPath = _deployment.WriteServerLicense(held);
         using (new FileStream(heldPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
         {
@@ -192,13 +191,12 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     [Fact]
     public async Task Start_TrustFromEnvironment_Works()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data);
         ServerSettings settings = _deployment.Settings(data);
         var withoutFiles = new ServerSettings
         {
             Product = settings.Product,
-            AdminListen = settings.AdminListen,
             Listen = settings.Listen,
             LicensePath = settings.LicensePath,
             DataDirectory = settings.DataDirectory,
@@ -545,7 +543,6 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         new()
         {
             Product = settings.Product,
-            AdminListen = settings.AdminListen,
             Listen = settings.Listen,
             LicensePath = settings.LicensePath,
             TrustRootKeyFiles = settings.TrustRootKeyFiles,
@@ -581,7 +578,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
                 deployment.Time.Advance(TimeSpan.FromMinutes(10));
             }
 
-            var store = new InstallationKeyStore("acme-cad", KeyScope.User, deployment.NewFolder("raw"));
+            var store = new InstallationKeyStore("acme-cad", KeyScope.User, deployment.NewFolder());
             Assert.True(store.TryLoadOrCreate(out InstallationKey? key, out _));
             return new Raw(deployment, server, key!);
         }

@@ -67,7 +67,17 @@ $ErrorActionPreference = 'Stop'
 # the calling shell keeps its own (.cursor/rules/scratch.mdc).
 $savedEnvironment = [Environment]::GetEnvironmentVariables()
 $root = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
-$work = Join-Path ([IO.Path]::GetTempPath()) ('elm-native-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6)))
+# design §20.7 (the V1d2 Grill): the work folder is elm-<8 hex digits> and elm-server's data folder in it has a name of two
+# characters, so that the path of the server's administration socket (admin.sock in the data folder, design §13.7) stays
+# within the system's limit: 103 bytes on macOS, 107 on Windows and Linux.
+$work = Join-Path ([IO.Path]::GetTempPath()) ('elm-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(4)).ToLowerInvariant())
+$serverData = Join-Path $work 'sd'
+$socketPath = Join-Path $serverData 'admin.sock'
+$socketBytes = [Text.Encoding]::UTF8.GetByteCount($socketPath)
+$socketLimit = $IsMacOS ? 103 : 107
+if ($socketBytes -gt $socketLimit) {
+    throw "The socket file of the test's elm-server would be '$socketPath': $socketBytes bytes in UTF-8, and this system allows $socketLimit. Run the test with a shorter temporary folder."
+}
 New-Item -ItemType Directory $work | Out-Null
 
 function Invoke-Checked([string]$what, [scriptblock]$command) {
@@ -344,13 +354,12 @@ try {
 
             # design §17.6: a cloud-floating license on the service, and elm-server on https with its own self-signed
             # certificate. The server's data folder is not made here: the server makes it 0700, and ProtectedFiles refuses
-            # a folder that group or other can write.
+            # a folder that group or other can write. Its administration API listens on admin.sock in that folder.
             $cloud = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"cloud`",`"floating`":`"cloud`"}").id
             $leaseKey = (Add-AdminRecord 'licenses' "{`"policyId`":`"$cloud`",`"name`":`"lease`",`"features`":[{`"code`":`"pro`",`"seats`":2}]}").key
             $serverUrl = "https://127.0.0.1:$(Get-FreePort)"
             $env:ELM_LISTEN = $serverUrl
-            $env:ELM_ADMIN_LISTEN = "http://127.0.0.1:$(Get-FreePort)"
-            $env:ELM_DATADIRECTORY = Join-Path $work 'server-data'
+            $env:ELM_DATADIRECTORY = $serverData
             $env:ELM_PRODUCT = 'acme-cad'
             $env:ELM_LICENSE = Join-Path $work 'server.elmlic'
 
