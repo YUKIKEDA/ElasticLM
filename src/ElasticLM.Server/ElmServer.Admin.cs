@@ -9,7 +9,7 @@ namespace ElasticLM.Server;
 
 /// <content>
 /// The local administration API (design §13.7): status, leases, a forced release, a license reload, and signing the usage
-/// log now. It answers only on the loopback http listener (<c>admin.listen</c>) and only with the administrator token; every
+/// log now. It answers only on the listener of the socket file <c>admin.sock</c> and only with the administrator token; every
 /// authorized operation is written to the usage log as <c>admin.action</c>, and requests without the token are counted each
 /// minute as <c>admin.denied</c>.
 /// </content>

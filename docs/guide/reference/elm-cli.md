@@ -243,7 +243,17 @@ Verifies a license file against a trust store and a requirement; it returns exit
 
 ## elm server
 
-The `elm server` commands administer an on-premises license server on its own machine. They read the administrator token from the server's data folder, so they run as the server's user. Without `--data`, the data folder is the machine-wide one of `--product`: `%ProgramData%\ElasticLM\<product>` on Windows, `/var/lib/elasticlm/<product>` on Linux, and `/Library/Application Support/ElasticLM/<product>` on macOS. Each request times out after 30 seconds.
+The `elm server` commands administer an on-premises license server on its own machine. Each command acts on the one server whose data folder it names. Without `--data`, the data folder is the machine-wide one of `--product`: `%ProgramData%\ElasticLM\<product>` on Windows, `/var/lib/elasticlm/<product>` on Linux, and `/Library/Application Support/ElasticLM/<product>` on macOS. Each request times out after 30 seconds.
+
+Run the `elm server` commands as the user that `elm-server` runs as: they read the administrator token from the server's data folder, which only the server's user and root can open on Linux and macOS (for example `sudo -u <server user> elm server status --product <id>`; root also works). On Windows, the folder's access list also admits the Administrators group and SYSTEM, and the administrator token is protected for the machine, not for one user, so those accounts can read it too.
+
+On Windows, run the [server license commands](#server-license-commands) as the server's user itself. They also read the server's installation key, and they first check the data folder: its owner and every account that its access list admits must be the user that runs the command, the Administrators group, or SYSTEM. Run as another administrator, they stop with exit code 1 and a line that starts `error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '<folder>' is not safe for secrets`, because the folder's access list admits the server's user, which is not the account running the command. The line ends by telling you to remove or restrict the folder; do not do that here: run the command as the server's user. A folder whose owner and access list name only the Administrators group and SYSTEM passes for every administrator ([Data folder](server-configuration.md#data-folder)).
+
+The `elm server` commands reach the server's [local administration API](administration-api.md#elm-server-local-administration-api) through the socket file `admin.sock` in the same data folder (a Unix domain socket: a file that programs on the same machine connect through, instead of a port), and through nothing else: they open no TCP connection, take no address, and cannot administer a server on another machine. Use the `elm` of the same release as the `elm-server`. On Windows they need Windows 10 version 1803 or Windows Server 2019, or later. On a system without Unix domain sockets, every `elm server` command stops with `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` and exit code 2.
+
+The path of `admin.sock` has a limit: 107 bytes in UTF-8 on Windows and Linux, and 103 on macOS. The data folder's own absolute path is therefore at most 96 bytes on Windows and Linux, and 92 on macOS; a character outside ASCII takes 2 to 4 bytes, and a relative `--data` is made absolute from the working folder first ([Data folder](server-configuration.md#data-folder)). For a data folder with a longer path, every `elm server` command stops before it reads the administrator token, with `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` and exit code 2. The server itself does not start on such a folder, and exits with 1.
+
+When a command prints `ELM_UNAUTHORIZED`, the administrator token that `elm` read is not the one the running server holds: the server started again between the read and the request, or `admin.token` was replaced by hand or restored from a backup. Run the command again: `elm` reads the token anew. If the code comes again, restart the server, which writes a new token.
 
 ### Server administration options
 
@@ -251,10 +261,21 @@ The `elm server` commands administer an on-premises license server on its own ma
 
 | Option | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
-| `--url` | `http` URL | `http://127.0.0.1:7071` | No | The server's administration API (its setting `admin.listen`). |
 | `--product` | Product ID | — | `--data` or `--product` | The server's product ID, to find its data folder at the default place. |
 | `--data` | Folder path | — | `--data` or `--product` | The server's data folder (its setting `dataDirectory`). |
 | `--json` | — | Off | No | Write the answer as JSON. |
+
+In each of the cases below, these five commands stop with one line on standard error:
+
+| Case | The line | Exit code | What to do |
+| --- | --- | --- | --- |
+| No administrator token can be read in the folder: the folder named is not the server's; the server has never started with a server license, since it makes the token only once its license verifies; or the command runs as a user that may not read the token | `error: The administrator token cannot be read in '<folder>'. Run elm server as the server's user, on its machine.` | 2 | Name the server's folder with `--data` when its `dataDirectory` is not the default one, start the server, or run the command as the server's user. |
+| The folder has no `admin.sock`: the server is not running | `error: The server cannot be reached: the administration socket '<path>' does not exist.` | 3 | Start the server, or name its folder with `--data` when its `dataDirectory` is not the default one. |
+| The connection fails, or no answer comes in 30 seconds. A socket file that a killed server left refuses the connection | `error: The server cannot be reached: <reason>` | 3 | When the reason says that the connection was refused: start the server, or name its folder with `--data` when its `dataDirectory` is not the default one. A socket file that a killed server left need not be deleted: the next start of the server removes it. When no answer came in 30 seconds: the server runs but does not answer. Run the command again, and restart the server if it stays so. |
+| The answer, a success or an error, has a body that is not JSON | `error: The server answered <status> with a body that is not JSON.` | 3 | What listens on `admin.sock` in that folder is not an `elm-server` of this release. Check that `--data` or `--product` names the server's folder, and that `elm` and `elm-server` are of the same release; then restart the server. |
+| The server refuses the administrator token (`401`) | `error: ELM_UNAUTHORIZED: The administrator token is missing or wrong.` | 1 | Run the command again; see above. |
+| Any other error answer with an error code | `error: <code>: <reason>` | 1 | See the code's row in [Error codes](error-codes.md). |
+| An error answer whose body is JSON or empty and has no error code | `error: The server's administration API answered <status>.` | 1 | What listens on `admin.sock` in that folder is not an `elm-server` of this release. Check that `--data` or `--product` names the server's folder, and use the `elm` of the server's release. |
 
 ### elm server status
 
@@ -310,21 +331,32 @@ The commands below manage the server license through the activation kept in the 
 | `--data` | Folder path | The machine-wide data folder of `--product` | No | The server's data folder (its setting `dataDirectory`). |
 | `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
 | `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
-| `--url` | `http` URL on a loopback address | `http://127.0.0.1:7071` | No | The server's administration API. |
 
 When a command writes a new license file and the server is running, it asks the server's [local administration API](administration-api.md#elm-server-local-administration-api) to reload it; when the server is not running, the server reads the file when it starts. In each of the cases below the file is written, the error is one line on standard error, and the exit code is 1.
 
-| The answer to the reload request | The line |
-| --- | --- |
-| The server read the new file and refused it (`409`; the codes are those of [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload)) | `error: the server kept its license: <code>: <reason>` |
-| Another error with a code: the request itself was refused, the server has not read the file, and it still uses its license. `ELM_UNAUTHORIZED` means that `--data` or `--product` names the folder of another server than the one at `--url` | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` |
-| An answer that is not a reload's answer and has no error code, as another program on that port gives | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` |
+| The answer to the reload request | The line | What to do |
+| --- | --- | --- |
+| The server read the new file and refused it (`409`; the codes are those of [`POST /admin/v1/license/reload`](administration-api.md#post-adminv1licensereload)) | `error: the server kept its license: <code>: <reason>` | Correct what the code names, as its row in [Error codes](error-codes.md) says, then run `elm server reload`. |
+| Another error with a code: the request itself was refused, the server has not read the file, and it still uses its license | `error: <code>: <reason> The license file is written; the server did not confirm a reload.` | For `ELM_UNAUTHORIZED`, run `elm server reload`, for which `elm` reads the administrator token anew. If the code comes again, `admin.token` is not the running server's (it was replaced by hand or restored from a backup): restart the server, which writes a new token and reads the license file. For another code, see its row in [Error codes](error-codes.md). |
+| An answer that is not a reload's answer and has no error code, as another program on that socket gives | `error: The server's administration API answered <status>. The license file is written; the server did not confirm a reload.` | Check that `--data` or `--product` names the server's folder. If it does, restart the server: it reads the written license file when it starts. |
+| The server reloaded, but its license is not the written one | `error: The server reads another license file than --license; pass its setting license.` | Run the command again with `--license` set to the server's `license` path. |
 
-When `--license` is the `license` setting of the server whose folder was named, that server reads the written file when it next starts, or at `elm server reload` with its own `--url`.
+When `--license` is the `license` setting of the server whose folder was named, that server reads the written file when it next starts, or at `elm server reload`.
 
-`deactivate`, `deactivate-proof`, `activate-request`, and `refresh-request` first ask the same API for the server's status. Without a readable administrator token in the folder, or when the connection to `--url` is refused (nothing listens there), they take the server as not running; the reload request does the same. When something listens there and gives no whole answer within 30 seconds, they stop with `error: The server's administration API did not answer in time.` or `error: The server's administration API gave no whole answer.`, write nothing, and end with exit code 3. After a written file, the reload request ends with the same line followed by `The license file is written; the server did not confirm a reload.` and exit code 3. An answer that is not a status stops them with `error: <code>: <reason>`, or `error: The server's administration API answered <status>.` for an answer without a code; they write nothing, and the exit code is 1. A stopped server's folder keeps its administrator token: while another server listens at the default `--url`, these commands need a `--url` where nothing listens, such as the stopped server's own `admin.listen`.
+`deactivate`, `deactivate-proof`, `activate-request`, and `refresh-request` first ask the same API for the server's status. That question, and the reload request after a written file, end in one of these ways when the answer is not a status, or not a reload's answer:
 
-A success answer whose body is not JSON stops the status question with `error: The server's administration API answered with a body that is not JSON.` and exit code 3; the reload request adds `The license file is written; the server did not confirm a reload.` to that line.
+| Case | What the command does | The line | Exit code |
+| --- | --- | --- | --- |
+| No administrator token can be read in the folder, the folder has no `admin.sock`, or the connection to `admin.sock` is refused (a socket file that a killed server left) | It takes the server as not running. After the status question, it goes on with its work | None after the status question. After a written file, `The server is not running; it reads the license when it starts.` on standard output | That of the command's work; 0 after a written file |
+| The connection fails in any other way, or it ends before a whole answer came. The line is the same for both | It stops | `error: The server's administration API gave no whole answer.` | 3 |
+| Something accepts the connection and gives no whole answer within 30 seconds | It stops | `error: The server's administration API did not answer in time.` | 3 |
+| A success answer whose body is not JSON | It stops | `error: The server's administration API answered with a body that is not JSON.` | 3 |
+| The status question gets an error with a code, such as `ELM_UNAUTHORIZED` | It stops | `error: <code>: <reason>` | 1 |
+| The status question gets an answer that is not a status and has no error code | It stops | `error: The server's administration API answered <status>.` | 1 |
+
+A command that stops at the status question writes nothing. After a written file, each line with exit code 3 is followed, on the same line, by `The license file is written; the server did not confirm a reload.`; the reload request's answers with exit code 1 are in the table above.
+
+In the rows with exit code 3 and in the last row, something may be listening on the socket file, so a server may be running. For `deactivate` and `deactivate-proof`, stop the server and run the command again. For the other commands, run the command again, and restart the server if the line comes again. For `ELM_UNAUTHORIZED`, see the top of [elm server](#elm-server).
 
 ### elm server activate
 

@@ -57,10 +57,6 @@ internal sealed partial record ServerSettings
     /// files. A relative path is under the data folder.</summary>
     public string UsageLog { get; init; } = "usage.jsonl";
 
-    /// <summary>Gets where the local administration API listens (<c>admin.listen</c>, design §13.7): http on a loopback
-    /// address only.</summary>
-    public Uri AdminListen { get; init; } = new("http://127.0.0.1:7071");
-
     /// <summary>Gets the <c>elm-service</c> that refreshes the server license on its own (<c>service.url</c>, design §13.7), or
     /// <see langword="null"/> for none.</summary>
     public Uri? ServiceUrl { get; init; }
@@ -103,7 +99,16 @@ internal sealed partial record ServerSettings
             throw new ServerStartException("borrow.reserve must be between 0 and 1000000.");
         }
 
-        Uri admin = ParseAdmin(Env("ELM_ADMIN_LISTEN") ?? file.Admin?.Listen ?? "http://127.0.0.1:7071");
+        // design §13.8 (V1d2): the setting is gone, and a value that is left stops the start whatever it is. Ignored, it would
+        // leave the operator thinking that the administration API is still on that port.
+        if (Env("ELM_ADMIN_LISTEN") is not null || file.Admin?.Listen == true)
+        {
+            throw new ServerStartException(
+                "admin.listen is no longer a setting: the administration API listens on the socket file admin.sock in the data folder. "
+                    + "Remove admin.listen (ELM_ADMIN_LISTEN)."
+            );
+        }
+
         string usage = Env("ELM_LOG_USAGE") ?? file.Log?.Usage ?? "usage.jsonl";
 
         // design §17.3 (V1c10, A1): a name of white space only is no file name either.
@@ -118,7 +123,6 @@ internal sealed partial record ServerSettings
             ServiceUrl = service,
             BorrowMaxDuration = borrowMax,
             BorrowReserve = reserve,
-            AdminListen = admin,
             UsageLog = usage,
             Product = product,
             Listen = listen,
@@ -197,29 +201,6 @@ internal sealed partial record ServerSettings
         && value <= TimeSpan.FromDays(36_600)
             ? value
             : throw new ServerStartException($"{key} must be a duration such as 7.00:00:00, from one second to 100 years: '{text}'.");
-
-    // design §13.7: the administration API answers only on this machine, so it listens on a loopback address over http.
-    private static Uri ParseAdmin(string text)
-    {
-        if (
-            !Uri.TryCreate(text, UriKind.Absolute, out Uri? uri)
-            || uri.Scheme != Uri.UriSchemeHttp
-            || uri.AbsolutePath != "/"
-            || uri.Query.Length > 0
-            || !(
-                uri.Host == "localhost"
-                || (
-                    System.Net.IPAddress.TryParse(uri.Host.Trim('[', ']'), out System.Net.IPAddress? address)
-                    && System.Net.IPAddress.IsLoopback(address)
-                )
-            )
-        )
-        {
-            throw new ServerStartException($"admin.listen must be an http URL on a loopback address, such as http://127.0.0.1:7071: '{text}'.");
-        }
-
-        return uri;
-    }
 
     // design §13.8: https, or http on a loopback address for tests and for trying it out locally (production uses https), as
     // ActivationClient takes it.

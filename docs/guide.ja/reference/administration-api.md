@@ -1806,9 +1806,23 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 
 ## `elm-server` のローカルの管理 API
 
-`elm-server` のローカルの管理 API は、サーバーのマシン上で `elm server` のコマンドが使う。答えるのは `admin.listen` のアドレスだけで、ループバックアドレスの平文の `http` だ。既定は `http://127.0.0.1:7071`（[elm-server の設定](server-configuration.md#admin)を参照）。ここではリースのプロトコルを提供しない。また、サーバーの `https` のアドレスで `/admin/` にリクエストすると、本文のない `404` になる。
+`elm-server` のローカルの管理 API は、サーバーのマシン上で `elm server` のコマンドが使う。この API がリクエストに答えるのは、サーバーのデータフォルダーにあるソケットのファイル `admin.sock`（Unix ドメインソケット。同じマシンのプログラムどうしが、ポートの代わりに接続に使うファイルだ）で受けたときだけで、そのソケットの上で平文の `http` を使う。Windows、Linux、macOS のどれでも同じだ。TCP のポートも設定もない（[elm-server の設定](server-configuration.md#ポート)を参照）。接続はマシンの外に出ないので、暗号化しない。接続を守るのは、データフォルダーのアクセス権と管理者トークンだ（[セキュリティモデル](../explanation/security-model.md#顧客の管理者向け)を参照）。ここではリースのプロトコルを提供しない。また、サーバーの `https` のアドレスで `/admin/…` にリクエストすると、本文のない `404` になる。
 
-- 認証: `Authorization: Bearer <token>`。トークンは、サーバーのデータフォルダーの `admin.token` に保存した 32 バイトの乱数を、base64url（43 文字）で書いたものだ。サーバーは最初の起動時にこのファイルを作る。Windows では、ファイルは DPAPI で保護したバイト列を持つ。ほかの OS では、バイト列をそのまま持ち、所有者だけが読み書きできる。ヘッダーは、ここに書いたとおり `Bearer` と 1 つの空白で始まらなければならない。スキーム名は大文字と小文字を区別する。トークンがないか正しくないときは `401` と `ELM_UNAUTHORIZED` になる。このファイルを読める人は、サーバーを管理できる（[elm-server の設定](server-configuration.md#データフォルダー)を参照）。
+認証は `Authorization: Bearer <token>` だ。トークンは管理者トークンで、サーバーのデータフォルダーの `admin.token` に保存した 32 バイトの乱数を、パディングなしの base64url（43 文字）で書いたものだ。サーバーは、起動のたびに新しいトークンを作ってファイルを置き換える。そのため、自分のプログラムでは、サーバーを起動するたびにファイルを読み直す。前の起動のトークンは `401` になる。Linux と macOS では、ファイルは 32 バイトをそのまま持ち、所有者だけが読み書きできる。Windows では、ファイルは DPAPI でマシンに対して保護したバイト列を持つので、スクリプトはそのバイト列をそのままでは使えない。下を参照。ヘッダーは、ここに書いたとおり `Bearer` と 1 つの空白で始まらなければならない。スキーム名は大文字と小文字を区別する。トークンがないか正しくないときは `401` と `ELM_UNAUTHORIZED` になる。このファイルを読める人は、サーバーを管理できる（[elm-server の設定](server-configuration.md#データフォルダー)を参照）。
+
+Linux と macOS では、自分のプログラムからは、サーバーのユーザーとして、ソケットのファイルを通して API を呼び出す。curl では次のようになる。1 行目はファイルからトークンを作り、2 行目はリクエストを送る。
+
+```text
+token=$(base64 < "<data folder>/admin.token" | tr '+/' '-_' | tr -d '=\n')
+curl --unix-socket "<data folder>/admin.sock" -H "Authorization: Bearer $token" http://elm-server.invalid/admin/v1/status
+```
+
+curl は、リクエストをソケットのファイルに送る。URL のホストは使われない。`elm-server.invalid` は、リクエストの `Host` ヘッダーに入るだけで、サーバーはこのヘッダーを見ない。
+
+Windows では、スクリプトからは、代わりに `elm server` のコマンドに `--json` を付けて使う（[サーバー管理のオプション](elm-cli.md#サーバー管理のオプション)）。このとき `elm server status`、`elm server leases`、`elm server reload` は、API のレスポンスを受け取ったまま表示する。
+
+どのルートにも、次のことが当てはまる。
+
 - ロールもページングもない。`allow` と `deny` の設定と `rateLimit.perIp` は適用しない。
 - 本文を読むルートはない。
 - エラーは problem 形式のレスポンス（`application/problem+json`）で、項目は[エラー](#エラー)で説明したものだ。

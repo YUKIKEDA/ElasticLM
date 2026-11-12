@@ -11,10 +11,13 @@ In this tutorial you run `elm-server`, the license server that a customer runs o
 You need:
 
 - The .NET 10 SDK. `dotnet --list-sdks` must list a version that starts with `10.`.
-- The ports 7070 and 7071 free on your machine: the server listens on both. In PowerShell, `Get-NetTCPConnection -LocalPort 7070,7071 -ErrorAction SilentlyContinue` prints nothing when both are free; on Linux and macOS, `lsof -i :7070 -i :7071` prints nothing.
+- The port 7070 free on your machine: the server listens on it. In PowerShell, `Get-NetTCPConnection -LocalPort 7070 -ErrorAction SilentlyContinue` prints nothing when it is free; on Linux and macOS, `lsof -i :7070` prints nothing.
 - The [GitHub CLI](https://cli.github.com/), `gh`, to check the files you download; nothing else in this tutorial uses it.
+- On Windows, Windows 10 version 1803 or Windows Server 2019, or later: `elm-server` needs it.
 
 Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
+
+Give the folder a short path: its full path may be at most 84 bytes in UTF-8 on Windows and Linux, and 80 on macOS; a character outside ASCII takes 2 to 4 bytes. The server keeps a socket file in `server-data` inside the folder, and the path of a socket file has a limit ([Data folder](../reference/server-configuration.md#data-folder)).
 
 On Linux and macOS, the folder must not be writable by your group or by others, because the server keeps its private key in a folder inside it. `chmod go-w .` in the folder makes sure of that.
 
@@ -146,7 +149,7 @@ Create a file named `server.json` in the tutorial folder with this content. Thes
 - `dataDirectory` is the folder where the server keeps its own key and its records.
 - `trust.rootKeys` lists the root public keys the server accepts a server license from.
 
-The paths are relative to the folder you start the server in. The server also listens on `http://127.0.0.1:7071` for the `elm server` commands, which is the default and needs no setting. [elm-server configuration](../reference/server-configuration.md) lists every setting.
+The paths are relative to the folder you start the server in. The server also listens on a socket file, `admin.sock` in `server-data`, for the `elm server` commands: a file that programs on this machine connect through, instead of a port. It needs no setting. [elm-server configuration](../reference/server-configuration.md) lists every setting.
 
 A server license is bound to one server, through the server's installation key, a key pair that the server makes the first time it starts. Start the server once to make the key and to see its thumbprint, the short name of the key:
 
@@ -164,6 +167,8 @@ error: The server license 'server.elmlic' does not exist. Ask the vendor for a s
 The value after `installation key` is the thumbprint: 43 characters, which may include `-` and `_`. The key itself stays in `server-data`. The values after `fingerprints` are the machine fingerprints of your machine: a license issued with `--fingerprint` would be bound to the machine as well, and this tutorial does not use them. In real use, the customer's administrator sends this thumbprint to the vendor, who issues the server license.
 
 On Linux and macOS, if the tutorial folder is writable by your group or by others, the server instead prints `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.`, followed by one more sentence, and also ends with exit code 1. Type `chmod go-w .` in the tutorial folder, then the same `elm-server` command again. You do not need to delete `server-data` first.
+
+If the server prints `error: The path of the administration socket …` instead, the path of the tutorial folder is too long. Move the folder to a shorter path, open a terminal there, add its `tools` folder to your `PATH` again, and type the same `elm-server` command.
 
 Issue the server license: two seats of the feature `pro`, bound to the server's key. Replace `<server-key>` with the thumbprint that the server printed, all 43 characters exactly:
 
@@ -198,7 +203,7 @@ Open a second terminal in the tutorial folder, and add the `tools` folder to its
 elm-server --config server.json
 ```
 
-The server keeps running and prints its log. Each entry is a line that starts with `info:` and names where the entry comes from, followed by the message, indented. The first entries come from the web host the server runs in: the two addresses it listens on, `Application started. Press Ctrl+C to shut down.`, the hosting environment, and a `Content root path`, which is the folder of the `elm-server` executable and has nothing to do with the paths in `server.json`. The line to look for is `server.started`, which says that the server started:
+The server keeps running and prints its log. Each entry is a line that starts with `info:` and names where the entry comes from, followed by the message, indented. The first entries come from the web host the server runs in: the address and the socket file it listens on, `Application started. Press Ctrl+C to shut down.`, the hosting environment, and a `Content root path`, which is the folder of the `elm-server` executable and has nothing to do with the paths in `server.json`. The line to look for is `server.started`, which says that the server started:
 
 ```text
 info: elm-server[1]
@@ -207,7 +212,7 @@ info: elm-server[1]
 
 The time at the end is in UTC, as `+00:00` shows.
 
-If port 7070 or 7071 is taken, the server instead logs the failure with a long stack trace and ends with exit code 1. Its last line is `error: elm-server cannot listen on https://127.0.0.1:7070/ and http://127.0.0.1:7071/: Failed to bind to address https://127.0.0.1:7070: address already in use.`; when only 7071 is taken, the address after `Failed to bind to address` is `http://127.0.0.1:7071`. Stop the program that uses the port, and start the server again.
+If port 7070 is taken, the server instead logs the failure with a long stack trace and ends with exit code 1. Its last line starts with `error: elm-server cannot listen on https://127.0.0.1:7070/ and`, names the socket file `admin.sock` in `server-data` by its full path, and ends with `Failed to bind to address https://127.0.0.1:7070: address already in use.` Stop the program that uses the port, and start the server again.
 
 For the first lease duration after it starts, one minute with this license, the server refuses new leases: after a restart, apps that held leases before it need that time to reclaim their seats. Leave the server running, and go back to the first terminal for the rest of the tutorial. While you create the app, most of that minute passes.
 
@@ -381,7 +386,7 @@ Ask the server what it holds:
 elm server status --data server-data
 ```
 
-`elm` reads the server's administrator token from `server-data` and asks the server on port 7071. Among other lines, it prints:
+`elm` reads the server's administrator token from `server-data` and asks the server through the socket file `admin.sock` in the same folder. Among other lines, it prints:
 
 <!-- steps:expect -->
 ```text

@@ -196,7 +196,7 @@ public sealed class LeaseTests : IAsyncLifetime
     [Fact]
     public async Task Borrow_ListedAndKeptWhenTheReturnIsRefused()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data, s => s with { BorrowReturnLimit = 0 });
         ElmServer server = await StartOpenServerAsync(data);
         nint client = Create(server.PublicUrls[0].AbsoluteUri);
@@ -250,13 +250,7 @@ public sealed class LeaseTests : IAsyncLifetime
         );
         Exports.Time = test.Time;
         string root = File.ReadAllText(test.FilePath("root.pub.pem"));
-        ClientOptions options = LeaseApi.Options(
-            _api,
-            root,
-            service.Url.ToString(),
-            _deployment.NewFolder("hosted"),
-            license.GetProperty("key").GetString()
-        );
+        ClientOptions options = LeaseApi.Options(_api, root, service.Url.ToString(), _deployment.NewFolder(), license.GetProperty("key").GetString());
         Assert.True(LeaseApi.Create(_api, options, out nint client) == 0, NativeApi.LastError);
 
         Assert.Equal(0, LeaseApi.Acquire(_api, client, "pro", 2, out nint lease, out _));
@@ -287,7 +281,7 @@ public sealed class LeaseTests : IAsyncLifetime
     [Fact]
     public async Task Transitions_RetryingReclaimingHeldLost()
     {
-        string data = _deployment.NewFolder("server");
+        string data = _deployment.NewFolder();
         ElmServer before = await StartOpenServerAsync(data);
         int port = before.PublicUrls[0].Port;
         nint client = Create(before.PublicUrls[0].AbsoluteUri);
@@ -489,7 +483,6 @@ public sealed class LeaseTests : IAsyncLifetime
         new()
         {
             Product = settings.Product,
-            AdminListen = settings.AdminListen,
             Listen = new Uri($"https://127.0.0.1:{port}"),
             LicensePath = settings.LicensePath,
             TrustRootKeyFiles = settings.TrustRootKeyFiles,
@@ -497,8 +490,7 @@ public sealed class LeaseTests : IAsyncLifetime
             RateLimitPerIp = settings.RateLimitPerIp,
         };
 
-    private ClientOptions Options(string? url, string? licenseKey = null) =>
-        LeaseApi.Options(_api, _root, url, _deployment.NewFolder("client"), licenseKey);
+    private ClientOptions Options(string? url, string? licenseKey = null) => LeaseApi.Options(_api, _root, url, _deployment.NewFolder(), licenseKey);
 
     private nint Create(string url)
     {

@@ -37,7 +37,7 @@ public sealed class ServerActivationTests
         );
 
         string license = vendor.File("activated.elmlic");
-        await using ServerProcess server = ServerProcess.Prepare(vendor, "activated", "acme-cad", license, service.Url);
+        await using ServerProcess server = ServerProcess.Prepare(vendor, "a", "acme-cad", license, service.Url);
         await server.InstallationKeyAsync();
         await vendor.ElmOkAsync(
             "server",

@@ -1,6 +1,7 @@
 using System.CommandLine;
 using System.Globalization;
 using System.Net.Http.Headers;
+using System.Net.Sockets;
 using System.Text.Json;
 using ElasticLM.Client;
 
@@ -8,7 +9,8 @@ namespace ElasticLM.Cli;
 
 /// <summary>
 /// <c>elm server</c>: the local administration of an on-premises server (design §13.7, §16). It runs on the server's machine,
-/// reads the administrator token from the server's data folder, and calls the administration API on a loopback address.
+/// reads the administrator token from the server's data folder, and calls the administration API on the socket file
+/// <c>admin.sock</c> in the same folder.
 /// </summary>
 internal static class ServerCommands
 {
@@ -37,14 +39,13 @@ internal static class ServerCommands
 
         var idArgument = new Argument<string>("lease-id") { Description = "The lease ID, as 'elm server leases' shows it." };
         var release = new Command("release", "Release a lease (a borrow too) on the server's side.") { idArgument };
-        AddCommon(release, out Option<string?> url, out Option<string?> product, out Option<string?> data, out Option<bool> json);
+        AddCommon(release, out Option<string?> product, out Option<string?> data, out Option<bool> json);
         release.SetAction(parse =>
             CommonOptions.Run(
                 host,
                 () =>
                     Call(
                         host,
-                        parse.GetValue(url),
                         parse.GetValue(product),
                         parse.GetValue(data),
                         HttpMethod.Delete,
@@ -69,32 +70,21 @@ internal static class ServerCommands
     )
     {
         var command = new Command(name, description);
-        AddCommon(command, out Option<string?> url, out Option<string?> product, out Option<string?> data, out Option<bool> json);
+        AddCommon(command, out Option<string?> product, out Option<string?> data, out Option<bool> json);
         command.SetAction(parse =>
-            CommonOptions.Run(
-                host,
-                () => Call(host, parse.GetValue(url), parse.GetValue(product), parse.GetValue(data), method, path, parse.GetValue(json), print)
-            )
+            CommonOptions.Run(host, () => Call(host, parse.GetValue(product), parse.GetValue(data), method, path, parse.GetValue(json), print))
         );
         return command;
     }
 
-    private static void AddCommon(
-        Command command,
-        out Option<string?> url,
-        out Option<string?> product,
-        out Option<string?> data,
-        out Option<bool> json
-    )
+    private static void AddCommon(Command command, out Option<string?> product, out Option<string?> data, out Option<bool> json)
     {
-        url = new Option<string?>("--url") { Description = "The administration API. Default: http://127.0.0.1:7071 (admin.listen)." };
         product = new Option<string?>("--product") { Description = "The server's product ID, to find its data folder at the default place." };
         data = new Option<string?>("--data")
         {
-            Description = "The server's data folder (dataDirectory), which holds the administrator token.",
+            Description = "The server's data folder (dataDirectory), which holds the administrator token and the administration socket.",
         }.AsPath();
         json = CommonOptions.Json();
-        command.Options.Add(url);
         command.Options.Add(product);
         command.Options.Add(data);
         command.Options.Add(json);
@@ -103,7 +93,6 @@ internal static class ServerCommands
     // One administration call. Exit codes: 0 done, 1 the server refused, 2 bad input or no token, 3 the server is unreachable.
     private static int Call(
         CliHost host,
-        string? url,
         string? product,
         string? data,
         HttpMethod method,
@@ -121,16 +110,19 @@ internal static class ServerCommands
                     ? new InstallationKeyStore(CliParse.NotEmpty(product, "--product"), KeyScope.Machine).Directory
                     : throw new CliException("Pass --data or --product.")
             );
+
+        // design §13.7 (V1d2): the length of the socket's path is checked before the token is read, so a folder whose path
+        // is too long is reported as that, with or without a token in it.
+        (string socketPath, UnixDomainSocketEndPoint endPoint) = ServerAdminApi.SocketOf(folder);
         string token =
             AdminToken.Read(folder)
             ?? throw new CliException($"The administrator token cannot be read in '{folder}'. Run elm server as the server's user, on its machine.");
-        if (!Uri.TryCreate(url ?? "http://127.0.0.1:7071/", UriKind.Absolute, out Uri? baseUri) || baseUri.Scheme != Uri.UriSchemeHttp)
+        if (!File.Exists(socketPath))
         {
-            throw new CliException($"--url must be an http URL: '{url}'.");
+            throw new CliException($"The server cannot be reached: the administration socket '{socketPath}' does not exist.", ExitCodes.NetworkError);
         }
 
-        // No redirects: the answer of another address is not the answer of the server at --url.
-        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { BaseAddress = baseUri, Timeout = RequestTimeout };
+        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, RequestTimeout);
         using var request = new HttpRequestMessage(method, path);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         HttpResponseMessage response;
@@ -143,7 +135,10 @@ internal static class ServerCommands
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
-            throw new CliException("The server cannot be reached: " + e.Message, ExitCodes.NetworkError);
+            // The HTTP client adds the request's host to a connection error's sentence, and the host is not where the
+            // request goes; the socket's own sentence says what happened.
+            string reason = e.InnerException is SocketException socket ? socket.Message : e.Message;
+            throw new CliException("The server cannot be reached: " + reason, ExitCodes.NetworkError);
         }
 
         using (response)
@@ -164,12 +159,8 @@ internal static class ServerCommands
 
             if (!response.IsSuccessStatusCode)
             {
-                string code = value.ValueKind == JsonValueKind.Object && value.TryGetProperty("code", out JsonElement c) ? c.GetString() ?? "?" : "?";
-                string detail =
-                    value.ValueKind == JsonValueKind.Object && value.TryGetProperty("detail", out JsonElement d)
-                        ? d.GetString() ?? string.Empty
-                        : string.Empty;
-                host.Error.WriteLine($"error: {code}: {detail}");
+                // The same line as the server license commands print for an answer that is not the one asked for.
+                host.Error.WriteLine("error: " + ServerAdminApi.Unexpected(response.StatusCode, value));
                 return ExitCodes.VerificationFailed;
             }
 

@@ -33,7 +33,7 @@ public sealed class ListenTests
     {
         await using Vendor vendor = await Vendor.CreateAsync("license", "lease");
         string license = vendor.File("server.elmlic");
-        await using ServerProcess server = ServerProcess.Prepare(vendor, "server", "acme-cad", license);
+        await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license);
 
         // Held right after Prepare found the port free, not after the license is issued: another process can take the port
         // only in the short time between the two. The run without a license below ends before the server listens.

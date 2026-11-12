@@ -96,7 +96,7 @@ flowchart LR
     Srv -- "server activation and refresh" --> Svc
     App1 -- "leases" --> Srv
     App2 -- "leases" --> Srv
-    CLI2 -- "local admin API" --> Srv
+    CLI2 -- "local administration API" --> Srv
 ```
 
 Read the figure like this:
@@ -179,10 +179,10 @@ Most of what keeps ElasticLM safe is about where private keys and secrets live. 
 | Root key | The vendor | A passphrase-protected PKCS#8 PEM file, kept offline. Only `elm` reads it, to sign key certificates. It never goes on a server. |
 | Signing key | The vendor | Given to `elm-service` as an encrypted file with its passphrase, or read by `elm` to issue license files. |
 | Installation key | Each device | Created by the client on first use and stored per product: with DPAPI on Windows, with file mode `0600` on Linux and macOS. |
-| `elm-server`'s installation key and admin token | The customer's administrator | The server's data folder, readable only by Administrators, SYSTEM, and the account that created it (Windows), or by its owner (Linux and macOS). |
+| `elm-server`'s installation key and administrator token | The customer's administrator | The server's data folder, readable only by the server's user, the Administrators group, and SYSTEM (Windows), or by the server's user and root (Linux and macOS). |
 | License key | The customer | Typed in by a person. `elm-service` stores only its hash. |
 
-No vendor private key is built into a binary or a resource. The app carries only the vendor's root public keys. The only private key on a customer's device is that device's own installation key, which the client creates there; `elm-server` likewise creates its own installation key and admin token.
+No vendor private key is built into a binary or a resource. The app carries only the vendor's root public keys. The only private key on a customer's device is that device's own installation key, which the client creates there; `elm-server` likewise creates its own installation key and administrator token.
 
 ## What can go wrong, and what you must do
 
@@ -206,7 +206,7 @@ Each role has a few things that only it can do. The pages that follow explain wh
 
 - Run `elm-server` under the operating system's service manager (a Windows service, systemd, or launchd) so that it restarts on its own. With the default 10-minute lease, apps keep working if the server is back within about 6 minutes 40 seconds. `elm-server` aims to listen within 1 second of starting; on a Linux test machine it took about 0.1 s.
 - Keep the server license fresh: let the server refresh online, or carry refresh files at least once every 37 days with the default 30-day token and 7-day grace period.
-- Keep the server's data folder private. It holds the server's installation key, the admin token, and the borrow record.
+- Keep the server's data folder private. It holds the server's installation key, the administrator token, and the borrow record.
 
 **When the network goes away**
 

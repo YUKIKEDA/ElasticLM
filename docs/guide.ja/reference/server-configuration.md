@@ -6,6 +6,8 @@ sidebar_position: 2
 
 このページは、`elm-server` のすべての設定をまとめたものだ。`elm-server` は、顧客のネットワークでフローティングライセンスのシートを貸し出すオンプレミスのライセンスサーバーだ。サーバーをインストールして運用する人に向けている。サーバーの役割と、シート、リース、借用の仕組みについては、先に[フローティングライセンス](../explanation/floating-licenses.md)を読むこと。
 
+Windows では、`elm-server` と `elm server` のコマンドに、Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降が要る。サーバーのローカルの管理 API は、Unix ドメインソケットで待ち受ける。Unix ドメインソケットは、同じマシンのプログラムどうしが、ネットワークのポートを使わずに接続するためのファイルだ（[ポート](#ポート)を参照）。Windows にも Unix ドメインソケットがあり、使えるのはこれらのバージョンからだ。このページでは、このファイルをソケットのファイルと呼ぶ。
+
 ## コマンドラインと終了コード
 
 ```text
@@ -24,14 +26,19 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | --- | --- |
 | 0 | サーバーが正常に止まった（Ctrl+C、`SIGTERM`、またはサービスの停止）。または、`--help` で使い方を表示した |
 | 1 | サーバーを起動できない。理由は表の下に挙げる |
-| 2 | 不明な引数、パスのない `--config`、または設定のエラー。設定ファイルがない、読めない、64 KiB より大きい、または有効でない。値が有効でない。`product` がない |
+| 2 | 不明な引数、パスのない `--config`、または設定のエラー。設定ファイルがない、読めない、64 KiB より大きい、または有効でない。値が有効でない。`product` がない。設定ではない [`admin.listen`](#admin) に値がある |
 
 終了コード 1 か 2 で終わる前に、`elm-server` は `error:` と理由を標準エラー出力に表示する。
 
 終了コード 1 になるのは、たとえば次のときだ。
 
 - サーバーライセンスがまだない。初回の起動ではこうなる。サーバーはインストール鍵を作り、メッセージにその鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)とマシンフィンガープリントを示す。これをベンダーに送ると、ベンダーがサーバーライセンスを発行する。または、ベンダーのライセンスキーでサーバーライセンスをアクティベーションする。オンラインなら [`elm server activate`](elm-cli.md#elm-server-activate)、オフラインなら [`elm server activate-request`](elm-cli.md#elm-server-activate-request) と [`elm server import`](elm-cli.md#elm-server-import) を使う。サーバーがベンダーから何を受け取る必要があるかは、[フローティングライセンス](../explanation/floating-licenses.md#elm-server-の運用)で説明している。
+- ソケットのファイル（データフォルダーの `admin.sock`）のパスが、システムの上限より長い。メッセージは `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` になる。サーバーは、ルート鍵を読む前、データフォルダーを作る前にこれを確かめるので、この起動は何も残さない。[データフォルダー](#データフォルダー)を参照。
+- システムに Unix ドメインソケットがない。このページの冒頭に挙げたバージョンより古い Windows などだ: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` サーバーは、パスの長さを確かめたあと、同じ時点でこれを確かめる。
 - ルート公開鍵が指定されていない。
+- 同じデータフォルダーで、別の `elm-server` が動いている: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` そのサーバーを止めるか、このサーバーに専用の `dataDirectory` を指定する。Windows では、バックアップやウイルス対策のスキャンなど、ほかのプログラムが `server.lock` を開いているあいだも、同じ行になる。そのときは、サーバーをもう一度起動し、そのプログラムの対象から `server.lock` を外す（対象から外すファイルは、[データフォルダー](#データフォルダー)に挙げている）。ファイルのロックが効かない場所（[データフォルダー](#データフォルダー)を参照）では、2 つ目のサーバーは代わりに `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.` で止まる。
+- ロックファイル `server.lock` を開けない。ほかのプログラムがファイルを開いているとき（上の項目）は除く。権限がない、ディスクがいっぱい、ファイルシステムが読み取り専用、といったときだ: `error: The lock file '<path>' cannot be opened: <reason>` 原因は、行の最後の理由に出る。サーバーのユーザーがデータフォルダーに書き込めることと、`server.lock` がファイルであることを確かめる。
+- `admin.sock` のパスにあるものを、使うことも消すこともできない。その名前のフォルダーがある場合などだ: `error: The administration socket '<path>' cannot be used: <reason>` そのパスにあるものを消して、サーバーをもう一度起動する。
 - 設定で指定したファイル（ルート鍵、サーバーライセンス、TLS 証明書）を読めないか、有効でない。
 - TLS 証明書に拡張キー使用法（証明書を使ってよい用途の一覧）があり、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication` と表示される）がない。
 - TLS 証明書のファイルで、サーバーの証明書のあとにある証明書が CA の証明書ではない。メッセージは、ファイルの中で何枚目かと、そのサブジェクトを示す: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
@@ -39,7 +46,8 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - `service.url` を設定しているのに、サーバーライセンスを書き込めない。
 - 借用の記録が壊れているか、読み書きできない。
 - 利用ログを書き込めない。
-- `listen` か `admin.listen` で待ち受けられない。ほかのプログラムがそのポートを使っている、そこで待ち受ける権限がない、このマシンにそのアドレスがない、といった場合だ。最後の行は `error: elm-server cannot listen on <listen> and <admin.listen>: <reason>` になる。両方の URL を、サーバーが読んだとおりに、それぞれ `/` で終わる形で示す。
+- 管理者トークンを書き込めない: `error: The administrator token in '<folder>' cannot be created or read.` Windows では、サーバーが起動するときに、ほかのプログラムが `admin.token` を 2 秒より長く開いたままにしていても、こうなる。そのときは、サーバーをもう一度起動する。繰り返すなら、ウイルス対策のスキャンなど、ファイルを開いているプログラムの対象から `admin.token` を外す。
+- `listen` のアドレスか、ソケットのファイルで待ち受けられない。ほかのプログラムがそのポートを使っている、そこで待ち受ける権限がない、このマシンにそのアドレスがない、データフォルダーのファイルシステムにソケットのファイルを置けない、といった場合だ。最後の行は `error: elm-server cannot listen on <listen> and <socket path>: <reason>` になる。`listen` の URL を、サーバーが読んだとおりに `/` で終わる形で示し、`admin.sock` の絶対パスを示す。
 
 ## 設定の渡し方
 
@@ -75,7 +83,8 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | 設定 | 既定 | 用途 |
 | --- | --- | --- |
 | `listen` | `https://0.0.0.0:7070`。すべての IPv4 アドレスのポート 7070 | クライアント。TLS 上のリースのプロトコルに使う |
-| `admin.listen` | `http://127.0.0.1:7071`。ループバックアドレスのポート 7071 | ローカルの管理 API。`elm server` のコマンドが使う。サーバーのマシンからのリクエストにしか答えない |
+
+`elm server` のコマンドが使うローカルの管理 API には、ポートも設定もない。サーバーは、[データフォルダー](#データフォルダー)のソケットのファイル `admin.sock` で待ち受ける。Windows、Linux、macOS のどれでも同じで、そのソケットの上で平文の `http` を使う。接続はマシンの外に出ないので、暗号化しない。接続を守るのは、データフォルダーのアクセス権と管理者トークンだ（[セキュリティモデル](../explanation/security-model.md#顧客の管理者向け)を参照）。接続できるのは、サーバーのマシン上の、データフォルダーを開けるプロセスだけだ。[`elm-server` のローカルの管理 API](administration-api.md#elm-server-のローカルの管理-api) を参照。
 
 ## 最上位の設定
 
@@ -87,7 +96,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | `license` | `ELM_LICENSE` | ファイルのパス | `elm-server` の実行ファイルと同じフォルダーの `server.elmlic` | サーバーライセンスのファイル。`service.url` を設定したときは、サーバーがこのファイルに書き込めなければならない。表の下の注意を参照 |
 | `allow` | `ELM_ALLOW` | 文字列のリスト | なし | リースのリクエストを許可するエントリー。[アクセスルール](#アクセスルール)を参照 |
 | `deny` | `ELM_DENY` | 文字列のリスト | なし | リースのリクエストを拒否するエントリー。[アクセスルール](#アクセスルール)を参照 |
-| `dataDirectory` | `ELM_DATADIRECTORY` | フォルダーのパス | Windows では `%ProgramData%\ElasticLM\<product>`、macOS では `/Library/Application Support/ElasticLM/<product>`、Linux では `/var/lib/elasticlm/<product>` | サーバーのデータフォルダー。[データフォルダー](#データフォルダー)を参照 |
+| `dataDirectory` | `ELM_DATADIRECTORY` | フォルダーのパス | Windows では `%ProgramData%\ElasticLM\<product>`、macOS では `/Library/Application Support/ElasticLM/<product>`、Linux では `/var/lib/elasticlm/<product>` | サーバーのデータフォルダー。パスの長さに上限がある。フォルダーはローカルのファイルシステムに置く。[データフォルダー](#データフォルダー)を参照 |
 
 注意:
 
@@ -97,18 +106,26 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 ### データフォルダー
 
-`elm-server` は、データフォルダーに次のファイルを置く。フォルダーごとバックアップし、サーバーのユーザーだけが読めるようにする。
+`elm-server` は、データフォルダーに次のファイルを置く。フォルダーは、`admin.sock`、`server.lock`、`admin.token` を除いてバックアップする。初めの 2 つは中身を持たず、トークンはサーバーが起動のたびに作り直すからだ。フォルダーをウイルス対策でスキャンするときも、同じ 3 つのファイルを対象から外す。Windows では、サーバーが動いているあいだに `admin.sock` や `server.lock` を読もうとしたプログラムは、エラーになる。
 
 | ファイル | 中身 |
 | --- | --- |
 | `installation.key` | サーバーのインストール鍵。初回の起動時に作る。サーバーライセンスはこの鍵に紐付くので、鍵が新しくなるとサーバーライセンスも新しく要る。Windows では DPAPI で保護する |
 | `clock` | 時刻の状態。インストール鍵で署名してあり、サーバーはこれで時計が戻されたことに気づく |
 | `activation.json` | サーバーライセンスを更新する `elm-service` から、`elm server activate` か `elm server import` が受け取ったアクティベーション。どちらかのコマンドを実行したあとにだけある。隣の `activation.lock` はロックファイルだ |
-| `admin.token` | `elm server` のコマンドが管理 API に送る管理者トークン。これを読める人は、サーバーを管理できる |
+| `admin.token` | `elm server` のコマンドが管理 API に送る管理者トークン。サーバーは、起動のたびに新しいトークンを作ってファイルを置き換えるので、前の起動のトークンは拒否される。ファイルは、サーバーが止まったあとも残る。これを読める人は、サーバーを管理できる |
+| `admin.sock` | ローカルの管理 API のソケットのファイル。サーバーが動いているあいだ、ここにある。サーバーは止まるときにこれを消す。強制終了されたサーバーはこれを残し、次の起動が消す。秘密は入っていない |
+| `server.lock` | ロックファイル。中身は空で、サーバーが動いているあいだ開いたままにする。同じフォルダーで 2 つ目の `elm-server` が起動しないようにするためだ。サーバーが止まったあとも残る。サーバーが動いているあいだは消さないこと |
 | `borrows-<UTC time>.jsonl` | 借用の記録。[ログ](logs.md#elm-server-の借用の記録)を参照 |
 | `usage-<UTC time>.jsonl` | 利用ログ。`log.usage` で別のフォルダーを指定したときは、ここには置かない。[ログ](logs.md#利用ログ)を参照 |
 
-サーバーは、自分のユーザーだけが開けるようにフォルダーを作る。Linux と macOS ではモードを `0700` にし、Windows ではサーバーのユーザー、Administrators、SYSTEM のアクセス制御リストを付ける。ほかのユーザーが読み書きできる既存のフォルダーは使わず、何を直せばよいかを示すメッセージを出して止まる。
+データフォルダーと `admin.token` を読めるのは、Linux と macOS ではサーバーのユーザーと root だけ、Windows ではサーバーのユーザー、Administrators グループ、SYSTEM だけだ。ここでいうサーバーのユーザーは、サーバーを起動してフォルダーを作ったユーザーだ。サーバーがフォルダーをそのように作る。Linux と macOS では、フォルダーのモードを `0700`、`admin.token` のモードを `0600` にする。Windows では、フォルダーに、サーバーのユーザー、Administrators グループ、SYSTEM にアクセスを許すアクセス制御リストを付け、`admin.token` は DPAPI で、1 人のユーザーではなくマシンに対して保護する。`admin.sock` に接続できるのも、同じユーザーだけだ。サーバーは、ほかのユーザーが読み書きできる既存のフォルダーは使わず、何を直せばよいかを示すメッセージを出して止まる。
+
+データフォルダーは、ローカルのファイルシステムに置く。`server.lock` のファイルのロックがあるので、2 つ目のサーバーはそのフォルダーでは起動しない。Linux と macOS では、このロックが効くのは、ファイルのロックがあるファイルシステムだけで、ネットワークファイルシステムの一部にはこれがない。Linux と macOS では、サーバーの環境で、環境変数 `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` が `1` か `true` のときも効かない。この変数は設定しない。ロックが効かない場所では、1 つのフォルダーでほぼ同時に起動した 2 つのサーバーが、どちらも動くことがある。そうなると、`elm server deactivate` が、動いているサーバーを止まっていると判断することがある。
+
+`admin.sock` の絶対パスは、UTF-8 で、Windows と Linux では 107 バイトまで、macOS では 103 バイトまでだ。そのうち 11 バイトを、ファイル名とその前の区切り文字が使う。そのため、データフォルダー自体の絶対パスは、Windows と Linux では 96 バイトまで、macOS では 92 バイトまでになる。ASCII 以外の文字は、1 文字で 2〜4 バイトを使う。相対パスの `dataDirectory` は、先に作業フォルダーからの絶対パスに直す。パスがこれより長いと、サーバーは起動せず、終了コード 1 で終わる。`elm server` のコマンドは、同じメッセージを出して、終了コード 2 で止まる。既定のフォルダーは、Windows と Linux では、どの製品 ID でも上限に収まる。macOS では、製品 ID が 53 文字までのときだけ収まる。それより長い製品 ID のサーバーには、パスの短い `dataDirectory` が要る。`--product` は既定のフォルダーを指すので、そのサーバーに対する `elm server` のコマンドには `--data` が要る。
+
+インストール鍵はデータフォルダーの中にある。そのため、新しい空のフォルダーで起動したサーバーは新しい鍵を作り、サーバーライセンスはその鍵と合わない。移したデータフォルダーは、新しいパスでも、サーバーの確認を通らなければならない。通らなければ、サーバーは `error: The folder '<folder>' is not safe for secrets` で始まる行を出して止まる。Linux と macOS では、フォルダーがグループとほかのユーザーにアクセスを許さず（モード `0700`）、親フォルダーにグループもほかのユーザーも書き込めないことが要る。`installation.key` など、中のファイルのモードは `0600` なので、フォルダーの所有者も変えてはならない。Windows では、フォルダーの所有者と親フォルダーの所有者が、それぞれサーバーのユーザー、Administrators グループ、SYSTEM のどれかであることが要る。アクセス制御リストは、ほかの誰にもアクセスを許さず、親フォルダーから継承していないものでなければならない。フォルダーをコピーすると、コピーは新しい親フォルダーのアクセス制御リストを受け継ぐので、サーバーはそれを使わない。`admin.sock`、`admin.token`、`server.lock` は移さなくてよい。
 
 ### アクセスルール
 
@@ -168,9 +185,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 ## `admin`
 
-| 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
-| --- | --- | --- | --- | --- |
-| `admin.listen` | `ELM_ADMIN_LISTEN` | URL | `http://127.0.0.1:7071` | ローカルの管理 API が待ち受ける場所。ループバックアドレス（または `localhost`）の `http` の URL で、パスとクエリを含まない |
+`elm-server` に `admin` の設定はない。ローカルの管理 API は、ソケットのファイルで待ち受ける（[ポート](#ポート)を参照）。設定ファイルの `admin.listen` に `null` 以外の値があるか、`ELM_ADMIN_LISTEN` が空でないと、サーバーは起動せず、`error: admin.listen is no longer a setting: the administration API listens on the socket file admin.sock in the data folder. Remove admin.listen (ELM_ADMIN_LISTEN).` と終了コード 2 で止まる。`admin` の下のほかのキーは、不明なキーとして扱う。
 
 ## `service`
 

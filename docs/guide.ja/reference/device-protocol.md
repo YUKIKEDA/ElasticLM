@@ -12,7 +12,7 @@ sidebar_position: 7
 
 - HTTP で JSON をやりとりする。どのパスも `/v1/` で始まる。
 - `elm-service` は `listen` の URL で答える。プルーフ（所有証明）は、その `publicUrls` のどれか 1 つを指す。その既定値が `listen` の URL になるのは、それがループバックアドレスのときだけだ（[elm-service の設定](service-configuration.md#最上位の設定)を参照）。
-- `elm-server` は、これらのルートに `listen` のポートでだけ、TLS で答える。`admin.listen` のポートでは、同じパスに本文のない `404` を返す（[elm-server の設定](server-configuration.md#ポート)を参照）。プルーフは、その `publicUrls` のどれか 1 つを指す。その既定値は、`listen` から組み立てた URL だ（[elm-server の設定](server-configuration.md#最上位の設定)を参照）。
+- `elm-server` は、これらのルートに `listen` のポートでだけ、TLS で答える。ローカルの管理 API のソケットのファイル（サーバーのマシンのプログラムどうしが、ポートの代わりに接続に使うファイル）では、同じパスに本文のない `404` を返す（[elm-server の設定](server-configuration.md#ポート)を参照）。プルーフは、その `publicUrls` のどれか 1 つを指す。その既定値は、`listen` から組み立てた URL だ（[elm-server の設定](server-configuration.md#最上位の設定)を参照）。
 - リクエストの本文は 64 KiB までだ。それより大きければ `413` と `ELM_PAYLOAD_TOO_LARGE` が返る。どちらのプログラムも `Content-Type` を確かめない。
 
 クライアントは、`elm-server` の TLS 証明書を、次の 2 つのどちらかを根拠に受け入れる。1 つは、OS がその証明書を検証することだ。管理者が用意した証明書は、これで確かめる。もう 1 つは、証明書の公開鍵が P-256 の鍵で、その[サムプリント](formats.md#鍵-id)がサーバーライセンスの `cnf.jkt` と一致することだ。既定の自己署名証明書の鍵はこれに当たる。クライアントは `cnf.jkt` を、`GET /v1/server/license` が返したサーバーライセンスから、そのライセンスを検証したあとで取り出す。最初の接続では、ライブラリは証明書を記録し、サーバーライセンスを取得して検証してから、初めて比べる。一致しなければ、受け取ったレスポンスを捨てて `ELM_SERVER_PIN_MISMATCH` を返す。TLS を傍受するプロキシを受け入れるのは、OS がその証明書を信頼している場合だけだ。`elm-service` は、OS の信頼だけで確かめる。[TLS](../explanation/floating-licenses.md#tls) を参照。

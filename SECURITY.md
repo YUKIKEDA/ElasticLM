@@ -60,7 +60,8 @@ The executables and `libelasticlm` have no Authenticode or Developer ID signatur
 ad-hoc signature that the linker adds). Windows SmartScreen may warn when you run them. macOS Gatekeeper does not open
 downloaded software that is not notarized; after checking the file as above, remove the quarantine attribute with
 `xattr -d com.apple.quarantine <file>`. The Linux binaries need glibc 2.28 or newer (RHEL 8, Debian 10, Ubuntu 20.04
-and later), or musl for `linux-musl-x64`; the macOS binaries need macOS 12 or newer.
+and later), or musl for `linux-musl-x64`; the macOS binaries need macOS 12 or newer. On Windows,
+`elm-server` and the `elm server` commands need Windows 10 version 1803 or Windows Server 2019, or newer.
 
 ## Supported versions
 

@@ -37,7 +37,7 @@ The app chooses one of two scopes in its client settings (`KeyScope` in `Elastic
 
 The machine scope needs more care, because every user of a device can read `%ProgramData%` and open DPAPI's machine scope, and any user can create a folder there before the app first runs. So on Windows the client creates the machine-scope folder with an access list that allows only Administrators, SYSTEM, and the user who made it. Before it uses an existing machine-scope folder, on any OS, it checks that no other user owns it or may write to it, and stops with `ELM_INSTALLATION_KEY_UNREADABLE` if one can. The user scope is not checked, because the user's own profile already limits access.
 
-The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token. [Files the client keeps](../reference/formats.md#files-the-client-keeps) lists the client's files, with whether each may be copied or deleted.
+The same folder holds other files tied to the key: the kept activation (`activation.json`), borrowed leases, the pins of on-premises servers, the clock guard's state, and on a server, `elm-server`'s administrator token ([Data folder](../reference/server-configuration.md#data-folder) lists the rest of a server's folder). [Files the client keeps](../reference/formats.md#files-the-client-keeps) lists the client's files, with whether each may be copied or deleted.
 
 ### When the key cannot be read
 
