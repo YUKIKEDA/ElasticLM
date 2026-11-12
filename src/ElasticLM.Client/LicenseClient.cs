@@ -486,7 +486,8 @@ public sealed class LicenseClient : IAsyncDisposable
                 writer.WriteEndObject();
             }
 
-            FileReplacement.Move(temporary, path, _time);
+            // The lease ID is new, so no reader holds a file at this path (design §12.6.2).
+            File.Move(temporary, path, overwrite: true);
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

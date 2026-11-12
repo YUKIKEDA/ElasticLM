@@ -89,8 +89,11 @@ internal static class AdminLoginFile
     }
 
     /// <summary>Writes the login, replacing any older one.</summary>
+    /// <param name="path">The path of the login file.</param>
+    /// <param name="login">The login to keep.</param>
+    /// <param name="time">The clock that counts the wait for a reader of the old file on Windows.</param>
     /// <exception cref="CliException">The file cannot be written.</exception>
-    public static void Write(string path, AdminLogin login)
+    public static void Write(string path, AdminLogin login, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(login);
         using var buffer = new MemoryStream();
@@ -132,7 +135,8 @@ internal static class AdminLoginFile
                 throw new CliException($"The login file cannot be written: '{temporary}' exists.", ExitCodes.InvalidInput);
             }
 
-            File.Move(temporary, path, overwrite: true);
+            // design §12.6.2 (V1d2a): elm reads the saved URL without the lock, and on Windows that read refuses the move.
+            FileReplacement.Move(temporary, path, time);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

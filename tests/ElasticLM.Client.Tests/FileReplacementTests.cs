@@ -216,6 +216,138 @@ public sealed class FileReplacementTests : IDisposable
         Assert.Equal(("old", true, 1), (ReadShared(Old), File.Exists(Fresh), clock.Timers));
     }
 
+    /// <summary>
+    /// A failure that is not a refused access is not tried again, on any OS.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - file.json; no file.json.tmp (the test deletes it); the counting fake clock.
+    ///
+    /// Steps:
+    /// - Move the missing new file over the old one, with Move or with MoveAsync.
+    ///
+    /// Expected:
+    /// - FileNotFoundException at once, with no timer made; file.json holds "old".
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Move_NewFileMissing_ThrowsWithoutWaiting(bool asynchronous)
+    {
+        var clock = new CountingTime(Start);
+        File.Delete(Fresh);
+
+        await Assert.ThrowsAsync<FileNotFoundException>(() => MoveAsync(asynchronous, Fresh, Old, clock));
+
+        Assert.Equal(("old", 0), (File.ReadAllText(Old), clock.Timers));
+    }
+
+    /// <summary>
+    /// On Linux and macOS a refused access is not tried again.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS, not as root; the folder of the two files has mode 0500, so a file in it cannot be renamed; the
+    ///   counting fake clock.
+    ///
+    /// Steps:
+    /// - Move the new file over the old one, with Move or with MoveAsync.
+    ///
+    /// Expected:
+    /// - UnauthorizedAccessException at once, with no timer made; file.json holds "old".
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Move_FolderNotWritableOnUnix_ThrowsWithoutWaiting(bool asynchronous)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Modes are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "Root renames in a folder of any mode.");
+        var clock = new CountingTime(Start);
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        }
+
+        try
+        {
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => MoveAsync(asynchronous, Fresh, Old, clock));
+            Assert.Equal(("old", 0), (File.ReadAllText(Old), clock.Timers));
+        }
+        finally
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+    }
+
+    /// <summary>
+    /// On Windows, the writers of the server license file and of a server pin wait for a reader of the old file on the clock
+    /// they are given, and write once the reader has closed.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; a server license file written once with LicenseFiles.Write, or a pin written once with
+    ///   ServerPins.TryWrite; that file opened by the test for reading, as File.ReadAllBytes opens it; the counting fake
+    ///   clock given to the writer.
+    ///
+    /// Steps:
+    /// - Write again on another thread. 3 times: wait for the next timer, then move the clock 100 milliseconds. Wait for the
+    ///   4th timer; close the reader; move the clock 100 milliseconds.
+    ///
+    /// Expected:
+    /// - The write has not ended while the reader holds the file; after the last move of the clock it ends (the pin's write
+    ///   returns true), the file holds the second content, and exactly 4 timers were made.
+    /// </remarks>
+    [Theory]
+    [InlineData("license")]
+    [InlineData("pin")]
+    public async Task Writers_ReaderHoldsTheOldFile_WaitOnTheirClock(string writer)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file that a reader holds open.");
+        var clock = new CountingTime(Start);
+        var url = new Uri("https://licenses.example/");
+        var pins = new ServerPins(_dir, clock);
+        string license = Path.Combine(_dir, "server.elmlic");
+        Action first =
+            writer == "license"
+                ? () => LicenseFiles.Write(license, "one"u8.ToArray(), clock)
+                : () => Assert.True(pins.TryWrite(url, "lic-1", "key-1"));
+        Action second =
+            writer == "license"
+                ? () => LicenseFiles.Write(license, "two"u8.ToArray(), clock)
+                : () => Assert.True(pins.TryWrite(url, "lic-2", "key-2"));
+        first();
+        string target = writer == "license" ? license : Directory.GetFiles(Path.Combine(_dir, "servers")).Single();
+        var reader = new FileStream(target, FileMode.Open, FileAccess.Read, FileShare.Read);
+        Task write = Task.Run(second, TestContext.Current.CancellationToken);
+        try
+        {
+            for (int timer = 1; timer <= 3; timer++)
+            {
+                await clock.WaitForTimersAsync(timer);
+                Assert.False(write.IsCompleted);
+                clock.Advance(TimeSpan.FromMilliseconds(100));
+            }
+
+            await clock.WaitForTimersAsync(4);
+            Assert.False(write.IsCompleted);
+            reader.Dispose();
+            clock.Advance(TimeSpan.FromMilliseconds(100));
+
+            await write.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            Assert.Contains(writer == "license" ? "two" : "lic-2", File.ReadAllText(target), StringComparison.Ordinal);
+            Assert.Equal(4, clock.Timers);
+        }
+        finally
+        {
+            reader.Dispose();
+            await EndAsync(write, clock);
+        }
+    }
+
     private static Task MoveAsync(bool asynchronous, string temporary, string path, TimeProvider time)
     {
         if (asynchronous)

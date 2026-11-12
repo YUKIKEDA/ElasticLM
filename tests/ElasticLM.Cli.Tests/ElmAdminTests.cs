@@ -413,6 +413,56 @@ public sealed class ElmAdminTests
     private static (int Code, string Text) Last((int Code, string Out, string Error) result, bool output = false) =>
         (result.Code, (output ? result.Out : result.Error).Trim().Split('\n')[^1].Trim());
 
+    /// <summary>
+    /// On Windows, the writer of the login file waits, on the clock it is given, for a reader that holds the old file
+    /// without the lock, as the read of the saved URL does, and writes once the reader has closed.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; a login file written once; the file opened by the test for reading, as File.ReadAllBytes opens it; a
+    ///   fake clock given to the writer.
+    ///
+    /// Steps:
+    /// - Write another login on another thread; move the clock 1 second in steps of 50 milliseconds; close the reader; go on
+    ///   moving the clock until the write ends.
+    ///
+    /// Expected:
+    /// - The write has not ended while the reader holds the file; after that it ends, and the file holds the second login.
+    /// </remarks>
+    [Fact]
+    public async Task LoginFile_ReaderHoldsTheOldFile_IsWrittenOnceTheReaderCloses()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file that a reader holds open.");
+        await using var test = new TestService();
+        string path = test.FilePath(Path.Combine("home", "login"));
+        AdminLoginFile.Write(path, new AdminLogin("https://one.example/", "https://idp.example/", "elm", "access-1", null, 1), test.Time);
+        Task write;
+        using (var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            write = Task.Run(
+                () =>
+                    AdminLoginFile.Write(path, new AdminLogin("https://two.example/", "https://idp.example/", "elm", "access-2", null, 2), test.Time),
+                TestContext.Current.CancellationToken
+            );
+            for (int i = 0; i < 20; i++)
+            {
+                test.Time.Advance(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(10, TestContext.Current.CancellationToken);
+            }
+
+            Assert.False(write.IsCompleted);
+        }
+
+        for (int i = 0; i < 1_000 && !write.IsCompleted; i++)
+        {
+            test.Time.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        await write.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+        Assert.Equal("https://two.example/", AdminLoginFile.Read(path)!.Url);
+    }
+
     private string SetLoginFile(TestService test)
     {
         string path = test.FilePath(Path.Combine("home", "login"));

@@ -244,7 +244,16 @@ internal static class AdminCredentials
             (string access, string? refresh, long expiresAt) = OidcHttp.Tokens(body, host.Time.GetUtcNow());
 
             // RFC 6749 §6: a new refresh token replaces the old one; without one, the old one stays.
-            AdminLoginFile.Write(path, login with { AccessToken = access, RefreshToken = refresh ?? login.RefreshToken, ExpiresAt = expiresAt });
+            AdminLoginFile.Write(
+                path,
+                login with
+                {
+                    AccessToken = access,
+                    RefreshToken = refresh ?? login.RefreshToken,
+                    ExpiresAt = expiresAt,
+                },
+                host.Time
+            );
             return access;
         }
     }

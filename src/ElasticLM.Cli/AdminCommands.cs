@@ -164,7 +164,7 @@ internal static class AdminCommands
                     string path = AdminLoginFile.PathOf(host);
                     using (AdminLoginFile.Lock(host, path))
                     {
-                        AdminLoginFile.Write(path, new AdminLogin(service.AbsoluteUri, issuer, clientId, access, refresh, expiresAt));
+                        AdminLoginFile.Write(path, new AdminLogin(service.AbsoluteUri, issuer, clientId, access, refresh, expiresAt), host.Time);
                     }
 
                     host.Out.WriteLine($"Signed in to {service}.");
