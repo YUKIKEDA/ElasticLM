@@ -40,7 +40,20 @@ internal sealed partial class ElmServer
             return;
         }
 
-        string result = await operation(context).ConfigureAwait(false);
+        string result;
+        try
+        {
+            result = await operation(context).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // design §13.7 (V1d9): an operation that ends with an exception is written too. The caller cut the connection
+            // when the request's token is canceled; anything else is the server's failure. The exception goes on.
+            ErrorCode code = context.RequestAborted.IsCancellationRequested ? ErrorCode.NetworkError : ErrorCode.InternalError;
+            WriteAdminAction(action, target, ErrorCodes.ToWireName(code));
+            throw;
+        }
+
         WriteAdminAction(action, target, result);
     }
 

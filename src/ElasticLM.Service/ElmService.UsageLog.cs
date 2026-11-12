@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.Text.Json;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -12,6 +14,9 @@ internal sealed partial class ElmService
 {
     private const string NoUsageLog = "This node writes no usage log; set usageLog.directory.";
     private const string NoUsageFile = "No usage log file of this node has this name.";
+
+    // The least length of a download's buffer, which Stream.CopyToAsync asks of the pool too; the pool may give a longer one.
+    private const int CopyBufferLength = 81_920;
 
     private void MapUsageLog()
     {
@@ -94,15 +99,50 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.NotFound, NoUsageFile, file).ConfigureAwait(false);
         }
 
+        // design §18.2 (V1d9): the row says how much of the file was handed to the response, also when the download ends early.
+        // The file is sent up to the length it has now; the node may add lines to its newest file while it is read.
         await using (stream.ConfigureAwait(false))
         {
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "application/x-ndjson";
-            await stream.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
-        }
+            AdminProgress progress = Progress(context);
+            progress.Target = file;
+            long size = stream.Length;
+            long sent = 0;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(CopyBufferLength);
+            try
+            {
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "application/x-ndjson";
+                while (sent < size)
+                {
+                    int wanted = (int)Math.Min(buffer.Length, size - sent);
+                    int read = await stream.ReadAsync(buffer.AsMemory(0, wanted), context.RequestAborted).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        // The answer has no Content-Length, so an end here would look like the whole file to the caller.
+                        throw new EndOfStreamException($"The usage log file '{file}' became shorter while it was sent.");
+                    }
 
-        return new AdminOutcome("ELM_OK", file);
+                    // Counted when the bytes are handed over: a write that fails may have sent a part of them.
+                    sent += read;
+                    await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted).ConfigureAwait(false);
+                }
+            }
+            catch (Exception)
+            {
+                progress.Detail = SentDetail(sent, size);
+                throw;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return new AdminOutcome("ELM_OK", file, SentDetail(sent, size));
+        }
     }
+
+    private static string SentDetail(long sent, long size) =>
+        JsonSerializer.Serialize(new UsageLogSent(sent, size), ServiceJsonContext.Default.UsageLogSent);
 
     // design §18.1: the counted refusals and a signature over the pending lines now, as the minute's timer does.
     private async Task<AdminOutcome> SealUsageLogAsync(HttpContext context, Caller caller)

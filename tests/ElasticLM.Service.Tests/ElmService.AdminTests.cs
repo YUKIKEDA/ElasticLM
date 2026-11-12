@@ -1,7 +1,10 @@
 using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
+using Microsoft.Data.Sqlite;
 
 namespace ElasticLM.Service.Tests;
 
@@ -551,8 +554,253 @@ public sealed class ElmServiceAdminTests
         await TestService.AssertProblemAsync(last, HttpStatusCode.TooManyRequests, "ELM_RATE_LIMITED", "Too many requests from this address.");
     }
 
+    /// <summary>
+    /// A refusal whose answer cannot be written because the caller is gone is still audited (design §18.2, V1d9): the row
+    /// has the result ELM_NETWORK_ERROR and the refusal's detail.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service on a clock that can hold one read of its timestamp; an owner key and a key with apikey.read alone.
+    ///
+    /// Steps:
+    /// - Hold the second read of the timestamp from here on: the first is the limit per source, and the second the limit
+    ///   per key, which comes after authentication and before the permission check.
+    /// - On a socket of its own, GET /v1/admin/audit with the narrow key. Once the service waits in the held read, end the
+    ///   caller's side and read until the service has closed the connection; let the held read go on; wait for one more
+    ///   audit.list row.
+    /// - Kestrel cancels the request's token on the thread pool after it has closed the connection. A run in which the
+    ///   answer was written before that leaves an ELM_FORBIDDEN row (1 run of 15 on Windows 11, measured with the loop cut
+    ///   to one run), and the steps are run again, twenty times at most.
+    /// - Check the chain with POST /v1/admin/audit/verify.
+    ///
+    /// Expected:
+    /// - Each run adds exactly one audit.list row. The last one has the result ELM_NETWORK_ERROR, the narrow key as its
+    ///   actor, and the detail {"permission":"audit.read"}. The chain is intact.
+    /// </remarks>
+    [Fact]
+    public async Task Refusal_CallerGoneBeforeItsAnswer_IsAuditedAsNetworkError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using var clock = new HeldClock(test.Time);
+        await using ElmService service = await ElmService.StartAsync(
+            test.Settings(),
+            new ServiceHostOptions
+            {
+                Time = clock,
+                Environment = test.HostOptions().Environment,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Critical,
+            },
+            cancel
+        );
+        HttpClient admin = test.Http(service, owner);
+        string narrow = await TestService.CreateKeyAsync(admin, "\"apikey.read\"");
+        string request = $"GET /v1/admin/audit HTTP/1.1\r\nHost: {service.Url.Authority}\r\nAuthorization: Bearer {narrow}\r\n\r\n";
+
+        AuditEntry? last = null;
+        for (int run = 0; run < 20 && last?.Result != "ELM_NETWORK_ERROR"; run++)
+        {
+            int before = (await RowsAsync(service, "audit.list")).Length;
+            Task held = clock.HoldAsync(2);
+            using Socket caller = await SendAsync(service, request);
+            await held.WaitAsync(TimeSpan.FromSeconds(10), cancel);
+            await LeaveAsync(caller);
+            clock.Release();
+            await TestService.WaitForAsync(async () => (await RowsAsync(service, "audit.list")).Length > before);
+            AuditEntry[] rows = await RowsAsync(service, "audit.list");
+            Assert.Equal(before + 1, rows.Length);
+            last = rows[^1];
+        }
+
+        await TestService.AssertAuditIntactAsync(admin);
+        Assert.Equal(
+            ("ELM_NETWORK_ERROR", "apikey", "{\"permission\":\"audit.read\"}", null),
+            (last!.Result, last.ActorType, last.Detail, last.Target)
+        );
+        Assert.Equal((await RowsAsync(service, "apikey.create"))[^1].Target, last.ActorId);
+    }
+
+    /// <summary>
+    /// A state change whose answer cannot be written because the caller left after the commit keeps its one audit row,
+    /// the transaction's (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service on SQLite and an owner key. The database file is put into rollback-journal mode, in which a writer's
+    ///   COMMIT waits for every reader: this lets the test hold a commit open, as a slow database does.
+    /// - A reader of the test holds its read lock.
+    ///
+    /// Steps:
+    /// - On a socket of its own, POST /v1/admin/products. Wait until SQLite refuses a new reader, which it does from the
+    ///   moment the writer waits to commit; end the caller's side and read until the service has closed the connection;
+    ///   end the test's reader; wait until the product is stored; stop the service, which waits for the request; read the
+    ///   rows and check the chain.
+    ///
+    /// Expected:
+    /// - The product is stored, and exactly one product.create row exists: result ELM_OK, target an ID. No row has the
+    ///   result ELM_NETWORK_ERROR. The chain is intact.
+    /// </remarks>
+    [Fact]
+    public async Task StateChange_CallerGoneAfterItsCommit_LeavesOneRow()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        // The mode can change only while no other connection is open; the service's idle ones are in the pool.
+        SqliteConnection.ClearAllPools();
+        await using SqliteConnection reader = await OpenUnpooledAsync(test, cancel);
+        Assert.Equal("delete", await ScalarAsync(reader, "PRAGMA journal_mode = DELETE", cancel));
+        await ScalarAsync(reader, "BEGIN", cancel);
+        await ScalarAsync(reader, "SELECT COUNT(*) FROM audit_log", cancel);
+
+        const string Product = """{"code":"p1","name":"P1"}""";
+        string request =
+            $"POST /v1/admin/products HTTP/1.1\r\nHost: {service.Url.Authority}\r\nAuthorization: Bearer {owner}\r\n"
+            + $"Content-Type: application/json\r\nContent-Length: {Product.Length}\r\n\r\n{Product}";
+        using Socket caller = await SendAsync(service, request);
+        await using (SqliteConnection probe = await OpenUnpooledAsync(test, cancel))
+        {
+            // A refused reader waits for the one second of this connection's timeout before it reports.
+            probe.DefaultTimeout = 1;
+            await TestService.WaitForAsync(async () =>
+            {
+                try
+                {
+                    await ScalarAsync(probe, "SELECT COUNT(*) FROM audit_state", cancel);
+                    return false;
+                }
+                catch (SqliteException e) when (e.SqliteErrorCode == 5)
+                {
+                    return true;
+                }
+            });
+        }
+
+        await LeaveAsync(caller);
+        await ScalarAsync(reader, "ROLLBACK", cancel);
+        await TestService.WaitForAsync(async () => await test.ScalarAsync("SELECT COUNT(*) FROM products WHERE code = 'p1'") == 1);
+        await service.StopAsync();
+
+        AuditEntry row = Assert.Single(await RowsAsync(service, "product.create"));
+        Assert.Equal("ELM_OK", row.Result);
+        Assert.True(Guid.TryParseExact(row.Target, "D", out _), "The row's target is the product's ID.");
+        Assert.DoesNotContain(await RowsAsync(service, null), r => r.Result == "ELM_NETWORK_ERROR");
+        Assert.Null((await service.Database.VerifyAuditAsync(cancel)).FirstBroken);
+    }
+
     private static string Body(string name = "n", string permissions = "\"audit.read\"", string more = "") =>
         "{\"name\":" + JsonSerializer.Serialize(name) + ",\"permissions\":[" + permissions + "]" + more + "}";
+
+    private static async Task<AuditEntry[]> RowsAsync(ElmService service, string? action)
+    {
+        IReadOnlyList<AuditRow> rows = await service.Database.ListAuditAsync(null, false, AuditLog.MaxLimit, TestContext.Current.CancellationToken);
+        return [.. rows.Select(r => r.Entry).Where(e => action is null || e.Action == action)];
+    }
+
+    // Sends one request on a connection of its own and returns the socket, so that the test decides when the caller goes.
+    private static async Task<Socket> SendAsync(ElmService service, string request)
+    {
+        var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
+        try
+        {
+            await socket.ConnectAsync(IPAddress.Loopback, service.Url.Port, TestContext.Current.CancellationToken);
+            await socket.SendAsync(Encoding.ASCII.GetBytes(request), TestContext.Current.CancellationToken);
+            return socket;
+        }
+        catch
+        {
+            socket.Dispose();
+            throw;
+        }
+    }
+
+    // The caller goes: it ends its side of the connection and reads until the service has closed it too, which Kestrel does
+    // when it has taken the request as aborted. A connection that the service resets counts as closed.
+    private static async Task LeaveAsync(Socket caller)
+    {
+        caller.Shutdown(SocketShutdown.Send);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        limit.CancelAfter(TimeSpan.FromSeconds(10));
+        byte[] buffer = new byte[1_024];
+        try
+        {
+            while (await caller.ReceiveAsync(buffer, limit.Token) > 0) { }
+        }
+        catch (SocketException) { }
+    }
+
+    private static async Task<SqliteConnection> OpenUnpooledAsync(TestService test, CancellationToken cancel)
+    {
+        var connection = new SqliteConnection(test.ConnectionString + ";Pooling=False");
+        await connection.OpenAsync(cancel);
+        return connection;
+    }
+
+    private static async Task<object?> ScalarAsync(SqliteConnection connection, string sql, CancellationToken cancel)
+    {
+        await using SqliteCommand command = connection.CreateCommand();
+        command.CommandText = sql;
+        return await command.ExecuteScalarAsync(cancel);
+    }
+
+    // The test's fake clock for a service, which can make one read of the timestamp wait until the test lets it go on. The
+    // service reads the timestamp in its rate limits, so a held read keeps a request between two of its steps.
+    private sealed class HeldClock(TimeProvider inner) : TimeProvider, IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(true);
+        private readonly Lock _lock = new();
+        private TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _readsUntilHeld;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        // Holds the given read of the timestamp, counted from this call, and returns a task that ends once that read waits.
+        public Task HoldAsync(int read)
+        {
+            lock (_lock)
+            {
+                _release.Reset();
+                _held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _readsUntilHeld = read;
+                return _held.Task;
+            }
+        }
+
+        public void Release() => _release.Set();
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            inner.CreateTimer(callback, state, dueTime, period);
+
+        public override long GetTimestamp()
+        {
+            bool hold;
+            lock (_lock)
+            {
+                hold = _readsUntilHeld > 0 && --_readsUntilHeld == 0;
+                if (hold)
+                {
+                    _held.SetResult();
+                }
+            }
+
+            if (hold)
+            {
+                // The limit only ends a test that never lets the read go on.
+                _release.Wait(TimeSpan.FromSeconds(30), CancellationToken.None);
+            }
+
+            return inner.GetTimestamp();
+        }
+
+        public void Dispose() => _release.Dispose();
+    }
 
     // A body without Content-Length: HttpClient sends it chunked, so only the read loop's own limit can stop it.
     private sealed class ChunkedContent : HttpContent

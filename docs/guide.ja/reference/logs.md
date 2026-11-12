@@ -107,7 +107,7 @@ info: elm-server[2]
 | `lease.reclaimed` | サーバーの再起動のあと、クライアントがリースを再登録したとき | `lic`、`key`、`lease`、`cloneFlagged` |
 | `lease.denied` | 拒否したリースの取得、リースの更新、リースの再登録、早期返却。60 秒ごとと停止時に件数を書く | `feat`（分かる場合）、`code`、`count` |
 | `admin.denied` | 正しいトークンのない管理リクエスト。60 秒ごとと停止時に件数を書く | `code`（`ELM_UNAUTHORIZED`）、`count` |
-| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID）、`result`（エラーコードの名前） |
+| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID）、`result`（エラーコードの名前。応答を書く前に呼び出し側が接続を切ったときは `ELM_NETWORK_ERROR`、サーバーの中で操作が失敗したときは `ELM_INTERNAL_ERROR`） |
 | `server.started` | サーバーが起動したとき | `lic`、`key`（ここではサーバーの鍵 ID。クライアントのものではなく、サーバー自身のインストール鍵のサムプリント）、`borrows`（復元した借用） |
 | `server.stopped` | サーバーが停止したとき | `leases`（返却されていないリース） |
 | `records.set_aside` | `--set-aside-broken-records` で動かしたサーバーが、起動中、待ち受けを始める前に、壊れた借用の記録を退避したとき。そのあと待ち受けに失敗した起動でも、この行は残る | `file` |
@@ -235,7 +235,7 @@ elm log verify <files or folders>... --product <ID> --stream borrows [--trust <f
 
 ### 記録するもの
 
-- 管理 API の認証済みの呼び出しすべて。参照と拒否も含み、呼び出しのアクションと一緒に記録する。成功した `GET /v1/admin/me` は行を書かない。
+- 管理 API の認証済みの呼び出しすべて。参照と拒否も含み、呼び出しのアクションと一緒に記録する。応答が最後まで届かずに終わった呼び出しも記録する。成功した `GET /v1/admin/me` は行を書かない。
 - 有効な認証のない呼び出し。件数を数え、1 分ごとに 1 行の `auth.failed` として書く。
 - 管理画面のサインイン、サインアウト、セッションの変更。
 - デバイスからのアクティベーション、アクティベーション解除、トライアル、見つかったクローン。トークンの更新と、拒否したデバイスのリクエストは記録しない。
@@ -252,7 +252,7 @@ API キーのような秘密は書き込まない。
 | `actorId` | `apikey` なら API キーの ID。`oidc` なら管理者の ID。`system` なら `setup` か `auth`。`installation` ならデバイスのインストール鍵のサムプリント。 |
 | `action` | アクション。次の表のどれか。 |
 | `target` | アクションの対象。ライセンス、アクティベーション、リースの ID など。または `null`。 |
-| `result` | `ELM_OK`、または拒否したときのエラーコードの名前（[エラーコード](error-codes.md)を参照）。 |
+| `result` | `ELM_OK`、または拒否したときのエラーコードの名前（[エラーコード](error-codes.md)を参照）。応答が最後まで届かずに終わった呼び出しは、呼び出し側が応答の前か途中で接続を切ったときは `ELM_NETWORK_ERROR`、サービスの中で操作が失敗したときは `ELM_INTERNAL_ERROR` になる。 |
 | `ip` | 送信元のアドレス、または `null`。 |
 | `detail` | アクションの詳細を入れた JSON オブジェクト、または `null`。 |
 | `prev` | 前の行のハッシュ（32 バイト）。 |
@@ -312,10 +312,10 @@ API キーのような秘密は書き込まない。
 | `lease.list` | `GET /v1/admin/licenses/{id}/leases`。 |
 | `lease.release` | `DELETE /v1/admin/leases/{id}`。`detail` には `licenseId`、`feature`、`seats` が入る。 |
 | `usagelog.list` | `GET /v1/admin/usage-log/files`。 |
-| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`。 |
+| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`。`detail` は `{"sent": ..., "size": ...}` で、応答に渡したバイト数とファイルの長さを表す。最後まで届いたダウンロードでは `sent` と `size` が等しい。途中で切られたダウンロードでは、`sent` は呼び出し側が読めた量の上限になる。 |
 | `usagelog.seal` | `POST /v1/admin/usage-log/seal`。 |
 
-権限がなくて拒否した呼び出しは、そのアクション、`result` の `ELM_FORBIDDEN`、`detail` の `{"permission": ...}` で記録する。
+権限がなくて拒否した呼び出しは、そのアクション、`result` の `ELM_FORBIDDEN`、`detail` の `{"permission": ...}` で記録する。その応答を書く前に呼び出し側がいなくなっていたときは、`result` が `ELM_NETWORK_ERROR` になり、`detail` は同じである。
 
 ### ハッシュのチェーン
 

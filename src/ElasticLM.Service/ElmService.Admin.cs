@@ -10,6 +10,7 @@ using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Http.Features;
 
 namespace ElasticLM.Service;
 
@@ -35,6 +36,23 @@ internal static class AdminApi
 /// <param name="Recorded">Whether the operation already wrote its audit row in its own transaction, or by design writes none
 /// (the success of <c>GET /v1/admin/me</c>, design §14.5); either way no row is added after it.</param>
 internal sealed record AdminOutcome(string Result, string? Target = null, string? Detail = null, bool Recorded = false);
+
+/// <summary>
+/// What an administration operation has reached while it runs, for the audit row of an operation that ends with an exception
+/// (design §18.2).
+/// </summary>
+internal sealed class AdminProgress
+{
+    /// <summary>Gets or sets a value indicating whether the operation's transaction committed its audit row; no row is added
+    /// after it, however the operation ends.</summary>
+    public bool Recorded { get; set; }
+
+    /// <summary>Gets or sets what the operation acts on, for the row of its failure, or <see langword="null"/>.</summary>
+    public string? Target { get; set; }
+
+    /// <summary>Gets or sets the audit detail for the row of its failure, or <see langword="null"/>.</summary>
+    public string? Detail { get; set; }
+}
 
 /// <content>
 /// The administration API of M4a1 (design §14.5, decision 0.79): API keys and the audit log, with authentication by API key,
@@ -255,16 +273,52 @@ internal sealed partial class ElmService
                 return;
             }
 
+            // design §18.2 (V1d9): from here on the call leaves an audit row however it ends, a refusal whose answer cannot be
+            // written included.
+            var progress = new AdminProgress();
+            context.Features.Set(progress);
             AdminOutcome outcome;
-            if (permission is not null && !caller.Permissions.Contains(permission))
+            try
             {
-                outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: AuditLog.Detail(w => w.WriteString("permission", permission)));
-                string who = token || session ? "The administrator's role" : "The API key";
-                await ProblemAsync(context, ErrorCode.Forbidden, $"{who} does not have the permission {permission}.").ConfigureAwait(false);
+                if (permission is not null && !caller.Permissions.Contains(permission))
+                {
+                    progress.Detail = AuditLog.Detail(w => w.WriteString("permission", permission));
+                    outcome = new AdminOutcome("ELM_FORBIDDEN", Detail: progress.Detail);
+                    string who = token || session ? "The administrator's role" : "The API key";
+                    await ProblemAsync(context, ErrorCode.Forbidden, $"{who} does not have the permission {permission}.").ConfigureAwait(false);
+                }
+                else
+                {
+                    outcome = await operation(context, caller).ConfigureAwait(false);
+                }
             }
-            else
+            catch (Exception) when (!progress.Recorded)
             {
-                outcome = await operation(context, caller).ConfigureAwait(false);
+                // design §18.2 (V1d9): the row of a call that ended with an exception. The caller cut the connection when the
+                // request's token is canceled; anything else is the service's failure. The row is written with a token of its
+                // own, since the request's may be canceled, and the exception goes on, so that the caller never takes a cut
+                // answer for a whole one.
+                ErrorCode code = context.RequestAborted.IsCancellationRequested ? ErrorCode.NetworkError : ErrorCode.InternalError;
+                var failed = new AuditEntry(
+                    caller.ActorType,
+                    caller.ActorId,
+                    action,
+                    progress.Target,
+                    ErrorCodes.ToWireName(code),
+                    ip,
+                    progress.Detail
+                );
+                try
+                {
+                    await Database.AppendAuditAsync(failed, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (DbException e)
+                {
+                    // A row that cannot be written goes to the service log and does not replace the exception of the call.
+                    ServiceLog.RequestFailed(_log, e);
+                }
+
+                throw;
             }
 
             if (!outcome.Recorded)
@@ -359,8 +413,8 @@ internal sealed partial class ElmService
             .ConfigureAwait(false);
 
         ApiKeyItem item = ToItem(record) with { Key = key };
-        await WriteJsonAsync(context, StatusCodes.Status201Created, item, ServiceJsonContext.Default.ApiKeyItem).ConfigureAwait(false);
-        return new AdminOutcome("ELM_OK", record.Id.ToString("D"), detail, Recorded: true);
+        return await WriteRecordedAsync(context, StatusCodes.Status201Created, item, ServiceJsonContext.Default.ApiKeyItem, record.Id, detail)
+            .ConfigureAwait(false);
     }
 
     private async Task<AdminOutcome> ListKeysAsync(HttpContext context, Caller caller)
@@ -534,6 +588,25 @@ internal sealed partial class ElmService
     {
         await ProblemAsync(context, code, message).ConfigureAwait(false);
         return new AdminOutcome(ErrorCodes.ToWireName(code), target);
+    }
+
+    // design §18.2 (V1d9): what the wrapper reads when the operation ends with an exception.
+    private static AdminProgress Progress(HttpContext context) => context.Features.GetRequiredFeature<AdminProgress>();
+
+    // design §18.2 (V1d9): the answer of a state change whose transaction committed its audit row. That row stands whatever
+    // becomes of the answer, so a write that throws adds no second row.
+    private static async Task<AdminOutcome> WriteRecordedAsync<T>(
+        HttpContext context,
+        int status,
+        T value,
+        JsonTypeInfo<T> type,
+        Guid target,
+        string? detail
+    )
+    {
+        Progress(context).Recorded = true;
+        await WriteJsonAsync(context, status, value, type).ConfigureAwait(false);
+        return new AdminOutcome("ELM_OK", target.ToString("D"), detail, Recorded: true);
     }
 
     private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, int? status = null) =>

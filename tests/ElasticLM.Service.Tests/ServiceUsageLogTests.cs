@@ -17,6 +17,9 @@ public sealed class ServiceUsageLogTests
     private const string Cloud = "\"floating\":\"cloud\",\"clientInfoStrategy\":\"hostAndUser\",\"borrowLimit\":86400";
     private const string ThreeSeats = """[{"code":"core","seats":3}]""";
 
+    // The length of the file of Issue #327: more than the service and the system keep for a caller that stopped reading.
+    private const int LargeFileLength = 32 * 1024 * 1024;
+
     /// <summary>
     /// Each lease and borrow event is one line with the license, product, feature, seats, key, and lease, and refusals are
     /// counted per feature and code; the log verifies with the certificates on its first line, without a product.
@@ -716,6 +719,345 @@ public sealed class ServiceUsageLogTests
         TrustStore trust = TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []);
         Assert.Empty(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n1").Issues);
         Assert.False(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n2").Intact);
+    }
+
+    /// <summary>
+    /// A download that the caller leaves midway is audited (design §18.2, V1d9): one usagelog.get row with the result
+    /// ELM_NETWORK_ERROR, whose detail says how many bytes were handed to the response and how long the file is.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, and an older file of that node of 33,554,432 bytes; each engine.
+    ///
+    /// Steps:
+    /// - Get the file; read 16,777,216 bytes of the answer; close the connection; wait for a usagelog.get row; check the
+    ///   chain with POST /v1/admin/audit/verify; stop the service; read the rows.
+    ///
+    /// Expected:
+    /// - 200. Exactly one usagelog.get row: result ELM_NETWORK_ERROR, target the file's name, detail with the two members
+    ///   sent and size, size 33,554,432, and sent at least what the test read and less than size. The chain is intact.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task UsageGet_CallerLeavesMidway_IsAuditedAsNetworkError(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string name = WriteOlderFile(test, "n1", LargeFileLength);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        long read = 0;
+        using (HttpResponseMessage response = await admin.GetAsync(FilePath(name), HttpCompletionOption.ResponseHeadersRead, cancel))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await using Stream body = await response.Content.ReadAsStreamAsync(cancel);
+            byte[] buffer = new byte[81_920];
+            while (read < LargeFileLength / 2)
+            {
+                int count = await body.ReadAsync(buffer, cancel);
+                Assert.True(count > 0, "The answer ended before half of the file.");
+                read += count;
+            }
+        }
+
+        await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
+        await TestService.AssertAuditIntactAsync(admin);
+        await service.StopAsync();
+        AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.get"));
+        Assert.Equal(("ELM_NETWORK_ERROR", name), (row.Result, row.Target));
+        (long sent, long size) = SentAndSize(row.Detail);
+        Assert.Equal(LargeFileLength, size);
+        Assert.InRange(sent, read, size - 1);
+    }
+
+    /// <summary>
+    /// A whole download is audited with the same detail (design §18.2, V1d9): sent equals size.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, and an older file of that node of 200,000 bytes, more than two reads of the
+    ///   download.
+    ///
+    /// Steps:
+    /// - Get the file to its end; wait for a usagelog.get row; check the chain with POST /v1/admin/audit/verify; stop the
+    ///   service; read the rows.
+    ///
+    /// Expected:
+    /// - The answer is the file's bytes. Exactly one usagelog.get row: result ELM_OK, target the file's name, detail
+    ///   {"sent":200000,"size":200000}. The chain is intact.
+    /// </remarks>
+    [Fact]
+    public async Task UsageGet_WholeFile_IsAuditedWithSentEqualToSize()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string name = WriteOlderFile(test, "n1", 200_000);
+
+        byte[] content = await admin.GetByteArrayAsync(FilePath(name), TestContext.Current.CancellationToken);
+
+        Assert.Equal(File.ReadAllBytes(Path.Combine(test.FilePath("usage"), name)), content);
+        await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
+        await TestService.AssertAuditIntactAsync(admin);
+        await service.StopAsync();
+        AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.get"));
+        Assert.Equal(("ELM_OK", name, "{\"sent\":200000,\"size\":200000}"), (row.Result, row.Target, row.Detail));
+    }
+
+    /// <summary>
+    /// A download sends the file up to the length it had when the download began, so a file that grows meanwhile, as the
+    /// node's newest file does, is still audited with sent equal to size (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, and an older file of that node of 33,553,432 bytes: not a whole number of the
+    ///   download's reads, so a last read that is not cut to the length takes bytes added after it.
+    ///
+    /// Steps:
+    /// - Get the file; read 1,048,576 bytes of the answer; add 1,048,576 bytes to the file; read the answer to its end;
+    ///   wait for a usagelog.get row; stop the service; read the rows.
+    ///
+    /// Expected:
+    /// - The answer is the file's first 33,553,432 bytes. Exactly one usagelog.get row: result ELM_OK, detail
+    ///   {"sent":33553432,"size":33553432}.
+    /// </remarks>
+    [Fact]
+    public async Task UsageGet_FileGrowsWhileItIsSent_SendsTheLengthItHad()
+    {
+        const int Length = LargeFileLength - 1_000;
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string name = WriteOlderFile(test, "n1", Length);
+        string path = Path.Combine(test.FilePath("usage"), name);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        long read = 0;
+        using var received = System.Security.Cryptography.IncrementalHash.CreateHash(System.Security.Cryptography.HashAlgorithmName.SHA256);
+        using (HttpResponseMessage response = await admin.GetAsync(FilePath(name), HttpCompletionOption.ResponseHeadersRead, cancel))
+        {
+            await using Stream body = await response.Content.ReadAsStreamAsync(cancel);
+            byte[] buffer = new byte[81_920];
+            int count;
+            while (read < 1_048_576 && (count = await body.ReadAsync(buffer, cancel)) > 0)
+            {
+                received.AppendData(buffer, 0, count);
+                read += count;
+            }
+
+            using (var file = new FileStream(path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                file.Write(new byte[1_048_576]);
+            }
+
+            while ((count = await body.ReadAsync(buffer, cancel)) > 0)
+            {
+                received.AppendData(buffer, 0, count);
+                read += count;
+            }
+        }
+
+        Assert.Equal(Length, read);
+        using (FileStream file = File.OpenRead(path))
+        {
+            byte[] first = new byte[Length];
+            await file.ReadExactlyAsync(first, cancel);
+            Assert.Equal(System.Security.Cryptography.SHA256.HashData(first), received.GetHashAndReset());
+        }
+
+        await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
+        await service.StopAsync();
+        AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.get"));
+        Assert.Equal(("ELM_OK", name, "{\"sent\":33553432,\"size\":33553432}"), (row.Result, row.Target, row.Detail));
+    }
+
+    /// <summary>
+    /// A download whose file cannot be read to the length it had ends as a failed transfer, not as a whole answer, and is
+    /// audited with the result ELM_INTERNAL_ERROR (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, and an older file of that node of 33,554,432 bytes.
+    ///
+    /// Steps:
+    /// - Get the file; read 1,048,576 bytes of the answer; cut the file to 16,777,216 bytes, as another program on the host
+    ///   can; read the answer to its end; wait for a usagelog.get row; check the chain with POST /v1/admin/audit/verify; stop
+    ///   the service; read the rows.
+    ///
+    /// Expected:
+    /// - 200, then the read of the answer throws an IOException instead of ending. Exactly one usagelog.get row: result
+    ///   ELM_INTERNAL_ERROR, target the file's name, size 33,554,432, and sent at least what the test read and less than
+    ///   size. The chain is intact.
+    /// </remarks>
+    [Fact]
+    public async Task UsageGet_FileCutWhileItIsSent_FailsTheTransferAndIsAuditedAsInternalError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string name = WriteOlderFile(test, "n1", LargeFileLength);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        long read = 0;
+        using (HttpResponseMessage response = await admin.GetAsync(FilePath(name), HttpCompletionOption.ResponseHeadersRead, cancel))
+        {
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            await using Stream body = await response.Content.ReadAsStreamAsync(cancel);
+            byte[] buffer = new byte[81_920];
+            while (read < 1_048_576)
+            {
+                int count = await body.ReadAsync(buffer, cancel);
+                Assert.True(count > 0, "The answer ended before the first mebibyte.");
+                read += count;
+            }
+
+            string path = Path.Combine(test.FilePath("usage"), name);
+            using (var file = new FileStream(path, FileMode.Open, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete))
+            {
+                file.SetLength(LargeFileLength / 2);
+            }
+
+            await Assert.ThrowsAnyAsync<IOException>(async () =>
+            {
+                int count;
+                while ((count = await body.ReadAsync(buffer, cancel)) > 0)
+                {
+                    read += count;
+                }
+            });
+        }
+
+        await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
+        await TestService.AssertAuditIntactAsync(admin);
+        await service.StopAsync();
+        AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.get"));
+        Assert.Equal(("ELM_INTERNAL_ERROR", name), (row.Result, row.Target));
+        (long sent, long size) = SentAndSize(row.Detail);
+        Assert.Equal(LargeFileLength, size);
+        Assert.InRange(sent, read, size - 1);
+    }
+
+    /// <summary>
+    /// An operation that ends with an exception that is not the database's is audited with the result ELM_INTERNAL_ERROR,
+    /// and the caller gets no answer of the operation (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, whose access to the signing key the test can make throw a
+    ///   CryptographicException (the host option of the usage log's key); the line service.started waits for its signature.
+    ///
+    /// Steps:
+    /// - Make the key throw; POST /v1/admin/usage-log/seal; let the key work again; check the chain with
+    ///   POST /v1/admin/audit/verify; read the rows.
+    ///
+    /// Expected:
+    /// - 500 without a body. Exactly one usagelog.seal row: result ELM_INTERNAL_ERROR, no target, no detail. The chain is
+    ///   intact.
+    /// </remarks>
+    [Fact]
+    public async Task Operation_ThrowsAnotherException_IsAuditedAsInternalError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        bool fail = false;
+        SigningKeyAccess Wrap(SigningKeyAccess key) =>
+            use => fail ? throw new System.Security.Cryptography.CryptographicException("The key cannot sign.") : key(use);
+        await using ElmService service = await ElmService.StartAsync(
+            Logged(test, "n1"),
+            new ServiceHostOptions
+            {
+                Time = test.Time,
+                Environment = test.HostOptions().Environment,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Critical,
+                WrapUsageLogKey = Wrap,
+            },
+            TestContext.Current.CancellationToken
+        );
+        HttpClient admin = test.Http(service, owner);
+
+        fail = true;
+        using (HttpResponseMessage failed = await admin.PostAsync("v1/admin/usage-log/seal", null, TestContext.Current.CancellationToken))
+        {
+            fail = false;
+            Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+            Assert.Empty(await failed.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken));
+        }
+
+        await TestService.AssertAuditIntactAsync(admin);
+        AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.seal"));
+        Assert.Equal(("ELM_INTERNAL_ERROR", null, null), (row.Result, row.Target, row.Detail));
+    }
+
+    /// <summary>
+    /// A state change whose transaction committed its audit row gets no second row when a later step of the operation
+    /// fails (design §18.2, V1d9): the row of the transaction stands.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log; a cloud-floating license; a lease of a device; each engine.
+    /// - The table of the products renamed, so that the read for the usage line, which follows the commit of the release,
+    ///   fails as a database that goes away does.
+    ///
+    /// Steps:
+    /// - DELETE /v1/admin/leases/{id}; give the table its name back; check the chain with POST /v1/admin/audit/verify;
+    ///   count the leases; read the rows.
+    ///
+    /// Expected:
+    /// - 500 ELM_INTERNAL_ERROR "The database failed."; no lease is left; exactly one lease.release row: result ELM_OK,
+    ///   target the lease. The chain is intact.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task StateChange_FailsAfterItsCommit_LeavesOneRow(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+        string lease = LeaseId(await device.AcquireAsync(key));
+
+        await test.ExecuteAsync("ALTER TABLE products RENAME TO products_gone");
+        await TestService.AssertProblemAsync(
+            await admin.DeleteAsync($"v1/admin/leases/{lease}", TestContext.Current.CancellationToken),
+            HttpStatusCode.InternalServerError,
+            "ELM_INTERNAL_ERROR",
+            "The database failed."
+        );
+        await test.ExecuteAsync("ALTER TABLE products_gone RENAME TO products");
+
+        await TestService.AssertAuditIntactAsync(admin);
+        Assert.Equal(0, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+        AuditEntry row = Assert.Single(await RowsAsync(service, "lease.release"));
+        Assert.Equal(("ELM_OK", lease), (row.Result, row.Target));
+    }
+
+    private static string FilePath(string name) => $"v1/admin/usage-log/files/{name}";
+
+    // Writes a file of this node from a day before the test's start, which the node lists and serves but does not write to.
+    // Its lines are numbered so that a wrong part of it does not compare as equal.
+    private static string WriteOlderFile(TestService test, string node, int length)
+    {
+        string name = $"usage-{node}-20260901T000000000Z.jsonl";
+        using var stream = new FileStream(Path.Combine(test.FilePath("usage"), name), FileMode.CreateNew, FileAccess.Write);
+        for (int line = 0; stream.Length < length; line++)
+        {
+            byte[] bytes = Encoding.ASCII.GetBytes(
+                line.ToString("D10", System.Globalization.CultureInfo.InvariantCulture).PadRight(1_023, 'x') + "\n"
+            );
+            stream.Write(bytes, 0, (int)Math.Min(bytes.Length, length - stream.Length));
+        }
+
+        return name;
+    }
+
+    private static async Task<AuditEntry[]> RowsAsync(ElmService service, string action)
+    {
+        IReadOnlyList<AuditRow> rows = await service.Database.ListAuditAsync(null, false, AuditLog.MaxLimit, TestContext.Current.CancellationToken);
+        return [.. rows.Select(r => r.Entry).Where(e => e.Action == action)];
+    }
+
+    private static (long Sent, long Size) SentAndSize(string? detail)
+    {
+        using JsonDocument parsed = JsonDocument.Parse(detail!);
+        Assert.Equal(["sent", "size"], parsed.RootElement.EnumerateObject().Select(p => p.Name));
+        return (parsed.RootElement.GetProperty("sent").GetInt64(), parsed.RootElement.GetProperty("size").GetInt64());
     }
 
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.

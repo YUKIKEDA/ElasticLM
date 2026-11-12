@@ -107,7 +107,7 @@ Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the 
 | `lease.reclaimed` | A client reclaims a lease after a server restart | `lic`, `key`, `lease`, `cloneFlagged` |
 | `lease.denied` | Refused acquisitions, renewals, reclaims, and early returns, counted every 60 seconds and at stop | `feat` (when known), `code`, `count` |
 | `admin.denied` | Administration requests without the right token, counted every 60 seconds and at stop | `code` (`ELM_UNAUTHORIZED`), `count` |
-| `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`), `result` (an error code name) |
+| `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`), `result` (an error code name; `ELM_NETWORK_ERROR` when the caller cut the connection before the answer was written, `ELM_INTERNAL_ERROR` when the operation failed inside the server) |
 | `server.started` | The server starts | `lic`, `key` (here the server's key ID: the thumbprint of the server's own installation key, not a client's), `borrows` (the borrows restored) |
 | `server.stopped` | The server stops | `leases` (the leases not returned) |
 | `records.set_aside` | The server, run with `--set-aside-broken-records`, moved a broken borrow record aside at start, before it listens; the line is there also when the start then fails to listen | `file` |
@@ -235,7 +235,7 @@ The options, the output, the exit codes, and the errors and warnings are those o
 
 ### What is recorded
 
-- Every authenticated call of the administration API, reads and refusals included, with the action of the call. A successful `GET /v1/admin/me` writes no row.
+- Every authenticated call of the administration API, reads and refusals included, with the action of the call, also when the call ends without a whole answer. A successful `GET /v1/admin/me` writes no row.
 - Calls without valid authentication, counted and written as one `auth.failed` row a minute.
 - Admin UI sign-ins, sign-outs, and session changes.
 - From devices: activations, deactivations, trials, and detected clones. Token refreshes and refused device requests are not recorded.
@@ -252,7 +252,7 @@ Secrets, such as API keys, are never written.
 | `actorId` | For `apikey`, the API key ID. For `oidc`, the administrator's ID. For `system`, `setup` or `auth`. For `installation`, the thumbprint of the device's installation key. |
 | `action` | The action, from the table below. |
 | `target` | What the action acted on, such as a license, activation, or lease ID; or `null`. |
-| `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). |
+| `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). A call that ended without a whole answer has `ELM_NETWORK_ERROR` when the caller cut the connection, before the answer or partway through it, and `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
 | `ip` | The source address, or `null`. |
 | `detail` | A JSON object with the action's details, or `null`. |
 | `prev` | The hash of the previous row (32 bytes). |
@@ -312,10 +312,10 @@ Secrets, such as API keys, are never written.
 | `lease.list` | `GET /v1/admin/licenses/{id}/leases`. |
 | `lease.release` | `DELETE /v1/admin/leases/{id}`; `detail` has `licenseId`, `feature`, `seats`. |
 | `usagelog.list` | `GET /v1/admin/usage-log/files`. |
-| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`. |
+| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`. `detail` is `{"sent": ..., "size": ...}`: the bytes handed to the answer and the length of the file. `sent` equals `size` for a whole download; for one that was cut, it is the most that the caller can have read. |
 | `usagelog.seal` | `POST /v1/admin/usage-log/seal`. |
 
-A call refused for a missing permission is recorded with its action, `result` `ELM_FORBIDDEN`, and `detail` `{"permission": ...}`.
+A call refused for a missing permission is recorded with its action, `result` `ELM_FORBIDDEN`, and `detail` `{"permission": ...}`. When the caller was gone before that answer could be written, `result` is `ELM_NETWORK_ERROR`, with the same `detail`.
 
 ### The hash chain
 
