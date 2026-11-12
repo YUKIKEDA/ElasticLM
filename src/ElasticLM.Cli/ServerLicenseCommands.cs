@@ -319,7 +319,7 @@ internal static class ServerLicenseCommands
         byte[]? file = KeptLicense(host, common, parse);
         try
         {
-            LicenseFiles.Write(licensePath, file ?? throw new IOException("The activation file holds no license."));
+            LicenseFiles.Write(licensePath, file ?? throw new IOException("The activation file holds no license."), host.Time);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

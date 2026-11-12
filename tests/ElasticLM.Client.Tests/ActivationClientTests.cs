@@ -377,7 +377,9 @@ public sealed partial class ActivationClientTests
     /// - Product app with a trial policy, whose token ends with the trial and is within the refresh window at once.
     ///
     /// Steps:
-    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more.
+    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more. Then read the kept file every 10 milliseconds,
+    ///   moving the clock 50 milliseconds each time: on Windows a read can hold the file at the moment the client replaces
+    ///   it, and the client tries again 100 milliseconds of its clock later.
     ///
     /// Expected:
     /// - The kept seq stays 1 for the 59 minutes; it is 2 after the hour.
@@ -395,10 +397,99 @@ public sealed partial class ActivationClientTests
         await vendor.AdvanceForAsync(TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1));
         for (int i = 0; i < 500 && vendor.Kept("a").Seq != 2; i++)
         {
+            vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
             await Task.Delay(10, Cancel);
         }
 
         Assert.Equal(2L, vendor.Kept("a").Seq);
+    }
+
+    /// <summary>
+    /// On Windows, a refresh waits for another handle that reads the activation file, before the request and after the
+    /// answer; a reader that stays past 2 seconds of the client's clock makes the refresh fail, and the next one works.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; product app with one license; client A activated (seq 1).
+    /// - A reader of activation.json, opened as the client reads it (read access, shared for reading, writing, and
+    ///   deleting): either before the refresh starts, so that the write before the request meets it, or by the client's
+    ///   HTTP handler when the answer 200 of the refresh arrives, so that the write of the answer meets it.
+    ///
+    /// Steps:
+    /// - Refresh; once the reader is open, move the clock 1 second in steps of 50 milliseconds; close the reader; go on
+    ///   moving the clock until the refresh ends.
+    /// - Refresh again with a reader opened the same way; move the clock until the refresh ends, with the reader open.
+    /// - Close the reader; refresh.
+    ///
+    /// Expected:
+    /// - The first refresh has not ended while the reader is open; it succeeds, and the kept seq is 2.
+    /// - The second fails with ELM_INTERNAL_ERROR "The activation file cannot be written: …", at least 2 seconds of the
+    ///   clock after it started; the state is RefreshFailing and the kept seq is 2. Before the request, nothing was sent and
+    ///   the kept retry list is empty; after the answer, the list holds the request's jti.
+    /// - The third succeeds, the state is Active, and the retry list is empty.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Refresh_ReaderHoldsTheActivationFile_WaitsForItUpToTwoSeconds(bool afterTheAnswer)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file that a reader holds open.");
+        await using Vendor vendor = await Vendor.StartAsync();
+        (_, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        string file = Path.Combine(vendor.Folder("a"), "activation.json");
+        using var readers = new ReadAfterTheRefreshAnswer(file);
+        await using ActivationClient client = vendor.Client("a", readers);
+        Activated(await client.ActivateAsync(key, Cancel));
+
+        async Task<Task<ActivationResult>> RefreshWithAReaderAsync()
+        {
+            if (afterTheAnswer)
+            {
+                readers.Armed = true;
+            }
+            else
+            {
+                readers.Open();
+            }
+
+            int sent = readers.Refreshes;
+            Task<ActivationResult> refresh = Task.Run(() => client.RefreshAsync(Cancel), Cancel);
+            for (int i = 0; i < 1_000 && readers.Reader is null; i++)
+            {
+                await Task.Delay(10, Cancel);
+            }
+
+            Assert.NotNull(readers.Reader);
+            Assert.Equal(afterTheAnswer, readers.Refreshes > sent);
+            return refresh;
+        }
+
+        Task<ActivationResult> first = await RefreshWithAReaderAsync();
+        for (int i = 0; i < 20; i++)
+        {
+            vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(10, Cancel);
+        }
+
+        Assert.False(first.IsCompleted);
+        readers.Close();
+        await vendor.AdvanceUntilAsync(first);
+        Activated(await first);
+        Assert.Equal(2L, vendor.Kept("a").Seq);
+
+        DateTimeOffset started = vendor.Test.Time.GetUtcNow();
+        Task<ActivationResult> second = await RefreshWithAReaderAsync();
+        await vendor.AdvanceUntilAsync(second);
+        LicenseError error = Failed(await second);
+        Assert.Equal(ErrorCode.InternalError, error.Code);
+        Assert.StartsWith("The activation file cannot be written: ", error.Message, StringComparison.Ordinal);
+        Assert.True(vendor.Test.Time.GetUtcNow() - started >= TimeSpan.FromSeconds(2));
+        Assert.Equal(ActivationState.RefreshFailing, client.State);
+        readers.Close();
+        Assert.Equal((2L, afterTheAnswer ? 1 : 0), (vendor.Kept("a").Seq, vendor.Kept("a").Retry.Count));
+
+        Activated(await client.RefreshAsync(Cancel));
+        Assert.Equal((ActivationState.Active, 0), (client.State, vendor.Kept("a").Retry.Count));
     }
 
     /// <summary>
@@ -1057,6 +1148,54 @@ public sealed partial class ActivationClientTests
             }
 
             return response;
+        }
+    }
+
+    // Opens a reader of the activation file, as the client reads it, when the answer 200 of a refresh arrives.
+    private sealed class ReadAfterTheRefreshAnswer(string file) : DelegatingHandler
+    {
+        private int _refreshes;
+
+        public volatile bool Armed;
+
+        public volatile FileStream? Reader;
+
+        public int Refreshes => Volatile.Read(ref _refreshes);
+
+        public void Open() => Reader = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        public void Close()
+        {
+            Reader?.Dispose();
+            Reader = null;
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            bool refresh = request.RequestUri!.AbsolutePath.EndsWith("/refresh", StringComparison.Ordinal);
+            if (refresh)
+            {
+                Interlocked.Increment(ref _refreshes);
+            }
+
+            HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
+            if (refresh && Armed && response.IsSuccessStatusCode)
+            {
+                Armed = false;
+                Open();
+            }
+
+            return response;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                Close();
+            }
+
+            base.Dispose(disposing);
         }
     }
 

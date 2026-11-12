@@ -130,7 +130,8 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 return null;
             }
 
-            // A reader lets a writer replace or remove the file, so another process's Check never blocks a save on Windows.
+            // A reader lets a writer remove the file. On Windows a writer's replacement is still refused while this handle is
+            // open, and the writer tries again (design §12.6.2, V1d2a).
             using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             bytes = new byte[stream.Length];
             stream.ReadExactly(bytes);
@@ -223,7 +224,9 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
 
         string temporary = FilePath + ".tmp";
         File.WriteAllBytes(temporary, buffer.ToArray());
-        File.Move(temporary, FilePath, overwrite: true);
+
+        // design §12.6.2 (V1d2a): readers do not take the lock, and on Windows one of them refuses the move while it reads.
+        FileReplacement.Move(temporary, FilePath, time);
     }
 
     /// <summary>Removes the activation file.</summary>

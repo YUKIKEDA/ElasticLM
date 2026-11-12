@@ -81,7 +81,7 @@ public sealed class LicenseClient : IAsyncDisposable
         IClockGuard guard = options.ClockGuard ?? new FileClockGuard(Path.Combine(store.Directory, "clock"), _guardKey);
         _licenseVerifier = new LicenseVerifier(options.Trust, _time, guard, options.VerifierOptions);
         _leaseVerifier = new LeaseVerifier(options.Trust, _time, guard, options.VerifierOptions);
-        _pins = new ServerPins(store.Directory);
+        _pins = new ServerPins(store.Directory, _time);
         _storeDirectory = store.Directory;
 
         // design §12.7.6 (M4d2's Grill): elm-service is checked with the OS's trust, as ActivationClient does.
@@ -486,6 +486,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 writer.WriteEndObject();
             }
 
+            // The lease ID is new, so no reader holds a file at this path (design §12.6.2).
             File.Move(temporary, path, overwrite: true);
             return null;
         }

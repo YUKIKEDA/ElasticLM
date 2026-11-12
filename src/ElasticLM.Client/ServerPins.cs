@@ -11,7 +11,7 @@ namespace ElasticLM.Client;
 /// The server pins: for each server URL, the server license ID and the server key thumbprint seen first (or
 /// accepted under a configured license ID). They live next to the installation key, one file per URL, in <c>servers/</c>.
 /// </summary>
-internal sealed class ServerPins(string directory)
+internal sealed class ServerPins(string directory, TimeProvider time)
 {
     private const int MaxPinFileLength = 4 * 1024;
 
@@ -75,7 +75,7 @@ internal sealed class ServerPins(string directory)
             }
 
             File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(pin, ClientWireContext.Default.PinFile));
-            File.Move(temporary, path, overwrite: true);
+            FileReplacement.Move(temporary, path, time);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

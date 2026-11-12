@@ -394,7 +394,7 @@ public sealed partial class ServerAnswerTests : IDisposable
     [Fact]
     public void Pins_AreReadWrittenAndChecked()
     {
-        var pins = new ServerPins(_directory);
+        var pins = new ServerPins(_directory, TimeProvider.System);
         var url = new Uri("https://Licenses.Example:443/");
 
         Assert.True(pins.TryRead(url, out PinFile? none));

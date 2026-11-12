@@ -106,7 +106,7 @@ internal sealed partial class ElmServer
     {
         try
         {
-            LicenseFiles.Write(_settings.LicensePath, file);
+            LicenseFiles.Write(_settings.LicensePath, file, Time);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

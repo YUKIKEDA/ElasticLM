@@ -351,7 +351,7 @@ public sealed class HostedLeaseClientTests
             KeyRule,
             Assert.Throws<ArgumentException>(() => LicenseClient.TryCreate(Options("https://elm.example/", "K", "lic"), out _, out _)).Message
         );
-        var pins = new ServerPins(new InstallationKeyStore("app", KeyScope.User, test.FilePath("client")).Directory);
+        var pins = new ServerPins(new InstallationKeyStore("app", KeyScope.User, test.FilePath("client")).Directory, test.Time);
         Assert.True(pins.TryWrite(new Uri("http://127.0.0.1:9/"), "lic-srv", "key-1"));
         Assert.True(LicenseClient.TryCreate(Options("http://127.0.0.1:9/", "K"), out LicenseClient? client, out LicenseError? error), error?.Message);
         Assert.False(client!.ResetServerPin(new Uri("http://127.0.0.1:9/")));
