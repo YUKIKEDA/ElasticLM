@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.IO.Pipelines;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -127,7 +128,16 @@ internal sealed partial class ElmService
 
                     // Counted when the bytes are handed over: a write that fails may have sent a part of them.
                     sent += read;
-                    await context.Response.Body.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted).ConfigureAwait(false);
+                    FlushResult written = await context
+                        .Response.BodyWriter.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted)
+                        .ConfigureAwait(false);
+                    if (written.IsCompleted)
+                    {
+                        // The connection is closed, and Kestrel drops this write and every later one without an exception
+                        // until it cancels the request's token (design §18.2, V1d9). Going on would count the rest of the
+                        // file as sent.
+                        return new AdminOutcome(ErrorCodes.ToWireName(ErrorCode.NetworkError), file, SentDetail(sent, size));
+                    }
                 }
             }
             catch (Exception)

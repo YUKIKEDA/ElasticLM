@@ -324,6 +324,13 @@ internal sealed partial class ElmService
 
             if (!outcome.Recorded)
             {
+                // design §18.2 (V1d9): an answer written after the connection closed is no answer. Kestrel drops such writes
+                // without an exception until it has canceled the request's token, which it does later, on the thread pool.
+                if (await AnswerMetClosedConnectionAsync(context).ConfigureAwait(false))
+                {
+                    outcome = outcome with { Result = ErrorCodes.ToWireName(ErrorCode.NetworkError) };
+                }
+
                 var entry = new AuditEntry(caller.ActorType, caller.ActorId, action, outcome.Target, outcome.Result, ip, outcome.Detail);
                 await Database.AppendAuditAsync(entry, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
             }
@@ -589,6 +596,29 @@ internal sealed partial class ElmService
     {
         await ProblemAsync(context, code, message).ConfigureAwait(false);
         return new AdminOutcome(ErrorCodes.ToWireName(code), target);
+    }
+
+    // design §18.2 (V1d9): whether the answer that was started has met a closed connection. Kestrel closes its output before
+    // it cancels the request's token, and from then on a write or a flush does nothing and reports the output as completed
+    // (aspnetcore v10.0.15, Http1OutputProducer.cs: Abort sets _pipeWriterCompleted, and WriteAsync and FlushAsync then return
+    // new FlushResult(false, true); Http1Connection.cs calls _http1Output.Abort before CancelRequestAbortedToken, which only
+    // schedules the cancellation). Response.Body drops that result, so the flush of the response's writer is asked here. An
+    // answer that has not started was handed nothing, and asking would start it.
+    private static async ValueTask<bool> AnswerMetClosedConnectionAsync(HttpContext context)
+    {
+        if (!context.Response.HasStarted)
+        {
+            return false;
+        }
+
+        try
+        {
+            return (await context.Response.BodyWriter.FlushAsync(context.RequestAborted).ConfigureAwait(false)).IsCompleted;
+        }
+        catch (OperationCanceledException)
+        {
+            return true;
+        }
     }
 
     // design §18.2 (V1d9): what the wrapper reads when the operation ends with an exception.

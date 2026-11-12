@@ -833,14 +833,14 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// - On a connection of its own to the socket file, GET /admin/v1/status with the administrator token. Once the server
     ///   waits in the held read, end the caller's side and read until the server has closed the connection; let the held
     ///   read go on; wait for one more admin.action entry in the server's log.
-    /// - Kestrel cancels the request's token on the thread pool after it has closed the connection. A run in which the
-    ///   answer was written before that leaves a line with ELM_OK (no run of 15 on Windows 11, measured with the loop cut
-    ///   to one run; 1 of 15 in the same test of elm-service), and the steps are run again, twenty times at most.
+    /// - Run these steps 30 times. Kestrel cancels the request's token on the thread pool after it has closed the
+    ///   connection, and until then it drops the answer's write without an exception; the server asks the response's
+    ///   writer whether the connection is closed, so both orders give the same line.
     /// - Stop and verify the usage log.
     ///
     /// Expected:
-    /// - Each run adds exactly one admin.action entry. The usage log is intact; its last admin.action line is status with
-    ///   ELM_NETWORK_ERROR, and every line before it is status with ELM_OK.
+    /// - Each run adds exactly one admin.action entry, with ELM_NETWORK_ERROR. The usage log is intact, and its 30
+    ///   admin.action lines are status with ELM_NETWORK_ERROR.
     /// </remarks>
     [Fact]
     public async Task AdminApi_CallerGoneBeforeTheAnswer_IsRecordedAsNetworkError()
@@ -854,8 +854,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         );
         string[] Logged() => [.. log.Entries.Select(e => e.Message).Where(m => m.StartsWith("admin.action: status ", StringComparison.Ordinal))];
 
-        bool cut = false;
-        for (int run = 0; run < 20 && !cut; run++)
+        for (int run = 0; run < 30; run++)
         {
             int before = Logged().Length;
             Task held = clock.HoldNextReadAsync();
@@ -872,13 +871,13 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
             await Deployment.WaitUntilAsync(() => Logged().Length > before);
             string[] entries = Logged();
             Assert.Equal(before + 1, entries.Length);
-            cut = entries[^1].EndsWith("-> ELM_NETWORK_ERROR", StringComparison.Ordinal);
+            Assert.EndsWith("-> ELM_NETWORK_ERROR", entries[^1], StringComparison.Ordinal);
         }
 
         await server.DisposeAsync();
         string[] actions = AdminActions(server);
-        Assert.Equal("status:ELM_NETWORK_ERROR", actions[^1]);
-        Assert.All(actions[..^1], a => Assert.Equal("status:ELM_OK", a));
+        Assert.Equal(30, actions.Length);
+        Assert.All(actions, a => Assert.Equal("status:ELM_NETWORK_ERROR", a));
     }
 
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;

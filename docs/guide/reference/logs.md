@@ -252,7 +252,7 @@ Secrets, such as API keys, are never written.
 | `actorId` | For `apikey`, the API key ID. For `oidc`, the administrator's ID. For `system`, `setup` or `auth`. For `installation`, the thumbprint of the device's installation key. |
 | `action` | The action, from the table below. |
 | `target` | What the action acted on, such as a license, activation, or lease ID; or `null`. |
-| `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). A call that ended without a whole answer has `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, and `ELM_INTERNAL_ERROR` when the operation failed inside the service. A change that was already stored keeps its row with `ELM_OK`. |
+| `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). A call that ended without a whole answer has `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, and `ELM_INTERNAL_ERROR` when the operation failed inside the service. A change that was already stored keeps its row with `ELM_OK`. The service can tell that the connection was closed only until it has handed over the whole answer: when the caller closes it after that, without reading the answer, the row has the operation's own result. |
 | `ip` | The source address, or `null`. |
 | `detail` | A JSON object with the action's details, or `null`. |
 | `prev` | The hash of the previous row (32 bytes). |
@@ -317,7 +317,7 @@ Secrets, such as API keys, are never written.
 
 A call refused for a missing permission is recorded with its action, `result` `ELM_FORBIDDEN`, and `detail` `{"permission": ...}`. When the connection was closed before that answer could be written, `result` is `ELM_NETWORK_ERROR`, with the same `detail`.
 
-A call that ended without a whole answer has `target` and `detail` `null`. The exceptions are a call refused for a missing permission, a download of `usagelog.get` that began, and `license.file` and `activation.offline` once the file was issued or processed: these keep the `target` and `detail` of their action.
+A call that ended without a whole answer can have `target` and `detail` `null`: the operation was stopped before the service knew them. A call refused for a missing permission, a download of `usagelog.get` that began, and `license.file` and `activation.offline` once the file was issued or processed always keep the `target` and `detail` of their action.
 
 ### The hash chain
 

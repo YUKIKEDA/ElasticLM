@@ -568,14 +568,15 @@ public sealed class ElmServiceAdminTests
     /// - On a socket of its own, GET /v1/admin/audit with the narrow key. Once the service waits in the held read, end the
     ///   caller's side and read until the service has closed the connection; let the held read go on; wait for one more
     ///   audit.list row.
-    /// - Kestrel cancels the request's token on the thread pool after it has closed the connection. A run in which the
-    ///   answer was written before that leaves an ELM_FORBIDDEN row (1 run of 15 on Windows 11, measured with the loop cut
-    ///   to one run), and the steps are run again, twenty times at most.
+    /// - Run these steps 50 times. Kestrel cancels the request's token on the thread pool after it has closed the
+    ///   connection, and until then it drops the answer's write without an exception: in 1 run of 15 on Windows 11 the
+    ///   write came first. The service asks the response's writer whether the connection is closed; a service that only
+    ///   waits for an exception leaves an ELM_FORBIDDEN row in such a run.
     /// - Check the chain with POST /v1/admin/audit/verify.
     ///
     /// Expected:
-    /// - Each run adds exactly one audit.list row. The last one has the result ELM_NETWORK_ERROR, the narrow key as its
-    ///   actor, and the detail {"permission":"audit.read"}. The chain is intact.
+    /// - Each run adds exactly one audit.list row, with the result ELM_NETWORK_ERROR, the narrow key as its actor, and the
+    ///   detail {"permission":"audit.read"}. The chain is intact.
     /// </remarks>
     [Fact]
     public async Task Refusal_CallerGoneBeforeItsAnswer_IsAuditedAsNetworkError()
@@ -598,27 +599,24 @@ public sealed class ElmServiceAdminTests
         string narrow = await TestService.CreateKeyAsync(admin, "\"apikey.read\"");
         string request = $"GET /v1/admin/audit HTTP/1.1\r\nHost: {service.Url.Authority}\r\nAuthorization: Bearer {narrow}\r\n\r\n";
 
-        AuditEntry? last = null;
-        for (int run = 0; run < 20 && last?.Result != "ELM_NETWORK_ERROR"; run++)
+        string? narrowId = (await RowsAsync(service, "apikey.create"))[^1].Target;
+        for (int run = 0; run < 50; run++)
         {
-            int before = (await RowsAsync(service, "audit.list")).Length;
             Task held = clock.HoldAsync(2);
             using Socket caller = await SendAsync(service, request);
             await held.WaitAsync(TimeSpan.FromSeconds(10), cancel);
             await LeaveAsync(caller);
             clock.Release();
-            await TestService.WaitForAsync(async () => (await RowsAsync(service, "audit.list")).Length > before);
+            await TestService.WaitForAsync(async () => (await RowsAsync(service, "audit.list")).Length > run);
             AuditEntry[] rows = await RowsAsync(service, "audit.list");
-            Assert.Equal(before + 1, rows.Length);
-            last = rows[^1];
+            Assert.Equal(run + 1, rows.Length);
+            Assert.Equal(
+                ("ELM_NETWORK_ERROR", "apikey", narrowId, "{\"permission\":\"audit.read\"}", null),
+                (rows[^1].Result, rows[^1].ActorType, rows[^1].ActorId, rows[^1].Detail, rows[^1].Target)
+            );
         }
 
         await TestService.AssertAuditIntactAsync(admin);
-        Assert.Equal(
-            ("ELM_NETWORK_ERROR", "apikey", "{\"permission\":\"audit.read\"}", null),
-            (last!.Result, last.ActorType, last.Detail, last.Target)
-        );
-        Assert.Equal((await RowsAsync(service, "apikey.create"))[^1].Target, last.ActorId);
     }
 
     /// <summary>
@@ -680,13 +678,13 @@ public sealed class ElmServiceAdminTests
     /// - On a socket of its own, POST /v1/admin/licenses/{id}/file. Once the service waits in the held read, end the
     ///   caller's side and read until the service has closed the connection; let the held read go on; wait for one more
     ///   license.file row.
-    /// - A run in which the answer was written before Kestrel canceled the request leaves an ELM_OK row, and the steps are
-    ///   run again, twenty times at most.
+    /// - Run these steps 10 times: the answer's write either throws on the canceled request or is dropped by Kestrel
+    ///   without an exception, whichever comes first, and the row must be the same.
     /// - Check the chain with POST /v1/admin/audit/verify.
     ///
     /// Expected:
-    /// - Each run adds exactly one license.file row. The last one has the result ELM_NETWORK_ERROR, the license as its
-    ///   target, and a detail with a jti and an exp of null. The chain is intact.
+    /// - Each run adds exactly one license.file row, with the result ELM_NETWORK_ERROR, the license as its target, and a
+    ///   detail with a jti and an exp of null. The chain is intact.
     /// </remarks>
     [Fact]
     public async Task LicenseFile_CallerGoneBeforeItsAnswer_RowNamesTheLicenseAndTheToken()
@@ -704,27 +702,24 @@ public sealed class ElmServiceAdminTests
             $"POST /v1/admin/licenses/{license}/file HTTP/1.1\r\nHost: {service.Url.Authority}\r\nAuthorization: Bearer {owner}\r\n"
             + "Content-Length: 0\r\n\r\n";
 
-        AuditEntry? last = null;
-        for (int run = 0; run < 20 && last?.Result != "ELM_NETWORK_ERROR"; run++)
+        for (int run = 0; run < 10; run++)
         {
-            int before = (await RowsAsync(service, "license.file")).Length;
             Task held = clock.HoldTimeAsync(3);
             using Socket caller = await SendAsync(service, request);
             await held.WaitAsync(TimeSpan.FromSeconds(10), cancel);
             await LeaveAsync(caller);
             clock.Release();
-            await TestService.WaitForAsync(async () => (await RowsAsync(service, "license.file")).Length > before);
+            await TestService.WaitForAsync(async () => (await RowsAsync(service, "license.file")).Length > run);
             AuditEntry[] rows = await RowsAsync(service, "license.file");
-            Assert.Equal(before + 1, rows.Length);
-            last = rows[^1];
+            Assert.Equal(run + 1, rows.Length);
+            Assert.Equal(("ELM_NETWORK_ERROR", license), (rows[^1].Result, rows[^1].Target));
+            using JsonDocument detail = JsonDocument.Parse(rows[^1].Detail!);
+            Assert.Equal(["jti", "exp"], detail.RootElement.EnumerateObject().Select(p => p.Name));
+            Assert.NotEqual(string.Empty, detail.RootElement.GetProperty("jti").GetString());
+            Assert.Equal(JsonValueKind.Null, detail.RootElement.GetProperty("exp").ValueKind);
         }
 
         await TestService.AssertAuditIntactAsync(admin);
-        Assert.Equal(("ELM_NETWORK_ERROR", license), (last!.Result, last.Target));
-        using JsonDocument detail = JsonDocument.Parse(last.Detail!);
-        Assert.Equal(["jti", "exp"], detail.RootElement.EnumerateObject().Select(p => p.Name));
-        Assert.NotEqual(string.Empty, detail.RootElement.GetProperty("jti").GetString());
-        Assert.Equal(JsonValueKind.Null, detail.RootElement.GetProperty("exp").ValueKind);
     }
 
     /// <summary>
@@ -740,14 +735,14 @@ public sealed class ElmServiceAdminTests
     /// - On a socket of its own, POST /v1/admin/offline with the request. While the service waits to commit the
     ///   activation, end the caller's side and read until the service has closed the connection; end the reader; wait for
     ///   one more activation.offline row.
-    /// - A run in which the answer was written before Kestrel canceled the request leaves an ELM_OK row, and the steps are
-    ///   run again with a new device, ten times at most.
-    /// - Stop the service; read the rows and check the chain.
+    /// - Run these steps 5 times, each with a new device: the answer's write either throws on the canceled request or is
+    ///   dropped by Kestrel without an exception, whichever comes first, and the row must be the same.
+    /// - Stop the service; check the chain.
     ///
     /// Expected:
-    /// - Each run adds one activation.activate row with ELM_OK and one activation.offline row whose target is that
-    ///   activation and whose detail is {"operation":"activate","channel":"offline"}. The last activation.offline row has
-    ///   the result ELM_NETWORK_ERROR. The chain is intact.
+    /// - Each run adds one activation.activate row with ELM_OK and one activation.offline row with the result
+    ///   ELM_NETWORK_ERROR, whose target is that activation and whose detail is
+    ///   {"operation":"activate","channel":"offline"}. The chain is intact.
     /// </remarks>
     [Fact]
     public async Task Offline_CallerGoneAfterTheActivationIsStored_RowNamesTheActivation()
@@ -764,8 +759,7 @@ public sealed class ElmServiceAdminTests
         );
         await using SqliteConnection reader = await OpenCommitHolderAsync(test, cancel);
 
-        AuditEntry? last = null;
-        for (int run = 0; run < 10 && last?.Result != "ELM_NETWORK_ERROR"; run++)
+        for (int run = 0; run < 5; run++)
         {
             using var device = TestDevice.Create(test, service);
             string file = device.ActivationFile(key, TestDevice.Fingerprints(2)) + "\n";
@@ -777,14 +771,16 @@ public sealed class ElmServiceAdminTests
             AuditEntry[] offline = await RowsAsync(service, "activation.offline");
             AuditEntry[] activated = await RowsAsync(service, "activation.activate");
             Assert.Equal((run + 1, run + 1), (offline.Length, activated.Length));
-            last = offline[^1];
+            AuditEntry last = offline[^1];
             Assert.Equal("ELM_OK", activated[^1].Result);
-            Assert.Equal((activated[^1].Target, "{\"operation\":\"activate\",\"channel\":\"offline\"}"), (last.Target, last.Detail));
+            Assert.Equal(
+                ("ELM_NETWORK_ERROR", activated[^1].Target, "{\"operation\":\"activate\",\"channel\":\"offline\"}"),
+                (last.Result, last.Target, last.Detail)
+            );
             Assert.NotNull(last.Target);
         }
 
         await service.StopAsync();
-        Assert.Equal("ELM_NETWORK_ERROR", last!.Result);
         Assert.Null((await service.Database.VerifyAuditAsync(cancel)).FirstBroken);
     }
 

@@ -54,7 +54,28 @@ internal sealed partial class ElmServer
             throw;
         }
 
+        // design §13.7 (V1d9): an answer written after the connection closed is no answer. Kestrel closes its output before it
+        // cancels the request's token, and until then a write does nothing and reports the output as completed (aspnetcore
+        // v10.0.15, Http1OutputProducer.cs and Http1Connection.cs). So the response's writer is flushed and asked; for an
+        // answer of a status alone, the flush starts it.
+        if (await AnswerMetClosedConnectionAsync(context).ConfigureAwait(false))
+        {
+            result = ErrorCodes.ToWireName(ErrorCode.NetworkError);
+        }
+
         WriteAdminAction(action, target, result);
+    }
+
+    private static async ValueTask<bool> AnswerMetClosedConnectionAsync(HttpContext context)
+    {
+        try
+        {
+            return (await context.Response.BodyWriter.FlushAsync(context.RequestAborted).ConfigureAwait(false)).IsCompleted;
+        }
+        catch (OperationCanceledException)
+        {
+            return true;
+        }
     }
 
     private void WriteAdminAction(string action, string? target, string result)

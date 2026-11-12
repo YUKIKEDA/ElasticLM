@@ -1052,6 +1052,36 @@ public sealed class ServiceUsageLogTests
     }
 
     /// <summary>
+    /// An operation that answers with a status alone is answered 500 when its row cannot be written: the answer is not
+    /// started before the row is written (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log; the table of the audit rows renamed, so that no row can be written.
+    ///
+    /// Steps:
+    /// - POST /v1/admin/usage-log/seal, which answers 204 when its row is written; give the table its name back.
+    ///
+    /// Expected:
+    /// - 500 ELM_INTERNAL_ERROR "The database failed.".
+    /// </remarks>
+    [Fact]
+    public async Task Seal_RowCannotBeWritten_IsAnswered500()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (_, HttpClient admin) = await StartLoggedAsync(test, "n1");
+
+        await test.ExecuteAsync("ALTER TABLE audit_log RENAME TO audit_log_gone");
+        await TestService.AssertProblemAsync(
+            await admin.PostAsync("v1/admin/usage-log/seal", null, TestContext.Current.CancellationToken),
+            HttpStatusCode.InternalServerError,
+            "ELM_INTERNAL_ERROR",
+            "The database failed."
+        );
+        await test.ExecuteAsync("ALTER TABLE audit_log_gone RENAME TO audit_log");
+    }
+
+    /// <summary>
     /// The rows of a download that was refused have no detail: sent and size belong to a download that began (design
     /// §18.2, V1d9).
     /// </summary>
