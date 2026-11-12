@@ -114,7 +114,7 @@ Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the 
 | `license.refreshed` | The server license was renewed from `elm-service` | `lic`, `token` (the token ID), `seq` |
 | `license.refresh_failed` | Renewing the server license failed | `stage` (`start`, `write`, `reload`, or `service`), `code` |
 
-A refusal line counts one kind (feature and code) for the period. Up to 100 kinds are counted in one period; beyond that, refusals are counted without their feature. A feature name that the license does not grant is never written, so such refusals share one kind for each code.
+A refusal line counts one kind (feature and code) for the period. Up to 100 kinds are counted in one period; beyond that, refusals are counted without their feature. A feature name that a request asks for and the server license does not grant is not written, so such refusals share one kind for each code.
 
 ### Events of `elm-service`
 

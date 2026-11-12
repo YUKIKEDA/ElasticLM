@@ -11,6 +11,9 @@ public static class LicenseRules
     /// <summary>The most features one license grants.</summary>
     public const int MaxFeatures = Limits.MaxFeatures;
 
+    /// <summary>The longest feature ID, in UTF-8 bytes.</summary>
+    public const int MaxFeatureIdBytes = Limits.MaxFeatureIdBytes;
+
     /// <summary>The most metadata entries.</summary>
     public const int MaxMetaEntries = Limits.MaxMetaEntries;
 

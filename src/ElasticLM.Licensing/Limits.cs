@@ -60,5 +60,6 @@ internal static class Limits
     /// <summary>
     /// Returns whether a feature ID has its form: 1 to 64 bytes in UTF-8, of any characters.
     /// </summary>
-    public static bool IsFeatureId(string? id) => id is { Length: > 0 } && Encoding.UTF8.GetByteCount(id) <= MaxFeatureIdBytes;
+    public static bool IsFeatureId(string? id) =>
+        id is { Length: > 0 and <= MaxFeatureIdBytes } && Encoding.UTF8.GetByteCount(id) <= MaxFeatureIdBytes;
 }

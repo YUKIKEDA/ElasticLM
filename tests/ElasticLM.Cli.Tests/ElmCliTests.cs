@@ -455,7 +455,7 @@ public sealed class ElmCliTests : IDisposable
         AssertInputError(Run(WithFeature("pro;foo=1")), "unknown or invalid part");
         AssertInputError(Run(WithFeature("pro;seats=abc")), "unknown or invalid part");
         AssertInputError(Run(WithFeature("pro;exp=tomorrow")), "not an ISO 8601");
-        AssertInputError(Run(WithFeature(new string('a', 65))), "The license breaks a rule of the token format");
+        AssertInputError(Run(WithFeature(new string('a', 65))), "is longer than 64 bytes in UTF-8");
         Assert.False(File.Exists(P("f.elmlic")));
         Assert.Equal(0, Run(WithFeature(new string('a', 64))).Code);
         string[] badExpiry = Issue("e.elmlic");

@@ -761,16 +761,17 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///
     /// Steps:
     /// - With the administrator token, DELETE /admin/v1/leases/{id} for: 22 letters A (well formed, unknown); "other~form";
-    ///   21 letters A and a dot (22 characters, one outside base64url); 4,000 letters z. Stop and verify the usage log.
+    ///   21 letters A and a dot (22 characters, one outside base64url); 21 letters B; 23 letters C; 4,000 letters z. Stop
+    ///   and verify the usage log.
     ///
     /// Expected:
-    /// - 404 ELM_UNKNOWN_LEASE "The server does not know the lease." four times.
-    /// - The usage log is intact and has four admin.action lines with action release and result ELM_UNKNOWN_LEASE: the first
+    /// - 404 ELM_UNKNOWN_LEASE "The server does not know the lease." six times.
+    /// - The usage log is intact and has six admin.action lines with action release and result ELM_UNKNOWN_LEASE: the first
     ///   with target 22 letters A, the others without target. The operational log has "admin.action: release
-    ///   AAAAAAAAAAAAAAAAAAAAAA -> ELM_UNKNOWN_LEASE" once and three lines "admin.action: release (null) ->
+    ///   AAAAAAAAAAAAAAAAAAAAAA -> ELM_UNKNOWN_LEASE" once and five lines "admin.action: release (null) ->
     ///   ELM_UNKNOWN_LEASE".
     /// - No usage log file and no entry of the category elm-server in the operational log holds "other~form", the ID with
-    ///   the dot, or 100 letters z.
+    ///   the dot, 21 letters B, 23 letters C, or 100 letters z.
     /// </remarks>
     [Fact]
     public async Task AdminApi_ReleaseOfAnIdOfAnotherForm_IsRefusedAndNotLogged()
@@ -788,8 +789,8 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         CancellationToken cancel = TestContext.Current.CancellationToken;
         string wellFormed = new('A', 22);
         string dotted = new string('A', 21) + ".";
-        string[] ids = [wellFormed, "other~form", dotted, new string('z', 4_000)];
-        string[] absent = ["other~form", dotted, new string('z', 100)];
+        string[] ids = [wellFormed, "other~form", dotted, new string('B', 21), new string('C', 23), new string('z', 4_000)];
+        string[] absent = ["other~form", dotted, new string('B', 21), new string('C', 23), new string('z', 100)];
 
         await using (ElmServer server = await ElmServer.StartAsync(_deployment.Settings(serverData), host, cancel))
         {
@@ -808,22 +809,20 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         JsonElement[] actions = [.. usage.Entries.Where(e => e.Type == "admin.action").Select(e => e.Value)];
-        Assert.Equal(4, actions.Length);
+        Assert.Equal(ids.Length, actions.Length);
         Assert.All(
             actions,
             a => Assert.Equal(("release", "ELM_UNKNOWN_LEASE"), (a.GetProperty("action").GetString(), a.GetProperty("result").GetString()))
         );
         Assert.Equal(
-            [wellFormed, null, null, null],
+            [wellFormed, null, null, null, null, null],
             actions.Select(a => a.TryGetProperty("target", out JsonElement target) ? target.GetString() : null)
         );
         string[] operational = [.. log.Entries.Where(e => e.Message.StartsWith("admin.action:", StringComparison.Ordinal)).Select(e => e.Message)];
         Assert.Equal(
             [
                 $"admin.action: release {wellFormed} -> ELM_UNKNOWN_LEASE",
-                "admin.action: release (null) -> ELM_UNKNOWN_LEASE",
-                "admin.action: release (null) -> ELM_UNKNOWN_LEASE",
-                "admin.action: release (null) -> ELM_UNKNOWN_LEASE",
+                .. Enumerable.Repeat("admin.action: release (null) -> ELM_UNKNOWN_LEASE", ids.Length - 1),
             ],
             operational
         );
