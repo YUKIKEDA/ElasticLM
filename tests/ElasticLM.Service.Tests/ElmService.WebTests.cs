@@ -1085,22 +1085,30 @@ public sealed class ElmServiceWebTests
     /// <remarks>
     /// Preconditions:
     /// - A service with OIDC but no web sign-in; a service with the web sign-in. Requests are written to a socket, so the
-    ///   path arrives as written: in another case (/AUTH/LOGIN, /Auth/Callback), with a letter percent-encoded in upper
-    ///   case (/auth/%4Cogin, /%41uth/callback), with a trailing slash (/auth/login/, /auth/logout/), with a dot segment
-    ///   (/auth/./login).
+    ///   request target and the method arrive as written.
+    /// - The forms of /auth/login and /auth/logout: in another case (/AUTH/LOGIN, /Auth/Login), with a letter
+    ///   percent-encoded in upper case (/auth/%4Cogin), with one trailing slash (/auth/login/, /AUTH/LOGIN/), with a dot
+    ///   segment (/auth/./login). The forms of /auth/callback: /AUTH/CALLBACK, /Auth/Callback, /%41uth/callback,
+    ///   /auth/./callback.
     ///
     /// Steps:
-    /// - Without the web sign-in: GET and POST each form of /auth/login, /auth/callback, and /auth/logout.
+    /// - Without the web sign-in: GET and POST each form.
     /// - With it: the wrong methods (POST and HEAD for login and callback, GET for logout) on each form; POST to
-    ///   /AUTH/CALLBACK with Content-Length 921600, and again with 2097152 (over the service's 1 MiB), and only 1,000
-    ///   bytes of the body sent; then the right method on each form; then GET and POST /auth/callback/.
+    ///   /AUTH/CALLBACK with Content-Length 921600, and again with 2097152 (over the 1 MiB the service lets Kestrel read),
+    ///   and only 1,000 bytes of the body sent; then the right method on each form.
+    /// - What is not a form of these paths: GET and POST /auth/callback/ with and without the web sign-in; with it, GET and
+    ///   POST /auth/login// and /auth/logout//.
+    /// - With the web sign-in: "get /AUTH/LOGIN" (the method in lower case). With and without it: "OPTIONS *", whose path
+    ///   is empty.
     ///
     /// Expected:
     /// - Without the web sign-in, and for every wrong method: 404 with the text page (for HEAD, its headers), also for the
     ///   two requests whose body was not sent in full, so the body is not read.
     /// - The right method reaches what answers: GET on a login form gives 302; GET on a callback form gives the 400 page
     ///   of a failed sign-in; POST on a logout form with the CSRF header gives 200.
-    /// - /auth/callback/ is not the handler's path and has no route: 404 without a body.
+    /// - /auth/callback/, /auth/login//, and /auth/logout// are not the handler's path and have no route: 404 without a
+    ///   body.
+    /// - "get" is not GET, and the empty path is the route "/" with a method that is not GET: 404 with the text page.
     /// </remarks>
     [Fact]
     public async Task WebPaths_InAnotherCaseOrWithATrailingSlash_AnswerOnlyAsDesigned()
@@ -1156,11 +1164,27 @@ public sealed class ElmServiceWebTests
             Assert.Equal(200, (await RawAsync(on.Url, "POST", path, string.Empty, csrf: true)).Status);
         }
 
-        foreach (string method in new[] { "GET", "POST" })
+        foreach (
+            (Uri service, string method, string path) in new[]
+            {
+                (on.Url, "GET", "/auth/callback/"),
+                (on.Url, "POST", "/auth/callback/"),
+                (off.Url, "GET", "/auth/callback/"),
+                (off.Url, "POST", "/auth/callback/"),
+                (on.Url, "GET", "/auth/login//"),
+                (on.Url, "POST", "/auth/login//"),
+                (on.Url, "GET", "/auth/logout//"),
+                (on.Url, "POST", "/auth/logout//"),
+            }
+        )
         {
-            (int status, _, string body) = await RawAsync(on.Url, method, "/auth/callback/", method == "POST" ? Form : null);
-            Assert.Equal((404, string.Empty), (status, body));
+            (int status, _, string body) = await RawAsync(service, method, path, method == "POST" ? Form : null, csrf: true);
+            Assert.True((status, body) == (404, string.Empty), $"{method} {path}: {status} '{body}'");
         }
+
+        AssertNotFoundPage(await RawAsync(on.Url, "get", "/AUTH/LOGIN"), "get in lower case", head: false);
+        AssertNotFoundPage(await RawAsync(on.Url, "OPTIONS", "*"), "OPTIONS *", head: false);
+        AssertNotFoundPage(await RawAsync(off.Url, "OPTIONS", "*"), "OPTIONS * without the web sign-in", head: false);
     }
 
     /// <summary>
@@ -1392,11 +1416,11 @@ public sealed class ElmServiceWebTests
             all.Write(buffer, 0, read);
             if (
                 contentLength is not null
-                && System.Text.Encoding.ASCII.GetString(all.GetBuffer(), 0, (int)all.Length).EndsWith("Not found.\n", StringComparison.Ordinal)
+                && System.Text.Encoding.ASCII.GetString(all.GetBuffer(), 0, (int)all.Length).EndsWith("\r\n0\r\n\r\n", StringComparison.Ordinal)
             )
             {
-                // The rest of the promised body never comes, so the service may wait for it before it closes; the page is
-                // the whole answer.
+                // The rest of the promised body never comes, so the service waits for it before it closes; the last chunk
+                // ends the answer (the page is sent chunked).
                 break;
             }
         }

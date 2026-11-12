@@ -45,6 +45,14 @@ internal sealed partial class ElmService
     private static readonly TimeSpan LastSeenInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SessionSweepInterval = TimeSpan.FromHours(1);
 
+    // The forms of the paths that RefuseWebPath takes as the sign-in's (design §15.3, V1d3).
+    private static readonly PathString LoginRoute = new(LoginPath);
+    private static readonly PathString LoginRouteWithSlash = new(LoginPath + "/");
+    private static readonly PathString CallbackRoute = new(CallbackPath);
+    private static readonly PathString LogoutRoute = new(LogoutPath);
+    private static readonly PathString LogoutRouteWithSlash = new(LogoutPath + "/");
+    private static readonly PathString RootRoute = new("/");
+
     // design §15.3: the UI is served at the first public URL, or the listen URL when there is none.
     private Uri PublicUrl =>
         _publicUrls.Count > 0 ? _publicUrls[0]
@@ -184,17 +192,16 @@ internal sealed partial class ElmService
     // design §15.3 (V1d3): the paths are compared as what answers behind this check matches them. Routing and the
     // OpenIdConnect handler ignore the case of the letters, and routing takes one trailing slash as the same path
     // (measured on ASP.NET Core 10.0.15); the handler's callback path does not. PathString compares without regard to case.
+    // Routing also takes an empty path, which Kestrel gives for the request target "*", as the route "/".
     private bool RefuseWebPath(HttpContext context)
     {
         PathString path = context.Request.Path;
         string? method =
-            Routed(path, LoginPath) || path == CallbackPath || path == "/" ? HttpMethods.Get
-            : Routed(path, LogoutPath) ? HttpMethods.Post
+            path == LoginRoute || path == LoginRouteWithSlash || path == CallbackRoute || path == RootRoute || !path.HasValue ? HttpMethods.Get
+            : path == LogoutRoute || path == LogoutRouteWithSlash ? HttpMethods.Post
             : path.StartsWithSegments(AssetsPath) ? HttpMethods.Get
             : null;
         return method is not null && (_settings.Web is null || !string.Equals(context.Request.Method, method, StringComparison.Ordinal));
-
-        static bool Routed(PathString path, string route) => path == route || path == route + "/";
     }
 
     private async Task LoginAsync(HttpContext context)
