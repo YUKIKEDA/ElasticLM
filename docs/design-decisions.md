@@ -2001,6 +2001,12 @@
 
 ### `elm-server` が動く Windows の下限（V1d2 の設計のレビューの R14、Issue #320）
 
-- **決定:** `elm-server` と `elm server` のコマンドには、AF_UNIX のある Windows（Windows 10 か Windows Server 2019 以降）が要る（持ち主が受け入れた。2026-11-11）。クライアントのライブラリ、`libelasticlm`、`elm-service`、`elm` のほかのコマンドは変わらない。
-- **理由:** 管理 API を Unix ドメインソケットのファイルで待ち受ける（Q1）。ASP.NET Core の文書は、その前提を「Linux, macOS, or Windows 10/Windows Server 2019 or later」と書く（https://learn.microsoft.com/en-us/aspnet/core/grpc/interprocess-uds ）。.NET 10 は、それより前の Windows Server 2016 などにも対応するが、そこは、この前提の外である。
-- **却下した案:** (B) 古い Windows でも動かすために、Q1 から考え直す（Issue の案。この文書を書いた側の読みでは、その Windows のためにループバックの TCP の待ち受けを残すことになり、Q3 で退けた案と同じく、そこでは F02 が残る）。
+- **決定:** `elm-server` と `elm server` のコマンドには、AF_UNIX のある Windows（Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降）が要る（持ち主が受け入れた。2026-11-11）。利用者の文書とプログラムの行では、Windows 10 の下限をバージョンまで書く（PR #355 の問 E、持ち主の決定、推奨案 A。2026-11-12）。クライアントのライブラリ、`libelasticlm`、`elm-service`、`elm` のほかのコマンドは変わらない。
+- **理由:** 管理 API を Unix ドメインソケットのファイルで待ち受ける（Q1）。ASP.NET Core の文書は、その前提を「Linux, macOS, or Windows 10/Windows Server 2019 or later」と書く（https://learn.microsoft.com/en-us/aspnet/core/grpc/interprocess-uds ）。.NET 10 は、それより前の Windows Server 2016 などにも対応するが、そこは、この前提の外である。バージョンまで書くのは、運用者が、入れる前に自分の Windows で動くかを判断できるようにするためである。AF_UNIX は Windows の Insider Build 17063 からである（https://devblogs.microsoft.com/commandline/af_unix-comes-to-windows/ ）。ビルド 17063 は、バージョン 1709（ビルド 16299）より後で、その次のバージョン 1803（ビルド 17134）より前である（https://learn.microsoft.com/en-us/windows/release-health/release-information ）。そのため、AF_UNIX のある最初の Windows 10 のバージョンは 1803 である。
+- **却下した案:** (B) 古い Windows でも動かすために、Q1 から考え直す（Issue の案。この文書を書いた側の読みでは、その Windows のためにループバックの TCP の待ち受けを残すことになり、Q3 で退けた案と同じく、そこでは F02 が残る）。(問 E の B) ASP.NET Core の文書と同じく「Windows 10 か Windows Server 2019 以降」と書く（Windows 10 のバージョン 1607 や 1709 は、この書き方に当てはまるのに、そこではサーバーが起動しない）。
+
+### Windows での `elm-server` の管理 API の呼び方（V1d2 のレビューのあとの問 F、PR #355）
+
+- **決定:** 利用者の文書の `curl --unix-socket` の例は、Linux と macOS 向けとする。Windows のスクリプトは、`elm server … --json` を使う（持ち主の決定、推奨案 A。2026-11-12）。
+- **理由:** 管理者トークンのファイル `admin.token` は、Linux と macOS では 32 バイトをそのまま書いたもので、Windows では DPAPI で守ってある（設計 §13.7）。Windows で `elm` を通さずに管理 API を呼ぶには、利用者がトークンを自分で復号することになり、DPAPI の範囲（利用者ごとか端末ごとか）と付加エントロピーを知る必要がある。それを文書に書くと、守り方を変えないと利用者に約束したことになり、あとで変えると利用者のスクリプトが動かなくなる。`elm server status`、`elm server leases`、`elm server reload` は、`--json` で API の答えをそのまま出すので、Windows のスクリプトはこれで足りる。
+- **却下した案:** (B) DPAPI の範囲と付加エントロピーを利用者の文書に書く（Windows でも自分のプログラムから呼べるが、トークンのファイルの守り方を変えられなくなる）。
