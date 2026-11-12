@@ -1,5 +1,4 @@
 using System.Buffers;
-using System.Text.Json;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -112,13 +111,17 @@ internal sealed partial class ElmService
             {
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = "application/x-ndjson";
+
+                // The length is fixed, so the answer names it: a transfer that stops short of it is an error for every
+                // caller, also for one whose answer ends when the connection closes.
+                context.Response.ContentLength = size;
                 while (sent < size)
                 {
                     int wanted = (int)Math.Min(buffer.Length, size - sent);
                     int read = await stream.ReadAsync(buffer.AsMemory(0, wanted), context.RequestAborted).ConfigureAwait(false);
                     if (read == 0)
                     {
-                        // The answer has no Content-Length, so an end here would look like the whole file to the caller.
+                        // Ending the answer here would hand the caller a part of the file; the exception cuts the connection.
                         throw new EndOfStreamException($"The usage log file '{file}' became shorter while it was sent.");
                     }
 
@@ -141,8 +144,14 @@ internal sealed partial class ElmService
         }
     }
 
+    // design §18.2 (V1d9): the bytes handed to the response, which are at least what the caller read, and the file's length
+    // when the download began.
     private static string SentDetail(long sent, long size) =>
-        JsonSerializer.Serialize(new UsageLogSent(sent, size), ServiceJsonContext.Default.UsageLogSent);
+        AuditLog.Detail(w =>
+        {
+            w.WriteNumber("sent", sent);
+            w.WriteNumber("size", size);
+        });
 
     // design §18.1: the counted refusals and a signature over the pending lines now, as the minute's timer does.
     private async Task<AdminOutcome> SealUsageLogAsync(HttpContext context, Caller caller)

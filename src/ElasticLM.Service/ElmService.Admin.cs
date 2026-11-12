@@ -312,9 +312,10 @@ internal sealed partial class ElmService
                 {
                     await Database.AppendAuditAsync(failed, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
                 }
-                catch (DbException e)
+                catch (Exception e)
                 {
-                    // A row that cannot be written goes to the service log and does not replace the exception of the call.
+                    // A row that cannot be written, whatever stopped it, goes to the service log and does not replace the
+                    // exception of the call.
                     ServiceLog.RequestFailed(_log, e);
                 }
 

@@ -480,15 +480,20 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.InternalError, IssueFailedException.Answer, target).ConfigureAwait(false);
         }
 
-        context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "application/json";
-        context.Response.Headers.ContentDisposition = $"attachment; filename=\"{target}.elmlic\"";
-        await context.Response.Body.WriteAsync(issued.File, context.RequestAborted).ConfigureAwait(false);
         string detail = AuditLog.Detail(w =>
         {
             w.WriteString("jti", issued.TokenId);
             w.WriteString("exp", license.ExpiresAt is long e ? AdminApi.Time(e) : null);
         });
+
+        // design §18.2 (V1d9): the file is signed now, so the row of an answer that cannot be written names it too.
+        AdminProgress progress = Progress(context);
+        progress.Target = target;
+        progress.Detail = detail;
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.ContentDisposition = $"attachment; filename=\"{target}.elmlic\"";
+        await context.Response.Body.WriteAsync(issued.File, context.RequestAborted).ConfigureAwait(false);
         return new AdminOutcome("ELM_OK", target, detail);
     }
 

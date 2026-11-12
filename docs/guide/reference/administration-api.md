@@ -367,7 +367,7 @@ One row of the audit log. The meaning of each field is in [Logs](logs.md#row-fie
 | `actorId` | string or `null` | Who acted. |
 | `action` | string | The action. |
 | `target` | string or `null` | What it acted on. |
-| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the caller cut the connection, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
+| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
 | `ip` | string or `null` | The source address. |
 | `detail` | string or `null` | The details: a JSON object as text, exactly as stored, so that the row's hash can be computed again. |
 | `prev` | string | The previous row's hash, in base64url. |
@@ -1600,7 +1600,7 @@ Returns one of this node's usage log files as it is.
 
 Permission: `usagelog.read`.
 
-Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began. A transfer that fails partway is cut, not ended. For example, the first lines of a file:
+Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began; `Content-Length` is that length. If the transfer fails partway, the service closes the connection without ending the answer, so the client receives fewer bytes than `Content-Length` and reports an error instead of taking the part for the whole file. For example, the first lines of a file:
 
 ```text
 {"type":"chain.start","ts":1793532478,"stream":"usage","node":"node-1","certificates":["eyJhbGciOiJFUzI1NiJ9.eyJleGFtcGxlIjp0cnVlfQ.ZmFrZS1zaWduYXR1cmU"]}

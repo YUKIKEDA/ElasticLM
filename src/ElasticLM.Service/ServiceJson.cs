@@ -491,10 +491,6 @@ internal sealed record UsageLogFileItem(
     [property: JsonPropertyName("modifiedAt")] string ModifiedAt
 );
 
-/// <summary>The audit detail of a download of a usage log file (design §18.2): the bytes handed to the response, which are
-/// at least what the caller read, and the file's length when the download began.</summary>
-internal sealed record UsageLogSent([property: JsonPropertyName("sent")] long Sent, [property: JsonPropertyName("size")] long Size);
-
 /// <summary>A page of this node's usage log files, oldest first, and the name to ask after for the next page.</summary>
 internal sealed record UsageLogFiles(
     [property: JsonPropertyName("node")] string Node,
@@ -564,7 +560,6 @@ internal sealed record Problem(
 [JsonSerializable(typeof(ActivationPage))]
 [JsonSerializable(typeof(LeasePage))]
 [JsonSerializable(typeof(UsageLogFiles))]
-[JsonSerializable(typeof(UsageLogSent))]
 [JsonSerializable(typeof(TrialItem))]
 [JsonSerializable(typeof(TrialPage))]
 [JsonSerializable(typeof(Dictionary<string, string>))]

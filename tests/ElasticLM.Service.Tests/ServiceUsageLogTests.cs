@@ -783,8 +783,8 @@ public sealed class ServiceUsageLogTests
     ///   service; read the rows.
     ///
     /// Expected:
-    /// - The answer is the file's bytes. Exactly one usagelog.get row: result ELM_OK, target the file's name, detail
-    ///   {"sent":200000,"size":200000}. The chain is intact.
+    /// - The answer has Content-Length 200000 and is the file's bytes. Exactly one usagelog.get row: result ELM_OK, target
+    ///   the file's name, detail {"sent":200000,"size":200000}. The chain is intact.
     /// </remarks>
     [Fact]
     public async Task UsageGet_WholeFile_IsAuditedWithSentEqualToSize()
@@ -793,8 +793,16 @@ public sealed class ServiceUsageLogTests
         (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
         string name = WriteOlderFile(test, "n1", 200_000);
 
-        byte[] content = await admin.GetByteArrayAsync(FilePath(name), TestContext.Current.CancellationToken);
+        // Read before the body, so that the length is the answer's header and not the count of a body that HttpClient kept.
+        using HttpResponseMessage response = await admin.GetAsync(
+            FilePath(name),
+            HttpCompletionOption.ResponseHeadersRead,
+            TestContext.Current.CancellationToken
+        );
+        long? declared = response.Content.Headers.ContentLength;
+        byte[] content = await response.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken);
 
+        Assert.Equal(200_000, declared);
         Assert.Equal(File.ReadAllBytes(Path.Combine(test.FilePath("usage"), name)), content);
         await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
         await TestService.AssertAuditIntactAsync(admin);
@@ -883,9 +891,10 @@ public sealed class ServiceUsageLogTests
     ///   the service; read the rows.
     ///
     /// Expected:
-    /// - 200, then the read of the answer throws an IOException instead of ending. Exactly one usagelog.get row: result
-    ///   ELM_INTERNAL_ERROR, target the file's name, size 33,554,432, and sent at least what the test read and less than
-    ///   size. The chain is intact.
+    /// - 200 with Content-Length 33554432, then the read of the answer throws an IOException instead of ending: the
+    ///   service closes the connection short of that length. Exactly one usagelog.get row: result ELM_INTERNAL_ERROR,
+    ///   target the file's name, size 33,554,432, and sent at least what the test read and less than size. The chain is
+    ///   intact.
     /// </remarks>
     [Fact]
     public async Task UsageGet_FileCutWhileItIsSent_FailsTheTransferAndIsAuditedAsInternalError()
@@ -899,6 +908,7 @@ public sealed class ServiceUsageLogTests
         using (HttpResponseMessage response = await admin.GetAsync(FilePath(name), HttpCompletionOption.ResponseHeadersRead, cancel))
         {
             Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            Assert.Equal(LargeFileLength, response.Content.Headers.ContentLength);
             await using Stream body = await response.Content.ReadAsStreamAsync(cancel);
             byte[] buffer = new byte[81_920];
             while (read < 1_048_576)
@@ -983,6 +993,108 @@ public sealed class ServiceUsageLogTests
         await TestService.AssertAuditIntactAsync(admin);
         AuditEntry row = Assert.Single(await RowsAsync(service, "usagelog.seal"));
         Assert.Equal(("ELM_INTERNAL_ERROR", null, null), (row.Result, row.Target, row.Detail));
+    }
+
+    /// <summary>
+    /// When the row of an operation that ended with an exception cannot be written, the failure goes to the service log and
+    /// the operation's own exception goes on (design §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, whose access to the signing key the test can make throw a
+    ///   CryptographicException; a log the test reads; the table of the audit rows renamed, so that no row can be written.
+    ///
+    /// Steps:
+    /// - Make the key throw; POST /v1/admin/usage-log/seal; let the key work again and give the table its name back; check
+    ///   the chain with POST /v1/admin/audit/verify; read the rows and the log.
+    ///
+    /// Expected:
+    /// - 500 without a body, which is the answer to the operation's exception; the database's would be 500 "The database
+    ///   failed.". No usagelog.seal row. The service's log has "A request failed on the database." once. The chain is
+    ///   intact.
+    /// </remarks>
+    [Fact]
+    public async Task Operation_ThrowsAndItsRowCannotBeWritten_KeepsItsOwnException()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        bool fail = false;
+        SigningKeyAccess Wrap(SigningKeyAccess key) =>
+            use => fail ? throw new System.Security.Cryptography.CryptographicException("The key cannot sign.") : key(use);
+        using var log = new ElasticLM.Server.Tests.RecordingLoggerProvider();
+        await using ElmService service = await ElmService.StartAsync(
+            Logged(test, "n1"),
+            new ServiceHostOptions
+            {
+                Time = test.Time,
+                Environment = test.HostOptions().Environment,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Error,
+                WrapUsageLogKey = Wrap,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
+        HttpClient admin = test.Http(service, owner);
+
+        await test.ExecuteAsync("ALTER TABLE audit_log RENAME TO audit_log_gone");
+        fail = true;
+        using (HttpResponseMessage failed = await admin.PostAsync("v1/admin/usage-log/seal", null, TestContext.Current.CancellationToken))
+        {
+            fail = false;
+            Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+            Assert.Empty(await failed.Content.ReadAsByteArrayAsync(TestContext.Current.CancellationToken));
+        }
+
+        await test.ExecuteAsync("ALTER TABLE audit_log_gone RENAME TO audit_log");
+        await TestService.AssertAuditIntactAsync(admin);
+        Assert.Empty(await RowsAsync(service, "usagelog.seal"));
+        Assert.Single(log.Entries, e => e.Category == "elm-service" && e.Message == "A request failed on the database.");
+    }
+
+    /// <summary>
+    /// The rows of a download that was refused have no detail: sent and size belong to a download that began (design
+    /// §18.2, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, and a second service that writes none.
+    ///
+    /// Steps:
+    /// - Get a file that the node does not have; get a file from the second service; read each service's rows.
+    ///
+    /// Expected:
+    /// - 404 ELM_NOT_FOUND, with a usagelog.get row of that result, the name as its target, and no detail; 409
+    ///   ELM_CONFLICT, with a usagelog.get row of that result, no target, and no detail.
+    /// </remarks>
+    [Fact]
+    public async Task UsageGet_Refused_RowsHaveNoDetail()
+    {
+        const string Unknown = "usage-n1-20260901T000000000Z.jsonl";
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await TestService.AssertProblemAsync(
+            await admin.GetAsync(FilePath(Unknown), cancel),
+            HttpStatusCode.NotFound,
+            "ELM_NOT_FOUND",
+            "No usage log file of this node has this name."
+        );
+        await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
+        AuditEntry missing = Assert.Single(await RowsAsync(service, "usagelog.get"));
+        Assert.Equal(("ELM_NOT_FOUND", Unknown, null), (missing.Result, missing.Target, missing.Detail));
+
+        await using TestService plain = TestService.Open("sqlite");
+        string owner = await plain.SetupAsync();
+        ElmService without = await plain.StartAsync();
+        await TestService.AssertProblemAsync(
+            await plain.Http(without, owner).GetAsync(FilePath(Unknown), cancel),
+            HttpStatusCode.Conflict,
+            "ELM_CONFLICT",
+            "This node writes no usage log; set usageLog.directory."
+        );
+        await TestService.WaitForAsync(async () => (await RowsAsync(without, "usagelog.get")).Length > 0);
+        AuditEntry none = Assert.Single(await RowsAsync(without, "usagelog.get"));
+        Assert.Equal(("ELM_CONFLICT", null, null), (none.Result, none.Target, none.Detail));
     }
 
     /// <summary>
