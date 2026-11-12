@@ -1702,7 +1702,11 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 保存（鍵のフォルダー、§10.2 の ACL と権限の内）:
 
 - `activation.json` は `{"activationId": <UUID か null>, "seq": <0 以上の整数>, "kind": <"standard"・"trial"・"server" か null>, "license": <§8.5 のファイルか null>, "retry": [<jti>, ...], "pending": [<jti>, ...], "unkept": <文字列か null>, "offline": <{"op", "nonce", "iat", "exp", "seq", "act", "key", "retry", "fp"} か null>, "deactivation": <elm-deact+jws か null>}` である。`offline` は待っているオフラインの要求、`deactivation` は渡していない解除の証明である（M4c2、§12.8.5）。`retry` は保存した有効化の更新と解除の、`pending` は有効化と試用の、答えのない要求の `jti` で、それぞれの要求の本文の `retry` になる。一覧を分けるのは、片方の成功がもう片方の `jti` を消さないためである（試用を持つ端末で、応答をなくした購入の有効化の `jti` を、試用の自動の更新の成功が消すと、購入の送り直しが複製と判定される。PR #67 のレビューの後の試験で見つけた）。`unkept` は、成功の応答で受けたのに保存できなかった最後のファイルの SHA-256（base64url、43 文字）である。読むときは `pending` がなければ空、`unkept`・`offline`・`deactivation` がなければ `null` とみなす。`seq` と `kind` は保存のときに確かめたトークンの値で、送るときは `seq` を使う。ライセンスキーは保存しない。待っているオフラインの有効化の要求も、キーの SHA-256（`offline.key`）だけを持つ（M4c2 の設計のレビュー）。
-- 書くときは一時ファイルに書いてから置き換える（読み手は書きかけを見ない）。読み手は削除と置き換えを許す共有で開くので、Windows でも別のプロセスの `Check` が置き換えを止めない。書けなければ（ディスク、権限）、送る前なら送らずに、受け取った後なら `retry` を残したまま、`ELM_INTERNAL_ERROR` を返す。
+- 書くときは一時ファイルに書いてから置き換える（読み手は書きかけを見ない）。読み手は、ロックを取らずに、削除と置き換えを許す共有で開く。Linux と macOS では、開いている読み手は置き換えを止めない（`rename(2)`）。Windows では止める。別のハンドルが `activation.json` を開いているあいだ、`File.Move(…, overwrite: true)` は、読み手が許した共有によらず、`UnauthorizedAccessException`（「Access to the path is denied.」）で失敗し、読み手が閉じれば通る（V1d2a。Windows 11 のビルド 26300、.NET 10.0.15 で、`FileShare.ReadWrite | FileShare.Delete` の読み手で測った。`FileShare.Read` の読み手は V1d2 が測った。§13.7）。M4b2 からここにあった「Windows でも別のプロセスの `Check` が置き換えを止めない」という文は、誤りだった。
+- 置き換えのやり直し（V1d2a、Issue #359）: Windows で置き換えが `UnauthorizedAccessException` で断られたら、100 ミリ秒おきにやり直す。最後の試みは、最初の試みの 2 秒後である（クライアントの `TimeProvider` で数える。間隔と上限は、§13.7 の `admin.token` と同じ）。待つあいだ、呼び出したスレッドは止まり、端末のロックは持ったままである。最後の試みも断られたら、次の項の「書けなければ」と同じ結果になり、一時ファイル `activation.json.tmp` は残る（次に書くときに上書きする）。Linux と macOS では、やり直さない。
+  - 同じやり直しを使うファイル（一時ファイルから置き換えて書き、ロックを取らない読み手がいるもの）: `activation.json`、サーバーライセンスのファイル（`elm-server` の更新と、`elm server activate` と `elm server refresh` が書く。§13.7）、借り出しのファイル（§12.7.4 の「保存」）、ピン（§13.5）、`admin.token`（§13.7。起動を取り消せるように、待つあいだスレッドを止めない形で使う）。
+  - 使わないファイル: `elm` のログインのファイル（読む側も、書く側と同じロックを取る。§16）。`elm` が `--force` で上書きする出力のファイル（ElasticLM のプログラムは、`elm` が書いているあいだにそのファイルを読まない。断られたら、運用者に誤りの行が出る）。借り出しの記録をよけるとき（§13.1）と、バックアップ（§14.2）の移動は、移す先にファイルがないので、この失敗は起きない。
+- 書けなければ（ディスク、権限、Windows で 2 秒を超えて開いたままの読み手）、送る前なら送らずに、受け取った後なら `retry` を残したまま、`ELM_INTERNAL_ERROR` を返す。
 - 読むのは 256 KiB まで。超えるか、この形（`activationId` は UUID、`retry` と `pending` は各 16 件まで各 1〜64 文字、`unkept` は 43 文字か `null`、`deactivation` は 16 KiB までの文字列、`offline.nonce` は 22 文字、`offline.op` は `activate` か `refresh`、`offline.act` は更新のときだけ UUID、`offline.key` は有効化のときだけ 43 文字、`offline.retry` は 16 件まで、`offline.fp` は 8 個まで各 32 文字の小文字の 16 進、`activationId`・`kind`・`license` はそろって値かそろって `null`）でなければ壊れているとし、`Check` は `ELM_MALFORMED` を返す。壊れたときの `ActivateAsync` と `StartTrialAsync` は有効化がないものとして送る。サービスにまだ有効化があれば、`seq` のない再有効化は複製になる（§10.4 の手順 4）ので、管理者の解除で戻る。
 - `Check` は呼ばれるたびにファイルを読み直す。別のプロセスの更新と解除は次の `Check` から見える。
 - `activation.lock` は OS のファイルのロック（Windows は共有モード、Linux と macOS は .NET の `flock`）で、同じ端末のプロセスの有効化・試用・更新・解除を 1 つずつにする。同じプロセスの同じクライアントの呼び出しは、その前にクライアントの中の排他で 1 つずつにする（自動の更新と手動の更新が自分のロックを待たない）。
@@ -1910,7 +1914,7 @@ public sealed class Lease { public bool IsBorrow { get; } }
 ```
 
 - 借り出したリースは更新しない。`DisposeAsync` は借り出しを返却しない（期限まで使うため）。
-- 保存: インストール鍵の場所の `borrows/<リース ID>.json` に `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "license": <サーバーライセンスのファイル>, "key": <サーバーの公開鍵の JWK>}` を、一時ファイルから置き換えて書く。読むときは `ver` が 1 でなければ使わず、知らないメンバーは無視する。フォルダーは 1,000 ファイルまでで、超える借り出しは保存しない。保存できなければ借り出しは失敗とする（`ELM_INTERNAL_ERROR`）。サーバーの席はその期限まで使われたままになる。
+- 保存: インストール鍵の場所の `borrows/<リース ID>.json` に `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "license": <サーバーライセンスのファイル>, "key": <サーバーの公開鍵の JWK>}` を、一時ファイルから置き換えて書く（Windows で読み手に断られたときは、§12.6.2 の「置き換えのやり直し」）。読むときは `ver` が 1 でなければ使わず、知らないメンバーは無視する。フォルダーは 1,000 ファイルまでで、超える借り出しは保存しない。保存できなければ借り出しは失敗とする（`ELM_INTERNAL_ERROR`）。サーバーの席はその期限まで使われたままになる。
 - `GetBorrowedLeases` は、このクライアントのサーバーの URL のファイルだけを読み、保存したサーバーライセンスと公開鍵から `ServerIdentity.TryVerify`（§13.5）と §12.7.5 で確かめる（時計の守りも含む）。サーバーのピン（`ExpectedServerLicenseId` を設定していればその `lic`、なければ保存したピンの `lic` と `cnf.jkt`）とも合わなければ使わない（0.60）。読むのは 1,000 ファイルまでである。期限の切れたファイルは消し、確かめられないファイル（書き換え・壊れ）は残して返さない。
 - `ReleaseLeaseAsync` で早期に返却する。成功（サーバーが知らないときを含む）ならファイルを消して `Released` にする。断られたか届かなければ、ファイルと `Held` のままにしてエラーを返す。
 - SaaS 型のモード（0.94）では、ファイルは `{"ver": 1, "server": <正規化した URL>, "lease": <トークン>, "certificates": [<証明書>]}` で、`license` と `key` を持たない。`GetBorrowedLeases` は同じ URL の、`certificates`（1〜4 個の文字列）を持つファイルだけを `VerifyHosted` で確かめる。ピンはない。ほかの規則（1,000 ファイル、期限切れは消す、確かめられないものは残して返さない）は同じである。`ver` を上げないのは、読み手が URL とモードで分かれ、知らないメンバーを無視するためである。期限の切れたファイルを消すのも同じ URL とモードのクライアントだけなので、ほかのモードや URL のファイルは、それを読むクライアントが動くまで 1,000 ファイルの上限に数えられたまま残る。
@@ -2384,7 +2388,7 @@ M3b で決めたこと（0.45）:
 - クライアントは、接続ごとに、OS の通常の検証に通るか、相手の公開鍵の拇印がピンした `cnf.jkt` と一致すれば受け入れる。クライアントに方式の設定は持たせない。サーバーの方式はサーバーの管理者が決め、アプリの開発者は知らないためである。正しい証明書を持つ別のサーバーにつながっても、リースは `cnf.jkt` の鍵でしか検証に通らない（§12.7.5）。
 - 接続のたびの確かめで一致しなければ、`ELM_SERVER_PIN_MISMATCH` を返し、次の要求で手順 1〜3 をやり直す。`ExpectedServerLicenseId` を設定していれば、同じ `lic` の別の鍵を受け入れ直す。設定していなければピンが断る。
 - クライアントは、受け取ったサーバーライセンスを、ルート鍵から §11.2 で検証し、`cnf.jkt` が受け取った公開鍵の拇印と一致することを確かめる。マシン指紋は確かめない。指紋はサーバーの端末のもので、サーバーが起動時に確かめる（§13.1）。`ElasticLM.Licensing` の `ServerIdentity.TryVerify` がこれを行う。
-- ピンは、インストール鍵の場所の `servers/` に、正規化した URL（§12.1）の SHA-256 の名前で、`{"url", "lic", "jkt"}` の JSON として置く。書くときは一時ファイルから置き換える。読めない・壊れた・別の URL のピンは、サーバーを確かめる役に立たないので、`ELM_SERVER_PIN_MISMATCH` で断る。`ResetServerPin` で消せる。
+- ピンは、インストール鍵の場所の `servers/` に、正規化した URL（§12.1）の SHA-256 の名前で、`{"url", "lic", "jkt"}` の JSON として置く。書くときは一時ファイルから置き換える（Windows で読み手に断られたときは、§12.6.2 の「置き換えのやり直し」）。読めない・壊れた・別の URL のピンは、サーバーを確かめる役に立たないので、`ELM_SERVER_PIN_MISMATCH` で断る。`ResetServerPin` で消せる。
 - サーバーが `ELM-Server-License` で手元と違う `jti` を返したら、クライアントは手順 1〜3 をやり直し、新しい写しで応答のリースを確かめる。古い写しは、それを指すリースのために 8 件まで残す。
 
 ```csharp
@@ -5441,6 +5445,21 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
   - 実装が直す、設計の外の書き写し: `tests/ElasticLM.E2E/ServerProcess.cs` の 71 行のあたりと `tests/native/run.ps1` の 352 行の `ELM_ADMIN_LISTEN`（残すと、サーバーが §13.8 の行で起動しない）。`src/ElasticLM.Client/AdminToken.cs` の XML の説明（`LoadOrCreate` の「あれば読む」）。`src/ElasticLM.Server/ElmServer.cs` の「design §13.1 step 3」のコメント（サーバーライセンスの手順は、手順 4 になった）と、`AdminUrl`。
   - 計測: NativeAOT の公開の警告が 0 件であること。`elm` と `elm-server` の大きさを、直す前と直したあとで、同じ SDK で比べて PR に書く。
   - 同じ種類を探した範囲: 管理者トークンを読むのは、`ServerCommands.Call`、`ServerLicenseCommands.Send`、`ElmServer.StartAsync` の 3 か所だけである（`AdminToken` を使う所）。`elm-service` には、ループバックだけの管理の待ち受けも、フォルダーに置くトークンのファイルもない（`src/ElasticLM.Service` の待ち受けは `listen` の 1 つで、管理 API は API キーか OIDC で認証する）。`elm admin` と `elm offline process` は、`--url` のサービスへ https（OS の信頼で確かめる）で資格情報を送る。相手を選び間違える場合は、§5.4 に受け入れる脅威としてあり、この行の範囲の外である。
+- V1d2a の Grill（Issue #359 に記録した。問 1 と問 2。持ち主の決定はどちらも推奨案 A。2026-11-12）: `ActivationClientTests.Refresh_AlreadyDue_WaitsTheRetryInterval` が、Windows のローカルのゲートでときどき落ちた原因を調べて直す。退けた案は design-decisions.md にある。
+  - 測った事実（`main` の 4f01acd、Windows 11 のビルド 26300、SDK 10.0.404、.NET 10.0.15、Debug）:
+    - このテストだけを 10 回流すと 4 回落ち、`tests/ElasticLM.Client.Tests` の全部を 5 回流すと 1 回落ちた。要求、答え、状態の変化を時刻つきで記録する写しを 12 回流すと、落ちた 4 回はどれも、更新の答え（`200`）のあとに、状態が `RefreshFailing`（`ELM_INTERNAL_ERROR`、「The activation file cannot be written: Access to the path is denied.」）になっていた。
+    - テストは、保存された seq が 2 になるのを、10 ミリ秒おきに `activation.json` を読んで待つ。その読みが、クライアントの置き換えと重なると、置き換えが断られる。`activation.json` を、`ActivationStore.Read` と同じ開き方で開いたまま `RefreshAsync` を呼ぶと、要求を送る前の書き込みで、必ず同じ誤りになった。ハンドルを閉じたあとの `RefreshAsync` は通り、状態は `Active` に戻った。
+    - 製品の中にも、ロックを取らずに `activation.json` を読む所がある（`ActivationClient` の起動と `Check`、`elm` のサーバーライセンスのコマンド、`elm-server`）。原因は、テストの側だけでなく、製品の側にもある。
+    - 分かっていないこと: 2026-11-12 になって落ちる割合が増えた理由（前の日までの PR #355 のゲートでは落ちていない）。ウイルス対策や索引のソフトがファイルを開くことで、同じ失敗が起きるか。
+  - ほかの仕組みの扱い（出典を読んだ。2026-11-12）: SQLite は、Windows で読み書きが `ERROR_ACCESS_DENIED`、`ERROR_SHARING_VIOLATION`、`ERROR_LOCK_VIOLATION` などで失敗したら、10 回までやり直す。待つ長さは 25 ミリ秒から始めて、回ごとに 25 ミリ秒ずつ伸ばす（`src/os_win.c` の `SQLITE_WIN32_IOERR_RETRY`、`SQLITE_WIN32_IOERR_RETRY_DELAY`、`winIoerrCanRetry1`、`winRetryIoerr`。コメントは、原因を「probably caused by antivirus software」と書く。https://github.com/sqlite/sqlite/blob/master/src/os_win.c ）。npm の `graceful-fs` は、Windows で `rename` が `EACCES`、`EPERM`、`EBUSY` で失敗したら、最長 60 秒、0 ミリ秒から 10 ミリ秒ずつ伸ばして 100 ミリ秒までの間隔でやり直す（`polyfills.js`。https://github.com/isaacs/node-graceful-fs/blob/main/polyfills.js ）。どちらも、短い間隔でやり直す形である。
+  - 持ち主が決めたこと:
+    - 問 1: 製品を直す。Windows で置き換えが断られたら、`admin.token` と同じ間隔と上限でやり直す（§12.6.2 の「置き換えのやり直し」）。Issue #359 は `bug` に改めた。
+    - 問 2: 一時ファイルを書いて上に移す所をすべて読み、ロックを取らない読み手がいるものは同じやり直しにそろえ、そろえないものは理由を書く（§12.6.2 の「同じやり直しを使うファイル」と「使わないファイル」）。
+  - こちらが決めたこと:
+    - やり直しは 1 つの型（`FileReplacement`）に置き、`admin.token` もそれを使う。`admin.token` のほかは、待つあいだ呼び出したスレッドを止める形にした。書く所はどれも同期の処理の中にあり、待つのは最長 2 秒で、読み手は 1 回の読みのあいだしかファイルを持たない。
+    - 上限を 2 秒より長くしない。`activation.json` の置き換えは、端末のロックを持ったまま待つ。ロックを待つ側の上限は 10 秒（§12.6.2）なので、2 秒待っても、ほかのプロセスの操作は断られない。
+    - テスト `Refresh_AlreadyDue_WaitsTheRetryInterval` は、待つあいだ、偽の時計を 50 ミリ秒ずつ進める。読みが置き換えと重なると、クライアントは偽の時計の 100 ミリ秒後にやり直すので、時計を止めたままでは終わらない。
+  - 同じ種類を探した範囲: `src/` の `File.Move` のすべて（10 か所）。結果は §12.6.2 の 2 つの一覧にある。時計の守りのファイル（§11.4。`FileClockGuard`）は、この行では変えていない。ロックを取らない読み手がいるが、書けなかったときの扱い（例外にせず、次の確かめで書く）を前から持ち、検証の道の上にあるためである。そろえるかどうかは、持ち主に聞く。
 
 ## 21. 依存
 

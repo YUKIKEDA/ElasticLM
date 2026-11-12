@@ -9,13 +9,16 @@ namespace ElasticLM.Client;
 internal static class LicenseFiles
 {
     /// <summary>Writes the file.</summary>
+    /// <param name="path">The path of the server license file.</param>
+    /// <param name="file">The license file.</param>
+    /// <param name="time">The clock that counts the wait for a reader of the old file on Windows.</param>
     /// <exception cref="IOException">The file cannot be written.</exception>
     /// <exception cref="UnauthorizedAccessException">Access is denied.</exception>
-    public static void Write(string path, byte[] file)
+    public static void Write(string path, byte[] file, TimeProvider time)
     {
         string full = Path.GetFullPath(path);
         string temporary = full + ".tmp";
         File.WriteAllBytes(temporary, file);
-        File.Move(temporary, full, overwrite: true);
+        FileReplacement.Move(temporary, full, time);
     }
 }

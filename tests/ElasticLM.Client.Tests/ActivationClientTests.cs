@@ -377,7 +377,9 @@ public sealed partial class ActivationClientTests
     /// - Product app with a trial policy, whose token ends with the trial and is within the refresh window at once.
     ///
     /// Steps:
-    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more.
+    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more. Then read the kept file every 10 milliseconds,
+    ///   moving the clock 50 milliseconds each time: on Windows a read can hold the file at the moment the client replaces
+    ///   it, and the client tries again 100 milliseconds of its clock later.
     ///
     /// Expected:
     /// - The kept seq stays 1 for the 59 minutes; it is 2 after the hour.
@@ -395,10 +397,77 @@ public sealed partial class ActivationClientTests
         await vendor.AdvanceForAsync(TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1));
         for (int i = 0; i < 500 && vendor.Kept("a").Seq != 2; i++)
         {
+            vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
             await Task.Delay(10, Cancel);
         }
 
         Assert.Equal(2L, vendor.Kept("a").Seq);
+    }
+
+    /// <summary>
+    /// On Windows, a refresh whose answer arrives while another handle reads the activation file is kept once the reader
+    /// has closed; a reader that stays past 2 seconds of the client's clock makes the refresh fail, and the next one works.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; product app with one license; client A activated (seq 1); activation.json opened by the test as a reader
+    ///   opens it (read access, shared for reading, writing, and deleting).
+    ///
+    /// Steps:
+    /// - Refresh; move the clock in steps of 50 milliseconds until 1 second has passed; close the reader; go on moving the
+    ///   clock until the refresh ends.
+    /// - Open the reader again; refresh; move the clock until the refresh ends, with the reader open.
+    /// - Close the reader; refresh.
+    ///
+    /// Expected:
+    /// - The first refresh has not ended while the reader is open; it succeeds, and the kept seq is 2.
+    /// - The second fails with ELM_INTERNAL_ERROR "The activation file cannot be written: …", at least 2 seconds of the
+    ///   clock after it started; the state is RefreshFailing, and the kept seq is 2.
+    /// - The third succeeds, and the state is Active.
+    /// </remarks>
+    [Fact]
+    public async Task Refresh_ReaderHoldsTheActivationFile_WaitsForItUpToTwoSeconds()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows refuses to replace a file that a reader holds open.");
+        await using Vendor vendor = await Vendor.StartAsync();
+        (_, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        await using ActivationClient client = vendor.Client("a");
+        Activated(await client.ActivateAsync(key, Cancel));
+        string file = Path.Combine(vendor.Folder("a"), "activation.json");
+        FileStream Reader() => new(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+
+        Task<ActivationResult> first;
+        using (FileStream reader = Reader())
+        {
+            first = Task.Run(() => client.RefreshAsync(Cancel), Cancel);
+            for (int i = 0; i < 20; i++)
+            {
+                vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
+                await Task.Delay(10, Cancel);
+            }
+
+            Assert.False(first.IsCompleted);
+        }
+
+        await vendor.AdvanceUntilAsync(first);
+        Activated(await first);
+        Assert.Equal(2L, vendor.Kept("a").Seq);
+
+        DateTimeOffset started = vendor.Test.Time.GetUtcNow();
+        using (FileStream reader = Reader())
+        {
+            Task<ActivationResult> second = Task.Run(() => client.RefreshAsync(Cancel), Cancel);
+            await vendor.AdvanceUntilAsync(second);
+            LicenseError error = Failed(await second);
+            Assert.Equal(ErrorCode.InternalError, error.Code);
+            Assert.StartsWith("The activation file cannot be written: ", error.Message, StringComparison.Ordinal);
+            Assert.True(vendor.Test.Time.GetUtcNow() - started >= TimeSpan.FromSeconds(2));
+            Assert.Equal(ActivationState.RefreshFailing, client.State);
+        }
+
+        Assert.Equal(2L, vendor.Kept("a").Seq);
+        Activated(await client.RefreshAsync(Cancel));
+        Assert.Equal(ActivationState.Active, client.State);
     }
 
     /// <summary>

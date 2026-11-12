@@ -17,12 +17,6 @@ internal static class AdminToken
     private const int Length = 32;
     private static readonly byte[] Purpose = "ElasticLM admin token v1"u8.ToArray();
 
-    // On Windows the replacement is refused while another process has the old file open for reading, as elm server does
-    // for a moment (File.Move with overwrite: UnauthorizedAccessException, HResult 0x80070005, on Windows 11 with .NET
-    // 10.0.14); it passes once the reader has closed the file.
-    private static readonly TimeSpan ReplaceInterval = TimeSpan.FromMilliseconds(100);
-    private static readonly TimeSpan ReplaceLimit = TimeSpan.FromSeconds(2);
-
     /// <summary>
     /// Makes a new token for a server data folder and puts it in place of the one that is there, if any. The token is
     /// written to a new file beside the old one, which then replaces it, so a reader never sees a half-written file.
@@ -52,19 +46,8 @@ internal static class AdminToken
 
             try
             {
-                long started = time.GetTimestamp();
-                while (true)
-                {
-                    try
-                    {
-                        File.Move(fresh, path, overwrite: true);
-                        break;
-                    }
-                    catch (UnauthorizedAccessException) when (OperatingSystem.IsWindows() && time.GetElapsedTime(started) < ReplaceLimit)
-                    {
-                        await Task.Delay(ReplaceInterval, time, cancellationToken).ConfigureAwait(false);
-                    }
-                }
+                // Refused on Windows while elm server reads the old file, as it does for a moment.
+                await FileReplacement.MoveAsync(fresh, path, time, cancellationToken).ConfigureAwait(false);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
             {
