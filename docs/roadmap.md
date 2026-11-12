@@ -9,7 +9,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 ## 運用
 
 1. 新しい作業は、先にこの表へ行を足してから Issue を切る。行の追加・削除は Grill を経る（`.cursor/rules/workflow.mdc`）。
-2. 次の Issue は、前の行が `done` または `blocked` になってから切る。
+2. 触るプロジェクトの組が違う行は、同時に 4 行まで進めてよい（組の分け方は `.cursor/rules/workflow.mdc` の「Rows in parallel」。持ち主の決定、2026-11-13、Issue #372）。同じ組の行は、前の行が `done` または `blocked` になってから始める。
 3. 設計の前提が折れたら、その行を `blocked` にし、設計を直してから次へ進む。
 4. 結果は GitHub Issue の本文に残す。この表は状態と Issue リンクだけ。
 
