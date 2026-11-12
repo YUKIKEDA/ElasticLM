@@ -182,7 +182,7 @@ int32_t elm_activation_state(const elm_activation* activation);
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
 | `elm_client_create` | エラー番号 | オンプレミスのライセンスサーバーのリースのクライアントを作る。`license_key` を設定したときは、SaaS 型のサービスのリースのクライアントになる。インストール鍵を開くか、なければ作り（鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE`）、マシンフィンガープリントを読む。サーバーには接続しない。 |
-| `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。レスポンスのリースがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` を返し、そのリースを保持も返却もしない。 |
+| `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。レスポンスのリースがこのリクエストに対するものでなければ `ELM_REQUEST_MISMATCH` を返し、そのリースを保持も返却もしない。 |
 | `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。`elm_client_acquire_lease` と同じ場合に `ELM_REQUEST_MISMATCH` を返す。 |
 | `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが引き取らなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |
 | `elm_client_get_borrowed_leases` | エラー番号 | 保存してある借用のうち、まだ有効なものを、新しいハンドルの配列で返す。配列は `elm_lease_list_free` で解放する。 |

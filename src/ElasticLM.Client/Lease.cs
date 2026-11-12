@@ -93,8 +93,9 @@ public sealed class Lease
     // design §10.4.
 
     /// <summary>
-    /// Gets the jti of renewal attempts that got no answer since the last token, newest last, at most 16. A retry names them,
-    /// so the server can give the token one of them produced again without taking the retry for a clone.
+    /// Gets the jti of the renewal attempts since the last token that got no answer or whose answer the client did not take,
+    /// newest last, at most 16. A retry names them, so the server can give the token one of them produced again without
+    /// taking the retry for a clone.
     /// </summary>
     internal List<string> UnansweredProofIds { get; } = [];
 

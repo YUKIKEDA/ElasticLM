@@ -157,7 +157,9 @@ public sealed class ElmServiceLeasesTests
     /// Expected:
     /// - 201 with a token whose areq is the acquisition's proof jti (design §8.4.3, V1d5); 200 with seq 2 expiring 700
     ///   seconds on and the renewal's jti in areq; 200 with the same token, whose areq is therefore the first renewal's jti
-    ///   and not the retry's. Under Flag the clone's token has the clone request's jti in areq. Under Deny the clone gives 409
+    ///   and not the retry's. Under Flag the clone's token has the clone request's jti in areq; a renewal with seq 9, ahead of the row,
+    ///   then gives seq 10, one with seq 9223372036854775807 gives 400 ELM_MALFORMED "The sequence number is too large for a
+    ///   next token." and no third lease.clone row, and a renewal with seq 10 then gives seq 11. Under Deny the clone gives 409
     ///   ELM_CLONE_DETECTED, the lease is stopped, the audit row is ELM_CLONE_DETECTED with seq 0, lastSeq 2, and the
     ///   strategy; the renewal and the release give 409 ELM_CLONE_DETECTED; the 2 seats give 409 ELM_NO_SEATS. Under Flag
     ///   the clone gives 200 with seq 3, the lease is not stopped, and the audit row is ELM_OK.
@@ -211,6 +213,23 @@ public sealed class ElmServiceLeasesTests
         {
             Assert.Equal((HttpStatusCode.OK, 3L), (clone.Status, device.VerifyLease(clone).Sequence));
             Assert.Equal(clone.Jti, device.VerifyLease(clone).AnsweredProofId);
+
+            // design §10.4 (V1d5): a flagged request ahead of the row gets a token later than its own; a sequence number
+            // that no token can follow is refused before the clone is recorded.
+            DeviceAnswer ahead = await device.RenewAsync(id, 9);
+            Assert.Equal((HttpStatusCode.OK, 10L), (ahead.Status, device.VerifyLease(ahead).Sequence));
+            AssertProblem(
+                await device.RenewAsync(id, long.MaxValue),
+                HttpStatusCode.BadRequest,
+                "ELM_MALFORMED",
+                "The sequence number is too large for a next token."
+            );
+            Assert.Equal(
+                2,
+                (await TestService.AuditRowsAsync(test, service, owner)).Count(r => r.GetProperty("action").GetString() == "lease.clone")
+            );
+            DeviceAnswer onward = await device.RenewAsync(id, 10);
+            Assert.Equal((HttpStatusCode.OK, 11L), (onward.Status, device.VerifyLease(onward).Sequence));
             return;
         }
 

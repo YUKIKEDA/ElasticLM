@@ -367,6 +367,98 @@ public sealed class HostedLeaseAnswerTests
         await client.DisposeAsync();
     }
 
+    /// <summary>
+    /// When the client does not take a success answer to a renewal that the service handled, because the token fails
+    /// verification or the body is not a lease answer, its retry names that request too, and the service returns the token
+    /// of that request again (design §10.4 step 2, §12.7.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with cloneStrategy deny and a license with seats of core; a client holding a lease of core
+    ///   (sequence 1), behind a relay that passes the next renewal to the service, which renews to sequence 2, and changes
+    ///   the answer on its way back: bad-signature changes one character of the token's signature; not-json replaces the
+    ///   body by "{".
+    ///
+    /// Steps:
+    /// - Move the clock 200 s (the renewal); then 15 s (the retry).
+    ///
+    /// Expected:
+    /// - Retrying, still with the token of sequence 1: ELM_BAD_SIGNATURE "The lease signature does not verify." for
+    ///   bad-signature, ELM_MALFORMED "The server's lease answer is not valid." for not-json.
+    /// - The retry's body is {"seq":1,"retry":[the jti of the first renewal's proof]}; the lease is Held with sequence 2,
+    ///   and its token names the first renewal's proof.
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    /// <param name="code">The error expected.</param>
+    /// <param name="message">The message expected.</param>
+    [Theory]
+    [InlineData("bad-signature", ErrorCode.BadSignature, "The lease signature does not verify.")]
+    [InlineData("not-json", ErrorCode.Malformed, "The server's lease answer is not valid.")]
+    public async Task Hosted_AnswerNotTakenAfterTheServiceRenewed_RetryGetsThatTokenAgain(string kind, ErrorCode code, string message)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await PolicyAsync(admin, "deny"), Features);
+        var relay = new Recorder();
+        LicenseClient client = HostedLeaseClientTests.Client(test, service, key, test.FilePath("client"), wrap: relay.Over);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: TestContext.Current.CancellationToken));
+        relay.RewriteNextRenewal = kind == "not-json" ? _ => "{" : Recorder.WithBrokenSignature;
+
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.State == LeaseState.Retrying));
+        Assert.Equal(new LicenseError(code, message), lease.LastError);
+        Assert.Equal(1, lease.Token.Sequence);
+        string refused = Assert.Single(Renewals(relay)).ProofId!;
+
+        test.Time.Advance(TimeSpan.FromSeconds(15));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.State == LeaseState.Held));
+        Assert.Equal($$"""{"seq":1,"retry":["{{refused}}"]}""", Renewals(relay)[1].Body);
+        Assert.Equal((2L, refused), (lease.Token.Sequence, lease.Token.AnsweredProofId));
+        await client.DisposeAsync();
+    }
+
+    /// <summary>
+    /// A service with cloneStrategy flag whose sequence number is behind the client's answers the client's renewal with a
+    /// token later than the client's, which the client takes at once (design §10.4, §12.7.5 step 8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with cloneStrategy flag and a license with seats of core; a client holding a lease of core
+    ///   that it renewed twice (sequence 3).
+    /// - The lease's row is set back to sequence 1 in the database, as a database restored from an older backup would
+    ///   have it.
+    ///
+    /// Steps:
+    /// - Move the clock 200 s so the client renews with sequence 3.
+    ///
+    /// Expected:
+    /// - The renewal is flagged as a clone and answered with sequence 4, one more than the client's: the lease is Held with
+    ///   sequence 4 after that one renewal, three renewals in all.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_FlaggedByAServiceBehindTheClient_IsAcceptedAtOnce()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await PolicyAsync(admin, "flag"), Features);
+        var relay = new Recorder();
+        LicenseClient client = HostedLeaseClientTests.Client(test, service, key, test.FilePath("client"), wrap: relay.Over);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: TestContext.Current.CancellationToken));
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.Token.Sequence == 2));
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.Token.Sequence == 3));
+        await test.ExecuteAsync($"UPDATE leases SET seq = 1 WHERE id = '{lease.Id}'");
+        Assert.Equal(1, await test.ScalarAsync($"SELECT seq FROM leases WHERE id = '{lease.Id}'"));
+
+        test.Time.Advance(TimeSpan.FromSeconds(200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.Token.Sequence == 4));
+        Assert.Equal(LeaseState.Held, lease.State);
+        Assert.Equal(3, Renewals(relay).Length);
+        Assert.Equal(4, await test.ScalarAsync($"SELECT seq FROM leases WHERE id = '{lease.Id}'"));
+        await client.DisposeAsync();
+    }
+
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];
 

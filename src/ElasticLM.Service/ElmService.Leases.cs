@@ -279,18 +279,29 @@ internal sealed partial class ElmService
             return ClientResult.Fail(ErrorCode.NoSeats, "The seats held are more than the license allows now.");
         }
 
-        switch (LeaseRules.Judge(request.Seq, lease.Seq, lease.IssuedBy, request.Retry))
+        LeaseSequence judged = LeaseRules.Judge(request.Seq, lease.Seq, lease.IssuedBy, request.Retry);
+        if (judged == LeaseSequence.Retry)
         {
-            case LeaseSequence.Retry:
-                // The answer to the request that got the last token was lost: the same token again, nothing changes.
-                return LeaseAnswer(StatusCodes.Status200OK, lease.LastToken);
-            case LeaseSequence.Clone:
-                if (await LeaseCloneAsync(device, scope, policy, lease, request.Seq).ConfigureAwait(false) is ClientResult stopped)
-                {
-                    return stopped;
-                }
+            // The answer to the request that got the last token was lost: the same token again, nothing changes.
+            return LeaseAnswer(StatusCodes.Status200OK, lease.LastToken);
+        }
 
-                break;
+        bool clone = judged == LeaseSequence.Clone;
+        if (clone && policy.CloneStrategy == "deny")
+        {
+            return await StopCloneAsync(device, scope, policy, lease, request.Seq).ConfigureAwait(false);
+        }
+
+        // design §10.4 (V1d5): after a flagged clone the next token is later than the request's too, so the copy that asked
+        // takes it. A sequence number that no token can follow is refused before the clone is recorded.
+        if (LeaseRules.NextSequence(lease.Seq, clone ? request.Seq : null) is not long sequence)
+        {
+            return ClientResult.Fail(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
+        }
+
+        if (clone)
+        {
+            await RecordCloneAsync(device, scope, policy, lease, request.Seq).ConfigureAwait(false);
         }
 
         if (LeaseRules.Expiry(at, policy.LeaseDuration, LeaseLimit(license, feature)) is not long expires)
@@ -298,7 +309,7 @@ internal sealed partial class ElmService
             return ClientResult.Fail(ErrorCode.Expired, "The license has expired.");
         }
 
-        LeaseRow next = lease with { Seq = lease.Seq + 1, IssuedBy = device.RequestId, ExpiresAt = expires };
+        LeaseRow next = lease with { Seq = sequence, IssuedBy = device.RequestId, ExpiresAt = expires };
         next = next with { LastToken = IssueLease(next, product, now) };
 
         // design §18.1: the sweep takes no license lock, so the lease may have gone since it was read; then it is unknown.
@@ -435,7 +446,15 @@ internal sealed partial class ElmService
 
     // A detected clone of a lease (design §10.4, §12.7.3): Deny stops the lease until its expiry, Flag lets the renewal go on;
     // both write lease.clone, the only device request of a lease with an audit row (M4d1's design review).
-    private static async Task<ClientResult?> LeaseCloneAsync(Device device, LicenseScope scope, PolicyRow policy, LeaseRow lease, long seq)
+    private static async Task<ClientResult> StopCloneAsync(Device device, LicenseScope scope, PolicyRow policy, LeaseRow lease, long seq)
+    {
+        await RecordCloneAsync(device, scope, policy, lease, seq).ConfigureAwait(false);
+        await scope.UpdateLeaseAsync(lease with { Stopped = true }, device.Aborted).ConfigureAwait(false);
+        return ClientResult.Fail(ErrorCode.CloneDetected, "Another copy of the installation went ahead; the lease is stopped until it expires.");
+    }
+
+    // The lease.clone audit row of a detected clone, with the strategy's result.
+    private static async Task RecordCloneAsync(Device device, LicenseScope scope, PolicyRow policy, LeaseRow lease, long seq)
     {
         bool deny = policy.CloneStrategy == "deny";
         string detail = AuditLog.Detail(w =>
@@ -449,13 +468,6 @@ internal sealed partial class ElmService
         string result = deny ? ErrorCodes.ToWireName(ErrorCode.CloneDetected) : "ELM_OK";
         var entry = new AuditEntry(device.ActorType, device.ActorId, AuditActions.LeaseClone, lease.Id, result, device.Ip, detail);
         await scope.AppendAuditAsync(entry, device.Aborted).ConfigureAwait(false);
-        if (!deny)
-        {
-            return null;
-        }
-
-        await scope.UpdateLeaseAsync(lease with { Stopped = true }, device.Aborted).ConfigureAwait(false);
-        return ClientResult.Fail(ErrorCode.CloneDetected, "Another copy of the installation went ahead; the lease is stopped until it expires.");
     }
 
     private async Task<AdminOutcome> ListLeasesAsync(HttpContext context, Caller caller)

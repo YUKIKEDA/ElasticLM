@@ -148,11 +148,11 @@ The license token of an activation and every lease token carry a sequence number
 | `seq` sent | Result |
 | --- | --- |
 | The same | A new token with the next `seq`. |
-| One less, and `retry` holds the `jti` of the request that got the last token | The answer to that request was lost: the last token again, and nothing changes. A lease token sent again names the earlier request in `areq`, not the retry. |
-| Anything else, a negative `seq` on `elm-server` included | A clone: another copy of the installation went ahead. With `cloneStrategy` `deny` (the policy's, see [Policy settings](../explanation/activation.md#policy-settings), or the server license's on `elm-server`), the answer is `409` with `ELM_CLONE_DETECTED`, and the activation or lease is stopped. With `flag`, the clone is recorded and the request goes on. |
+| One less, and `retry` holds the `jti` of the request that got the last token | The answer to that request was lost, or the client refused it: the last token again, and nothing changes. A lease token sent again names the earlier request in `areq`, not the retry. |
+| Anything else, a negative `seq` on `elm-server` included | A clone: another copy of the installation went ahead. With `cloneStrategy` `deny` (the policy's, see [Policy settings](../explanation/activation.md#policy-settings), or the server license's on `elm-server`), the answer is `409` with `ELM_CLONE_DETECTED`, and the activation or lease is stopped. With `flag`, the clone is recorded and the request goes on. For a lease, the new token's `seq` is then one more than the greater of the server's `seq` and the `seq` sent; a renewal for which no greater `seq` exists (a `seq` of 9223372036854775807) gets `400` with `ELM_MALFORMED`. |
 
 - `elm-service` takes a `seq` of 0 or more; a negative one gets `ELM_MALFORMED`. `elm-server` takes any whole number that fits 64 bits.
-- `retry` lists the `jti` of the client's earlier requests that got no answer: at most 16 strings, each 1 to 64 characters. A longer list, another length, or a `null` entry gets `ELM_MALFORMED`. Both programs apply the same limits.
+- `retry` lists the `jti` of the client's earlier requests that got no answer and, for a lease renewal, of those whose answer the client refused: at most 16 strings, each 1 to 64 characters. A longer list, another length, or a `null` entry gets `ELM_MALFORMED`. Both programs apply the same limits.
 - A first activation whose answer was lost is sent again with `seq` `0` and the first request's `jti` in `retry`. A trial whose answer was lost is sent again with the first request's `jti` in `retry`. Both get the file they were issued.
 - A stopped activation refuses every refresh and activation with `ELM_CLONE_DETECTED`. It is deactivated only with the `seq` of its last token, or by an administrator. A stopped lease refuses renewal and release until it expires.
 
@@ -461,7 +461,7 @@ Gets a new lease token with a new expiry. `{id}` is the lease ID: 22 characters 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
 | `seq` | integer | yes | 0 or more: the `seq` of the last token the client received. |
-| `retry` | array of strings | no | The `jti` of earlier requests that got no answer (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
+| `retry` | array of strings | no | The `jti` of earlier renewals that got no answer or whose answer the client refused (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
 
 The new token lasts the policy's current `leaseDuration`, cut as on acquire.
 
@@ -662,7 +662,7 @@ Gets a new lease token with a new expiry. `{id}` is the lease ID, the `lse` clai
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
 | `seq` | integer | yes | The `seq` of the last token the client received. Any whole number that fits 64 bits: a negative value is accepted and judged a clone (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
-| `retry` | array of strings | no | The `jti` of earlier requests that got no answer (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
+| `retry` | array of strings | no | The `jti` of earlier renewals that got no answer or whose answer the client refused (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
 
 The new token lasts the server license's lease period, cut as on acquire.
 

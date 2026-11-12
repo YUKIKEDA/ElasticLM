@@ -330,7 +330,7 @@ Payload:
 | `srv` | string | yes | The key ID of the issuing server. It must equal `iss`. |
 | `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it holds; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
 | `seq` | integer | yes | The lease's sequence number. The verifier accepts 0 or more; `elm-server` and `elm-service` write 1 in the first token and one more at each renewal, so neither writes 0. |
-| `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters. For an acquisition, a borrow, or a renewal it is the `jti` of that request's proof. A renewal sent again after a lost answer gets the earlier token again, so that token names the earlier request. The verifier checks only the length. The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
+| `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters. A renewal sent again after an answer that was lost or refused gets the earlier token again, so that token names the earlier request. The verifier checks only the length. The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
 
 Member of `cnf`:
 

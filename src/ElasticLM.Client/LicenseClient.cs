@@ -1251,11 +1251,12 @@ public sealed class LicenseClient : IAsyncDisposable
             return;
         }
 
-        // design §12.7.3: retry from 15 s, doubling up to 60 s, until the lease expires.
-        SetState(lease, LeaseState.Retrying, error, events);
+        // design §12.7.3: retry from 15 s, doubling up to 60 s, until the lease expires. The retry is set before the state is
+        // visible, as the next renewal is before a new token: whoever sees Retrying and then moves the clock finds the timer.
         TimeSpan untilExpiry = lease.ExpiresAt - _time.GetUtcNow() + TimeSpan.FromSeconds(1);
         TimeSpan delay = lease.NextRetryDelay();
         Schedule(lease, delay < untilExpiry ? delay : untilExpiry);
+        SetState(lease, LeaseState.Retrying, error, events);
     }
 
     // Reclaims every lease this client holds on the server, 64 tokens per request (design §13.4). A lease whose reclaim is
@@ -1297,8 +1298,9 @@ public sealed class LicenseClient : IAsyncDisposable
             LicenseError error = reply.Error ?? new LicenseError(ErrorCode.Malformed, "The server's reclaim answer is not valid.");
             foreach (Lease lease in batch.Where(l => l.State == LeaseState.Reclaiming))
             {
-                SetState(lease, LeaseState.Retrying, error, events);
+                // The retry is set before the state is visible, as above.
                 Schedule(lease, lease.NextRetryDelay());
+                SetState(lease, LeaseState.Retrying, error, events);
             }
 
             return;

@@ -1,3 +1,7 @@
+using System.Buffers.Text;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 
@@ -735,6 +739,127 @@ public sealed class LeaseEngineTests : IDisposable
             Sequence = 1,
             AnsweredProofId = "proof-1",
         };
+
+    /// <summary>
+    /// Under clone strategy flag, the token after a flagged renewal is later than both the lease's sequence number and the
+    /// request's, and a sequence number that no token can follow is refused without changing the lease (design §10.4, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Clone strategy flag; a lease renewed once (sequence 2).
+    ///
+    /// Steps:
+    /// - Renew with 7 (ahead of the server); with 3 (behind it); with -5; with 9223372036854775807; with 10; with
+    ///   9223372036854775806; with 9223372036854775807.
+    ///
+    /// Expected:
+    /// - Flagged with sequence 8; flagged with 9; flagged with 10; ELM_MALFORMED "The sequence number is too large for a
+    ///   next token."; granted with 11 and not flagged, so the refusal changed nothing; flagged with
+    ///   9223372036854775807; ELM_MALFORMED with the same message, since the lease's own number cannot be followed.
+    /// </remarks>
+    [Fact]
+    public void Flag_TokenIsLaterThanTheLeaseAndTheRequest()
+    {
+        const string TooLarge = "The sequence number is too large for a next token.";
+        using var server = new TestServer(clone: CloneStrategy.Flag);
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        string id = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request())).LeaseId;
+        Assert.IsType<LeaseOutcome.Granted>(engine.Renew(id, 1, client.KeyId));
+        (bool Flagged, long Sequence) Renewed(long sequence)
+        {
+            var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(id, sequence, client.KeyId));
+            return (granted.CloneFlagged, Valid(granted.Token, client, server).Sequence);
+        }
+
+        Assert.Equal((true, 8L), Renewed(7));
+        Assert.Equal((true, 9L), Renewed(3));
+        Assert.Equal((true, 10L), Renewed(-5));
+        Assert.Equal(TooLarge, AssertRefused(ErrorCode.Malformed, engine.Renew(id, long.MaxValue, client.KeyId)).Error.Message);
+        Assert.Equal((false, 11L), Renewed(10));
+        Assert.Equal((true, long.MaxValue), Renewed(long.MaxValue - 1));
+        Assert.Equal(TooLarge, AssertRefused(ErrorCode.Malformed, engine.Renew(id, long.MaxValue, client.KeyId)).Error.Message);
+    }
+
+    /// <summary>
+    /// A lease token without the ID of the proof it answers (areq) is refused by a reclaim and skipped by the restore of the
+    /// borrow record, as by the client's check (design §8.4.3, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Lease tokens written by hand and signed with the server's key, for a client's key and the current server license:
+    ///   a lease and a borrow with areq, and a lease and a borrow without it.
+    ///
+    /// Steps:
+    /// - Reclaim the two leases in one request on a fresh engine. Restore each borrow, as a borrow record, into an engine of
+    ///   its own.
+    ///
+    /// Expected:
+    /// - The lease with areq is reclaimed; the one without is ELM_MALFORMED "The lease payload is not valid." with no lease
+    ///   ID, and the engine holds 1 seat. The borrow with areq is restored (1); the one without is not (0).
+    /// </remarks>
+    [Fact]
+    public void ReclaimAndRestore_TokenWithoutAnsweredProofId_IsRefused()
+    {
+        TestClient client = _server.Client();
+        LeaseEngine engine = _server.Engine();
+
+        IReadOnlyList<ReclaimResult> results = engine.Reclaim(
+            [HandSigned(client, "lease-A-AAAAAAAAAAAAAA", borrow: false, withAreq: true), HandSigned(client, "lease-B-AAAAAAAAAAAAAA", false, false)],
+            client.KeyId,
+            client.PublicKey
+        );
+
+        Assert.Equal("lease-A-AAAAAAAAAAAAAA", results[0].LeaseId);
+        Assert.Null(results[0].Error);
+        Assert.Null(results[1].LeaseId);
+        Assert.Equal(new LicenseError(ErrorCode.Malformed, "The lease payload is not valid."), results[1].Error);
+        Assert.Equal(1, engine.SeatsInUse("pro"));
+
+        BorrowRecord Record(bool withAreq) =>
+            new(HandSigned(client, "lease-C-AAAAAAAAAAAAAA", borrow: true, withAreq), "lic-srv", 5, TimeSpan.FromDays(7), [client.Fingerprint]);
+        Assert.Equal(1, _server.Engine().Restore([Record(withAreq: true)], []));
+        Assert.Equal(0, _server.Engine().Restore([Record(withAreq: false)], []));
+    }
+
+    // A lease token of the current server license for a client, signed with the server's key, with or without areq.
+    private string HandSigned(TestClient client, string leaseId, bool borrow, bool withAreq)
+    {
+        string kid = KeyFiles.KeyId(_server.Key);
+        long now = _server.Time.GetUtcNow().ToUnixTimeSeconds();
+        var payload = new JsonObject
+        {
+            ["ver"] = 1,
+            ["iss"] = kid,
+            ["iat"] = now,
+            ["exp"] = now + 600,
+            ["jti"] = "j",
+            ["lse"] = leaseId,
+            ["prd"] = "acme-cad",
+            ["lic"] = "lic-srv",
+            ["feat"] = "pro",
+            ["n"] = 1,
+            ["cnf"] = new JsonObject { ["jkt"] = client.KeyId },
+            ["brw"] = borrow,
+            ["srv"] = kid,
+            ["slic"] = _server.Identity.License.TokenId,
+            ["seq"] = 1,
+        };
+        if (withAreq)
+        {
+            payload["areq"] = "proof-1";
+        }
+
+        string header = $$"""{"alg":"ES256","kid":"{{kid}}","typ":"{{TokenTypes.Lease}}"}""";
+        string input =
+            Base64Url.EncodeToString(Encoding.UTF8.GetBytes(header)) + "." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+        byte[] signature = _server.Key.SignData(
+            Encoding.ASCII.GetBytes(input),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation
+        );
+        return input + "." + Base64Url.EncodeToString(signature);
+    }
 
     private VerifiedLease Valid(string token, TestClient client, TestServer? server = null) =>
         Assert.IsType<LeaseVerificationResult.Valid>((server ?? _server).VerifyAsClient(token, client)).Lease;

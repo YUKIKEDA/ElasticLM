@@ -58,6 +58,10 @@ internal sealed class Recorder
     /// <summary>Gets or sets the rewrite of a successful acquisition's answer, or <see langword="null"/>.</summary>
     public Func<string, string>? Rewrite { get; set; }
 
+    /// <summary>Gets or sets the rewrite of the next successful renewal's answer, applied once after the server handled the
+    /// renewal, or <see langword="null"/>.</summary>
+    public Func<string, string>? RewriteNextRenewal { get; set; }
+
     /// <summary>Gets or sets a value indicating whether a request that gets a replayed answer is first passed to the server,
     /// whose own answer is then thrown away. Otherwise the server never sees the request.</summary>
     public bool PassReplacedOn { get; set; }
@@ -100,6 +104,15 @@ internal sealed class Recorder
         {
             return [.. _answers];
         }
+    }
+
+    /// <summary>Returns a lease answer whose token has one character of its signature changed.</summary>
+    public static string WithBrokenSignature(string answer)
+    {
+        using JsonDocument document = JsonDocument.Parse(answer);
+        string token = document.RootElement.GetProperty("lease").GetString()!;
+        string changed = token[..^4] + (token[^4] == 'A' ? 'B' : 'A') + token[^3..];
+        return answer.Replace(token, changed, StringComparison.Ordinal);
     }
 
     private static string? ProofIdOf(HttpRequestMessage request)
@@ -165,6 +178,12 @@ internal sealed class Recorder
                 if (acquisition && recorder.Rewrite is Func<string, string> rewrite)
                 {
                     response.Content = new StringContent(rewrite(text), Encoding.UTF8, "application/json");
+                }
+
+                if (renewal && recorder.RewriteNextRenewal is Func<string, string> once)
+                {
+                    recorder.RewriteNextRenewal = null;
+                    response.Content = new StringContent(once(text), Encoding.UTF8, "application/json");
                 }
             }
 

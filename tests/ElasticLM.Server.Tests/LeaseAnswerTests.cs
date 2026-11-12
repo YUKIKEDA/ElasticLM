@@ -340,6 +340,124 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.Equal(Assert.Single(Renewals(relay)).ProofId, lease.Token.AnsweredProofId);
     }
 
+    /// <summary>
+    /// When the client does not take a success answer to a renewal that the server handled, because the token fails
+    /// verification or the body is not a lease answer, its retry names that request too, and the server returns the token
+    /// of that request again (design §10.4 step 2, §12.7.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny) past its reclaim window; a client holding a lease of pro (sequence 1), behind a
+    ///   relay that passes the next renewal to the server, which renews to sequence 2, and changes the answer on its way
+    ///   back: bad-signature changes one character of the token's signature; not-json replaces the body by "{".
+    ///
+    /// Steps:
+    /// - Move the clock 200 s (the renewal); then 15 s (the retry).
+    ///
+    /// Expected:
+    /// - Retrying, still with the token of sequence 1: ELM_BAD_SIGNATURE "The lease is not signed by the server's key."
+    ///   for bad-signature, ELM_MALFORMED "The server's lease answer is not valid." for not-json.
+    /// - The retry's body is {"seq":1,"retry":[the jti of the first renewal's proof]}; the lease is Held with sequence 2,
+    ///   its token names the first renewal's proof, and the server counts 1 seat.
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    /// <param name="code">The error expected.</param>
+    /// <param name="message">The message expected.</param>
+    [Theory]
+    [InlineData("bad-signature", ErrorCode.BadSignature, "The lease is not signed by the server's key.")]
+    [InlineData("not-json", ErrorCode.Malformed, "The server's lease answer is not valid.")]
+    public async Task Renewal_AnswerNotTakenAfterTheServerRenewed_RetryGetsThatTokenAgain(string kind, ErrorCode code, string message)
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        relay.RewriteNextRenewal = kind == "not-json" ? _ => "{" : Recorder.WithBrokenSignature;
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        Assert.Equal(new LicenseError(code, message), lease.LastError);
+        Assert.Equal(1, lease.Token.Sequence);
+        string refused = Assert.Single(Renewals(relay)).ProofId!;
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(15));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Held);
+        Assert.Equal($$"""{"seq":1,"retry":["{{refused}}"]}""", Renewals(relay)[1].Body);
+        Assert.Equal((2L, refused), (lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// A server with clone strategy flag whose sequence number is behind the client's answers the client's renewal with a
+    /// token later than the client's, which the client takes at once (design §10.4, §12.7.5 step 8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy flag) on port P; a client holding a lease of pro that it renewed twice (sequence 3),
+    ///   behind a relay that kept the acquisition's answer (sequence 1).
+    /// - The server restarted on P. Another copy of the installation reclaims the lease with the token of sequence 1, so
+    ///   the server holds the lease at sequence 1, two behind the client.
+    ///
+    /// Steps:
+    /// - Move the clock 200 s so the client renews with sequence 3.
+    ///
+    /// Expected:
+    /// - The reclaim is accepted. The client's renewal is flagged as a clone and answered with sequence 4, one more than
+    ///   the client's: the lease is Held with sequence 4 without having been Retrying, and the client sent no reclaim.
+    /// </remarks>
+    [Fact]
+    public async Task Renewal_FlaggedByAServerBehindTheClient_IsAcceptedAtOnce()
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data, s => s with { CloneStrategy = CloneStrategy.Flag });
+        ElmServer before = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(Window);
+        int port = before.PublicUrls[0].Port;
+        var relay = new Recorder();
+        string folder = _deployment.NewFolder();
+        LicenseClient client = Client(before, relay, folder);
+        int retrying = 0;
+        client.LeaseStateChanged += (_, e) => retrying += e.Current == LeaseState.Retrying ? 1 : 0;
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        string first;
+        using (var answer = System.Text.Json.JsonDocument.Parse(Assert.Single(relay.Answers()).Body))
+        {
+            first = answer.RootElement.GetProperty("lease").GetString()!;
+        }
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 2);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 3);
+
+        await before.DisposeAsync();
+        ElmServer after = await _deployment.StartServerAsync(
+            data,
+            s => new ServerSettings
+            {
+                Product = s.Product,
+                Listen = new Uri($"https://127.0.0.1:{port}"),
+                LicensePath = s.LicensePath,
+                TrustRootKeyFiles = s.TrustRootKeyFiles,
+                DataDirectory = s.DataDirectory,
+                RateLimitPerIp = s.RateLimitPerIp,
+            }
+        );
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.User, folder).TryLoadOrCreate(out InstallationKey? key, out _));
+        using (key)
+        {
+            Assert.Equal(client.InstallationKeyThumbprint, key!.Thumbprint);
+            Assert.Null(Assert.Single(after.Engine.Reclaim([first], key.Thumbprint, key.PublicParameters())).Error);
+        }
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 4);
+        Assert.Equal(LeaseState.Held, lease.State);
+        Assert.Equal(0, retrying);
+        Assert.DoesNotContain(relay.Requests(), r => r.Path.EndsWith("/reclaim", StringComparison.Ordinal));
+        Assert.Equal(1, after.Engine.SeatsInUse("pro"));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     private static SentRequest[] Renewals(Recorder relay) =>

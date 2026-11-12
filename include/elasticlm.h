@@ -325,8 +325,9 @@ ELM_FUNCTION(int32_t, elm_client_create, (const elm_client_options* options, elm
  * service); listing sends nothing. retry_after_seconds may be NULL; otherwise it gets 0, or when to try again after a
  * refusal (seconds, rounded up), such as ELM_SERVER_RECOVERING after a server starts. On success *out is a new lease;
  * free it with elm_lease_free. count is at least 1; the server refuses more seats than it has. An answer whose lease is
- * not the answer to this request (another feature, count, kind, a longer borrow, or another request) is
- * ELM_REQUEST_MISMATCH: that lease is neither kept nor returned, and ends at its expiry.
+ * not the answer to this request (another feature or count, a borrow where a lease was asked for or the reverse, a
+ * longer borrow, or another request) is ELM_REQUEST_MISMATCH: that lease is neither kept nor returned, and ends at its
+ * expiry.
  */
 ELM_FUNCTION(int32_t, elm_client_acquire_lease, (elm_client* client, const char* feature_id, const char* feature_version, int32_t count, elm_lease** out, int64_t* retry_after_seconds))
 
