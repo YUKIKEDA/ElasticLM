@@ -33,4 +33,6 @@ A size that grew is split by what added it before the PR says so: publish with `
 
 `HttpClient` in an executable that had none adds about 0.76 MB on win-x64: `System.Net.Http` 420,419 bytes, the name resolution, socket, and primitives parts 61,766 bytes, and their type descriptors 275,180 bytes (M4c3, `elm-server`, PR #79). A design that gives an executable an HTTP client shows this size in its Grill.
 
+A `JsonElement` member in a type of a source-generated context adds size too. In V1d2 reading the value of the removed `admin.listen` setting as a `JsonElement` made `elm-server.exe` (win-x64) 13,795,328 bytes, 57,344 more than reading it as a string (13,737,984). The settings reader now skips the value, at 13,741,568 bytes (PR #355). A member that only needs to know whether a value is there skips it.
+
 Under `dotnet run`, a project with `PublishAot` reports `RuntimeFeature.IsDynamicCodeSupported` as false too. To tell the builds apart at run time, use `System.Runtime.JitInfo.GetCompiledMethodCount() > 0` (JIT).
