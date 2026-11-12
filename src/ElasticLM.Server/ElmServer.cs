@@ -1004,9 +1004,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
+        // design §12.7.1 (V1d4): a feature is named as a license names it, 1 to 64 UTF-8 bytes. A request outside that is
+        // refused here, before the engine and the usage log see the name.
         AcquireBody? request = Parse(body, ServerJsonContext.Default.AcquireBody);
         if (
             request is null
+            || !Limits.IsFeatureId(request.Feature)
             || request.Version is { Length: > MaxVersionLength }
             || (request.Fingerprints is { } fingerprints && (fingerprints.Count > MaxFingerprints || !fingerprints.TrueForAll(IsFingerprint)))
             || !FitsUtf8(request.Client?.Host, MaxClientNameBytes)
@@ -1071,7 +1074,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
         }
         else if (outcome is LeaseOutcome.Refused refused)
         {
-            _usage.Denied(request.Feature, refused.Error.Code);
+            // design §18.1 (V1d4): the engine names the feature only when the server license grants it, so a name a client
+            // made up is counted without it and cannot use up the kinds of a minute.
+            _usage.Denied(refused.FeatureId, refused.Error.Code);
         }
 
         await AnswerAsync(context, outcome, StatusCodes.Status201Created).ConfigureAwait(false);

@@ -115,6 +115,7 @@ The payload is a UTF-8 JSON object. These rules hold for every payload on this p
 | A license file | 65,536 bytes (64 KiB) |
 | `certificates` in a license file | 1 to 4 |
 | `feat` in a license token | 256 features |
+| A feature ID (`id` in `feat`) | 64 bytes in UTF-8 |
 | `fp` in a license token | 8 fingerprints |
 | `meta` in a license token | 32 entries; each key at most 64 bytes and each value at most 1,024 bytes in UTF-8 |
 | JSON nesting | 8 levels |
@@ -223,7 +224,7 @@ Members of each item of `feat`:
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
-| `id` | string | yes | The feature ID, not empty. |
+| `id` | string | yes | The feature ID: 1 to 64 bytes in UTF-8, of any characters. |
 | `ver` | string | no | The feature versions the license covers: 1 to 4 comparators separated by spaces, all of which must hold. A comparator is `>=`, `<=`, `>`, `<`, or `=`, followed by a version `major.minor` or `major.minor.patch` of digits only, at most 9 digits each; a missing patch is 0. Without `ver`, every version. |
 | `seats` | integer | in a `server` token; not allowed otherwise | The concurrent seats of the feature, 1 or more. Required in every feature of a `server` token, and not allowed in other kinds. |
 | `exp` | integer | no | The feature's own expiry: a time. No grace period is added. |

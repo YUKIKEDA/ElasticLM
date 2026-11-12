@@ -419,7 +419,8 @@ public sealed class ElmCliTests : IDisposable
     /// Steps:
     /// - license inspect on: not JSON, license not a string, certificates not an array, a null certificate, a token with two
     ///   segments, a segment that is not base64url. license issue with: a feature without ID, an unknown feature part, seats
-    ///   not a number, an expiry that is not a date (in a feature and in --expires), metadata without '=', a public key as the
+    ///   not a number, an expiry that is not a date (in a feature and in --expires), a feature ID of 65 bytes (the file is
+    ///   not written; an ID of 64 bytes is issued, exit 0), metadata without '=', a public key as the
     ///   certificate, --trust with another root. key certify with --days 0 and 732 and a bad --not-before.
     ///
     /// Expected:
@@ -454,6 +455,9 @@ public sealed class ElmCliTests : IDisposable
         AssertInputError(Run(WithFeature("pro;foo=1")), "unknown or invalid part");
         AssertInputError(Run(WithFeature("pro;seats=abc")), "unknown or invalid part");
         AssertInputError(Run(WithFeature("pro;exp=tomorrow")), "not an ISO 8601");
+        AssertInputError(Run(WithFeature(new string('a', 65))), "The license breaks a rule of the token format");
+        Assert.False(File.Exists(P("f.elmlic")));
+        Assert.Equal(0, Run(WithFeature(new string('a', 64))).Code);
         string[] badExpiry = Issue("e.elmlic");
         badExpiry[Array.IndexOf(badExpiry, "--expires") + 1] = "tomorrow";
         AssertInputError(Run(badExpiry), "not an ISO 8601");
