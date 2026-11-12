@@ -594,6 +594,10 @@ internal sealed partial class ElmService
             Duration = TimeSpan.FromSeconds(lease.ExpiresAt - now.ToUnixTimeSeconds()),
             IsBorrow = lease.Borrow,
             Sequence = lease.Seq,
+
+            // design §8.4.3 (V1d5): the row's issued_by is the jti of the proof this token answers. A retry gets the kept
+            // token again, which names the earlier request.
+            AnsweredProofId = lease.IssuedBy,
         };
         string token;
         try

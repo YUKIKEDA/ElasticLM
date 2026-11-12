@@ -148,7 +148,7 @@ The license token of an activation and every lease token carry a sequence number
 | `seq` sent | Result |
 | --- | --- |
 | The same | A new token with the next `seq`. |
-| One less, and `retry` holds the `jti` of the request that got the last token | The answer to that request was lost: the last token again, and nothing changes. |
+| One less, and `retry` holds the `jti` of the request that got the last token | The answer to that request was lost: the last token again, and nothing changes. A lease token sent again names the earlier request in `areq`, not the retry. |
 | Anything else, a negative `seq` on `elm-server` included | A clone: another copy of the installation went ahead. With `cloneStrategy` `deny` (the policy's, see [Policy settings](../explanation/activation.md#policy-settings), or the server license's on `elm-server`), the answer is `409` with `ELM_CLONE_DETECTED`, and the activation or lease is stopped. With `flag`, the clone is recorded and the request goes on. |
 
 - `elm-service` takes a `seq` of 0 or more; a negative one gets `ELM_MALFORMED`. `elm-server` takes any whole number that fits 64 bits.

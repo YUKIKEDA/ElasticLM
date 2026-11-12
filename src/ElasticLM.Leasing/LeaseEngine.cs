@@ -764,6 +764,10 @@ public sealed class LeaseEngine : IDisposable
             IsBorrow = borrow is not null,
             ServerLicenseTokenId = state.Server.License.TokenId,
             Sequence = sequence,
+
+            // design §8.4.3 (V1d5): the token names the request it answers. A retry gets this token again (RenewCore), so it
+            // then names the earlier request, which the client keeps in its list of unanswered requests.
+            AnsweredProofId = proofId,
         };
         string token = _sign(spec, DateTimeOffset.FromUnixTimeSeconds(nowSeconds));
         record.Sequence = sequence;

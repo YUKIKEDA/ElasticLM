@@ -262,6 +262,7 @@ public sealed class LeaseVerifier
             && parsed.Cnf.Jkt.Length > 0
             && parsed.N >= 1
             && parsed.Seq >= 0
+            && Limits.IsProofId(parsed.Areq)
             && Limits.IsTime(parsed.Iat)
             && Limits.IsTime(parsed.Exp)
             && parsed.Exp > parsed.Iat;

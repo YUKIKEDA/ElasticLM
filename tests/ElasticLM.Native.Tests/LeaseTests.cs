@@ -264,6 +264,76 @@ public sealed class LeaseTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// elm_client_acquire_lease and elm_client_borrow_lease return ELM_REQUEST_MISMATCH (38) and no lease when the answer
+    /// carries a genuine lease that is not the answer to their request (design §12.7.5, §17.6, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An elm-service with product acme-cad, a cloud-floating policy that lends borrows, and a license with 3 seats of
+    ///   pro. A relay on a loopback port passes requests on to the service, which lists the relay's URL as its public URL,
+    ///   and keeps the answer of the last acquisition. A client with the license key and the relay's URL.
+    ///
+    /// Steps:
+    /// - Acquire 1 seat of pro through the relay. Then, each time with the relay answering with the kept answer and
+    ///   passing nothing on: acquire 1 seat of pro; acquire 2 seats of pro; borrow 1 seat of pro for an hour.
+    /// - Release the first lease, destroy the client, and list the license's leases.
+    ///
+    /// Expected:
+    /// - 0 and a lease; then 38 three times with out NULL and exactly "The server's lease answers another request.", "The
+    ///   server's lease is for another number of seats than the one asked for.", and "The server's lease is not of the
+    ///   kind asked for."; the relay replayed three answers.
+    /// - The release returns 0, and the service lists no lease.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_ReplayedAnswerOfAnotherRequest_Returns38AndNoLease()
+    {
+        await using ReplayingRelay relay = await ReplayingRelay.StartAsync();
+        await using var test = new TestService();
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync(s => s with { PublicUrls = [relay.Url] });
+        relay.Target = service.Url;
+        HttpClient admin = test.Http(service, owner);
+        string product = (await TestService.CreatedAsync(admin, "v1/admin/products", """{"code":"acme-cad","name":"CAD"}"""))
+            .GetProperty("id")
+            .GetString()!;
+        await TestService.CreatedAsync(admin, $"v1/admin/products/{product}/features", """{"code":"pro","name":"Pro"}""");
+        string policy = await TestService.PolicyAsync(admin, product, "\"floating\":\"cloud\",\"borrowLimit\":86400");
+        JsonElement license = await TestService.CreatedAsync(
+            admin,
+            "v1/admin/licenses",
+            $$"""{"policyId":"{{policy}}","name":"n","features":[{"code":"pro","seats":3}]}"""
+        );
+        Exports.Time = test.Time;
+        string root = File.ReadAllText(test.FilePath("root.pub.pem"));
+        ClientOptions options = LeaseApi.Options(_api, root, relay.Url.ToString(), _deployment.NewFolder(), license.GetProperty("key").GetString());
+        Assert.True(LeaseApi.Create(_api, options, out nint client) == 0, NativeApi.LastError);
+
+        Assert.True(LeaseApi.Acquire(_api, client, "pro", 1, out nint lease, out _) == 0, NativeApi.LastError);
+        relay.ReplayToNextAcquisition();
+        Assert.Equal(
+            (38, (nint)0, "The server's lease answers another request."),
+            (LeaseApi.Acquire(_api, client, "pro", 1, out nint same, out _), same, NativeApi.LastError)
+        );
+        relay.ReplayToNextAcquisition();
+        Assert.Equal(
+            (38, (nint)0, "The server's lease is for another number of seats than the one asked for."),
+            (LeaseApi.Acquire(_api, client, "pro", 2, out nint more, out _), more, NativeApi.LastError)
+        );
+        relay.ReplayToNextAcquisition();
+        Assert.Equal(
+            (38, (nint)0, "The server's lease is not of the kind asked for."),
+            (LeaseApi.Borrow(_api, client, "pro", 3600, out nint borrow, out _), borrow, NativeApi.LastError)
+        );
+        Assert.Equal(3, relay.Replayed);
+
+        Assert.Equal(0, LeaseApi.Release(client, lease));
+        LeaseApi.Free(lease);
+        LeaseApi.Destroy(client);
+        string leases = $"v1/admin/licenses/{license.GetProperty("id").GetString()}/leases";
+        Assert.Equal(0, (await TestService.GetAsync(admin, leases)).GetProperty("items").GetArrayLength());
+    }
+
+    /// <summary>
     /// The states a lease goes through, each with its callback: retrying, retrying again, reclaiming, held, and lost.
     /// </summary>
     /// <remarks>

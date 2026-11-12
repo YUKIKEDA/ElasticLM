@@ -178,6 +178,7 @@ public sealed class VerifiedLease
         ServerKeyId = payload.Srv;
         ServerLicenseTokenId = payload.Slic;
         Sequence = payload.Seq;
+        AnsweredProofId = payload.Areq;
         IssuedAt = DateTimeOffset.FromUnixTimeSeconds(payload.Iat);
         ExpiresAt = DateTimeOffset.FromUnixTimeSeconds(payload.Exp);
         Token = token;
@@ -214,6 +215,14 @@ public sealed class VerifiedLease
 
     /// <summary>Gets the lease sequence number.</summary>
     public long Sequence { get; }
+
+    // design §8.4.3, §12.7.5 (V1d5).
+
+    /// <summary>
+    /// Gets the <c>jti</c> of the proof of the request this token answers (<c>areq</c>), 1 to 64 characters. A client that
+    /// sent the request compares it with the proof it made; <see cref="LeaseVerifier"/> checks only its form.
+    /// </summary>
+    public string AnsweredProofId { get; }
 
     /// <summary>Gets the time the lease was issued.</summary>
     public DateTimeOffset IssuedAt { get; }

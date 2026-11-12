@@ -47,4 +47,15 @@ internal static class Limits
     /// </summary>
     public static bool IsLeaseId(string? id) =>
         id is { Length: LeaseIdLength } && id.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-' or '_');
+
+    // design §12.2, §8.4.3 (V1d5).
+
+    /// <summary>The most characters a proof's <c>jti</c> has.</summary>
+    public const int MaxProofIdLength = 64;
+
+    /// <summary>
+    /// Returns whether a proof's <c>jti</c> has its form: 1 to 64 characters. A server accepts no other in a proof, so a
+    /// lease token that names the proof it answers holds no other.
+    /// </summary>
+    public static bool IsProofId(string? id) => id is { Length: > 0 and <= MaxProofIdLength };
 }

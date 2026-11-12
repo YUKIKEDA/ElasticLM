@@ -154,17 +154,20 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Acquire 2 seats; verify the token as the client does.
     ///
     /// Expected:
-    /// - Valid; 2 seats, sequence 1, 10 minutes, the server license's jti in slic; the outcome's expiry matches.
+    /// - Valid; 2 seats, sequence 1, 10 minutes, the server license's jti in slic, the request's proof ID in areq (design
+    ///   §8.4.3, V1d5); the outcome's expiry matches.
     /// </remarks>
     [Fact]
     public void Acquire_Token_PassesTheClientCheck()
     {
         LeaseEngine engine = _server.OpenEngine();
         TestClient client = _server.Client();
+        LeaseRequest request = client.Request(count: 2);
 
-        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(count: 2)));
+        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(request));
 
         VerifiedLease lease = Valid(granted.Token, client);
+        Assert.Equal(request.ProofId, lease.AnsweredProofId);
         Assert.Equal(granted.LeaseId, lease.LeaseId);
         Assert.Equal(2, lease.Seats);
         Assert.Equal(1, lease.Sequence);
@@ -220,7 +223,8 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Renew with 1 by proof P (its answer is lost); retry with 1 naming [Q, P]; renew with 2; renew with 0.
     ///
     /// Expected:
-    /// - Sequence 2; the same token again without a new signature; sequence 3; ELM_CLONE_DETECTED.
+    /// - Sequence 2 in a token whose areq is P; the same token again without a new signature, so its areq is still P and
+    ///   not the retry's R (design §8.4.3, V1d5); sequence 3 in a token whose areq is S; ELM_CLONE_DETECTED.
     /// </remarks>
     [Fact]
     public void Renew_Sequence_IsJudged()
@@ -230,15 +234,16 @@ public sealed class LeaseEngineTests : IDisposable
         var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
 
         var second = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "P", []));
-        Assert.Equal(2, Valid(second.Token, client).Sequence);
+        Assert.Equal((2L, "P"), (Valid(second.Token, client).Sequence, Valid(second.Token, client).AnsweredProofId));
         int signed = _server.Signed;
 
         var retried = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "R", ["Q", "P"]));
         Assert.Equal(second.Token, retried.Token);
         Assert.Equal(signed, _server.Signed);
+        Assert.Equal("P", Valid(retried.Token, client).AnsweredProofId);
 
-        var third = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId));
-        Assert.Equal(3, Valid(third.Token, client).Sequence);
+        var third = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId, "S", []));
+        Assert.Equal((3L, "S"), (Valid(third.Token, client).Sequence, Valid(third.Token, client).AnsweredProofId));
 
         AssertRefused(ErrorCode.CloneDetected, engine.Renew(granted.LeaseId, 1, client.KeyId));
     }
@@ -339,10 +344,10 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Clone strategy flag; a lease renewed twice (sequence 3).
     ///
     /// Steps:
-    /// - Renew with 1; reclaim the first token.
+    /// - Renew with 1 by proof F; reclaim the first token.
     ///
     /// Expected:
-    /// - Granted with CloneFlagged and sequence 4; the reclaim succeeds with CloneFlagged.
+    /// - Granted with CloneFlagged, sequence 4, and areq F (design §8.4.3, V1d5); the reclaim succeeds with CloneFlagged.
     /// </remarks>
     [Fact]
     public void Flag_ReportsAndAnswersAsUsual()
@@ -354,9 +359,10 @@ public sealed class LeaseEngineTests : IDisposable
         Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
         Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId));
 
-        var flagged = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
+        var flagged = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "F", []));
         Assert.True(flagged.CloneFlagged);
-        Assert.Equal(4, Valid(flagged.Token, client, server).Sequence);
+        VerifiedLease next = Valid(flagged.Token, client, server);
+        Assert.Equal((4L, "F"), (next.Sequence, next.AnsweredProofId));
 
         ReclaimResult reclaimed = Assert.Single(engine.Reclaim([granted.Token], client.KeyId, client.PublicKey));
         Assert.Null(reclaimed.Error);
@@ -727,6 +733,7 @@ public sealed class LeaseEngineTests : IDisposable
             Duration = TimeSpan.FromMinutes(10),
             ServerLicenseTokenId = _server.Identity.License.TokenId,
             Sequence = 1,
+            AnsweredProofId = "proof-1",
         };
 
     private VerifiedLease Valid(string token, TestClient client, TestServer? server = null) =>

@@ -155,7 +155,9 @@ public sealed class ElmServiceLeasesTests
     ///   read the lease and the audit row; under Deny renew with seq 2, release, and acquire 2 seats from another device.
     ///
     /// Expected:
-    /// - 201; 200 with seq 2 expiring 700 seconds on; 200 with the same token. Under Deny the clone gives 409
+    /// - 201 with a token whose areq is the acquisition's proof jti (design §8.4.3, V1d5); 200 with seq 2 expiring 700
+    ///   seconds on and the renewal's jti in areq; 200 with the same token, whose areq is therefore the first renewal's jti
+    ///   and not the retry's. Under Flag the clone's token has the clone request's jti in areq. Under Deny the clone gives 409
     ///   ELM_CLONE_DETECTED, the lease is stopped, the audit row is ELM_CLONE_DETECTED with seq 0, lastSeq 2, and the
     ///   strategy; the renewal and the release give 409 ELM_CLONE_DETECTED; the 2 seats give 409 ELM_NO_SEATS. Under Flag
     ///   the clone gives 200 with seq 3, the lease is not stopped, and the audit row is ELM_OK.
@@ -172,12 +174,16 @@ public sealed class ElmServiceLeasesTests
 
         DeviceAnswer acquired = await device.AcquireAsync(key);
         string id = device.VerifyLease(acquired).LeaseId;
+        Assert.Equal(acquired.Jti, device.VerifyLease(acquired).AnsweredProofId);
         test.Time.Advance(TimeSpan.FromSeconds(100));
         DeviceAnswer renewed = await device.RenewAsync(id, 1);
         Assert.Equal(HttpStatusCode.OK, renewed.Status);
         Assert.Equal((2L, Time(700)), (device.VerifyLease(renewed).Sequence, device.VerifyLease(renewed).ExpiresAt));
+        Assert.Equal(renewed.Jti, device.VerifyLease(renewed).AnsweredProofId);
         DeviceAnswer retried = await device.RenewAsync(id, 1, ["unrelated", renewed.Jti]);
         Assert.Equal((HttpStatusCode.OK, renewed.Lease), (retried.Status, retried.Lease));
+        Assert.NotEqual(renewed.Jti, retried.Jti);
+        Assert.Equal(renewed.Jti, device.VerifyLease(retried).AnsweredProofId);
 
         DeviceAnswer clone = await device.RenewAsync(id, 0);
         JsonElement lease = (await TestService.GetAsync(admin, $"v1/admin/licenses/{licenseId}/leases")).GetProperty("items")[0];
@@ -204,6 +210,7 @@ public sealed class ElmServiceLeasesTests
         if (!deny)
         {
             Assert.Equal((HttpStatusCode.OK, 3L), (clone.Status, device.VerifyLease(clone).Sequence));
+            Assert.Equal(clone.Jti, device.VerifyLease(clone).AnsweredProofId);
             return;
         }
 

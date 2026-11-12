@@ -53,7 +53,7 @@ sidebar_position: 9
 | `StatelessClockGuard` | クラス | 状態を持たない時刻巻き戻し対策で、`StatelessClockGuard.Instance` として使う。どの時刻も受け入れるので、時計を戻しても検出しない。それでも、未来に発行されたトークンは検証側が拒否する。 |
 | `TokenTypes` | 静的クラス | `typ` ヘッダーの値を定数で持つ。`KeyCertificate`（`elm-cert+jws`）、`License`（`elm-license+jws`）、`Lease`（`elm-lease+jws`）、`Proof`（`elm-proof+jws`）、`ActivationRequest`（`elm-actreq+jws`）、`DeactivationProof`（`elm-deact+jws`）、`Log`（`elm-log+jws`）。 |
 | `TrustStore` | クラス | アプリが信頼するベンダーのルート鍵と、失効させた鍵 ID。[後述](#truststore)。 |
-| `VerifiedLease` | クラス | すべての確認に通ったリーストークン。各 ID、機能、シート数、紐付いたインストール鍵、借用かどうか、シーケンス番号、発行時刻、有効期限、トークンそのものを持つ。作れるのは `LeaseVerifier` だけだ。 |
+| `VerifiedLease` | クラス | すべての確認に通ったリーストークン。各 ID、機能、シート数、紐付いたインストール鍵、借用かどうか、シーケンス番号、応えたリクエストのプルーフの `jti`（`AnsweredProofId`）、発行時刻、有効期限、トークンそのものを持つ。作れるのは `LeaseVerifier` だけだ。 |
 | `VerifiedLicense` | クラス | すべての確認に通ったライセンス。クレームを型付きで持つ。ライセンス ID、製品、種類、機能、トークン ID、署名鍵の ID、発行時刻、有効期限、猶予期間、トークンの更新を始める期間、紐付け、シーケンス番号、応えるオフラインのリクエストのノンス、サーバーライセンスではリースの期間、借用の上限、超過の割合、クローンへの対応、そしてベンダーの `Metadata` だ。作れるのは `LicenseVerifier` だけなので、これを持つコードは確認に通ったと分かる。 |
 
 ### `TrustStore`
@@ -266,8 +266,8 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
 | `TryCreate` | `LicenseClientOptions options`、`out LicenseClient? client`、`out LicenseError? error` | `bool` | インストール鍵を読み、なければ作って、マシンフィンガープリントを計算する。サーバーには接続しない。`ELM_INSTALLATION_KEY_UNREADABLE` で失敗する。製品 ID が正しくない、サーバーの URL が https の絶対 URL でない（ライセンスキーがあれば、ループバックアドレスへの http も許す）、ライセンスキーが空か `ExpectedServerLicenseId` と一緒に指定した、アプリのバージョンが 64 バイトを超える、のどれかなら `ArgumentException` を投げる。 |
-| `AcquireLeaseAsync` | `string featureId`、`string? version = null`、`int count = 1`、`CancellationToken cancellationToken = default` | `Task<LeaseResult>` | `count` 個のシートのリースを取得し、その更新を始める。オンプレミスのサーバーからの場合、最初の呼び出しでサーバーライセンスとサーバーの鍵を取得して確かめる。キャンセルしたリクエストは `ELM_NETWORK_ERROR` で終わる。`count` が 1 より小さければ `ArgumentOutOfRangeException` を投げる。 |
-| `BorrowLeaseAsync` | `string featureId`、`TimeSpan period`、`string? version = null`、`int count = 1`、`CancellationToken cancellationToken = default` | `Task<LeaseResult>` | 1 秒以上の期間でリースを借用する。サーバーが許すより長い期間は、サーバーが拒否する。借用は更新せず、期限が切れるまで有効で、検証に必要なものと一緒にインストール鍵の隣に保存する。 |
+| `AcquireLeaseAsync` | `string featureId`、`string? version = null`、`int count = 1`、`CancellationToken cancellationToken = default` | `Task<LeaseResult>` | `count` 個のシートのリースを取得し、その更新を始める。オンプレミスのサーバーからの場合、最初の呼び出しでサーバーライセンスとサーバーの鍵を取得して確かめる。レスポンスのリースがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` で失敗し、クライアントはそのリースを保持も返却もしない。キャンセルしたリクエストは `ELM_NETWORK_ERROR` で終わる。`count` が 1 より小さければ `ArgumentOutOfRangeException` を投げる。 |
+| `BorrowLeaseAsync` | `string featureId`、`TimeSpan period`、`string? version = null`、`int count = 1`、`CancellationToken cancellationToken = default` | `Task<LeaseResult>` | 1 秒以上の期間でリースを借用する。サーバーが許すより長い期間は、サーバーが拒否する。借用は更新せず、期限が切れるまで有効で、検証に必要なものと一緒にインストール鍵の隣に保存する。レスポンスのリースがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` で失敗し、クライアントはそのリースを保持も返却もしない。 |
 | `GetBorrowedLeases` | なし | `IReadOnlyList<Lease>` | このクライアントのサーバーの URL とモードについて保存した借用（最大 1,000 ファイル）を読み、借用したときと同じようにそれぞれを確かめる。リクエストは送らない。期限が切れた借用は消す。検証に通らないファイルはそのまま残し、返さない。 |
 | `ReleaseLeaseAsync` | `Lease lease`、`CancellationToken cancellationToken = default` | `Task<LicenseError?>` | リースを返却し、その更新を止める。借用でないリースは、サーバーに届かなかったときでも、そのあと `Released` になる。サーバーは期限が来たときにそのリースを捨てる。サーバーが拒否したか、サーバーに届かなかった借用は、`ELM_UNKNOWN_LEASE` の場合を除き、状態、ファイル、前の `LastError` を保ち、イベントを発生させない。すでに失われたリースや返却したリースは送り直さず、`null` を返す。別のクライアントのリースなら `ArgumentException` を投げる。 |
 | `ResetServerPin` | `Uri serverUrl` | `bool` | 意図して別のマシンに移したサーバーのピンを消す。次のリクエストでは、最初に接続したときと同じようにサーバーを確かめる。ピンがなかったとき、ファイルを消せないとき、そしてライセンスキーのあるクライアントでは常に、`false` を返す。 |
