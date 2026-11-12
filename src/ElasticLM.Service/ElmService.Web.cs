@@ -45,6 +45,14 @@ internal sealed partial class ElmService
     private static readonly TimeSpan LastSeenInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SessionSweepInterval = TimeSpan.FromHours(1);
 
+    // The forms of the paths that RefuseWebPath takes as the sign-in's (design §15.3, V1d3).
+    private static readonly PathString LoginRoute = new(LoginPath);
+    private static readonly PathString LoginRouteWithSlash = new(LoginPath + "/");
+    private static readonly PathString CallbackRoute = new(CallbackPath);
+    private static readonly PathString LogoutRoute = new(LogoutPath);
+    private static readonly PathString LogoutRouteWithSlash = new(LogoutPath + "/");
+    private static readonly PathString RootRoute = new("/");
+
     // design §15.3: the UI is served at the first public URL, or the listen URL when there is none.
     private Uri PublicUrl =>
         _publicUrls.Count > 0 ? _publicUrls[0]
@@ -180,16 +188,19 @@ internal sealed partial class ElmService
     // design §15.3, §15.2: the sign-in's paths and the admin UI's files answer only their method, and nothing at all while
     // the web sign-in is off; this runs before the OpenIdConnect handler, which would read a POST body at the callback path,
     // and before the static files, which would answer HEAD.
+    //
+    // design §15.3 (V1d3): the paths are compared as what answers behind this check matches them. Routing and the
+    // OpenIdConnect handler ignore the case of the letters, and routing takes one trailing slash as the same path
+    // (measured on ASP.NET Core 10.0.15); the handler's callback path does not. PathString compares without regard to case.
+    // Routing also takes an empty path, which Kestrel gives for the request target "*", as the route "/".
     private bool RefuseWebPath(HttpContext context)
     {
-        string path = context.Request.Path.Value ?? string.Empty;
-        string? method = path switch
-        {
-            LoginPath or CallbackPath or "/" => HttpMethods.Get,
-            LogoutPath => HttpMethods.Post,
-            _ when context.Request.Path.StartsWithSegments(AssetsPath) => HttpMethods.Get,
-            _ => null,
-        };
+        PathString path = context.Request.Path;
+        string? method =
+            path == LoginRoute || path == LoginRouteWithSlash || path == CallbackRoute || path == RootRoute || !path.HasValue ? HttpMethods.Get
+            : path == LogoutRoute || path == LogoutRouteWithSlash ? HttpMethods.Post
+            : path.StartsWithSegments(AssetsPath) ? HttpMethods.Get
+            : null;
         return method is not null && (_settings.Web is null || !string.Equals(context.Request.Method, method, StringComparison.Ordinal));
     }
 

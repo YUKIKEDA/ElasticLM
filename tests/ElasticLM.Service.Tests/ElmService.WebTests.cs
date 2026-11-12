@@ -1079,6 +1079,115 @@ public sealed class ElmServiceWebTests
     }
 
     /// <summary>
+    /// The check on the sign-in's paths matches a path as routing and the OpenIdConnect handler do: without regard to the
+    /// case of its letters, and, for the two routed paths, with one trailing slash (design §15.3, V1d3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with OIDC but no web sign-in; a service with the web sign-in. Requests are written to a socket, so the
+    ///   request target and the method arrive as written.
+    /// - The forms of /auth/login and /auth/logout: in another case (/AUTH/LOGIN, /Auth/Login), with a letter
+    ///   percent-encoded in upper case (/auth/%4Cogin), with one trailing slash (/auth/login/, /AUTH/LOGIN/), with a dot
+    ///   segment (/auth/./login). The forms of /auth/callback: /AUTH/CALLBACK, /Auth/Callback, /%41uth/callback,
+    ///   /auth/./callback.
+    ///
+    /// Steps:
+    /// - Without the web sign-in: GET and POST each form.
+    /// - With it: the wrong methods (POST and HEAD for login and callback, GET for logout) on each form; POST to
+    ///   /AUTH/CALLBACK with Content-Length 921600, and again with 2097152 (over the 1 MiB the service lets Kestrel read),
+    ///   and only 1,000 bytes of the body sent; then the right method on each form.
+    /// - What is not a form of these paths: GET and POST /auth/callback/ with and without the web sign-in; with it, GET and
+    ///   POST /auth/login// and /auth/logout//.
+    /// - With the web sign-in: "get /AUTH/LOGIN" (the method in lower case). With and without it: "OPTIONS *", whose path
+    ///   is empty.
+    ///
+    /// Expected:
+    /// - Without the web sign-in, and for every wrong method: 404 with the text page (for HEAD, its headers), also for the
+    ///   two requests whose body was not sent in full, so the body is not read.
+    /// - The right method reaches what answers: GET on a login form gives 302; GET on a callback form gives the 400 page
+    ///   of a failed sign-in; POST on a logout form with the CSRF header gives 200.
+    /// - /auth/callback/, /auth/login//, and /auth/logout// are not the handler's path and have no route: 404 without a
+    ///   body.
+    /// - "get" is not GET, and the empty path is the route "/" with a method that is not GET: 404 with the text page.
+    /// </remarks>
+    [Fact]
+    public async Task WebPaths_InAnotherCaseOrWithATrailingSlash_AnswerOnlyAsDesigned()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        ElmService off = await test.StartAsync(s => s with { Oidc = idp.Settings() });
+        ElmService on = await StartAsync(test, idp);
+        string[] login = ["/AUTH/LOGIN", "/Auth/Login", "/auth/%4Cogin", "/auth/login/", "/AUTH/LOGIN/", "/auth/./login"];
+        string[] callback = ["/AUTH/CALLBACK", "/Auth/Callback", "/%41uth/callback", "/auth/./callback"];
+        string[] logout = ["/AUTH/LOGOUT", "/Auth/Logout", "/auth/%4Cogout", "/auth/logout/", "/AUTH/LOGOUT/", "/auth/./logout"];
+        const string Form = "code=c&state=s";
+
+        foreach (string path in login.Concat(callback).Concat(logout))
+        {
+            AssertNotFoundPage(await RawAsync(off.Url, "GET", path), path, head: false);
+            AssertNotFoundPage(await RawAsync(off.Url, "POST", path, Form), path, head: false);
+        }
+
+        foreach (string path in login.Concat(callback))
+        {
+            AssertNotFoundPage(await RawAsync(on.Url, "POST", path, Form), path, head: false);
+            AssertNotFoundPage(await RawAsync(on.Url, "HEAD", path), path, head: true);
+        }
+
+        foreach (string path in logout)
+        {
+            AssertNotFoundPage(await RawAsync(on.Url, "GET", path), path, head: false);
+        }
+
+        foreach (int promised in new[] { 921_600, 2_097_152 })
+        {
+            AssertNotFoundPage(
+                await RawAsync(on.Url, "POST", "/AUTH/CALLBACK", new string('a', 1_000), contentLength: promised),
+                $"a body of {promised} bytes cut short",
+                head: false
+            );
+        }
+
+        foreach (string path in login)
+        {
+            Assert.Equal(302, (await RawAsync(on.Url, "GET", path)).Status);
+        }
+
+        foreach (string path in callback)
+        {
+            (int status, _, string body) = await RawAsync(on.Url, "GET", path);
+            Assert.Equal((400, "The sign-in failed. Start it again.\n"), (status, body));
+        }
+
+        foreach (string path in logout)
+        {
+            Assert.Equal(200, (await RawAsync(on.Url, "POST", path, string.Empty, csrf: true)).Status);
+        }
+
+        foreach (
+            (Uri service, string method, string path) in new[]
+            {
+                (on.Url, "GET", "/auth/callback/"),
+                (on.Url, "POST", "/auth/callback/"),
+                (off.Url, "GET", "/auth/callback/"),
+                (off.Url, "POST", "/auth/callback/"),
+                (on.Url, "GET", "/auth/login//"),
+                (on.Url, "POST", "/auth/login//"),
+                (on.Url, "GET", "/auth/logout//"),
+                (on.Url, "POST", "/auth/logout//"),
+            }
+        )
+        {
+            (int status, _, string body) = await RawAsync(service, method, path, method == "POST" ? Form : null, csrf: true);
+            Assert.True((status, body) == (404, string.Empty), $"{method} {path}: {status} '{body}'");
+        }
+
+        AssertNotFoundPage(await RawAsync(on.Url, "get", "/AUTH/LOGIN"), "get in lower case", head: false);
+        AssertNotFoundPage(await RawAsync(on.Url, "OPTIONS", "*"), "OPTIONS *", head: false);
+        AssertNotFoundPage(await RawAsync(off.Url, "OPTIONS", "*"), "OPTIONS * without the web sign-in", head: false);
+    }
+
+    /// <summary>
     /// The Data Protection keys are made by the service, encrypted with the key encryption key, shared by nodes, and checked
     /// at the start (design §15.3): a sign-in started on one node finishes on another; a start with another key encryption
     /// key is refused; the next key is made when the last one ends within 7 days.
@@ -1239,6 +1348,101 @@ public sealed class ElmServiceWebTests
         }
 
         Assert.DoesNotContain("domain=", cookie, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static void AssertNotFoundPage((int Status, string ContentType, string Body) answer, string what, bool head)
+    {
+        Assert.True(
+            answer == (404, "text/plain; charset=utf-8", head ? string.Empty : "Not found.\n"),
+            $"{what}: {answer.Status} {answer.ContentType} '{answer.Body}'"
+        );
+    }
+
+    // Writes one HTTP/1.1 request to a socket, so the request target arrives as written, and reads the answer to its end.
+    // With contentLength, the header promises more than the body that is sent.
+    private static async Task<(int Status, string ContentType, string Body)> RawAsync(
+        Uri service,
+        string method,
+        string target,
+        string? form = null,
+        int? contentLength = null,
+        bool csrf = false
+    )
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using var client = new System.Net.Sockets.TcpClient();
+        await client.ConnectAsync(service.Host, service.Port, cancel);
+        await using System.Net.Sockets.NetworkStream stream = client.GetStream();
+        string request = $"{method} {target} HTTP/1.1\r\nHost: {service.Authority}\r\nConnection: close\r\n";
+        if (csrf)
+        {
+            request += "X-ELM-CSRF: 1\r\n";
+        }
+
+        if (form is not null)
+        {
+            int length = contentLength ?? form.Length;
+            request +=
+                "Content-Type: application/x-www-form-urlencoded\r\nContent-Length: "
+                + length.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                + "\r\n";
+        }
+
+        request += "\r\n" + form;
+        await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes(request), cancel);
+
+        using var all = new MemoryStream();
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        limit.CancelAfter(TimeSpan.FromSeconds(30));
+        byte[] buffer = new byte[4096];
+        while (true)
+        {
+            int read;
+            try
+            {
+                read = await stream.ReadAsync(buffer, limit.Token);
+            }
+            catch (IOException) when (contentLength is not null)
+            {
+                // The service closes a connection whose promised body it did not read; what came before is the answer.
+                break;
+            }
+
+            if (read == 0)
+            {
+                break;
+            }
+
+            all.Write(buffer, 0, read);
+            if (
+                contentLength is not null
+                && System.Text.Encoding.ASCII.GetString(all.GetBuffer(), 0, (int)all.Length).EndsWith("\r\n0\r\n\r\n", StringComparison.Ordinal)
+            )
+            {
+                // The rest of the promised body never comes, so the service waits for it before it closes; the last chunk
+                // ends the answer (the page is sent chunked).
+                break;
+            }
+        }
+
+        string text = System.Text.Encoding.UTF8.GetString(all.GetBuffer(), 0, (int)all.Length);
+        int headEnd = text.IndexOf("\r\n\r\n", StringComparison.Ordinal);
+        Assert.True(headEnd > 0, "The answer has no head: " + text);
+        string head = text[..headEnd];
+        string body = text[(headEnd + 4)..];
+        int status = int.Parse(head.AsSpan(9, 3), System.Globalization.CultureInfo.InvariantCulture);
+        string type =
+            head.Split("\r\n").FirstOrDefault(l => l.StartsWith("Content-Type: ", StringComparison.OrdinalIgnoreCase))?["Content-Type: ".Length..]
+            ?? string.Empty;
+        if (head.Contains("Transfer-Encoding: chunked", StringComparison.OrdinalIgnoreCase))
+        {
+            // The pages and the JSON answers here are short: one chunk, then the last one.
+            int lineEnd = body.IndexOf("\r\n", StringComparison.Ordinal);
+            int size = lineEnd > 0 ? Convert.ToInt32(body[..lineEnd], 16) : 0;
+            body = size > 0 ? body.Substring(lineEnd + 2, size) : string.Empty;
+        }
+
+        return (status, type, body);
     }
 
     private static async Task AssertPageAsync(HttpResponseMessage answer, HttpStatusCode status, string text)
