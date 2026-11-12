@@ -23,9 +23,9 @@ env:
   DOTNET_CLI_TELEMETRY_OPTOUT: "1"
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
   # One SDK for every runtime identifier and both containers, so a release has one ILCompiler and runtime (design §20.5).
-  DOTNET_SDK_VERSION: 10.0.403
+  DOTNET_SDK_VERSION: 10.0.404
   ALMALINUX_IMAGE: almalinux:8@sha256:2d0f2eb2a83cc09dbc2eb92fade4dbe8f709628149e81aa00aec70630406603b
-  ALPINE_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0.403-alpine3.24-aot@sha256:8a339f2175a99aad64cd618450303b8361d565eebbdf8aad95cdf8e6b54ab9d3
+  ALPINE_SDK_IMAGE: mcr.microsoft.com/dotnet/sdk:10.0.404-alpine3.24-aot@sha256:85991a5d9f61414223b52fa0e343fd4418acd2d71fe00b99253cf974b8a2e117
   # design §20.6: the BuildKit that builds the elm-service image. Dependabot does not raise it (docs/releasing.md).
   BUILDKIT_IMAGE: moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
   IMAGE_NAME: ghcr.io/yukikeda/elm-service
