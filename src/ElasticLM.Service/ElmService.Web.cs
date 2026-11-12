@@ -180,17 +180,21 @@ internal sealed partial class ElmService
     // design §15.3, §15.2: the sign-in's paths and the admin UI's files answer only their method, and nothing at all while
     // the web sign-in is off; this runs before the OpenIdConnect handler, which would read a POST body at the callback path,
     // and before the static files, which would answer HEAD.
+    //
+    // design §15.3 (V1d3): the paths are compared as what answers behind this check matches them. Routing and the
+    // OpenIdConnect handler ignore the case of the letters, and routing takes one trailing slash as the same path
+    // (measured on ASP.NET Core 10.0.15); the handler's callback path does not. PathString compares without regard to case.
     private bool RefuseWebPath(HttpContext context)
     {
-        string path = context.Request.Path.Value ?? string.Empty;
-        string? method = path switch
-        {
-            LoginPath or CallbackPath or "/" => HttpMethods.Get,
-            LogoutPath => HttpMethods.Post,
-            _ when context.Request.Path.StartsWithSegments(AssetsPath) => HttpMethods.Get,
-            _ => null,
-        };
+        PathString path = context.Request.Path;
+        string? method =
+            Routed(path, LoginPath) || path == CallbackPath || path == "/" ? HttpMethods.Get
+            : Routed(path, LogoutPath) ? HttpMethods.Post
+            : path.StartsWithSegments(AssetsPath) ? HttpMethods.Get
+            : null;
         return method is not null && (_settings.Web is null || !string.Equals(context.Request.Method, method, StringComparison.Ordinal));
+
+        static bool Routed(PathString path, string route) => path == route || path == route + "/";
     }
 
     private async Task LoginAsync(HttpContext context)
