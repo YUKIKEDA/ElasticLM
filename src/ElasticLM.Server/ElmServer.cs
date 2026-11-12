@@ -218,8 +218,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
         var disposables = new List<IDisposable> { key!, guardKey };
         try
         {
-            // design §13.1 step 3 (V1d2): the lock comes before everything that writes to the data folder or removes from it,
-            // so a start that does not get it changes nothing.
+            // design §13.1 step 3 (V1d2): the lock comes after the installation key, which step 2 above reads or, in a folder
+            // without one, creates together with the folder. Of two starts in an empty folder only one creates the key file
+            // (FileMode.CreateNew), and the other reads it. The lock comes before everything else that writes to the data
+            // folder or removes from it, so a start that does not get it changes nothing else.
             FileStream serverLock = OpenLock(store.Directory);
             disposables.Add(serverLock);
             await RemoveLeftSocketAsync(store.Directory, adminSocketPath, adminEndPoint, cancellationToken).ConfigureAwait(false);
