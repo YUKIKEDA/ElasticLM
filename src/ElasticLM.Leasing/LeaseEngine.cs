@@ -616,7 +616,8 @@ public sealed class LeaseEngine : IDisposable
                 return Refuse(ErrorCode.CloneDetected, "Another copy of the installation renewed the lease; a clone was detected.");
             }
 
-            LeaseOutcome flagged = IssueNext(record, now, proofId, state, borrow: null);
+            // design §10.4 (V1d5): the next token is later than the request's too, so the copy that asked takes it.
+            LeaseOutcome flagged = IssueNext(record, now, proofId, state, borrow: null, flaggedRequest: sequence);
             return flagged is LeaseOutcome.Granted granted ? granted with { CloneFlagged = true } : flagged;
         }
     }
@@ -756,8 +757,21 @@ public sealed class LeaseEngine : IDisposable
 
     // Issues the record's next token: sequence + 1, and an expiry that does not pass the server license's exp + grace, so the
     // client's check of design §12.7.5 step 5 holds.
-    private LeaseOutcome IssueNext(LeaseRecord record, DateTimeOffset now, string proofId, LicenseState state, TimeSpan? borrow)
+    private LeaseOutcome IssueNext(
+        LeaseRecord record,
+        DateTimeOffset now,
+        string proofId,
+        LicenseState state,
+        TimeSpan? borrow,
+        long? flaggedRequest = null
+    )
     {
+        // A request can name any 64-bit sequence number; one that no token can follow is refused, not issued past.
+        if (LeaseRules.NextSequence(record.Sequence, flaggedRequest) is not long sequence)
+        {
+            return Refuse(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
+        }
+
         long nowSeconds = now.ToUnixTimeSeconds();
         long period = borrow is TimeSpan b ? (long)b.TotalSeconds : state.LeaseSeconds;
         if (LeaseRules.Expiry(nowSeconds, period, state.LicenseLimit) is not long expires)
@@ -765,7 +779,6 @@ public sealed class LeaseEngine : IDisposable
             return Refuse(ErrorCode.Expired, "The server license has expired.");
         }
 
-        long sequence = record.Sequence + 1;
         var spec = new LeaseSpec
         {
             LeaseId = record.Id,
@@ -778,6 +791,10 @@ public sealed class LeaseEngine : IDisposable
             IsBorrow = borrow is not null,
             ServerLicenseTokenId = state.Server.License.TokenId,
             Sequence = sequence,
+
+            // design §8.4.3 (V1d5): the token names the request it answers. A retry gets this token again (RenewCore), so it
+            // then names the earlier request, which the client keeps in its list of unanswered requests.
+            AnsweredProofId = proofId,
         };
         string token = _sign(spec, DateTimeOffset.FromUnixTimeSeconds(nowSeconds));
         record.Sequence = sequence;

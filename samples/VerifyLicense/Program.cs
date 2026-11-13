@@ -200,6 +200,7 @@ internal static class SelfTest
                     Seats = 1,
                     InstallationKeyThumbprint = key!.Thumbprint,
                     Duration = TimeSpan.FromMinutes(10),
+                    AnsweredProofId = "proof-1",
                 };
                 string lease = ElasticLM.Issuing.LeaseIssuer.Issue(signing, spec, TimeProvider.System);
                 TrustStore trust = TrustStore.Create([root.ExportSubjectPublicKeyInfoPem()], []);
@@ -292,6 +293,7 @@ internal static class SelfTest
                 Duration = TimeSpan.FromMinutes(10),
                 ServerLicenseTokenId = identity!.License.TokenId,
                 Sequence = 1,
+                AnsweredProofId = "proof-1",
             };
             string token = ElasticLM.Issuing.LeaseIssuer.Issue(server, leaseSpec, TimeProvider.System);
             if (engine.Reclaim([token], clientKid, client.ExportParameters(false))[0].Error is LicenseError reclaimError)
