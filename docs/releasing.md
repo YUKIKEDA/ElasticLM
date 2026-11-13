@@ -102,9 +102,12 @@ release is published (design §20.7, T28).
 6. Approve the `release` environment in the run. The `publish` job downloads every file of the draft and checks it
    before it pushes anything: `SHA256SUMS` against the `checksums` job's hash of it, every file against `SHA256SUMS`,
    and that the draft holds exactly the files `SHA256SUMS` lists and `SHA256SUMS` itself. It checks the image tar
-   against the `image` job's hash too. Then it pushes the `.nupkg` and `.snupkg` to nuget.org and publishes the release
-   (design §20.5, "公開のジョブの確かめ"). Do not add a file to the draft: the job stops on any file `SHA256SUMS`
-   does not list.
+   against the `image` job's hash too. Then it pushes the `.nupkg` and `.snupkg` to nuget.org and the image to GHCR.
+   Right before it publishes the release, it reads the draft's files again and compares each name and GitHub's SHA-256
+   of each file with the checked lines (design §20.5, "公開のジョブの確かめ"). Do not add or replace a file of the draft:
+   the job stops on any file `SHA256SUMS` does not list, and if it stops at the last check, the packages and the image
+   are already pushed. Do not edit the draft's notes, title, or prerelease setting either: the job publishes them as
+   they are, unchecked.
 7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
 8. After `publish`, approve the `github-pages` environment in the same run. The `pages` job deploys the site the `site` job
    built from the tag. The site's artifact is kept for 7 days: approve both environments within that time. If the `pages` job fails because the artifact expired, re-run the `site` job of the same run: `gh run rerun <run ID> --job <site job ID>` (the job IDs are in `gh run view <run ID> --json jobs`). GitHub runs `site` again from the same tag, then `pages`, which needs the approval again; the jobs `site` does not depend on, `publish` among them, are not run again. A run can be re-run for up to 30 days. The tag's run does not run `pnpm audit`, so an advisory published since the tag does not stop it.

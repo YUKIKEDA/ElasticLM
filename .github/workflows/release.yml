@@ -912,6 +912,26 @@ jobs:
           diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | cut -c67- | sort) <(sort "$RUNNER_TEMP/assets") || { echo "::error::The draft release does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
           diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | cut -c67- | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
+      # In the form the publish job reads from the draft: GitHub's digest of each file and its name.
+      - name: List the digests the draft gets
+        working-directory: check/assets
+        run: |
+          set -euo pipefail
+          sha256sum -- * | sed 's/^\([0-9a-f]\{64\}\) [ *]/sha256:\1  /' > "$RUNNER_TEMP/released"
+
+      - name: Check the draft's assets against the checked hashes
+        working-directory: check/assets
+        env:
+          SUMS: ${{ steps.sums.outputs.sums }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          if grep -Evq '^sha256:[0-9a-f]{64}  ' "$RUNNER_TEMP/released"; then echo "::error::An asset of the draft release has no SHA-256 digest."; exit 1; fi
+          diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | sort) <(sed 's/^sha256://' "$RUNNER_TEMP/released" | sort) || { echo "::error::The draft release does not hold exactly the checked files (< is missing or changed, > is not among them)."; exit 1; }
+
   attest:
     # T24: provenance for every file SHA256SUMS lists, and for SHA256SUMS itself. No build code runs here.
     name: Attest
@@ -1034,6 +1054,7 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          gh --version
           gh release view "$TAG" --json assets --jq '.assets[].name' > "$RUNNER_TEMP/assets"
           mkdir draft
           gh release download "$TAG" --dir draft
@@ -1120,6 +1141,29 @@ jobs:
       - name: Log out of GHCR
         if: always()
         run: docker logout ghcr.io
+
+      # design §20.5 (V1d10): the draft is read again right before it is published, by name and by GitHub's SHA-256 of
+      # each file, so that a file added or replaced since the first check stops the job. A missing digest stops it too.
+      - name: Read the draft's assets again
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: gh release view "$TAG" --json assets --jq '.assets[] | (.digest // "none") + "  " + .name' > "$RUNNER_TEMP/released"
+
+      # The same commands run in the checksums job on every pull request.
+      - name: Check the draft's assets against the checked hashes
+        working-directory: draft
+        env:
+          SUMS: ${{ needs.checksums.outputs.sha256sums }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          if grep -Evq '^sha256:[0-9a-f]{64}  ' "$RUNNER_TEMP/released"; then echo "::error::An asset of the draft release has no SHA-256 digest."; exit 1; fi
+          diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | sort) <(sed 's/^sha256://' "$RUNNER_TEMP/released" | sort) || { echo "::error::The draft release does not hold exactly the checked files (< is missing or changed, > is not among them)."; exit 1; }
 
       - name: Publish the release
         env:
