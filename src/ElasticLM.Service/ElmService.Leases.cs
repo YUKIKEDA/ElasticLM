@@ -56,7 +56,7 @@ internal sealed partial class ElmService
             return ClientResult.Fail(e.Code, e.Message);
         }
 
-        return WithFeature(await AcquireParsedAsync(context, proof, request).ConfigureAwait(false), request.Feature);
+        return await AcquireParsedAsync(context, proof, request).ConfigureAwait(false);
     }
 
     private async Task<ClientResult> AcquireParsedAsync(HttpContext context, ProofResult.Valid proof, AcquireRequest request)
@@ -107,6 +107,24 @@ internal sealed partial class ElmService
         DateTimeOffset now
     )
     {
+        // design §18.1 (V1d4): a refusal is counted with the feature only when the license grants a feature of that name
+        // with seats. The refusals before the license is read, and a name the license does not have, are counted without
+        // it, so made-up names cannot use up the kinds of a minute.
+        LicenseFeature? feature = LeasedFeature(scope.License, request.Feature);
+        ClientResult result = await AcquireFeatureAsync(scope, device, request, policy, product, now, feature).ConfigureAwait(false);
+        return feature is null ? result : WithFeature(result, feature.Code);
+    }
+
+    private async Task<ClientResult> AcquireFeatureAsync(
+        LicenseScope scope,
+        Device device,
+        AcquireRequest request,
+        PolicyRow policy,
+        ProductRow product,
+        DateTimeOffset now,
+        LicenseFeature? feature
+    )
+    {
         long at = now.ToUnixTimeSeconds();
         LicenseRow license = scope.License;
         if (Refusal(license, at) is ClientResult refused)
@@ -114,7 +132,6 @@ internal sealed partial class ElmService
             return refused;
         }
 
-        LicenseFeature? feature = LeasedFeature(license, request.Feature);
         if (CheckFeature(feature, request.Version, at) is LicenseError featureError)
         {
             return ClientResult.Fail(featureError.Code, featureError.Message);
@@ -552,6 +569,8 @@ internal sealed partial class ElmService
 
         if (_usage is not null)
         {
+            // design §18.2 (V1d9): the transaction committed the row; a read that fails for the usage line adds no second one.
+            Progress(context).Recorded = true;
             (_, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
             ReleasedLine(found, product.Code, "admin");
         }

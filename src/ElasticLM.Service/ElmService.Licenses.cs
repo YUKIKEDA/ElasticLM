@@ -138,8 +138,15 @@ internal sealed partial class ElmService
                 AuditEntry entry = Entry(context, caller, AuditActions.LicenseCreate, license.Id, detail);
                 await Database.CreateLicenseAsync(license, entry, now, context.RequestAborted).ConfigureAwait(false);
                 LicenseItem item = ToItem(license, at) with { Key = key };
-                await WriteJsonAsync(context, StatusCodes.Status201Created, item, ServiceJsonContext.Default.LicenseItem).ConfigureAwait(false);
-                return new AdminOutcome("ELM_OK", license.Id.ToString("D"), detail, Recorded: true);
+                return await WriteRecordedAsync(
+                        context,
+                        StatusCodes.Status201Created,
+                        item,
+                        ServiceJsonContext.Default.LicenseItem,
+                        license.Id,
+                        detail
+                    )
+                    .ConfigureAwait(false);
             }
         );
 
@@ -306,9 +313,15 @@ internal sealed partial class ElmService
                         return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed, at), ServiceJsonContext.Default.LicenseItem)
+                    return await WriteRecordedAsync(
+                            context,
+                            StatusCodes.Status200OK,
+                            ToItem(changed, at),
+                            ServiceJsonContext.Default.LicenseItem,
+                            found.Id,
+                            detail
+                        )
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -389,8 +402,15 @@ internal sealed partial class ElmService
                 return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, found.Id.ToString("D")).ConfigureAwait(false);
             }
 
-            await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed, at), ServiceJsonContext.Default.LicenseItem).ConfigureAwait(false);
-            return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
+            return await WriteRecordedAsync(
+                    context,
+                    StatusCodes.Status200OK,
+                    ToItem(changed, at),
+                    ServiceJsonContext.Default.LicenseItem,
+                    found.Id,
+                    detail
+                )
+                .ConfigureAwait(false);
         }
         catch (BodyException e)
         {
@@ -460,15 +480,20 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.InternalError, IssueFailedException.Answer, target).ConfigureAwait(false);
         }
 
-        context.Response.StatusCode = StatusCodes.Status200OK;
-        context.Response.ContentType = "application/json";
-        context.Response.Headers.ContentDisposition = $"attachment; filename=\"{target}.elmlic\"";
-        await context.Response.Body.WriteAsync(issued.File, context.RequestAborted).ConfigureAwait(false);
         string detail = AuditLog.Detail(w =>
         {
             w.WriteString("jti", issued.TokenId);
             w.WriteString("exp", license.ExpiresAt is long e ? AdminApi.Time(e) : null);
         });
+
+        // design §18.2 (V1d9): the file is signed now, so the row of an answer that cannot be written names it too.
+        AdminProgress progress = Progress(context);
+        progress.Target = target;
+        progress.Detail = detail;
+        context.Response.StatusCode = StatusCodes.Status200OK;
+        context.Response.ContentType = "application/json";
+        context.Response.Headers.ContentDisposition = $"attachment; filename=\"{target}.elmlic\"";
+        await context.Response.Body.WriteAsync(issued.File, context.RequestAborted).ConfigureAwait(false);
         return new AdminOutcome("ELM_OK", target, detail);
     }
 

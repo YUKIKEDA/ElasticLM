@@ -105,16 +105,16 @@ info: elm-server[2]
 | `lease.expired` | リースが更新されずに期限切れになったとき | `lic`、`feat`、`n`、`key`、`lease` |
 | `borrow.expired` | 借用が終わったとき | `lic`、`feat`、`n`、`key`、`lease` |
 | `lease.reclaimed` | サーバーの再起動のあと、クライアントがリースを再登録したとき | `lic`、`key`、`lease`、`cloneFlagged` |
-| `lease.denied` | 拒否したリースの取得、リースの更新、リースの再登録、早期返却。60 秒ごとと停止時に件数を書く | `feat`（分かる場合）、`code`、`count` |
+| `lease.denied` | 拒否したリースの取得、リースの更新、リースの再登録、早期返却。60 秒ごとと停止時に件数を書く | `feat`（早期返却ではリースの機能。リースの取得では、リクエストが求めた機能で、サーバーライセンスが付与している場合だけ付く）、`code`、`count` |
 | `admin.denied` | 正しいトークンのない管理リクエスト。60 秒ごとと停止時に件数を書く | `code`（`ELM_UNAUTHORIZED`）、`count` |
-| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID）、`result`（エラーコードの名前） |
+| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID。リクエストの ID がリース ID の形でなければ付かない）、`result`（エラーコードの名前。レスポンスが終わる前に接続が閉じたときは `ELM_NETWORK_ERROR`、サーバーの内部で操作が失敗したときは `ELM_INTERNAL_ERROR`） |
 | `server.started` | サーバーが起動したとき | `lic`、`key`（ここではサーバーの鍵 ID。クライアントのものではなく、サーバー自身のインストール鍵のサムプリント）、`borrows`（復元した借用） |
 | `server.stopped` | サーバーが停止したとき | `leases`（返却されていないリース） |
 | `records.set_aside` | `--set-aside-broken-records` で動かしたサーバーが、起動中、待ち受けを始める前に、壊れた借用の記録を退避したとき。そのあと待ち受けに失敗した起動でも、この行は残る | `file` |
 | `license.refreshed` | サーバーライセンスを `elm-service` から更新したとき | `lic`、`token`（トークン ID）、`seq` |
 | `license.refresh_failed` | サーバーライセンスの更新に失敗したとき | `stage`（`start`、`write`、`reload`、`service` のいずれか）、`code` |
 
-拒否の行は、期間内の 1 つの種類（機能とコードの組）の件数を表す。1 つの期間に数える種類は 100 までで、それを超えた分は機能を区別せずに数える。
+拒否の行は、期間内の 1 つの種類（機能とコードの組）の件数を表す。1 つの期間に数える種類は 100 までで、それを超えた分は機能を区別せずに数える。リクエストが求めた機能のうち、サーバーライセンスが付与していないものの名前は書かないので、そうした拒否は、コードごとに 1 つの種類にまとまる。
 
 ### `elm-service` のイベント
 
@@ -129,7 +129,7 @@ info: elm-server[2]
 | `borrow.returned` | 借用が早期返却されたとき、または管理者が借用を解放したとき | `lease.released` と同じ |
 | `lease.expired` | 期限切れのリースを、片付けの処理が削除したとき | `lic`、`prd`、`feat`、`n`、`key`、`lease` |
 | `borrow.expired` | 終わった借用を、片付けの処理が削除したとき | `lic`、`prd`、`feat`、`n`、`key`、`lease` |
-| `lease.denied` | リースのルールで拒否したリースの取得、リースの更新、返却。60 秒ごと、停止時、seal の指示のときに件数を書く。プルーフの不備、レート制限（`429`）、本文のサイズ（`413`）による拒否は数えない | `feat`（分かる場合）、`code`、`count` |
+| `lease.denied` | リースのルールで拒否したリースの取得、リースの更新、返却。60 秒ごと、停止時、seal の指示のときに件数を書く。プルーフの不備、レート制限（`429`）、本文のサイズ（`413`）による拒否は数えない | `feat`（リースの機能。リースの取得では、リクエストが求めた機能で、ライセンスが付与している場合だけ付く）、`code`、`count` |
 | `service.started` | ノードが起動したとき。リクエストを受け付ける前に書く | `node` |
 | `service.stopped` | ノードが停止したとき、または `service.started` を書いたあとで起動に失敗したとき（たとえば、待ち受けられないとき） | `node` |
 
@@ -235,7 +235,7 @@ elm log verify <files or folders>... --product <ID> --stream borrows [--trust <f
 
 ### 記録するもの
 
-- 管理 API の認証済みの呼び出しすべて。参照と拒否も含み、呼び出しのアクションと一緒に記録する。成功した `GET /v1/admin/me` は行を書かない。
+- 管理 API の認証済みの呼び出しすべて。参照と拒否も含み、呼び出しのアクションと一緒に記録する。レスポンスを最後まで返せずに終わった呼び出しも記録する。成功した `GET /v1/admin/me` は行を書かない。
 - 有効な認証のない呼び出し。件数を数え、1 分ごとに 1 行の `auth.failed` として書く。
 - 管理画面のサインイン、サインアウト、セッションの変更。
 - デバイスからのアクティベーション、アクティベーション解除、トライアル、見つかったクローン。トークンの更新と、拒否したデバイスのリクエストは記録しない。
@@ -252,7 +252,7 @@ API キーのような秘密は書き込まない。
 | `actorId` | `apikey` なら API キーの ID。`oidc` なら管理者の ID。`system` なら `setup` か `auth`。`installation` ならデバイスのインストール鍵のサムプリント。 |
 | `action` | アクション。次の表のどれか。 |
 | `target` | アクションの対象。ライセンス、アクティベーション、リースの ID など。または `null`。 |
-| `result` | `ELM_OK`、または拒否したときのエラーコードの名前（[エラーコード](error-codes.md)を参照）。 |
+| `result` | `ELM_OK`、または拒否したときのエラーコードの名前（[エラーコード](error-codes.md)を参照）。レスポンスを最後まで返せずに終わった呼び出しでは、レスポンスが終わる前に接続が閉じたときは `ELM_NETWORK_ERROR`、サービスの内部で操作が失敗したときは `ELM_INTERNAL_ERROR` になる。すでに保存された変更の行は、`ELM_OK` のまま残る。サービスが接続の切断に気づけるのは、レスポンスをすべて渡し終えるまでだ。そのあとで、呼び出し元がレスポンスを読まずに接続を閉じたときは、行の `result` は操作そのものの結果になる。 |
 | `ip` | 送信元のアドレス、または `null`。 |
 | `detail` | アクションの詳細を入れた JSON オブジェクト、または `null`。 |
 | `prev` | 前の行のハッシュ（32 バイト）。 |
@@ -312,10 +312,12 @@ API キーのような秘密は書き込まない。
 | `lease.list` | `GET /v1/admin/licenses/{id}/leases`。 |
 | `lease.release` | `DELETE /v1/admin/leases/{id}`。`detail` には `licenseId`、`feature`、`seats` が入る。 |
 | `usagelog.list` | `GET /v1/admin/usage-log/files`。 |
-| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`。 |
+| `usagelog.get` | `GET /v1/admin/usage-log/files/{name}`。ダウンロードを始めた呼び出しの `detail` は `{"sent": ..., "size": ...}` で、レスポンスに書き出したバイト数と、ダウンロードを始めた時点のファイルの長さを表す。最後まで届いたダウンロードでは `sent` と `size` が等しい。途中で終わったダウンロードでは、`sent` は呼び出し元が受け取れた量の上限になる。 |
 | `usagelog.seal` | `POST /v1/admin/usage-log/seal`。 |
 
-権限がなくて拒否した呼び出しは、そのアクション、`result` の `ELM_FORBIDDEN`、`detail` の `{"permission": ...}` で記録する。
+権限がなくて拒否した呼び出しは、そのアクション、`result` の `ELM_FORBIDDEN`、`detail` の `{"permission": ...}` で記録する。そのレスポンスを書く前に接続が閉じていたときは、`result` が `ELM_NETWORK_ERROR` になる。`detail` は変わらない。
+
+レスポンスを最後まで返せずに終わった呼び出しでは、`target` と `detail` が `null` になることがある。サービスがそれらを知る前に、操作が止まったときだ。権限がなくて拒否した呼び出し、ダウンロードを始めた `usagelog.get`、ファイルを発行または処理したあとの `license.file` と `activation.offline` は、いつも、そのアクションの `target` と `detail` を持つ。
 
 ### ハッシュのチェーン
 

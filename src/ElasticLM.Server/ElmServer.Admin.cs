@@ -19,12 +19,18 @@ internal sealed partial class ElmServer
     {
         _app.MapGet("/admin/v1/status", (RequestDelegate)(context => AdminAsync(context, "status", null, StatusAsync)));
         _app.MapGet("/admin/v1/leases", (RequestDelegate)(context => AdminAsync(context, "leases", null, LeasesAsync)));
-        _app.MapDelete(
-            "/admin/v1/leases/{id}",
-            (RequestDelegate)(context => AdminAsync(context, "release", context.Request.RouteValues["id"] as string, ForceReleaseAsync))
-        );
+        _app.MapDelete("/admin/v1/leases/{id}", (RequestDelegate)ReleaseRouteAsync);
         _app.MapPost("/admin/v1/license/reload", (RequestDelegate)(context => AdminAsync(context, "reload", null, ReloadAsync)));
         _app.MapPost("/admin/v1/log/seal", (RequestDelegate)(context => AdminAsync(context, "seal", null, SealAsync)));
+    }
+
+    // design §13.7 (V1d4): the route takes text of any length the request line allows. Only text of the form of a lease ID
+    // (22 characters of base64url) names a lease; other text is read here and nowhere else, so this server's lines in the
+    // usage log and the operational log never hold it.
+    private Task ReleaseRouteAsync(HttpContext context)
+    {
+        string? id = context.Request.RouteValues["id"] is string text && Limits.IsLeaseId(text) ? text : null;
+        return AdminAsync(context, "release", id, admin => ForceReleaseAsync(admin, id));
     }
 
     // The bearer token is compared in constant time; a missing or wrong token is 401 ELM_UNAUTHORIZED and is counted
@@ -40,8 +46,42 @@ internal sealed partial class ElmServer
             return;
         }
 
-        string result = await operation(context).ConfigureAwait(false);
+        string result;
+        try
+        {
+            result = await operation(context).ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+            // design §13.7 (V1d9): an operation that ends with an exception is written too. The caller cut the connection
+            // when the request's token is canceled; anything else is the server's failure. The exception goes on.
+            ErrorCode code = context.RequestAborted.IsCancellationRequested ? ErrorCode.NetworkError : ErrorCode.InternalError;
+            WriteAdminAction(action, target, ErrorCodes.ToWireName(code));
+            throw;
+        }
+
+        // design §13.7 (V1d9): an answer written after the connection closed is no answer. Kestrel closes its output before it
+        // cancels the request's token, and until then a write does nothing and reports the output as completed (aspnetcore
+        // v10.0.15, Http1OutputProducer.cs and Http1Connection.cs). So the response's writer is flushed and asked; for an
+        // answer of a status alone, the flush starts it.
+        if (await AnswerMetClosedConnectionAsync(context).ConfigureAwait(false))
+        {
+            result = ErrorCodes.ToWireName(ErrorCode.NetworkError);
+        }
+
         WriteAdminAction(action, target, result);
+    }
+
+    private static async ValueTask<bool> AnswerMetClosedConnectionAsync(HttpContext context)
+    {
+        try
+        {
+            return (await context.Response.BodyWriter.FlushAsync(context.RequestAborted).ConfigureAwait(false)).IsCompleted;
+        }
+        catch (OperationCanceledException)
+        {
+            return true;
+        }
     }
 
     private void WriteAdminAction(string action, string? target, string result)
@@ -92,10 +132,11 @@ internal sealed partial class ElmServer
         return "ELM_OK";
     }
 
-    private async Task<string> ForceReleaseAsync(HttpContext context)
+    // The ID is null when the route's text has another form than a lease ID; it is answered as a lease the server does not
+    // know (design §13.7, V1d4).
+    private async Task<string> ForceReleaseAsync(HttpContext context, string? id)
     {
-        string id = context.Request.RouteValues["id"] as string ?? string.Empty;
-        LeaseInfo? released = Engine.ForceRelease(id);
+        LeaseInfo? released = id is null ? null : Engine.ForceRelease(id);
         if (released is null)
         {
             await ProblemAsync(context, ErrorCode.UnknownLease, "The server does not know the lease.").ConfigureAwait(false);

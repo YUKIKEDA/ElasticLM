@@ -561,7 +561,7 @@ Lends seats of a feature of the server license, or borrows them when the body ha
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
-| `feature` | string | yes | The feature code. The server license must grant it. |
+| `feature` | string | yes | The feature code: 1 to 64 bytes in UTF-8, or the answer is `400` with `ELM_MALFORMED`. The server license must grant it. |
 | `version` | string | no | The version of the feature the app needs, `major.minor[.patch]`, at most 32 characters. It must be in the server license's version range for the feature. |
 | `count` | integer | yes | The seats to take: 1 to the feature's seats in the server license. A number that does not fit 32 bits gets `ELM_MALFORMED`. |
 | `borrow` | integer | no | Makes the lease a borrow for this many seconds: 1 to the server license's borrow limit, or to `borrow.maxDuration` when that is shorter. A value below 0 or above 3,162,240,000 (100 years) gets `ELM_MALFORMED`. |
