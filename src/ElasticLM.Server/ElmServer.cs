@@ -967,15 +967,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
         MapAdmin();
     }
 
-    // The administration API answers only requests that came in on the listener this server bound to admin.sock, and the
-    // lease protocol only on the https one (design §13.7). A request is not taken for an administration request because it
-    // came without TLS: a listener added through configuration has no TLS either. The IP rules and the rate limit come
-    // before any other work of the lease protocol (design §13.8, T16).
+    // No answer before the start has completed, as before listening: a start that stops after this request leaves no record
+    // of it (design §13.1, V1d3a).
     private async Task StartGateAsync(HttpContext context, RequestDelegate next)
     {
         if (!_started)
         {
-            // No answer, as before listening: a start that stops after this request leaves no record of it.
             context.Abort();
             return;
         }
@@ -983,6 +980,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
         await next(context).ConfigureAwait(false);
     }
 
+    // The administration API answers only requests that came in on the listener this server bound to admin.sock, and the
+    // lease protocol only on the https one (design §13.7). A request is not taken for an administration request because it
+    // came without TLS: a listener added through configuration has no TLS either. The IP rules and the rate limit come
+    // before any other work of the lease protocol (design §13.8, T16).
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         // Routing matches a path without regard to case, so the guard does too: "/Admin/v1/status" is an administration
