@@ -401,20 +401,19 @@ public sealed class ElmCommandsTests : IAsyncDisposable
 
     /// <summary>
     /// elm log verify reports a line that is JSON but not an object, and a line whose type is not text, as an error with
-    /// exit code 1, not as an unhandled exception; in a folder it does not read a file whose name has no real date and time
-    /// (design §16, §18.1).
+    /// exit code 1, not as an unhandled exception (design §16, §18.1).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A server that ran and stopped; an empty file usage-20261301T000000000Z.jsonl (month 13) in its data folder.
+    /// - A server that ran and stopped.
     ///
     /// Steps:
-    /// - Verify the data folder. Append [] to the usage log file and verify; replace that line with an object whose type is
-    ///   a lone surrogate escape and verify.
+    /// - Append [] to the usage log file and verify the data folder; replace that line with an object whose type is a lone
+    ///   surrogate escape and verify.
     ///
     /// Expected:
-    /// - Exit 0 and "intact: 1 file(s)". Then exit 1 each time, with the line "error: {file}:{line}: The line is not a JSON
-    ///   object." or "… The line holds a string that is not valid Unicode.", and "NOT INTACT".
+    /// - Exit 1 each time, with the line "error: {file}:{line}: The line is not a JSON object." or "… The line holds a
+    ///   string that is not valid Unicode.", and "NOT INTACT".
     /// </remarks>
     [Fact]
     public async Task LogVerify_LinesThatAreNotObjectsOrNotText_AreErrors()
@@ -422,12 +421,6 @@ public sealed class ElmCommandsTests : IAsyncDisposable
         ElmServer server = await _deployment.StartServerAsync();
         await server.DisposeAsync();
         string data = server.DataDirectory;
-        File.WriteAllBytes(Path.Combine(data, "usage-20261301T000000000Z.jsonl"), []);
-
-        (int code, string output, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
-        Assert.Equal(0, code);
-        Assert.StartsWith("intact: 1 file(s)", output.Trim(), StringComparison.Ordinal);
-
         string usage = SignedLog.FindFiles(data, "usage").Single();
         string written = File.ReadAllText(usage);
         int line = written.Count(c => c == '\n') + 1;
@@ -444,6 +437,63 @@ public sealed class ElmCommandsTests : IAsyncDisposable
             Assert.Contains($"error: {Path.GetFileName(usage)}:{line}: {message}", brokenOutput, StringComparison.Ordinal);
             Assert.Contains("NOT INTACT", brokenOutput, StringComparison.Ordinal);
         }
+    }
+
+    /// <summary>
+    /// elm log verify on a folder names, in a warning, each file whose name has the form of a log file's name but no real
+    /// date and time, which it does not verify: a log file renamed to such a name does not vanish from the result without a
+    /// trace. A folder without such a file gets no such warning (design §16, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran over three UTC days and stopped (three usage log files).
+    ///
+    /// Steps:
+    /// - Verify the data folder. Rename the third file to usage-20261301T000000000Z.jsonl (month 13); start the server again
+    ///   and stop it, so that its new file links to the second file. Verify the folder as text and with --json.
+    ///
+    /// Expected:
+    /// - First exit 0, "intact: 3 file(s)", and no warning that names a date and time. After the rename exit 0, the line
+    ///   "warning: usage-20261301T000000000Z.jsonl:0: The file's name has the form of a log file's name but no real date and
+    ///   time; the file was not verified.", and "intact: 3 file(s)"; the JSON report is intact and holds the same issue.
+    /// </remarks>
+    [Fact]
+    public async Task LogVerify_FolderWithAFileNamedWithoutARealTime_WarnsAndNamesIt()
+    {
+        const string Renamed = "usage-20261301T000000000Z.jsonl";
+        const string Message = "The file's name has the form of a log file's name but no real date and time; the file was not verified.";
+        ElmServer server = await _deployment.StartServerAsync();
+        string data = server.DataDirectory;
+        for (int files = 2; files <= 3; files++)
+        {
+            _deployment.Time.Advance(TimeSpan.FromDays(1));
+            int expected = files;
+            await Deployment.WaitUntilAsync(() => SignedLog.FindFiles(data, "usage").Count == expected);
+        }
+
+        await server.DisposeAsync();
+        (int code, string output, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
+        Assert.Equal(0, code);
+        Assert.Contains("intact: 3 file(s)", output, StringComparison.Ordinal);
+        Assert.DoesNotContain("no real date and time", output, StringComparison.Ordinal);
+
+        File.Move(SignedLog.FindFiles(data, "usage")[2], Path.Combine(data, Renamed));
+        _deployment.Time.Advance(TimeSpan.FromMinutes(1));
+        await (await _deployment.StartServerAsync(data)).DisposeAsync();
+
+        (int after, string afterOutput, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
+        Assert.Equal(0, after);
+        Assert.Contains($"warning: {Renamed}:0: {Message}", afterOutput, StringComparison.Ordinal);
+        Assert.Contains("intact: 3 file(s)", afterOutput, StringComparison.Ordinal);
+        using JsonDocument json = JsonDocument.Parse(Run(["log", "verify", data, "--product", "acme-cad", "--json"]).Out);
+        Assert.True(json.RootElement.GetProperty("intact").GetBoolean());
+        Assert.Contains(
+            json.RootElement.GetProperty("issues").EnumerateArray(),
+            i =>
+                i.GetProperty("file").GetString() == Renamed
+                && i.GetProperty("severity").GetString() == "warning"
+                && i.GetProperty("message").GetString() == Message
+        );
     }
 
     // Each of the thirteen elm server commands, with a data folder and the other options it needs; the commands that write

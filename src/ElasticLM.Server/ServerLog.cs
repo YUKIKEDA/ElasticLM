@@ -63,6 +63,9 @@ internal static partial class ServerLog
     )]
     public static partial void NotALogFile(ILogger log, string file, string kind);
 
+    [LoggerMessage(EventId = 34, Level = LogLevel.Error, Message = "The borrow record cannot be written; the borrow or the early return is refused.")]
+    public static partial void BorrowRecordFailed(ILogger log, Exception exception);
+
     [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
     public static partial void AdminAction(ILogger log, string action, string? target, string result);
 

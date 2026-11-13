@@ -1017,8 +1017,9 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// A recorded borrow whose token's payload is not an object, or holds a lone surrogate escape as its lease ID, is kept
-    /// with no expiry, signed or not, and reading the record does not throw; the engine skips such a token (design §13.4).
+    /// A recorded borrow whose token's payload is not an object, or holds a lone surrogate escape as its lease ID, is read
+    /// without an exception, signed or not, as a token with the expiry 0: the server starts, does not restore it, counts no
+    /// seat for it, and does not carry it forward into the new record file (design §13.4).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -1026,13 +1027,14 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///   is a lone surrogate escape; after the last signature, a borrow line whose token's payload is [].
     ///
     /// Steps:
-    /// - Load the record.
+    /// - Load the record. Start the server; read its seats in use and its new record file.
     ///
     /// Expected:
-    /// - Three borrows with those tokens, and no return.
+    /// - The load reads three borrows with those tokens and no return. The server starts with no borrowed seat and no seat
+    ///   in use, and its new record file holds no borrow.started line.
     /// </remarks>
     [Fact]
-    public async Task BorrowRecord_TokenPayloadOfAnotherShape_IsKept()
+    public async Task BorrowRecord_TokenPayloadOfAnotherShape_IsNotRestored()
     {
         string serverData = _deployment.NewFolder();
         await (await StartOpenServerAsync(serverData)).DisposeAsync();
@@ -1058,10 +1060,18 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         string file = SignedLog.FindFiles(serverData, "borrows")[^1];
         File.AppendAllText(file, $"{{\"type\":\"borrow.started\",\"ts\":1,\"lease\":\"{array}\",\"lic\":\"l\",\"seats\":1,\"borrow\":1}}\n");
 
-        using ServerIdentity server = ServerIdentityOf(serverData);
-        using BorrowJournal journal = BorrowJournal.Load(serverData, _deployment.Trust, server, setAsideBroken: false, _deployment.Time);
-        Assert.Equal([array, lone, array], journal.Borrows.Select(b => b.Token));
-        Assert.Empty(journal.Returns);
+        using (ServerIdentity server = ServerIdentityOf(serverData))
+        using (BorrowJournal journal = BorrowJournal.Load(serverData, _deployment.Trust, server, setAsideBroken: false, _deployment.Time))
+        {
+            Assert.Equal([array, lone, array], journal.Borrows.Select(b => b.Token));
+            Assert.Empty(journal.Returns);
+        }
+
+        ElmServer started = await _deployment.StartServerAsync(serverData);
+        Assert.Equal((0, 0), (Assert.Single(started.Engine.Usage()).Borrowed, started.Engine.SeatsInUse("pro")));
+        string newest = SignedLog.FindFiles(serverData, "borrows")[^1];
+        Assert.NotEqual(file, newest);
+        Assert.DoesNotContain("borrow.started", ReadShared(newest), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -1105,6 +1115,101 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
     // A token of three parts whose payload is the given JSON text; it is not signed, and the record's reader does not verify.
     private static string Token(string payloadJson) => $"a.{System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payloadJson))}.c";
+
+    /// <summary>
+    /// A running server that reaches a new UTC day beside newest files with the last name a file can have cannot start its
+    /// new files: lease requests go on and the operational log has the error of the usage log; a borrow and an early return
+    /// are refused, and the operational log has the error of the borrow record with its cause (design §13.4, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server past its reclaim window, with one borrow of two days; then files
+    ///   usage-99991231T235959999Z.jsonl and borrows-99991231T235959999Z.jsonl put into its data folder.
+    ///
+    /// Steps:
+    /// - Move the clock one day (the 60-second timer then tries to start the files of the new day). Borrow again; return
+    ///   the first borrow early; acquire a lease. Read the operational log.
+    ///
+    /// Expected:
+    /// - The second borrow fails with ELM_INTERNAL_ERROR and the early return with ELM_RETURN_NOT_ALLOWED; one seat stays
+    ///   borrowed. The lease is acquired. The operational log has the errors "The usage log cannot be written." and "The
+    ///   borrow record cannot be written; the borrow or the early return is refused."
+    /// </remarks>
+    [Fact]
+    public async Task NewDay_BesideFilesWithTheLastName_RequestsGoOnAndBorrowsAreRefused()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        _deployment.Time.Advance(Window);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        Lease borrowed = Acquired(await client.BorrowLeaseAsync("pro", TimeSpan.FromDays(2), cancellationToken: cancel));
+        File.WriteAllText(Path.Combine(serverData, "usage-99991231T235959999Z.jsonl"), "{}\n");
+        File.WriteAllText(Path.Combine(serverData, "borrows-99991231T235959999Z.jsonl"), "{}\n");
+
+        _deployment.Time.Advance(Day);
+        await Deployment.WaitUntilAsync(() => log.Entries.Any(e => e.Message == "The usage log cannot be written."));
+
+        var second = Assert.IsType<LeaseResult.Failed>(await client.BorrowLeaseAsync("pro", Day, cancellationToken: cancel));
+        Assert.Equal(ErrorCode.InternalError, second.Error.Code);
+        Assert.Equal(ErrorCode.ReturnNotAllowed, (await client.ReleaseLeaseAsync(borrowed, cancel))?.Code);
+        Assert.Equal(1, Assert.Single(server.Engine.Usage()).Borrowed);
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Error && e.Message == "The usage log cannot be written.");
+        Assert.Contains(
+            log.Entries,
+            e => e.Level == LogLevel.Error && e.Message == "The borrow record cannot be written; the borrow or the early return is refused."
+        );
+    }
+
+    /// <summary>
+    /// When the previous usage log file cannot be read at the start, the server starts with chain.reset, and the reason in
+    /// the file and in the operational log's warning names the file without its folder (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped; its usage log file held open by the test for itself alone.
+    ///
+    /// Steps:
+    /// - Start the server; read the warnings and the first line of the new usage log file.
+    ///
+    /// Expected:
+    /// - The warning "The usage log could not continue its chain: the previous file {name} cannot be read". The first line is
+    ///   chain.reset with that reason, and does not hold the name of the test's folder.
+    /// </remarks>
+    [Fact]
+    public async Task Start_PreviousUsageLogCannotBeRead_ResetsWithTheFileNameOnly()
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string previous = SignedLog.FindFiles(serverData, "usage")[^1];
+        string reason = $"the previous file {Path.GetFileName(previous)} cannot be read";
+
+        using var log = new RecordingLoggerProvider();
+        ElmServer started;
+        using (new FileStream(previous, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            started = await StartLoggedAsync(serverData, log);
+        }
+
+        await using ElmServer server = started;
+        Assert.Contains(log.Entries, e => e.Level == LogLevel.Warning && e.Message == "The usage log could not continue its chain: " + reason);
+        string first = FirstLine(SignedLog.FindFiles(serverData, "usage")[^1]);
+        Assert.StartsWith("{\"type\":\"chain.reset\"", first, StringComparison.Ordinal);
+        Assert.Contains($"\"reason\":\"{reason}\"", first, StringComparison.Ordinal);
+        Assert.DoesNotContain(Path.GetFileName(_deployment.Directory), first, StringComparison.Ordinal);
+    }
+
+    // The text of a log file that a running server may hold open.
+    private static string ReadShared(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        return reader.ReadToEnd();
+    }
 
     // The first line of a log file that a running server may hold open.
     private static string FirstLine(string path)

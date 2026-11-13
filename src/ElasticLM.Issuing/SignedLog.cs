@@ -65,6 +65,7 @@ public sealed partial class SignedLog : IDisposable
     private FileStream? _file;
     private string _fileName = string.Empty;
     private DateOnly _fileDay;
+    private DateOnly _reportedDay;
     private IncrementalHash _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
     private int _pending;
     private long _n;
@@ -126,8 +127,9 @@ public sealed partial class SignedLog : IDisposable
     /// records forward into it.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason instead of
     /// continuing the newest file (for a record the operator set aside).</param>
-    /// <param name="notALogFile">Called before each new file, under the log's lock, with the name of each file in the folder
-    /// whose name has the form of the log's file names but no real date and time; such a file is not a file of the log.</param>
+    /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
+    /// name of each file in the folder whose name has the form of the log's file names but no real date and time; such a
+    /// file is not a file of the log.</param>
     /// <returns>The open log.</returns>
     /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
     /// file can have (<c>99991231T235959999Z</c>).</exception>
@@ -171,8 +173,8 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
     /// <param name="fileStarted">Called after the first line of each new file, under the log's lock.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason.</param>
-    /// <param name="notALogFile">Called before each new file, under the log's lock, with the name of each file in the folder
-    /// whose name has the form of the log's file names but no real date and time.</param>
+    /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
+    /// name of each file in the folder whose name has the form of the log's file names but no real date and time.</param>
     /// <returns>The open log.</returns>
     /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
     /// file can have.</exception>
@@ -200,10 +202,35 @@ public sealed partial class SignedLog : IDisposable
         var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, fileStarted, notALogFile);
         lock (log._lock)
         {
-            log.StartFile(previous: null, continueChain: true, resetReason);
+            try
+            {
+                log.StartFile(previous: null, continueChain: true, resetReason);
+            }
+            catch
+            {
+                // The log is not returned, so nothing else would release its file and its hash.
+                log._file?.Dispose();
+                log._digest.Dispose();
+                throw;
+            }
         }
 
         return log;
+    }
+
+    /// <summary>
+    /// Returns the files of a log in the folder, oldest first, and the names of the files that are not files of the log
+    /// although their names have the form of a log file's name: their digits are no real date and time.
+    /// </summary>
+    /// <param name="directory">The folder.</param>
+    /// <param name="baseName">The file name prefix.</param>
+    /// <param name="notLogFiles">The file names that have the form but no real date and time, in name order.</param>
+    /// <returns>The full paths.</returns>
+    public static IReadOnlyList<string> FindFiles(string directory, string baseName, out IReadOnlyList<string> notLogFiles)
+    {
+        (List<(string Path, DateTimeOffset Time)> files, List<string> others) = Scan(directory, baseName);
+        notLogFiles = others;
+        return [.. files.Select(f => f.Path)];
     }
 
     /// <summary>
@@ -213,7 +240,7 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="directory">The folder.</param>
     /// <param name="baseName">The file name prefix.</param>
     /// <returns>The full paths.</returns>
-    public static IReadOnlyList<string> FindFiles(string directory, string baseName) => [.. Scan(directory, baseName).Files.Select(f => f.Path)];
+    public static IReadOnlyList<string> FindFiles(string directory, string baseName) => FindFiles(directory, baseName, out _);
 
     /// <summary>
     /// Appends an event line <c>{"type": ..., "ts": ..., ...}</c> and signs when <c>sealEvery</c> lines are pending. A new UTC
@@ -530,13 +557,19 @@ public sealed partial class SignedLog : IDisposable
     {
         DateTimeOffset now = _time.GetUtcNow();
         (List<(string Path, DateTimeOffset Time)> existing, List<string> notLogFiles) = Scan(_directory, _baseName);
-        if (_notALogFile is not null)
+
+        // Reported at a start and once in a UTC day: a write that fails comes here again at each later write, and would
+        // repeat the report with every request.
+        var today = DateOnly.FromDateTime(now.UtcDateTime);
+        if (_notALogFile is not null && (continueChain || today != _reportedDay))
         {
             foreach (string name in notLogFiles)
             {
                 _notALogFile(name);
             }
         }
+
+        _reportedDay = today;
 
         // At a start the chain continues from the newest file of the folder.
         if (continueChain && existing.Count > 0)

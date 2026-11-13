@@ -33,6 +33,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     private readonly List<(BorrowRecord Record, string LeaseId, long Expires)> _borrows = [];
     private readonly List<BorrowReturn> _returns = [];
     private SignedLog? _log;
+    private ILogger? _operational;
 
     private BorrowJournal(string directory, TimeProvider time)
     {
@@ -119,13 +120,15 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
 
     /// <summary>
     /// Opens the record for writing: a new file that carries forward what is still needed. A file with the name of a record
-    /// file but no real date and time is reported in the operational log, at this start and before each later file.
+    /// file but no real date and time is reported in the operational log, at this start and at each new UTC day. A borrow or
+    /// a return that cannot be written is reported there too, with its cause, before the engine refuses it.
     /// </summary>
     public void Open(SigningKeyAccess key, byte[] licenseFile, byte[] keyJwk, ILogger operational)
     {
         string? reset = SetAside is null ? null : $"the broken record {Path.GetFileName(SetAside)} was set aside by the operator";
         lock (_lock)
         {
+            _operational = operational;
             _log = SignedLog.Open(
                 _directory,
                 BaseName,
@@ -148,7 +151,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         (string leaseId, long expires) = ReadToken(borrow.Token);
         lock (_lock)
         {
-            WriteBorrow(_log!, borrow);
+            Recorded(() => WriteBorrow(_log!, borrow));
             _borrows.Add((borrow, leaseId, expires));
         }
     }
@@ -158,9 +161,28 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         ArgumentNullException.ThrowIfNull(returned);
         lock (_lock)
         {
-            WriteReturn(_log!, returned);
+            Recorded(() => WriteReturn(_log!, returned));
             _borrows.RemoveAll(b => b.LeaseId == returned.LeaseId);
             _returns.Add(returned);
+        }
+    }
+
+    // Writes a borrow or a return. The engine refuses the request when the write throws, and the next file's chain.reset
+    // names only the file, so the cause is kept here, in the operational log.
+    private void Recorded(Action write)
+    {
+        try
+        {
+            write();
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            if (_operational is not null)
+            {
+                ServerLog.BorrowRecordFailed(_operational, e);
+            }
+
+            throw;
         }
     }
 
@@ -215,7 +237,8 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             }
             catch (Exception e) when (e is JsonException or InvalidOperationException)
             {
-                // Not a token: kept with no expiry, and the engine skips it.
+                // Not a token: read with the expiry 0. The engine does not restore it, and the next file does not carry it
+                // forward (CarryForward drops what has expired).
             }
         }
 

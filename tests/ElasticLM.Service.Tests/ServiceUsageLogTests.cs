@@ -882,6 +882,44 @@ public sealed class ServiceUsageLogTests
         );
     }
 
+    /// <summary>
+    /// A running service that reaches a new UTC day beside a newest file with the last name a file can have cannot start
+    /// its new file: the operational log has the error of the usage log, and lease requests go on (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Node n1 running with its usage log; then a file usage-n1-99991231T235959999Z.jsonl put into the usage folder.
+    ///
+    /// Steps:
+    /// - Move the clock in steps of six hours until the operational log has the usage log's error (the 60-second timer
+    ///   tries to start the file of the new day). Make a cloud-floating policy and a license; acquire a lease.
+    ///
+    /// Expected:
+    /// - The error "The usage log cannot be written; the request goes on."; the lease is granted with 201.
+    /// </remarks>
+    [Fact]
+    public async Task NewDay_BesideAFileWithTheLastName_RequestsGoOn()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await test.StartAsync(_ => Logged(test, "n1"), log);
+        HttpClient admin = test.Http(service, owner);
+        File.WriteAllText(Path.Combine(test.FilePath("usage"), "usage-n1-99991231T235959999Z.jsonl"), "{}\n");
+
+        await test.WaitWithClockAsync(
+            () =>
+                Task.FromResult(
+                    log.Entries.Any(e => e.Level == LogLevel.Error && e.Message == "The usage log cannot be written; the request goes on.")
+                ),
+            TimeSpan.FromHours(6)
+        );
+
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+        Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key)).Status);
+    }
+
     // A node writing its usage log in the test's "usage" folder, with a certificate that allows log.
     private static ServiceSettings Logged(TestService test, string node)
     {

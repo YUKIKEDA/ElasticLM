@@ -11,6 +11,8 @@ namespace ElasticLM.Cli;
 /// </summary>
 internal static class LogCommands
 {
+    private const string NotVerified = "The file's name has the form of a log file's name but no real date and time; the file was not verified.";
+
     public static Command Create(CliHost host)
     {
         var filesArgument = new Argument<string[]>("files")
@@ -68,8 +70,16 @@ internal static class LogCommands
                         throw new CliException("--node chooses a node's files in a folder; give folders, or files without --node.");
                     }
 
-                    string[] files = ExpandFiles(paths, node is null ? stream : $"{stream}-{node}");
+                    string[] files = ExpandFiles(paths, node is null ? stream : $"{stream}-{node}", out IReadOnlyList<string> notLogFiles);
                     LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream, node);
+
+                    // design §18.1: a file of a folder whose name has no real date and time is not verified. It is named in a
+                    // warning, so that a log file renamed to such a name does not leave the result without a trace.
+                    LogIssue[] issues =
+                    [
+                        .. notLogFiles.Select(name => new LogIssue(name, 0, LogIssueSeverity.Warning, NotVerified)),
+                        .. report.Issues,
+                    ];
                     if (parse.GetValue(jsonOption))
                     {
                         var output = new LogVerifyOutput(
@@ -77,7 +87,7 @@ internal static class LogCommands
                             files.Length,
                             report.Entries.Count,
                             [
-                                .. report.Issues.Select(i => new LogIssueOutput(
+                                .. issues.Select(i => new LogIssueOutput(
                                     i.File,
                                     i.Line,
                                     i.Severity == LogIssueSeverity.Error ? "error" : "warning",
@@ -89,7 +99,7 @@ internal static class LogCommands
                     }
                     else
                     {
-                        foreach (LogIssue issue in report.Issues)
+                        foreach (LogIssue issue in issues)
                         {
                             string severity = issue.Severity == LogIssueSeverity.Error ? "error" : "warning";
                             host.Out.WriteLine($"{severity}: {issue.File}:{issue.Line}: {issue.Message}");
@@ -114,14 +124,17 @@ internal static class LogCommands
 
     // A folder stands for the files of the stream (or of one node's usage log) in it; files are taken in name order, which
     // is time order.
-    private static string[] ExpandFiles(string[] paths, string stream)
+    private static string[] ExpandFiles(string[] paths, string stream, out IReadOnlyList<string> notLogFiles)
     {
         var files = new List<string>();
+        var others = new List<string>();
+        notLogFiles = others;
         foreach (string path in paths)
         {
             if (Directory.Exists(path))
             {
-                files.AddRange(SignedLog.FindFiles(path, stream));
+                files.AddRange(SignedLog.FindFiles(path, stream, out IReadOnlyList<string> named));
+                others.AddRange(named);
             }
             else if (File.Exists(path))
             {

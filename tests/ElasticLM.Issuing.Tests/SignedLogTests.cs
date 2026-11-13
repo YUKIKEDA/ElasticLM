@@ -1538,6 +1538,58 @@ public sealed class SignedLogTests : IDisposable
         Assert.Equal((5, LogIssueSeverity.Error, "The signature's payload is not valid."), (issue.Line, issue.Severity, issue.Message));
     }
 
+    /// <summary>
+    /// A file whose name has no real date and time is reported at the start and once in a UTC day, not at each write that
+    /// tries again after a failed write: the report would otherwise repeat with every request while the disk is full.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with an empty file usage-20261301T000000000Z.jsonl; a log signed every line, opened with a callback for
+    ///   such names, whose key can be made to fail with an IOException.
+    ///
+    /// Steps:
+    /// - Make the key fail and append three times (the second and the third start a new file, which fails too). Move the
+    ///   clock one day, let the key work, and append.
+    ///
+    /// Expected:
+    /// - Each of the three appends throws IOException, and the name stays reported once, from the start. After the new day
+    ///   it is reported a second time.
+    /// </remarks>
+    [Fact]
+    public void Append_AgainAfterAFailedWrite_DoesNotReportTheNameAgain()
+    {
+        File.WriteAllBytes(Path.Combine(_dir, "usage-20261301T000000000Z.jsonl"), []);
+        var reported = new List<string>();
+        bool fail = false;
+        string Access(Func<ECDsa, string> use) => fail ? throw new IOException("The disk is full.") : use(_server);
+        using SignedLog log = SignedLog.Open(
+            _dir,
+            "usage",
+            "usage",
+            Access,
+            LicenseFile(_server),
+            KeyFiles.ExportPublicJwk(_server),
+            _time,
+            sealEvery: 1,
+            notALogFile: reported.Add
+        );
+        Assert.Single(reported);
+
+        fail = true;
+        for (int attempt = 0; attempt < 3; attempt++)
+        {
+            _time.Advance(TimeSpan.FromSeconds(1));
+            Assert.Throws<IOException>(() => Append(log, 1));
+        }
+
+        Assert.Single(reported);
+
+        fail = false;
+        _time.Advance(TimeSpan.FromDays(1));
+        Append(log, 1);
+        Assert.Equal(["usage-20261301T000000000Z.jsonl", "usage-20261301T000000000Z.jsonl"], reported);
+    }
+
     // Appends bytes and a line feed to a file.
     private static void AppendLine(string path, byte[] line)
     {
