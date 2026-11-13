@@ -69,6 +69,8 @@ public static class LogVerifier
     /// <summary>The longest line read; a longer line is an error.</summary>
     public const int MaxLineLength = 1024 * 1024;
 
+    private const string UnreadableText = "The line holds a string that is not valid Unicode.";
+
     /// <summary>
     /// Verifies log files given oldest first.
     /// </summary>
@@ -156,16 +158,31 @@ public static class LogVerifier
                 {
                     using var document = JsonDocument.Parse(bytes, new JsonDocumentOptions { MaxDepth = 32 });
                     value = document.RootElement.Clone();
-                    type =
-                        value.ValueKind == JsonValueKind.Object
-                        && value.TryGetProperty("type", out JsonElement t)
-                        && t.ValueKind == JsonValueKind.String
-                            ? t.GetString()!
-                            : string.Empty;
+                    if (value.ValueKind != JsonValueKind.Object)
+                    {
+                        Issue(number, LogIssueSeverity.Error, "The line is not a JSON object.");
+                        return;
+                    }
+
+                    type = value.TryGetProperty("type", out JsonElement t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : string.Empty;
                 }
                 catch (JsonException)
                 {
                     Issue(number, LogIssueSeverity.Error, "The line is not a JSON object.");
+                    return;
+                }
+                catch (InvalidOperationException)
+                {
+                    // The type, or a member name passed on the way to it, is a lone surrogate escape or not UTF-8.
+                    Issue(number, LogIssueSeverity.Error, UnreadableText);
+                    return;
+                }
+
+                // The lines this verifier reads further (the chain line, a signature, a key change) hold no text it cannot
+                // read; an event line's other members are its reader's to check.
+                if ((index == 0 || type == LogLineTypes.Auth || type == LogLineTypes.KeyChanged) && !IsReadableText(value))
+                {
+                    Issue(number, LogIssueSeverity.Error, UnreadableText);
                     return;
                 }
 
@@ -561,6 +578,41 @@ public static class LogVerifier
         state.N = payload!.N;
         state.Prev = SignedLog.Hash(bytes);
         return true;
+    }
+
+    // Whether every member name and every string of a value can be read as text. JsonElement throws
+    // InvalidOperationException from GetString and from a property's Name on a lone surrogate escape ("\ud800") and on bytes
+    // that are not UTF-8 (measured on .NET 10.0.15, Windows); the depth is bounded by the parse (32).
+    private static bool IsReadableText(JsonElement value)
+    {
+        try
+        {
+            switch (value.ValueKind)
+            {
+                case JsonValueKind.String:
+                    _ = value.GetString();
+                    return true;
+                case JsonValueKind.Array:
+                    return value.EnumerateArray().All(IsReadableText);
+                case JsonValueKind.Object:
+                    foreach (JsonProperty member in value.EnumerateObject())
+                    {
+                        _ = member.Name;
+                        if (!IsReadableText(member.Value))
+                        {
+                            return false;
+                        }
+                    }
+
+                    return true;
+                default:
+                    return true;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
+        }
     }
 
     // Splits a file into lines, each with its line feed. A last line without one is reported as partial and left out.

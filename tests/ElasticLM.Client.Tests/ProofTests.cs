@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Client.Tests;
@@ -21,6 +22,9 @@ public sealed class ProofTests : IDisposable
     private readonly NonceService _nonces;
     private readonly MemoryReplayStore _replays;
     private readonly ProofVerifier _verifier;
+
+    /// <summary>Gets each way the verifier gets a proof's key with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> KeySourcesAndSignatureForms => SignatureForms.Cross("embedded", "known", "cached");
 
     public ProofTests()
     {
@@ -242,6 +246,51 @@ public sealed class ProofTests : IDisposable
         }
 
         Directory.Delete(otherDir, recursive: true);
+    }
+
+    /// <summary>
+    /// A proof that carries no valid signature is refused whichever way the verifier gets the key (from the proof, from the
+    /// caller, or from its own cache): with an empty signature part, with a signature that is not 64 bytes or not the
+    /// key's, and with an alg other than ES256 (design §8.2 rules 3 and 5, §12.2, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid proof: with its key embedded; without it, for a verifier whose caller knows the key; without it, for a
+    ///   verifier that has verified an earlier proof of the key.
+    /// - A copy of it in a form of <see cref="SignatureForms"/> with the same payload: an empty signature part; the first 63
+    ///   bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg none and an empty signature part;
+    ///   alg HS256 and an ES256 signature of the installation key over the changed header.
+    ///
+    /// Steps:
+    /// - Verify the copy, then the proof itself.
+    ///
+    /// Expected:
+    /// - ELM_PROOF_INVALID: "The request proof signature does not verify." for the four signatures, "The request proof is
+    ///   missing or not a valid elm-proof+jws." for the two algs. Then Valid, so the copy recorded nothing.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(KeySourcesAndSignatureForms))]
+    public void Verify_ProofWithoutAValidSignature_IsRefused(string keyFrom, string form)
+    {
+        ECParameters key = _key.PublicParameters();
+        Func<string, ECParameters?>? lookup = keyFrom == "known" ? kid => kid == _key.Thumbprint ? key : null : null;
+        if (keyFrom == "cached")
+        {
+            string earlier = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time);
+            Assert.IsType<ProofResult.Valid>(_verifier.Verify(earlier, "POST", Target, Body));
+        }
+
+        string proof = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: keyFrom == "embedded", _time);
+
+        var invalid = Assert.IsType<ProofResult.Invalid>(
+            _verifier.Verify(SignatureForms.Change(proof, form, _key.Sign), "POST", Target, Body, lookup)
+        );
+
+        string message = SignatureForms.ChangesAlgorithm(form)
+            ? "The request proof is missing or not a valid elm-proof+jws."
+            : "The request proof signature does not verify.";
+        Assert.Equal((ErrorCode.ProofInvalid, message), (invalid.Error.Code, invalid.Error.Message));
+        Assert.IsType<ProofResult.Valid>(_verifier.Verify(proof, "POST", Target, Body, lookup));
     }
 
     /// <summary>

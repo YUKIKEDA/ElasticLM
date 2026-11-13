@@ -23,6 +23,8 @@ A review the owner asks for is posted on the pull request, in the same turn, wit
 
 When several reviewers each take one part of a scope, build the coverage table from what each report says it did not read, before the findings are verified. A part nobody read gets a reviewer of its own. In V1d the reviewer of the on-premises server did not read `LogVerifier.cs`, so the threat of a changed usage log (T15) was only partly covered; the table of threats against reviewers showed it, and one more reviewer read the log code (PR #334).
 
+The independent reviewer of a workflow, or of code that reads untrusted input, is told to read it as an attacker: to look for the gaps around a new check, not only for a way through it. In PR #388 such a review found no way through the new check and a gap beside it: `image-test` unpacks an artifact it has not verified over the checkout. In PR #391 it found that a log file whose name was changed drops out of the verification without a word.
+
 Before a subagent's report is posted where others can read it, search it for the local account name, network addresses, and the shapes of keys and tokens. A report quotes paths and command output of the machine it ran on. In V1d thirteen reports went to a public Issue after such a search, which found nothing (PR #334).
 
 Before calling a PR ready, and whenever the owner asks for the next step, read the reviews and inline comments of every open PR (`gh pr view <n> --json reviews,comments` and `gh api repos/{owner}/{repo}/pulls/<n>/comments`).

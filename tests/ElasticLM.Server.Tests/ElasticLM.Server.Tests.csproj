@@ -22,5 +22,7 @@
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\SettingsReference.cs" Link="SettingsReference.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\EndpointRoutes.cs" Link="EndpointRoutes.cs" />
+    <!-- design §20.7, V1d14: the forms of a token without a signature, shared by the tests of every verifier. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\SignatureForms.cs" Link="SignatureForms.cs" />
   </ItemGroup>
 </Project>
