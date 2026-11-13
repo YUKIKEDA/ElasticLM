@@ -782,6 +782,85 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.IsType<LeaseResult.Acquired>(await telling.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
 
+    /// <summary>
+    /// The release of the lease an acquisition issued, named by the jti of the acquisition's proof, follows the order of the
+    /// release checks: the form of the jti before anything, then the proof, which carries the key, then the lease of that key
+    /// and request; a stopped clone is refused (design §12.7.7, V1d5b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its reclaim window; key 1 holds a lease of pro from an acquisition whose proof's jti is J (the token's
+    ///   areq); key 2 is another installation.
+    ///
+    /// Steps:
+    /// - DELETE /v1/leases/requests/ with 65 characters and no proof; with J and no proof; with J and a proof of key 2 that
+    ///   carries its key; with J and a proof of key 1 that carries its key.
+    /// - Acquire again with key 1 (jti K); stop that lease as a clone at the server; DELETE /v1/leases/requests/K with a proof
+    ///   of key 1.
+    ///
+    /// Expected:
+    /// - 204 with an ELM-Nonce header, and the lease still held; 401 ELM_PROOF_INVALID; 204 with the lease still held; 204
+    ///   with no lease left.
+    /// - 409 ELM_CLONE_DETECTED, and the stopped lease still held.
+    /// </remarks>
+    [Fact]
+    public async Task ReleaseRequest_OverHttp_FollowsTheReleaseChecks()
+    {
+        await using Raw raw = await Raw.StartAsync(_deployment);
+        await using Raw other = await Raw.StartAsync(_deployment, raw.Server);
+        string jti = AnsweredProofId(await raw.AcquireTokenAsync());
+
+        using (HttpResponseMessage malformed = await raw.SendAsync(HttpMethod.Delete, "v1/leases/requests/" + new string('a', 65), [], null))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, malformed.StatusCode);
+            Assert.True(malformed.Headers.Contains("ELM-Nonce"));
+        }
+
+        string path = "v1/leases/requests/" + jti;
+        using (HttpResponseMessage unsigned = await raw.SendAsync(HttpMethod.Delete, path, [], null))
+        {
+            Assert.Equal(HttpStatusCode.Unauthorized, unsigned.StatusCode);
+            await Raw.AssertCodeAsync(unsigned, "ELM_PROOF_INVALID");
+        }
+
+        using (HttpResponseMessage otherKey = await other.SignedAsync(HttpMethod.Delete, path, [], includeKey: true))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, otherKey.StatusCode);
+        }
+
+        Assert.Equal(1, raw.Server.Engine.LeaseCount);
+        using (HttpResponseMessage released = await raw.SignedAsync(HttpMethod.Delete, path, [], includeKey: true))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, released.StatusCode);
+        }
+
+        Assert.Equal(0, raw.Server.Engine.LeaseCount);
+
+        string token = await raw.AcquireTokenAsync();
+        using (JsonDocument payload = JsonDocument.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(token.Split('.')[1])))
+        {
+            string leaseId = payload.RootElement.GetProperty("lse").GetString()!;
+            Assert.IsType<Leasing.LeaseOutcome.Refused>(raw.Server.Engine.Renew(leaseId, 5, raw.KeyId, "another-copy", []));
+        }
+
+        using HttpResponseMessage stopped = await raw.SignedAsync(
+            HttpMethod.Delete,
+            "v1/leases/requests/" + AnsweredProofId(token),
+            [],
+            includeKey: true
+        );
+        Assert.Equal(HttpStatusCode.Conflict, stopped.StatusCode);
+        await Raw.AssertCodeAsync(stopped, "ELM_CLONE_DETECTED");
+        Assert.Equal(1, raw.Server.Engine.LeaseCount);
+    }
+
+    // The areq of a lease token: the jti of the proof of the request it answers (design §8.4.3).
+    private static string AnsweredProofId(string token)
+    {
+        using JsonDocument payload = JsonDocument.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(token.Split('.')[1]));
+        return payload.RootElement.GetProperty("areq").GetString()!;
+    }
+
     private static ServerSettings Change(ServerSettings settings, int? perIp = null, AccessRules? access = null) =>
         new()
         {
@@ -812,6 +891,8 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         }
 
         public ElmServer Server { get; }
+
+        public string KeyId => _key.Thumbprint;
 
         public static async Task<Raw> StartAsync(Deployment deployment, ElmServer? server = null, string? keyFolder = null)
         {

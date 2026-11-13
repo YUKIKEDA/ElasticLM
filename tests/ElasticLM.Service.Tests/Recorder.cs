@@ -29,7 +29,9 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 /// share it: records each request, can make the renewals fail as if the network were down, can lose the answer of a
 /// renewal the server handled, can rewrite the answer to an acquisition, keeps the successful lease answers, can
 /// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, and
-/// can answer the next renewal with a body over the client's limit.
+/// can answer the next renewal with a body over the client's limit. For the release of an acquisition whose answer was lost
+/// (design §12.7.7), it can lose the answer of the next acquisition, answer it over the limit, hold it until the client
+/// cancels, and make releases by a request's proof ID fail before they are sent.
 /// </summary>
 internal sealed class Recorder
 {
@@ -43,6 +45,12 @@ internal sealed class Recorder
     private KeptAnswer? _acquisitionAnswer;
     private KeptAnswer? _renewalAnswer;
     private volatile string _oversizeRenewal = string.Empty;
+    private volatile bool _loseNextAcquisitionAnswer;
+    private volatile bool _oversizeNextAcquisition;
+    private volatile TaskCompletionSource? _holdNextAcquisition;
+    private int _failRequestReleases;
+    private int _refuseRequestReleases;
+    private HttpStatusCode _refusalStatus;
     private int _replayed;
 
     /// <summary>Gets or sets a value indicating whether renewals throw <see cref="HttpRequestException"/> before they are sent.</summary>
@@ -58,6 +66,52 @@ internal sealed class Recorder
     {
         get => _loseNextRenewalAnswer;
         set => _loseNextRenewalAnswer = value;
+    }
+
+    /// <summary>Gets or sets a value indicating whether the answer of the next acquisition or borrow is thrown away after the
+    /// server handled it, as <see cref="HttpRequestException"/>.</summary>
+    public bool LoseNextAcquisitionAnswer
+    {
+        get => _loseNextAcquisitionAnswer;
+        set => _loseNextAcquisitionAnswer = value;
+    }
+
+    /// <summary>Gets or sets a value indicating whether the answer of the next acquisition or borrow, after the server handled
+    /// it, gets a body of 256 KiB and a byte in place of its own, with its status and headers.</summary>
+    public bool OversizeNextAcquisition
+    {
+        get => _oversizeNextAcquisition;
+        set => _oversizeNextAcquisition = value;
+    }
+
+    /// <summary>Gets or sets the number of the next releases by a request's proof ID (<c>DELETE /v1/leases/requests/…</c>)
+    /// that throw <see cref="HttpRequestException"/> before they are sent.</summary>
+    public int FailRequestReleases
+    {
+        get => Volatile.Read(ref _failRequestReleases);
+        set => Volatile.Write(ref _failRequestReleases, value);
+    }
+
+    /// <summary>
+    /// Answers the next releases by a request's proof ID with a status and no body, without passing them to the server.
+    /// </summary>
+    /// <param name="status">The status.</param>
+    /// <param name="count">How many releases to answer so.</param>
+    public void RefuseRequestReleases(HttpStatusCode status, int count = 1)
+    {
+        _refusalStatus = status;
+        Volatile.Write(ref _refuseRequestReleases, count);
+    }
+
+    /// <summary>
+    /// Holds the answer of the next acquisition or borrow, after the server handled it, until the client cancels the request.
+    /// </summary>
+    /// <returns>A task that completes when the server has handled the acquisition and its answer is held.</returns>
+    public Task HoldNextAcquisitionAnswer()
+    {
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _holdNextAcquisition = held;
+        return held.Task;
     }
 
     /// <summary>Gets or sets the rewrite of a successful acquisition's answer, or <see langword="null"/>.</summary>
@@ -154,6 +208,45 @@ internal sealed class Recorder
             if (recorder.FailRenewals && renewal)
             {
                 throw new HttpRequestException("Renewals are made to fail.");
+            }
+
+            if (
+                request.Method == HttpMethod.Delete
+                && path.StartsWith("/v1/leases/requests/", StringComparison.Ordinal)
+                && Interlocked.Decrement(ref recorder._failRequestReleases) >= 0
+            )
+            {
+                throw new HttpRequestException("The release is made to fail.");
+            }
+
+            if (
+                request.Method == HttpMethod.Delete
+                && path.StartsWith("/v1/leases/requests/", StringComparison.Ordinal)
+                && Interlocked.Decrement(ref recorder._refuseRequestReleases) >= 0
+            )
+            {
+                return new HttpResponseMessage(recorder._refusalStatus) { RequestMessage = request };
+            }
+
+            if (acquisition && (recorder.LoseNextAcquisitionAnswer || recorder.OversizeNextAcquisition || recorder._holdNextAcquisition is not null))
+            {
+                HttpResponseMessage handled = await base.SendAsync(request, cancellationToken);
+                if (Interlocked.Exchange(ref recorder._holdNextAcquisition, null) is TaskCompletionSource held)
+                {
+                    handled.Dispose();
+                    held.SetResult();
+                    await Task.Delay(Timeout.Infinite, cancellationToken);
+                }
+
+                if (recorder.OversizeNextAcquisition)
+                {
+                    recorder.OversizeNextAcquisition = false;
+                    return Oversized(handled);
+                }
+
+                recorder.LoseNextAcquisitionAnswer = false;
+                handled.Dispose();
+                throw new HttpRequestException("The answer was lost on the way.");
             }
 
             string oversize = renewal ? Interlocked.Exchange(ref recorder._oversizeRenewal, string.Empty) : string.Empty;

@@ -965,6 +965,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _app.MapPost("/v1/leases/reclaim", (RequestDelegate)ReclaimAsync);
         _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)RenewAsync);
         _app.MapDelete("/v1/leases/{id}", (RequestDelegate)ReleaseAsync);
+        _app.MapDelete("/v1/leases/requests/{jti}", (RequestDelegate)ReleaseRequestAsync);
         MapAdmin();
     }
 
@@ -1204,19 +1205,40 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
+        await AnswerReleaseAsync(context, Engine.Release(id, proof.KeyId, out LeaseInfo? lease), lease, proof.KeyId).ConfigureAwait(false);
+    }
+
+    // design §12.7.7 (V1d5b): the release of the lease an acquisition or a borrow issued, by the jti of that request's proof,
+    // for a client that did not take the answer. The key is only known from the proof, which carries it.
+    private async Task ReleaseRequestAsync(HttpContext context)
+    {
+        string jti = context.Request.RouteValues["jti"] as string ?? string.Empty;
+        if (!Limits.IsProofId(jti))
+        {
+            // No request had such a proof ID, so no lease was issued for it; nothing else is read (design §12.7.7 step 2).
+            context.Response.Headers[NonceHeader] = _nonces.Issue();
+            context.Response.StatusCode = StatusCodes.Status204NoContent;
+            return;
+        }
+
+        if (await ReadAuthenticatedAsync(context, knownKey: null).ConfigureAwait(false) is not (_, ProofResult.Valid proof))
+        {
+            return;
+        }
+
+        ReleaseOutcome outcome = Engine.ReleaseRequest(jti, proof.KeyId, out LeaseInfo? lease);
+        await AnswerReleaseAsync(context, outcome, lease, proof.KeyId).ConfigureAwait(false);
+    }
+
+    // The answer and the log lines of a release, by lease ID or by the request that issued the lease (design §12.7.1, §18.1).
+    private async Task AnswerReleaseAsync(HttpContext context, ReleaseOutcome outcome, LeaseInfo? lease, string keyId)
+    {
         string licenseId = Engine.Server.License.LicenseId;
-        switch (Engine.Release(id, proof.KeyId, out LeaseInfo? lease))
+        switch (outcome)
         {
             case ReleaseOutcome.Released:
-                ServerLog.Released(_log, id);
-                _usage.Lease(
-                    lease?.IsBorrow == true ? "borrow.returned" : "lease.released",
-                    id,
-                    lease?.FeatureId,
-                    lease?.Seats,
-                    proof.KeyId,
-                    licenseId
-                );
+                ServerLog.Released(_log, lease!.LeaseId);
+                _usage.Lease(lease.IsBorrow ? "borrow.returned" : "lease.released", lease.LeaseId, lease.FeatureId, lease.Seats, keyId, licenseId);
                 context.Response.StatusCode = StatusCodes.Status204NoContent;
                 break;
             case ReleaseOutcome.NotFound:

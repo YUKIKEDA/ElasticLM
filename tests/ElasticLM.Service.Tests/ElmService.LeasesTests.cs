@@ -731,6 +731,107 @@ public sealed class ElmServiceLeasesTests
     }
 
     /// <summary>
+    /// The release of the lease an acquisition or a borrow issued, named by the jti of that request's proof, follows the
+    /// order of the release checks: the form of the jti first, then a proof that carries its key, then the unrenewed lease of
+    /// that key and request; a stopped clone is refused, and a borrow is an early return within the same limit as a release
+    /// by its ID (design §12.7.7, V1d5b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with clone strategy deny, borrows of up to a day, and one early return per 30 days; a
+    ///   license with 2 seats of core; device A, device B (another key), and device C (a key the service has not seen); each
+    ///   engine.
+    ///
+    /// Steps:
+    /// - DELETE v1/leases/requests/ with 65 characters and no proof.
+    /// - A acquires L1 (jti J1). DELETE v1/leases/requests/J1 without a proof; with a proof of C without its key; with a proof
+    ///   of B; renew L1 (jti R), then with a proof of A, and DELETE v1/leases/requests/R; release L1 by its ID.
+    /// - A acquires L2 (J2); DELETE v1/leases/requests/no-such-request with a proof of A; DELETE v1/leases/requests/J2.
+    /// - A borrows B1 (J3); DELETE v1/leases/requests/J3 with a proof of A. A borrows B2 (J4); DELETE v1/leases/requests/J4;
+    ///   release B2 by its ID.
+    /// - A acquires L3 (J5) and renews it with seq 5, which stops it as a clone; DELETE v1/leases/requests/J5.
+    ///
+    /// Expected:
+    /// - 204 with an ELM-Nonce header.
+    /// - 401 ELM_PROOF_INVALID twice; 204 with L1 still listed; 204 twice with L1 still listed (renewed, and R renewed it);
+    ///   204.
+    /// - 204 with L2 still listed; 204, and no lease is listed.
+    /// - 204, B1 gone; 409 ELM_RETURN_NOT_ALLOWED twice, B2 still listed.
+    /// - 409 ELM_CLONE_DETECTED, L3 still listed.
+    /// </remarks>
+    /// <param name="provider">The database engine.</param>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task ReleaseRequest_EachCase_FollowsTheReleaseChecks(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string policy = await CloudPolicyAsync(admin, "\"cloneStrategy\":\"deny\",\"borrowLimit\":86400,\"borrowReturnLimit\":1");
+        (string licenseId, string key) = await LicenseAsync(admin, policy, TwoSeats);
+        using var a = TestDevice.Create(test, service);
+        using var b = TestDevice.Create(test, service);
+        using var c = TestDevice.Create(test, service);
+        string[] prints = TestDevice.Fingerprints();
+        const string NotNow = "The borrow cannot be returned early now; it ends at its expiry.";
+        async Task<string[]> LeasesAsync() =>
+            [
+                .. (await TestService.GetAsync(admin, $"v1/admin/licenses/{licenseId}/leases"))
+                    .GetProperty("items")
+                    .EnumerateArray()
+                    .Select(i => i.GetProperty("id").GetString()!),
+            ];
+        Task<DeviceAnswer> ReleaseRequestAsync(TestDevice device, string jti, bool includeKey = true, bool unsigned = false) =>
+            device.SendAsync(HttpMethod.Delete, $"v1/leases/requests/{jti}", string.Empty, includeKey, proof: unsigned ? _ => null : null);
+
+        DeviceAnswer malformed = await ReleaseRequestAsync(a, new string('a', 65), unsigned: true);
+        Assert.Equal(HttpStatusCode.NoContent, malformed.Status);
+        Assert.NotNull(malformed.Nonce);
+
+        DeviceAnswer first = await a.AcquireAsync(key);
+        string l1 = a.VerifyLease(first).LeaseId;
+        DeviceAnswer withoutProof = await ReleaseRequestAsync(a, first.Jti, unsigned: true);
+        Assert.Equal((HttpStatusCode.Unauthorized, "ELM_PROOF_INVALID"), (withoutProof.Status, withoutProof.Code));
+        DeviceAnswer withoutKey = await ReleaseRequestAsync(c, first.Jti, includeKey: false);
+        Assert.Equal((HttpStatusCode.Unauthorized, "ELM_PROOF_INVALID"), (withoutKey.Status, withoutKey.Code));
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(b, first.Jti)).Status);
+        Assert.Equal([l1], await LeasesAsync());
+        DeviceAnswer renewed = await a.RenewAsync(l1, 1);
+        Assert.Equal(HttpStatusCode.OK, renewed.Status);
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(a, first.Jti)).Status);
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(a, renewed.Jti)).Status);
+        Assert.Equal([l1], await LeasesAsync());
+        Assert.Equal(HttpStatusCode.NoContent, (await a.ReleaseAsync(l1)).Status);
+
+        DeviceAnswer second = await a.AcquireAsync(key);
+        Assert.Equal(HttpStatusCode.Created, second.Status);
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(a, "no-such-request")).Status);
+        Assert.Single(await LeasesAsync());
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(a, second.Jti)).Status);
+        Assert.Empty(await LeasesAsync());
+
+        DeviceAnswer borrowed = await a.BorrowAsync(key, 3600, prints);
+        Assert.Equal(HttpStatusCode.Created, borrowed.Status);
+        Assert.Equal(HttpStatusCode.NoContent, (await ReleaseRequestAsync(a, borrowed.Jti)).Status);
+        Assert.Empty(await LeasesAsync());
+        DeviceAnswer again = await a.BorrowAsync(key, 3600, prints);
+        string b2 = a.VerifyLease(again).LeaseId;
+        AssertProblem(await ReleaseRequestAsync(a, again.Jti), HttpStatusCode.Conflict, "ELM_RETURN_NOT_ALLOWED", NotNow);
+        AssertProblem(await a.ReleaseAsync(b2), HttpStatusCode.Conflict, "ELM_RETURN_NOT_ALLOWED", NotNow);
+        Assert.Equal([b2], await LeasesAsync());
+
+        DeviceAnswer third = await a.AcquireAsync(key);
+        string l3 = a.VerifyLease(third).LeaseId;
+        Assert.Equal(HttpStatusCode.Conflict, (await a.RenewAsync(l3, 5)).Status);
+        AssertProblem(
+            await ReleaseRequestAsync(a, third.Jti),
+            HttpStatusCode.Conflict,
+            "ELM_CLONE_DETECTED",
+            "The lease was stopped because a clone of the installation was detected."
+        );
+        Assert.Equal(new[] { b2, l3 }.Order(StringComparer.Ordinal), (await LeasesAsync()).Order(StringComparer.Ordinal));
+    }
+
+    /// <summary>
     /// The lease paths are limited per source in the devices' bucket before anything else, so an ID that cannot be a lease
     /// is still counted.
     /// </summary>
@@ -739,10 +840,11 @@ public sealed class ElmServiceLeasesTests
     /// - RateLimitClientPerIp 1.
     ///
     /// Steps:
-    /// - Release "x" twice without a proof; list the API keys as the owner.
+    /// - Release "x" twice without a proof; release the lease of request "x" (design §12.7.7) without a proof; list the API
+    ///   keys as the owner.
     ///
     /// Expected:
-    /// - 204, then 429 ELM_RATE_LIMITED "Too many requests from this address."; the list gives 200.
+    /// - 204, then 429 ELM_RATE_LIMITED "Too many requests from this address." twice; the list gives 200.
     /// </remarks>
     [Fact]
     public async Task Release_PerSource_IsLimited()
@@ -760,6 +862,12 @@ public sealed class ElmServiceLeasesTests
 
         await TestService.AssertProblemAsync(
             await anonymous.DeleteAsync("v1/leases/x", cancel),
+            HttpStatusCode.TooManyRequests,
+            "ELM_RATE_LIMITED",
+            "Too many requests from this address."
+        );
+        await TestService.AssertProblemAsync(
+            await anonymous.DeleteAsync("v1/leases/requests/x", cancel),
             HttpStatusCode.TooManyRequests,
             "ELM_RATE_LIMITED",
             "Too many requests from this address."

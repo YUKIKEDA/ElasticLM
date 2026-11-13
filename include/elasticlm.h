@@ -400,7 +400,8 @@ ELM_FUNCTION(void, elm_lease_free, (elm_lease* lease))
 ELM_FUNCTION(void, elm_lease_list_free, (elm_lease** leases, size_t count))
 
 /* Waits for running callbacks (no time bound) and for an operation of the same client in progress, the automatic
- * renewal included (no bound), then returns the leases that are not borrows within 5 s. Calling it while another
+ * renewal included (no bound), then, within 5 s in all, sends the releases still owed for acquisitions whose answer did
+ * not come or was not taken and returns the leases that are not borrows. Calling it while another
  * thread is inside a function of the same client is undefined behavior. */
 ELM_FUNCTION(void, elm_client_destroy, (elm_client* client))
 

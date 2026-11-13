@@ -109,7 +109,9 @@ public sealed class AnswerLimitTests : IDisposable
     ///   buffers of the two sockets may hold. A client that reads the whole answer before it checks the size takes all
     ///   64 MiB.
     /// - declared: the server wrote no body byte of that answer (only the 17 bytes of the nonce answer before it, in the
-    ///   lease and activation cases), and the client returned without the clock moving.
+    ///   lease and activation cases, and in the lease case with status 200 the 50 bytes of the 404 problem it gives the
+    ///   release by the request's jti that the client sends after a success answer it did not take), and the client
+    ///   returned without the clock moving.
     /// </remarks>
     /// <param name="path">The case.</param>
     /// <param name="shape">The shape of the answer.</param>
@@ -137,8 +139,12 @@ public sealed class AnswerLimitTests : IDisposable
         Assert.Equal(new LicenseError(ErrorCode.Malformed, TooLarge(path)), error);
         if (shape == "declared")
         {
-            // The lease and activation cases get a nonce first, whose answer has a body.
-            Assert.Equal(path is "lease" or "activation" ? """{"nonce":"first"}""".Length : 0, written);
+            // The lease and activation cases get a nonce first, whose answer has a body. After a lease's success answer, the
+            // client releases what the server may have issued by the request's jti (design §12.7.7), which this server
+            // answers with its 404 problem.
+            int nonce = path is "lease" or "activation" ? """{"nonce":"first"}""".Length : 0;
+            int release = path == "lease" && status == 200 ? """{"code":"ELM_UNKNOWN_LEASE","detail":"unexpected"}""".Length : 0;
+            Assert.Equal(nonce + release, written);
         }
         else
         {

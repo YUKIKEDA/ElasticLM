@@ -27,7 +27,8 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     /// <summary>
     /// An answer to an acquisition or a borrow that differs from the request in one thing is refused with
     /// ELM_REQUEST_MISMATCH and the sentence for that thing; an answer that differs in nothing but the request it answers
-    /// is refused too. The client holds no lease afterwards and returns none.
+    /// is refused too. The client holds no lease afterwards and returns none by its ID; it releases what the server issued for
+    /// its own request by that request's jti, which leaves the holder's lease alone (design §12.7.7).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -53,8 +54,9 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     /// Expected:
     /// - The holder's request gives a lease. The second gives Failed with ELM_REQUEST_MISMATCH, the case's message, and no
     ///   retry time; the relay replayed one answer.
-    /// - No borrow file was added, the second client sent no DELETE when disposed, the server's seats are as before, and
-    ///   the holder's lease is still Held.
+    /// - No borrow file was added. The only DELETE the second client sent, before or when disposed, is
+    ///   DELETE /v1/leases/requests/ with the jti of its own request, which the server never saw; the server's seats are as
+    ///   before, and the holder's lease is still Held.
     /// </remarks>
     /// <param name="kind">The case.</param>
     /// <param name="message">The message expected.</param>
@@ -108,7 +110,8 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.Equal(1, relay.Replayed);
         Assert.Equal(borrows, BorrowFiles(folder));
         await second.DisposeAsync();
-        Assert.DoesNotContain(relay.Requests(), r => r.Method == "DELETE");
+        string asked = relay.Requests().Last(r => r.Method == "POST" && r.Path == "/v1/leases").ProofId!;
+        Assert.Equal(["/v1/leases/requests/" + asked], relay.Requests().Where(r => r.Method == "DELETE").Select(r => r.Path));
         Assert.Equal((seats, 0L), (server.Engine.SeatsInUse("pro"), server.Engine.SeatsInUse("cam")));
         Assert.Equal(LeaseState.Held, held.State);
     }

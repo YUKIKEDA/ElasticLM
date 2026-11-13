@@ -22,7 +22,8 @@ public sealed class HostedLeaseAnswerTests
     /// <summary>
     /// An answer of the service to an acquisition or a borrow that differs from the request in one thing is refused with
     /// ELM_REQUEST_MISMATCH and the sentence for that thing; an answer that differs in nothing but the request it answers
-    /// is refused too. The client holds no lease afterwards and returns none.
+    /// is refused too. The client holds no lease afterwards and returns none by its ID; it releases what the service issued
+    /// for its own request by that request's jti, which leaves the holder's lease alone (design §12.7.7).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -48,8 +49,9 @@ public sealed class HostedLeaseAnswerTests
     /// Expected:
     /// - The holder's request gives a lease. The second gives Failed with ELM_REQUEST_MISMATCH, the case's message, and no
     ///   retry time; the relay replayed one answer.
-    /// - No borrow file was added, the second client sent no DELETE when disposed, the service lists the holder's lease
-    ///   alone, and that lease is still Held.
+    /// - No borrow file was added. The only DELETE the second client sent, before or when disposed, is
+    ///   DELETE /v1/leases/requests/ with the jti of its own request, which the service never saw; the service lists the
+    ///   holder's lease alone, and that lease is still Held.
     /// </remarks>
     /// <param name="kind">The case.</param>
     /// <param name="message">The message expected.</param>
@@ -104,7 +106,8 @@ public sealed class HostedLeaseAnswerTests
         Assert.Equal(1, relay.Replayed);
         Assert.Equal(borrows, BorrowFiles(folder));
         await second.DisposeAsync();
-        Assert.DoesNotContain(relay.Requests(), r => r.Method == "DELETE");
+        string asked = relay.Requests().Last(r => r.Method == "POST" && r.Path == "/v1/leases").ProofId!;
+        Assert.Equal(["/v1/leases/requests/" + asked], relay.Requests().Where(r => r.Method == "DELETE").Select(r => r.Path));
         ListedLeases leases = await LeasesAsync(admin, licenseId);
         Assert.Equal([held.Id], leases.Ids);
         Assert.Equal(LeaseState.Held, held.State);
@@ -456,6 +459,78 @@ public sealed class HostedLeaseAnswerTests
         Assert.Equal(LeaseState.Held, lease.State);
         Assert.Equal(3, Renewals(relay).Length);
         Assert.Equal(4, await test.ScalarAsync($"SELECT seq FROM leases WHERE id = '{lease.Id}'"));
+        await client.DisposeAsync();
+    }
+
+    /// <summary>
+    /// With a license key, an acquisition or a borrow whose answer the client does not get or does not take is released at
+    /// once by its proof's jti, and a release that does not get through is sent before the next request: the seat is free
+    /// again without the app acquiring again, and a borrow counts as an early return (design §12.7.7, V1d5b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with borrowLimit 86400 and borrowReturnLimit 1, and a license with 5 seats of core and 3 of
+    ///   cam; a client with its key behind a relay that passes each request to the service, which issues the lease.
+    ///
+    /// Steps:
+    /// - Lose the answer of an acquisition of core (J1); list the leases.
+    /// - Give the answer of a borrow of core over 256 KiB (J2); list the leases.
+    /// - Lose the answer of an acquisition of cam (J3) and make its release fail; list the leases; acquire cam; list.
+    /// - Borrow core and return it.
+    ///
+    /// Expected:
+    /// - ELM_NETWORK_ERROR; right after the acquisition, DELETE /v1/leases/requests/J1; no lease is listed.
+    /// - ELM_MALFORMED; DELETE /v1/leases/requests/J2; no lease is listed.
+    /// - ELM_NETWORK_ERROR and one lease listed; the next acquisition sends DELETE /v1/leases/requests/J3 before its POST,
+    ///   and only its own lease is listed.
+    /// - The return is refused with ELM_RETURN_NOT_ALLOWED: J2's release was the early return of 30 days.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_AnswerNotTaken_ReleasesThatRequestsLease()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core", "cam");
+        string policy = await TestService.PolicyAsync(admin, product, "\"floating\":\"cloud\",\"borrowLimit\":86400,\"borrowReturnLimit\":1");
+        (string licenseId, string key) = await LicenseAsync(admin, policy, Features);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        var relay = new Recorder();
+        LicenseClient client = HostedLeaseClientTests.Client(test, service, key, test.FilePath("client"), wrap: relay.Over);
+        string[] Released() => [.. relay.Requests().Where(r => r.Method == "DELETE").Select(r => r.Path)];
+        string LastAcquisition() => relay.Requests().Last(r => r.Method == "POST" && r.Path == "/v1/leases").ProofId!;
+
+        relay.LoseNextAcquisitionAnswer = true;
+        Assert.Equal(
+            ErrorCode.NetworkError,
+            Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("core", cancellationToken: cancel)).Error.Code
+        );
+        Assert.Equal(["/v1/leases/requests/" + LastAcquisition()], Released());
+        Assert.Empty((await LeasesAsync(admin, licenseId)).Ids);
+
+        relay.OversizeNextAcquisition = true;
+        LeaseResult oversized = await client.BorrowLeaseAsync("core", TimeSpan.FromHours(1), cancellationToken: cancel);
+        Assert.Equal(ErrorCode.Malformed, Assert.IsType<LeaseResult.Failed>(oversized).Error.Code);
+        Assert.Equal("/v1/leases/requests/" + LastAcquisition(), Released()[^1]);
+        Assert.Empty((await LeasesAsync(admin, licenseId)).Ids);
+
+        relay.LoseNextAcquisitionAnswer = true;
+        relay.FailRequestReleases = 1;
+        Assert.Equal(
+            ErrorCode.NetworkError,
+            Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("cam", cancellationToken: cancel)).Error.Code
+        );
+        string owed = LastAcquisition();
+        Assert.Single((await LeasesAsync(admin, licenseId)).Ids);
+        int before = relay.Requests().Length;
+        Lease cam = Acquired(await client.AcquireLeaseAsync("cam", cancellationToken: cancel));
+        Assert.Equal(
+            ["DELETE /v1/leases/requests/" + owed, "POST /v1/leases"],
+            relay.Requests().Skip(before).Where(r => r.Method != "GET").Select(r => r.Method + " " + r.Path)
+        );
+        Assert.Equal([cam.Id], (await LeasesAsync(admin, licenseId)).Ids);
+
+        Lease borrow = Acquired(await client.BorrowLeaseAsync("core", TimeSpan.FromHours(1), cancellationToken: cancel));
+        Assert.Equal(ErrorCode.ReturnNotAllowed, (await client.ReleaseLeaseAsync(borrow, cancel))?.Code);
         await client.DisposeAsync();
     }
 

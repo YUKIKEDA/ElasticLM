@@ -27,6 +27,8 @@ internal sealed partial class ElmService
         _app.MapPost("/v1/leases", (RequestDelegate)(c => ClientAsync(c, acquire)));
         _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)(c => ClientAsync(c, renew)));
         _app.MapDelete("/v1/leases/{id}", (RequestDelegate)(c => ClientAsync(c, release)));
+        Func<HttpContext, Task<ClientResult>> releaseRequest = Counted(ReleaseRequestAsync);
+        _app.MapDelete("/v1/leases/requests/{jti}", (RequestDelegate)(c => ClientAsync(c, releaseRequest)));
         _app.MapGet(
             "/v1/admin/licenses/{id}/leases",
             (RequestDelegate)(c => AdminAsync(c, Permissions.LeaseRead, AuditActions.LeaseList, ListLeasesAsync))
@@ -368,62 +370,113 @@ internal sealed partial class ElmService
                 async scope =>
                 {
                     long at = now.ToUnixTimeSeconds();
-                    if (scope is null || await scope.FindLeaseAsync(found.Id, at, device.Aborted).ConfigureAwait(false) is not LeaseRow lease)
-                    {
-                        return Released;
-                    }
-
-                    if (lease.Stopped)
-                    {
-                        return ClientResult.Fail(ErrorCode.CloneDetected, "The lease was stopped because a clone of the installation was detected.");
-                    }
-
-                    IReadOnlyList<string> counters = [];
-                    if (lease.Borrow)
-                    {
-                        counters = [.. LeaseRules.ReturnCounters(lease.KeyId, Activations.Load(lease.BorrowFingerprints ?? "[]"))];
-                        long since = at - (long)LeaseRules.ReturnWindow.TotalSeconds;
-                        int returns = await scope.CountReturnsAsync(counters, since, device.Aborted).ConfigureAwait(false);
-
-                        // design §12.7.4: a feature the license no longer grants has 0 seats, so it counts as fewer seats.
-                        long seatsNow = LeasedFeature(scope.License, lease.Feature)?.Seats ?? 0;
-                        if (
-                            !LeaseRules.MayReturnEarly(
-                                returns,
-                                (int)policy.BorrowReturnLimit,
-                                true,
-                                (int)seatsNow,
-                                (int)(lease.BorrowFeatureSeats ?? 0),
-                                TimeSpan.FromSeconds(policy.BorrowLimit ?? 0),
-                                TimeSpan.FromSeconds(lease.BorrowLimit ?? 0)
-                            )
-                        )
-                        {
-                            return ClientResult.Fail(ErrorCode.ReturnNotAllowed, "The borrow cannot be returned early now; it ends at its expiry.");
-                        }
-                    }
-
-                    // The sweep may have removed it since it was read: released already, with no line and no early return.
-                    if (!await scope.DeleteLeaseAsync(lease.Id, device.Aborted).ConfigureAwait(false))
-                    {
-                        return Released;
-                    }
-
-                    if (lease.Borrow)
-                    {
-                        await scope.RecordReturnAsync(counters, at, device.Aborted).ConfigureAwait(false);
-                    }
-
-                    return Released with
-                    {
-                        After = () => ReleasedLine(lease, product.Code, "device"),
-                    };
+                    return scope is null || await scope.FindLeaseAsync(found.Id, at, device.Aborted).ConfigureAwait(false) is not LeaseRow lease
+                        ? Released
+                        : await ReleaseInScopeAsync(scope, device, lease, policy, product, at).ConfigureAwait(false);
                 },
                 now,
                 device.Aborted
             )
             .ConfigureAwait(false);
         return WithFeature(result, found.Feature);
+    }
+
+    // design §12.7.7 (V1d5b): the release of the lease an acquisition or a borrow issued, named by the jti of that request's
+    // proof, for a client that did not take the answer. The proof carries the key, which the lease is then found with; a
+    // text that cannot be a proof's jti is answered without a query, as a lease ID that cannot be one is.
+    private async Task<ClientResult> ReleaseRequestAsync(HttpContext context)
+    {
+        if (RouteText(context, "jti") is not string jti || !Limits.IsProofId(jti))
+        {
+            return Released;
+        }
+
+        if (await ReadProvenAsync(context, null).ConfigureAwait(false) is not (_, ProofResult.Valid proof))
+        {
+            return ClientResult.Answered;
+        }
+
+        if (await Database.FindLeaseByRequestAsync(proof.KeyId, jti, context.RequestAborted).ConfigureAwait(false) is not LeaseRow found)
+        {
+            return Released;
+        }
+
+        (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+        DateTimeOffset now = Time.GetUtcNow();
+        Device device = Online(context, proof);
+        ClientResult result = await Database
+            .WithLicenseAsync(
+                found.LicenseId,
+                async scope =>
+                {
+                    long at = now.ToUnixTimeSeconds();
+                    return scope is null || await scope.FindLeaseAsync(found.Id, at, device.Aborted).ConfigureAwait(false) is not LeaseRow lease
+                        ? Released
+                        : await ReleaseInScopeAsync(scope, device, lease, policy, product, at).ConfigureAwait(false);
+                },
+                now,
+                device.Aborted
+            )
+            .ConfigureAwait(false);
+        return WithFeature(result, found.Feature);
+    }
+
+    // design §12.7.6 release steps 4 to 6, under the license's lock: a stopped clone stays, a borrow is returned early only
+    // within the limit, and the row is removed.
+    private async Task<ClientResult> ReleaseInScopeAsync(
+        LicenseScope scope,
+        Device device,
+        LeaseRow lease,
+        PolicyRow policy,
+        ProductRow product,
+        long at
+    )
+    {
+        if (lease.Stopped)
+        {
+            return ClientResult.Fail(ErrorCode.CloneDetected, "The lease was stopped because a clone of the installation was detected.");
+        }
+
+        IReadOnlyList<string> counters = [];
+        if (lease.Borrow)
+        {
+            counters = [.. LeaseRules.ReturnCounters(lease.KeyId, Activations.Load(lease.BorrowFingerprints ?? "[]"))];
+            long since = at - (long)LeaseRules.ReturnWindow.TotalSeconds;
+            int returns = await scope.CountReturnsAsync(counters, since, device.Aborted).ConfigureAwait(false);
+
+            // design §12.7.4: a feature the license no longer grants has 0 seats, so it counts as fewer seats.
+            long seatsNow = LeasedFeature(scope.License, lease.Feature)?.Seats ?? 0;
+            if (
+                !LeaseRules.MayReturnEarly(
+                    returns,
+                    (int)policy.BorrowReturnLimit,
+                    true,
+                    (int)seatsNow,
+                    (int)(lease.BorrowFeatureSeats ?? 0),
+                    TimeSpan.FromSeconds(policy.BorrowLimit ?? 0),
+                    TimeSpan.FromSeconds(lease.BorrowLimit ?? 0)
+                )
+            )
+            {
+                return ClientResult.Fail(ErrorCode.ReturnNotAllowed, "The borrow cannot be returned early now; it ends at its expiry.");
+            }
+        }
+
+        // The sweep may have removed it since it was read: released already, with no line and no early return.
+        if (!await scope.DeleteLeaseAsync(lease.Id, device.Aborted).ConfigureAwait(false))
+        {
+            return Released;
+        }
+
+        if (lease.Borrow)
+        {
+            await scope.RecordReturnAsync(counters, at, device.Aborted).ConfigureAwait(false);
+        }
+
+        return Released with
+        {
+            After = () => ReleasedLine(lease, product.Code, "device"),
+        };
     }
 
     // design §18.1, 0.95: every refusal of a lease request is counted for the minute's lease.denied line.

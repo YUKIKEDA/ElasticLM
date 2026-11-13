@@ -17,7 +17,8 @@ namespace ElasticLM.Client;
 /// returns them. With <see cref="LicenseClientOptions.LicenseKey"/> it leases from <c>elm-service</c> instead: TLS is
 /// checked with the OS's trust, leases with the service's certificates, and a lease the
 /// service does not know is lost, not reclaimed. It has the lifetime rules of the C ABI: <see cref="DisposeAsync"/> stops the
-/// timers and returns the leases it holds that are not borrows.
+/// timers and returns the leases it holds that are not borrows. For an acquisition whose answer does not come or is not
+/// taken, it asks the server to release the lease issued for that request.
 /// </summary>
 /// <remarks>
 /// The methods may be called from several threads; requests to the server are made one at a time. <see cref="LeaseStateChanged"/>
@@ -35,6 +36,7 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxBorrowFiles = 1_000;
     private const int MaxCertificates = 4; // design §8.6
     private const int MaxCertificateLength = 16 * 1024; // design §8.6: one token
+    private const int MaxOwedReleases = 16; // design §8.6, §12.7.7
     private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
 
@@ -53,6 +55,10 @@ public sealed class LicenseClient : IAsyncDisposable
     private readonly bool _hosted;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<Lease> _leases = [];
+
+    // design §12.7.7 (V1d5b): the proof IDs of acquisitions and borrows whose answer the client did not take and whose release
+    // has not got through, oldest first; kept in memory only, under the lock.
+    private readonly List<string> _owedReleases = [];
 
     // Server identities by server license jti: the current one, and older ones that leases issued under them still need.
     private readonly List<ServerIdentity> _identities = [];
@@ -161,7 +167,9 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <summary>
     /// Acquires a lease and starts renewing it. From an on-premises server, the first call fetches and checks
     /// the server license and the server's key; from <c>elm-service</c>, each lease is checked with the
-    /// certificates of its answer.
+    /// certificates of its answer. When the answer does not come or the client does not take it, the client asks the server
+    /// to release whatever lease it issued for this request, before this call returns or, if that does not get through,
+    /// before its next request to the server and when it is disposed.
     /// </summary>
     /// <param name="featureId">The feature.</param>
     /// <param name="version">The app's version of the feature (<c>major.minor[.patch]</c>), or <see langword="null"/>.</param>
@@ -169,7 +177,7 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests; a canceled request ends as
     /// <c>ELM_NETWORK_ERROR</c>.</param>
     /// <returns>The lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease that is
-    /// not the answer to this request, which the client neither keeps nor returns.</returns>
+    /// not the answer to this request, which the client neither keeps nor returns by its ID.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
@@ -185,7 +193,9 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <summary>
     /// Borrows a lease for a period: it is not renewed, is valid until it expires, and is saved next to the
     /// installation key with what verifies it (the server license and key, or the certificates from <c>elm-service</c>), so
-    /// <see cref="GetBorrowedLeases"/> finds it after a restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules.
+    /// <see cref="GetBorrowedLeases"/> finds it after a restart without the server. <see cref="ReleaseLeaseAsync"/> returns it early within the server's rules. A borrow
+    /// whose answer does not come, is not taken, or cannot be saved is released as an acquisition is, and the server counts it
+    /// as an early return.
     /// </summary>
     /// <param name="featureId">The feature.</param>
     /// <param name="period">The borrow period, at least one second; the server refuses more than it allows.</param>
@@ -193,7 +203,7 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="count">The number of seats, at least 1.</param>
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests.</param>
     /// <returns>The borrowed lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease
-    /// that is not the answer to this request, which the client neither keeps nor returns.</returns>
+    /// that is not the answer to this request, which the client neither keeps nor returns by its ID.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1, or the period is shorter
     /// than one second.</exception>
@@ -268,6 +278,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 return new LeaseResult.Failed(connectError, null);
             }
 
+            await SendOwedReleasesAsync(cancellationToken).ConfigureAwait(false);
             var body = new AcquireRequestBody(
                 featureId,
                 version,
@@ -289,6 +300,12 @@ public sealed class LicenseClient : IAsyncDisposable
                 .ConfigureAwait(false);
             if (reply.Error is not null)
             {
+                if (reply.Unanswered)
+                {
+                    // design §12.7.7: the server may have issued a lease for this request; no request after it names one.
+                    await ReleaseUntakenAsync(reply.ProofId, cancellationToken).ConfigureAwait(false);
+                }
+
                 return new LeaseResult.Failed(reply.Error, reply.RetryAfter);
             }
 
@@ -297,13 +314,16 @@ public sealed class LicenseClient : IAsyncDisposable
             {
                 case LeaseVerificationResult.Valid valid
                     when AcquireMismatch(valid.Lease, featureId, count, borrow, reply.ProofId) is LicenseError mismatch:
-                    // design §12.7.5 (V1d5): the lease is not kept, not saved, and not returned to the server. It may be
-                    // another holder's lease, which a return would end; it ends at its own expiry.
+                    // design §12.7.5 (V1d5): the lease is not kept, not saved, and not returned by its ID. It may be another
+                    // holder's lease, which a return would end; it ends at its own expiry. What the server issued for this
+                    // request, if anything, is released by the request's proof ID (§12.7.7), which that lease does not answer.
+                    await ReleaseUntakenAsync(reply.ProofId, cancellationToken).ConfigureAwait(false);
                     return new LeaseResult.Failed(mismatch, null);
                 case LeaseVerificationResult.Valid valid:
                     var lease = new Lease(valid.Lease) { Owner = this, Certificates = certificates };
                     if (lease.IsBorrow && SaveBorrow(lease) is LicenseError saveError)
                     {
+                        await ReleaseUntakenAsync(reply.ProofId, cancellationToken).ConfigureAwait(false);
                         return new LeaseResult.Failed(saveError, null);
                     }
 
@@ -315,6 +335,7 @@ public sealed class LicenseClient : IAsyncDisposable
 
                     return new LeaseResult.Acquired(lease);
                 case LeaseVerificationResult.Invalid invalid:
+                    await ReleaseUntakenAsync(reply.ProofId, cancellationToken).ConfigureAwait(false);
                     return new LeaseResult.Failed(invalid.Error, null);
                 default:
                     throw new InvalidOperationException("Unknown lease verification result.");
@@ -324,6 +345,53 @@ public sealed class LicenseClient : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    // design §12.7.7 (V1d5b): asks the server to release what it issued for an acquisition or a borrow whose answer the client
+    // did not take, once; a release that does not get through is owed and sent again before the next request. A canceled
+    // call does not wait for it: the canceled token keeps it from being sent, and it is owed.
+    private async Task ReleaseUntakenAsync(string? proofId, CancellationToken cancellationToken)
+    {
+        if (proofId is not null && !await SendRequestReleaseAsync(proofId, cancellationToken).ConfigureAwait(false))
+        {
+            if (_owedReleases.Count == MaxOwedReleases)
+            {
+                // The oldest one's lease, if any, holds its seats until it expires.
+                _owedReleases.RemoveAt(0);
+            }
+
+            _owedReleases.Add(proofId);
+        }
+    }
+
+    // Sends the owed releases, oldest first, under the lock, and stops at the first that does not get through, so a server
+    // that cannot be reached is not waited for once per release (design §12.7.7).
+    private async Task SendOwedReleasesAsync(CancellationToken cancellationToken)
+    {
+        while (_owedReleases.Count > 0)
+        {
+            if (!await SendRequestReleaseAsync(_owedReleases[0], cancellationToken).ConfigureAwait(false))
+            {
+                return;
+            }
+
+            _owedReleases.RemoveAt(0);
+        }
+    }
+
+    // DELETE /v1/leases/requests/{jti} with a proof that carries the key (design §12.7.7). It got through when an answer of
+    // at most 256 KiB came back with a status other than 429 and 5xx: the server decided, and asking again changes nothing.
+    private async Task<bool> SendRequestReleaseAsync(string proofId, CancellationToken cancellationToken)
+    {
+        Reply reply = await SendSignedAsync(
+                HttpMethod.Delete,
+                "v1/leases/requests/" + Uri.EscapeDataString(proofId),
+                body: null,
+                includeKey: true,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+        return reply.Status is int status and not 429 and < 500;
     }
 
     // design §12.7.5 (V1d5). The fields come before the request's ID: a server that answers this request with a lease of
@@ -481,8 +549,9 @@ public sealed class LicenseClient : IAsyncDisposable
     // design §17.6.
 
     /// <summary>
-    /// Stops the renewal timers, returns the leases the client holds that are not borrows, and releases the key and the
-    /// connections. It gives up returning after 5 seconds and ignores failures; the server drops a lease not returned at its expiry, and
+    /// Stops the renewal timers, sends the releases still owed for acquisitions whose answer the client did not take, returns
+    /// the leases the client holds that are not borrows, and releases the key and the connections. It gives up returning
+    /// after 5 seconds and ignores failures; the server drops a lease not returned at its expiry, and
     /// a borrow stays valid and on the disk. No new event starts once it has begun; an event already being raised may still
     /// run around the time it returns.
     /// </summary>
@@ -501,6 +570,13 @@ public sealed class LicenseClient : IAsyncDisposable
 
             // design §17.2: returning the leases takes at most 5 seconds; leases not returned by then end at their expiry.
             using var timeout = new CancellationTokenSource(DisposeTimeout, _time);
+
+            // design §12.7.7: the owed releases go first, within the same 5 seconds; those that do not get through are dropped.
+            if (_owedReleases.Count > 0 && await EnsureConnectedAsync(timeout.Token).ConfigureAwait(false) is null)
+            {
+                await SendOwedReleasesAsync(timeout.Token).ConfigureAwait(false);
+            }
+
             foreach (Lease lease in _leases.Where(l => !l.IsBorrow).ToArray())
             {
                 await ReleaseCoreAsync(lease, events: [], timeout.Token).ConfigureAwait(false);
@@ -1151,6 +1227,7 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync().ConfigureAwait(false);
         if (error is null)
         {
+            await SendOwedReleasesAsync(CancellationToken.None).ConfigureAwait(false);
             Reply reply = await SendSignedAsync(
                     HttpMethod.Post,
                     $"v1/leases/{Uri.EscapeDataString(lease.Id)}/renew",
@@ -1311,6 +1388,8 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error is null)
         {
+            await SendOwedReleasesAsync(cancellationToken).ConfigureAwait(false);
+
             // A borrow's return carries the key (design §12.7.1): an on-premises server restored from its record may not know it.
             // elm-service checks it against the key the lease keeps.
             Reply reply = await SendSignedAsync(
@@ -1439,7 +1518,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 ? licenses.FirstOrDefault()
                 : null;
             LicenseError? error = whole.IsSuccess ? null : ProblemOf(whole.Status, content, keepDetail: true);
-            return new Reply(content, error, ValidNonce(nonce), serverLicense, whole.Headers.RetryAfter?.Delta);
+            return new Reply(content, error, ValidNonce(nonce), serverLicense, whole.Headers.RetryAfter?.Delta) { Status = (int)whole.Status };
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
         {
@@ -1463,6 +1542,9 @@ public sealed class LicenseClient : IAsyncDisposable
         public bool Unanswered { get; init; }
 
         public string? ProofId { get; init; }
+
+        // The status of a whole answer of at most 256 KiB; null when none came.
+        public int? Status { get; init; }
 
         public static Reply Failure(LicenseError error, bool unanswered = false) => new([], error, null, null, null) { Unanswered = unanswered };
     }

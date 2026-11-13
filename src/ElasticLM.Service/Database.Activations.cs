@@ -135,6 +135,13 @@ internal abstract partial class Database
     /// <summary>Returns a lease that has not expired, or <see langword="null"/>; read outside a transaction, to find its license.</summary>
     public abstract Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken);
 
+    /// <summary>
+    /// Returns the lease that an acquisition or a borrow with the proof <paramref name="requestId"/> issued, bound to
+    /// <paramref name="keyId"/>, and not renewed since (sequence 1), or <see langword="null"/>; read outside a transaction,
+    /// to find its license, whose lock the expiry is judged under (design §12.7.7).
+    /// </summary>
+    public abstract Task<LeaseRow?> FindLeaseByRequestAsync(string keyId, string requestId, CancellationToken cancellationToken);
+
     /// <summary>Returns a license's leases that have not expired, after an ID, in ID order (design §12.7.6).</summary>
     public abstract Task<IReadOnlyList<LeaseRow>> ListLeasesAsync(
         Guid licenseId,
