@@ -5515,9 +5515,9 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 書き込みの失敗の理由（`a write to <ファイル> failed`）からも、例外の文を外した。問 8-4 と同じ種類（理由に絶対パスが入りうる）である。
     - 借り出しの記録の書き込みの失敗は、原因の例外を運用の記録に残す（`ServerLog.BorrowRecordFailed`、イベント 34。レビューの指摘 2）。理由から例外の文を外したあと、原因がサーバーのどこにも残らなかったためである。
     - `SignedLog.Open` は、最初のファイルを始められなかったとき、開いたファイルとハッシュを捨ててから例外を投げ直す（レビューの指摘 9。テストは足していない）。
-  - レビューのあとで、持ち主に聞いていること（まだ決まっていない。コードは、推奨案の形で作ってある）:
-    - 問 8-5: F20 のうち、この行で直したのは、問 8-3 が名指す 2 つ（借り出しの記録、検証）と `SignedLog.TryReadAuth` である。F20 が挙げるクライアントの読み手（`ActivationClient.ImportResponseAsync`、`LicenseClient.TryReadBorrowFile`、`TryReadHostedBorrowFile`）は `ElasticLM.Client` にあり、この行は触れていない。それらを V1d23 の行に残すか（推奨。いまの表はこの形）、この行に入れるか。
-    - 問 8-6: `elm log verify` にフォルダーを渡したとき、日時として読めない名前のファイルを、警告にするか（推奨。この形で作った。終了コードは変わらない）、誤りにして結果を `NOT INTACT` にするか。レビューが確かめたこと: 日ごとのファイルが 3 つあるフォルダーで、閉じた最新のファイルの名前を `usage-20261301T000000000Z.jsonl` に変えて起動し直すと、新しいファイルは 2 日目のファイルにつながり、フォルダーの検証は、指摘なしの intact になった。ファイルはフォルダーに残っているのに、1 日分の利用が検証から外れる。`main` では、同じ名前の変更で起動が止まっていた。
+  - レビューのあとで、持ち主に聞いて決めたこと（2026-11-13。どちらも推奨案 A。コードは、その形である）:
+    - 問 8-5: F20 のうち、この行で直したのは、問 8-3 が名指す 2 つ（借り出しの記録、検証）と `SignedLog.TryReadAuth` である。F20 が挙げるクライアントの読み手（`ActivationClient.ImportResponseAsync`、`LicenseClient.TryReadBorrowFile`、`TryReadHostedBorrowFile`）は `ElasticLM.Client` にあり、この行は触れていない。持ち主の決定: それらは V1d23 の行に残す（退けた案: この行に入れる）。
+    - 問 8-6: `elm log verify` にフォルダーを渡したとき、日時として読めない名前のファイルを、警告にする（持ち主の決定。終了コードは変わらない。退けた案: 誤りにして結果を `NOT INTACT` にする。何も出さない）。レビューが確かめたこと: 日ごとのファイルが 3 つあるフォルダーで、閉じた最新のファイルの名前を `usage-20261301T000000000Z.jsonl` に変えて起動し直すと、新しいファイルは 2 日目のファイルにつながり、フォルダーの検証は、指摘なしの intact になった。ファイルはフォルダーに残っているのに、1 日分の利用が検証から外れる。`main` では、同じ名前の変更で起動が止まっていた。
   - `--set-aside-broken-records`（新しく決めたことはない。直しのあとの動き）: 借り出しの最新の記録に、オブジェクトでない行か、`type` が文字として読めない行があると、検証が誤りにするので、起動は `The borrow record '…' is broken (line N: The line is not a JSON object.). Start with --set-aside-broken-records …` で止まり、このオプションで退けて起動できる。直しの前は、どちらでも起動しなかった。名前が日時として読めない記録のファイルは、壊れた記録ではなく、記録のファイルでないので、このオプションに関わらず読まれず、名前も変わらない。
   - 同じ種類を探した範囲:
     - `src/ElasticLM.Issuing`、`ElasticLM.Server`、`ElasticLM.Service`、`ElasticLM.Leasing`、`ElasticLM.Licensing` の `JsonDocument.Parse`（6 か所）。`LogVerifier`、`SignedLog`、`BorrowJournal.ReadToken` は、この行で直した。`RequestBody` は、前から受けている。`ElmService.Oidc.cs` の `IdentityOf` と `IsSigned` は、対のないサロゲートで `InvalidOperationException` を出す（2 つの関数を呼んで確かめた。要求の道でどうなるかは、走らせていない）。サービスの OIDC の読み手で、この行の外である。
