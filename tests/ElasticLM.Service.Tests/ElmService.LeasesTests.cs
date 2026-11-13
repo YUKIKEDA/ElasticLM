@@ -13,6 +13,8 @@ public sealed class ElmServiceLeasesTests
 {
     private const string Cloud = "\"floating\":\"cloud\"";
     private const string TwoSeats = """[{"code":"core","seats":2}]""";
+    private const string BadSeatCount = "The seat count must be at least 1 and at most the feature's seats.";
+    private const string BadLeaseRequest = "The request body is not a valid lease request.";
 
     /// <summary>
     /// A cloud-floating license lends a seat as a lease token the client verifies with the service's certificates; the
@@ -530,6 +532,87 @@ public sealed class ElmServiceLeasesTests
             "ELM_CONFLICT",
             "A license of a cloud-floating policy is leased, not activated."
         );
+    }
+
+    /// <summary>
+    /// A seat count below 1 or above the feature's seats is refused and makes no lease, also when the count is outside
+    /// 32 bits; a count outside 64 bits is refused as malformed (ELM_MALFORMED) (design §12.7.1, §12.7.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy; a license with 2 seats of core, none held; one device; SQLite (the check comes before the
+    ///   SQL of each engine).
+    ///
+    /// Steps:
+    /// - Acquire core with count 0; -1; -2147483648 (the smallest 32-bit value); -2147483649 and 2147483648 (outside
+    ///   32 bits); 4294967297 (2^32 + 1, which is 1 when cut to 32 bits); 3 (one above the seats); 9223372036854775807
+    ///   and -9223372036854775808 (the largest and the smallest 64-bit value); 9223372036854775808 and
+    ///   -9223372036854775809 (outside 64 bits). Then list the license's leases and count the rows of leases.
+    ///
+    /// Expected:
+    /// - 400 ELM_INVALID_ARGUMENT "The seat count must be at least 1 and at most the feature's seats." for each count
+    ///   inside 64 bits; 400 ELM_MALFORMED "The request body is not a valid lease request." for the two outside; the list
+    ///   is empty and the table has no row.
+    /// </remarks>
+    [Theory]
+    [InlineData("0", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-1", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-2147483648", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-2147483649", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("2147483648", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("4294967297", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("3", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("9223372036854775807", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-9223372036854775808", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("9223372036854775808", "ELM_MALFORMED", BadLeaseRequest)]
+    [InlineData("-9223372036854775809", "ELM_MALFORMED", BadLeaseRequest)]
+    public async Task Acquire_CountBelowOneOrAboveTheSeats_IsRefusedWithoutALease(string count, string code, string detail)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (string licenseId, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
+        using var device = TestDevice.Create(test, service);
+
+        DeviceAnswer answer = await device.PostAsync(
+            "v1/leases",
+            $$"""{"licenseKey":"{{key}}","product":"app","feature":"core","count":{{count}}}"""
+        );
+
+        AssertProblem(answer, HttpStatusCode.BadRequest, code, detail);
+        Assert.Equal(0, (await TestService.GetAsync(admin, $"v1/admin/licenses/{licenseId}/leases")).GetProperty("items").GetArrayLength());
+        Assert.Equal(0, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+    }
+
+    /// <summary>
+    /// A seat count of 1 and a seat count equal to the feature's seats are granted, and the lease holds that many seats
+    /// (design §12.7.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy; a license with 2 seats of core, none held; one device; SQLite.
+    ///
+    /// Steps:
+    /// - Acquire core with count 1 (the least count) or 2 (the feature's seats); verify the answer as a SaaS client; count
+    ///   the rows of leases.
+    ///
+    /// Expected:
+    /// - 201; the lease is for that many seats; the table has one row.
+    /// </remarks>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    public async Task Acquire_CountAtEachBound_IsGranted(int count)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
+        using var device = TestDevice.Create(test, service);
+
+        DeviceAnswer answer = await device.AcquireAsync(key, count: count);
+
+        Assert.True(answer.Status == HttpStatusCode.Created, answer.Text);
+        Assert.Equal(count, device.VerifyLease(answer).Seats);
+        Assert.Equal(1, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
     }
 
     /// <summary>

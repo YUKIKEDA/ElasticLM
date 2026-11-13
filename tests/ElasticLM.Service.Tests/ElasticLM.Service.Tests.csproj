@@ -16,5 +16,7 @@
     <Compile Include="..\ElasticLM.Server.Tests\TestCertificateChain.cs" Link="TestCertificateChain.cs" />
     <!-- design §20.7, V1c16: the reason of a refused sign-in is read from the service's log, as the server's tests read theirs. -->
     <Compile Include="..\ElasticLM.Server.Tests\RecordingLoggerProvider.cs" Link="RecordingLoggerProvider.cs" />
+    <!-- design §20.7, V1d14: the forms of a token without a signature, shared by the tests of every verifier. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\SignatureForms.cs" Link="SignatureForms.cs" />
   </ItemGroup>
 </Project>

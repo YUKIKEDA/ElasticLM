@@ -7,7 +7,7 @@ A software licensing platform for .NET: signed license verification, an on-premi
 | What | Where |
 | --- | --- |
 | Design (canonical, Japanese): requirements, threat model, formats, protocols | `docs/design.ja.md` |
-| Rejected alternatives | `docs/design-decisions.md` |
+| Rejected alternatives | `docs/design-decisions.md`; for each row since Issue #407, `docs/rows/<row ID>.md` with its Grill record |
 | Decisions with a measured or outside reason | `docs/adr/` (one per file) |
 | Order and status of work | `docs/roadmap.md` |
 | User documentation (English, with its Japanese translation) and its site | `docs/guide/`, `docs/guide.ja/`, `website/` (design §20.7) |
