@@ -340,8 +340,8 @@ public sealed class LeaseTests : IAsyncLifetime
     /// Preconditions:
     /// - A lease of pro from a server on port P.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:

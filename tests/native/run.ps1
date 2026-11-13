@@ -288,20 +288,26 @@ try {
         # is not mixed with localhost.
         # The programs listen on port 0 and name the port in the start line of their log, written once they answer (design
         # §18.1): a port found free and closed before the start could be taken by another program in between (the V1d3b
-        # Grill, 3b-3). The log is read with sharing, since the program still writes it.
+        # Grill, 3b-3). Their output goes to files in $work, read with sharing since the program still writes them; on a
+        # failure both files of each program are printed before $work is removed (Show-ProgramOutput below).
+        function Read-SharedText([string]$path) {
+            if (-not (Test-Path $path)) { return '' }
+            $stream = [IO.FileStream]::new($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+            try { [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+        }
         function Wait-StartLine([Diagnostics.Process]$started, [string]$log, [string]$pattern, [string]$name) {
             for ($i = 0; $i -lt 300; $i++) {
-                $text = ''
-                if (Test-Path $log) {
-                    $stream = [IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
-                    try { $text = [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
-                }
-                if ($text -match $pattern) { return $Matches[1] }
+                if ((Read-SharedText $log) -match $pattern) { return $Matches[1] }
                 if ($started.HasExited) { break }
                 Start-Sleep -Milliseconds 100
             }
-            Write-Host $text
             throw "$name wrote no start line."
+        }
+        function Show-ProgramOutput([string]$name) {
+            foreach ($stream in @('out', 'err')) {
+                $path = Join-Path $work "$name.$stream.log"
+                if (Test-Path $path) { Write-Host "--- $name standard $($stream -eq 'out' ? 'output' : 'error'):"; Write-Host (Read-SharedText $path) }
+            }
         }
         $url = 'http://127.0.0.1:0'
         $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
@@ -390,6 +396,12 @@ try {
                 Stop-Process -Id $serverProcess.Id -ErrorAction SilentlyContinue
                 $serverProcess.WaitForExit()
             }
+        }
+        catch {
+            # The programs' output is in files that go with $work; on a failure it goes to this run's log.
+            Show-ProgramOutput 'service'
+            Show-ProgramOutput 'server'
+            throw
         }
         finally {
             # Windows keeps the SQLite file open until the process ends, so the folder is removed only after that.

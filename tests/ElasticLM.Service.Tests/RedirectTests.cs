@@ -92,54 +92,57 @@ public sealed class RedirectTests
 
         public void Dispose()
         {
-            // The listener stops only after the loop has ended, as in ProblemServer (Issue #392).
+            // The listener stops only after the loop has ended, as in ProblemServer (Issue #392). A loop that failed, or that
+            // did not end, fails the test.
             _stop.Cancel();
-            try
-            {
-                _loop.Wait(TimeSpan.FromSeconds(5));
-            }
-            catch (AggregateException)
-            {
-                // A client that left in the middle of its request ended the loop.
-            }
-
+            bool ended = _loop.Wait(TimeSpan.FromSeconds(5));
             _listener.Stop();
             _stop.Dispose();
+            Assert.True(ended, "The redirecting listener's loop did not end within 5 seconds of its cancellation.");
         }
 
         private async Task LoopAsync()
         {
-            while (!_stop.IsCancellationRequested)
+            try
             {
-                TcpClient client;
-                try
+                while (true)
                 {
-                    client = await _listener.AcceptTcpClientAsync(_stop.Token);
-                }
-                catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
-                {
-                    return;
-                }
-
-                using (client)
-                {
-                    NetworkStream stream = client.GetStream();
-                    var head = new StringBuilder();
-                    byte[] one = new byte[1];
-                    while (!head.ToString().EndsWith("\r\n\r\n", StringComparison.Ordinal) && await stream.ReadAsync(one) == 1)
+                    using TcpClient client = await _listener.AcceptTcpClientAsync(_stop.Token);
+                    try
                     {
-                        head.Append((char)one[0]);
+                        await AnswerAsync(client.GetStream());
                     }
-
-                    lock (_requests)
+                    catch (Exception e) when (e is IOException or SocketException)
                     {
-                        _requests.Add(head.ToString());
+                        // The client left in the middle of its request; the next one is answered.
                     }
-
-                    string answer = $"HTTP/1.1 307 Temporary Redirect\r\nLocation: {Url}moved\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-                    await stream.WriteAsync(Encoding.ASCII.GetBytes(answer));
                 }
             }
+            catch (Exception e)
+                when (_stop.IsCancellationRequested
+                    && (e is OperationCanceledException || e is SocketException { SocketErrorCode: SocketError.OperationAborted })
+                )
+            {
+                // Stopped. A cancelled wait on the socket may also end with SocketException OperationAborted (Issue #392).
+            }
+        }
+
+        private async Task AnswerAsync(NetworkStream stream)
+        {
+            var head = new StringBuilder();
+            byte[] one = new byte[1];
+            while (!head.ToString().EndsWith("\r\n\r\n", StringComparison.Ordinal) && await stream.ReadAsync(one, _stop.Token) == 1)
+            {
+                head.Append((char)one[0]);
+            }
+
+            lock (_requests)
+            {
+                _requests.Add(head.ToString());
+            }
+
+            string answer = $"HTTP/1.1 307 Temporary Redirect\r\nLocation: {Url}moved\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+            await stream.WriteAsync(Encoding.ASCII.GetBytes(answer), _stop.Token);
         }
     }
 }

@@ -121,10 +121,10 @@ public sealed class ElmOfflineTests
     /// <remarks>
     /// Preconditions:
     /// - A request file of a made-up device key; a file of 64 KiB and one of 64 KiB and a byte.
-    /// - The closed port: a listener of the test takes a port the system chooses and stops, and the test takes it that nothing
+    /// - The closed port: a listener of the test takes a port the system chooses and stops, and the test assumes that nothing
     ///   listens there afterwards. Another program that took the port in between would get the request instead (the V1d3b
-    ///   Grill, 3b-5): on Windows the ports that binds to port 0 get move on across the machine, and none came back at once in
-    ///   2,000 binds.
+    ///   Grill, 3b-5): on Windows the port that a bind to port 0 gets moves on across the machine, and in 2,000 binds none
+    ///   came back at once.
     ///
     /// Steps:
     /// - Process: with an http URL that is not loopback; an ftp URL; a missing file; a text that is no request; an

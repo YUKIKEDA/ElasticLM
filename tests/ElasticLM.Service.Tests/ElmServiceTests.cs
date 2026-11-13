@@ -437,8 +437,7 @@ public sealed class ElmServiceTests
     /// Steps:
     /// - Start the service on https and port 0; once the test's listener has accepted the check's connection, read the port
     ///   from the host's "Now listening on" entry and POST /v1/admin/products (code v1d3a) to it with the API key; move the
-    ///   fake clock 10 seconds. Then start the
-    ///   service on http with the same database, and GET /v1/admin/products.
+    ///   fake clock 10 seconds. Then start the service on http with the same database, and GET /v1/admin/products.
     ///
     /// Expected:
     /// - The POST fails without an answer. ServiceStartException "The check that Windows sends the intermediate CA

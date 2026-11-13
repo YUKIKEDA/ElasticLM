@@ -1041,8 +1041,11 @@ public sealed partial class ActivationClientTests
         }
     }
 
-    private static VerifiedLicense Activated(ActivationResult result) =>
-        result is ActivationResult.Activated activated ? activated.License : throw new InvalidOperationException(result.ToString());
+    private static VerifiedLicense Activated(ActivationResult result) => ActivatedResult(result).License;
+
+    // The whole result, the refusal's code and message included, goes into the failure (Issue #414).
+    private static ActivationResult.Activated ActivatedResult(ActivationResult result) =>
+        result as ActivationResult.Activated ?? throw new InvalidOperationException(result.ToString());
 
     private static LicenseError Failed(ActivationResult result) =>
         result is ActivationResult.Failed failed ? failed.Error : throw new InvalidOperationException(result.ToString());

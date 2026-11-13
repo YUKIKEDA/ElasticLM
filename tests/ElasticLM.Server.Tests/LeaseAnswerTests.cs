@@ -4,6 +4,7 @@ using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Service.Tests;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -453,8 +454,8 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     /// - The server restarted on P. Another copy of the installation reclaims the lease with the token of sequence 1, so
     ///   the server holds the lease at sequence 1, two behind the client.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -515,17 +516,6 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.Equal(0, retrying);
         Assert.DoesNotContain(relay.Requests(), r => r.Path.EndsWith("/reclaim", StringComparison.Ordinal));
         Assert.Equal(1, after.Engine.SeatsInUse("pro"));
-    }
-
-    // A refusal puts its code and message into the failure, so that a run that fails once says why (Issue #414).
-    private static Lease Acquired(LeaseResult result)
-    {
-        if (result is LeaseResult.Failed failed)
-        {
-            Assert.Fail($"The lease was refused: {failed.Error.Code}: {failed.Error.Message}");
-        }
-
-        return Assert.IsType<LeaseResult.Acquired>(result).Lease;
     }
 
     private static SentRequest[] Renewals(Recorder relay) =>

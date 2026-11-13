@@ -193,9 +193,9 @@ public sealed partial class AdminSocketTests
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license, started with Kestrel__Endpoints__Tcp__Url set to an
     ///   http URL on 127.0.0.1 and port 0, whose port the test reads from the host's "Now listening on" line once the server
-    ///   has started, and Kestrel__Endpoints__Socket__Url set to http://unix: and the path of a second
-    ///   socket file in the vendor's folder. The server reads both from its process's environment, which a test in the
-    ///   server's own process cannot give it.
+    ///   has started, and Kestrel__Endpoints__Socket__Url set to http://unix: and the path of a second socket file in the
+    ///   vendor's folder. The server reads both from its process's environment, which a test in the server's own process
+    ///   cannot give it.
     /// - A request without a token tells the two outcomes apart: the administration API answers it 401, and the guard before
     ///   it 404. On Linux and macOS the token is also read from admin.token, which holds its 32 bytes there, and sent.
     ///

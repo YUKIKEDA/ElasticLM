@@ -1,6 +1,7 @@
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Licensing;
+using static ElasticLM.E2E.Results;
 
 namespace ElasticLM.E2E;
 
@@ -135,7 +136,7 @@ public sealed class ServiceFlowTests
         Assert.True(LicenseClient.TryCreate(options, out LicenseClient? created, out LicenseError? error), error?.Message);
         await using (LicenseClient client = created!)
         {
-            Lease lease = Assert.IsType<LeaseResult.Acquired>(await client.AcquireLeaseAsync("pro", cancellationToken: Cancel)).Lease;
+            Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: Cancel));
             Assert.Equal((LeaseState.Held, 1), (lease.State, lease.Seats));
             Assert.Null(await client.ReleaseLeaseAsync(lease, Cancel));
             Assert.Equal(LeaseState.Released, lease.State);
@@ -165,16 +166,5 @@ public sealed class ServiceFlowTests
         };
         Assert.True(ActivationClient.TryCreate(options, out ActivationClient? client, out LicenseError? error), error?.Message);
         return client!;
-    }
-
-    // A refusal puts its code and message into the failure, so that a run that fails once says why (Issue #414).
-    private static VerifiedLicense Activated(ActivationResult result)
-    {
-        if (result is ActivationResult.Failed failed)
-        {
-            Assert.Fail($"The activation was refused: {failed.Error.Code}: {failed.Error.Message}");
-        }
-
-        return Assert.IsType<ActivationResult.Activated>(result).License;
     }
 }

@@ -3,6 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -97,8 +98,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - A lease from a server on port P; the server stopped; a new server license for the same server (new jti); the server
     ///   started again on P (new nonce secret, empty state).
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -143,8 +144,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// Preconditions:
     /// - A server with 100 seats; one client holding 70 leases; the server restarted on the same port.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -188,8 +189,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     ///   items in the leases' order: ELM_OK; ELM_NETWORK_ERROR, a code only a client makes; no code; ELM_NO_SEATS, one of
     ///   the ten; ELM_SOMETHING, not a code; a null code.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -267,8 +268,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - Client A (first-connection pin) and client B (ExpectedServerLicenseId lic-srv) connected to a server on port P; that
     ///   server stopped and a server with another installation key and lic-srv started on P, past its window.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -321,8 +322,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// Preconditions:
     /// - A server with a valid license that serves TLS with a self-signed certificate of another key (as a TLS proxy would).
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -717,8 +718,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - A lease from a server on port P; the server restarted on P; a handler that records each state and holds on
     ///   Reclaiming.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -798,17 +799,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
         Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
 
-    // A refusal puts its code and message into the failure, so that a run that fails once says why (Issue #414).
-    private static Lease Acquired(LeaseResult result)
-    {
-        if (result is LeaseResult.Failed failed)
-        {
-            Assert.Fail($"The lease was refused: {failed.Error.Code}: {failed.Error.Message}");
-        }
-
-        return Assert.IsType<LeaseResult.Acquired>(result).Lease;
-    }
-
+    // A refusal of another code puts its code and message into the failure (Issue #414).
     private static void Failed(ErrorCode expected, LeaseResult result)
     {
         LeaseResult.Failed failed = Assert.IsType<LeaseResult.Failed>(result);

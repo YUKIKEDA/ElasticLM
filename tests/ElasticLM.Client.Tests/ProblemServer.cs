@@ -96,9 +96,12 @@ internal sealed class ProblemServer : IAsyncDisposable
                 }
             }
         }
-        catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
+        catch (Exception e)
+            when (_stopping.IsCancellationRequested
+                && (e is OperationCanceledException || e is SocketException { SocketErrorCode: SocketError.OperationAborted })
+            )
         {
-            // Stopped.
+            // Stopped. A cancelled wait on the socket may also end with SocketException OperationAborted (Issue #392).
         }
     }
 

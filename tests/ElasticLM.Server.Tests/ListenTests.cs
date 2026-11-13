@@ -7,6 +7,7 @@ using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 using Microsoft.Extensions.Logging;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -32,8 +33,8 @@ public sealed class ListenTests : IAsyncDisposable
     /// - A server that recorded a borrow of pro for a day and stopped; a TcpListener started on 127.0.0.1 at a port the OS
     ///   picked, the same IP and port the server is given as listen.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -132,8 +133,8 @@ public sealed class ListenTests : IAsyncDisposable
     /// - A data folder in which a server ran and stopped, so it holds an administrator token; a TcpListener on 127.0.0.1
     ///   holding the port given as listen.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -183,8 +184,8 @@ public sealed class ListenTests : IAsyncDisposable
     /// - A server that recorded a borrow and stopped; a character of the borrow line changed (seats 2 to 9); a TcpListener on
     ///   127.0.0.1 holding the port given as listen.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
-    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
-    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
     ///   runs and 600 CI runs.
     ///
     /// Steps:
@@ -323,7 +324,7 @@ public sealed class ListenTests : IAsyncDisposable
         LeaseResult borrowed = await _deployment
             .Client(server.PublicUrls[0])
             .BorrowLeaseAsync("pro", TimeSpan.FromDays(1), cancellationToken: TestContext.Current.CancellationToken);
-        Assert.IsType<LeaseResult.Acquired>(borrowed);
+        Acquired(borrowed);
         await server.DisposeAsync();
     }
 
