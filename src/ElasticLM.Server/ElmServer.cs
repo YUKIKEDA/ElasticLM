@@ -39,6 +39,10 @@ internal sealed class ServerHostOptions
 
     /// <summary>Gets one more logger provider, which the host disposes with itself, for tests that read the host's log.</summary>
     public ILoggerProvider? LoggerProvider { get; init; }
+
+    /// <summary>Gets a replacement for the endpoint that the check of the intermediates connects to (design §13.5), for tests
+    /// of a check that gets no answer; <see langword="null"/> connects to the server's own listener.</summary>
+    public Func<IPEndPoint, IPEndPoint>? SelfCheckTarget { get; init; }
 }
 
 /// <summary>
@@ -98,6 +102,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private IReadOnlyList<Uri> _publicUrls;
     private bool _stopped;
     private bool _disposed;
+
+    // design §13.1, §13.5 (V1d3a): false until the start has completed. Kestrel serves from app.StartAsync on, and a start
+    // can still stop after it (the check of the intermediates), so until then every request is cut without an answer.
+    private volatile bool _started;
 
     private ElmServer(Parts parts)
     {
@@ -186,10 +194,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <summary>
     /// Starts the server as design §13.1 says: settings and the length of the administration socket's path, trust store,
     /// installation key, the lock file and a socket file that is left, server license, the borrow record, a new administrator
-    /// token, TLS, the usage log, then listening with the reclaim window open.
+    /// token, TLS, the usage log, then listening with the reclaim window open, and on Windows the check that the intermediates
+    /// of the operator's TLS certificate file are sent (design §13.5).
     /// </summary>
     /// <exception cref="ServerStartException">The server cannot start, including when another server runs on the data
-    /// folder and when it cannot listen on <c>listen</c> or on the administration socket; the message says why.</exception>
+    /// folder, when it cannot listen on <c>listen</c> or on the administration socket, and when Windows does not send an
+    /// intermediate of the TLS certificate file; the message says why.</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -267,7 +277,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 : new TlsServerCertificate(TlsCertificates.SelfSigned(key, publicUrls, host.Time), []);
             disposables.Add(certificate);
 
-            WebApplication app = Build(settings, certificate, host, adminSocketPath);
+            WebApplication app = Build(settings, certificate, host, adminSocketPath, out Func<IPEndPoint> listening);
 
             // design §13.1 (V1c9, R2): a failed start disposes the host too, which writes out the console log before Program
             // prints the last line.
@@ -351,7 +361,22 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {adminSocketPath}: {e.Message}");
             }
 
+            // design §13.5 (V1d3a): on Windows, what the first handshake of this process sends stays for the process, so a
+            // start that left an intermediate of the operator's file out stops here, before the server says it has started.
+            // The catch below disposes the host, which closes both listeners, as after a failure to listen.
+            if (
+                settings.TlsCertificate is string checkedPath
+                && await TlsChainSelfCheck
+                    .RunAsync(checkedPath, certificate, host.SelfCheckTarget?.Invoke(listening()) ?? listening(), host.Time, cancellationToken)
+                    .ConfigureAwait(false)
+                    is string unsent
+            )
+            {
+                throw new ServerStartException(unsent);
+            }
+
             server.AfterStart(host.Time.GetElapsedTime(started));
+            server._started = true;
             await server.RestartActivationAsync().ConfigureAwait(false);
             return server;
         }
@@ -725,8 +750,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
         return [new UriBuilder(listen) { Port = port, Path = "/" }.Uri];
     }
 
-    private static WebApplication Build(ServerSettings settings, TlsServerCertificate certificate, ServerHostOptions host, string adminSocketPath)
+    private static WebApplication Build(
+        ServerSettings settings,
+        TlsServerCertificate certificate,
+        ServerHostOptions host,
+        string adminSocketPath,
+        out Func<IPEndPoint> listening
+    )
     {
+        // Kestrel puts the endpoint it bound, with the port the system chose for port 0, into the listener's options: the tests
+        // listen on port 0, and the check of the intermediates reaches the server there (TlsChainTests).
+        ListenOptions? https = null;
+        listening = () => https!.IPEndPoint!;
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
         if (host.LoggerProvider is ILoggerProvider provider)
@@ -766,11 +801,14 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 ServerSettings.ListenAddress(settings.Listen),
                 settings.Listen.Port,
                 options =>
-                    options.UseHttps(https =>
+                {
+                    https = options;
+                    options.UseHttps(tls =>
                     {
-                        https.ServerCertificate = certificate.Certificate;
-                        https.ServerCertificateChain = certificate.Intermediates;
-                    })
+                        tls.ServerCertificate = certificate.Certificate;
+                        tls.ServerCertificateChain = certificate.Intermediates;
+                    });
+                }
             );
         });
         return builder.Build();
@@ -918,6 +956,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
     private void Map()
     {
+        _app.Use(StartGateAsync);
         _app.Use(GuardAsync);
         _app.MapGet("/v1/nonce", (RequestDelegate)NonceAsync);
         _app.MapGet("/v1/server/license", (RequestDelegate)ServerLicenseAsync);
@@ -926,6 +965,19 @@ internal sealed partial class ElmServer : IAsyncDisposable
         _app.MapPost("/v1/leases/{id}/renew", (RequestDelegate)RenewAsync);
         _app.MapDelete("/v1/leases/{id}", (RequestDelegate)ReleaseAsync);
         MapAdmin();
+    }
+
+    // No answer before the start has completed, as before listening: a start that stops after this request leaves no record
+    // of it (design §13.1, V1d3a).
+    private async Task StartGateAsync(HttpContext context, RequestDelegate next)
+    {
+        if (!_started)
+        {
+            context.Abort();
+            return;
+        }
+
+        await next(context).ConfigureAwait(false);
     }
 
     // The administration API answers only requests that came in on the listener this server bound to admin.sock, and the

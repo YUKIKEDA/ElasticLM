@@ -16,7 +16,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** V1d3a（`TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す。design.ja.md §20.7 の表の V1d3a の行）
+- **フェーズ:** V1d3b（テストの助け `ProblemServer` が、ときどき、片づけのときに例外を出して、関係のないテストを落とす原因を調べて直す。design.ja.md §20.7 の表の V1d3b の行）
 
 ## v1 まで
 
@@ -90,7 +90,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1d2 | `elm server` のコマンドが、サーバーの管理者トークンを、サーバーと確かめていない相手に送ることを直す（V1d の指摘 F02、重さは高）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d2 の行。決めた形は §20.7 の「V1d2 の Grill」） | done | [#320](https://github.com/YUKIKEDA/ElasticLM/issues/320) |
 | V1d2a | `ActivationClientTests.Refresh_AlreadyDue_WaitsTheRetryInterval` が、ときどき、更新されないまま（seq が 1 のまま）で落ちる原因を調べて直す（原因は、Windows で、読み手が開いているファイルの置き換えが断られること。置き換えをやり直すようにした。決めた形は design.ja.md §20.7 の「V1d2a の Grill」）（PR #360 のゲートで見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d2 のあと、V1d3 の前。Grill で決める点は design.ja.md §20.7 の表の V1d2a の行） | done | [#359](https://github.com/YUKIKEDA/ElasticLM/issues/359) |
 | V1d3 | `elm-service` の、パスを守る検査が大文字と小文字を区別することを直す（V1d の指摘 F03 のうち、サービスの側。`elm-server` の側は、V1d2 の PR #355 で直した）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d3 の Grill」） | done | [#321](https://github.com/YUKIKEDA/ElasticLM/issues/321) |
-| V1d3a | `TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す（V1d2 の作業で見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d3 のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3a の行） | not-started | [#356](https://github.com/YUKIKEDA/ElasticLM/issues/356) |
+| V1d3a | `TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す（V1d2 の作業で見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d3 のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3a の行） | done | [#356](https://github.com/YUKIKEDA/ElasticLM/issues/356) |
 | V1d3b | テストの助け `ProblemServer` が、ときどき、片づけのときに例外を出して、関係のないテストを落とす原因を調べて直す（PR #390（V1d14）の CI が見つけ、持ち主の決定（2026-11-13、Issue #395）で足した行。V1d3a のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3b の行） | not-started | [#392](https://github.com/YUKIKEDA/ElasticLM/issues/392) |
 | V1d4 | `elm-server` が、断った貸し出しの要求の、長さの上限のない機能名を利用ログに書くことを直す（V1d の指摘 F04）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d4 の Grill」。管理 API のリースの ID の検査（Issue #374）も、この行で直した） | done | [#322](https://github.com/YUKIKEDA/ElasticLM/issues/322) |
 | V1d4a | Web ホスト（`Microsoft.AspNetCore.Hosting.Diagnostics`）が、リクエストごとに、リクエストのパスの文字を運用のログに書くことを確かめて直す（V1d4 の作業（PR #377）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行。V1d4 のあと、V1d5 の前。Grill で決める点は design.ja.md §20.7 の表の V1d4a の行） | not-started | [#375](https://github.com/YUKIKEDA/ElasticLM/issues/375) |

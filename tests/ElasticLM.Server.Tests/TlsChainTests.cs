@@ -1,18 +1,40 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
+using ElasticLM.Client;
+using ElasticLM.Issuing;
+using Microsoft.Extensions.Logging;
+
 namespace ElasticLM.Server.Tests;
 
 /// <summary>
 /// elm-server sends the intermediate CA certificates of its TLS certificate file with the certificate, from a PEM file and from
-/// a PKCS#12 file, and refuses to start when one of them is not a CA certificate (design §13.5, V1c12).
+/// a PKCS#12 file, and refuses to start when one of them is not a CA certificate (design §13.5, V1c12). On Windows it checks
+/// at each start that they are sent, and stops when one is not (design §13.5, V1d3a).
 /// </summary>
+/// <remarks>
+/// A test whose server sends an intermediate starts it through <see cref="StartWithChainAsync"/>: the chain holds the mutex of
+/// the tests that change the Windows CA stores, and a start that stops at the server's own check is made again with a new
+/// chain (<see cref="TestCertificateChain.StartAsync"/>). The servers stop before the chains are disposed.
+/// </remarks>
 public sealed class TlsChainTests : IAsyncDisposable
 {
     private readonly Deployment _deployment = new();
-    private readonly TestCertificateChain _chain = new();
+    private readonly List<TestCertificateChain> _chains = [];
 
     public async ValueTask DisposeAsync()
     {
-        await _deployment.DisposeAsync();
-        _chain.Dispose();
+        try
+        {
+            await _deployment.DisposeAsync();
+        }
+        finally
+        {
+            foreach (TestCertificateChain chain in _chains)
+            {
+                chain.Dispose();
+            }
+        }
     }
 
     /// <summary>
@@ -34,10 +56,10 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_PemWithIntermediate_SendsTheIntermediate()
     {
-        (string certificate, string key) = _chain.WritePem(_deployment.FilePath("chain.crt"), _deployment.FilePath("chain.key"), _chain.Intermediate);
-
-        ElmServer server = await _deployment.StartServerAsync(change: s => s with { TlsCertificate = certificate, TlsKey = key });
-        (bool sent, bool builds, _) = await _chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
+        (TestCertificateChain chain, ElmServer server) = await StartWithChainAsync(c =>
+            c.WritePem(_deployment.FilePath("chain.crt"), _deployment.FilePath("chain.key"), c.Intermediate)
+        );
+        (bool sent, bool builds, _) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
 
         Assert.True(sent);
         Assert.True(builds);
@@ -59,15 +81,10 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_PemWithRoot_SendsTheIntermediate()
     {
-        (string certificate, string key) = _chain.WritePem(
-            _deployment.FilePath("root.crt"),
-            _deployment.FilePath("root.key"),
-            _chain.Intermediate,
-            _chain.Root
+        (TestCertificateChain chain, ElmServer server) = await StartWithChainAsync(c =>
+            c.WritePem(_deployment.FilePath("root.crt"), _deployment.FilePath("root.key"), c.Intermediate, c.Root)
         );
-
-        ElmServer server = await _deployment.StartServerAsync(change: s => s with { TlsCertificate = certificate, TlsKey = key });
-        (bool sent, bool builds, _) = await _chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
+        (bool sent, bool builds, _) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
 
         Assert.True(sent);
         Assert.True(builds);
@@ -90,10 +107,10 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_Pkcs12WithIntermediate_SendsTheIntermediate()
     {
-        string pfx = _chain.WritePkcs12(_deployment.FilePath("chain.pfx"), [_chain.Intermediate]);
-
-        ElmServer server = await _deployment.StartServerAsync(change: s => s with { TlsCertificate = pfx, TlsKey = null });
-        (bool sent, bool builds, _) = await _chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
+        (TestCertificateChain chain, ElmServer server) = await StartWithChainAsync(c =>
+            (c.WritePkcs12(_deployment.FilePath("chain.pfx"), [c.Intermediate]), null)
+        );
+        (bool sent, bool builds, _) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
 
         Assert.True(sent);
         Assert.True(builds);
@@ -118,12 +135,12 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_Pkcs12WithTwoKeys_UsesTheFirst()
     {
-        string pfx = _chain.WritePkcs12(_deployment.FilePath("keys.pfx"), [_chain.Intermediate], otherWithKey: true);
+        (TestCertificateChain chain, ElmServer server) = await StartWithChainAsync(c =>
+            (c.WritePkcs12(_deployment.FilePath("keys.pfx"), [c.Intermediate], otherWithKey: true), null)
+        );
+        (bool sent, _, string? presented) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
 
-        ElmServer server = await _deployment.StartServerAsync(change: s => s with { TlsCertificate = pfx, TlsKey = null });
-        (bool sent, _, string? presented) = await _chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
-
-        Assert.Equal(_chain.Server.Thumbprint, presented);
+        Assert.Equal(chain.Server.Thumbprint, presented);
         Assert.True(sent);
     }
 
@@ -144,12 +161,13 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_PemWithoutIntermediate_ServesWithoutIt()
     {
-        (string certificate, string key) = _chain.WritePem(_deployment.FilePath("leaf.crt"), _deployment.FilePath("leaf.key"));
+        TestCertificateChain chain = NewChain();
+        (string certificate, string key) = chain.WritePem(_deployment.FilePath("leaf.crt"), _deployment.FilePath("leaf.key"));
 
         ElmServer server = await _deployment.StartServerAsync(change: s => s with { TlsCertificate = certificate, TlsKey = key });
-        (bool sent, bool builds, string? presented) = await _chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
+        (bool sent, bool builds, string? presented) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
 
-        Assert.Equal(_chain.Server.Thumbprint, presented);
+        Assert.Equal(chain.Server.Thumbprint, presented);
         Assert.False(sent);
         Assert.False(builds);
     }
@@ -176,12 +194,13 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_NonAuthorityAfterTheCertificate_Throws()
     {
-        string key = _chain.WritePem(_deployment.FilePath("other.crt"), _deployment.FilePath("other.key"), _chain.Other).Key;
+        TestCertificateChain chain = NewChain();
+        string key = chain.WritePem(_deployment.FilePath("other.crt"), _deployment.FilePath("other.key"), chain.Other).Key;
         string other = _deployment.FilePath("other.crt");
-        string unconstrained = _chain
-            .WritePem(_deployment.FilePath("unconstrained.crt"), _deployment.FilePath("unconstrained.key"), _chain.Unconstrained)
+        string unconstrained = chain
+            .WritePem(_deployment.FilePath("unconstrained.crt"), _deployment.FilePath("unconstrained.key"), chain.Unconstrained)
             .Certificate;
-        string pfx = _chain.WritePkcs12(_deployment.FilePath("other.pfx"), [_chain.Intermediate, _chain.Other]);
+        string pfx = chain.WritePkcs12(_deployment.FilePath("other.pfx"), [chain.Intermediate, chain.Other]);
 
         foreach (
             (string certificate, string? keyFile, int position, string subject) in new[]
@@ -218,7 +237,7 @@ public sealed class TlsChainTests : IAsyncDisposable
     [Fact]
     public async Task Start_PemWithoutCertificate_Throws()
     {
-        string key = _chain.WritePem(_deployment.FilePath("none.crt"), _deployment.FilePath("none.key")).Key;
+        string key = NewChain().WritePem(_deployment.FilePath("none.crt"), _deployment.FilePath("none.key")).Key;
         string certificate = _deployment.FilePath("none.crt");
         File.Copy(key, certificate, overwrite: true);
 
@@ -227,5 +246,330 @@ public sealed class TlsChainTests : IAsyncDisposable
         );
 
         Assert.StartsWith("The TLS certificate cannot be read: ", refused.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A CA certificate in the file that does not belong to the chain of the server's certificate is not sent, and the server
+    /// starts without it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Two chains with names of their own; a PEM file with the first chain's certificate, its intermediate, and then the
+    ///   intermediate of the second chain, and the key.
+    ///
+    /// Steps:
+    /// - Start the server with the two files; connect and check as in the PEM test.
+    ///
+    /// Expected:
+    /// - The server starts (on Windows, its check at the start expects only the intermediate of its own chain), the first
+    ///   chain's intermediate is among the certificates sent, and the chain builds.
+    /// </remarks>
+    [Fact]
+    public async Task Start_PemWithAnUnrelatedAuthority_StartsAndSendsItsOwnIntermediate()
+    {
+        TestCertificateChain unrelated = NewChain();
+        (TestCertificateChain chain, ElmServer server) = await StartWithChainAsync(c =>
+            c.WritePem(_deployment.FilePath("two.crt"), _deployment.FilePath("two.key"), c.Intermediate, unrelated.Intermediate)
+        );
+        (bool sent, bool builds, _) = await chain.ConnectAsync(server.PublicUrls[0], TestContext.Current.CancellationToken);
+
+        Assert.True(sent);
+        Assert.True(builds);
+    }
+
+    /// <summary>
+    /// On Windows, a server whose first handshake cannot have the intermediate stops at the start with a sentence that names
+    /// the certificate left out, leaves nothing listening, and does not record a start (design §13.5, V1d3a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; a listener of the test that answers TLS handshakes with the chain's certificate alone, with the
+    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate. From
+    ///   then on Windows sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
+    /// - A PEM file with the certificate and then the intermediate, and the key; or a PKCS#12 file with the certificate, its
+    ///   key, and the intermediate; a recording log provider.
+    ///
+    /// Steps:
+    /// - Start the server with the files on a port of the test's choice and a data folder of the test; then connect to that
+    ///   port, and read the data folder and the operational log.
+    ///
+    /// Expected:
+    /// - ServerStartException "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS
+    ///   certificate '{path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process
+    ///   runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification
+    ///   Authorities store." with the intermediate's subject and thumbprint, for both files; the connection afterwards is
+    ///   refused; no admin.sock; no server.started in the operational log or in the files; one usage log and one borrow
+    ///   record, each ending with its auth line.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_FirstHandshakeWithoutTheIntermediate_Throws(bool pkcs12)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        TestCertificateChain chain = NewChain(sentByServer: true);
+        using (var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel))
+        {
+            (IPEndPoint alone, Task served) = chain.Listen(IPAddress.Loopback, [], stop.Token);
+            (bool primed, _, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{alone.Port}/"), cancel);
+            Assert.False(primed);
+            await stop.CancelAsync();
+            await served;
+        }
+
+        (string certificate, string? key) = pkcs12
+            ? (chain.WritePkcs12(_deployment.FilePath("first.pfx"), [chain.Intermediate]), null)
+            : chain.WritePem(_deployment.FilePath("first.crt"), _deployment.FilePath("first.key"), chain.Intermediate);
+        int port = FreePort();
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        using var log = new RecordingLoggerProvider();
+        ServerSettings settings = _deployment.Settings(data) with
+        {
+            Listen = new Uri($"https://127.0.0.1:{port}"),
+            TlsCertificate = certificate,
+            TlsKey = key,
+        };
+
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => ElmServer.StartAsync(settings, HostOptions(log), cancel));
+
+        Assert.Equal(
+            $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the TLS "
+                + $"certificate '{certificate}' out of the first TLS handshake, and what that handshake sent stays for as long as this "
+                + "process runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate "
+                + "Certification Authorities store.",
+            refused.Message
+        );
+        using var client = new TcpClient();
+        SocketException closed = await Assert.ThrowsAsync<SocketException>(() => client.ConnectAsync(IPAddress.Loopback, port, cancel).AsTask());
+        Assert.Equal(SocketError.ConnectionRefused, closed.SocketErrorCode);
+        AssertFailedStartLeft(data, log);
+    }
+
+    /// <summary>
+    /// On Windows, a start whose check of the intermediates gets no answer stops with that sentence when the clock passes the
+    /// limit, and the requests that come in while the check runs, on the https listener and on the administration socket, get
+    /// no answer and leave no record (design §13.1, §13.5, V1d3a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain that a server sends; a PEM file with the certificate and then the intermediate, and the key; a TCP
+    ///   listener of the test that accepts connections and sends nothing, to which the check is sent (ServerHostOptions.
+    ///   SelfCheckTarget); a recording log provider.
+    ///
+    /// Steps:
+    /// - Start the server on a port of the test's choice; once the test's listener has accepted the check's connection, send
+    ///   GET /v1/nonce over https and POST /admin/v1/log/seal with the administrator token over admin.sock; then move the fake
+    ///   clock 10 seconds.
+    ///
+    /// Expected:
+    /// - Both requests fail without an answer. ServerStartException "The check that Windows sends the intermediate CA
+    ///   certificates of the TLS certificate '{path}' did not get an answer: the TLS handshake with 127.0.0.1:{port of the test's
+    ///   listener} did not finish within 10 seconds." The operational log has no admin.action and no server.started line; the
+    ///   data folder holds the files of a failed start and no admin.sock.
+    /// </remarks>
+    [Fact]
+    public async Task Start_CheckWithoutAnswer_ThrowsAndAnswersNothingMeanwhile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        TestCertificateChain chain = NewChain(sentByServer: true);
+        (string certificate, string key) = chain.WritePem(_deployment.FilePath("hole.crt"), _deployment.FilePath("hole.key"), chain.Intermediate);
+        int port = FreePort();
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        using var hole = new TcpListener(IPAddress.Loopback, 0);
+        hole.Start();
+        var holeEndPoint = (IPEndPoint)hole.LocalEndpoint;
+        using var log = new RecordingLoggerProvider();
+        ServerSettings settings = _deployment.Settings(data) with
+        {
+            Listen = new Uri($"https://127.0.0.1:{port}"),
+            TlsCertificate = certificate,
+            TlsKey = key,
+        };
+        ServerHostOptions options = HostOptions(log, _ => holeEndPoint);
+
+        Task<ElmServer> start = ElmServer.StartAsync(settings, options, cancel);
+        using TcpClient check = await hole.AcceptTcpClientAsync(cancel);
+        using var https = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true });
+        HttpRequestException nonce = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            https.GetAsync(new Uri($"https://127.0.0.1:{port}/v1/nonce"), cancel)
+        );
+        using HttpClient admin = Deployment.SocketHttp(AdminSocket.PathIn(data));
+        admin.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", AdminToken.Read(data));
+        HttpRequestException seal = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            admin.PostAsync(new Uri("http://localhost/admin/v1/log/seal"), null, cancel)
+        );
+        _deployment.Time.Advance(TlsChainSelfCheck.Limit);
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => start.WaitAsync(TimeSpan.FromSeconds(30), cancel));
+
+        Assert.Equal(
+            $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{certificate}' did not get an answer: "
+                + $"the TLS handshake with {holeEndPoint} did not finish within 10 seconds.",
+            refused.Message
+        );
+        Assert.NotNull(nonce);
+        Assert.NotNull(seal);
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("admin.action", StringComparison.Ordinal));
+        AssertFailedStartLeft(data, log);
+    }
+
+    /// <summary>
+    /// The tests start a server again, with a new chain, only after the sentence of the server's own check, and at most three
+    /// chains in all; any other failure of the start is the test's at once.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Three start functions that count their calls: one throws ServerStartException with the sentence of the check for a
+    ///   certificate left out; one throws ServerStartException "The TLS certificate cannot be read: x"; one throws the first
+    ///   sentence twice and then returns 7.
+    ///
+    /// Steps:
+    /// - Call TestCertificateChain.StartAsync with each.
+    ///
+    /// Expected:
+    /// - The first throws its exception after 3 calls, each with another chain; the second after 1 call; the third returns 7
+    ///   after 3 calls.
+    /// </remarks>
+    [Fact]
+    public async Task StartAsync_OnlyAfterTheCheckSentence_TriesAnotherChain()
+    {
+        const string leftOut =
+            "Windows left the intermediate CA certificate CN=x (thumbprint 00) of the TLS certificate 'x' out of the first TLS handshake, "
+            + "and what that handshake sent stays for as long as this process runs. Start again; if this happens at every start, add the "
+            + "certificate to the machine's Intermediate Certification Authorities store.";
+        var subjects = new HashSet<string>();
+        int other = 0;
+        int third = 0;
+
+        ServerStartException always = await Assert.ThrowsAsync<ServerStartException>(() =>
+            TestCertificateChain.StartAsync<int>(chain =>
+            {
+                subjects.Add(chain.Intermediate.Subject);
+                throw new ServerStartException(leftOut);
+            })
+        );
+        ServerStartException unread = await Assert.ThrowsAsync<ServerStartException>(() =>
+            TestCertificateChain.StartAsync<int>(_ =>
+            {
+                other++;
+                throw new ServerStartException("The TLS certificate cannot be read: x");
+            })
+        );
+        (TestCertificateChain kept, int started) = await TestCertificateChain.StartAsync(_ =>
+            ++third < TestCertificateChain.StartAttempts ? throw new ServerStartException(leftOut) : Task.FromResult(7)
+        );
+        _chains.Add(kept);
+
+        Assert.Equal(leftOut, always.Message);
+        Assert.Equal(3, TestCertificateChain.StartAttempts);
+        Assert.Equal(3, subjects.Count);
+        Assert.Equal("The TLS certificate cannot be read: x", unread.Message);
+        Assert.Equal(1, other);
+        Assert.Equal((7, 3), (started, third));
+    }
+
+    /// <summary>
+    /// On Windows, disposing a chain that a server sent takes the certificates .NET wrote for it out of the CA stores.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain that a server sends; a listener of the test that sends the chain's certificate with its intermediate,
+    ///   for which .NET writes the intermediate to the CA store of the machine or of the user; one handshake that receives the
+    ///   intermediate.
+    ///
+    /// Steps:
+    /// - Stop the listener, dispose the chain, and read the CA store of the user, which also shows the machine's.
+    ///
+    /// Expected:
+    /// - The handshake received the intermediate, and after the disposal no certificate of the store has the subject of the
+    ///   chain's intermediate or of its root.
+    /// </remarks>
+    [Fact]
+    public async Task Dispose_ChainAServerSent_LeavesNoneOfItsCertificatesInTheStores()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Only Windows keeps the intermediates a server sends in a certificate store.");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        var chain = new TestCertificateChain(sentByServer: true);
+        string[] subjects = [chain.Intermediate.Subject, chain.Root.Subject];
+        bool sent;
+        try
+        {
+            using var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+            (IPEndPoint endPoint, Task served) = chain.Listen(IPAddress.Loopback, [chain.Intermediate], stop.Token);
+            (sent, _, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{endPoint.Port}/"), cancel);
+            await stop.CancelAsync();
+            await served;
+        }
+        finally
+        {
+            chain.Dispose();
+        }
+
+        using var store = new X509Store(StoreName.CertificateAuthority, StoreLocation.CurrentUser);
+        store.Open(OpenFlags.ReadOnly);
+        string[] left = [.. store.Certificates.Select(c => c.Subject).Where(subjects.Contains)];
+
+        Assert.True(sent);
+        Assert.Empty(left);
+    }
+
+    // What a start that stopped at the check leaves: no admin.sock, no server.started in the operational log, and in the
+    // data folder the files of any failed start (§13.1): one usage log and one borrow record, each closed with its auth line,
+    // beside the installation key, the lock file, the administrator token, the clock, and the server license.
+    private static void AssertFailedStartLeft(string data, RecordingLoggerProvider log)
+    {
+        Assert.False(File.Exists(AdminSocket.PathIn(data)));
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("server.started", StringComparison.Ordinal));
+        string[] usage = Directory.GetFiles(data, "usage-*.jsonl");
+        string[] borrows = Directory.GetFiles(data, "borrows-*.jsonl");
+        Assert.Single(usage);
+        Assert.Single(borrows);
+        foreach (string file in usage.Concat(borrows))
+        {
+            string text = File.ReadAllText(file);
+            Assert.DoesNotContain("server.started", text, StringComparison.Ordinal);
+            Assert.Contains("\"auth\"", File.ReadAllLines(file)[^1], StringComparison.Ordinal);
+        }
+    }
+
+    private ServerHostOptions HostOptions(RecordingLoggerProvider log, Func<IPEndPoint, IPEndPoint>? selfCheckTarget = null) =>
+        new()
+        {
+            Time = _deployment.Time,
+            Environment = _ => null,
+            MinimumLogLevel = LogLevel.Information,
+            LoggerProvider = log,
+            SelfCheckTarget = selfCheckTarget,
+        };
+
+    private static int FreePort()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        return ((IPEndPoint)listener.LocalEndpoint).Port;
+    }
+
+    private TestCertificateChain NewChain(bool sentByServer = false)
+    {
+        var chain = new TestCertificateChain(sentByServer);
+        _chains.Add(chain);
+        return chain;
+    }
+
+    // Starts the server with the files that write makes from a new chain; see the remarks of the class.
+    private async Task<(TestCertificateChain Chain, ElmServer Server)> StartWithChainAsync(
+        Func<TestCertificateChain, (string Certificate, string? Key)> write
+    )
+    {
+        (TestCertificateChain chain, ElmServer server) = await TestCertificateChain.StartAsync(c =>
+        {
+            (string certificate, string? key) = write(c);
+            return _deployment.StartServerAsync(change: s => s with { TlsCertificate = certificate, TlsKey = key });
+        });
+        _chains.Add(chain);
+        return (chain, server);
     }
 }
