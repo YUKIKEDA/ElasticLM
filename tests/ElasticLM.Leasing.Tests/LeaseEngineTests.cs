@@ -144,6 +144,53 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A refused acquisition names its feature only when the current server license grants a feature of that name, also when
+    /// the refusal comes before the feature is read (design §18.1): the usage log counts refusals under this name.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Features pro (&gt;=2.0 &lt;3.0, 5 seats) and cam (5 seats), a license that expires 15 minutes after the start with
+    ///   2 minutes of grace; the window (10 minutes) is over; one lease of cam.
+    ///
+    /// Steps:
+    /// - Acquire nope; pro 3.0. Replace the license with one that grants pro only and acquire cam, whose lease is still
+    ///   held. Advance 7 minutes, to exp + grace, and acquire pro and nope.
+    ///
+    /// Expected:
+    /// - ELM_FEATURE_NOT_LICENSED without a feature; ELM_FEATURE_VERSION_NOT_LICENSED with pro; ELM_FEATURE_NOT_LICENSED
+    ///   without a feature for cam; ELM_EXPIRED with pro; ELM_EXPIRED without a feature.
+    /// </remarks>
+    [Fact]
+    public void Acquire_Refused_NamesTheFeatureOnlyWhenTheLicenseGrantsIt()
+    {
+        using var server = new TestServer(
+            features: [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5), new FeatureSpec("cam", Seats: 5)],
+            expires: TestServer.Start.AddMinutes(15),
+            grace: TimeSpan.FromMinutes(2)
+        );
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(feature: "cam", version: null)));
+        static void AssertNames(ErrorCode code, string? feature, LeaseOutcome outcome)
+        {
+            var refused = Assert.IsType<LeaseOutcome.Refused>(outcome);
+            Assert.Equal(code, refused.Error.Code);
+            Assert.Equal(feature, refused.FeatureId);
+        }
+
+        AssertNames(ErrorCode.FeatureNotLicensed, null, engine.Acquire(client.Request(feature: "nope")));
+        AssertNames(ErrorCode.FeatureVersionNotLicensed, "pro", engine.Acquire(client.Request(version: "3.0")));
+
+        server.ReplaceServerLicense(spec => spec with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5)] });
+        engine.ReplaceLicense(server.Identity);
+        AssertNames(ErrorCode.FeatureNotLicensed, null, engine.Acquire(client.Request(feature: "cam", version: null)));
+
+        server.Time.Advance(TimeSpan.FromMinutes(7));
+        AssertNames(ErrorCode.Expired, "pro", engine.Acquire(client.Request()));
+        AssertNames(ErrorCode.Expired, null, engine.Acquire(client.Request(feature: "nope")));
+    }
+
+    /// <summary>
     /// A granted lease is a token the client accepts, for its key, with sequence number 1 and the license's lease duration.
     /// </summary>
     /// <remarks>

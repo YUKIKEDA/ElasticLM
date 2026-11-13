@@ -211,6 +211,12 @@ internal static class CliParse
             throw new CliException($"The feature '{text}' has no ID.");
         }
 
+        // design §8.4.2 (V1d4): the issuer refuses it too, with a sentence that does not name the rule.
+        if (System.Text.Encoding.UTF8.GetByteCount(id) > LicenseRules.MaxFeatureIdBytes)
+        {
+            throw new CliException($"The ID of the feature '{text}' is longer than {LicenseRules.MaxFeatureIdBytes} bytes in UTF-8.");
+        }
+
         string? range = null;
         int? seats = null;
         DateTimeOffset? expires = null;

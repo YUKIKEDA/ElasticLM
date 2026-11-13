@@ -36,8 +36,8 @@ public sealed class ServiceUsageLogTests
     /// Expected:
     /// - Intact with no issue. The signed lines (the retry writes none) are service.started, lease.acquired, lease.renewed,
     ///   lease.released (by device), lease.acquired, lease.released (by admin), borrow.started, borrow.returned (by device),
-    ///   borrow.started, borrow.returned (by admin), two lease.denied lines (nope, ELM_FEATURE_NOT_LICENSED, 2; core,
-    ///   ELM_INVALID_ARGUMENT, 1), service.stopped.
+    ///   borrow.started, borrow.returned (by admin), two lease.denied lines (no feature, ELM_FEATURE_NOT_LICENSED, 2: the
+    ///   license does not grant nope, so the name is not written; core, ELM_INVALID_ARGUMENT, 1), service.stopped.
     /// - The first acquisition has the license, app, core, 1, A's key, the lease ID, its expiry, pc, u, and 1.2. No file
     ///   holds the license key.
     /// </remarks>
@@ -112,15 +112,7 @@ public sealed class ServiceUsageLogTests
             ["device", "admin", "device", "admin"],
             report.Entries.Where(e => e.Type is "lease.released" or "borrow.returned").Select(e => e.Value.GetProperty("by").GetString())
         );
-        Assert.Equal(
-            [("core", "ELM_INVALID_ARGUMENT", 1L), ("nope", "ELM_FEATURE_NOT_LICENSED", 2L)],
-            report
-                .Entries.Where(e => e.Type == "lease.denied")
-                .Select(e =>
-                    (e.Value.GetProperty("feat").GetString(), e.Value.GetProperty("code").GetString(), e.Value.GetProperty("count").GetInt64())
-                )
-                .Order()
-        );
+        Assert.Equal([(null, "ELM_FEATURE_NOT_LICENSED", 2L), ("core", "ELM_INVALID_ARGUMENT", 1L)], Denials(report));
         Assert.Equal("n1", report.Entries[^1].Value.GetProperty("node").GetString());
         foreach (string file in Files(test, "n1"))
         {
@@ -466,6 +458,110 @@ public sealed class ServiceUsageLogTests
     }
 
     /// <summary>
+    /// A refused acquisition is counted with its feature only when the license grants a feature of that name with seats;
+    /// the refusals before the license is read, and a name the license does not have, are counted without it (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log; products app (features core and extra) and other; a cloud-floating policy and
+    ///   licenses of it with seats of core: plain, with ver "&gt;=2.0 &lt;3.0", and one suspended; a policy that is not
+    ///   cloud-floating and a license of it with core; each engine.
+    ///
+    /// Steps:
+    /// - Acquire: an unknown key; the plain license for product other; the license that is not cloud-floating; extra and
+    ///   made-up of the plain license; version 3.0 of the ranged one; core and made-up of the suspended one. Stop the
+    ///   service; verify the node's files; read them.
+    ///
+    /// Expected:
+    /// - 404 ELM_LICENSE_NOT_FOUND; 400 ELM_WRONG_PRODUCT; 409 ELM_CONFLICT; 403 ELM_FEATURE_NOT_LICENSED twice; 403
+    ///   ELM_FEATURE_VERSION_NOT_LICENSED; 403 ELM_LICENSE_SUSPENDED twice.
+    /// - The lease.denied lines: without feat ELM_CONFLICT 1, ELM_FEATURE_NOT_LICENSED 2, ELM_LICENSE_NOT_FOUND 1,
+    ///   ELM_LICENSE_SUSPENDED 1, ELM_WRONG_PRODUCT 1; with core ELM_FEATURE_VERSION_NOT_LICENSED 1 and
+    ///   ELM_LICENSE_SUSPENDED 1. No file holds "made-up".
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Usage_AcquireRefusals_NameOnlyAFeatureTheLicenseGrants(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        string product = await ProductAsync(admin, "app", "core", "extra");
+        await ProductAsync(admin, "other");
+        string policy = await TestService.PolicyAsync(admin, product, Cloud);
+        (_, string plain) = await LicenseAsync(admin, policy, ThreeSeats);
+        (_, string ranged) = await LicenseAsync(admin, policy, """[{"code":"core","seats":2,"ver":">=2.0 <3.0"}]""");
+        (string suspendedId, string suspended) = await LicenseAsync(admin, policy, ThreeSeats);
+        (await admin.PostAsync($"v1/admin/licenses/{suspendedId}/suspend", null, TestContext.Current.CancellationToken)).Dispose();
+        (_, string fixedSeats) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        using var device = TestDevice.Create(test, service);
+
+        Assert.Equal("ELM_LICENSE_NOT_FOUND", (await device.AcquireAsync("ELM-AAAA-AAAA-AAAA-AAAA")).Code);
+        Assert.Equal("ELM_WRONG_PRODUCT", (await device.AcquireAsync(plain, product: "other")).Code);
+        Assert.Equal("ELM_CONFLICT", (await device.AcquireAsync(fixedSeats)).Code);
+        Assert.Equal("ELM_FEATURE_NOT_LICENSED", (await device.AcquireAsync(plain, feature: "extra")).Code);
+        Assert.Equal("ELM_FEATURE_NOT_LICENSED", (await device.AcquireAsync(plain, feature: "made-up")).Code);
+        Assert.Equal("ELM_FEATURE_VERSION_NOT_LICENSED", (await device.AcquireAsync(ranged, more: ",\"version\":\"3.0\"")).Code);
+        Assert.Equal("ELM_LICENSE_SUSPENDED", (await device.AcquireAsync(suspended)).Code);
+        Assert.Equal("ELM_LICENSE_SUSPENDED", (await device.AcquireAsync(suspended, feature: "made-up")).Code);
+        await service.StopAsync();
+
+        LogReport report = Verify(test, "n1");
+        Assert.Empty(report.Issues);
+        Assert.Equal(
+            [
+                (null, "ELM_CONFLICT", 1L),
+                (null, "ELM_FEATURE_NOT_LICENSED", 2L),
+                (null, "ELM_LICENSE_NOT_FOUND", 1L),
+                (null, "ELM_LICENSE_SUSPENDED", 1L),
+                (null, "ELM_WRONG_PRODUCT", 1L),
+                ("core", "ELM_FEATURE_VERSION_NOT_LICENSED", 1L),
+                ("core", "ELM_LICENSE_SUSPENDED", 1L),
+            ],
+            Denials(report)
+        );
+        Assert.DoesNotContain("made-up", Text(test, "n1"), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// Names the license does not grant do not use up the 100 kinds of refusal of a minute: after 100 of them, a refusal of
+    /// a granted feature still carries its feature (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log; a cloud-floating license with 3 seats of core; each engine. The clock does not
+    ///   move, so every refusal falls into one minute's count.
+    ///
+    /// Steps:
+    /// - Acquire the features x-0 to x-99; acquire 4 seats of core. Stop the service; verify the node's files.
+    ///
+    /// Expected:
+    /// - 100 times 403 ELM_FEATURE_NOT_LICENSED; 400 ELM_INVALID_ARGUMENT. Two lease.denied lines: without feat
+    ///   ELM_FEATURE_NOT_LICENSED 100, and core ELM_INVALID_ARGUMENT 1.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Usage_ManyUnlistedNames_LeaveTheKindsToGrantedFeatures(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+
+        for (int i = 0; i < 100; i++)
+        {
+            string name = "x-" + i.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            Assert.Equal("ELM_FEATURE_NOT_LICENSED", (await device.AcquireAsync(key, feature: name)).Code);
+        }
+
+        Assert.Equal("ELM_INVALID_ARGUMENT", (await device.AcquireAsync(key, count: 4)).Code);
+        await service.StopAsync();
+
+        LogReport report = Verify(test, "n1");
+        Assert.Empty(report.Issues);
+        Assert.Equal([(null, "ELM_FEATURE_NOT_LICENSED", 100L), ("core", "ELM_INVALID_ARGUMENT", 1L)], Denials(report));
+    }
+
+    /// <summary>
     /// Refusals are counted per feature and code; beyond 100 kinds in a minute they are counted without the feature, as
     /// elm-server does (design §18.1).
     /// </summary>
@@ -754,6 +850,21 @@ public sealed class ServiceUsageLogTests
 
     private static LogReport Verify(TestService test, string node) =>
         LogVerifier.Verify(Files(test, node), TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []), null, "usage");
+
+    // The lease.denied lines as (feat or null, code, count), ordered.
+    private static (string? Feature, string? Code, long Count)[] Denials(LogReport report) =>
+        [
+            .. report
+                .Entries.Where(e => e.Type == "lease.denied")
+                .Select(e =>
+                    (
+                        e.Value.TryGetProperty("feat", out JsonElement feature) ? feature.GetString() : null,
+                        e.Value.GetProperty("code").GetString(),
+                        e.Value.GetProperty("count").GetInt64()
+                    )
+                )
+                .Order(),
+        ];
 
     private static string LeaseId(DeviceAnswer answer)
     {

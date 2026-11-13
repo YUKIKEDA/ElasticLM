@@ -105,16 +105,16 @@ info: elm-server[2]
 | `lease.expired` | リースが更新されずに期限切れになったとき | `lic`、`feat`、`n`、`key`、`lease` |
 | `borrow.expired` | 借用が終わったとき | `lic`、`feat`、`n`、`key`、`lease` |
 | `lease.reclaimed` | サーバーの再起動のあと、クライアントがリースを再登録したとき | `lic`、`key`、`lease`、`cloneFlagged` |
-| `lease.denied` | 拒否したリースの取得、リースの更新、リースの再登録、早期返却。60 秒ごとと停止時に件数を書く | `feat`（分かる場合）、`code`、`count` |
+| `lease.denied` | 拒否したリースの取得、リースの更新、リースの再登録、早期返却。60 秒ごとと停止時に件数を書く | `feat`（早期返却ではリースの機能。リースの取得では、リクエストが求めた機能で、サーバーライセンスが付与している場合だけ付く）、`code`、`count` |
 | `admin.denied` | 正しいトークンのない管理リクエスト。60 秒ごとと停止時に件数を書く | `code`（`ELM_UNAUTHORIZED`）、`count` |
-| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID）、`result`（エラーコードの名前） |
+| `admin.action` | 正しいトークンのある管理リクエスト | `action`（`status`、`leases`、`release`、`reload`、`seal` のいずれか）、`target`（`release` のリース ID。リクエストの ID がリース ID の形でなければ付かない）、`result`（エラーコードの名前） |
 | `server.started` | サーバーが起動したとき | `lic`、`key`（ここではサーバーの鍵 ID。クライアントのものではなく、サーバー自身のインストール鍵のサムプリント）、`borrows`（復元した借用） |
 | `server.stopped` | サーバーが停止したとき | `leases`（返却されていないリース） |
 | `records.set_aside` | `--set-aside-broken-records` で動かしたサーバーが、起動中、待ち受けを始める前に、壊れた借用の記録を退避したとき。そのあと待ち受けに失敗した起動でも、この行は残る | `file` |
 | `license.refreshed` | サーバーライセンスを `elm-service` から更新したとき | `lic`、`token`（トークン ID）、`seq` |
 | `license.refresh_failed` | サーバーライセンスの更新に失敗したとき | `stage`（`start`、`write`、`reload`、`service` のいずれか）、`code` |
 
-拒否の行は、期間内の 1 つの種類（機能とコードの組）の件数を表す。1 つの期間に数える種類は 100 までで、それを超えた分は機能を区別せずに数える。
+拒否の行は、期間内の 1 つの種類（機能とコードの組）の件数を表す。1 つの期間に数える種類は 100 までで、それを超えた分は機能を区別せずに数える。リクエストが求めた機能のうち、サーバーライセンスが付与していないものの名前は書かないので、そうした拒否は、コードごとに 1 つの種類にまとまる。
 
 ### `elm-service` のイベント
 
@@ -129,7 +129,7 @@ info: elm-server[2]
 | `borrow.returned` | 借用が早期返却されたとき、または管理者が借用を解放したとき | `lease.released` と同じ |
 | `lease.expired` | 期限切れのリースを、片付けの処理が削除したとき | `lic`、`prd`、`feat`、`n`、`key`、`lease` |
 | `borrow.expired` | 終わった借用を、片付けの処理が削除したとき | `lic`、`prd`、`feat`、`n`、`key`、`lease` |
-| `lease.denied` | リースのルールで拒否したリースの取得、リースの更新、返却。60 秒ごと、停止時、seal の指示のときに件数を書く。プルーフの不備、レート制限（`429`）、本文のサイズ（`413`）による拒否は数えない | `feat`（分かる場合）、`code`、`count` |
+| `lease.denied` | リースのルールで拒否したリースの取得、リースの更新、返却。60 秒ごと、停止時、seal の指示のときに件数を書く。プルーフの不備、レート制限（`429`）、本文のサイズ（`413`）による拒否は数えない | `feat`（リースの機能。リースの取得では、リクエストが求めた機能で、ライセンスが付与している場合だけ付く）、`code`、`count` |
 | `service.started` | ノードが起動したとき。リクエストを受け付ける前に書く | `node` |
 | `service.stopped` | ノードが停止したとき、または `service.started` を書いたあとで起動に失敗したとき（たとえば、待ち受けられないとき） | `node` |
 

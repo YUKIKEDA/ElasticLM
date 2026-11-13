@@ -914,7 +914,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `lic` | string | 必須 | ライセンス ID |
 | `prd` | string | 必須 | 製品 ID |
 | `kind` | string | 必須 | `standard`, `trial`, `server`（§9.6） |
-| `feat` | object[] | 必須（空でよい） | 機能。各要素は `id`（string、必須）、`ver`（string、任意。許す版の範囲 §9.2）、`seats`（int、`kind: server` のとき必須で、ほかの種類では持たない。持つトークンは検証で `ELM_MALFORMED`）、`exp`（int、任意。機能ごとの期限） |
+| `feat` | object[] | 必須（空でよい） | 機能。各要素は `id`（string、必須。UTF-8 で 1〜64 バイト。文字は問わない。V1d4）、`ver`（string、任意。許す版の範囲 §9.2）、`seats`（int、`kind: server` のとき必須で、ほかの種類では持たない。持つトークンは検証で `ELM_MALFORMED`）、`exp`（int、任意。機能ごとの期限） |
 | `cnf` | object | `kind: server` では必須。ほかの種類では端末に紐づくとき | `{"jkt": "<インストール鍵の拇印>"}` |
 | `fp` | string[] | 任意 | マシン指紋（§10.3）。`elm license issue` は、`--fingerprint` があれば `--fingerprint-matching ignore` でも書く。`elm-service` は、ポリシーの照合が `ignore` のときと指紋がないときは `fp` と `fpm` を書かない（`ElmService.Client.cs`、`LicenseIssuer`） |
 | `fpm` | string | `fp` が 1 つ以上の要素を持つとき | 指紋の照合方法（§9.3 の `FingerprintMatching`） |
@@ -1011,6 +1011,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | ライセンスファイル | 64 KiB |
 | `certificates` の数 | 4 |
 | `feat` の数 | 256 |
+| 機能の ID（`feat[].id`。`elm-server` の貸し出しの要求の `feature` も同じ。V1d4） | UTF-8 で 64 バイト |
 | `fp` の数 | 8 |
 | `meta` の組の数 | 32（キー 64 バイト、値 1 KiB まで） |
 | JSON の入れ子の深さ | 8 |
@@ -1794,7 +1795,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - 借り出しの取得は、本文の `fingerprints`（§10.3）を 1 つ以上要る（0.57）。なければ、期間の上限の判定の後に `400` と `ELM_FINGERPRINT_UNAVAILABLE` を返す。
 - 本文の読み方は、`elm-server` と `elm-service` で次の点が違う。`elm-server` は本文をソース生成の型（`ServerJson` の `AcquireBody`・`RenewBody`・`ReclaimBody`）で読み、`elm-service` は `RequestBody`（`JsonDocument`）で読む（§12.6.1, §12.7.6）。
   - `client` の `host` と `user`: `elm-server` では各々任意（なくても `null` でもよい）で、各 255 バイトまで（`ElmServer.AcquireAsync`）。`elm-service` では両方とも必須で、欠ければ `ELM_MALFORMED`（`Activations.Client`）。
-  - `feature`: `elm-server` は形を確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
+  - `feature`: `elm-server` は、空の値と、UTF-8 で 64 バイトを超える値を、`400` と `ELM_MALFORMED`（「The request body is not a valid lease request.」）で断る（V1d4。機能の ID の上限と同じ。§8.6）。`version` や `app` と同じ検査で、証明の検証のあと、リースの処理と利用ログの前に行うので、こういう要求は `lease.denied` に数えない。文字の種類は確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。V1d4 より前は、長さを確かめなかった。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
   - `fingerprints`: どちらも 8 個まで、各 32 文字の小文字の 16 進。`elm-service` は同じ値を 1 つにまとめ（`Activations.Fingerprints`）、`elm-server` はまとめずに受け取ったまま使う。
   - 更新の `seq`: `elm-server` は 64 ビットの整数なら負の値も受け、§10.4 の手順 3 で複製と判定する（`LeaseRules.Judge`。負の値は今の更新番号とも、その 1 つ前とも一致しない）。`elm-service` は負の値を `ELM_MALFORMED` で断る（`Activations.Sequence`）。
   - 同じメンバーが 2 回ある本文: `elm-server` は、型が知るメンバーの 2 回だけを `ELM_MALFORMED` とし、知らないメンバーの 2 回は無視する。System.Text.Json のソース生成の読み手の `AllowDuplicateProperties = false` は、型のプロパティーにだけ効く（.NET 10 で試して確かめた）。`elm-service` は、どのメンバーの 2 回も `ELM_MALFORMED` とする（`JsonDocument` の `AllowDuplicateProperties = false`）。
@@ -2439,7 +2440,7 @@ M3c で作った形（0.50。待ち受けは V1d2 の 0.119 で改めた。オ�
   - 止まるとき: 正常に止まっても、ファイルは消さない。次の起動が置き換えるまで残るが、そのトークンを受けるサーバーはもうない。消さないのは、止まる処理を増やさず、強制終了のあとと同じ形にするためである。
   - 失敗した起動: 手順 6 より後で失敗した起動（待ち受けられないときなど）では、トークンはもう置き換わっている。手順 6 より前で失敗した起動は、前のファイルを残す。どちらでも動いているサーバーはなく、`elm` は、`admin.sock` がないことで「動いていない」と見る。
   - ソケットでの `ELM_UNAUTHORIZED`（`401`）の意味: トークンとソケットは同じフォルダーにあるので、V1c18 が書いた「`--url` のサーバーとは別のサーバーのフォルダーを名指した」は、もう起きない。`401` になるのは、次の 2 つである。(a) 起動し直す途中のサーバーがトークンを置き換える前に `elm` が `admin.token` を読み、新しいサーバーが待ち受けたあとでつないだ。(b) `admin.token` が手で置き換えられた。結果は、いままでの行（「error: ELM_UNAUTHORIZED: <文>」。再読み込みの依頼では、ファイルは書いてあることを足す）と終了コード 1 で、状態の問い合わせでは何も書かない。`elm` は、トークンを読み直して送り直すことはしない。読み直すと、(b) の本当の食い違いを 1 回ぶん隠すためで、(a) は、コマンドをもう一度流せば通る。
-- エンドポイント: `GET /admin/v1/status`、`GET /admin/v1/leases`、`DELETE /admin/v1/leases/{id}`（強制返却。知らなければ `404` と `ELM_UNKNOWN_LEASE`、借り出しなら `409` と `ELM_RETURN_NOT_ALLOWED`。0.56。強制返却したリースのクライアントは、次の更新で `ELM_UNKNOWN_LEASE` を受けて回収を送り（§13.4 の手順 4）、手持ちのトークンが期限内で空き席があれば、席をまた持つ。`LeaseEngine.ForceRelease` は記録を消すだけで、トークンを止めないためである）、`POST /admin/v1/license/reload`（§13.1）、`POST /admin/v1/log/seal`（利用ログの署名を今書く）。
+- エンドポイント: `GET /admin/v1/status`、`GET /admin/v1/leases`、`DELETE /admin/v1/leases/{id}`（強制返却。知らなければ `404` と `ELM_UNKNOWN_LEASE`。`{id}` がリースの ID の形（`[A-Za-z0-9_-]` の 22 文字）でなければ、リースを探さずに同じ答えを返し、利用ログの `admin.action` の行は `target` なしで書く。V1d4、Issue #374。借り出しなら `409` と `ELM_RETURN_NOT_ALLOWED`。0.56。強制返却したリースのクライアントは、次の更新で `ELM_UNKNOWN_LEASE` を受けて回収を送り（§13.4 の手順 4）、手持ちのトークンが期限内で空き席があれば、席をまた持つ。`LeaseEngine.ForceRelease` は記録を消すだけで、トークンを止めないためである）、`POST /admin/v1/license/reload`（§13.1）、`POST /admin/v1/log/seal`（利用ログの署名を今書く）。
 - 認証された各操作を利用ログに `{"type": "admin.action", "action", "target", "result": <コード>}` で書く。認証の失敗は 1 行ずつ書かず、1 分ごとに `{"type": "admin.denied", "code": "ELM_UNAUTHORIZED", "count"}` で件数を書く（0.58）。ソケットにつなげる者が違うトークンを送り続けても、利用ログを際限なく増やせないようにするためである（V1d2 の前は、ほかの利用者やブラウザーがループバックへ送る要求も、ここに届いた）。
 - 状態の表示（`GET /admin/v1/status`）の応答は `{"product", "license": <ライセンス ID>, "licenseToken": <トークン ID>, "licenseExpires": <UNIX 秒>, "key": <サーバーのインストール鍵の拇印>, "recovering": <回収の時間中か>, "recoveryEnds": <回収の時間の終わりの UNIX 秒>, "leases": <持っているリースの数>, "features": [{"feature", "seats", "allowed": <超過を含む席数>, "inUse": <期限内のリースの席>, "borrowed": <借り出しの席>}], "autoRefresh"}` である（`StatusAnswer`）。期限のないサーバーライセンスでは `licenseExpires` を書かない（`null` も書かない。`ServerJsonContext` の `WhenWritingNull`）。`elm server status` は、この項目がなければ `expires: never` と表示する（`ServerCommands.PrintStatus`。V1c7、Issue #203 で直した）。
 - `elm server status|leases|release <ID>|reload|seal` が、`--data`（データのフォルダー）か `--product`（端末の範囲の既定の場所）のフォルダーから管理者トークンを読み、同じフォルダーの `admin.sock` につないで管理 API を呼ぶ（`ServerCommands.Call`）。`--url` はない（V1d2 でなくした。渡せば、ほかの知らないオプションと同じ引数の誤りになる。`--url` のための行は出さない）。ほかの端末から使う道はない（0.50、0.119）。要求の時間切れは 30 秒。終了コードは、成功 0、サーバーの拒否 1、引数の誤りとトークンが読めないとき 2、つながらないとき 3。`admin.sock` がなければ、つながずに「The server cannot be reached: the administration socket '<パス>' does not exist.」を出す。接続に失敗したとき（断られたときを含む）は、いままでどおり「The server cannot be reached: <.NET の文>」を出す。どちらも終了コード 3 である。<.NET の文> は、接続の誤りでは、内側の `SocketException` の文にする。`HttpRequestException` の文は、終わりに「(elm-server.invalid:80)」を足すので、`elm` が 80 番へ行ったように読めるためである。誤りの応答にコードがないとき（別のリリースの `elm-server` の `404` など）は、サーバーライセンスのコマンドと同じ「The server's administration API answered <状態コード>.」を出して、終了コード 1 で終わる（`ServerAdminApi.Unexpected`。V1d2 の前は「error: ?: 」と出ていた。文書の読み直しの E6）。
@@ -3912,6 +3913,7 @@ M3c で作った形:
 - 書き込みに失敗したら、そのファイルを閉じ、次の書き込みで `chain.reset`（理由は `a write to <ファイル> failed: ...`）から新しいファイルを始める（0.59）。途中まで書いた行は署名のない行（警告）として残り、改ざん（誤り）とはみなさない。`key.changed` を書けなかったとき、利用ログは新しいサーバーライセンスに替え、次のファイルの `chain.reset` がそれを持つ（サーバーは新しいライセンスを使う）。借り出しの記録は古いライセンスのまま続ける（サーバーは `409` を返して古いライセンスを使い続ける。§13.1）。
 - 新しいファイルの名前は、時計が戻っても最新のファイルより後に並べる（最新のファイルの時刻 + 1 ミリ秒）。起動時に読むのは、名前で最新のファイルだからである（0.56）。
 - 拒否の数え方（0.58）: `lease.denied` と `admin.denied` は、署名のタイマー（60 秒）ごとと停止のときに、種類（イベント、機能、コード）ごとの件数を `{"type", "ts", "feat"?, "code", "count"}` の 1 行で書く。1 分に数える種類は 100 までで、超えた分は機能を省いて数える。拒否の行の増え方は、要求の数ではなく、1 分あたりの種類の数で抑える。
+  - `feat` を書く条件（V1d4）: `lease.denied` の行の `feat` に書くのは、リースの機能か、ライセンスが付与している機能の名前だけである。要求が頼んだだけの名前は書かない。`elm-server` では、早期返却の断りに、リースの機能を書く（更新と回収の断りには付かない）。取得の断りには、要求の名前を、そのときのサーバーライセンスが席数（`seats`）つきで持つときだけ書く。取得の `ELM_FEATURE_NOT_LICENSED` には付かず、`ELM_EXPIRED` には、ライセンスにある名前のときだけ付く。`elm-service` では、更新と返却の断りに、どのコードでも、リースの機能を書く。取得の断りには、要求のコードを、ライセンスが席数つきで持つときだけ書く。取得の `ELM_LICENSE_NOT_FOUND`、`ELM_WRONG_PRODUCT`、`ELM_CONFLICT`（クラウドのフローティングでないポリシー）、`ELM_FEATURE_NOT_LICENSED` には付かない。こうして、クライアントが勝手に作った名前は、コードごとに 1 つの種類にまとまる。`elm-server` では、種類の数を決めるのは、サーバーライセンスの機能（多くて 256 個）とコードだけになる。`elm-service` では、すべてのライセンスの機能が種類になるので、本物の断りだけで 100 種類を超えることはある。V1d4 より前は、要求の名前をそのまま書いていたので、どの鍵でも、作った名前で 100 種類の枠を使い切れた。
 - ディスクが一杯のとき: 利用ログは運用の記録に書いて要求を続ける。借り出しの記録に書けなければ、借り出しと早期返却を断る（§13.4）。
 - イベント（M3c）: `lease.acquired`、`lease.renewed`（`cloneFlagged`）、`lease.released`、`lease.expired`、`lease.reclaimed`（`cloneFlagged`）、`lease.denied`（取得・更新・回収・早期返却の拒否を、1 分ごとに機能とコードごとの `count` で）、`borrow.started`、`borrow.returned`、`borrow.expired`、`overage`（`inUse` つき）、`server.started`（`lic`、`key`、`borrows`）、`server.stopped`（返却されなかったリースの数 `leases`）、`admin.action`（`action`、`target`、`result`、§13.7）、`admin.denied`（1 分ごとの `count`）、`records.set_aside`（`file`）。M4c3 で `license.refreshed` と `license.refresh_failed`（`stage` は `start`・`write`・`reload`・`service`、§13.7）。取得の行は、送られていればホスト名・ユーザー名・アプリの版を持つ。
 - 書き手と検証は `ElasticLM.Issuing` の `SignedLog`（`Open`、`Append`、`Seal`、`ChangeKey`、`FindFiles`）と `LogVerifier.Verify(files, trust, productId, stream)` で、`elm-server` と `elm log verify` が共有する。
@@ -5482,6 +5484,26 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 空のパスを、`/` と同じに扱う（設計の独立レビューの指摘）。Kestrel は、要求の対象が `*` のとき、パスを空にする。ルーティングは、空のパスを `/` の経路に合わせるので、検査の前は、`OPTIONS *` が、画面の `404` でなくルーティングの `405` になっていた。ハンドラーは動かず、本文も読まれない。この行と同じ種類（検査が、ルーティングと違う形で比べる）なので、ここで直した。
     - 1 MiB を超える本文の `503` は、検査のあとでは起きない。メソッドの違う要求は、ハンドラーに届く前に画面の `404` になり、本文は読まれない（テストは、`Content-Length` が 921600 と 2097152 で、本文を 1,000 バイトだけ送った `POST /AUTH/CALLBACK` が、`404` になることを確かめる）。`GET` の要求の本文は、ハンドラーが読まない。
   - 同じ種類を探した範囲: `src/ElasticLM.Service` と `src/ElasticLM.Server` の、`Request.Path`、`PathString`、`StartsWithSegments` を使う所のすべて。大文字と小文字を区別していたのは、`ElmService.Web.cs` の `RefuseWebPath` の `switch` だけである。`ElmService.Admin.cs` の `StartsWithSegments`（`/v1/admin`、`/v1/activations` など）と `ElmService.AdminUi.cs` の `/assets` は、区別しない。証明の宛先を作る所（`ElmService.Client.cs`、`ElmServer.cs`）は、検査でない。
+- V1d4 の Grill（Issue #322 と Issue #374 に記録した。問 4-1〜問 4-4。持ち主の決定はどれも推奨案 A。2026-11-13）: `elm-server` が、断った貸し出しの要求の、長さの上限のない機能名を利用ログに書くこと（V1d の指摘 F04）を直す。退けた案は design-decisions.md にある。
+  - 測った事実（`main` の 2919c9c、Windows 11、Debug）:
+    - `elm-server` は、要求の `feature` の長さを確かめなかった。65,512 文字の `<` は `403 ELM_FEATURE_NOT_LICENSED` で、`lease.denied` の行は 393,165 バイトになった（`<` は 6 バイトに直される）。101 個の名前で、行は合わせて 39,314,603 バイトになった。`LogVerifier` は、そのログを損なわれていないと報告した。
+    - ライセンスの `feat[].id` の決まりは、空でないことだけだった。11,784 文字の ID を持つサーバーライセンスを発行でき、サーバーは、その機能を貸し出した。要求だけに上限を置くと、検証を通るライセンスの機能が借りられなくなる。
+    - 利用ログの `feat` は、`ELM_EXPIRED` と `ELM_FEATURE_NOT_LICENSED` の断りでは、要求の名前そのままだった。作った名前を送り続けると、1 分に 100 種類の枠を使い切れ、そのあいだ、本物の断りの行から機能名が落ちる（コードから）。`elm-service` は、名前の形を限っているので行は長くならないが、枠は同じように使い切れた。
+    - ログを読む側（`LogVerifier`、`elm log verify`）は、`feat` を解釈しない。
+    - ログに届く要求のメンバーで、ほかに長さの検査がなかったのは、`elm-server` の `DELETE /admin/v1/leases/{id}` の `{id}` だけだった（Issue #374）。
+  - ほかの仕組み（読んだもの。2026-11-13）: FlexNet Publisher の機能名は 30 文字まで（https://community.revenera.com/s/article/flexnet-licensing-error-2-5 ）。FlexNet のデバッグログは、ライセンスにない機能の要求を `UNSUPPORTED` として名前つきで書き、`NOLOG UNSUPPORTED` で止められる（License Administration Guide 11.11.1）。Keygen と Cryptlex の文書は、名前の長さを書いていない。
+  - 持ち主が決めたこと:
+    - 問 4-1: 機能の ID を、UTF-8 で 1〜64 バイトに限る（§8.4.2、§8.6）。`elm-server` の要求の `feature` も同じ上限にする（§12.7.1）。
+    - 問 4-2: サーバーライセンスにない機能名は、利用ログに書かない（§18.1）。
+    - 問 4-3: `elm-service` も同じ決まりにする（§18.1）。
+    - 問 4-4: Issue #374（管理 API の `{id}`）は、この行で一緒に直す（§13.7）。
+  - こちらが決めたこと:
+    - 上限は、`ElasticLM.Licensing` の `Limits` の 1 つの決まり（`IsFeatureId`）に置き、ライセンスの決まり（発行と検証が共有する `LicensePayloadRules`）と、サーバーの要求の検査が、同じものを使う。
+    - 名前がライセンスにあるかは、リースの処理（`LeaseEngine.Acquire`）が、ロックの中で決めて、断りの結果に入れる。ハンドラーで比べると、ライセンスの再読み込みと競合し、判定に使ったライセンスと違うライセンスで比べることがある。
+    - 数のない機能（`seats` のない機能）は、ログでは「ライセンスにない」ものと同じに扱う（リースの決まりが、もうそう扱っている）。`elm-service` で、ライセンスの状態（取り消し、停止、期限切れ）で断るときは、ライセンスがその名前を持てば `feat` を書く（`elm-server` の `ELM_EXPIRED` と同じ）。
+    - リーストークンの `feat`（§8.4.3）の検査は、「空でない」のままにした。`elm-server` のリースは、検証で、サーバーライセンスの機能であることを確かめる。`elm-service` のコードは 64 文字までである。ここに上限を足すと、前の借り出しの記録と、回収のトークンも断ることになる。V1d4 より前に、64 バイトを超える機能の ID で作られた借り出しの記録は、そのまま読み込まれ、その名前が `borrow.*` の行に出る。この名前は、サーバーが署名したもので、16 KiB のトークンの内に収まり、クライアントが選んだものではない。
+    - 管理 API の、形の違う `{id}` には、`404 ELM_UNKNOWN_LEASE` を返す。この経路の誤りは、もともとこのコードと `409` だけで、`elm-service` も、形の違うリースの ID に同じ答えを返す（§12.7.6）。`admin.action` の行は、`target` なしで書く。
+  - 同じ種類を探した範囲: 2 つの製品の、利用ログ、運用のログ、監査に届く要求のメンバー（Issue #322 の記録の表）。この行の外で見つけたもの: Web ホストが、要求のパスを運用のログに書くこと（Issue #375）。`elm-service` の管理 API が、経路の文字を監査の `target` に渡すこと（Issue #376）。`elm license issue` は、65 バイト以上の機能の ID を、発行の前に「The ID of the feature '…' is longer than 64 bytes in UTF-8.」で断る（発行の側の文は、どの決まりに外れたかを言わないので、設計と正しさのレビューの指摘で足した）。
 
 ## 21. 依存
 

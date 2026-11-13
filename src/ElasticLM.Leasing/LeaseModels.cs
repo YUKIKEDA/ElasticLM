@@ -64,7 +64,14 @@ public abstract record LeaseOutcome
     /// </summary>
     /// <param name="Error">The reason.</param>
     /// <param name="RetryAfter">When to try again, for <see cref="ErrorCode.ServerRecovering"/>; otherwise <see langword="null"/>.</param>
-    public sealed record Refused(LicenseError Error, TimeSpan? RetryAfter = null) : LeaseOutcome;
+    public sealed record Refused(LicenseError Error, TimeSpan? RetryAfter = null) : LeaseOutcome
+    {
+        /// <summary>
+        /// Gets the feature a refused acquisition named, when the server license grants a feature of that name; otherwise
+        /// <see langword="null"/>. The usage log names only these, so a name a client made up is never written (design §18.1).
+        /// </summary>
+        public string? FeatureId { get; init; }
+    }
 }
 
 /// <summary>

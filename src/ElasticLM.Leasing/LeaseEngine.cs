@@ -172,14 +172,28 @@ public sealed class LeaseEngine : IDisposable
     /// Acquires a new lease, or borrows one when the request has a borrow period (design §12.7.1, §12.7.2, §12.7.4).
     /// </summary>
     /// <param name="request">The request.</param>
-    /// <returns>The lease, or why it was refused.</returns>
+    /// <returns>The lease, or why it was refused. A refusal names the feature only when the server license grants it.</returns>
     public LeaseOutcome Acquire(LeaseRequest request)
     {
         ArgumentNullException.ThrowIfNull(request);
         _gate.EnterReadLock();
         try
         {
-            return AcquireCore(request, _state);
+            LicenseState state = _state;
+            LeaseOutcome outcome = AcquireCore(request, state);
+
+            // design §18.1 (V1d4): the name is looked up in the license the request was judged under, also for a refusal that
+            // comes before the feature is read (ELM_EXPIRED).
+            if (
+                outcome is LeaseOutcome.Refused refused
+                && state.Pools.TryGetValue(request.FeatureId ?? string.Empty, out FeaturePool? pool)
+                && pool.Feature is not null
+            )
+            {
+                return refused with { FeatureId = pool.FeatureId };
+            }
+
+            return outcome;
         }
         finally
         {
