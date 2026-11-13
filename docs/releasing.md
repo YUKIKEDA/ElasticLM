@@ -91,9 +91,11 @@ release is published (design §20.7, T28).
    documentation says that a prerelease pushes neither.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
-   `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release. Each job that takes files from another
+   `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release. A job that takes files from another
    job checks them against the SHA-256 lines that job gave as its output, and that there are no other files; a job
-   whose check fails stops the run before the draft (design §20.5, "ジョブの間の artifact の確かめ").
+   whose check fails stops the run before the draft. Two downloads are not checked this way: the site's artifact,
+   which the `pages` job deploys, and the image tar in the `publish` job, which compares only the tar's index digest
+   with the `image` job's output (design §20.5, "ジョブの間の artifact の確かめ"; §5.4).
 5. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version). Each
    `libelasticlm-<version>-<rid>` archive holds the library, `elasticlm.h`, and `LICENSE` at its top; on `win-*` it also
    holds the import library `elasticlm.lib`, which stays out of the `-symbols` archive (decision 0.118). The build job
