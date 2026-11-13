@@ -13,11 +13,15 @@ namespace ElasticLM.Service.Tests;
 /// <remarks>
 /// Each test repeats its round, because one round can pass by chance without the read under the lock: when the second
 /// request arrives after the first one is committed, the row read before the lock is already the new one. With that read
-/// taken out, the first round passed in each of the 20 test runs measured on SQLite, and every one of those runs failed on
-/// later rounds (design §20.7, the V1d13 Grill).
+/// taken out, the first round passed in 29 of the 30 test runs measured on SQLite, and every one of those runs failed on
+/// other rounds (design §20.7, the V1d13 Grill).
 /// </remarks>
 public sealed class ElmServiceConcurrentRenewalTests
 {
+    // TestService.AuditRowsAsync reads the first 200 audit rows, oldest first. The refresh test writes 5 rows before its
+    // rounds and 4 a round (45 after 10 rounds, counted in a run), so the clone row of round n is row 4n + 3 and is read up
+    // to round 49; the renewal test writes 3 a round (35 after 10 rounds), up to round 65. Past that the round's clone row
+    // is not read and the round is reported as differing.
     private const int Rounds = 10;
 
     /// <summary>Gets each engine with each clone strategy.</summary>
@@ -30,13 +34,15 @@ public sealed class ElmServiceConcurrentRenewalTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A cloud-floating policy with the case's cloneStrategy; a license with 10 seats of core, one for each round's lease;
-    ///   two copies of one installation (the same installation key); each engine with deny and with flag.
+    /// - A cloud-floating policy with the case's cloneStrategy; a license with 10 seats of core and no overage, one for each round's
+    ///   lease. No lease is released, and a lease that Deny stopped holds its seat until it expires, so round n acquires
+    ///   with n - 1 seats held and renews with n held; a renewal is refused only when more seats are held than the license
+    ///   allows, so 10 seats are exactly enough for round 10. Two copies of one installation (the same installation key); each engine with deny and with flag.
     ///
     /// Steps:
     /// - Ten rounds, the clock moved a second before each: acquire a lease (seq 1); take a nonce for each copy; send a
     ///   renewal with seq 1 from both copies at once, each with its own nonce and proof; read the lease; renew once more
-    ///   with the lease's sequence number; read the lease.clone audit rows of the lease.
+    ///   with the sequence number the lease must then have (2 under Deny, 3 under Flag); read the lease.clone audit rows of the lease.
     ///
     /// Expected:
     /// - In every round, under Deny: one 200 with seq 2 whose areq is that request's jti, and one 409 ELM_CLONE_DETECTED
@@ -87,8 +93,8 @@ public sealed class ElmServiceConcurrentRenewalTests
             string[] rows =
             [
                 .. (await TestService.AuditRowsAsync(test, service, owner))
-                    .Where(row => row.GetProperty("action").GetString() == "lease.clone" && row.GetProperty("target").GetString() == id)
-                    .Select(row => row.GetProperty("result").GetString() + " " + row.GetProperty("detail").GetString()),
+                    .Where(r => r.GetProperty("action").GetString() == "lease.clone" && r.GetProperty("target").GetString() == id)
+                    .Select(r => r.GetProperty("result").GetString() + " " + r.GetProperty("detail").GetString()),
             ];
 
             string seen = string.Join(
@@ -120,7 +126,7 @@ public sealed class ElmServiceConcurrentRenewalTests
     /// Steps:
     /// - Ten rounds, the clock moved a second before each: activate (seq 1); take a nonce for each copy; send a refresh
     ///   with seq 1 from both copies at once, each with its own nonce and proof; read the activation; refresh once more
-    ///   with the activation's sequence number; read the activation.clone audit rows of the activation.
+    ///   with the sequence number the activation must then have (2 under Deny, 3 under Flag); read the activation.clone audit rows of the activation.
     ///
     /// Expected:
     /// - In every round, under Deny: one 200 with seq 2 and one 409 ELM_CLONE_DETECTED "Another copy of the installation
@@ -169,8 +175,8 @@ public sealed class ElmServiceConcurrentRenewalTests
             string[] rows =
             [
                 .. (await TestService.AuditRowsAsync(test, service, owner))
-                    .Where(row => row.GetProperty("action").GetString() == "activation.clone" && row.GetProperty("target").GetString() == id)
-                    .Select(row => row.GetProperty("result").GetString() + " " + row.GetProperty("detail").GetString()),
+                    .Where(r => r.GetProperty("action").GetString() == "activation.clone" && r.GetProperty("target").GetString() == id)
+                    .Select(r => r.GetProperty("result").GetString() + " " + r.GetProperty("detail").GetString()),
             ];
 
             string seen = string.Join(
@@ -194,7 +200,8 @@ public sealed class ElmServiceConcurrentRenewalTests
         $"{different.Count} of {Rounds} rounds differ from: {expected}\n{string.Join('\n', different)}";
 
     // Sends {"seq":1} to a path from both copies at once. The nonces are taken first, and each request is made on a thread of
-    // its own, so that neither proof waits for the other request: the two requests then read the row before either one writes it.
+    // its own, so that neither proof waits for the other request. Nothing holds the first request back, so a round may still be
+    // served one after the other; the test repeats for that reason.
     private static async Task<DeviceAnswer[]> SendAtOnceAsync(TestDevice first, TestDevice second, string path)
     {
         const string Body = """{"seq":1}""";
