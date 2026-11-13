@@ -158,7 +158,7 @@ A token without `exp` never expires. Only license files issued by hand with `elm
 - `cnf.jkt`, the thumbprint of the device's installation key. This is the real identifier of the device. The requirement passes an `InstallationIdentity` with the key's thumbprint; if the token has `cnf` and the requirement passes no identity, verification fails with `ELM_WRONG_INSTALLATION`.
 - `fp`, the machine fingerprints, compared as `fpm` says: `any` passes when one fingerprint in the token matches the machine, `all` needs every one to match, and `ignore` skips the comparison. The policy setting `fingerprintMatching` decides `fpm`.
 
-Both claims are signed, so a licensee cannot edit them. Copying the file to another machine fails because that machine has a different installation key. How the installation key and the fingerprints are made, and why the key is the identifier rather than the OS machine ID, is in [devices and proofs](devices-and-proofs.md).
+Both claims are signed, so a licensee cannot edit them. Copying the file to another machine fails because that machine has a different installation key. An administrator who copies the installation key along with it makes the file work there ([the security model](security-model.md#on-the-licensees-machine)). How the installation key and the fingerprints are made, and why the key is the identifier rather than the OS machine ID, is in [devices and proofs](devices-and-proofs.md).
 
 An unbound license has neither `cnf` nor `fp` and passes on any machine. Use it only when that is what you sell.
 

@@ -14,7 +14,7 @@ ElasticLM puts one goal first: stop three kinds of abuse with cryptography rathe
 
 - **A forged or edited license.** A license is signed by the vendor. An app accepts only licenses whose signature leads back to a key the app was built to trust.
 - **A forged or replayed request.** Every request that changes state on a server is signed by a key that belongs to one installation of the app. It also carries a recent server nonce (a random value the server handed out a short time before) and a one-time ID, so a captured request cannot be sent again.
-- **Use beyond the seats that were bought.** Servers count seats under a lock, and a client checks that what a server lends it fits in the license the vendor signed.
+- **Use beyond the seats that were bought.** Servers count seats under a lock, and a client checks that what a server lends it fits in the license the vendor signed. The exception is a customer's administrator who takes an on-premises server's key out (see below).
 
 ElasticLM does not try to stop a person who changes the app's own binary so that it skips the check; the [security model](security-model.md) explains why, and lists everything that is and is not protected.
 
