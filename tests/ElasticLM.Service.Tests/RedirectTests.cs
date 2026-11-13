@@ -92,17 +92,18 @@ public sealed class RedirectTests
 
         public void Dispose()
         {
+            // The listener stops only after the loop has ended, as in ProblemServer (Issue #392).
             _stop.Cancel();
-            _listener.Stop();
             try
             {
                 _loop.Wait(TimeSpan.FromSeconds(5));
             }
             catch (AggregateException)
             {
-                // The loop ends with the listener stopped.
+                // A client that left in the middle of its request ended the loop.
             }
 
+            _listener.Stop();
             _stop.Dispose();
         }
 
