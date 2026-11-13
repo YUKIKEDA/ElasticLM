@@ -199,7 +199,7 @@ An error is an RFC 9457 problem with the media type `application/problem+json`. 
 
 - `elm-service` limits every device route per source address before anything else (`rateLimit.clientPerIp`), and every request with a proof per installation key after the proof check and before its `jti` is recorded (`rateLimit.clientPerKey`, see [The proof](#the-proof)). An offline file counts against the key that signed it, after its signature and time checks.
 - `elm-server` applies its IP rules (`allow` and `deny`) first: a refused address gets `403` with `ELM_FORBIDDEN`. Then it limits every route per source address (`rateLimit.perIp`).
-- A request over a limit gets `429` with `ELM_RATE_LIMITED` and `Retry-After: 1`.
+- A request over one of these limits gets `429` with `ELM_RATE_LIMITED` and `Retry-After: 1`.
 - `elm-service` also limits the trials of each product in any 24 hours (`trialDailyLimit` of the product's trial policy); see [`POST /v1/trials`](#post-v1trials).
 
 The limits and their defaults are in [elm-service configuration](service-configuration.md#ratelimit) and [elm-server configuration](server-configuration.md#ratelimit).
@@ -357,7 +357,7 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` is empty. |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | No product has the code, or the product has no trial policy. |
 | `409` | `ELM_TRIAL_USED` | One of the fingerprints already had a trial of the product. |
-| `429` | `ELM_RATE_LIMITED` | The product has given its trial policy's `trialDailyLimit` trials in the last 24 hours: "The product has reached its limit of N trials in 24 hours." `Retry-After` is the seconds until the oldest of them is 24 hours old, at least 1. Nothing is written. |
+| `429` | `ELM_RATE_LIMITED` | The product has given its trial policy's `trialDailyLimit` trials in the last 24 hours: "The product has reached its limit of N trials in 24 hours." `Retry-After` is the seconds until one place frees, from 1 to 86,400: when the oldest of them is 24 hours old, or, when the limit was lowered below their number, when enough of them are. Only that place frees, and the next request takes it. Nothing is written. |
 
 ### `POST /v1/offline`
 

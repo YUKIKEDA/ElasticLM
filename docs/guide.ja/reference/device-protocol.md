@@ -199,8 +199,8 @@ sidebar_position: 7
 
 - `elm-service` は、デバイス向けのすべてのルートを、何よりも先に送信元のアドレスごとに制限する（`rateLimit.clientPerIp`）。また、プルーフ付きのすべてのリクエストを、プルーフの確認のあと、`jti` を記録する前に、インストール鍵ごとに制限する（`rateLimit.clientPerKey`。[プルーフ](#プルーフ)を参照）。オフラインのファイルは、署名と時刻の確認のあとに、署名した鍵の回数として数える。
 - `elm-server` は、まず IP のルール（`allow` と `deny`）を当てはめる。拒否したアドレスには `403` と `ELM_FORBIDDEN` を返す。次に、すべてのルートを送信元のアドレスごとに制限する（`rateLimit.perIp`）。
-- 制限を超えたリクエストには、`429` と `ELM_RATE_LIMITED` が `Retry-After: 1` 付きで返る。
-- `elm-service` は、製品ごとのトライアルの数も、どの 24 時間でも制限する（製品のトライアルのポリシーの `trialDailyLimit`）。[`POST /v1/trials`](#post-v1trials) を参照。
+- これらの制限を超えたリクエストには、`429` と `ELM_RATE_LIMITED` が `Retry-After: 1` 付きで返る。
+- `elm-service` は、製品ごとのトライアルの数も、どの 24 時間をとっても制限する（製品のトライアルのポリシーの `trialDailyLimit`）。[`POST /v1/trials`](#post-v1trials) を参照。
 
 制限とその既定値は、[elm-service の設定](service-configuration.md#ratelimit)と[elm-server の設定](server-configuration.md#ratelimit)にある。
 
@@ -330,7 +330,7 @@ sidebar_position: 7
 - 認証: `jwk` 付きのプルーフ。
 - 成功: 新しいトライアルなら `201`。再試行なら `200`。再試行とは、同じインストール鍵で、アクティベーションがまだ `seq` 1 のままで、`retry` にそのアクティベーションを得たリクエストの `jti` が入っている場合だ。再試行は、発行済みのファイルを受け取る。
 - レスポンスヘッダー: `ELM-Nonce`。製品の上限で断るときは `Retry-After` も付く。
-- 順序: レスポンスを受け取れなかったトライアルの再試行には、まずそのファイルを返す。次に、使用済みのフィンガープリントに `ELM_TRIAL_USED` を返す。製品の上限が効くのはその後だ。
+- 確かめる順: まず、レスポンスを受け取れなかったトライアルの再試行に、そのファイルを返す。次に、使用済みのフィンガープリントに `ELM_TRIAL_USED` を返す。製品の上限は、その後で確かめる。
 
 | 名前 | 型 | 必須 | 範囲と意味 |
 | --- | --- | --- | --- |
@@ -357,7 +357,7 @@ sidebar_position: 7
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` が空だ。 |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | そのコードの製品がないか、製品にトライアルのポリシーがない。 |
 | `409` | `ELM_TRIAL_USED` | フィンガープリントのどれかで、この製品のトライアルがすでに行われている。 |
-| `429` | `ELM_RATE_LIMITED` | 製品が、トライアルのポリシーの `trialDailyLimit` 件のトライアルを直近 24 時間に出している: "The product has reached its limit of N trials in 24 hours." `Retry-After` は、そのうち最も古いトライアルが 24 時間を過ぎるまでの秒数で、1 以上だ。何も書き込まない。 |
+| `429` | `ELM_RATE_LIMITED` | 製品が、トライアルのポリシーの `trialDailyLimit` 件のトライアルを直近 24 時間に出している: "The product has reached its limit of N trials in 24 hours." `Retry-After` は、枠が 1 つ空くまでの秒数で、1 から 86,400 だ。枠が空くのは、そのうち最も古いトライアルを出してから 24 時間たったときだ。上限をその数より小さく下げたあとなら、その差の分のトライアルも 24 時間たったときだ。空くのはその 1 つだけで、次のリクエストが使う。何も書き込まない。 |
 
 ### `POST /v1/offline`
 

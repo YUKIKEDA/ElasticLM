@@ -85,7 +85,7 @@ A vendor chooses these settings per policy. The names and values are as the admi
 | `borrowReturnLimit` | 0 to 1,000 | 2 | How many borrows may be returned early in 30 days |
 | `clientInfoStrategy` | `none`, `hostAndUser` | `none` | Whether the service keeps the host name and OS user name the app sends |
 | `trialDuration` | seconds | 14 days | The length of a trial, for a `trial` policy |
-| `trialDailyLimit` | 1 to 100,000 | 1,000 | How many trials the product gives in any 24 hours, for the product's trial policy |
+| `trialDailyLimit` | 1 to 100,000 | 1,000 | How many trials the product gives in any 24 hours; used only while the policy is the product's trial policy |
 
 The floating settings are explained in [Floating licenses](floating-licenses.md). A product offers trials by naming one `trial` policy in its `trialPolicyId` (see Trials below).
 
@@ -198,7 +198,7 @@ A trial lets a device use the product for a limited time without a key. The app 
 
 - The product must name a trial policy (`trialPolicyId`). Without one, or for an unknown product, the answer is `404` and `ELM_TRIAL_NOT_OFFERED`.
 - The service records each trial by product and fingerprint. If any of the device's fingerprints already has a trial of this product, the answer is `409` and `ELM_TRIAL_USED`, even from the same installation key.
-- If the product has already given its trial policy's `trialDailyLimit` trials in the last 24 hours, the answer is `429` and `ELM_RATE_LIMITED`, with a `Retry-After` of the seconds until the oldest of them is 24 hours old. Nothing is written. The limit keeps anyone who can reach the service from filling its database with trials; [Offer a trial](../how-to/offer-a-trial.md#set-how-many-trials-a-day-the-product-gives) shows how to set it.
+- If the product has already given its trial policy's `trialDailyLimit` trials in the last 24 hours, the answer is `429` and `ELM_RATE_LIMITED`, with a `Retry-After` of the seconds until one place frees, at most 24 hours. Nothing is written. Only one place frees then, and while someone keeps asking, it is taken at once. The limit keeps anyone who can reach the service from filling its database with trials; [Offer a trial](../how-to/offer-a-trial.md#set-how-many-trials-the-product-gives-in-24-hours) shows how to set it.
 - Otherwise it creates a license without a key, named `trial`, that lasts `trialDuration`, with all of the product's current features, and activates it for this key. The file has no grace period.
 - A trial policy must be `nodeLocked`, must match fingerprints (`any` or `all`), and has a `gracePeriod` of 0. A device that cannot make any fingerprint gets no trial.
 - A trial is refreshed and checked for clones like any activation. Once it is deactivated or stopped by `deny`, it is over, because a trial license has no key to activate again with; only an administrator who deletes the trial record lets the device start a new one.
@@ -261,6 +261,7 @@ In the last row the service has already moved `seq` forward, so the next request
 - **A copied device that stays offline, or a saved copy of a license file restored after deactivation, is not detected.** A short `tokenLifetime` and `deactivationLimit` limit the harm. See [Security model](security-model.md).
 - **An old offline request file handed in after a newer one looks like a clone.** The service keeps only the latest offline response per activation, so an old request is taken as two steps behind, and with `deny` the activation is stopped. Users must throw away old request files once they make a new one; the app is told when a pending request was replaced (`Replaced`). Mixing online and offline refreshes on one device needs the same care.
 - **A damaged `activation.json` or a stopped activation.** `Check` returns `ELM_MALFORMED` for a damaged file, and activating again cannot send the last `seq`, which looks like a clone. After `ELM_CLONE_DETECTED` with `deny`, the copy that is behind cannot recover by itself. In both cases an administrator deactivates the old activation and the user activates again. Check the audit log for `activation.clone` rows first: they name the key thumbprint, the `seq` sent, and the last issued `seq`.
+- **Trials stop when a product reaches its limit.** A product gives at most `trialDailyLimit` trials in any 24 hours, and someone who keeps asking can use them up, so that new trials are refused for as long as they go on. See [Offer a trial](../how-to/offer-a-trial.md#set-how-many-trials-the-product-gives-in-24-hours) and [Security model](security-model.md#around-the-hosted-service-and-its-administrators).
 - **Containers.** A container without a machine ID gets `ELM_FINGERPRINT_UNAVAILABLE`, and one that loses its key folder on every restart uses a new activation each time. See [Devices and proofs](devices-and-proofs.md).
 
 For every error code and what to do about it, see [Error codes](../reference/error-codes.md). For the audit log's rows and actions, such as `activation.clone`, see [Logs](../reference/logs.md).

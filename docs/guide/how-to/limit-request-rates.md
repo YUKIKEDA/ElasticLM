@@ -23,7 +23,7 @@ The service has four limits, each a number of requests per second. A caller may 
 | `rateLimit.clientPerIp` | `20` | Requests from one source to the device endpoints, which apps call: activations, trials, nonces, offline files, and leases. Counted before the request's proof is checked. |
 | `rateLimit.clientPerKey` | `2` | Device requests of one installation key, that is, of one installation of an app. |
 
-An app's activation or refresh is two device requests, the nonce and the request itself, so the default `clientPerIp` lets one source activate ten devices a second. A nonce stays usable for 300 seconds, though, so a script that keeps one nonce sends one request for each activation or trial, twenty a second. Trials are also limited for each product in any 24 hours, by `trialDailyLimit` of the product's trial policy ([Offer a trial](offer-a-trial.md#set-how-many-trials-a-day-the-product-gives)). Each value is a whole number from 1 to 10000. Keep `perKey` at or below `perIp`: an API key's requests from one source count against both, so for such a key a larger `perKey` never takes effect.
+An app's activation or refresh is two device requests, the nonce and the request itself, so the default `clientPerIp` lets one source activate ten devices a second. Each `rateLimit` value is a whole number from 1 to 10000. Keep `perKey` at or below `perIp`: an API key's requests from one source count against both, so for such a key a larger `perKey` never takes effect. A nonce stays usable for 300 seconds, though, so a script that keeps one nonce sends one request for each activation or trial, twenty a second. Trials are also limited for each product in any 24 hours, by `trialDailyLimit` of the product's trial policy, which is not a `rateLimit` setting ([Offer a trial](offer-a-trial.md#set-how-many-trials-the-product-gives-in-24-hours)).
 
 ## Set the limits
 
@@ -116,7 +116,7 @@ A value that is not a whole number, such as `2.5` or `"20"`, also stops the serv
 
 ## What a refused caller sees
 
-The service answers a request over a limit with the status 429, the error code `ELM_RATE_LIMITED`, and the header `Retry-After: 1`: the caller may try again after one second. The answer is a problem document whose `detail` names the limit:
+The service answers a request over one of these limits with the status 429, the error code `ELM_RATE_LIMITED`, and the header `Retry-After: 1`: the caller may try again after one second. The answer is a problem document whose `detail` names the limit:
 
 | `detail` | Limit |
 | --- | --- |
@@ -124,6 +124,7 @@ The service answers a request over a limit with the status 429, the error code `
 | `Too many requests with this API key.` | `perKey`, for an API key |
 | `Too many requests from this administrator.` | `perKey`, for an OIDC access token or an admin UI session |
 | `Too many requests with this installation key.` | `clientPerKey` |
+| `The product has reached its limit of N trials in 24 hours.` | Not a `rateLimit` setting: the trial policy's `trialDailyLimit`. Its `Retry-After` is up to 86,400 seconds ([Offer a trial](offer-a-trial.md#set-how-many-trials-the-product-gives-in-24-hours)). |
 
 `elm admin request` prints such an answer on standard error and ends with exit code 1:
 

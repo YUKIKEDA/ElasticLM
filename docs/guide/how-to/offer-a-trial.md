@@ -68,9 +68,11 @@ elm admin request PATCH /v1/admin/products/<product-id> --body offer-trial.json 
 
 From now on, an app that calls `StartTrialAsync` gets a trial of 30 days. A product names one trial policy at a time; a trial already running keeps the end it got when it started.
 
-## Set how many trials a day the product gives
+## Set how many trials the product gives in 24 hours
 
-Anyone who can reach the service can ask it for a trial, and each trial leaves rows in the service's database that stay after the trial ends. So that a script that asks again and again with new installation keys and fingerprints cannot fill the database, a product gives at most `trialDailyLimit` trials in any 24 hours. It is a member of the product's trial policy: from 1 to 100,000, 1,000 by default. Trials of every policy of the product count, and a trial whose record you delete (below) no longer counts. Raise the limit when more machines than that start a trial of your product in a day. This one allows 5,000:
+Anyone who can reach the service can ask it for a trial. Each trial leaves rows in the service's database: the trial's record, which holds the machine's fingerprints and keeps that machine from a second trial, and the trial's license and activation. None of them is removed when the trial ends. So that a script that asks again and again with new installation keys and fingerprints cannot fill the database, a product gives at most `trialDailyLimit` trials in any 24 hours. It is a member of the trial policy that the product names in `trialPolicyId`, from 1 to 100,000, 1,000 by default; no value turns the limit off. The service counts the product's trials of the last 24 hours, under whichever of its policies they were made, in its database, so every node of the service (each running `elm-service` that shares the database) counts the same trials, and a restart does not reset the count. A trial whose record you delete (see [Let the machine start a trial again](#let-the-machine-start-a-trial-again)) no longer counts, while its license and activation stay.
+
+To see how many trials your product gives, count the `trial.create` rows of the audit log in a span of 24 hours: each row is one trial, and its `detail` holds the `productId` ([Logs](../reference/logs.md#actions)). Set the limit a few times above your busiest 24 hours. A higher value lets a script add more rows before it is stopped; a lower value is reached sooner by real users. This one allows 5,000:
 
 <!-- steps:file path=daily-trials.json -->
 ```json
@@ -82,11 +84,13 @@ Anyone who can reach the service can ask it for a trial, and each trial leaves r
 elm admin request PATCH /v1/admin/policies/<month-trial-policy-id> --body daily-trials.json --url http://127.0.0.1:8080
 ```
 
-`elm` prints the policy, now with `"trialDailyLimit":5000`.
+`elm` prints the policy, now with `"trialDailyLimit":5000`. The new value applies from the next trial request. A value below the number of trials of the last 24 hours refuses the next trial at once.
 
-When the product has given that many trials in the last 24 hours, the service refuses the next one with the status 429 and `ELM_RATE_LIMITED`, such as "The product has reached its limit of 5000 trials in 24 hours.", and writes nothing. The answer's `Retry-After` header gives the seconds until the oldest of those trials is 24 hours old, at most a day; the app gets it as `RetryAfter` with the error. A machine that already had a trial of the product still gets `ELM_TRIAL_USED`, and an app that asks again for a trial whose answer it lost still gets that trial. Each node of the service also writes a warning to its operational log when a product reaches its limit, at most once a day for each product (see [Logs](../reference/logs.md#operational-log)).
+When the product has given that many trials in the last 24 hours, the service refuses the next one with the status 429 and `ELM_RATE_LIMITED`, such as "The product has reached its limit of 5000 trials in 24 hours.", and writes nothing. The answer's `Retry-After` header gives the seconds, at most 24 hours, until one place frees: when the oldest of the counted trials is 24 hours old, or, after you lowered the limit below the count, when enough of them are. Only that one place frees, and every app refused in the meantime gets about the same time, so the first one to ask again takes it; while someone keeps asking, it is taken at once. `StartTrialAsync` returns `ActivationResult.Failed` with the error and the wait in its `RetryAfter`. A machine that already had a trial of the product still gets `ELM_TRIAL_USED`, and an app that asks again for a trial whose answer it lost still gets that trial.
 
-Someone who uses up the day's trials stops new trials of the product until the oldest of them is 24 hours old, as long as they keep asking. Other products, and devices that activate with a license key, are not affected. When the warning appears, find the source in your proxy's logs and block it there, or raise the limit.
+Each node also writes a warning to its operational log when the product reaches its limit: the first time, and then only once 24 hours have passed since that node's last warning about the product. A node keeps these times in memory, so after a restart it warns at the next refusal ([Logs](../reference/logs.md#operational-log)).
+
+If the warning comes from a script and not from real users, find its address in the `ip` of the `trial.create` rows of the audit log, or, behind a proxy, in the proxy's log, since the service then sees the proxy's address. Block that address at your firewall or proxy. A source that changes its address, such as one with many addresses of an IPv6 /64, cannot be stopped this way, and raising the limit only makes it take longer to reach. [Security model](../explanation/security-model.md#around-the-hosted-service-and-its-administrators) explains what such a source can do.
 
 ## Start a trial on a machine that had one
 

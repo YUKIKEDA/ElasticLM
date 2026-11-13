@@ -248,7 +248,7 @@ Every member is present, the defaults included. What each setting decides is in 
 | `borrowReturnLimit` | number | Borrows that may be returned early in 30 days. |
 | `clientInfoStrategy` | string | `none` or `hostAndUser`. |
 | `trialDuration` | number | Seconds a trial lasts. |
-| `trialDailyLimit` | number | Trials the product gives in any 24 hours, when this is its trial policy. |
+| `trialDailyLimit` | number | Trials the product gives in any 24 hours; used only while this is the product's trial policy. |
 | `createdAt` | time | When it was created. |
 | `updatedAt` | time | When it was last changed. |
 
@@ -822,7 +822,7 @@ Permission: `policy.write`.
 | `borrowReturnLimit` | number | No | 0 to 1,000. Default 2. |
 | `clientInfoStrategy` | string | No | `none` (default) or `hostAndUser`. |
 | `trialDuration` | number | No | Seconds: 86,400 to 31,536,000 (365 days). Default 1,209,600 (14 days). |
-| `trialDailyLimit` | number | No | 1 to 100,000. Default 1,000. Counted for the product whose `trialPolicyId` names this policy: trials of every policy of the product made in the last 24 hours. |
+| `trialDailyLimit` | number | No | 1 to 100,000. Default 1,000. Used while the product's `trialPolicyId` names this policy, from its next trial request: it counts the product's trials of the last 24 hours, made under any of its policies. A value below that count refuses the next trial at once. |
 
 For a member that takes a number without `null`, or a string, `null` is `ELM_MALFORMED`. The settings must also fit together; otherwise the answer is `ELM_INVALID_ARGUMENT`:
 
