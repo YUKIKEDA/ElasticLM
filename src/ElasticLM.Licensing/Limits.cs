@@ -73,4 +73,12 @@ internal static class Limits
     /// lease token that names the proof it answers holds no other.
     /// </summary>
     public static bool IsProofId(string? id) => id is { Length: > 0 and <= MaxProofIdLength };
+
+    // design §8.4.2 (V1d5a).
+
+    /// <summary>
+    /// Returns whether an activation ID has its form: a UUID of 36 characters with hyphens, as the hosted activation service
+    /// writes it.
+    /// </summary>
+    public static bool IsActivationId(string? id) => Guid.TryParseExact(id, "D", out _);
 }

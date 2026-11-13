@@ -200,6 +200,61 @@ public sealed class IssuingTests : IDisposable
     }
 
     /// <summary>
+    /// The issuer writes the request a token answers (areq) and the activation that issues it (act) as given, and refuses
+    /// them before signing when they do not have their form (design §8.4.2, §8.6, V1d5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid standard spec with the case's AnsweredRequestId and ActivationId: a proof jti of 64 characters and a UUID;
+    ///   neither; an areq of 65 characters; an empty areq; an act that is not a UUID.
+    ///
+    /// Steps:
+    /// - Issue it; verify what was issued.
+    ///
+    /// Expected:
+    /// - The first two: Valid with the same AnsweredRequestId and ActivationId (null when not given). The others:
+    ///   ArgumentException "The license breaks a rule of the token format: …" for the parameter spec.
+    /// </remarks>
+    [Theory]
+    [InlineData("both", true)]
+    [InlineData("neither", true)]
+    [InlineData("areq-long", false)]
+    [InlineData("areq-empty", false)]
+    [InlineData("act-not-uuid", false)]
+    public void Issue_AnswerClaims_WrittenOrRefused(string kind, bool issued)
+    {
+        const string Activation = "01a0f4c2-c400-75cb-b06c-028a0f832d89";
+        LicenseSpec spec = Spec(LicenseKind.Standard, bound: true, expires: true) with
+        {
+            AnsweredRequestId = kind switch
+            {
+                "neither" => null,
+                "areq-long" => new string('p', 65),
+                "areq-empty" => string.Empty,
+                _ => new string('p', 64),
+            },
+            ActivationId = kind switch
+            {
+                "neither" => null,
+                "act-not-uuid" => "activation-1",
+                _ => Activation,
+            },
+        };
+
+        if (!issued)
+        {
+            ArgumentException refused = Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [Certificate()], spec, _time));
+            Assert.StartsWith("The license breaks a rule of the token format: ", refused.Message, StringComparison.Ordinal);
+            Assert.Equal("spec", refused.ParamName);
+            return;
+        }
+
+        IssuedLicense license = LicenseIssuer.Issue(_signing, [Certificate()], spec, _time);
+        var valid = Assert.IsType<LicenseVerificationResult.Valid>(Verifier().Verify(license.File, Requirement(LicenseKind.Standard, true)));
+        Assert.Equal((spec.AnsweredRequestId, spec.ActivationId), (valid.License.AnsweredRequestId, valid.License.ActivationId));
+    }
+
+    /// <summary>
     /// The issuer refuses certificates that do not let the signing key sign licenses at the issue time.
     /// </summary>
     /// <remarks>

@@ -309,17 +309,17 @@ public sealed class LeaseTests : IAsyncLifetime
         Assert.True(LeaseApi.Create(_api, options, out nint client) == 0, NativeApi.LastError);
 
         Assert.True(LeaseApi.Acquire(_api, client, "pro", 1, out nint lease, out _) == 0, NativeApi.LastError);
-        relay.ReplayToNextAcquisition();
+        relay.ReplayToNext();
         Assert.Equal(
             (38, (nint)0, "The server's lease answers another request."),
             (LeaseApi.Acquire(_api, client, "pro", 1, out nint same, out _), same, NativeApi.LastError)
         );
-        relay.ReplayToNextAcquisition();
+        relay.ReplayToNext();
         Assert.Equal(
             (38, (nint)0, "The server's lease is for another number of seats than the one asked for."),
             (LeaseApi.Acquire(_api, client, "pro", 2, out nint more, out _), more, NativeApi.LastError)
         );
-        relay.ReplayToNextAcquisition();
+        relay.ReplayToNext();
         Assert.Equal(
             (38, (nint)0, "The server's lease is not of the kind asked for."),
             (LeaseApi.Borrow(_api, client, "pro", 3600, out nint borrow, out _), borrow, NativeApi.LastError)

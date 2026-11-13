@@ -103,6 +103,12 @@ internal static class LicensePayloadRules
             return false;
         }
 
+        // design §8.4.2 (V1d5a): the request a token of an activation answers and the activation's ID, when it has them.
+        if ((payload.Areq is not null && !Limits.IsProofId(payload.Areq)) || (payload.Act is not null && !Limits.IsActivationId(payload.Act)))
+        {
+            return false;
+        }
+
         if (payload.Clone is not (null or "deny" or "flag"))
         {
             return false;
