@@ -89,6 +89,21 @@ internal sealed class Deployment : IAsyncDisposable
         return path;
     }
 
+    /// <summary>
+    /// Replaces the license token in the server license file of a data folder. The change gets the token and a function that
+    /// signs as the vendor's signing key does (ES256), for a token that must carry that key's signature over other bytes.
+    /// </summary>
+    public void ChangeServerLicenseToken(string dataDirectory, Func<string, Func<byte[], byte[]>, string> change)
+    {
+        string path = System.IO.Path.Combine(dataDirectory, "server.elmlic");
+        var file = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(path))!.AsObject();
+        file["license"] = change(
+            file["license"]!.GetValue<string>(),
+            input => _signing.SignData(input, HashAlgorithmName.SHA256, DSASignatureFormat.IeeeP1363FixedFieldConcatenation)
+        );
+        File.WriteAllText(path, file.ToJsonString());
+    }
+
     public ServerSettings Settings(string dataDirectory, int port = 0) =>
         new()
         {

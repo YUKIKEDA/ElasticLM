@@ -4,6 +4,7 @@ using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Server.Tests;
 
@@ -420,6 +421,59 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         await server.DisposeAsync();
         LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.Empty(usage.Issues);
+    }
+
+    /// <summary>
+    /// A reload refuses a server license whose token carries no valid signature, and the server keeps the license it runs
+    /// on: with an empty signature part, with a signature that is not 64 bytes or not the signing key's, and with an alg
+    /// other than ES256 (design §8.2 rules 3 and 5, §13.1, §13.7, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server; a new license file for the same key with 3 seats, written over the server's file.
+    /// - The token in that file in a form of <see cref="SignatureForms"/> with the same payload and the same certificate: an
+    ///   empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg
+    ///   none and an empty signature part; alg HS256 and an ES256 signature of the signing key over the changed header.
+    ///
+    /// Steps:
+    /// - Reload; write the new license file again, unchanged, and reload.
+    ///
+    /// Expected:
+    /// - 409 with code ELM_BAD_SIGNATURE and detail "The server license does not verify: {reason} This server's installation
+    ///   key is {thumbprint}.", where the reason is "The license signature does not verify." for the four signatures and
+    ///   "The token algorithm is not ES256." for the two algs; the server's license is still the one it started on.
+    /// - Then 200, and the server's license is the new one.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SignatureForms.All), MemberType = typeof(SignatureForms))]
+    public async Task Reload_ServerLicenseWithoutAValidSignature_KeepsTheOldLicense(string form)
+    {
+        string serverData = _deployment.NewFolder();
+        ElmServer server = await StartOpenServerAsync(serverData);
+        string started = server.Engine.Server.License.TokenId;
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        static LicenseSpec ThreeSeats(LicenseSpec spec) => spec with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 3)] };
+        _deployment.WriteServerLicense(serverData, ThreeSeats);
+        _deployment.ChangeServerLicenseToken(serverData, (token, sign) => SignatureForms.Change(token, form, sign));
+        using HttpClient admin = Deployment.AdminHttp(server);
+
+        using (HttpResponseMessage refused = await admin.PostAsync("admin/v1/license/reload", null, cancel))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+            using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(cancel));
+            string reason = SignatureForms.ChangesAlgorithm(form) ? "The token algorithm is not ES256." : "The license signature does not verify.";
+            Assert.Equal("ELM_BAD_SIGNATURE", problem.RootElement.GetProperty("code").GetString());
+            Assert.Equal(
+                $"The server license does not verify: {reason} This server's installation key is {Deployment.ServerKeyId(serverData)}.",
+                problem.RootElement.GetProperty("detail").GetString()
+            );
+        }
+
+        Assert.Equal(started, server.Engine.Server.License.TokenId);
+        _deployment.WriteServerLicense(serverData, ThreeSeats);
+        using HttpResponseMessage reloaded = await admin.PostAsync("admin/v1/license/reload", null, cancel);
+        Assert.Equal(HttpStatusCode.OK, reloaded.StatusCode);
+        Assert.NotEqual(started, server.Engine.Server.License.TokenId);
     }
 
     /// <summary>

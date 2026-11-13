@@ -13,7 +13,7 @@ namespace ElasticLM.Licensing.Tests;
 /// The forms, by name:
 /// - <c>empty</c>: the signature part is empty, so the token ends with its second dot.
 /// - <c>63-bytes</c>: the first 63 bytes of the token's signature.
-/// - <c>64-zero-bytes</c>: 64 zero bytes, the length of a signature with a value that is none.
+/// - <c>64-zero-bytes</c>: 64 zero bytes: the right length, but no key's signature.
 /// - <c>65-bytes</c>: the token's signature and one more zero byte.
 /// - <c>alg-none-empty</c>: <c>alg</c> is <c>none</c> and the signature part is empty.
 /// - <c>alg-hs256-signed</c>: <c>alg</c> is <c>HS256</c>, with an ES256 signature of the token's own key over the changed

@@ -179,6 +179,45 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// The server does not start on a server license whose token carries no valid signature: with an empty signature part,
+    /// with a signature that is not 64 bytes or not the signing key's, and with an alg other than ES256 (design §8.2 rules
+    /// 3 and 5, §13.1, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder with a server license on which a server starts and stops.
+    /// - The token in that file in a form of <see cref="SignatureForms"/> with the same payload and the same certificate: an
+    ///   empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg
+    ///   none and an empty signature part; alg HS256 and an ES256 signature of the signing key over the changed header.
+    ///
+    /// Steps:
+    /// - Start a server on the folder.
+    ///
+    /// Expected:
+    /// - ServerStartException "ELM_BAD_SIGNATURE: The server license does not verify: {reason} This server's installation
+    ///   key is {thumbprint}.", where the reason is "The license signature does not verify." for the four signatures and
+    ///   "The token algorithm is not ES256." for the two algs.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SignatureForms.All), MemberType = typeof(SignatureForms))]
+    public async Task Start_ServerLicenseWithoutAValidSignature_Fails(string form)
+    {
+        string data = _deployment.NewFolder();
+        await (await _deployment.StartServerAsync(data)).DisposeAsync();
+        _deployment.ChangeServerLicenseToken(data, (token, sign) => SignatureForms.Change(token, form, sign));
+
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() =>
+            ElmServer.StartAsync(_deployment.Settings(data), _deployment.HostOptions(), TestContext.Current.CancellationToken)
+        );
+
+        string reason = SignatureForms.ChangesAlgorithm(form) ? "The token algorithm is not ES256." : "The license signature does not verify.";
+        Assert.Equal(
+            $"ELM_BAD_SIGNATURE: The server license does not verify: {reason} This server's installation key is {Deployment.ServerKeyId(data)}.",
+            refused.Message
+        );
+    }
+
+    /// <summary>
     /// The root keys may come from ELM_TRUST_ROOT_KEYS instead of files (design §13.8).
     /// </summary>
     /// <remarks>

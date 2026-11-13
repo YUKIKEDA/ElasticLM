@@ -223,15 +223,16 @@ public sealed class LicenseVerifierTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A valid license token and its certificate. One of the two, the token or the certificate, is put into a form of
+    /// - A license token and its certificate. One of the two, the token or the certificate, is then put into a form of
     ///   <see cref="SignatureForms"/> with the same payload: an empty signature part; the first 63 bytes of its signature; 64
     ///   zero bytes; its signature and one more zero byte; alg none and an empty signature part; alg HS256 and an ES256
     ///   signature of its own key over the changed header.
     ///
     /// Steps:
-    /// - Verify the file of the token and the certificate.
+    /// - Verify the file of the token and the certificate as they were issued; verify the file with the changed part.
     ///
     /// Expected:
+    /// - Valid for the file as issued.
     /// - For the token: ELM_BAD_SIGNATURE, "The license signature does not verify." for the four signatures and "The token
     ///   algorithm is not ES256." for the two algs.
     /// - For the certificate: ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for all six.
@@ -242,6 +243,7 @@ public sealed class LicenseVerifierTests : IDisposable
     {
         string token = _issuer.License();
         string certificate = _issuer.Certificate();
+        Assert.IsType<LicenseVerificationResult.Valid>(_issuer.Verifier().Verify(TestIssuer.File(token, certificate), _issuer.Requirement()));
         (ErrorCode Code, string Message) expected;
         if (part == "token")
         {
