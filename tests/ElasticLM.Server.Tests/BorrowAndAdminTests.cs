@@ -825,7 +825,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///   AAAAAAAAAAAAAAAAAAAAAA -> ELM_UNKNOWN_LEASE" once and five lines "admin.action: release (null) ->
     ///   ELM_UNKNOWN_LEASE".
     /// - No usage log file and no entry of any category in the operational log holds "other~form", the ID with the dot, 21
-    ///   letters B, 23 letters C, or 100 letters z: the web host's request lines are not written (design §18.1, V1d4a).
+    ///   letters B, 23 letters C, or 100 letters z: the web host's request lines are not written (design §18.3, V1d4a).
     /// </remarks>
     [Fact]
     public async Task AdminApi_ReleaseOfAnIdOfAnotherForm_IsRefusedAndNotLogged()

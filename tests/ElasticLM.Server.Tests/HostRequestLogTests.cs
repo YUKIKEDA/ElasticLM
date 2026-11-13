@@ -12,7 +12,7 @@ namespace ElasticLM.Server.Tests;
 
 /// <summary>
 /// The operational log of elm-server holds no text of a request's path, query, or Host header: the web host's request
-/// lines are written from Warning up only, whatever the settings say (design §18.1, V1d4a).
+/// lines are written from Warning up only, whatever the settings say (design §18.3, V1d4a).
 /// </summary>
 public sealed class HostRequestLogTests : IAsyncDisposable
 {

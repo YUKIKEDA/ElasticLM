@@ -22,7 +22,9 @@ internal static class HostRequestLog
 
     // The alias that the ProviderAlias attribute of ConsoleLoggerProvider gives it. The selector takes a rule named by a
     // provider's alias as one named by its full type name, so both names are one provider here. The console is the only
-    // provider with an alias that the programs register.
+    // provider with an alias that the programs register; a program that registers another provider with an alias adds it
+    // here: with a rule under each name, the rule added for the later name wins, and a None set under the other can come
+    // out as Warning.
     private const string ConsoleAlias = "Console";
 
     private static readonly string ConsoleProvider = typeof(ConsoleLoggerProvider).FullName!;
