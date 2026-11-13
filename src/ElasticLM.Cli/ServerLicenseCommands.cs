@@ -17,8 +17,8 @@ internal static class ServerLicenseCommands
 {
     private const int MaxAnswerBytes = 256 * 1024;
 
-    // How long a call to the server's local administration API waits for the whole answer.
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
+    // What ActivationClient returns for an answer of the service that is larger than its limit.
+    private static readonly LicenseError AnswerTooLarge = new(ErrorCode.Malformed, ActivationClient.AnswerTooLarge);
 
     public static void Add(Command server, CliHost host)
     {
@@ -469,26 +469,11 @@ internal static class ServerLicenseCommands
             return null;
         }
 
-        // The wait is counted on the host's clock, not on the HTTP client's own timer.
-        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, Timeout.InfiniteTimeSpan);
-        using var waited = new CancellationTokenSource(RequestTimeout, host.Time);
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // The wait covers the answer's body too, and is counted on the host's clock, not on the HTTP client's own timer.
+        BoundedAnswer answer;
         try
         {
-            using HttpResponseMessage response = http.Send(request, waited.Token);
-            using var reader = new StreamReader(response.Content.ReadAsStream());
-            string body = reader.ReadToEnd();
-            try
-            {
-                using var document = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
-                return (response.StatusCode, document.RootElement.Clone());
-            }
-            catch (JsonException) when (!response.IsSuccessStatusCode)
-            {
-                // Another program on the socket answers an error with a page; the status code is all there is to tell.
-                return (response.StatusCode, default);
-            }
+            answer = ServerAdminApi.Send(host, endPoint, method, path, token);
         }
         catch (HttpRequestException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused })
         {
@@ -499,9 +484,26 @@ internal static class ServerLicenseCommands
             // Every other failure to get an HTTP answer: something took the connection, so a server may run there.
             throw new CliException("The server's administration API gave no whole answer.", ExitCodes.NetworkError);
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
             throw new CliException("The server's administration API did not answer in time.", ExitCodes.NetworkError);
+        }
+
+        if (answer is not BoundedAnswer.Whole whole)
+        {
+            // Something that listens answered, so a server may run there, as above.
+            throw new CliException(ServerAdminApi.AnswerTooLarge, ExitCodes.NetworkError);
+        }
+
+        try
+        {
+            using JsonDocument document = whole.Body.Length == 0 ? JsonDocument.Parse("{}") : JsonDocument.Parse(whole.Body);
+            return (whole.Status, document.RootElement.Clone());
+        }
+        catch (JsonException) when (!whole.IsSuccess)
+        {
+            // Another program on the socket answers an error with a page; the status code is all there is to tell.
+            return (whole.Status, default);
         }
         catch (JsonException)
         {
@@ -514,11 +516,12 @@ internal static class ServerLicenseCommands
             ? member.GetString()
             : null;
 
-    // design §16, §13.7: the network is exit code 3; anything the service, the checks, or the kept state said is 1.
+    // design §16, §13.7: the network is exit code 3, and so is an answer of the service that is larger than its limit, of
+    // which nothing was read (V1d6); anything the service, the checks, or the kept state said is 1.
     private static int Refused(CliHost host, LicenseError error)
     {
         host.Error.WriteLine($"error: {ErrorCodes.ToWireName(error.Code)}: {error.Message}");
-        return error.Code == ErrorCode.NetworkError ? ExitCodes.NetworkError : ExitCodes.VerificationFailed;
+        return error.Code == ErrorCode.NetworkError || error == AnswerTooLarge ? ExitCodes.NetworkError : ExitCodes.VerificationFailed;
     }
 
     private static byte[]? KeptLicense(CliHost host, Common common, ParseResult parse) =>

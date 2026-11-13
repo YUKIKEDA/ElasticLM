@@ -11,10 +11,21 @@ namespace ElasticLM.Cli;
 internal static class ServerAdminApi
 {
     /// <summary>
+    /// The largest answer body, in bytes, that an <c>elm server</c> command reads from the administration API (design §13.7,
+    /// V1d6): 64 MiB. The list of leases is the one answer that grows with the server's use; the design gives its measured
+    /// size for each lease and the number of leases the limit holds.
+    /// </summary>
+    public const int MaxAnswerLength = 64 * 1024 * 1024;
+
+    /// <summary>
     /// The base address of every request. The server does not read the host. <c>.invalid</c> never resolves (RFC 2606 §2,
     /// RFC 6761 §6.4), so a request that lost its connect callback fails instead of going to a TCP port of this machine.
     /// </summary>
     public static readonly Uri BaseAddress = new("http://elm-server.invalid/");
+
+    /// <summary>The line for an answer of the administration API whose body is over <see cref="MaxAnswerLength"/>.</summary>
+    public static readonly string AnswerTooLarge =
+        $"ELM_MALFORMED: The server's administration API answered with a body larger than {MaxAnswerLength} bytes.";
 
     /// <summary>
     /// Returns the socket file of a server data folder and its endpoint.
@@ -38,22 +49,32 @@ internal static class ServerAdminApi
     public static SocketsHttpHandler CreateHandler(CliHost host, UnixDomainSocketEndPoint endPoint)
     {
         Func<UnixDomainSocketEndPoint, CancellationToken, ValueTask<Stream>> connect = host.ConnectAdminSocket ?? ConnectAsync;
-        return new SocketsHttpHandler
-        {
-            AllowAutoRedirect = false,
-            UseProxy = false,
-            ConnectCallback = (_, cancellationToken) => connect(endPoint, cancellationToken),
-        };
+        SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
+        handler.UseProxy = false;
+        handler.ConnectCallback = (_, cancellationToken) => connect(endPoint, cancellationToken);
+        return handler;
     }
 
     /// <summary>
-    /// Creates the HTTP client of the requests to one server.
+    /// Sends one request to a server's administration API and reads its answer up to <see cref="MaxAnswerLength"/>, with
+    /// the administrator token of the same folder. The whole exchange, the answer's body included, ends after 30 seconds
+    /// of the host's clock.
     /// </summary>
     /// <param name="host">The command's host.</param>
     /// <param name="endPoint">The server's socket file.</param>
-    /// <param name="timeout">The HTTP client's own limit for one request.</param>
-    public static HttpClient CreateClient(CliHost host, UnixDomainSocketEndPoint endPoint, TimeSpan timeout) =>
-        new(CreateHandler(host, endPoint)) { BaseAddress = BaseAddress, Timeout = timeout };
+    /// <param name="method">The request's method.</param>
+    /// <param name="path">The request's path, such as <c>admin/v1/status</c>.</param>
+    /// <param name="token">The administrator token.</param>
+    /// <returns>The answer, or <see cref="BoundedAnswer.TooLarge"/> for a body over the limit.</returns>
+    /// <exception cref="HttpRequestException">No connection was made, or the answer ended before it was whole.</exception>
+    /// <exception cref="TimeoutException">No whole answer came in time.</exception>
+    public static BoundedAnswer Send(CliHost host, UnixDomainSocketEndPoint endPoint, HttpMethod method, string path, string token)
+    {
+        using HttpClient http = BoundedAnswer.CreateClient(CreateHandler(host, endPoint));
+        using var request = new HttpRequestMessage(method, new Uri(BaseAddress, path));
+        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        return BoundedAnswer.SendAsync(http, request, MaxAnswerLength, host.Time, CancellationToken.None).GetAwaiter().GetResult();
+    }
 
     /// <summary>
     /// Returns the sentence for an answer of the administration API that is not the one asked for: its error code and

@@ -14,8 +14,6 @@ namespace ElasticLM.Cli;
 /// </summary>
 internal static class ServerCommands
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-
     public static Command Create(CliHost host)
     {
         var server = new Command("server", "Administer an on-premises license server on this machine.");
@@ -122,18 +120,12 @@ internal static class ServerCommands
             throw new CliException($"The server cannot be reached: the administration socket '{socketPath}' does not exist.", ExitCodes.NetworkError);
         }
 
-        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, RequestTimeout);
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        HttpResponseMessage response;
-        string body;
+        BoundedAnswer answer;
         try
         {
-            response = http.Send(request);
-            using var reader = new StreamReader(response.Content.ReadAsStream());
-            body = reader.ReadToEnd();
+            answer = ServerAdminApi.Send(host, endPoint, method, path, token);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (Exception e) when (e is HttpRequestException or TimeoutException)
         {
             // The HTTP client adds the request's host to a connection error's sentence, and the host is not where the
             // request goes; the socket's own sentence says what happened.
@@ -141,40 +133,42 @@ internal static class ServerCommands
             throw new CliException("The server cannot be reached: " + reason, ExitCodes.NetworkError);
         }
 
-        using (response)
+        if (answer is not BoundedAnswer.Whole whole)
         {
-            JsonElement value = default;
-            if (body.Length > 0)
-            {
-                try
-                {
-                    using var document = JsonDocument.Parse(body);
-                    value = document.RootElement.Clone();
-                }
-                catch (JsonException)
-                {
-                    throw new CliException($"The server answered {(int)response.StatusCode} with a body that is not JSON.", ExitCodes.NetworkError);
-                }
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                // The same line as the server license commands print for an answer that is not the one asked for.
-                host.Error.WriteLine("error: " + ServerAdminApi.Unexpected(response.StatusCode, value));
-                return ExitCodes.VerificationFailed;
-            }
-
-            if (json && value.ValueKind != JsonValueKind.Undefined)
-            {
-                host.Out.WriteLine(JsonSerializer.Serialize(value, CliJsonContext.Default.JsonElement));
-            }
-            else
-            {
-                print(value, host.Out);
-            }
-
-            return ExitCodes.Success;
+            throw new CliException(ServerAdminApi.AnswerTooLarge, ExitCodes.NetworkError);
         }
+
+        JsonElement value = default;
+        if (whole.Body.Length > 0)
+        {
+            try
+            {
+                using var document = JsonDocument.Parse(whole.Body);
+                value = document.RootElement.Clone();
+            }
+            catch (JsonException)
+            {
+                throw new CliException($"The server answered {(int)whole.Status} with a body that is not JSON.", ExitCodes.NetworkError);
+            }
+        }
+
+        if (!whole.IsSuccess)
+        {
+            // The same line as the server license commands print for an answer that is not the one asked for.
+            host.Error.WriteLine("error: " + ServerAdminApi.Unexpected(whole.Status, value));
+            return ExitCodes.VerificationFailed;
+        }
+
+        if (json && value.ValueKind != JsonValueKind.Undefined)
+        {
+            host.Out.WriteLine(JsonSerializer.Serialize(value, CliJsonContext.Default.JsonElement));
+        }
+        else
+        {
+            print(value, host.Out);
+        }
+
+        return ExitCodes.Success;
     }
 
     private static string Time(long seconds) => DateTimeOffset.FromUnixTimeSeconds(seconds).ToString("u", CultureInfo.InvariantCulture);

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
@@ -252,6 +253,61 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// A success answer that is larger than 256 KiB keeps its request's jti, so that sending again names it and gets the file
+    /// the service made; an error answer that is larger keeps none (design §12.6.2, §10.4, the V1d6 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client whose HTTP handler, when armed, answers the next POST with a body of 262,145 spaces: after the
+    ///   service handled the request and with its status (a success), or without sending the request and with status 503.
+    ///
+    /// Steps:
+    /// - Arm for the first activation and activate; activate again.
+    /// - Arm for a refresh and refresh; refresh again.
+    /// - Arm with status 503 and refresh; refresh again.
+    ///
+    /// Expected:
+    /// - Each armed call fails with ELM_MALFORMED and "The service's answer is larger than the limit.".
+    /// - After the oversized activation the kept file holds one pending jti, and the service one activation; the second
+    ///   activation's body names that jti in retry and gives sequence 1 of the same activation.
+    /// - After the oversized refresh the state is RefreshFailing and the kept file holds one jti in retry; the next
+    ///   refresh's body names it and gives sequence 2, the file the service made for the first refresh, and no jti is kept.
+    ///   A client that drops the jti would send sequence 1 again without it and be refused as a clone.
+    /// - After the oversized 503 no jti is kept; the next refresh's body has no retry and gives sequence 3.
+    /// </remarks>
+    [Fact]
+    public async Task OversizedAnswers_KeepTheJtiOnlyAfterASuccess()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string licenseId, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        var oversize = new OversizeNextAnswer();
+        await using ActivationClient client = vendor.Client("a", oversize);
+        var tooLarge = new LicenseError(ErrorCode.Malformed, "The service's answer is larger than the limit.");
+
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, Failed(await client.ActivateAsync(key, Cancel)));
+        string pending = Assert.Single(vendor.Kept("a").Pending);
+        Assert.Equal(1, await vendor.ActivationCountAsync(licenseId));
+        Assert.Equal(1L, Activated(await client.ActivateAsync(key, Cancel)).Sequence);
+        Assert.Equal([pending], oversize.RetryOfLastPost());
+        Assert.Equal(1, await vendor.ActivationCountAsync(licenseId));
+
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, Failed(await client.RefreshAsync(Cancel)));
+        Assert.Equal(ActivationState.RefreshFailing, client.State);
+        string unanswered = Assert.Single(vendor.Kept("a").Retry);
+        Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Equal([unanswered], oversize.RetryOfLastPost());
+        Assert.Empty(vendor.Kept("a").Retry);
+
+        oversize.Arm(afterTheService: false);
+        Assert.Equal(tooLarge, Failed(await client.RefreshAsync(Cancel)));
+        Assert.Empty(vendor.Kept("a").Retry);
+        Assert.Equal(3L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Empty(oversize.RetryOfLastPost());
+    }
+
+    /// <summary>
     /// Two processes of one device refresh at once without being taken for clones: the lock file makes them wait for each
     /// other, and the second reads the first's file again before it sends (design §12.5).
     /// </summary>
@@ -377,9 +433,10 @@ public sealed partial class ActivationClientTests
     /// - Product app with a trial policy, whose token ends with the trial and is within the refresh window at once.
     ///
     /// Steps:
-    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more. Then read the kept file every 10 milliseconds,
-    ///   moving the clock 50 milliseconds each time: on Windows a read can hold the file at the moment the client replaces
-    ///   it, and the client tries again 100 milliseconds of its clock later.
+    /// - Start a trial; move the clock 59 minutes; move it 1 minute more, to the hour. Then read the kept file every 10
+    ///   milliseconds, moving the clock 50 milliseconds each time, 25 seconds at most: on Windows a read can hold the file
+    ///   at the moment the client replaces it, and the client tries again 100 milliseconds of its clock later. The clock
+    ///   stays short of the 30 seconds after which the client gives the refresh's request up (design §12.6.2).
     ///
     /// Expected:
     /// - The kept seq stays 1 for the 59 minutes; it is 2 after the hour.
@@ -394,7 +451,7 @@ public sealed partial class ActivationClientTests
         Assert.Equal(LicenseKind.Trial, Activated(await client.StartTrialAsync(Cancel)).Kind);
         await vendor.AdvanceForAsync(TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(1));
         Assert.Equal(1L, vendor.Kept("a").Seq);
-        await vendor.AdvanceForAsync(TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1));
+        vendor.Test.Time.Advance(TimeSpan.FromMinutes(1));
         for (int i = 0; i < 500 && vendor.Kept("a").Seq != 2; i++)
         {
             vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
@@ -1147,6 +1204,47 @@ public sealed partial class ActivationClientTests
                 throw new HttpRequestException("The answer was lost.");
             }
 
+            return response;
+        }
+    }
+
+    // Once armed, answers the next POST with a body of 256 KiB and a byte: in place of the service's answer and with its
+    // status, after the service handled the request; or without sending the request, with status 503. Keeps the body of
+    // the last POST.
+    private sealed class OversizeNextAnswer : DelegatingHandler
+    {
+        private volatile string _armed = string.Empty;
+        private volatile string _lastBody = string.Empty;
+
+        public void Arm(bool afterTheService) => _armed = afterTheService ? "after" : "instead";
+
+        // The retry member of the last POST's body; empty when the body has none.
+        public string[] RetryOfLastPost()
+        {
+            using JsonDocument body = JsonDocument.Parse(_lastBody);
+            return body.RootElement.TryGetProperty("retry", out JsonElement retry) ? [.. retry.EnumerateArray().Select(e => e.GetString()!)] : [];
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Post)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            _lastBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            string armed = Interlocked.Exchange(ref _armed, string.Empty);
+            if (armed.Length == 0)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            HttpResponseMessage response =
+                armed == "after"
+                    ? await base.SendAsync(request, cancellationToken)
+                    : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { RequestMessage = request };
+            response.Content?.Dispose();
+            response.Content = new ByteArrayContent(Encoding.ASCII.GetBytes(new string(' ', (256 * 1024) + 1)));
             return response;
         }
     }

@@ -2,17 +2,21 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
+using ElasticLM.Client.Tests;
 using ElasticLM.Service;
 using ElasticLM.Service.Tests;
+using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Cli.Tests;
 
 /// <summary>
 /// <c>elm offline process</c> (design §12.8.4, §16) against a real <c>elm-service</c> on loopback (SQLite: the command only
-/// passes files over HTTP), and against a fake one for the answer's size limit.
+/// passes files over HTTP), and against a fake one for the answer's size limit and its time limit.
 /// </summary>
 public sealed class ElmOfflineTests
 {
+    private const int MaxAnswer = 256 * 1024;
+
     // The login file is pointed at a file that does not exist, so the tests never read the person's own login (M5a).
     private readonly Dictionary<string, string> _environment = new()
     {
@@ -184,7 +188,7 @@ public sealed class ElmOfflineTests
     ///   form padded to 256 KiB, then one of 256 KiB and a byte.
     ///
     /// Expected:
-    /// - 0; 0 with the answer written as received; 3 "The service's answer is larger than 262144 bytes.".
+    /// - 0; 0 with the answer written as received; 3 "ELM_MALFORMED: The service's answer is larger than 262144 bytes.".
     /// </remarks>
     [Fact]
     public async Task Process_ReadsUpToItsLimits()
@@ -204,6 +208,115 @@ public sealed class ElmOfflineTests
         Assert.Equal(0, await RunAgainstAsync(atLimit, request, answer));
         Assert.Equal(atLimit, await File.ReadAllTextAsync(answer, TestContext.Current.CancellationToken));
         Assert.Equal(3, await RunAgainstAsync(atLimit + " ", request, test.FilePath("over.elmresp")));
+    }
+
+    /// <summary>
+    /// An answer of the service that goes on past 256 KiB, or that declares such a body, ends elm offline process with exit
+    /// code 3 and ELM_MALFORMED, and elm takes no more of it than the limit (design §12.8.4, §16, the V1d6 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service on loopback that writes its answer byte by byte. The answer to the POST, by shape: endless (64 MiB of
+    ///   spaces in chunks, without a last chunk), until-close (64 MiB without a length), declared (a Content-Length of 4 GiB
+    ///   and no body), one-over (262,145 bytes without a length). Each with status 200 and with status 503.
+    /// - An activation request file.
+    ///
+    /// Steps:
+    /// - Process the request against the service; wait until the service has stopped writing.
+    ///
+    /// Expected:
+    /// - Exit code 3 and the one line "error: ELM_MALFORMED: The service's answer is larger than 262144 bytes."; no answer
+    ///   file.
+    /// - endless and until-close: the service wrote more than 256 KiB and at most 256 KiB and 16 MiB, which is what the
+    ///   buffers of the two sockets may hold; an elm that reads the whole answer first takes all 64 MiB. declared: no body
+    ///   byte. one-over: all 262,145 bytes.
+    /// </remarks>
+    /// <param name="shape">The shape of the answer.</param>
+    /// <param name="status">The status of the answer.</param>
+    [Theory]
+    [InlineData("endless", 200)]
+    [InlineData("endless", 503)]
+    [InlineData("until-close", 200)]
+    [InlineData("until-close", 503)]
+    [InlineData("declared", 200)]
+    [InlineData("declared", 503)]
+    [InlineData("one-over", 200)]
+    [InlineData("one-over", 503)]
+    public async Task Process_AnswerOverTheLimit_ExitsThreeAndIsNotTaken(string shape, int status)
+    {
+        const long Offered = 64L * 1024 * 1024;
+        const long SocketBuffers = 16L * 1024 * 1024;
+        await using var test = new TestService();
+        using var device = TestDevice.Create(test, (await StartedAsync(test)).Service);
+        string request = Write(test, "a.elmreq", device.ActivationFile("ELM-AAAA-AAAA-AAAA-AAAA", TestDevice.Fingerprints()));
+        string answer = test.FilePath("a.elmresp");
+        RawAnswer offered = shape switch
+        {
+            "endless" => RawAnswer.Endless(Offered, status),
+            "until-close" => RawAnswer.UntilClose(string.Empty, Offered, status),
+            "declared" => RawAnswer.DeclaredOnly(4_294_967_296L, status),
+            _ => RawAnswer.UntilClose(string.Empty, MaxAnswer + 1, status),
+        };
+        await using RawAnswerServer service = RawAnswerServer.Start(_ => offered);
+
+        (int Code, string Out, string Error) result = await Task.Run(
+            () => Run("offline", "process", "--url", service.Url.ToString(), "--in", request, "--out", answer),
+            TestContext.Current.CancellationToken
+        );
+        long written = await service.SettledBodyBytesAsync();
+
+        Assert.Equal((3, "error: ELM_MALFORMED: The service's answer is larger than 262144 bytes."), Trimmed(result));
+        Assert.False(File.Exists(answer));
+        (long least, long most) = shape switch
+        {
+            "declared" => (0L, 0L),
+            "one-over" => (MaxAnswer + 1, MaxAnswer + 1),
+            _ => (MaxAnswer + 1, MaxAnswer + SocketBuffers),
+        };
+        Assert.InRange(written, least, most);
+    }
+
+    /// <summary>
+    /// An answer of the service that stops ends elm offline process after 30 seconds of the command's clock, with exit code
+    /// 3, whether the answer stops before its head or inside its body (design §12.8.4, the V1d6 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service on loopback that reads the POST and then sends nothing (no-head), or sends a head with status 200 and
+    ///   the first byte of a body in chunks, and then nothing (body).
+    /// - elm on a fake clock.
+    ///
+    /// Steps:
+    /// - Process an activation request; once the service waits, move the clock 30 seconds.
+    ///
+    /// Expected:
+    /// - Exit code 3 and the one line "error: The service cannot be reached: No whole answer came within 30 seconds."; no
+    ///   answer file, within 20 seconds of the real clock. An elm whose limit runs on the real clock would not return in
+    ///   that time.
+    /// </remarks>
+    /// <param name="stop">Where the answer stops.</param>
+    [Theory]
+    [InlineData("no-head")]
+    [InlineData("body")]
+    public async Task Process_AnswerThatStops_ExitsThreeAfterThirtySeconds(string stop)
+    {
+        await using var test = new TestService();
+        using var device = TestDevice.Create(test, (await StartedAsync(test)).Service);
+        string request = Write(test, "a.elmreq", device.ActivationFile("ELM-AAAA-AAAA-AAAA-AAAA", TestDevice.Fingerprints()));
+        string answer = test.FilePath("a.elmresp");
+        await using RawAnswerServer service = RawAnswerServer.Start(_ => stop == "no-head" ? RawAnswer.Silent : RawAnswer.Stalled("{", 1));
+        var time = new FakeTimeProvider(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
+
+        Task<(int Code, string Out, string Error)> running = Task.Run(
+            () => Run(time, "offline", "process", "--url", service.Url.ToString(), "--in", request, "--out", answer),
+            TestContext.Current.CancellationToken
+        );
+        await service.Held.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        time.Advance(TimeSpan.FromSeconds(30));
+        (int Code, string Out, string Error) result = await running.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+
+        Assert.Equal((3, "error: The service cannot be reached: No whole answer came within 30 seconds."), Trimmed(result));
+        Assert.False(File.Exists(answer));
     }
 
     /// <summary>
@@ -312,7 +425,9 @@ public sealed class ElmOfflineTests
         return 0;
     }
 
-    private (int Code, string Out, string Error) Run(params string[] args)
+    private (int Code, string Out, string Error) Run(params string[] args) => Run(TimeProvider.System, args);
+
+    private (int Code, string Out, string Error) Run(TimeProvider time, params string[] args)
     {
         using var output = new StringWriter();
         using var error = new StringWriter();
@@ -320,7 +435,7 @@ public sealed class ElmOfflineTests
         {
             Out = output,
             Error = error,
-            Time = TimeProvider.System,
+            Time = time,
             GetEnvironmentVariable = name => _environment.GetValueOrDefault(name),
             ReadSecret = null,
         };

@@ -1040,9 +1040,10 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `borrow.reserve` | 0 以上、1,000,000 以下 |
 | サーバーの公開鍵の JWK（`GET /v1/server/license` の `key`） | 1,024 バイト |
 | リースの取得の `version` | 32 文字 |
-| `elm-server` の応答（クライアントが読む大きさ） | 256 KiB |
-| `elm-service` の発行の応答（`ActivationClient` と `elm offline process` が読む大きさ） | 256 KiB |
-| `elm-service` のリースの応答（SaaS 型の `LicenseClient` が読む大きさ、0.94） | 256 KiB。`certificates` は 1〜4 個、各 16 KiB まで（1 つのトークンと同じ）。外れれば `ELM_MALFORMED` |
+| `elm-server` の応答（クライアントが読む大きさ） | 256 KiB。読みながら数え、超えれば `ELM_MALFORMED`（§12.1 の「応答の読み方」。V1d6） |
+| `elm-service` の発行の応答（`ActivationClient` と `elm offline process` が読む大きさ） | 256 KiB。読み方と、超えたときは上の行と同じ |
+| `elm-service` のリースの応答（SaaS 型の `LicenseClient` が読む大きさ、0.94） | 256 KiB。読み方と、超えたときは上の行と同じ。`certificates` は 1〜4 個、各 16 KiB まで（1 つのトークンと同じ）。外れれば `ELM_MALFORMED` |
+| `elm-server` の管理 API の応答（`elm server` のコマンドが読む大きさ。V1d6） | 64 MiB（67,108,864 バイト）。読み方は上の行と同じ。超えれば終了コード 3（§13.7） |
 | オフラインの要求ファイル（`elm-service` と `elm offline process` が読む大きさ） | 64 KiB |
 | 問題の応答の `detail`（クライアントがアプリに渡す長さ） | 512 文字。超えれば状態コードだけを伝える |
 | サーバーのピンのファイル | 4 KiB |
@@ -1261,7 +1262,7 @@ OS の ID が読めないとき（ファイルがない、`uninitialized`、全�
 複製された端末は同じインストール鍵を持つため、サーバー側で更新番号の巻き戻りから検出する。OAuth のリフレッシュトークンの回転（RFC 9700 §4.14）と同じ考え方である。
 
 1. 有効化（サーバーライセンスを含む）とリースは更新番号（`seq`）を持つ。サービスとサーバーは、更新のたびに 1 増やしてトークンに入れ、最後に出した値と、そのトークンを覚える。
-2. クライアントは、更新・解除・再有効化の要求に、最後に受け取った `seq` を入れる。前の要求に応答が届かなかった（送ったが答えがない）ときは、その要求の証明の `jti` を、新しいトークンを受け取るまで覚えておき、再試行の本文の `retry` に入れる（新しいものを後ろに、16 件まで）。リースの更新では、成功の応答が届いたのに、クライアントがその答えを受け取らなかったとき（§12.7.3）にも、その要求の証明の `jti` を同じ一覧に入れる（V1d5）。サーバーがその要求で更新していれば、次の再試行には同じトークンが返り、複製と判定されない。
+2. クライアントは、更新・解除・再有効化の要求に、最後に受け取った `seq` を入れる。前の要求に応答が届かなかった（送ったが答えがない）ときは、その要求の証明の `jti` を、新しいトークンを受け取るまで覚えておき、再試行の本文の `retry` に入れる（新しいものを後ろに、16 件まで）。リースの更新では、成功の応答が届いたのに、クライアントがその答えを受け取らなかったとき（§12.7.3）にも、その要求の証明の `jti` を同じ一覧に入れる（V1d5）。サーバーがその要求で更新していれば、次の再試行には同じトークンが返り、複製と判定されない。読む大きさの上限（§8.6）を超える成功の応答も、答えのない要求と同じに扱い、その要求の `jti` を一覧に入れる。リースの更新でも、有効化・試用・更新・解除でも同じである（V1d6。§12.1 の「応答の読み方」）。
 3. 判定:
    - 要求の `seq` が最後に出した値と同じ: 正しい更新。`seq` を 1 増やして新しいトークンを出す。
    - 要求の `seq` が最後に出した値より 1 小さく、`retry` が「最後に出したトークンを出した要求の証明の `jti`」を含む: 前の応答が届かなかった再試行とみなし、最後に出したトークンをそのまま返す（冪等）。サーバーはそのため、トークンごとに、それを出した要求の `jti` を覚える。リーストークンは、その `jti` を `areq` に持つ（§8.4.3）。返したトークンの `areq` は、再試行の要求の `jti` ではなく、前の要求の `jti` である。クライアントは、その `jti` が自分の一覧にあるので、このトークンを受け取る（§12.7.5 の手順 8）。
@@ -1413,10 +1414,25 @@ public static class ErrorCodes
 - ライセンスキーを送るクライアント（`LicenseClient`、`ActivationClient`、`elm offline process`）はリダイレクトに従わない。`3xx` は誤りの応答として扱う（`ELM_INTERNAL_ERROR`）。設定を誤ったプロキシの `307` や `308` に従うと、ライセンスキーを含む本文を別の送り先へ送り直してしまうためである。証明の `htu` で要求はそこで失敗するが、キーはもう届いている（M4d2 の設計のレビュー R5、持ち主が受けた）。
 - サーバーは自分の公開 URL（`publicUrls`、§13.8, §14.8）を設定で持つ。証明の `htu` は、要求の `Host` ヘッダーではなく、この設定と比べる。リバースプロキシの後ろでも同じ値になるためである。公開 URL が複数あれば、どれかと一致すればよい。
 - 問題の応答は `{"type": "about:blank", "title": <コード>, "status": <状態コード>, "detail": <一文>, "code": <コード>}` である。`Retry-After` を返すときは秒数で返す（`ELM_SERVER_RECOVERING`, `ELM_RATE_LIMITED`）。`ELM_RATE_LIMITED` の `Retry-After` は、どちらのプログラムでもいつも `1` である（`elm-server` の `GuardAsync`、`elm-service` の `WriteProblemAsync`）。
-- クライアント（`LicenseClient`、`ActivationClient`）が問題の応答の `code` から受け取るのは、§19 の表の HTTP の列に、問題の応答の状態コードがあるコードだけである（番号で 1、2、7、10〜14、20〜22、24、30〜37、39〜44、50〜56、99 の 34 個。`ElasticLM.Client` の中の、公開しない `ProblemCodes` が、この一覧と、§19 の回収の応答の一覧を持つ）。ほかの 15 個は受け取らない: `ELM_OK`（0）、クライアントやライブラリだけが作る 15、18、19、23、38、90、`elm-server` のサーバーライセンスの再読み込みの `409` でしか返らない 3、4、5、6、8、9、16、17 である。受け取らないコード、知らない名前、`code` のない本文、JSON でない本文は、どれも `ELM_INTERNAL_ERROR` と「The server answered <状態コード> without a known error code.」として読み、`detail` は使わない。問題の応答には署名がなく、中継や偽のサーバーが作れる（§5.4）。成功のコードや、クライアント自身が作る誤りのコードを、そこから受け取らないためである（V1d1 の Grill の Q1 と Q2）。応答の状態コードは、§19 の表のそのコードの値と比べない。`3xx` は、本文によらず `ELM_INTERNAL_ERROR` である（上の項）。受け取らないコードの応答でも、`Retry-After` と `ELM-Nonce` のヘッダーは、いままでどおり読む。
+- クライアント（`LicenseClient`、`ActivationClient`）が問題の応答の `code` から受け取るのは、§19 の表の HTTP の列に、問題の応答の状態コードがあるコードだけである（番号で 1、2、7、10〜14、20〜22、24、30〜37、39〜44、50〜56、99 の 34 個。`ElasticLM.Client` の中の、公開しない `ProblemCodes` が、この一覧と、§19 の回収の応答の一覧を持つ）。ほかの 15 個は受け取らない: `ELM_OK`（0）、クライアントやライブラリだけが作る 15、18、19、23、38、90、`elm-server` のサーバーライセンスの再読み込みの `409` でしか返らない 3、4、5、6、8、9、16、17 である。受け取らないコード、知らない名前、`code` のない本文、JSON でない本文は、どれも `ELM_INTERNAL_ERROR` と「The server answered <状態コード> without a known error code.」として読み、`detail` は使わない。問題の応答には署名がなく、中継や偽のサーバーが作れる（§5.4）。成功のコードや、クライアント自身が作る誤りのコードを、そこから受け取らないためである（V1d1 の Grill の Q1 と Q2）。応答の状態コードは、§19 の表のそのコードの値と比べない。`3xx` は、本文によらず `ELM_INTERNAL_ERROR` である（上の項）。受け取らないコードの応答でも、`Retry-After` と `ELM-Nonce` のヘッダーは、いままでどおり読む（上限を超えた応答のヘッダーは読まない。下の「応答の読み方」）。
 - 受け取ったコードの `detail` は、1〜512 文字のときだけ使い、ほかは「The server answered <状態コード>.」にする。オンプレミスのクライアントが、サーバーライセンスを確かめる前に受け取る問題の応答（`GET /v1/server/license` の答え、§13.5）は、コードは上の規則で受け取り、`detail` は使わずに、いつも「The server answered <状態コード>.」にする。この接続はどの証明書も受け取るので、経路の上の誰でも答えられ、その相手が選んだ文をアプリの誤りの文にしないためである（V1d1 の Grill の Q3）。
 - `elm-server` は、リースの要求（取得・更新・返却・回収）への応答に、成功でも失敗でもヘッダー `ELM-Nonce` で新しいノンスを付ける。クライアントは次の要求にそれを使い、`GET /v1/nonce` を呼ぶのは最初とノンスを失ったときだけになる。例外は、経路の処理の前に答える 2 つで、`ELM-Nonce` を持たない。IP の規則（`allow`・`deny`、§13.8）で断る `403` と `ELM_FORBIDDEN`、送信元ごとの頻度の制限の `429` と `ELM_RATE_LIMITED` である（`ElmServer.GuardAsync`）。`elm-service` の送信元ごとの `429` も同じく `ELM-Nonce` を持たない（`ElmService.GuardAsync`。§12.6.1）。
 - クライアント（`ActivationClient` と `LicenseClient`）は、ヘッダーのノンスも、`GET /v1/nonce` の本文のノンスと同じく 1 文字以上 128 文字以下に限り、外れた値はヘッダーがないのと同じに扱う（1 つの関数 `LicenseClient.ValidNonce`。V1c11 の Grill、Issue #242。持ち主の決定はすべて推奨案）。空のヘッダーと空白だけのヘッダーは、どちらも `HttpClient` で空の文字列になる（2026-11-08、.NET 10.0.14 で生の HTTP の応答を返して測った）。前は長さの上限しか見ず、空のノンスで次の要求の証明を作ろうとして、`ProofBuilder.Create` が `ArgumentException` を投げていた（C では `ELM_INVALID_ARGUMENT`。V1c10 の実装で見つけた）。ヘッダーがないときの動き（前のノンスを使い、`ELM_NONCE_REQUIRED` なら新しいノンスで 1 回だけ送り直し、ノンスがなければ `GET /v1/nonce`）は変えない。ノンスはその有効期間（§12.2）のあいだ何度でも使えるので、範囲の外のヘッダーを受けたクライアントは、期間の中では前のノンスで送り、切れていれば `ELM_NONCE_REQUIRED` のあと `GET /v1/nonce` で取り直す（V1c11 の設計の独立レビューと正しさのレビューの A2、持ち主の決定で、Issue の Done when をこの動きに合わせて読む）。ノンスの文字の種類は確かめない。サーバーのノンスはどれも `NonceService` が作る 75 文字の base64url だが、利用者の文書はノンスを中身を読まない文字列（opaque string）とし、文字の正しくない値はサーバーが `ELM_NONCE_REQUIRED` で断って今の送り直しの流れで直るため（レビューの R4、持ち主の決定）。
+
+応答の読み方（V1d6、Issue #324。決めたことは §20.7 の「V1d6 の Grill」）:
+
+- 読む側は、`LicenseClient`（最初の接続の `GET /v1/server/license`、`GET /v1/nonce`、リースの要求のすべて）、`ActivationClient`、`elm offline process`（§12.8.4）、`elm server` のコマンド（§13.7）である。どれも、`ElasticLM.Client` の中の、公開しない 1 つの処理（`BoundedAnswer.SendAsync`）で送って読む。上限は、サーバーとサービスの応答が 256 KiB（`BoundedAnswer.MaxLength`）、`elm-server` の管理 API の応答が 64 MiB（§13.7）である（§8.6）。
+- 手順:
+  1. ヘッダーまでを受け取る（`HttpCompletionOption.ResponseHeadersRead`）。`HttpClient` の既定（`ResponseContentRead`）は、本文の全部をメモリに読み込んでから戻る（dotnet/runtime の release/10.0、`src/libraries/System.Net.Http/src/System/Net/Http/HttpClient.cs` の `LoadIntoBufferAsync(_maxResponseContentBufferSize, …)`。この値の既定は約 2 GiB）。V1d6 より前は、そのあとで大きさを確かめていた。
+  2. `Content-Length` が上限を超えていれば、本文を 1 バイトも読まずに、上限を超えた応答とする。
+  3. `Content-Length` があれば、その長さの配列に読む。なければ（chunked か、接続の終わりまでの本文）、数えながら読み、上限と 1 バイトまで読んだところで止める。バッファーは 1 KiB から倍にしていき、上限と 1 バイトより大きくしない。`elm-server` のリースの答えは chunked で届き、どれも数 KiB である。
+- 速さと確保の量（測った値。Windows 11、.NET SDK 10.0.404、JIT の Release、プロセスの中の `elm-server` にループバックの TLS で、取得と返却を 2,000 回ずつ 7 組。確保の量はサーバーを含むプロセス全体の、要求 1 つあたり。f64b5f1 と、この行のコードを、同じ時間に交互に 2 回ずつ走らせた）: 確保は、f64b5f1 で 46,540〜46,559 バイト、この行で 38,950〜39,004 バイトだった。最初のバッファーを 4 KiB にすると 42,062〜42,083 バイト、16 KiB にすると 54,312〜54,333 バイトだったので、1 KiB にした。1 要求の時間の中央値は、f64b5f1 で 672.8〜1,107.8 µs、この行で 681.6〜1,013.6 µs で、同じ版の 2 回の差（最大 435 µs）より小さい差は見分けられなかった（同じ機械で、ほかの作業のビルドが動いていた）。`ResponseHeadersRead` と数えながらの読み取りのほかに、要求ごとに `CancellationTokenSource` を 2 つ（30 秒と、呼び出した側のトークンとのつなぎ）作る。参照機での §4.2 の測定（`tools/ElasticLM.Measure`）は、自分の `HttpClient` で送るので、この変更を通らない。
+- 上限を超えた応答は、終わらない本文も含めて、状態コードによらず `ELM_MALFORMED` である（問 6-2）。文は、`LicenseClient` が「The server's answer is larger than the limit.」、`ActivationClient` が「The service's answer is larger than the limit.」。V1d6 より前は、終わらない本文を約 2 GiB まで読み、`ELM_NETWORK_ERROR` になっていた。
+- 上限を超えた応答からは、状態コードのほかに何も読まない。`ELM-Nonce`、`Retry-After`、`ELM-Server-License` のヘッダーも、本文の `code` も使わない（公開しない型 `BoundedAnswer.TooLarge` は、状態コードしか持たない）。次の要求は、前のノンスで送る。状態コードは、その要求を、答えのない要求として数えるかどうかにだけ使う（成功の `2xx` なら数える。§12.6.2、§12.7.3。問 6-3）。
+- 時間: 要求を送るところから本文の終わりまでを、1 つの 30 秒（`BoundedAnswer.Deadline`）で打ち切る（問 6-4）。30 秒は、クライアントの `TimeProvider`（`elm` では `CliHost.Time`）で数える。`new CancellationTokenSource(30 秒, TimeProvider)` のトークンを、送信と本文の読み取りの両方に渡す。`HttpClient.Timeout` は無限にする。`ResponseHeadersRead` では、`HttpClient.Timeout` はヘッダーが届くまでしか数えず、実時間のタイマーで動くためである。打ち切った要求は `ELM_NETWORK_ERROR` で、文は「No whole answer came within 30 seconds.」で終わる（`LicenseClient` は「The server cannot be reached: 」、`ActivationClient` は「The service did not answer: 」のあとに続ける）。本文が遅く届くときも、途中で止まるときも、同じである。呼び出した側の取り消しも、いままでどおり `ELM_NETWORK_ERROR` である。
+- 本文が、`Content-Length` の長さに届く前に切れたときは、いままでどおり `ELM_NETWORK_ERROR` である（文は「The answer ended before it was whole.」で終わる）。その要求は、答えのない要求として数える。
+- 読み残した本文: クライアントは、上限を超えた応答の残りを読まずに、応答を捨てる。そのとき .NET の `SocketsHttpHandler` は、接続を使い回すために、残りを最大 1 MiB、最長 2 秒まで読んで捨てることがある（`SocketsHttpHandler/HttpContentReadStream.cs` の `DrainOnDisposeAsync`。既定の値は `src/libraries/Common/src/System/Net/Http/HttpHandlerDefaults.cs` の `DefaultMaxResponseDrainSize` と `DefaultResponseDrainTimeout`）。`Content-Length` の残りが 1 MiB を超えるときは、読まずに接続を閉じる（`ContentLengthReadStream.cs` の `DrainAsync`）。この読み捨てはメモリに残らず、30 秒の中には数えない。この設定は変えていない。
+- 測った値（Windows 11、.NET SDK 10.0.404、JIT の Release、ループバック。`BoundedAnswerTests.Send_BodyFarOverTheLimit_IsGivenUpNearTheLimit` を 30 回）: 64 MiB の本文を出す相手が、クライアントが接続を閉じるまでに書けた本文は、chunked で 524,288〜917,504 バイト、長さのない本文で 393,216〜1,048,576 バイト、`Content-Length` が 64 MiB の本文で 262,144〜393,216 バイトだった。相手が書けた量は、クライアントが読んだ量に、2 つのソケットのバッファーに入った量を足したものである。直す前は、256 MiB の答えで約 768 MiB を確保し、終わらない答えを約 2 GiB まで読んだ（Issue #324 の Grill のコメント）。
 
 `htu` の正規化（クライアントとサーバーの両方で同じ手順）:
 
@@ -1710,7 +1726,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - `TryCreate` は、インストール鍵があれば読み（読めなければ `ELM_INSTALLATION_KEY_UNREADABLE`）、指紋を `MachineFingerprint.Compute` で作り、保存した有効化を読んで更新を予約する。鍵がなければ作らず、最初の `ActivateAsync` か `StartTrialAsync` が送る前に、鍵とそのフォルダーを作る（§10.2 の「最初の有効化・試用のときに作る」）。鍵を持たないクライアントは、操作のたびに、同じ端末のほかのプロセスが作った鍵があれば読む。サービスには触れない。製品 ID の誤り、`ServiceUrl` が https でもループバックの http でもない、`AppVersion` が 64 バイトを超える、は `ArgumentException`。`ServiceUrl` が `null` のクライアントは、オンラインの操作（有効化・試用・更新・解除）を送らずに `ELM_INVALID_STATE`（「No service URL is set; use the offline requests.」）を返し、自動の更新のタイマーを置かない（M4c2）。
 - 内部の設定（`elm-server` と `elm` だけが使う、M4c3）: `RequiredKind`（受け取るファイルの種類を 1 つに絞る。保存した有効化がその種類でなければ、どの操作も `ELM_INVALID_STATE`）、`CreateKey`（`false` なら鍵を作らない）、`LicenseKept`（新しいファイルを保存するたびに、そのバイト列で呼ぶ）。§13.7 のとおりに使う。
 - 失敗は例外にせず `Failed` か `LicenseError` で返す。通信の失敗と打ち切りは `ELM_NETWORK_ERROR`、サービスの問題の応答は §19 のコード（受け取るコードは §12.1）、手元のファイルが書けないときは `ELM_INTERNAL_ERROR` である。クライアントが返す `Failed` と `LicenseError` は、`ELM_OK` を持たない。`DeactivateAsync` と `ForgetDeactivationProofAsync` の成功は、内部でも、誤りのコードの値では表さない（V1d1 の Grill の Q5）。
-- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は 30 秒で打ち切り、応答は 256 KiB まで読む（§8.6）。ノンスは前の応答の `ELM-Nonce`（1 文字以上 128 文字まで。外れれば無いとみなす。§12.1）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
+- TLS はサービスの証明書を OS の信頼で確かめる（オンプレミスのピン（§13.5）は使わない）。要求は、送るところから本文の終わりまでを、クライアントの `TimeProvider` で数える 30 秒で打ち切り（`ELM_NETWORK_ERROR`）、応答は 256 KiB まで読む（§8.6）。超える応答は `ELM_MALFORMED` で、そのヘッダーは読まない（§12.1 の「応答の読み方」。V1d6）。ノンスは前の応答の `ELM-Nonce`（1 文字以上 128 文字まで。外れれば無いとみなす。§12.1）、なければ `GET /v1/nonce` を使い、`ELM_NONCE_REQUIRED` にはその応答の新しいノンスで 1 回だけ送り直す。
 - 送るもの: 有効化と試用は、製品の `code`（`product`）、指紋（`Compute` のすべて）、`SendClientInfo` なら `client`（ホスト名と OS のユーザー名、どちらかが 255 バイトを超えれば送らない）、`AppVersion` があれば `app`。クライアントは有効化の前にポリシーを知らず、トークンも `ClientInfoStrategy` を持たないので、`client` を送るかはアプリが決め、残すかはサービスがポリシーで決める（§4.4）。
 
 保存（鍵のフォルダー、§10.2 の ACL と権限の内）:
@@ -1732,7 +1748,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 送り直しと記録（§10.4 の手順 2）:
 
 - 証明を作るたびに、その `jti` を `retry` に書いてから送る（送った後に落ちても、次の要求が名指せる）。
-- 問題の応答を受けた要求と、送る前に失敗した要求（名前の解決、接続、TLS）の `jti` は、`retry` から消す。サービスが受け取ったかわからない要求（送った後の打ち切りと切断）の `jti` は残す。成功の応答を受けた要求の `jti` も、そのファイルを保存するまで残す。保存できない（確かめに通らない、発行の応答でない、書けない）ときに消すと、サービスが `seq` を進めた後の次の要求が「1 小さく `retry` に `jti` がない」になり、複製と判定されるためである（署名鍵の入れ替えの後、新しいルートを持つ版が届く前の端末がこの順をたどる。PR #67 のレビュー）。保存できなかったファイルは、その SHA-256 を `unkept` に残す。次の成功の応答のファイルが同じなら、サービスはその要求を送り直しと判定していて（§10.4 の手順 3。最後の証明は前の要求のまま）、その要求の `jti` は効かないので消す。消さなければ、保存できない応答が 1 時間ごとの再試行で 1 件ずつ増え、16 時間で一覧が埋まって、更新も解除も送れなくなるためである（PR #67 の再レビュー）。新しいファイルを保存したら `unkept` を `null` にする。§10.4 の判定で効くのは、最後のファイルを出した 1 つの要求だけで、確かに断られた要求を残すと、オフラインが長いと 16 件を使い切って効く `jti` を押し出すためである（M4b2 の設計のレビュー）。
+- 問題の応答を受けた要求と、送る前に失敗した要求（名前の解決、接続、TLS）の `jti` は、`retry` から消す。サービスが受け取ったかわからない要求（送った後の打ち切りと切断）の `jti` は残す。256 KiB を超える応答（§12.1 の「応答の読み方」）は、状態コードで分ける（V1d6 の Grill の問 6-3）。成功（`2xx`）なら、サービスがその要求で有効化や更新を済ませているかもしれないので、`jti` を残す。次の要求がその `jti` を `retry` で名指し、サービスは同じファイルを返す（§10.4 の手順 2）。誤りの状態なら、`jti` を消す。V1d6 より前は、どちらでも消していた。サービスが `seq` を進めていれば、次の更新は、1 小さい `seq` を、その `jti` のない `retry` で送ることになり、§10.4 の手順 3 で複製になる形だった。大きすぎる成功の応答がくり返されると、残る `jti` は要求ごとに 1 つ増え、16 件で次の項の `ELM_INVALID_STATE` になる。成功の応答を受けた要求の `jti` も、そのファイルを保存するまで残す。保存できない（確かめに通らない、発行の応答でない、書けない）ときに消すと、サービスが `seq` を進めた後の次の要求が「1 小さく `retry` に `jti` がない」になり、複製と判定されるためである（署名鍵の入れ替えの後、新しいルートを持つ版が届く前の端末がこの順をたどる。PR #67 のレビュー）。保存できなかったファイルは、その SHA-256 を `unkept` に残す。次の成功の応答のファイルが同じなら、サービスはその要求を送り直しと判定していて（§10.4 の手順 3。最後の証明は前の要求のまま）、その要求の `jti` は効かないので消す。消さなければ、保存できない応答が 1 時間ごとの再試行で 1 件ずつ増え、16 時間で一覧が埋まって、更新も解除も送れなくなるためである（PR #67 の再レビュー）。新しいファイルを保存したら `unkept` を `null` にする。§10.4 の判定で効くのは、最後のファイルを出した 1 つの要求だけで、確かに断られた要求を残すと、オフラインが長いと 16 件を使い切って効く `jti` を押し出すためである（M4b2 の設計のレビュー）。
 - わからない要求が 1 つの一覧に 16 件たまったら、その種類の要求はそれ以上送らずに `ELM_INVALID_STATE` を返す。古いものを落とすと、効く `jti` を失って複製と判定されうるためで、管理者の解除と有効化で戻る。
 - 新しいファイルを保存したら、その要求の一覧を空にする。有効化と試用は両方を空にし（前の有効化を置き換えるため）、更新は `retry` だけを空にして `pending` を残す。
 - 最初の有効化と試用の前は、`activationId`・`kind`・`license` が `null`、`seq` が 0 の `activation.json` に `pending` だけを持つ。応答をなくした最初の有効化の送り直しは `seq` 0 と `retry` を持ち、試用は `retry` を持つ（§12.6.1）。
@@ -1895,7 +1911,7 @@ stateDiagram-v2
 - 失敗したら、15 秒から始めて倍にし、60 秒を上限として、期限まで再試行する。Cryptlex が「期限の 30 秒以上前に同期せよ」と書く（https://cryptlex.com/docs/licensing-models/floating-licenses/hosted-floating-licenses ）ように、1 回の遅れで席を失わない間隔にする。
 - 期限が来たら `Lost` にし、アプリに通知する。アプリが何をするか（保存を促す、機能を止める）はアプリが決める。
 - `ELM_CLONE_DETECTED` は再試行しても変わらないので、すぐに `Lost` にする。それ以外の失敗（通信の失敗、`5xx`、サーバーのピンの不一致、クライアントが受け取らなかった答えを含む）は期限まで再試行する。
-- 成功の応答が届いたのに、クライアントがその答えを受け取らなかったとき（V1d5）は、持っているトークンを替えずに `Retrying` にし、その要求の証明の `jti` を、答えのない要求の一覧に入れる（§10.4 の手順 2）。受け取らないのは、応答の本文がリースの答えとして読めないとき（JSON でない。SaaS 型では、`certificates` が §12.7.1 の形でないときも）、トークンが §12.7.5 の手順 1〜6 を通らないとき、答えが名指すサーバーライセンスを取り直せないとき、手順 8 で `ELM_REQUEST_MISMATCH` になるときである。256 KiB（§8.6）を超える成功の応答は、ここに入らない。クライアントは `ELM_MALFORMED` で `Retrying` にするが、その要求の `jti` を一覧に入れない。サーバーがその要求で更新していれば、次の再試行は複製と判定される（応答の大きさの読み方は、Issue #324 の行 V1d6 が変える）。再試行のタイマーは、状態を `Retrying` にする前に作る。`Retrying` を見てから時計を進める側が、タイマーを見逃さないためである（更新の成功で、次の更新を先に決めるのと同じ）。
+- 成功の応答が届いたのに、クライアントがその答えを受け取らなかったとき（V1d5）は、持っているトークンを替えずに `Retrying` にし、その要求の証明の `jti` を、答えのない要求の一覧に入れる（§10.4 の手順 2）。受け取らないのは、応答の本文がリースの答えとして読めないとき（JSON でない。SaaS 型では、`certificates` が §12.7.1 の形でないときも）、トークンが §12.7.5 の手順 1〜6 を通らないとき、答えが名指すサーバーライセンスを取り直せないとき、手順 8 で `ELM_REQUEST_MISMATCH` になるときである。256 KiB（§8.6）を超える成功（`2xx`）の応答も、同じに扱う（V1d6 の Grill の問 6-3）。クライアントは `ELM_MALFORMED` で `Retrying` にし、その要求の `jti` を一覧に入れる。サーバーがその要求で更新していれば、再試行は、その `jti` を名指して同じトークンを受け取る。256 KiB を超える誤りの状態の応答では、`ELM_MALFORMED` で `Retrying` にするが、`jti` を一覧に入れない（サーバーは、断った要求では更新していない）。どちらも、応答のヘッダーは読まず、再試行は前のノンスで送る（§12.1 の「応答の読み方」）。V1d5 のときは、大きすぎる成功の応答でも `jti` を入れなかった。一覧は 16 件までで、超えると古いものから落とす（`Lease.AddUnanswered`）。再試行のタイマーは、状態を `Retrying` にする前に作る。`Retrying` を見てから時計を進める側が、タイマーを見逃さないためである（更新の成功で、次の更新を先に決めるのと同じ）。
 - 更新の問題の応答から受け取るコードは、§12.1 の一覧のものだけである。
 - SaaS 型では、更新が `ELM_UNKNOWN_LEASE` で断られたら、すぐに `Lost` にする。サービスは状態をデータベースに持ち、再起動で失わないので、回収はない（回収の経路もない。`404`、0.93）。
 - オンプレミスで更新が `ELM_UNKNOWN_LEASE` で断られたら `Reclaiming` にし、そのサーバーから借りているリースを 1 回の要求でまとめて回収する（0.44）。回収できたリースはそのまま、断られたリースは `Lost` にし、回収できたら更新をやり直す。回収の要求自体が失敗したら `Retrying` にする。
@@ -2176,7 +2192,7 @@ M4c1（0.90）で、§12.8.1〜§12.8.3 を次の形で出す。
 
 - `elm offline process --url <サービスの URL> --in <要求ファイル> [--out <応答ファイル>] [--force] [--json]`。
 - 環境変数 `ELM_API_KEY` があれば管理の入口に `Authorization: Bearer` で送る。なければ、`elm admin login` で保存したログインの URL が `--url` と同じオリジンならそのアクセストークンで管理の入口に送り（M5a、§16）、そうでなければ公開の入口に送る。
-- `--url` は https（ループバックの http だけ許す、`ActivationClient` と同じ）。TLS は OS の信頼で確かめる。要求の時間切れは 30 秒、応答は 256 KiB まで（§8.6）。
+- `--url` は https（ループバックの http だけ許す、`ActivationClient` と同じ）。TLS は OS の信頼で確かめる。応答は、`ActivationClient` と同じ処理で読む（§12.1 の「応答の読み方」。V1d6）。要求を送るところから本文の終わりまでを、`elm` の時計（`CliHost.Time`）で数える 30 秒で打ち切り、「error: The service cannot be reached: No whole answer came within 30 seconds.」と終了コード 3 で終わる。応答は 256 KiB まで読み（§8.6）、超えれば、状態コードによらず「error: ELM_MALFORMED: The service's answer is larger than 262144 bytes.」と終了コード 3 で終わり、応答ファイルは書かない。V1d6 より前は、`HttpClient` が本文の全部を読み込んだあとで大きさを確かめ、文は誤りコードを持たなかった。
 - 入力は 64 KiB まで読み、ヘッダーの `typ` を見る（署名はサービスが確かめる）。`elm-actreq+jws` には `--out` が要り、`elm-deact+jws` に `--out` を渡せば引数の誤り。
 - `--out` がすでにあれば、`--force` がなければ、送る前に引数の誤りで終わる（ほかのコマンドと同じく、黙って上書きしない）。
 - 拡張子: 要求は `.elmreq`、解除の証明は `.elmdeact`、応答は `.elmresp`。名前は問わない。
@@ -2482,7 +2498,20 @@ M3c で作った形（0.50。待ち受けは V1d2 の 0.119 で改めた。オ�
 - 認証された各操作を利用ログに `{"type": "admin.action", "action", "target", "result": <コード>}` で書く。認証の失敗は 1 行ずつ書かず、1 分ごとに `{"type": "admin.denied", "code": "ELM_UNAUTHORIZED", "count"}` で件数を書く（0.58）。ソケットにつなげる者が違うトークンを送り続けても、利用ログを際限なく増やせないようにするためである（V1d2 の前は、ほかの利用者やブラウザーがループバックへ送る要求も、ここに届いた）。
 - 例外で終わった操作（V1d9）: `admin.action` の行は、操作が例外で終わったときも書く。`result` は、要求が取り消されていれば（呼び出した側が接続を切った）`ELM_NETWORK_ERROR`、そうでなければ `ELM_INTERNAL_ERROR` である。例外は、そのあと前と同じく外へ出る。例外の型は見ない。例外なしに戻った操作でも、行を書く前に応答の書き手をフラッシュして、接続が閉じていたら（`IsCompleted` が真か、フラッシュが取り消された）`ELM_NETWORK_ERROR` にする（`ElmServer.AnswerMetClosedConnectionAsync`。Kestrel が、閉じた接続への書き込みを、取り消しの前は例外なしに捨てるため。§18.2）。`204` だけを返す操作でもフラッシュするので、その答えは、行を書く前に始まる（`elm-service` と違い、行が書けないときに `500` を返す道がないので、先に始まってよい）。サーバーの停止や、Kestrel が自分で接続を切ったときも、要求は取り消されるので、同じく `ELM_NETWORK_ERROR` と記録する。`result` は、状態が変わったかどうかではなく、呼び出しがどう終わったかを表す。再読み込みが済んだあとで答えを書けなかったときも、`result` は `ELM_NETWORK_ERROR` になる。ライセンスが替わったことは、`key.changed` の行で分かる。強制返却は、返却のあとに `204` を置くだけなので、済んだあとで例外になる所がない（`ElmServer.ForceReleaseAsync`）。
 - 状態の表示（`GET /admin/v1/status`）の応答は `{"product", "license": <ライセンス ID>, "licenseToken": <トークン ID>, "licenseExpires": <UNIX 秒>, "key": <サーバーのインストール鍵の拇印>, "recovering": <回収の時間中か>, "recoveryEnds": <回収の時間の終わりの UNIX 秒>, "leases": <持っているリースの数>, "features": [{"feature", "seats", "allowed": <超過を含む席数>, "inUse": <期限内のリースの席>, "borrowed": <借り出しの席>}], "autoRefresh"}` である（`StatusAnswer`）。期限のないサーバーライセンスでは `licenseExpires` を書かない（`null` も書かない。`ServerJsonContext` の `WhenWritingNull`）。`elm server status` は、この項目がなければ `expires: never` と表示する（`ServerCommands.PrintStatus`。V1c7、Issue #203 で直した）。
-- `elm server status|leases|release <ID>|reload|seal` が、`--data`（データのフォルダー）か `--product`（端末の範囲の既定の場所）のフォルダーから管理者トークンを読み、同じフォルダーの `admin.sock` につないで管理 API を呼ぶ（`ServerCommands.Call`）。`--url` はない（V1d2 でなくした。渡せば、ほかの知らないオプションと同じ引数の誤りになる。`--url` のための行は出さない）。ほかの端末から使う道はない（0.50、0.119）。要求の時間切れは 30 秒。終了コードは、成功 0、サーバーの拒否 1、引数の誤りとトークンが読めないとき 2、つながらないとき 3。`admin.sock` がなければ、つながずに「The server cannot be reached: the administration socket '<パス>' does not exist.」を出す。接続に失敗したとき（断られたときを含む）は、いままでどおり「The server cannot be reached: <.NET の文>」を出す。どちらも終了コード 3 である。<.NET の文> は、接続の誤りでは、内側の `SocketException` の文にする。`HttpRequestException` の文は、終わりに「(elm-server.invalid:80)」を足すので、`elm` が 80 番へ行ったように読めるためである。誤りの応答にコードがないとき（別のリリースの `elm-server` の `404` など）は、サーバーライセンスのコマンドと同じ「The server's administration API answered <状態コード>.」を出して、終了コード 1 で終わる（`ServerAdminApi.Unexpected`。V1d2 の前は「error: ?: 」と出ていた。文書の読み直しの E6）。
+- `elm server status|leases|release <ID>|reload|seal` が、`--data`（データのフォルダー）か `--product`（端末の範囲の既定の場所）のフォルダーから管理者トークンを読み、同じフォルダーの `admin.sock` につないで管理 API を呼ぶ（`ServerCommands.Call`）。`--url` はない（V1d2 でなくした。渡せば、ほかの知らないオプションと同じ引数の誤りになる。`--url` のための行は出さない）。ほかの端末から使う道はない（0.50、0.119）。要求の時間切れは、送るところから本文の終わりまでの 30 秒で、`elm` の時計（`CliHost.Time`）で数える（V1d6。§12.1 の「応答の読み方」。その前は、`HttpClient.Timeout` の 30 秒で、本文を読む時間を数えなかった）。時間切れは「The server cannot be reached: No whole answer came within 30 seconds.」を出す。応答は 64 MiB まで読み、超えれば「error: ELM_MALFORMED: The server's administration API answered with a body larger than 67108864 bytes.」を出す（下の「管理 API の応答の上限」）。どちらも終了コード 3 である。終了コードは、成功 0、サーバーの拒否 1、引数の誤りとトークンが読めないとき 2、つながらないとき 3。`admin.sock` がなければ、つながずに「The server cannot be reached: the administration socket '<パス>' does not exist.」を出す。接続に失敗したとき（断られたときを含む）は、いままでどおり「The server cannot be reached: <.NET の文>」を出す。どちらも終了コード 3 である。<.NET の文> は、接続の誤りでは、内側の `SocketException` の文にする。`HttpRequestException` の文は、終わりに「(elm-server.invalid:80)」を足すので、`elm` が 80 番へ行ったように読めるためである。誤りの応答にコードがないとき（別のリリースの `elm-server` の `404` など）は、サーバーライセンスのコマンドと同じ「The server's administration API answered <状態コード>.」を出して、終了コード 1 で終わる（`ServerAdminApi.Unexpected`。V1d2 の前は「error: ?: 」と出ていた。文書の読み直しの E6）。
+
+管理 API の応答の上限（V1d6 の Grill の問 6-5。持ち主に聞く値は §20.7 の「V1d6 の Grill」）:
+
+- `elm server` のコマンドは、管理 API の応答を 64 MiB（67,108,864 バイト、`ServerAdminApi.MaxAnswerLength`）まで読む。`status`・`leases`・`release`・`reload`・`seal`（`ServerCommands.Call`）と、サーバーライセンスのコマンドの、状態の問い合わせと再読み込みの依頼（`ServerLicenseCommands.Send`）で、同じ値を使う。読み方と 30 秒の数え方は、§12.1 の「応答の読み方」と同じである。V1d6 より前は、上限がなかった。
+- 超えた応答は、状態コードによらず「error: ELM_MALFORMED: The server's administration API answered with a body larger than 67108864 bytes.」と終了コード 3 で止まる。サーバーライセンスのコマンドでは、ほかの「答えが読めない」場合と同じに扱う。状態の問い合わせなら何も書かずに止まり、再読み込みの依頼なら「The license file is written; the server did not confirm a reload.」を同じ行に足す。
+- 測った応答の大きさ（サーバーの `ServerJsonContext` が書く UTF-8 のバイト数。Windows 11、.NET SDK 10.0.404）:
+  - リースの一覧（`GET /admin/v1/leases`）: リースがなければ 13 バイト。リースが $n$ 件なら $12 + n \times s$ バイトで、$s$ は 1 件の大きさに区切りのコンマを足したものである。$s$ は、機能が `pro`、席が 1、期限が 10 桁の数字のリースで 162 バイトだった（動かした `elm-server` から 1,000 件を取って読むと 162,012 バイト）。機能の ID が ASCII の英字 64 文字なら 223 バイト、漢字 21 文字（UTF-8 で 63 バイト。JSON では 1 文字が `\uXXXX` の 6 バイトになる）なら 285 バイトである。いちばん大きいのは、ID が `"` 64 文字（1 文字が `"`）、席が 2,147,483,647、期限が 12 桁のときの 554 バイトである。
+  - 状態（`GET /admin/v1/status`）: 動かしたサーバー（機能 1 つ）で 326 バイト。いちばん大きいのは、機能が 256 個（§8.6）で、どの ID も `"` 64 文字のときの 124,066 バイトである。
+  - 再読み込み（`POST /admin/v1/license/reload`）: 動かしたサーバーで 61 バイト。知らないリースの強制返却の `404` の問題の応答は 137 バイト。強制返却とログの区切りの成功（`204`）には本文がない。
+- リースの数には、設計の上の上限がない。サーバーライセンスの機能は 256 個まで（§8.6）、機能の席数は 1 以上の 32 ビットの整数、超過は 1,000 % まで（§8.6）なので、1 席ずつのリースは $256 \times \lfloor 2{,}147{,}483{,}647 \times 11 \rfloor = 256 \times 23{,}622{,}320{,}117$ 件まで持てる。どんな上限を置いても、それを超える一覧はありうる。そこで、上限は §4.2 の目標（`elm-server` が同時に持つリース 10,000 件）から決めた。
+- 64 MiB に入るリースの数: $s = 162$ で 414,252 件（$\lfloor (67{,}108{,}864 - 12) / 162 \rfloor$）、$s = 554$ で 121,135 件。10,000 件の一覧は、$s = 162$ で 1,620,012 バイト、$s = 554$ で 5,540,012 バイトなので、上限はその約 41 倍と約 12 倍である。
+- 上限を超えうるのは、リースの一覧だけである。そのとき `elm server leases` は終了コード 3 で止まり、リースの一覧をほかに読む道はない。状態の `leases` は件数の数字なので、ほかのコマンドの応答は、リースの数では大きくならない。
+- 上限が守るもの: ソケットで答える相手が `elm-server` でないとき（§5.4 の、データのフォルダーに書ける者が `admin.sock` を置き換えたとき）に、`elm` のプロセスが応答のために持つメモリを抑える。値は 1 か所（`ServerAdminApi.MaxAnswerLength`）にだけ書いてある。
 
 ソケットのファイル（V1d2、0.119。調べた事実は §20.7 の「V1d2 の Grill」）:
 
@@ -2611,7 +2640,7 @@ M3c で作った形（0.50。待ち受けは V1d2 の 0.119 で改めた。オ�
 - `publicUrls` を設定しないときは `listen` から作る（`ElmServer.DefaultPublicUrls`）。`listen` のホストが `0.0.0.0` か `[::]` なら、`https://<端末のホスト名（小文字）>:<ポート>/` と `https://localhost:<ポート>/` の 2 つの URL にする。それ以外のホストでは `listen` の URL（パスは `/`）にする。クライアントが別の名前で接続するなら、`publicUrls` にその URL を書く（`htu` が一致しないため）。
 - リバースプロキシの後ろでは、IP の規則と頻度の制限はプロキシの IP に当たる。`elm-server` は `X-Forwarded-For` を信じない（偽れるため）。プロキシの後ろに置くなら、IP の規則はプロキシで行い、`rateLimit.perIp` をプロキシの先の端末の数に合わせて上げる。NAT の後ろの多くの端末が 1 つの IP から来るときも同じである。
 - 待ち受けの時間の上限は Kestrel の既定である（ヘッダーは 30 秒、本文は毎秒 240 バイトを下回れば切る、接続の保持は 130 秒）。遅く送るクライアントに資源を取られ続けないためである。
-- クライアントは要求ごとに 30 秒で打ち切り、通信の失敗として扱う（`ELM_NETWORK_ERROR`、§12.7.3 の再試行）。ノンスが切れていれば（リースが長く、更新の間隔が 300 秒を超えるとき）、`ELM_NONCE_REQUIRED` の応答の新しいノンスで 1 度だけ送り直す。
+- クライアントは要求ごとに、送るところから本文の終わりまでを 30 秒で打ち切り、通信の失敗として扱う（`ELM_NETWORK_ERROR`、§12.7.3 の再試行。30 秒はクライアントの `TimeProvider` で数える。§12.1 の「応答の読み方」）。ノンスが切れていれば（リースが長く、更新の間隔が 300 秒を超えるとき）、`ELM_NONCE_REQUIRED` の応答の新しいノンスで 1 度だけ送り直す。
 - `allow` と `deny` の項目は、IP アドレス、CIDR の範囲、`host:<名前>`、`user:<名前>` のどれかである。IP の項目はリースのすべての要求に、ホスト名とユーザー名の項目は新しいリース（取得）だけに当てる。それを申告するのは取得の要求だけだからである。種類ごとに、拒否の項目に当たれば断り、許可の項目があってどれにも当たらなければ断る（`403` と `ELM_FORBIDDEN`）。申告のない取得は、ホスト名・ユーザー名の許可の項目に当たらない。ホスト名は大文字と小文字を区別しない。`host:` と `user:` の名前は 1〜255 文字で、外れれば起動しない（`AccessRules.Parse`）。
 - 頻度の制限（0.46）は、送信元ごとのトークンバケットである。送信元は IPv4 のアドレスか IPv6 の /64 である（IPv6 の端末は /64 の中のどのアドレスも使えるため）。毎秒 `rateLimit.perIp` 件まで、同じ数までのまとまった要求を許す。超えれば `429` と `ELM_RATE_LIMITED`、`Retry-After: 1` を返す。IP の規則と頻度の制限は、ほかのどの処理より先に行う。
 - 覚える送信元は 100,000 件までで、満ちているときの新しい送信元は、全員で 1 つの溢れ用のバケットを分け合う。断らないのは、攻撃者が送信元を次々に変えて表を満たしても、正規のクライアントを締め出せないようにするためである。1 秒以上要求のない送信元は 30 秒ごとの掃除で忘れる。
@@ -3385,7 +3414,7 @@ M5b の形（0.99）:
 
 サーバー側の `trust.rootKeys` は運用者の設定の誤りを早く知らせるためのもので、安全性の要ではない。利用者の管理者が自分のルート鍵を設定して自分でサーバーライセンスを作っても、アプリはベンダーのルート鍵だけを信じるため、そのサーバーのリースを受け付けない（§12.7.5）。
 
-出力は既定で人が読む形、`--json` で JSON にする。終了コードは、成功 0、検証の失敗 1、引数の誤り 2、通信の失敗 3 とする。
+出力は既定で人が読む形、`--json` で JSON にする。終了コードは、成功 0、検証の失敗 1、引数の誤り 2、通信の失敗 3 とする。読む大きさの上限（§8.6）を超えた応答は、`ELM_MALFORMED` と書いて、終了コード 3 にする（V1d6 の Grill の問 6-2）。応答からは何も読んでおらず、相手が何を答えたかが分からないので、相手の拒否（1）ではなく、やりとりの失敗に数える。`elm offline process`（§12.8.4）、`elm server` のコマンドの管理 API の応答（§13.7）、サーバーライセンスのコマンドが `ActivationClient` から受け取る「The service's answer is larger than the limit.」（`ServerLicenseCommands.Refused`）が、これに当たる。ほかの `ELM_MALFORMED`（ノンスの応答の形が違う、発行の応答でない、など）は、いままでどおり 1 である。
 
 `elm admin`（M5a、0.98）:
 
@@ -3422,7 +3451,7 @@ M5b の形（0.99）:
   - path は `/v1/admin/` で始まり、クエリを含めてよく、2,048 文字まで。断片、`\`、`.` と `..` のセグメント、`%2e`・`%2f`・`%5c`（大文字と小文字を区別しない）を含めば引数の誤り。`System.Uri` が正規化で変える形を、送る前に断るためである（§12.1、`design-docs` の規則）。
   - URL は `--url`、環境変数 `ELM_SERVICE_URL`、保存したログインの `url` の順に使う。URL がパスを持てば（リバースプロキシの下）、その末尾の `/` を除いた後に path をつなぐ。https（ループバックの http は可）でなければ終了コード 2。
   - `--body` のファイルは 64 KiB までで、`application/json` で送る。
-  - `2xx` は応答の本文を、大きさを問わず読みながら標準出力に書き、終了コード 0（利用ログのファイルの NDJSON は大きいことがある）。本文が改行で終わらなければ、最後に改行を 1 つ書く（シェルのプロンプトや次の出力が本文の行に続かないように。空の本文には何も書かない。V1c3d の正しさのレビューの A8、持ち主の決定でこの行で直した）。ほかの状態は本文を 64 KiB まで標準エラーに書き、終了コード 1。転送（`3xx`）は追わず、終了コード 1（§12.1 と同じく、Bearer の値をほかの場所に送らない）。
+  - `2xx` は応答の本文を、大きさを問わず読みながら標準出力に書き、終了コード 0（利用ログのファイルの NDJSON は大きいことがある）。成功の本文に大きさの上限がないことは、受け入れる（V1d6 の Grill の問 6-6）。本文はメモリにためずに 8,192 文字ずつ標準出力へ流すので、大きな本文で増えるのは、出力の行き先の大きさである。本文が改行で終わらなければ、最後に改行を 1 つ書く（シェルのプロンプトや次の出力が本文の行に続かないように。空の本文には何も書かない。V1c3d の正しさのレビューの A8、持ち主の決定でこの行で直した）。ほかの状態は本文を 64 KiB まで標準エラーに書き、終了コード 1。転送（`3xx`）は追わず、終了コード 1（§12.1 と同じく、Bearer の値をほかの場所に送らない）。
   - 通信の失敗（接続、TLS、100 秒の時間切れ）は終了コード 3。
 - トークンとキーの値は、標準出力にも標準エラーにも書かない。
 
@@ -3771,7 +3800,7 @@ void elm_string_free(char* text);
 - オンラインの操作（`activate`、`start_trial`、`refresh`、`deactivate`）は、.NET の非同期の操作を呼んだスレッドで終わるまで待つ。C には取り消しの口を作らない。待つ時間の上限は、次の和である（ヘッダーにも書く）:
   - 同じハンドルのほかの操作（自動の更新を含む）が終わるのを待つ時間（上限なし）。
   - 同じ端末のほかのプロセスのロックのファイルを待つ時間（最長 10 秒、`ActivationStore.LockWait`）。
-  - 送る回数（ノンスの取得、要求、`ELM_NONCE_REQUIRED` のあとの送り直しで最大 3 回）× 1 回の上限（`HttpClient.Timeout` の 30 秒）。
+  - 送る回数（ノンスの取得、要求、`ELM_NONCE_REQUIRED` のあとの送り直しで最大 3 回）× 1 回の上限（送るところから本文の終わりまでの 30 秒。§12.1 の「応答の読み方」。V1d6 より前は `HttpClient.Timeout` の 30 秒）。
 - 結果: `ActivationResult.Activated` は `ELM_OK` と新しい `elm_license`（§17.4 と同じハンドル）。猶予期間の中かは、`ActivationResult.Activated` に足す公開のプロパティ `InGracePeriod`（`init`、既定は `false`）から取る。.NET の `ActivationClient` は、受け取ったファイルを確かめた `LicenseVerificationResult.Valid` の `InGracePeriod` をそこに入れる（オフラインの答えは日が経っていて、猶予期間に入っていることがある）。`Check` は .NET の `LicenseVerificationResult` からそのまま取る。`Failed` は、その番号と文。
 - 出力の引数（§17.4 の決まりの例外）:
   - `retry_after_seconds` は `NULL` でよい（受け取らない）。`NULL` でなければ、成功では 0、失敗では `RetryAfter` の秒（切り上げ。なければ 0）を入れる。
@@ -3881,7 +3910,7 @@ void elm_client_destroy(elm_client* c);
   - 解放の決まり: `elm_lease_list_free` に渡すのは、`elm_client_get_borrowed_leases` が返した配列と個数そのものだけである。一覧の要素を `elm_lease_free` で解放してから `elm_lease_list_free` を呼ぶこと、個数が違うこと、読んでいる間の解放は、呼び出し側の誤り（未定義の動作）としてヘッダーに書く。
 - オンラインの操作（取得、借り出し、返却、借りたリースの一覧）は、§17.5 と同じく、呼んだスレッドで終わるまで待つ。C には取り消しの口を作らない。待つ時間の上限は、次の和である（ヘッダーにも書く）:
   - 同じハンドルのほかの操作（自動の更新と回収を含む）が終わるのを待つ時間（上限なし）。
-  - 送る回数 × 1 回の上限（`HttpClient.Timeout` の 30 秒。最初の接続の `HttpClient` も同じ）。取得と借り出しは最大 6 回（オンプレミスで初めて、または鍵が替わったときのサーバーライセンスの取得 1 回、ノンスと要求を `ELM_NONCE_REQUIRED` のあとの送り直しで最大 2 組、答えのサーバーライセンスの取り直し 1 回）。返却は、オンプレミスで最大 5 回（サーバーライセンスの取得 1 回とノンスと要求の最大 2 組）、SaaS 型で最大 4 回。
+  - 送る回数 × 1 回の上限（送るところから本文の終わりまでの 30 秒。最初の接続も同じ。§12.1 の「応答の読み方」。V1d6 より前は `HttpClient.Timeout` の 30 秒）。取得と借り出しは最大 6 回（オンプレミスで初めて、または鍵が替わったときのサーバーライセンスの取得 1 回、ノンスと要求を `ELM_NONCE_REQUIRED` のあとの送り直しで最大 2 組、答えのサーバーライセンスの取り直し 1 回）。返却は、オンプレミスで最大 5 回（サーバーライセンスの取得 1 回とノンスと要求の最大 2 組）、SaaS 型で最大 4 回。
   - 借りたリースの一覧は送らない（ファイルを読むだけ）が、ほかの操作の終わりを待つ。
 - 結果と出力の引数:
   - `LeaseResult.Acquired` は `ELM_OK` と新しい `elm_lease`。`Failed` は、その番号と文。`retry_after_seconds` は `NULL` でよく、決まりは §17.5 と同じ（成功では 0、失敗では `RetryAfter` の秒を切り上げ、なければ 0）。立ち上げのあとの回収の間のサーバーは、取得を `ELM_SERVER_RECOVERING` と `Retry-After` で断る（§13.4）。
@@ -5624,6 +5653,39 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `ActivationClient.Keep` は、オンラインの有効化・更新・試用の答えを、ファイルがこのインストールで検証に通れば保存する。答えの有効化 ID と `seq` を、持っているものと比べない。ライセンストークンは、オンラインでは要求に結ばれていない（`areq` はオフラインだけ）。コードを読んだだけで、測っていない（Issue #379）。
     - リースの答えのない要求の一覧（`Lease.AddUnanswered`）は、16 件を超えると古いものから落とす。有効化の一覧は、16 件で送るのをやめる（§12.6.2）。問 5-5 でこの一覧に入る `jti` が増えたので、中継が答えを 16 回続けて差し替えると、効く `jti` が落ち、サーバーが複製と判定しうる（Issue #380）。
     - 再試行に返るトークンが、入れ替える前のサーバーライセンスのもとで出したものだと、クライアントは `slic` の違いで断り続け、リースは期限で失われる。ヘッダーと `slic` が違いうることは §12.7.1 に書いてあり、この行で変えていない。
+- V1d6 の Grill（Issue #324 に記録した。問 6-1〜問 6-6。持ち主の決定はどれも推奨案 A。2026-11-13）: クライアントと `elm` が、答えの本文を全部読み込んだあとで大きさの上限を確かめていたことを直す（V1d の指摘 F07）。却下した案は [design-decisions.md](./design-decisions.md) の「答えの本文を、読みながら上限で止める」。
+  - 測った事実（Grill のとき。Windows、SDK 10.0.404、JIT の Release）: `ActivationClient.ActivateAsync` は、256 MiB の答えで約 768 MiB を確保し、終わらない答えは約 2 GiB まで読んで `ELM_NETWORK_ERROR` になった。`Content-Length` が 256 MiB と言っていても、全部読んだ。`elm offline process` も同じだった（子プロセスの最大の作業セットは 346〜2,083 MiB）。`elm server` のコマンドと、サーバーライセンスの状態・読み直しの答えには、上限がなかった。
+  - 持ち主が決めたこと:
+    - 問 6-1（読み方）: ヘッダーまでを受け取り（`ResponseHeadersRead`）、`Content-Length` を見て、数えながら読む。共通の処理を 1 つにする。
+    - 問 6-2（誤り）: 大きすぎる答えは、終わらないものも含めて `ELM_MALFORMED`。`elm` の終了コードは 3。
+    - 問 6-3（答えのない要求）: 大きすぎる成功（`2xx`）の答えの `jti` を、答えのない要求の一覧に入れる。リースと有効化の両方。
+    - 問 6-4（時間）: 送信から本文の終わりまでを、1 つの 30 秒で打ち切り、クライアントの `TimeProvider` で数える。
+    - 問 6-5（`elm server`）: `elm server` とサーバーライセンスのコマンドの答えにも、この行で上限を置く。数字は、正しい答えのいちばん大きいものを測ってから、持ち主にもう一度聞く。
+    - 問 6-6（範囲）: 大きさを確かめてから全部読むファイルは、この行に入れず、Issue にする（Issue #386）。`elm admin request` の成功の本文に上限がないことは、設計に「受け入れる」と書く（§16）。
+  - こちらが決めたこと（Grill のとき）: `Content-Length` が上限を超えていれば、読まずに断る。大きすぎる答えの `ELM-Nonce` と `Retry-After` は読まない。
+  - 実装で決めたこと:
+    - 管理 API の答えの上限は 64 MiB で作った。測った大きさと計算は §13.7 の「管理 API の応答の上限」にある。値は `ServerAdminApi.MaxAnswerLength` の 1 か所にあり、問 6-5 のとおり、持ち主にもう一度聞く。
+    - `elm` の行に誤りコードを足した。`elm offline process` の大きすぎる答えの行は、「error: The service's answer is larger than 262144 bytes.」から「error: ELM_MALFORMED: The service's answer is larger than 262144 bytes.」に変わる。管理 API の答えの行も同じ形にした（§13.7）。問 6-2 が、大きすぎる答えを `ELM_MALFORMED` と決めたためである。
+    - サーバーライセンスのコマンドが `ActivationClient` から受け取る `ELM_MALFORMED` のうち、大きすぎる答えのものだけを終了コード 3 にした（§16）。`ActivationClient.AnswerTooLarge`（公開しない定数）の文と同じ誤りかで見分ける。V1d6 より前は、終わらない答えが `ELM_NETWORK_ERROR` で 3、終わる大きすぎる答えが `ELM_MALFORMED` で 1 だった。
+    - 変わった文: 時間切れの文は、`HttpClient` の例外の文から「No whole answer came within 30 seconds.」になった。本文が途中で切れたときの文は、「Error while copying content to a stream.」から「The answer ended before it was whole.」になった。どちらも、前の「The server cannot be reached: 」や「The service did not answer: 」のあとに続く。オンプレミスの最初の接続（`GET /v1/server/license`）の成功の答えが大きすぎるときの文は、「The server's license answer is not valid.」から「The server's answer is larger than the limit.」になった（コードはどちらも `ELM_MALFORMED`）。
+    - .NET の `SocketsHttpHandler` が、捨てた応答の残りを読み捨てる設定（§12.1 の「応答の読み方」）は、変えない。
+  - テスト:
+    - 答えを 1 バイトずつ書ける相手（`RawAnswerServer`。ループバックのポートか、Unix ドメインソケットのファイルで待ち受け、書いた本文のバイト数を数える）を足した。`ProblemServer` の閉じ方の不具合（Issue #392）を持ち込まないように、待ち受けを閉じたあとの受け付けが投げる例外を、型によらず「止まった」と読む。
+    - 共通の処理（`BoundedAnswerTests`）: 上限ちょうどと 1 バイト超え（`Content-Length` つき、chunked、接続の終わりまで）。宣言だけで本文のない答え（上限 + 1 と 4 GiB）。64 MiB の本文で、相手が書けた量が上限と 16 MiB までに収まること（直す前のコードで落ちるのは、この確かめである）。30 秒の 1 ティック前に終わる本文と、30 秒で終わらない本文と、ヘッダーの来ない答え（どれも、要求のあとで時計を 20 秒進めてから）。呼び出した側の取り消し。途中で切れた本文。
+    - クライアントの経路ごと（`AnswerLimitTests`）: オンプレミスの最初の接続、SaaS 型の `LicenseClient` のノンスとリースの要求、`ActivationClient` のノンスと有効化の要求で、上限ちょうどと 1 バイト超え、終わらない本文・長さのない本文・宣言だけの答え（成功と `503`）、止まる本文の 30 秒、大きすぎる答えの `Retry-After` と `ELM-Nonce` を使わないこと。
+    - `jti`: リース（`LeaseAnswerTests.Renewal_OversizedAnswer_RetryNamesItsRequestOnlyAfterASuccess`）と有効化・更新（`ActivationClientTests.OversizedAnswers_KeepTheJtiOnlyAfterASuccess`）で、大きすぎる成功の答えのあとの要求が `jti` を名指して同じトークン（ファイル）を受け取り、大きすぎる `503` のあとの要求は名指さないこと。
+    - `elm`: `elm offline process`（`ElmOfflineTests`）と、`elm server` のコマンド（`AdminAnswerLimitTests`。`leases`・`status` と、状態を先に聞く `deactivate-proof`、`activate` の終了コード）。
+    - 前からあるテストの変更: `ActivationClientTests.Refresh_AlreadyDue_WaitsTheRetryInterval`、`ServerLicenseTests.Online_ActivateRefreshDeactivate_AroundTheServer`、`ServerLicenseTests.HandFile_AndAnActivationMadeWhileRunning` は、更新の要求が出たあとも偽の時計を 1 分ずつ進めていた。30 秒をクライアントの時計で数えるようになったので、その進め方は、途中の要求を打ち切る。更新の時刻まで進めたあとは、時計を止めて待つ（1 つ目は、50 ミリ秒ずつ、合わせて 25 秒まで進める）形に直した。
+  - 変異の確かめ（29 個。どれもビルドの終了コードを見てから、200 秒の上限つきで走らせ、`dotnet test` の終了コードで判定した）: 全部の答えを読み込む形に戻す（`ResponseContentRead`）、`Content-Length` と数えた長さの比べの `>` を `>=` と `> limit + 1` に、30 秒を 29 秒と 31 秒に、30 秒をシステムの時計に、本文の読み取りに 30 秒のトークンを渡さない、どの取り消しも時間切れにする、途中で切れた本文を `HttpRequestException` にしない、256 KiB と 64 MiB を 1 つ大きくと 1 つ小さく、リースと有効化で大きすぎる成功の答えを答えのない要求に数えない・大きすぎる誤りの答えも数える、`LicenseClient` の最初の接続と要求・`ActivationClient`・`elm offline process`・管理 API の時計をシステムの時計に、`elm` の終了コードを 1 に（`elm offline process`、`elm server status`、状態の問い合わせ、サーバーライセンスのコマンド）、すべての `ELM_MALFORMED` を 3 に。最初の実行では、時計の 7 個（システムの時計の 6 個と、本文の読み取りに 30 秒のトークンを渡さないもの）が残った。テストの実時間の上限（60 秒と 120 秒）が 30 秒より長く、システムの時計の 30 秒でも呼び出しが戻ったためと、偽の時計を、答えのヘッダーがクライアントに届く前に進めることがあったためである。上限を 20 秒にし、ヘッダーが届いたのを待ってから時計を進めるようにして、7 個とも落ちた。29 個とも落ちる。
+  - 同じ種類を探した範囲（`src` の中の、`HttpClient` で送って本文を読む所のすべて）:
+    - `elm` の `OidcHttp`（`elm admin login` などの、IdP と `/v1/admin/oidc` への要求）: `MaxResponseContentBufferSize` が 64 KiB で、既定の `ResponseContentRead` で送る。`HttpClient` が読み込みの途中で止め、`HttpClient.Timeout` の 30 秒が本文まで数える。直していない。
+    - `elm-service` の OIDC の取り出し口（`ElmService.Oidc.cs`。`MaxResponseContentBufferSize` は 256 KiB）: discovery と鍵は `HttpDocumentRetriever` が `httpClient.SendAsync(message)` で、画面のログインのトークンの要求は `OpenIdConnectHandler` が `Backchannel.SendAsync(requestMessage, Context.RequestAborted)` で送る。どちらも既定の `ResponseContentRead` なので、上限と 30 秒が本文に効く（Microsoft.IdentityModel.Protocols 8.19.2 の `src/Microsoft.IdentityModel.Protocols/Configuration/HttpDocumentRetriever.cs`、dotnet/aspnetcore の v10.0.14 の `src/Security/Authentication/OpenIdConnect/src/OpenIdConnectHandler.cs` を読んだ。大きすぎる discovery を返すテストは足していない）。直していない。
+    - `elm admin request`: 下の「この行の外で見つけたもの」。
+    - `tools/ElasticLM.Measure` は、自分の `HttpClient` で送る。製品の読み方を通らないので、§4.2 の測定の値は、この行で変わらない。
+  - この行の外で見つけたもの（直していない）:
+    - `elm admin request`（`AdminCommands`）は `ResponseHeadersRead` で送るので、`HttpClient.Timeout` の 100 秒は、ヘッダーが届くまでしか数えない。成功の本文も、誤りの本文（64 KiB まで）も、同期の `Stream.Read` で読み、時間の上限がない。ヘッダーのあとで止まる相手には、コマンドが終わらない（コードを読んだだけで、走らせていない）。
+    - 取得と借り出しの成功の答えが大きすぎるとき、サーバーはリースを出していて、クライアントはそれを持たない。席は、そのリースの期限まで埋まる。答えをなくした取得と同じで、V1d6 より前からである。
+    - 偽の時計を使うテストは、クライアントの要求が出ているあいだに時計を 30 秒以上進めると、その要求を打ち切る。`TestService.WaitWithClockAsync`（10 回の確かめごとに 1 分か 10 分進める）を使うテストは、要求が 10 回の確かめ（約 200 ミリ秒）より長くかかると、これに当たる。上の 3 つのほかは、直していない。
 
 ## 21. 依存
 
