@@ -27,17 +27,22 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 /// <summary>
 /// Sits between a client and the network (<c>LicenseClientOptions.WrapHandler</c>), for one client or for several that
 /// share it: records each request, can make the renewals fail as if the network were down, can lose the answer of a
-/// renewal the server handled, can rewrite the answer to an acquisition, keeps the successful lease answers, and can
-/// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does.
+/// renewal the server handled, can rewrite the answer to an acquisition, keeps the successful lease answers, can
+/// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, and
+/// can answer the next renewal with a body over the client's limit.
 /// </summary>
 internal sealed class Recorder
 {
+    private const string OversizeAfter = "after";
+    private const string OversizeInstead = "instead";
+
     private readonly List<SentRequest> _sent = [];
     private readonly List<KeptAnswer> _answers = [];
     private volatile bool _failRenewals;
     private volatile bool _loseNextRenewalAnswer;
     private KeptAnswer? _acquisitionAnswer;
     private KeptAnswer? _renewalAnswer;
+    private volatile string _oversizeRenewal = string.Empty;
     private int _replayed;
 
     /// <summary>Gets or sets a value indicating whether renewals throw <see cref="HttpRequestException"/> before they are sent.</summary>
@@ -77,6 +82,13 @@ internal sealed class Recorder
 
     /// <summary>Answers the next renewal with <paramref name="answer"/>, once.</summary>
     public void ReplayToNextRenewal(KeptAnswer answer) => Volatile.Write(ref _renewalAnswer, answer);
+
+    /// <summary>
+    /// Answers the next renewal, once, with a body of 256 KiB and a byte, which is over the client's limit (design §8.6).
+    /// </summary>
+    /// <param name="afterTheServer"><see langword="true"/> to pass the renewal to the server first and keep the status and
+    /// headers of its answer; <see langword="false"/> to answer with status 503 without the server seeing the renewal.</param>
+    public void OversizeNextRenewal(bool afterTheServer) => _oversizeRenewal = afterTheServer ? OversizeAfter : OversizeInstead;
 
     /// <summary>Returns the requests sent so far: method, path, and body.</summary>
     public (string Method, string Path, string Body)[] Sent()
@@ -144,6 +156,17 @@ internal sealed class Recorder
                 throw new HttpRequestException("Renewals are made to fail.");
             }
 
+            string oversize = renewal ? Interlocked.Exchange(ref recorder._oversizeRenewal, string.Empty) : string.Empty;
+            if (oversize == OversizeInstead)
+            {
+                return Oversized(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { RequestMessage = request });
+            }
+
+            if (oversize == OversizeAfter)
+            {
+                return Oversized(await base.SendAsync(request, cancellationToken));
+            }
+
             KeptAnswer? replay =
                 acquisition ? Interlocked.Exchange(ref recorder._acquisitionAnswer, null)
                 : renewal ? Interlocked.Exchange(ref recorder._renewalAnswer, null)
@@ -187,6 +210,14 @@ internal sealed class Recorder
                 }
             }
 
+            return response;
+        }
+
+        // The answer with a body of 256 KiB and a byte, all spaces, in place of its own; its status and headers stay.
+        private static HttpResponseMessage Oversized(HttpResponseMessage response)
+        {
+            response.Content?.Dispose();
+            response.Content = new ByteArrayContent(Encoding.ASCII.GetBytes(new string(' ', (256 * 1024) + 1)));
             return response;
         }
 

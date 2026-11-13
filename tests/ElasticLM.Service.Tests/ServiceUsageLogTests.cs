@@ -1177,28 +1177,33 @@ public sealed class ServiceUsageLogTests
 
     /// <summary>
     /// A download whose file cannot be read to the length it had ends as a failed transfer, not as a whole answer, and is
-    /// audited with the result ELM_INTERNAL_ERROR (design §18.2, V1d9).
+    /// audited with the result ELM_INTERNAL_ERROR (design §18.2, V1d9). Being the service's failure, it keeps Kestrel's
+    /// error entry of an unhandled exception in the operational log (V1d9a).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A node "n1" writing its usage log, and an older file of that node of 33,554,432 bytes.
+    /// - A node "n1" writing its usage log, whose operational log the test records from Information up, and an older file
+    ///   of that node of 33,554,432 bytes.
     ///
     /// Steps:
     /// - Get the file; read 1,048,576 bytes of the answer; cut the file to 16,777,216 bytes, as another program on the host
     ///   can; read the answer to its end; wait for a usagelog.get row; check the chain with POST /v1/admin/audit/verify; stop
-    ///   the service; read the rows.
+    ///   the service; read the rows and the log.
     ///
     /// Expected:
     /// - 200 with Content-Length 33554432, then the read of the answer throws an IOException instead of ending: the
     ///   service closes the connection short of that length. Exactly one usagelog.get row: result ELM_INTERNAL_ERROR,
     ///   target the file's name, size 33,554,432, and sent at least what the test read and less than size. The chain is
     ///   intact.
+    /// - The log has an Error entry of Kestrel's that names an unhandled exception of the application, and no line of an
+    ///   administration call whose request could not be read.
     /// </remarks>
     [Fact]
     public async Task UsageGet_FileCutWhileItIsSent_FailsTheTransferAndIsAuditedAsInternalError()
     {
         await using TestService test = TestService.Open("sqlite");
-        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1", log);
         string name = WriteOlderFile(test, "n1", LargeFileLength);
         CancellationToken cancel = TestContext.Current.CancellationToken;
 
@@ -1240,6 +1245,14 @@ public sealed class ServiceUsageLogTests
         (long sent, long size) = SentAndSize(row.Detail);
         Assert.Equal(LargeFileLength, size);
         Assert.InRange(sent, read, size - 1);
+        Assert.Contains(
+            log.Entries,
+            e =>
+                e.Level == LogLevel.Error
+                && e.Category.StartsWith("Microsoft.AspNetCore.Server.Kestrel", StringComparison.Ordinal)
+                && e.Message.Contains("An unhandled exception was thrown by the application.", StringComparison.Ordinal)
+        );
+        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("could not be read", StringComparison.Ordinal));
     }
 
     /// <summary>
@@ -1426,26 +1439,29 @@ public sealed class ServiceUsageLogTests
     }
 
     /// <summary>
-    /// A state change whose transaction committed its audit row gets no second row when a later step of the operation
-    /// fails (design §18.2, V1d9): the row of the transaction stands.
+    /// A forced release reads the product for its usage line before its transaction, as the device's release does (design
+    /// §18.1, §18.2, V1d9a): when that read fails, nothing is released and the call is audited as the service's failure; the
+    /// next release frees the lease and writes its usage line.
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A node "n1" writing its usage log; a cloud-floating license; a lease of a device; each engine.
-    /// - The table of the products renamed, so that the read for the usage line, which follows the commit of the release,
-    ///   fails as a database that goes away does.
+    /// - The table of the products renamed, so that the read for the usage line fails as a database that goes away does.
     ///
     /// Steps:
-    /// - DELETE /v1/admin/leases/{id}; give the table its name back; check the chain with POST /v1/admin/audit/verify;
-    ///   count the leases; read the rows.
+    /// - DELETE /v1/admin/leases/{id}; give the table its name back; count the leases; check the chain with
+    ///   POST /v1/admin/audit/verify; read the rows.
+    /// - DELETE /v1/admin/leases/{id} again; count the leases; read the rows; stop the service; verify the node's files.
     ///
     /// Expected:
-    /// - 500 ELM_INTERNAL_ERROR "The database failed."; no lease is left; exactly one lease.release row: result ELM_OK,
-    ///   target the lease. The chain is intact.
+    /// - 500 ELM_INTERNAL_ERROR "The database failed."; the lease is still there; exactly one lease.release row: result
+    ///   ELM_INTERNAL_ERROR, no target, no detail. The chain is intact.
+    /// - 204; no lease is left; a second lease.release row: result ELM_OK, target the lease. The log is intact, and its only
+    ///   lease.released line names the lease, by admin.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
-    public async Task StateChange_FailsAfterItsCommit_LeavesOneRow(string provider)
+    public async Task ForcedRelease_ProductUnreadable_ReleasesNothing(string provider)
     {
         await using TestService test = TestService.Open(provider);
         (ElmService service, HttpClient admin) = await StartLoggedAsync(test, "n1");
@@ -1462,10 +1478,22 @@ public sealed class ServiceUsageLogTests
         );
         await test.ExecuteAsync("ALTER TABLE products_gone RENAME TO products");
 
+        Assert.Equal(1, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
         await TestService.AssertAuditIntactAsync(admin);
+        AuditEntry failed = Assert.Single(await RowsAsync(service, "lease.release"));
+        Assert.Equal(("ELM_INTERNAL_ERROR", null, null), (failed.Result, failed.Target, failed.Detail));
+
+        await DeleteAsync(admin, $"v1/admin/leases/{lease}");
         Assert.Equal(0, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
-        AuditEntry row = Assert.Single(await RowsAsync(service, "lease.release"));
-        Assert.Equal(("ELM_OK", lease), (row.Result, row.Target));
+        AuditEntry[] rows = await RowsAsync(service, "lease.release");
+        Assert.Equal(2, rows.Length);
+        Assert.Equal(("ELM_OK", lease), (rows[^1].Result, rows[^1].Target));
+        await service.StopAsync();
+
+        LogReport report = Verify(test, "n1");
+        Assert.Empty(report.Issues);
+        JsonElement released = Assert.Single(report.Entries, e => e.Type == "lease.released").Value;
+        Assert.Equal((lease, "admin"), (released.GetProperty("lease").GetString(), released.GetProperty("by").GetString()));
     }
 
     private static string FilePath(string name) => $"v1/admin/usage-log/files/{name}";
@@ -1512,10 +1540,14 @@ public sealed class ServiceUsageLogTests
         return test.Settings(s => s with { UsageLogDirectory = test.FilePath("usage"), NodeName = node, SigningCertificateFiles = [certificate] });
     }
 
-    private static async Task<(ElmService Service, HttpClient Admin)> StartLoggedAsync(TestService test, string node)
+    private static async Task<(ElmService Service, HttpClient Admin)> StartLoggedAsync(
+        TestService test,
+        string node,
+        RecordingLoggerProvider? log = null
+    )
     {
         string owner = await test.SetupAsync();
-        ElmService service = await test.StartAsync(_ => Logged(test, node));
+        ElmService service = await test.StartAsync(_ => Logged(test, node), log);
         return (service, test.Http(service, owner));
     }
 

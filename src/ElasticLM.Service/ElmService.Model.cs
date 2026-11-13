@@ -450,7 +450,7 @@ internal sealed partial class ElmService
     }
 
     // Reads the body as one JSON object and runs the operation; a body that cannot be used is answered here.
-    private static async Task<AdminOutcome> WithBodyAsync(HttpContext context, string malformed, Func<RequestBody, Task<AdminOutcome>> operation)
+    private async Task<AdminOutcome> WithBodyAsync(HttpContext context, string malformed, Func<RequestBody, Task<AdminOutcome>> operation)
     {
         if (await ReadBodyAsync(context).ConfigureAwait(false) is not byte[] bytes)
         {

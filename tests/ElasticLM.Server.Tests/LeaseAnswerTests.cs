@@ -290,6 +290,61 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A renewal whose success answer is larger than 256 KiB counts as one without an answer: the retry names its request,
+    /// and the server returns that request's token again. A renewal whose error answer is larger names nothing (design
+    /// §12.7.3, §10.4 step 2, the V1d6 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny) past its reclaim window; a client holding a lease of pro (sequence 1), behind a
+    ///   relay that can answer the next renewal with a body of 262,145 spaces: with the status of the server's answer,
+    ///   after the server handled the renewal (it renews to sequence 2); or with status 503, without the server seeing the
+    ///   renewal.
+    ///
+    /// Steps:
+    /// - Arm the relay after the server; move the clock 200 s (the renewal); then 15 s (the retry).
+    /// - Arm the relay with status 503; move the clock 200 s (the next renewal); then 15 s (the retry).
+    ///
+    /// Expected:
+    /// - Both renewals: Retrying with ELM_MALFORMED "The server's answer is larger than the limit.", and the token held
+    ///   stays.
+    /// - The first retry's body is {"seq":1,"retry":[the jti of the oversized renewal's proof]}; the lease is Held with
+    ///   sequence 2, and its token names the oversized renewal's proof. A client that does not name it sends {"seq":1} to a
+    ///   server at sequence 2 and loses the lease as a clone.
+    /// - The second retry's body is {"seq":2}; the lease is Held with sequence 3, and the server counts 1 seat.
+    /// </remarks>
+    [Fact]
+    public async Task Renewal_OversizedAnswer_RetryNamesItsRequestOnlyAfterASuccess()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        var tooLarge = new LicenseError(ErrorCode.Malformed, "The server's answer is larger than the limit.");
+
+        relay.OversizeNextRenewal(afterTheServer: true);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        Assert.Equal((tooLarge, 1L), (lease.LastError, lease.Token.Sequence));
+        string oversized = Assert.Single(Renewals(relay)).ProofId!;
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(15));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Held);
+        Assert.Equal($$"""{"seq":1,"retry":["{{oversized}}"]}""", Renewals(relay)[1].Body);
+        Assert.Equal((2L, oversized), (lease.Token.Sequence, lease.Token.AnsweredProofId));
+
+        relay.OversizeNextRenewal(afterTheServer: false);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        Assert.Equal((tooLarge, 2L), (lease.LastError, lease.Token.Sequence));
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(15));
+        await Deployment.WaitUntilAsync(() => lease.Token.Sequence == 3);
+        Assert.Equal("""{"seq":2}""", Renewals(relay)[3].Body);
+        Assert.Equal((LeaseState.Held, 1L), (lease.State, server.Engine.SeatsInUse("pro")));
+    }
+
+    /// <summary>
     /// The answers of a correct server pass the client's comparison: each token names the proof of its request, a borrow
     /// that the server cut at the end of its license is taken, and so is a renewal that skips a sequence number after the
     /// server flagged a clone.

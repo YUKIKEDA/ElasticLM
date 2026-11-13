@@ -22,6 +22,8 @@ sidebar_position: 9
 
 どの結果の型もこの 2 つの場合しか持たないので、`switch` でこの 2 つを扱えば漏れはない。`Error` は `LicenseError` だ。`Code` は `ErrorCode` の値、`WireName` はその名前（`ELM_EXPIRED` など）、`Message` は人が読むための英語の一文で、鍵の情報やトークン全体を含むことはない。[エラーコード](error-codes.md)に、すべてのコードと、アプリに返す前にクライアントが自分で再試行するコードを挙げている。`RetryAfter` は `TimeSpan?` で、サーバーがレスポンスの `Retry-After` ヘッダーで求めた待ち時間だ。`ELM_SERVER_RECOVERING` や `ELM_RATE_LIMITED` のときにサーバーはこれを求める。求めていなければ `null` になる。クライアントは自分では待たない。
 
+`ActivationClient` と `LicenseClient` は、読むレスポンスのどれにも上限を置く。リクエストを送ってから 30 秒以内に、本文を含むレスポンスの全体が届かなければ、そのリクエストは `ELM_NETWORK_ERROR` で終わる。30 秒は、オプションの `TimeProvider` で数える。本文が 256 KiB より大きいレスポンスは、HTTP の状態にかかわらず `ELM_MALFORMED` になる。クライアントは、そのレスポンスのほかの部分を読まないので、`RetryAfter` は `null` になる。
+
 例外は、呼び出し方の誤りにだけ使う。`ArgumentException`（空の引数や正しくない引数。製品 ID や URL など）、`ArgumentOutOfRangeException`（1 より少ないシート数、1 秒より短い借用の期間、範囲外の時刻のずれ）、`ArgumentNullException`（`null` の引数、またはオプションの `Trust` や `TimeProvider` が `null`）、クライアントを破棄したあとの `ObjectDisposedException` だ。各メンバーの XML ドキュメントに、そのメンバーが投げる例外を書いている。
 
 ## `ElasticLM.Licensing`
@@ -257,7 +259,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `AppVersion` | `string?` | `null` | いいえ | 監査ログのために送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | 時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション。`null` なら既定値。 |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。 |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |
 
 ### `LicenseClient`
 
@@ -293,4 +295,4 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `AppVersion` | `string?` | `null` | いいえ | 新しいリースごとに送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | サーバーライセンスとリースのための時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション（時刻のずれ）。`null` なら既定値。 |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。 |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |

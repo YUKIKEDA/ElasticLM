@@ -12,7 +12,7 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<bool> CreateProductAsync(ProductRow product, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(product);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 int inserted = await tx.Insert(ProductRow.Table)
@@ -64,7 +64,7 @@ internal sealed partial class ServiceStore<TDialect>
     {
         ArgumentNullException.ThrowIfNull(change);
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // A self-assignment locks the row on PostgreSQL, as SELECT … FOR UPDATE would; SQLite holds the write lock.
@@ -95,7 +95,7 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<bool> CreateFeatureAsync(FeatureRow feature, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(feature);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 int inserted = await tx.Insert(FeatureRow.Table)
@@ -156,7 +156,7 @@ internal sealed partial class ServiceStore<TDialect>
     {
         ArgumentNullException.ThrowIfNull(change);
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 FeatureRow? before = await tx.Update(FeatureRow.Table)
@@ -186,7 +186,7 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task CreatePolicyAsync(PolicyRow policy, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(policy);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 await tx.Insert(PolicyRow.Table)
@@ -253,7 +253,7 @@ internal sealed partial class ServiceStore<TDialect>
     {
         ArgumentNullException.ThrowIfNull(change);
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 PolicyRow? before = await tx.Update(PolicyRow.Table)
