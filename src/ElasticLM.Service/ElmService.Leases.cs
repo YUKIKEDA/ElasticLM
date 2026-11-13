@@ -557,6 +557,8 @@ internal sealed partial class ElmService
 
         if (_usage is not null)
         {
+            // design §18.2 (V1d9): the transaction committed the row; a read that fails for the usage line adds no second one.
+            Progress(context).Recorded = true;
             (_, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
             ReleasedLine(found, product.Code, "admin");
         }

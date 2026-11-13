@@ -902,7 +902,223 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(1, Assert.Single(server.Engine.Usage()).Borrowed);
     }
 
+    /// <summary>
+    /// An administration operation that ends with an exception is written to the usage log as admin.action with the
+    /// result ELM_INTERNAL_ERROR, and the caller gets no answer of the operation (design §13.7, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on a clock whose next read the test can make throw an InvalidOperationException. No setting of a deployed
+    ///   server makes an operation of the administration API throw, so the exception comes from the host's clock.
+    ///
+    /// Steps:
+    /// - Make the next read throw; get the status, which reads the clock; get the status again; stop and verify the usage
+    ///   log.
+    ///
+    /// Expected:
+    /// - 500 without a body, then 200. The usage log is intact, and its admin.action lines are status with
+    ///   ELM_INTERNAL_ERROR and status with ELM_OK, in this order.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_OperationThrows_IsRecordedAsInternalError()
+    {
+        using var clock = new HeldClock(_deployment.Time);
+        await using ElmServer server = await StartOnClockAsync(clock, new RecordingLoggerProvider());
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using HttpClient admin = Deployment.AdminHttp(server);
+
+        clock.FailNextRead();
+        using (HttpResponseMessage failed = await admin.GetAsync("admin/v1/status", cancel))
+        {
+            Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+            Assert.Empty(await failed.Content.ReadAsByteArrayAsync(cancel));
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("admin/v1/status", cancel)).StatusCode);
+
+        await server.DisposeAsync();
+        Assert.Equal(["status:ELM_INTERNAL_ERROR", "status:ELM_OK"], AdminActions(server));
+    }
+
+    /// <summary>
+    /// An administration operation whose answer cannot be written because the caller is gone is written to the usage log
+    /// as admin.action with the result ELM_NETWORK_ERROR (design §13.7, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on a clock that can hold its next read, with a log the test reads.
+    ///
+    /// Steps:
+    /// - Hold the next read of the clock, which the status operation makes after the token is checked.
+    /// - On a connection of its own to the socket file, GET /admin/v1/status with the administrator token. Once the server
+    ///   waits in the held read, end the caller's side and read until the server has closed the connection; let the held
+    ///   read go on; wait for one more admin.action entry in the server's log.
+    /// - Run these steps 30 times. Kestrel cancels the request's token on the thread pool after it has closed the
+    ///   connection, and until then it drops the answer's write without an exception; the server asks the response's
+    ///   writer whether the connection is closed, so both orders give the same line.
+    /// - Stop and verify the usage log.
+    ///
+    /// Expected:
+    /// - Each run adds exactly one admin.action entry, with ELM_NETWORK_ERROR. The usage log is intact, and its 30
+    ///   admin.action lines are status with ELM_NETWORK_ERROR.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_CallerGoneBeforeTheAnswer_IsRecordedAsNetworkError()
+    {
+        var log = new RecordingLoggerProvider();
+        using var clock = new HeldClock(_deployment.Time);
+        await using ElmServer server = await StartOnClockAsync(clock, log);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        byte[] request = System.Text.Encoding.ASCII.GetBytes(
+            $"GET /admin/v1/status HTTP/1.1\r\nHost: elm-server.invalid\r\nAuthorization: Bearer {AdminToken.Read(server.DataDirectory)}\r\n\r\n"
+        );
+        string[] Logged() => [.. log.Entries.Select(e => e.Message).Where(m => m.StartsWith("admin.action: status ", StringComparison.Ordinal))];
+
+        for (int run = 0; run < 30; run++)
+        {
+            int before = Logged().Length;
+            Task held = clock.HoldNextReadAsync();
+            using var caller = new System.Net.Sockets.Socket(
+                System.Net.Sockets.AddressFamily.Unix,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Unspecified
+            );
+            await caller.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(server.AdminSocketPath), cancel);
+            await caller.SendAsync(request, cancel);
+            await held.WaitAsync(TimeSpan.FromSeconds(10), cancel);
+            await LeaveAsync(caller);
+            clock.Release();
+            await Deployment.WaitUntilAsync(() => Logged().Length > before);
+            string[] entries = Logged();
+            Assert.Equal(before + 1, entries.Length);
+            Assert.EndsWith("-> ELM_NETWORK_ERROR", entries[^1], StringComparison.Ordinal);
+        }
+
+        await server.DisposeAsync();
+        string[] actions = AdminActions(server);
+        Assert.Equal(30, actions.Length);
+        Assert.All(actions, a => Assert.Equal("status:ELM_NETWORK_ERROR", a));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
+
+    // A server with a license in a new data folder, on the given clock, whose log goes to the given provider too.
+    private async Task<ElmServer> StartOnClockAsync(TimeProvider clock, RecordingLoggerProvider log)
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        return await ElmServer.StartAsync(
+            _deployment.Settings(data),
+            new ServerHostOptions
+            {
+                Time = clock,
+                Environment = _ => null,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Information,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
+    }
+
+    // The admin.action lines of a stopped server's usage log, which must verify, as "action:result".
+    private string[] AdminActions(ElmServer server)
+    {
+        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        Assert.True(usage.Intact);
+        return
+        [
+            .. usage
+                .Entries.Where(e => e.Type == "admin.action")
+                .Select(e => e.Value.GetProperty("action").GetString() + ":" + e.Value.GetProperty("result").GetString()),
+        ];
+    }
+
+    // The caller goes: it ends its side of the connection and reads until the server has closed it too, which Kestrel does
+    // when it has taken the request as aborted. A connection that the server resets counts as closed.
+    private static async Task LeaveAsync(System.Net.Sockets.Socket caller)
+    {
+        caller.Shutdown(System.Net.Sockets.SocketShutdown.Send);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        limit.CancelAfter(TimeSpan.FromSeconds(10));
+        byte[] buffer = new byte[1_024];
+        try
+        {
+            while (await caller.ReceiveAsync(buffer, limit.Token) > 0) { }
+        }
+        catch (System.Net.Sockets.SocketException) { }
+    }
+
+    // The deployment's fake clock for a server, whose next read of the time the test can hold until it lets it go on, or
+    // make throw. The status operation reads the time, so a held read keeps a request inside that operation.
+    private sealed class HeldClock(TimeProvider inner) : TimeProvider, IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(true);
+        private readonly Lock _lock = new();
+        private TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _hold;
+        private bool _fail;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        // Holds the next read of the time and returns a task that ends once that read waits.
+        public Task HoldNextReadAsync()
+        {
+            lock (_lock)
+            {
+                _release.Reset();
+                _held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _hold = true;
+                return _held.Task;
+            }
+        }
+
+        public void Release() => _release.Set();
+
+        public void FailNextRead()
+        {
+            lock (_lock)
+            {
+                _fail = true;
+            }
+        }
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            inner.CreateTimer(callback, state, dueTime, period);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            bool hold;
+            bool fail;
+            lock (_lock)
+            {
+                (hold, fail) = (_hold, _fail);
+                (_hold, _fail) = (false, false);
+                if (hold)
+                {
+                    _held.SetResult();
+                }
+            }
+
+            if (fail)
+            {
+                throw new InvalidOperationException("The test's clock cannot be read.");
+            }
+
+            if (hold)
+            {
+                // The limit only ends a test that never lets the read go on.
+                _release.Wait(TimeSpan.FromSeconds(30), CancellationToken.None);
+            }
+
+            return inner.GetUtcNow();
+        }
+
+        public void Dispose() => _release.Dispose();
+    }
 
     // The server identity of a data folder: its license verified for its installation key.
     private ServerIdentity ServerIdentityOf(string serverData)
