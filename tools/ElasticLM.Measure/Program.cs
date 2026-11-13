@@ -76,6 +76,53 @@ internal sealed class Lag
 }
 
 /// <summary>
+/// The requests that got no whole answer (Issue #393, design §20.7): when each was sent, its method and path, and the
+/// messages of the exception, kept for finding the cause.
+/// </summary>
+internal sealed class BrokenRequests
+{
+    private readonly List<(double At, string Path, string Error)> _requests = [];
+    private readonly Lock _gate = new();
+
+    /// <summary>Keeps a request if its answer is <see cref="Device.NoAnswer"/>.</summary>
+    /// <param name="sentAt">When the request was sent, in seconds from the start of the load.</param>
+    /// <param name="path">The method and the path.</param>
+    /// <param name="answer">The answer.</param>
+    public void Add(double sentAt, string path, Answer answer)
+    {
+        if (answer.Code != Device.NoAnswer)
+        {
+            return;
+        }
+
+        lock (_gate)
+        {
+            _requests.Add((sentAt, path, answer.Error ?? string.Empty));
+        }
+    }
+
+    /// <summary>Writes the requests as the array <c>broken</c>, in the order they were sent.</summary>
+    /// <param name="writer">The writer, inside an object.</param>
+    public void Write(Utf8JsonWriter writer)
+    {
+        lock (_gate)
+        {
+            writer.WriteStartArray("broken");
+            foreach ((double at, string path, string error) in _requests.OrderBy(r => r.At))
+            {
+                writer.WriteStartObject();
+                writer.WriteNumber("atS", Math.Round(at, 2));
+                writer.WriteString("path", path);
+                writer.WriteString("message", error);
+                writer.WriteEndObject();
+            }
+
+            writer.WriteEndArray();
+        }
+    }
+}
+
+/// <summary>
 /// 10,000 concurrent leases of elm-server (design §4.2, §20.7): keys that each hold the same number of leases, taken at a
 /// steady rate once the reclaim time after the start has passed, then renewed at a fixed interval from their acquisition.
 /// Every lease token is checked against the server license after the timed part.
@@ -120,6 +167,8 @@ internal static class Leases
             double recoveryWait = TimeProvider.System.GetElapsedTime(waitStart).TotalSeconds;
             var acquired = new Latencies();
             var renewed = new Latencies();
+            var afterBroken = new Latencies();
+            var broken = new BrokenRequests();
             var lag = new Lag();
             using LeaseChecker checker = await LeaseChecker.CreateAsync(http, options["trust"]);
             long start = TimeProvider.System.GetTimestamp();
@@ -130,12 +179,16 @@ internal static class Leases
                     (device, i) =>
                         Task.Run(async () =>
                         {
-                            var held = new List<(TimeSpan At, string Id, long Seq)>();
+                            // Unsure: the last renewal of the lease got no whole answer, so the server may hold a later seq.
+                            var held = new List<(TimeSpan At, string Id, long Seq, bool Unsure)>();
                             for (int j = 0; j < perKey; j++)
                             {
                                 var at = TimeSpan.FromSeconds(((j * keys) + i) / rate);
                                 await lag.UntilAsync(start, at);
-                                Answer answer = await device.PostAsync("v1/leases", Acquire, includeKey: true);
+                                const string path = "v1/leases";
+                                double sentAt = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
+                                Answer answer = await device.PostAsync(path, Acquire, includeKey: true);
+                                broken.Add(sentAt, "POST " + path, answer);
                                 if (answer.Code is string refused)
                                 {
                                     acquired.Failed(refused);
@@ -144,7 +197,7 @@ internal static class Leases
 
                                 acquired.Succeeded(answer.Milliseconds);
                                 (string id, long seq) = Device.Lease(answer.Body);
-                                held.Add((at, id, seq));
+                                held.Add((at, id, seq, false));
                                 checker.Check(answer.Body, device.Thumbprint);
                             }
 
@@ -152,17 +205,23 @@ internal static class Leases
                             {
                                 for (int k = 0; k < held.Count; k++)
                                 {
-                                    (TimeSpan at, string id, long seq) = held[k];
+                                    (TimeSpan at, string id, long seq, bool unsure) = held[k];
                                     await lag.UntilAsync(start, at + (interval * c));
-                                    Answer answer = await device.PostAsync($"v1/leases/{id}/renew", $$"""{"seq":{{seq}}}""", includeKey: false);
+                                    string path = $"v1/leases/{id}/renew";
+                                    double sentAt = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
+                                    Answer answer = await device.PostAsync(path, $$"""{"seq":{{seq}}}""", includeKey: false);
+                                    broken.Add(sentAt, "POST " + path, answer);
                                     if (answer.Code is string refused)
                                     {
-                                        renewed.Failed(refused);
+                                        // Issue #393: a refusal of the seq that a renewal without an answer may have moved on is
+                                        // counted apart from the failures; that renewal is already one of them.
+                                        (unsure && refused != Device.NoAnswer ? afterBroken : renewed).Failed(refused);
+                                        held[k] = (at, id, seq, unsure || refused == Device.NoAnswer);
                                         continue;
                                     }
 
                                     renewed.Succeeded(answer.Milliseconds);
-                                    held[k] = (at, id, Device.Lease(answer.Body).Seq);
+                                    held[k] = (at, id, Device.Lease(answer.Body).Seq, false);
                                     checker.Check(answer.Body, device.Thumbprint);
                                 }
                             }
@@ -176,6 +235,8 @@ internal static class Leases
             writer.WriteNumber("maxSendLagMs", Math.Round(lag.Max.TotalMilliseconds, 1));
             acquired.Write(writer, "acquire");
             renewed.Write(writer, "renew");
+            afterBroken.Write(writer, "renewAfterBroken");
+            broken.Write(writer);
             writer.WriteNumber("tokensVerified", checker.Verified);
             writer.WriteNumber("tokensRefused", checker.Refused);
             return 0;
@@ -295,6 +356,7 @@ internal static class Activations
             }
 
             var activated = new Latencies();
+            var broken = new BrokenRequests();
             var lag = new Lag();
             var slow = new List<(double At, double Milliseconds, int InFlight)>();
             int inFlight = 0;
@@ -317,12 +379,15 @@ internal static class Activations
                             await lag.UntilAsync(start, at);
                             string fingerprint = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(16));
                             Interlocked.Increment(ref inFlight);
+                            const string path = "v1/activations";
+                            double sentAt = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
                             Answer answer = await device.PostAsync(
-                                "v1/activations",
+                                path,
                                 $$"""{"licenseKey":"{{key}}","product":"acme-cad","fingerprints":["{{fingerprint}}"]}""",
                                 includeKey: true
                             );
                             int others = Interlocked.Decrement(ref inFlight);
+                            broken.Add(sentAt, "POST " + path, answer);
                             if (answer.Milliseconds > SlowMilliseconds)
                             {
                                 lock (slow)
@@ -364,6 +429,7 @@ internal static class Activations
             }
 
             writer.WriteEndArray();
+            broken.Write(writer);
             double[] sortedFlushes = [.. flushTimes.Select(f => f.Milliseconds).Order()];
             writer.WriteStartObject("flush");
             writer.WriteNumber("count", sortedFlushes.Length);

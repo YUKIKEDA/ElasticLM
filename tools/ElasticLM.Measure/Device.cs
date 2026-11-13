@@ -7,13 +7,17 @@ using ElasticLM.Licensing;
 
 namespace ElasticLM.Measure;
 
-/// <summary>The answer to one signed request: its status, its error code if any, its body, and how long it took.</summary>
+/// <summary>
+/// The answer to one signed request: its status, its error code if any, its body, and how long it took. A request that got
+/// no whole answer has the status 0, the code <see cref="Device.NoAnswer"/>, an empty body, and the exception's messages.
+/// </summary>
 /// <param name="Status">The HTTP status.</param>
-/// <param name="Code">The error code of a refusal, or <see langword="null"/>.</param>
+/// <param name="Code">The error code of a refusal, <see cref="Device.NoAnswer"/>, or <see langword="null"/>.</param>
 /// <param name="Body">The answer's body.</param>
 /// <param name="Milliseconds">The time from building the proof to the answer.</param>
 /// <param name="RetryAfter">The answer's <c>Retry-After</c>, if any.</param>
-internal sealed record Answer(HttpStatusCode Status, string? Code, string Body, double Milliseconds, TimeSpan? RetryAfter);
+/// <param name="Error">The messages of the exception of a request without a whole answer, or <see langword="null"/>.</param>
+internal sealed record Answer(HttpStatusCode Status, string? Code, string Body, double Milliseconds, TimeSpan? RetryAfter, string? Error = null);
 
 /// <summary>
 /// One installation key and the requests it signs (design §12.2), one at a time, with the nonce of its last answer, as a
@@ -21,6 +25,9 @@ internal sealed record Answer(HttpStatusCode Status, string? Code, string Body, 
 /// </summary>
 internal sealed class Device : IDisposable
 {
+    /// <summary>The code of a request that got no whole answer: the client threw <see cref="HttpRequestException"/>.</summary>
+    public const string NoAnswer = nameof(HttpRequestException);
+
     private readonly HttpClient _http;
     private readonly InstallationKey _key;
     private readonly SemaphoreSlim _one = new(1, 1);
@@ -66,6 +73,7 @@ internal sealed class Device : IDisposable
     private async Task<Answer> SendAsync(HttpMethod method, string path, string body, bool includeKey)
     {
         await _one.WaitAsync();
+        long start = TimeProvider.System.GetTimestamp();
         try
         {
             if (_nonce is null)
@@ -74,7 +82,7 @@ internal sealed class Device : IDisposable
             }
 
             byte[] bytes = Encoding.UTF8.GetBytes(body);
-            long start = TimeProvider.System.GetTimestamp();
+            start = TimeProvider.System.GetTimestamp();
             string proof = ProofBuilder.Create(
                 _key,
                 method.Method,
@@ -100,10 +108,29 @@ internal sealed class Device : IDisposable
 
             return new Answer(response.StatusCode, code, text, milliseconds, response.Headers.RetryAfter?.Delta);
         }
+        catch (HttpRequestException exception)
+        {
+            // design §20.7 (V1d31, Issue #393): a request whose answer broke off is a failed request of the load, not the end
+            // of the run. The server may have taken its nonce, so the next request gets a new one.
+            _nonce = null;
+            return new Answer(0, NoAnswer, string.Empty, TimeProvider.System.GetElapsedTime(start).TotalMilliseconds, null, Messages(exception));
+        }
         finally
         {
             _one.Release();
         }
+    }
+
+    // The messages of an exception and of the exceptions inside it, which name where the request broke off.
+    private static string Messages(Exception exception)
+    {
+        var messages = new List<string>();
+        for (Exception? e = exception; e is not null; e = e.InnerException)
+        {
+            messages.Add(e.Message);
+        }
+
+        return string.Join(" ---> ", messages);
     }
 
     /// <summary>Returns the lease token of a lease answer.</summary>
