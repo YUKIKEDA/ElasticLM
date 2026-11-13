@@ -483,6 +483,10 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     /// - elm-service with a server policy; a data folder that holds a stopped server's installation key and administrator
     ///   token; a listener of the test on admin.sock in that folder that answers the first request with a given answer, and
     ///   any later one with 404.
+    /// - The closed port: a listener of the test takes a port the system chooses and stops, and the test takes it that nothing
+    ///   listens there afterwards. Another program that took the port in between would get the request instead (the V1d3b
+    ///   Grill, 3b-5): on Windows the ports that binds to port 0 get move on across the machine, and none came back at once in
+    ///   2,000 binds.
     ///
     /// Steps:
     /// - In that folder: run elm server deactivate-proof against 404 with no body, against 502 with an HTML body, against 200

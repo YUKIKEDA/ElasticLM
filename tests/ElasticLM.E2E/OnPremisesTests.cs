@@ -21,6 +21,9 @@ public sealed class OnPremisesTests
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license issued by elm (pro, 3 seats, 15-second leases, borrows of
     ///   a day) bound to the key the server made on its first run.
+    /// - The server starts on a port the system chooses and starts again on the same port, where its client finds it. The
+    ///   port is free for a moment between the kill and the second start: another program could take it then, and that start
+    ///   would fail. The window stays (the V1d3b Grill, 3b-4).
     ///
     /// Steps:
     /// - Start the server. Acquire pro, waiting each Retry-After while the server answers ELM_SERVER_RECOVERING. Wait for the

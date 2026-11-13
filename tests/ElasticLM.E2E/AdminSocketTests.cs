@@ -1,5 +1,6 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Text.RegularExpressions;
 
 namespace ElasticLM.E2E;
 
@@ -7,7 +8,7 @@ namespace ElasticLM.E2E;
 /// The published elm-server and elm around the socket file of the administration API (design §13.1, §13.7, §20.7, V1d2):
 /// what needs a process of its own, another process's environment, or another user of the machine.
 /// </summary>
-public sealed class AdminSocketTests
+public sealed partial class AdminSocketTests
 {
     private static readonly TimeSpan Bound = TimeSpan.FromSeconds(30);
 
@@ -61,7 +62,8 @@ public sealed class AdminSocketTests
     /// - The published elm-server for acme-cad, running with a server license.
     ///
     /// Steps:
-    /// - Kill the server's process; look for admin.sock; start the server again; run elm server status.
+    /// - Kill the server's process; look for admin.sock; start the server again on the same data folder and a port the system
+    ///   chooses; run elm server status.
     ///
     /// Expected:
     /// - admin.sock is still in the data folder after the kill; the second start answers, and status exits 0.
@@ -77,9 +79,12 @@ public sealed class AdminSocketTests
 
         await server.KillAsync();
         Assert.True(Path.Exists(server.AdminSocketPath), "The killed server left no socket file.");
-        await server.StartAsync();
 
-        (int code, _, string error) = await server.ElmServerAsync(vendor, "status");
+        // On a port of its own: the test needs no client to find the server where it was.
+        await using ServerProcess again = server.Twin();
+        await again.StartAsync();
+
+        (int code, _, string error) = await again.ElmServerAsync(vendor, "status");
         Assert.True(code == 0, error);
     }
 
@@ -89,8 +94,8 @@ public sealed class AdminSocketTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - The published elm-server for acme-cad with a server license, prepared twice with the same data folder and two
-    ///   listen ports.
+    /// - The published elm-server for acme-cad with a server license, prepared twice for each round with the same data folder,
+    ///   each on a port the system chooses.
     ///
     /// Steps:
     /// - Five times: launch both processes without waiting in between; wait until one has ended; wait until the other
@@ -113,11 +118,13 @@ public sealed class AdminSocketTests
 
         for (int round = 1; round <= 5; round++)
         {
-            await using ServerProcess second = first.Twin();
-            first.Launch();
-            second.Launch();
-            await RealClock.WaitUntilAsync("one of two servers on one data folder ending", () => first.HasExited || second.HasExited, Bound);
-            (ServerProcess stopped, ServerProcess running) = first.HasExited ? (first, second) : (second, first);
+            // Two new servers in each round, each on a port the system chooses: none starts again on a port it let go.
+            await using ServerProcess one = first.Twin();
+            await using ServerProcess two = first.Twin();
+            one.Launch();
+            two.Launch();
+            await RealClock.WaitUntilAsync("one of two servers on one data folder ending", () => one.HasExited || two.HasExited, Bound);
+            (ServerProcess stopped, ServerProcess running) = one.HasExited ? (one, two) : (two, one);
 
             await running.WaitUntilItAnswersAsync();
             Assert.False(running.HasExited, $"Round {round}: both servers ended: {running.Log}");
@@ -125,8 +132,8 @@ public sealed class AdminSocketTests
 
             // The log's last lines come after the process has ended.
             await RealClock.WaitUntilAsync("the stopped server's last line", () => stopped.Log.Contains(line, StringComparison.Ordinal), Bound);
-            await first.KillAsync();
-            await second.KillAsync();
+            await one.KillAsync();
+            await two.KillAsync();
         }
     }
 
@@ -185,7 +192,8 @@ public sealed class AdminSocketTests
     /// <remarks>
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license, started with Kestrel__Endpoints__Tcp__Url set to an
-    ///   http URL on a free loopback port and Kestrel__Endpoints__Socket__Url set to http://unix: and the path of a second
+    ///   http URL on 127.0.0.1 and port 0, whose port the test reads from the host's "Now listening on" line once the server
+    ///   has started, and Kestrel__Endpoints__Socket__Url set to http://unix: and the path of a second
     ///   socket file in the vendor's folder. The server reads both from its process's environment, which a test in the
     ///   server's own process cannot give it.
     /// - A request without a token tells the two outcomes apart: the administration API answers it 401, and the guard before
@@ -205,9 +213,8 @@ public sealed class AdminSocketTests
         string license = vendor.File("server.elmlic");
         await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license);
         await server.IssueLicenseAsync(vendor, license);
-        var tcp = new Uri($"http://127.0.0.1:{ServiceProcess.FreePort()}");
         string otherSocket = vendor.File("x.sock");
-        server.SetEnvironment("Kestrel__Endpoints__Tcp__Url", tcp.ToString());
+        server.SetEnvironment("Kestrel__Endpoints__Tcp__Url", "http://127.0.0.1:0");
 
         // Kestrel takes "http://unix:/" for a socket file. On Linux and macOS that "/" is the first character of the path; on
         // Windows the path, which begins with a drive letter, follows it (BindingAddress.GetUnixPipePath, aspnetcore
@@ -215,6 +222,11 @@ public sealed class AdminSocketTests
         server.SetEnvironment("Kestrel__Endpoints__Socket__Url", "http://unix:" + (OperatingSystem.IsWindows() ? "/" : string.Empty) + otherSocket);
         await server.StartAsync();
         CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        // The host names each address it listens on before the server's start line (design §18.1).
+        Match listening = AddedTcpListener().Match(server.Log);
+        Assert.True(listening.Success, $"The server named no http listener on 127.0.0.1: {server.Log}");
+        var tcp = new Uri(listening.Groups[1].Value);
 
         using HttpClient own = SocketHttp(server.AdminSocketPath);
         using HttpClient added = new(new SocketsHttpHandler { UseProxy = false }) { BaseAddress = tcp };
@@ -567,4 +579,8 @@ public sealed class AdminSocketTests
         {
             BaseAddress = new Uri("http://elm-server.invalid/"),
         };
+
+    // The web host's line for the http listener on 127.0.0.1 (the server's own listener is https).
+    [GeneratedRegex(@"Now listening on: (http://127\.0\.0\.1:\d+)")]
+    private static partial Regex AddedTcpListener();
 }

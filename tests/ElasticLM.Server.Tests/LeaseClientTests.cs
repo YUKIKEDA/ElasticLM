@@ -96,6 +96,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// Preconditions:
     /// - A lease from a server on port P; the server stopped; a new server license for the same server (new jti); the server
     ///   started again on P (new nonce secret, empty state).
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Advance 200 s so the client renews.
@@ -138,6 +142,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A server with 100 seats; one client holding 70 leases; the server restarted on the same port.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Advance 200 s so every lease renews.
@@ -179,6 +187,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - The client's HTTP handler passes the reclaim request to the server and then replaces the body of its answer by six
     ///   items in the leases' order: ELM_OK; ELM_NETWORK_ERROR, a code only a client makes; no code; ELM_NO_SEATS, one of
     ///   the ten; ELM_SOMETHING, not a code; a null code.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Advance 200 s so every lease renews: the first renewal gets ELM_UNKNOWN_LEASE and the client reclaims all six.
@@ -254,6 +266,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// Preconditions:
     /// - Client A (first-connection pin) and client B (ExpectedServerLicenseId lic-srv) connected to a server on port P; that
     ///   server stopped and a server with another installation key and lic-srv started on P, past its window.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - A acquires twice; resets the pin; acquires. B acquires twice.
@@ -288,12 +304,12 @@ public sealed class LeaseClientTests : IAsyncDisposable
         await _deployment.StartServerAsync(change: s => With(s, port));
         _deployment.Time.Advance(Window);
 
-        Assert.Equal(ErrorCode.ServerPinMismatch, Failed(await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)));
-        Assert.Equal(ErrorCode.ServerPinMismatch, Failed(await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)));
+        Failed(ErrorCode.ServerPinMismatch, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(ErrorCode.ServerPinMismatch, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Assert.True(a.ResetServerPin(before.PublicUrls[0]));
         Acquired(await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
 
-        Assert.Equal(ErrorCode.ServerPinMismatch, Failed(await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)));
+        Failed(ErrorCode.ServerPinMismatch, await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Acquired(await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
 
@@ -304,6 +320,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A server with a valid license that serves TLS with a self-signed certificate of another key (as a TLS proxy would).
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Acquire.
@@ -328,10 +348,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
         string clientData = _deployment.NewFolder();
         LicenseClient client = _deployment.Client(proxied.PublicUrls[0], clientData);
 
-        Assert.Equal(
-            ErrorCode.ServerPinMismatch,
-            Failed(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken))
-        );
+        Failed(ErrorCode.ServerPinMismatch, await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Assert.False(Directory.Exists(System.IO.Path.Combine(clientData, "servers")));
 
         await proxied.DisposeAsync();
@@ -370,10 +387,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
         File.WriteAllText(Assert.Single(Directory.GetFiles(System.IO.Path.Combine(data, "servers"))), "{damaged");
 
         LicenseClient second = _deployment.Client(server.PublicUrls[0], data);
-        Assert.Equal(
-            ErrorCode.ServerPinMismatch,
-            Failed(await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken))
-        );
+        Failed(ErrorCode.ServerPinMismatch, await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Assert.True(second.ResetServerPin(server.PublicUrls[0]));
         Acquired(await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
@@ -410,7 +424,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
             }
         );
 
-        Assert.Equal(ErrorCode.UntrustedKey, Failed(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)));
+        Failed(ErrorCode.UntrustedKey, await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     /// <summary>
@@ -702,6 +716,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// Preconditions:
     /// - A lease from a server on port P; the server restarted on P; a handler that records each state and holds on
     ///   Reclaiming.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Advance 200 s so the client reclaims; once the handler holds, dispose the client; then let the handler go and wait
@@ -780,9 +798,22 @@ public sealed class LeaseClientTests : IAsyncDisposable
         Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
 
-    private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
+    // A refusal puts its code and message into the failure, so that a run that fails once says why (Issue #414).
+    private static Lease Acquired(LeaseResult result)
+    {
+        if (result is LeaseResult.Failed failed)
+        {
+            Assert.Fail($"The lease was refused: {failed.Error.Code}: {failed.Error.Message}");
+        }
 
-    private static ErrorCode Failed(LeaseResult result) => Assert.IsType<LeaseResult.Failed>(result).Error.Code;
+        return Assert.IsType<LeaseResult.Acquired>(result).Lease;
+    }
+
+    private static void Failed(ErrorCode expected, LeaseResult result)
+    {
+        LeaseResult.Failed failed = Assert.IsType<LeaseResult.Failed>(result);
+        Assert.True(failed.Error.Code == expected, $"Expected {expected}, got {failed.Error.Code}: {failed.Error.Message}");
+    }
 
     private static ServerSettings With(ServerSettings settings, int? port = null, string? tlsCertificate = null) =>
         new()

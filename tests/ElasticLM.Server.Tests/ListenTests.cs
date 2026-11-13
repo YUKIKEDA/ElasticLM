@@ -31,6 +31,10 @@ public sealed class ListenTests : IAsyncDisposable
     /// Preconditions:
     /// - A server that recorded a borrow of pro for a day and stopped; a TcpListener started on 127.0.0.1 at a port the OS
     ///   picked, the same IP and port the server is given as listen.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Start the server on that port; read the newest usage log and borrow record files; stop the listener; start the server
@@ -127,8 +131,10 @@ public sealed class ListenTests : IAsyncDisposable
     /// Preconditions:
     /// - A data folder in which a server ran and stopped, so it holds an administrator token; a TcpListener on 127.0.0.1
     ///   holding the port given as listen.
-    /// - Between the listener's stop and the server's next start another process could take the port; the window is a few
-    ///   milliseconds, and the test would then fail with that port in its message.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Read admin.token; start the server on the held port; look at the folder; stop the listener; start the server again
@@ -176,6 +182,10 @@ public sealed class ListenTests : IAsyncDisposable
     /// Preconditions:
     /// - A server that recorded a borrow and stopped; a character of the borrow line changed (seats 2 to 9); a TcpListener on
     ///   127.0.0.1 holding the port given as listen.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the ports that binds to port 0 get move on across the
+    ///   machine, and none came back at once in 2,000 binds; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Start with the set-aside option on the held port; stop the listener; start without the option on the same port; stop

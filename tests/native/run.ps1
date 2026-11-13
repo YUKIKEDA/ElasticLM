@@ -14,14 +14,14 @@
     - Makes keys and two licenses with elm in a temporary folder: one unbound, one bound to the key the test creates.
     - Runs the verification test in its two steps. The second also compares the whole elm_last_error_message of a root key
       that is not PEM, with no .NET parameter name in it, on the published library (design §17.3, V1c10).
-    - Starts elm-service on a free loopback port (with 10 requests a second per installation key, not 2), makes a product, a feature, a policy, a license, and the product's trial
+    - Starts elm-service on a loopback port that the system chooses (with 10 requests a second per installation key, not 2), makes a product, a feature, a policy, a license, and the product's trial
       policy with the setup key, and runs the activation test against it: activation, a refresh, deactivation, and a trial
       (design §17.5, §20.7).
     - Runs the offline activation in phases of the C test that share one activation folder: the test writes the request
       file, elm offline process gets the answer from elm-service, and the test imports it. Then it revokes that license
       through the administration API, and the test's refresh must be refused with ELM_LICENSE_REVOKED (design §20.7).
-    - Starts elm-server on a free https loopback port with a server license of 15-second leases bound to its key, makes a
-      cloud-floating license on elm-service, and runs the lease test against both (design §17.6).
+    - Starts elm-server on an https loopback port that the system chooses, with a server license of 15-second leases bound
+      to its key, makes a cloud-floating license on elm-service, and runs the lease test against both (design §17.6).
     - Prints the library's runtime dependencies.
     Everything it makes goes in a temporary folder that it removes at the end (.cursor/rules/scratch.mdc).
 
@@ -286,14 +286,24 @@ try {
         # design §17.5: the activation test against elm-service with this run's keys, nonce secret, and SQLite database.
         # The C test gets the listening URL itself: without publicUrls, a proof's htu is compared with it, so 127.0.0.1
         # is not mixed with localhost.
-        function Get-FreePort {
-            $listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, 0)
-            $listener.Start()
-            $free = $listener.LocalEndpoint.Port
-            $listener.Stop()
-            $free
+        # The programs listen on port 0 and name the port in the start line of their log, written once they answer (design
+        # §18.1): a port found free and closed before the start could be taken by another program in between (the V1d3b
+        # Grill, 3b-3). The log is read with sharing, since the program still writes it.
+        function Wait-StartLine([Diagnostics.Process]$started, [string]$log, [string]$pattern, [string]$name) {
+            for ($i = 0; $i -lt 300; $i++) {
+                $text = ''
+                if (Test-Path $log) {
+                    $stream = [IO.FileStream]::new($log, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)
+                    try { $text = [IO.StreamReader]::new($stream).ReadToEnd() } finally { $stream.Dispose() }
+                }
+                if ($text -match $pattern) { return $Matches[1] }
+                if ($started.HasExited) { break }
+                Start-Sleep -Milliseconds 100
+            }
+            Write-Host $text
+            throw "$name wrote no start line."
         }
-        $url = "http://127.0.0.1:$(Get-FreePort)"
+        $url = 'http://127.0.0.1:0'
         $env:ELM_SIGNING_PASSPHRASE = $env:ELM_KEY_PASSPHRASE
         $env:ELM_NONCE_SECRET = [Convert]::ToBase64String([Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
         $env:ELM_SIGNING_KEY = Join-Path $work 'signing.key.pem'
@@ -309,14 +319,10 @@ try {
         $env:ELM_RATELIMIT_CLIENTPERKEY = '10'
         $apiKey = (& $Service setup).Trim()
         if ($LASTEXITCODE -ne 0 -or -not $apiKey.StartsWith('elm_')) { throw 'elm-service setup did not print a key.' }
-        $process = Start-Process $Service -PassThru -NoNewWindow
+        $serviceLog = Join-Path $work 'service.out.log'
+        $process = Start-Process $Service -PassThru -NoNewWindow -RedirectStandardOutput $serviceLog -RedirectStandardError (Join-Path $work 'service.err.log')
         try {
-            $ready = $false
-            for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
-                try { $ready = (Invoke-WebRequest "$url/health" -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
-                if (-not $ready) { Start-Sleep -Seconds 1 }
-            }
-            if (-not $ready) { throw 'elm-service did not answer /health.' }
+            $url = Wait-StartLine $process $serviceLog 'service\.started: listening on (http://\S+?)/,' 'elm-service'
 
             $headers = @{ Authorization = "Bearer $apiKey" }
             function Add-AdminRecord([string]$path, [string]$body) {
@@ -357,8 +363,7 @@ try {
             # a folder that group or other can write. Its administration API listens on admin.sock in that folder.
             $cloud = (Add-AdminRecord 'policies' "{`"productId`":`"$product`",`"name`":`"cloud`",`"floating`":`"cloud`"}").id
             $leaseKey = (Add-AdminRecord 'licenses' "{`"policyId`":`"$cloud`",`"name`":`"lease`",`"features`":[{`"code`":`"pro`",`"seats`":2}]}").key
-            $serverUrl = "https://127.0.0.1:$(Get-FreePort)"
-            $env:ELM_LISTEN = $serverUrl
+            $env:ELM_LISTEN = 'https://127.0.0.1:0'
             $env:ELM_DATADIRECTORY = $serverData
             $env:ELM_PRODUCT = 'acme-cad'
             $env:ELM_LICENSE = Join-Path $work 'server.elmlic'
@@ -373,15 +378,10 @@ try {
                     --out server.elmlic | Out-Null
             }
 
-            $serverProcess = Start-Process $Server -PassThru -NoNewWindow
+            $serverLog = Join-Path $work 'server.out.log'
+            $serverProcess = Start-Process $Server -PassThru -NoNewWindow -RedirectStandardOutput $serverLog -RedirectStandardError (Join-Path $work 'server.err.log')
             try {
-                # elm-server has no /health; its license endpoint answers once it listens.
-                $ready = $false
-                for ($i = 0; $i -lt 30 -and -not $ready; $i++) {
-                    try { $ready = (Invoke-WebRequest "$serverUrl/v1/server/license" -SkipCertificateCheck -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
-                    if (-not $ready) { Start-Sleep -Seconds 1 }
-                }
-                if (-not $ready) { throw 'elm-server did not answer /v1/server/license.' }
+                $serverUrl = 'https://127.0.0.1:' + (Wait-StartLine $serverProcess $serverLog 'server\.started: listening on port (\d+) ' 'elm-server')
 
                 & $test lease $Library (Join-Path $work 'lease') (Join-Path $work 'root.pub.pem') $serverUrl $url $leaseKey
                 if ($LASTEXITCODE -ne 0) { throw 'The C lease test failed.' }

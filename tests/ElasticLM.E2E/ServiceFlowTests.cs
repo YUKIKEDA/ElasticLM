@@ -167,5 +167,14 @@ public sealed class ServiceFlowTests
         return client!;
     }
 
-    private static VerifiedLicense Activated(ActivationResult result) => Assert.IsType<ActivationResult.Activated>(result).License;
+    // A refusal puts its code and message into the failure, so that a run that fails once says why (Issue #414).
+    private static VerifiedLicense Activated(ActivationResult result)
+    {
+        if (result is ActivationResult.Failed failed)
+        {
+            Assert.Fail($"The activation was refused: {failed.Error.Code}: {failed.Error.Message}");
+        }
+
+        return Assert.IsType<ActivationResult.Activated>(result).License;
+    }
 }
