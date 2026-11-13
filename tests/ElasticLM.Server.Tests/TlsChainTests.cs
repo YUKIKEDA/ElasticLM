@@ -2,6 +2,8 @@ using System.Net;
 using System.Net.Sockets;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Client;
+using ElasticLM.Issuing;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Server.Tests;
 
@@ -284,21 +286,25 @@ public sealed class TlsChainTests : IAsyncDisposable
     /// - Windows. A chain; a listener of the test that answers TLS handshakes with the chain's certificate alone, with the
     ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate. From
     ///   then on Windows sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
-    /// - A PEM file with the certificate and then the intermediate, and the key.
+    /// - A PEM file with the certificate and then the intermediate, and the key; or a PKCS#12 file with the certificate, its
+    ///   key, and the intermediate; a recording log provider.
     ///
     /// Steps:
-    /// - Start the server with the two files on a port of the test's choice and a data folder of the test; then connect to
-    ///   that port, and read the data folder.
+    /// - Start the server with the files on a port of the test's choice and a data folder of the test; then connect to that
+    ///   port, and read the data folder and the operational log.
     ///
     /// Expected:
     /// - ServerStartException "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS
     ///   certificate '{path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process
     ///   runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification
-    ///   Authorities store." with the intermediate's subject and thumbprint; the connection afterwards is refused; the data
-    ///   folder holds no admin.sock, and its log files hold no server.started.
+    ///   Authorities store." with the intermediate's subject and thumbprint, for both files; the connection afterwards is
+    ///   refused; no admin.sock; no server.started in the operational log or in the files; one usage log and one borrow
+    ///   record, each ending with its auth line.
     /// </remarks>
-    [Fact]
-    public async Task Start_FirstHandshakeWithoutTheIntermediate_Throws()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Start_FirstHandshakeWithoutTheIntermediate_Throws(bool pkcs12)
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
         CancellationToken cancel = TestContext.Current.CancellationToken;
@@ -312,16 +318,21 @@ public sealed class TlsChainTests : IAsyncDisposable
             await served;
         }
 
-        (string certificate, string key) = chain.WritePem(_deployment.FilePath("first.crt"), _deployment.FilePath("first.key"), chain.Intermediate);
+        (string certificate, string? key) = pkcs12
+            ? (chain.WritePkcs12(_deployment.FilePath("first.pfx"), [chain.Intermediate]), null)
+            : chain.WritePem(_deployment.FilePath("first.crt"), _deployment.FilePath("first.key"), chain.Intermediate);
         int port = FreePort();
         string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        using var log = new RecordingLoggerProvider();
+        ServerSettings settings = _deployment.Settings(data) with
+        {
+            Listen = new Uri($"https://127.0.0.1:{port}"),
+            TlsCertificate = certificate,
+            TlsKey = key,
+        };
 
-        var refused = await Assert.ThrowsAsync<ServerStartException>(() =>
-            _deployment.StartServerAsync(
-                data,
-                s => s with { Listen = new Uri($"https://127.0.0.1:{port}"), TlsCertificate = certificate, TlsKey = key }
-            )
-        );
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => ElmServer.StartAsync(settings, HostOptions(log), cancel));
 
         Assert.Equal(
             $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the TLS "
@@ -333,10 +344,76 @@ public sealed class TlsChainTests : IAsyncDisposable
         using var client = new TcpClient();
         SocketException closed = await Assert.ThrowsAsync<SocketException>(() => client.ConnectAsync(IPAddress.Loopback, port, cancel).AsTask());
         Assert.Equal(SocketError.ConnectionRefused, closed.SocketErrorCode);
-        Assert.False(File.Exists(AdminSocket.PathIn(data)));
-        string[] logs = Directory.GetFiles(data, "*.jsonl");
-        Assert.NotEmpty(logs);
-        Assert.DoesNotContain("server.started", string.Concat(logs.Select(File.ReadAllText)), StringComparison.Ordinal);
+        AssertFailedStartLeft(data, log);
+    }
+
+    /// <summary>
+    /// On Windows, a start whose check of the intermediates gets no answer stops with that sentence when the clock passes the
+    /// limit, and the requests that come in while the check runs, on the https listener and on the administration socket, get
+    /// no answer and leave no record (design §13.1, §13.5, V1d3a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain that a server sends; a PEM file with the certificate and then the intermediate, and the key; a TCP
+    ///   listener of the test that accepts connections and sends nothing, to which the check is sent (ServerHostOptions.
+    ///   SelfCheckTarget); a recording log provider.
+    ///
+    /// Steps:
+    /// - Start the server on a port of the test's choice; once the test's listener has accepted the check's connection, send
+    ///   GET /v1/nonce over https and POST /admin/v1/log/seal with the administrator token over admin.sock; then move the fake
+    ///   clock 10 seconds.
+    ///
+    /// Expected:
+    /// - Both requests fail without an answer. ServerStartException "The check that Windows sends the intermediate CA
+    ///   certificates of the TLS certificate '{path}' did not get an answer: the TLS handshake with 127.0.0.1:{port of the test's
+    ///   listener} did not finish within 10 seconds." The operational log has no admin.action and no server.started line; the
+    ///   data folder holds the files of a failed start and no admin.sock.
+    /// </remarks>
+    [Fact]
+    public async Task Start_CheckWithoutAnswer_ThrowsAndAnswersNothingMeanwhile()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        TestCertificateChain chain = NewChain(sentByServer: true);
+        (string certificate, string key) = chain.WritePem(_deployment.FilePath("hole.crt"), _deployment.FilePath("hole.key"), chain.Intermediate);
+        int port = FreePort();
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        using var hole = new TcpListener(IPAddress.Loopback, 0);
+        hole.Start();
+        var holeEndPoint = (IPEndPoint)hole.LocalEndpoint;
+        using var log = new RecordingLoggerProvider();
+        ServerSettings settings = _deployment.Settings(data) with
+        {
+            Listen = new Uri($"https://127.0.0.1:{port}"),
+            TlsCertificate = certificate,
+            TlsKey = key,
+        };
+        ServerHostOptions options = HostOptions(log, _ => holeEndPoint);
+
+        Task<ElmServer> start = ElmServer.StartAsync(settings, options, cancel);
+        using TcpClient check = await hole.AcceptTcpClientAsync(cancel);
+        using var https = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true });
+        HttpRequestException nonce = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            https.GetAsync(new Uri($"https://127.0.0.1:{port}/v1/nonce"), cancel)
+        );
+        using HttpClient admin = Deployment.SocketHttp(AdminSocket.PathIn(data));
+        admin.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", AdminToken.Read(data));
+        HttpRequestException seal = await Assert.ThrowsAsync<HttpRequestException>(() =>
+            admin.PostAsync(new Uri("http://localhost/admin/v1/log/seal"), null, cancel)
+        );
+        _deployment.Time.Advance(TlsChainSelfCheck.Limit);
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => start.WaitAsync(TimeSpan.FromSeconds(30), cancel));
+
+        Assert.Equal(
+            $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{certificate}' did not get an answer: "
+                + $"the TLS handshake with {holeEndPoint} did not finish within 10 seconds.",
+            refused.Message
+        );
+        Assert.NotNull(nonce);
+        Assert.NotNull(seal);
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("admin.action", StringComparison.Ordinal));
+        AssertFailedStartLeft(data, log);
     }
 
     /// <summary>
@@ -438,6 +515,35 @@ public sealed class TlsChainTests : IAsyncDisposable
         Assert.True(sent);
         Assert.Empty(left);
     }
+
+    // What a start that stopped at the check leaves: no admin.sock, no server.started in the operational log, and in the
+    // data folder the files of any failed start (§13.1): one usage log and one borrow record, each closed with its auth line,
+    // beside the installation key, the lock file, the administrator token, the clock, and the server license.
+    private static void AssertFailedStartLeft(string data, RecordingLoggerProvider log)
+    {
+        Assert.False(File.Exists(AdminSocket.PathIn(data)));
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("server.started", StringComparison.Ordinal));
+        string[] usage = Directory.GetFiles(data, "usage-*.jsonl");
+        string[] borrows = Directory.GetFiles(data, "borrows-*.jsonl");
+        Assert.Single(usage);
+        Assert.Single(borrows);
+        foreach (string file in usage.Concat(borrows))
+        {
+            string text = File.ReadAllText(file);
+            Assert.DoesNotContain("server.started", text, StringComparison.Ordinal);
+            Assert.Contains("\"auth\"", File.ReadAllLines(file)[^1], StringComparison.Ordinal);
+        }
+    }
+
+    private ServerHostOptions HostOptions(RecordingLoggerProvider log, Func<IPEndPoint, IPEndPoint>? selfCheckTarget = null) =>
+        new()
+        {
+            Time = _deployment.Time,
+            Environment = _ => null,
+            MinimumLogLevel = LogLevel.Information,
+            LoggerProvider = log,
+            SelfCheckTarget = selfCheckTarget,
+        };
 
     private static int FreePort()
     {

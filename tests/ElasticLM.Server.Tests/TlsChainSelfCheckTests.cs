@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Issuing;
 using Microsoft.Extensions.Time.Testing;
@@ -17,7 +19,10 @@ public sealed class TlsChainSelfCheckTests : IDisposable
 
     private readonly CancellationTokenSource _stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
     private readonly List<IDisposable> _owned = [];
-    private readonly FakeTimeProvider _time = new(Deployment.Start);
+
+    // The real time: a certificate sent in place of the file's is checked for its period against this clock, and the test
+    // certificates are valid around the real time.
+    private readonly FakeTimeProvider _time = new(TimeProvider.System.GetUtcNow());
 
     public void Dispose()
     {
@@ -74,26 +79,32 @@ public sealed class TlsChainSelfCheckTests : IDisposable
 
     /// <summary>
     /// After earlier checks of the same listener in the same process, each check still makes a full handshake and reads the
-    /// certificates sent: a resumed session would carry none.
+    /// certificates sent, with TLS 1.3 and with TLS 1.2; it sends no server name and nothing after the handshake.
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Windows. A chain that a server sends (it holds the mutex of the tests that change the CA stores); a listener of the
-    ///   test that sends the chain's certificate with its intermediate; the certificate with the intermediate as the
-    ///   intermediates of its file.
+    ///   test that sends the chain's certificate with its intermediate, with the TLS versions the system chooses or with TLS
+    ///   1.2 only, and records, for each handshake, the bytes read after it and the server name the client sent; the
+    ///   certificate with the intermediate as the intermediates of its file.
     ///
     /// Steps:
-    /// - Connect to the listener once (with a new chain, at most three in all, until the chain builds), then run the check
-    ///   with the listener's endpoint three times in a row.
+    /// - Connect to the listener twice (with a new chain, at most three in all, until it sends the intermediate), run the check with
+    ///   the listener's endpoint three times in a row, then connect once more, which ends after the listener has recorded the
+    ///   third check.
     ///
     /// Expected:
-    /// - Null each time.
+    /// - Null each time; after every recorded handshake the listener read no byte (the client closed), and it saw no server
+    ///   name.
     /// </remarks>
-    [Fact]
-    public async Task Run_SameListenerAgain_MakesAFullHandshake()
+    [Theory]
+    [InlineData(SslProtocols.None)]
+    [InlineData(SslProtocols.Tls12)]
+    public async Task Run_SameListenerAgain_MakesAFullHandshake(SslProtocols protocols)
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
-        (TestCertificateChain chain, IPEndPoint endPoint, _, _) = await ListenSendingAsync(c => c.Intermediate);
+        var seen = new ConcurrentQueue<(int Read, string ServerName)>();
+        (TestCertificateChain chain, IPEndPoint endPoint, _, _) = await ListenSendingAsync(c => c.Intermediate, protocols, seen);
         TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
 
         string?[] problems = new string?[3];
@@ -102,7 +113,55 @@ public sealed class TlsChainSelfCheckTests : IDisposable
             problems[i] = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
         }
 
+        _ = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{endPoint.Port}/"), _stop.Token);
+
         Assert.Equal(new string?[3], problems);
+        Assert.True(seen.Count >= 4, $"The listener recorded {seen.Count} handshakes.");
+        Assert.All(
+            seen,
+            s =>
+            {
+                Assert.True(s.Read <= 0, $"The listener read {s.Read} bytes after a handshake.");
+                Assert.Equal(string.Empty, s.ServerName);
+            }
+        );
+    }
+
+    /// <summary>
+    /// Two intermediates that the listener leaves out are both named, in the order of the chain from the server's certificate.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain root, upper intermediate, intermediate, server certificate; a listener of the test that answers with
+    ///   the server's certificate alone; the certificate with the intermediate and the upper intermediate as the intermediates
+    ///   of its file.
+    ///
+    /// Steps:
+    /// - Run the check with the listener's endpoint.
+    ///
+    /// Expected:
+    /// - "Windows left the intermediate CA certificate {intermediate} (thumbprint …) and the intermediate CA certificate {upper}
+    ///   (thumbprint …) of the TLS certificate 'chain.crt' out of the first TLS handshake, … add these certificates to the
+    ///   machine's Intermediate Certification Authorities store."
+    /// </remarks>
+    [Fact]
+    public async Task Run_TwoIntermediatesNotSent_NamesBoth()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain(upper: true));
+        (IPEndPoint endPoint, _) = chain.Listen(IPAddress.Loopback, [], _stop.Token);
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate, chain.UpperIntermediate!));
+
+        string? problem = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+
+        Assert.Equal(
+            $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) and the "
+                + $"intermediate CA certificate {chain.UpperIntermediate!.Subject} (thumbprint {chain.UpperIntermediate.Thumbprint}) of the TLS "
+                + $"certificate '{Path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process runs. "
+                + "Start again; if this happens at every start, add these certificates to the machine's Intermediate Certification "
+                + "Authorities store.",
+            problem
+        );
     }
 
     /// <summary>
@@ -116,8 +175,8 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     ///   its file.
     ///
     /// Steps:
-    /// - Connect to the listener and read what it sends; when the chain does not build (the listener's first handshake lost
-    ///   the renewed certificate), try a new chain, at most three in all. Run the check with the listener's endpoint.
+    /// - Connect to the listener and read what it sends; when it does not send the renewed certificate (its first handshake
+    ///   lost it), try a new chain, at most three in all. Run the check with the listener's endpoint.
     ///
     /// Expected:
     /// - The listener sends a certificate with the intermediate's subject, and not the certificate of the file; the check
@@ -134,6 +193,64 @@ public sealed class TlsChainSelfCheckTests : IDisposable
         Assert.False(sentTheFiles);
         Assert.True(builds);
         Assert.Null(problem);
+    }
+
+    /// <summary>
+    /// A renewed certificate of the intermediate CA does not count as sent at a time outside its period.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. The chain and the listener of the renewed test; a clock one day after the end of the renewed certificate.
+    ///
+    /// Steps:
+    /// - Run the check with the listener's endpoint and that clock.
+    ///
+    /// Expected:
+    /// - The sentence that names the file's intermediate as left out.
+    /// </remarks>
+    [Fact]
+    public async Task Run_RenewedIntermediateOutsideItsPeriod_NamesTheFilesIntermediate()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        (TestCertificateChain chain, IPEndPoint endPoint, _, bool builds) = await ListenSendingAsync(c => c.IntermediateRenewed);
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        var later = new FakeTimeProvider(new DateTimeOffset(chain.IntermediateRenewed.NotAfter.ToUniversalTime()).AddDays(1));
+
+        string? problem = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, later, _stop.Token);
+
+        Assert.True(builds);
+        Assert.Equal(LeftOut(chain), problem);
+    }
+
+    /// <summary>
+    /// A check cancelled through the caller's token ends with the cancellation, not with the sentence of the time limit.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test
+    ///   that accepts the connection and sends nothing.
+    ///
+    /// Steps:
+    /// - Start the check with a token of the test; once the listener has accepted, cancel the token.
+    ///
+    /// Expected:
+    /// - The check throws OperationCanceledException.
+    /// </remarks>
+    [Fact]
+    public async Task Run_CallerCancels_ThrowsTheCancellation()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, (IPEndPoint)listener.LocalEndpoint, _time, caller.Token);
+        using TcpClient accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+        await caller.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token));
     }
 
     /// <summary>
@@ -283,25 +400,38 @@ public sealed class TlsChainSelfCheckTests : IDisposable
         + $"handshake with {endPoint} {how}.";
 
     // A chain that a server sends, with a listener of the test that sends the chain's certificate and the given intermediate,
-    // and what a first connection to it got. The listener's own first handshake can lose the intermediate to another program
+    // and what a connection to it got. The listener's own first handshake can lose the intermediate to another program
     // that changes the store at that moment, as a server's can (design §20.7, the V1d3a Grill); then a new chain is tried, at
     // most StartAttempts in all. A chain holds the mutex until it is disposed, so the chain of a failed try is disposed before
     // the next is made.
     private async Task<(TestCertificateChain Chain, IPEndPoint EndPoint, bool SentTheFiles, bool Builds)> ListenSendingAsync(
-        Func<TestCertificateChain, X509Certificate2> intermediate
+        Func<TestCertificateChain, X509Certificate2> intermediate,
+        SslProtocols protocols = SslProtocols.None,
+        ConcurrentQueue<(int Read, string ServerName)>? seen = null
     )
     {
         for (int attempt = 1; ; attempt++)
         {
             var chain = new TestCertificateChain(sentByServer: true);
-            (IPEndPoint endPoint, _) = chain.Listen(IPAddress.Loopback, [intermediate(chain)], _stop.Token);
-            (bool sent, bool builds, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{endPoint.Port}/"), _stop.Token);
-            if (builds || attempt == TestCertificateChain.StartAttempts)
+            var stop = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+            (IPEndPoint endPoint, Task served) = chain.Listen(IPAddress.Loopback, [intermediate(chain)], stop.Token, protocols, seen);
+            var url = new Uri($"https://127.0.0.1:{endPoint.Port}/");
+
+            // Whether the listener sends this intermediate is read by its thumbprint: a chain can build from the store's copy.
+            bool sendsIt = await chain.SendsAsync(url, intermediate(chain), _stop.Token);
+            (bool sent, bool builds, _) = await chain.ConnectAsync(url, _stop.Token);
+            if (sendsIt || attempt == TestCertificateChain.StartAttempts)
             {
+                Own(stop);
                 return (Own(chain), endPoint, sent, builds);
             }
 
+            // The listener of a try that is given up stops before its chain sweeps the stores and gives the mutex back.
+            await stop.CancelAsync();
+            await served;
+            stop.Dispose();
             chain.Dispose();
+            seen?.Clear();
         }
     }
 

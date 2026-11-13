@@ -32,12 +32,14 @@ public static class TlsChainSelfCheck
     /// </summary>
     /// <remarks>
     /// Nothing is checked, and no connection is made, on an operating system other than Windows or for a certificate without an
-    /// intermediate in its chain. An intermediate counts as sent when a certificate with its subject and its public key was sent.
+    /// intermediate in its chain. An intermediate counts as sent when that certificate was sent, or one with its subject and its
+    /// public key that is valid at the time of <paramref name="time"/>.
     /// </remarks>
     /// <param name="certificatePath">The certificate file, which the returned sentence names.</param>
     /// <param name="certificate">The server's certificate and the intermediates of the same file.</param>
     /// <param name="listening">The endpoint the https listener is bound to; a wildcard address is reached through loopback.</param>
-    /// <param name="time">The clock that counts <see cref="Limit"/>.</param>
+    /// <param name="time">The clock that counts <see cref="Limit"/> and against which a certificate sent in place of the file's is
+    /// checked for its period.</param>
     /// <param name="cancellationToken">Cancels the check.</param>
     /// <returns>
     /// <see langword="null"/> when every such intermediate was sent or nothing was checked; otherwise why the server must not go
@@ -67,7 +69,7 @@ public static class TlsChainSelfCheck
         }
 
         IPEndPoint target = Target(listening);
-        List<SentCertificate>? sent = null;
+        List<X509Certificate2>? sent = null;
         string? unfinished = null;
         using var limit = new CancellationTokenSource(Limit, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
@@ -99,7 +101,8 @@ public static class TlsChainSelfCheck
                             {
                                 // SslStream puts the certificates the server sent into the chain's ExtraStore
                                 // (CertificateValidationPal.GetRemoteCertificate, dotnet/runtime v10.0.15).
-                                sent = [.. (chain?.ChainPolicy.ExtraStore ?? []).Select(c => new SentCertificate(c))];
+                                // Copies: the chain and its certificates belong to SslStream, which disposes them.
+                                sent = [.. (chain?.ChainPolicy.ExtraStore ?? []).Select(c => X509CertificateLoader.LoadCertificate(c.RawData))];
                                 return true;
                             },
                         },
@@ -121,15 +124,28 @@ public static class TlsChainSelfCheck
             unfinished = "failed";
         }
 
-        // Only a whole handshake counts: the servers' listeners ask for no client certificate, so a handshake of their own that
-        // fails is not one that can be read.
-        if (sent is null || unfinished is not null)
+        List<X509Certificate2> missing;
+        try
         {
-            return $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{certificatePath}' did not "
-                + $"get an answer: the TLS handshake with {target} {unfinished}.";
+            // Only a whole handshake counts: the servers' listeners ask for no client certificate, so a handshake of their own
+            // that fails is not one that can be read.
+            if (sent is null || unfinished is not null)
+            {
+                return $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{certificatePath}' did "
+                    + $"not get an answer: the TLS handshake with {target} {unfinished ?? "failed"}.";
+            }
+
+            DateTimeOffset now = time.GetUtcNow();
+            missing = [.. expected.Where(e => !sent.Exists(s => StandsFor(s, e, now)))];
+        }
+        finally
+        {
+            foreach (X509Certificate2 copy in sent ?? [])
+            {
+                copy.Dispose();
+            }
         }
 
-        List<X509Certificate2> missing = [.. expected.Where(e => !sent.Exists(s => s.Is(e)))];
         if (missing.Count == 0)
         {
             return null;
@@ -141,10 +157,32 @@ public static class TlsChainSelfCheck
         // process changed the store, a read of it right after such a start missed the intermediate in 3 of 206 starts (design
         // §20.7, the V1d3a Grill).
         string names = string.Join(" and ", missing.Select(c => $"the intermediate CA certificate {c.Subject} (thumbprint {c.Thumbprint})"));
+        string these = missing.Count == 1 ? "the certificate" : "these certificates";
         return $"Windows left {names} of the TLS certificate '{certificatePath}' out of the first TLS handshake, and what that handshake "
-            + "sent stays for as long as this process runs. Start again; if this happens at every start, add the certificate to the "
+            + $"sent stays for as long as this process runs. Start again; if this happens at every start, add {these} to the "
             + "machine's Intermediate Certification Authorities store.";
     }
+
+    /// <summary>
+    /// Returns whether a certificate that the server sent stands for an intermediate of the file: it is that certificate, or it
+    /// has the same subject and public key and is valid at <paramref name="now"/>, as a renewed certificate of the same CA that
+    /// Windows takes from a store is.
+    /// </summary>
+    /// <remarks>
+    /// Such a certificate lets a client build a chain to the same root through the same CA. That the client accepts it is not
+    /// decided here: the client checks the chain, with its own time and rules.
+    /// </remarks>
+    internal static bool StandsFor(X509Certificate2 sent, X509Certificate2 expected, DateTimeOffset now) =>
+        string.Equals(sent.Thumbprint, expected.Thumbprint, StringComparison.Ordinal)
+        || (
+            SameNameAndKey(sent, expected)
+            && sent.NotBefore.ToUniversalTime() <= now.UtcDateTime
+            && now.UtcDateTime <= sent.NotAfter.ToUniversalTime()
+        );
+
+    private static bool SameNameAndKey(X509Certificate2 one, X509Certificate2 other) =>
+        one.SubjectName.RawData.AsSpan().SequenceEqual(other.SubjectName.RawData)
+        && one.PublicKey.ExportSubjectPublicKeyInfo().AsSpan().SequenceEqual(other.PublicKey.ExportSubjectPublicKeyInfo());
 
     // The intermediates of the file that stand in the chain of the server's certificate, without a self-issued one (a root,
     // which SChannel does not send). .NET decides what goes with the certificate the same way: a chain built with the file's
@@ -165,16 +203,18 @@ public static class TlsChainSelfCheck
         // The result of Build is not read: a chain that ends in a root this machine does not trust still names its links.
         _ = chain.Build(certificate.Certificate);
         var expected = new List<X509Certificate2>();
-        for (int i = 0; i < chain.ChainElements.Count; i++)
+
+        // The server's own certificate is never matched: the file's other certificates are CA certificates (V1c12 Q3).
+        foreach (X509ChainElement element in chain.ChainElements)
         {
-            using X509Certificate2 link = chain.ChainElements[i].Certificate;
-            if (i == 0 || link.SubjectName.RawData.AsSpan().SequenceEqual(link.IssuerName.RawData))
+            using X509Certificate2 link = element.Certificate;
+            if (link.SubjectName.RawData.AsSpan().SequenceEqual(link.IssuerName.RawData))
             {
                 continue;
             }
 
-            var role = new SentCertificate(link);
-            if (certificate.Intermediates.FirstOrDefault(role.Is) is X509Certificate2 fromFile)
+            // The chain may take the link from a store, where a renewed certificate of the same CA can stand.
+            if (certificate.Intermediates.FirstOrDefault(c => SameNameAndKey(c, link)) is X509Certificate2 fromFile)
             {
                 expected.Add(fromFile);
             }
@@ -187,15 +227,4 @@ public static class TlsChainSelfCheck
         listening.Address.Equals(IPAddress.Any) ? new IPEndPoint(IPAddress.Loopback, listening.Port)
         : listening.Address.Equals(IPAddress.IPv6Any) ? new IPEndPoint(IPAddress.IPv6Loopback, listening.Port)
         : listening;
-
-    // What makes a certificate the same link of a chain: its name and its key. A renewed or cross-signed intermediate that
-    // Windows sends in place of the file's has both, and a client builds the same chain with it.
-    private readonly struct SentCertificate(X509Certificate2 certificate)
-    {
-        private readonly byte[] _subject = certificate.SubjectName.RawData;
-        private readonly byte[] _key = certificate.PublicKey.ExportSubjectPublicKeyInfo();
-
-        public bool Is(X509Certificate2 other) =>
-            _subject.AsSpan().SequenceEqual(other.SubjectName.RawData) && _key.AsSpan().SequenceEqual(other.PublicKey.ExportSubjectPublicKeyInfo());
-    }
 }

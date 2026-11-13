@@ -107,13 +107,18 @@ internal sealed class TestService : IAsyncDisposable
     }
 
     /// <summary>Returns the host options; with <paramref name="log"/>, the log is written to it from Information up.</summary>
-    public ServiceHostOptions HostOptions(string? passphrase = Passphrase, ILoggerProvider? log = null) =>
+    public ServiceHostOptions HostOptions(
+        string? passphrase = Passphrase,
+        ILoggerProvider? log = null,
+        Func<IPEndPoint, IPEndPoint>? selfCheckTarget = null
+    ) =>
         new()
         {
             Time = Time,
             Environment = name => name == ServiceSettings.SigningPassphraseVariable ? passphrase : null,
             MinimumLogLevel = log is null ? LogLevel.Warning : LogLevel.Information,
             LoggerProvider = log,
+            SelfCheckTarget = selfCheckTarget,
         };
 
     public async Task<ElmService> StartAsync(Func<ServiceSettings, ServiceSettings>? change = null, ILoggerProvider? log = null)

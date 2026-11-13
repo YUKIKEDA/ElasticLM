@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
@@ -57,38 +58,61 @@ internal sealed class TestCertificateChain : IDisposable
     /// Whether a test starts a server that sends the intermediate, which changes the CA store on Windows: the chain then waits
     /// for the mutex of such tests and holds it until <see cref="Dispose"/> has swept the stores.
     /// </param>
-    public TestCertificateChain(bool sentByServer = false)
+    /// <param name="upper">
+    /// Whether another intermediate CA stands between the root and <see cref="Intermediate"/>: <see cref="UpperIntermediate"/>.
+    /// </param>
+    public TestCertificateChain(bool sentByServer = false, bool upper = false)
     {
-        DateTimeOffset now = TimeProvider.System.GetUtcNow();
-        DateTimeOffset notBefore = now.AddDays(-1);
-        DateTimeOffset notAfter = now.AddDays(30);
-        string name = SubjectPrefix + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
-
-        using ECDsa rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var rootRequest = new CertificateRequest(name + " root", rootKey, HashAlgorithmName.SHA256);
-        AddAuthority(rootRequest, pathLength: 1);
-        Root = rootRequest.CreateSelfSigned(notBefore, notAfter);
-
-        using ECDsa intermediateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        var intermediateRequest = new CertificateRequest(name + " intermediate", intermediateKey, HashAlgorithmName.SHA256);
-        AddAuthority(intermediateRequest, pathLength: 0);
-        intermediateRequest.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(Root, true, false));
-        using (X509Certificate2 signed = intermediateRequest.Create(Root, notBefore, notAfter, RandomNumberGenerator.GetBytes(16)))
-        {
-            Intermediate = signed.CopyWithPrivateKey(intermediateKey);
-        }
-
-        IntermediateRenewed = intermediateRequest.Create(Root, notBefore.AddHours(1), notAfter, RandomNumberGenerator.GetBytes(16));
-
-        _serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        Server = Leaf("CN=127.0.0.1", _serverKey, Intermediate, notBefore, notAfter, basicConstraints: true);
-        _otherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        Other = Leaf("CN=another server", _otherKey, Intermediate, notBefore, notAfter, basicConstraints: true);
-        using ECDsa unconstrainedKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
-        Unconstrained = Leaf("CN=no basic constraints", unconstrainedKey, Intermediate, notBefore, notAfter, basicConstraints: false);
-
-        // Last, so that a constructor that throws holds no mutex.
+        // The mutex first, so no key or certificate is made by a chain that waits for it in vain; a constructor that throws
+        // after it gives it back.
         _storeLock = sentByServer && OperatingSystem.IsWindows() ? new StoreLock() : null;
+        try
+        {
+            DateTimeOffset now = TimeProvider.System.GetUtcNow();
+            DateTimeOffset notBefore = now.AddDays(-1);
+            DateTimeOffset notAfter = now.AddDays(30);
+            string name = SubjectPrefix + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
+
+            using ECDsa rootKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var rootRequest = new CertificateRequest(name + " root", rootKey, HashAlgorithmName.SHA256);
+            AddAuthority(rootRequest, pathLength: upper ? 2 : 1);
+            Root = rootRequest.CreateSelfSigned(notBefore, notAfter);
+
+            X509Certificate2 issuer = Root;
+            using ECDsa upperKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            if (upper)
+            {
+                var upperRequest = new CertificateRequest(name + " upper intermediate", upperKey, HashAlgorithmName.SHA256);
+                AddAuthority(upperRequest, pathLength: 1);
+                upperRequest.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(Root, true, false));
+                using X509Certificate2 signed = upperRequest.Create(Root, notBefore, notAfter, RandomNumberGenerator.GetBytes(16));
+                UpperIntermediate = signed.CopyWithPrivateKey(upperKey);
+                issuer = UpperIntermediate;
+            }
+
+            using ECDsa intermediateKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            var intermediateRequest = new CertificateRequest(name + " intermediate", intermediateKey, HashAlgorithmName.SHA256);
+            AddAuthority(intermediateRequest, pathLength: 0);
+            intermediateRequest.CertificateExtensions.Add(X509AuthorityKeyIdentifierExtension.CreateFromCertificate(issuer, true, false));
+            using (X509Certificate2 signed = intermediateRequest.Create(issuer, notBefore, notAfter, RandomNumberGenerator.GetBytes(16)))
+            {
+                Intermediate = signed.CopyWithPrivateKey(intermediateKey);
+            }
+
+            IntermediateRenewed = intermediateRequest.Create(issuer, notBefore.AddHours(1), notAfter, RandomNumberGenerator.GetBytes(16));
+
+            _serverKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            Server = Leaf("CN=127.0.0.1", _serverKey, Intermediate, notBefore, notAfter, basicConstraints: true);
+            _otherKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            Other = Leaf("CN=another server", _otherKey, Intermediate, notBefore, notAfter, basicConstraints: true);
+            using ECDsa unconstrainedKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+            Unconstrained = Leaf("CN=no basic constraints", unconstrainedKey, Intermediate, notBefore, notAfter, basicConstraints: false);
+        }
+        catch
+        {
+            _storeLock?.Dispose();
+            throw;
+        }
     }
 
     /// <summary>Gets the root CA, which only the client trusts.</summary>
@@ -96,6 +120,9 @@ internal sealed class TestCertificateChain : IDisposable
 
     /// <summary>Gets the intermediate CA, which the server must send.</summary>
     public X509Certificate2 Intermediate { get; }
+
+    /// <summary>Gets the intermediate CA between the root and <see cref="Intermediate"/>, for a chain made with one.</summary>
+    public X509Certificate2? UpperIntermediate { get; }
 
     /// <summary>
     /// Gets another certificate of the intermediate CA, as a CA's renewed certificate is: the same name and key, another serial
@@ -216,8 +243,19 @@ internal sealed class TestCertificateChain : IDisposable
     /// <param name="address">The address to listen on.</param>
     /// <param name="intermediates">The certificates to send after the server's.</param>
     /// <param name="cancellationToken">Stops the listener.</param>
+    /// <param name="protocols">The TLS versions the listener allows; <see cref="SslProtocols.None"/> lets the system choose.</param>
+    /// <param name="seen">
+    /// Gets, for each handshake that ended, the bytes read after it (up to 16; 0 when the client sent nothing more and closed,
+    /// -1 when the read failed because the client had closed) and the server name the client sent (empty when it sent none).
+    /// </param>
     /// <returns>The endpoint, and the listener's work, which ends when <paramref name="cancellationToken"/> is cancelled.</returns>
-    public (IPEndPoint EndPoint, Task Served) Listen(IPAddress address, X509Certificate2[] intermediates, CancellationToken cancellationToken)
+    public (IPEndPoint EndPoint, Task Served) Listen(
+        IPAddress address,
+        X509Certificate2[] intermediates,
+        CancellationToken cancellationToken,
+        SslProtocols protocols = SslProtocols.None,
+        ConcurrentQueue<(int Read, string ServerName)>? seen = null
+    )
     {
         var listener = new TcpListener(address, 0);
         listener.Start();
@@ -242,14 +280,25 @@ internal sealed class TestCertificateChain : IDisposable
                             {
                                 ServerCertificate = context is null ? alone.Certificate : null,
                                 ServerCertificateContext = context,
-                                EnabledSslProtocols = SslProtocols.None,
+                                EnabledSslProtocols = protocols,
                                 CertificateRevocationCheckMode = X509RevocationMode.NoCheck,
                             },
                             cancellationToken
                         );
 
-                        // The client closes first; the read returns 0 then.
-                        _ = await tls.ReadAsync(new byte[1], cancellationToken);
+                        // A client that sends nothing after the handshake closes first; the read returns 0 then, or, when the
+                        // client closed while the listener's session tickets were on their way (TLS 1.3), throws: -1.
+                        int read;
+                        try
+                        {
+                            read = await tls.ReadAsync(new byte[16], cancellationToken);
+                        }
+                        catch (IOException)
+                        {
+                            read = -1;
+                        }
+
+                        seen?.Enqueue((read, tls.TargetHostName));
                     }
                     catch (Exception e) when (e is IOException or AuthenticationException)
                     {
@@ -278,6 +327,23 @@ internal sealed class TestCertificateChain : IDisposable
     /// </remarks>
     public async Task<(bool Sent, bool Builds, string? Presented)> ConnectAsync(Uri url, CancellationToken cancellationToken)
     {
+        (bool sent, bool builds, string? presented, _) = await HandshakeAsync(url, null, cancellationToken);
+        return (sent, builds, presented);
+    }
+
+    /// <summary>
+    /// Connects to the server over TLS and returns whether it sent the given certificate (by thumbprint).
+    /// </summary>
+    public async Task<bool> SendsAsync(Uri url, X509Certificate2 certificate, CancellationToken cancellationToken) =>
+        (await HandshakeAsync(url, certificate, cancellationToken)).SentThat;
+
+    private async Task<(bool Sent, bool Builds, string? Presented, bool SentThat)> HandshakeAsync(
+        Uri url,
+        X509Certificate2? that,
+        CancellationToken cancellationToken
+    )
+    {
+        bool sentThat = false;
         bool sent = false;
         bool builds = false;
         string? thumbprint = null;
@@ -292,6 +358,7 @@ internal sealed class TestCertificateChain : IDisposable
                 {
                     X509Certificate2Collection received = chain?.ChainPolicy.ExtraStore ?? [];
                     sent = received.Cast<X509Certificate2>().Any(c => c.Thumbprint == Intermediate.Thumbprint);
+                    sentThat = that is not null && received.Cast<X509Certificate2>().Any(c => c.Thumbprint == that.Thumbprint);
                     using var check = new X509Chain();
                     check.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
                     check.ChainPolicy.CustomTrustStore.Add(Root);
@@ -305,7 +372,7 @@ internal sealed class TestCertificateChain : IDisposable
             },
             cancellationToken
         );
-        return (sent, builds, thumbprint);
+        return (sent, builds, thumbprint, sentThat);
     }
 
     /// <summary>
@@ -340,6 +407,7 @@ internal sealed class TestCertificateChain : IDisposable
         {
             _storeLock?.Dispose();
             Root.Dispose();
+            UpperIntermediate?.Dispose();
             Intermediate.Dispose();
             IntermediateRenewed.Dispose();
             Server.Dispose();
@@ -366,15 +434,25 @@ internal sealed class TestCertificateChain : IDisposable
             X509Certificate2Collection all = store.Certificates;
             try
             {
-                X509Certificate2[] ours = [.. all.Where(c => c.Subject.StartsWith(SubjectPrefix, StringComparison.Ordinal))];
-                if (ours.Length == 0)
-                {
-                    return;
-                }
-
+                X509Certificate2[] ours = [.. all.Where(IsOurs)];
+                int removed = 0;
                 foreach (X509Certificate2 certificate in ours)
                 {
-                    store.Remove(certificate);
+                    try
+                    {
+                        store.Remove(certificate);
+                        removed++;
+                    }
+                    catch (CryptographicException)
+                    {
+                        // The user's store also lists the machine's certificates, and removing one of those through it is
+                        // refused. They are the machine's to remove, which the sweep of the machine's store did or could not.
+                    }
+                }
+
+                if (removed == 0)
+                {
+                    return;
                 }
             }
             finally
@@ -386,6 +464,12 @@ internal sealed class TestCertificateChain : IDisposable
             }
         }
     }
+
+    // The names of this run's chains, and the two names that every chain had before V1d3a, whose certificates earlier runs
+    // left in the stores (21 of them in the measurement of design §20.7, the V1d3a Grill).
+    private static bool IsOurs(X509Certificate2 certificate) =>
+        certificate.Subject.StartsWith(SubjectPrefix, StringComparison.Ordinal)
+        || certificate.Subject is "CN=ElasticLM test root" or "CN=ElasticLM test intermediate";
 
     private static void AddAuthority(CertificateRequest request, int pathLength)
     {
@@ -435,6 +519,7 @@ internal sealed class TestCertificateChain : IDisposable
         private readonly ManualResetEventSlim _release = new();
         private readonly Thread _holder;
         private bool _taken;
+        private Exception? _failure;
 
         public StoreLock()
         {
@@ -444,7 +529,15 @@ internal sealed class TestCertificateChain : IDisposable
             if (!_taken)
             {
                 _holder.Join();
-                throw new TimeoutException($"The mutex '{Name}' of the tests that change the Windows CA stores was not free within {Wait}.");
+                _decided.Dispose();
+                _release.Dispose();
+                throw _failure is null
+                    ? new TimeoutException($"The mutex '{Name}' of the tests that change the Windows CA stores was not free within {Wait}.")
+                    : new InvalidOperationException(
+                        $"The mutex '{Name}' of the tests that change the Windows CA stores cannot be opened or taken, for example because "
+                            + "a process that runs as administrator made it.",
+                        _failure
+                    );
             }
         }
 
@@ -456,24 +549,44 @@ internal sealed class TestCertificateChain : IDisposable
             _release.Dispose();
         }
 
+        // Every exception is kept for the constructor: one that left this thread would end the test host.
         private void Hold()
         {
-            using var mutex = new Mutex(initiallyOwned: false, Name);
+            Mutex? mutex = null;
             try
             {
-                _taken = mutex.WaitOne(Wait);
+                mutex = new Mutex(initiallyOwned: false, Name);
+                try
+                {
+                    _taken = mutex.WaitOne(Wait);
+                }
+                catch (AbandonedMutexException)
+                {
+                    // A test process ended while it held the mutex; this thread holds it now.
+                    _taken = true;
+                }
             }
-            catch (AbandonedMutexException)
+            catch (Exception e)
             {
-                // A test process ended while it held the mutex; this thread holds it now.
-                _taken = true;
+                _failure = e;
             }
 
             _decided.Set();
-            if (_taken)
+            try
             {
-                _release.Wait();
-                mutex.ReleaseMutex();
+                if (_taken)
+                {
+                    _release.Wait();
+                    mutex!.ReleaseMutex();
+                }
+            }
+            catch (Exception e) when (e is ApplicationException or ObjectDisposedException)
+            {
+                // Released already, or the process is ending; nothing waits for this thread's answer any more.
+            }
+            finally
+            {
+                mutex?.Dispose();
             }
         }
     }

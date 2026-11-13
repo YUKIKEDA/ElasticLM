@@ -32,6 +32,10 @@ internal sealed class ServiceHostOptions
 
     /// <summary>Gets one more logger provider, which the host disposes with itself, for tests that read the host's log.</summary>
     public ILoggerProvider? LoggerProvider { get; init; }
+
+    /// <summary>Gets a replacement for the endpoint that the check of the intermediates connects to (design §13.5), for tests
+    /// of a check that gets no answer; <see langword="null"/> connects to the service's own listener.</summary>
+    public Func<IPEndPoint, IPEndPoint>? SelfCheckTarget { get; init; }
 }
 
 /// <summary>
@@ -80,6 +84,10 @@ internal sealed partial class ElmService : IAsyncDisposable
     private IReadOnlyList<Uri> _publicUrls = [];
     private bool _stopped;
     private bool _disposed;
+
+    // design §13.5, §14.8 (V1d3a): false until the start has completed. Kestrel serves from app.StartAsync on, and a start
+    // can still stop after it (the check of the intermediates), so until then every request is cut without an answer.
+    private volatile bool _started;
 
     private ElmService(
         WebApplication app,
@@ -243,7 +251,9 @@ internal sealed partial class ElmService : IAsyncDisposable
             // closes the listener, as after a failure to listen.
             if (
                 tls is not null
-                && await TlsChainSelfCheck.RunAsync(settings.TlsCertificate!, tls, listening(), host.Time, cancellationToken).ConfigureAwait(false)
+                && await TlsChainSelfCheck
+                    .RunAsync(settings.TlsCertificate!, tls, host.SelfCheckTarget?.Invoke(listening()) ?? listening(), host.Time, cancellationToken)
+                    .ConfigureAwait(false)
                     is string unsent
             )
             {
@@ -251,6 +261,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             }
 
             service.AfterStart(applied, host.Time.GetElapsedTime(started));
+            service._started = true;
             return service;
         }
         catch

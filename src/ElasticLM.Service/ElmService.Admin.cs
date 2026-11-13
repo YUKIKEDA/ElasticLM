@@ -104,6 +104,7 @@ internal sealed partial class ElmService
 
     private void MapAdmin()
     {
+        _app.Use(StartGateAsync);
         _app.Use(GuardAsync);
         if (_settings.Oidc is not null)
         {
@@ -144,6 +145,19 @@ internal sealed partial class ElmService
 
     // design §14.7: every request is limited per source before authentication, devices and administrators in separate
     // buckets; an authenticated one also per API key or installation key.
+    // No answer before the start has completed, as before listening: a start that stops after this request leaves no record
+    // of it (design §14.8, V1d3a).
+    private async Task StartGateAsync(HttpContext context, RequestDelegate next)
+    {
+        if (!_started)
+        {
+            context.Abort();
+            return;
+        }
+
+        await next(context).ConfigureAwait(false);
+    }
+
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         PathString path = context.Request.Path;

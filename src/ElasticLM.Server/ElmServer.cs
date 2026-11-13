@@ -39,6 +39,10 @@ internal sealed class ServerHostOptions
 
     /// <summary>Gets one more logger provider, which the host disposes with itself, for tests that read the host's log.</summary>
     public ILoggerProvider? LoggerProvider { get; init; }
+
+    /// <summary>Gets a replacement for the endpoint that the check of the intermediates connects to (design §13.5), for tests
+    /// of a check that gets no answer; <see langword="null"/> connects to the server's own listener.</summary>
+    public Func<IPEndPoint, IPEndPoint>? SelfCheckTarget { get; init; }
 }
 
 /// <summary>
@@ -98,6 +102,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private IReadOnlyList<Uri> _publicUrls;
     private bool _stopped;
     private bool _disposed;
+
+    // design §13.1, §13.5 (V1d3a): false until the start has completed. Kestrel serves from app.StartAsync on, and a start
+    // can still stop after it (the check of the intermediates), so until then every request is cut without an answer.
+    private volatile bool _started;
 
     private ElmServer(Parts parts)
     {
@@ -358,7 +366,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
             // The catch below disposes the host, which closes both listeners, as after a failure to listen.
             if (
                 settings.TlsCertificate is string checkedPath
-                && await TlsChainSelfCheck.RunAsync(checkedPath, certificate, listening(), host.Time, cancellationToken).ConfigureAwait(false)
+                && await TlsChainSelfCheck
+                    .RunAsync(checkedPath, certificate, host.SelfCheckTarget?.Invoke(listening()) ?? listening(), host.Time, cancellationToken)
+                    .ConfigureAwait(false)
                     is string unsent
             )
             {
@@ -366,6 +376,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             }
 
             server.AfterStart(host.Time.GetElapsedTime(started));
+            server._started = true;
             await server.RestartActivationAsync().ConfigureAwait(false);
             return server;
         }
@@ -945,6 +956,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
     private void Map()
     {
+        _app.Use(StartGateAsync);
         _app.Use(GuardAsync);
         _app.MapGet("/v1/nonce", (RequestDelegate)NonceAsync);
         _app.MapGet("/v1/server/license", (RequestDelegate)ServerLicenseAsync);
@@ -959,6 +971,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
     // lease protocol only on the https one (design §13.7). A request is not taken for an administration request because it
     // came without TLS: a listener added through configuration has no TLS either. The IP rules and the rate limit come
     // before any other work of the lease protocol (design §13.8, T16).
+    private async Task StartGateAsync(HttpContext context, RequestDelegate next)
+    {
+        if (!_started)
+        {
+            // No answer, as before listening: a start that stops after this request leaves no record of it.
+            context.Abort();
+            return;
+        }
+
+        await next(context).ConfigureAwait(false);
+    }
+
     private async Task GuardAsync(HttpContext context, RequestDelegate next)
     {
         // Routing matches a path without regard to case, so the guard does too: "/Admin/v1/status" is an administration
