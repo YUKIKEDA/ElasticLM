@@ -242,7 +242,7 @@ sidebar_position: 7
 | `client` | オブジェクト | いいえ | `{"host": <string>, "user": <string>}`。ホスト名と OS のユーザー名だ。どちらの項目も必須で、255 バイト以下の文字列にする。ポリシーの `clientInfoStrategy` が `hostAndUser` のときだけ保存し、それ以外は無視する。 |
 | `app` | 文字列 | いいえ | アプリのバージョン。64 バイト以下。 |
 
-レスポンスには、アクティベーション ID とライセンスファイルが入る。ライセンスファイルは `.elmlic` ファイルと同じ JSON だ（[ライセンスファイル](../explanation/license-files-and-verification.md#ライセンスファイル)を参照）。トークンはアクティベーション ID を持たないので、クライアントは ID をファイルと一緒に保存する。ここでは、トークンと証明書を `eyJ…` に縮めている。
+レスポンスには、アクティベーション ID とライセンスファイルが入る。ライセンスファイルは `.elmlic` ファイルと同じ JSON だ（[ライセンスファイル](../explanation/license-files-and-verification.md#ライセンスファイル)を参照）。ライセンストークンは、同じ ID を `act` に持ち、応えたリクエストの ID を `areq` に持つ。`areq` はこのリクエストの `jti` で、レスポンスが失われたあとに送り直したリクエストでは以前のリクエストの `jti` だ（[ライセンストークン](formats.md#ライセンストークン-elm-licensejws)を参照）。ここでは、トークンと証明書を `eyJ…` に縮めている。
 
 ```json
 {
@@ -265,6 +265,8 @@ sidebar_position: 7
 | `403` | `ELM_LICENSE_REVOKED`、`ELM_LICENSE_SUSPENDED`、`ELM_EXPIRED` | ライセンスが失効しているか、一時停止中か、期限切れだ。 |
 | `409` | `ELM_CLONE_DETECTED` | `cloneStrategy` が `deny` のときに、同じインストール鍵が誤った `seq` でもう一度アクティベーションした。または、そのアクティベーションが止まっている。 |
 | `409` | `ELM_ACTIVATION_LIMIT` | 新しいアクティベーションで、ライセンスのアクティベーションがすでに `maxActivations` 件ある。 |
+
+クライアントがアクティベーション、トークンの更新、トライアルのレスポンスのファイルを保存するのは、そのファイルがこのインストールで検証に通り、リクエストへのレスポンスであるときだけだ。トークンの `act` が `activationId` と同じで、トークンの更新では `act` が保持しているアクティベーションであり `seq` が保持している値より大きく、`areq` がこのリクエストの `jti` か、リクエストの `retry` にある `jti` でなければならない。そうでなければ、クライアントは保持しているものを変えず、リクエストの `jti` を次の `retry` のために残して、`ELM_REQUEST_MISMATCH` を返す。通信経路の途中にいる中継が、別のリクエストへの本物のレスポンスを返すと、このエラーになる。
 
 ### `POST /v1/activations/{id}/refresh`
 

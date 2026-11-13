@@ -4,6 +4,7 @@ using System.Text.Json;
 using ElasticLM.Cli;
 using ElasticLM.Client;
 using ElasticLM.Licensing;
+using ElasticLM.Native.Tests;
 using ElasticLM.Service;
 using ElasticLM.Service.Tests;
 using Microsoft.Extensions.Logging;
@@ -104,6 +105,85 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.True(code == 0, error);
         Assert.True(File.Exists(hand));
         Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
+    }
+
+    /// <summary>
+    /// The server's own refresh, answered by a relay on the path with the service's genuine answer to an earlier refresh,
+    /// keeps the license in use and logs ELM_REQUEST_MISMATCH; the next refresh through the service goes on from it (design
+    /// §12.6.2, §13.7, V1d5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy (tokens of 2 hours, refresh window 1 hour) whose public URL is a relay that keeps
+    ///   the answer of the last refresh it passed on.
+    ///
+    /// Steps:
+    /// - Start a server with no license, which makes its key; activate and refresh with elm server through the relay (it
+    ///   keeps the answer of sequence 2); start a server with service.url set to the relay; have the relay answer the next refresh with the kept answer; move the clock a minute at
+    ///   a time until the relay replayed; seal and read the usage log; move the clock until the server refreshes again.
+    ///
+    /// Expected:
+    /// - The server starts with sequence 2; after the replay the server still uses sequence 2, the kept activation is at
+    ///   sequence 2 with one request in its retry list, and the usage log has license.refresh_failed with stage service and
+    ///   ELM_REQUEST_MISMATCH; the next refresh brings sequence 3.
+    /// </remarks>
+    [Fact]
+    public async Task OwnRefresh_ReplayedAnswerOfAnotherRequest_KeepsTheLicenseAndLogsTheMismatch()
+    {
+        await using ReplayingRelay relay = await ReplayingRelay.StartAsync(path => path.EndsWith("/refresh", StringComparison.Ordinal));
+        (TestService test, ElmService service, string key) = await ServiceAsync(
+            "\"tokenLifetime\":7200,\"refreshWindow\":3600",
+            s => s with { PublicUrls = [relay.Url] }
+        );
+        relay.Target = service.Url;
+        string folder = _deployment.NewFolder();
+        string license = Path.Combine(folder, "server.elmlic");
+        string[] through = [.. Common(folder), "--service", relay.Url.ToString(), "--license", license];
+        ServerSettings settings = Settings(test, folder) with { ServiceUrl = relay.Url };
+        await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+        (int code, _, string error) = Run(test, ["server", "activate", key, .. through]);
+        Assert.True(code == 0, error);
+        (code, _, error) = Run(test, ["server", "refresh", .. through]);
+        Assert.True(code == 0, error);
+
+        ElmServer server = await StartAsync(test, settings);
+        Assert.Equal(2L, server.Engine.Server.License.Sequence);
+        relay.ReplayToNext();
+        for (int minute = 0; minute < 61 && relay.Replayed == 0; minute++)
+        {
+            test.Time.Advance(TimeSpan.FromMinutes(1));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        // Lines reach the disk when they are sealed (design §18.1), so the log is sealed until the line is there.
+        bool logged = false;
+        using (HttpClient seal = Deployment.AdminHttp(server))
+        {
+            for (int i = 0; i < 100 && !logged; i++)
+            {
+                (await seal.PostAsync("admin/v1/log/seal", null, TestContext.Current.CancellationToken)).Dispose();
+                logged = UsageLines(folder)
+                    .Any(l =>
+                        l.Contains("\"license.refresh_failed\"", StringComparison.Ordinal)
+                        && l.Contains("\"stage\":\"service\"", StringComparison.Ordinal)
+                        && l.Contains("\"code\":\"ELM_REQUEST_MISMATCH\"", StringComparison.Ordinal)
+                    );
+                await Task.Delay(50, TestContext.Current.CancellationToken);
+            }
+        }
+
+        Assert.True(logged, "No license.refresh_failed line with ELM_REQUEST_MISMATCH.");
+        StoredActivation kept = new ActivationStore(folder, test.Time).Read(out _)!;
+        Assert.Equal((2L, 2L, 1), (server.Engine.Server.License.Sequence, kept.Seq, kept.Retry.Count));
+
+        for (int minute = 0; minute < 61 && server.Engine.Server.License.Sequence != 3; minute++)
+        {
+            test.Time.Advance(TimeSpan.FromMinutes(1));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        await Deployment.WaitUntilAsync(() => server.Engine.Server.License.Sequence == 3);
+        Assert.Equal(1, relay.Replayed);
     }
 
     /// <summary>
@@ -1040,12 +1120,15 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     }
 
     // elm-service with product acme-cad (feature pro) and a server policy, and a license key of it.
-    private async Task<(TestService Test, ElmService Service, string Key)> ServiceAsync(string members)
+    private async Task<(TestService Test, ElmService Service, string Key)> ServiceAsync(
+        string members,
+        Func<ServiceSettings, ServiceSettings>? change = null
+    )
     {
         var test = new TestService();
         _owned.Add(test);
         string owner = await test.SetupAsync();
-        ElmService service = await test.StartAsync();
+        ElmService service = await test.StartAsync(change);
         HttpClient admin = test.Http(service, owner);
         string product = (await TestService.CreatedAsync(admin, "v1/admin/products", $$"""{"code":"{{Product}}","name":"cad"}"""))
             .GetProperty("id")

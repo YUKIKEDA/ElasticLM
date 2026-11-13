@@ -1111,6 +1111,91 @@ public sealed class LicenseVerifierTests : IDisposable
     }
 
     /// <summary>
+    /// The request a license token answers (areq) and its activation (act) are optional, and when present have their form:
+    /// areq 1 to 64 characters, act a UUID with hyphens (design §8.4.2, §8.6, V1d5a). A token without them, as one issued by
+    /// hand or kept before they were issued, verifies.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Correctly signed payloads: without areq and act; with areq of 1 and of 64 characters and act a UUID; with areq
+    ///   null; with areq empty, of 65 characters, or a number; with act empty, of 36 characters that are not a UUID, a UUID
+    ///   without hyphens, or a number.
+    ///
+    /// Steps:
+    /// - Verify each.
+    ///
+    /// Expected:
+    /// - Valid for the first four, with AnsweredRequestId and ActivationId the claims (null when absent); ELM_MALFORMED for
+    ///   the others.
+    /// </remarks>
+    [Theory]
+    [InlineData("none", true)]
+    [InlineData("areq-one", true)]
+    [InlineData("areq-longest", true)]
+    [InlineData("areq-null", true)]
+    [InlineData("areq-empty", false)]
+    [InlineData("areq-long", false)]
+    [InlineData("areq-number", false)]
+    [InlineData("act-empty", false)]
+    [InlineData("act-not-uuid", false)]
+    [InlineData("act-without-hyphens", false)]
+    [InlineData("act-number", false)]
+    public void Verify_AnswerClaims_HaveTheirForm(string kind, bool valid)
+    {
+        const string Activation = "01a0f4c2-c400-75cb-b06c-028a0f832d89";
+        JsonObject license = _issuer.LicensePayload();
+        if (kind != "none")
+        {
+            license["areq"] = "proof-1";
+            license["act"] = Activation;
+        }
+
+        switch (kind)
+        {
+            case "areq-one":
+                license["areq"] = "p";
+                break;
+            case "areq-longest":
+                license["areq"] = new string('p', 64);
+                break;
+            case "areq-null":
+                license["areq"] = null;
+                break;
+            case "areq-empty":
+                license["areq"] = string.Empty;
+                break;
+            case "areq-long":
+                license["areq"] = new string('p', 65);
+                break;
+            case "areq-number":
+                license["areq"] = 7;
+                break;
+            case "act-empty":
+                license["act"] = string.Empty;
+                break;
+            case "act-not-uuid":
+                license["act"] = new string('x', 36);
+                break;
+            case "act-without-hyphens":
+                license["act"] = Activation.Replace("-", string.Empty, StringComparison.Ordinal);
+                break;
+            case "act-number":
+                license["act"] = 7;
+                break;
+        }
+
+        LicenseVerificationResult result = _issuer.Verifier().Verify(_issuer.File(license), _issuer.Requirement(version: null));
+        if (!valid)
+        {
+            AssertError(ErrorCode.Malformed, result);
+            return;
+        }
+
+        VerifiedLicense verified = Assert.IsType<LicenseVerificationResult.Valid>(result).License;
+        Assert.Equal((license["areq"]?.GetValue<string>(), license["act"]?.GetValue<string>()), (verified.AnsweredRequestId, verified.ActivationId));
+    }
+
+    /// <summary>
     /// A JSON null anywhere in the file, the header, the payload, or a certificate is rejected as a result, never as an
     /// exception (review of PR #8).
     /// </summary>

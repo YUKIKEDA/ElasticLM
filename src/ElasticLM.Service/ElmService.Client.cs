@@ -226,9 +226,10 @@ internal sealed partial class ElmService
             await scope.UpdateLicenseAsync(license, device.Aborted).ConfigureAwait(false);
         }
 
-        byte[] file = IssueFile(license, policy, product, device.KeyId, request.Fingerprints, 1, offline?.Nonce);
+        Guid id = Guid.CreateVersion7(now);
+        byte[] file = IssueFile(license, policy, product, device.KeyId, request.Fingerprints, 1, id, device.RequestId);
         var activation = new ActivationRow(
-            Guid.CreateVersion7(now),
+            id,
             license.Id,
             device.KeyId,
             device.Key.Q.X!,
@@ -500,9 +501,10 @@ internal sealed partial class ElmService
             at
         );
         ClientInfo? client = policy.ClientInfoStrategy == "hostAndUser" ? request.Client : null;
-        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1, null);
+        Guid activationId = Guid.CreateVersion7(now);
+        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1, activationId, proof.ProofId);
         var activation = new ActivationRow(
-            Guid.CreateVersion7(now),
+            activationId,
             license.Id,
             proof.KeyId,
             proof.Key.Q.X!,
@@ -570,7 +572,7 @@ internal sealed partial class ElmService
             LastProof = device.RequestId,
             UpdatedAt = at,
         };
-        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq, offlineNonce);
+        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq, next.Id, next.LastProof);
         next = next with { LastFile = file };
         await scope.UpdateActivationAsync(next, device.Aborted).ConfigureAwait(false);
         if (reactivated)
@@ -705,7 +707,9 @@ internal sealed partial class ElmService
     }
 
     // design §8.4.2: the token of an activation; its expiry is the earlier of TokenLifetime and the license's (Round 1 of the
-    // M4b Grill), and every member follows the policy and the license as they are now (decision 0.68).
+    // M4b Grill), and every member follows the policy and the license as they are now (decision 0.68). It names the activation
+    // and the request it answers, the one the activation keeps as LastProof, so a client can tell it from an answer to another
+    // request (V1d5a).
     private byte[] IssueFile(
         LicenseRow license,
         PolicyRow policy,
@@ -713,7 +717,8 @@ internal sealed partial class ElmService
         string keyId,
         IReadOnlyList<string> fingerprints,
         long seq,
-        string? offlineNonce
+        Guid activationId,
+        string requestId
     )
     {
         long now = Time.GetUtcNow().ToUnixTimeSeconds();
@@ -759,7 +764,8 @@ internal sealed partial class ElmService
             BorrowReturnLimit = server ? (int)policy.BorrowReturnLimit : null,
             CloneStrategy = server ? (policy.CloneStrategy == "flag" ? CloneStrategy.Flag : CloneStrategy.Deny) : null,
             Metadata = Licenses.LoadMeta(license.Meta),
-            OfflineRequestNonce = offlineNonce,
+            AnsweredRequestId = requestId,
+            ActivationId = activationId.ToString("D"),
         };
 
         // Checked with the service's own trust store before it is returned, as the CLI does (design §16). The issuer refuses

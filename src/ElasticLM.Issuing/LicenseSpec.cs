@@ -65,8 +65,14 @@ public sealed record LicenseSpec
     /// <summary>Gets the activation sequence number (design §10.4), or <see langword="null"/> for manual issuance.</summary>
     public long? Sequence { get; init; }
 
-    /// <summary>Gets the nonce of the offline request answered (design §12.8), or <see langword="null"/>.</summary>
-    public string? OfflineRequestNonce { get; init; }
+    /// <summary>Gets the ID of the request an activation's token answers (<c>areq</c>, design §8.4.2): the <c>jti</c> of an
+    /// online request's proof or the nonce of an offline request, 1 to 64 characters; or <see langword="null"/> for manual
+    /// issuance.</summary>
+    public string? AnsweredRequestId { get; init; }
+
+    /// <summary>Gets the ID of the activation that issues the token (<c>act</c>, design §8.4.2), a UUID with hyphens; or
+    /// <see langword="null"/> for manual issuance.</summary>
+    public string? ActivationId { get; init; }
 
     /// <summary>Gets the lease duration; required for server licenses.</summary>
     public TimeSpan? LeaseDuration { get; init; }

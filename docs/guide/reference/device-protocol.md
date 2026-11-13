@@ -242,7 +242,7 @@ Activates the installation for a license, or activates the same installation key
 | `client` | object | no | `{"host": <string>, "user": <string>}`: the host name and OS user name. Both members are required strings of at most 255 bytes. Kept only when the policy's `clientInfoStrategy` is `hostAndUser`; otherwise ignored. |
 | `app` | string | no | The app's version, at most 64 bytes. |
 
-The answer holds the activation ID and the license file, the same JSON as a `.elmlic` file (see [The license file](../explanation/license-files-and-verification.md#the-license-file)). The client keeps the ID with the file, because the token does not carry it. Tokens and certificates are shortened to `eyJ…` here:
+The answer holds the activation ID and the license file, the same JSON as a `.elmlic` file (see [The license file](../explanation/license-files-and-verification.md#the-license-file)). The license token carries the same ID in `act`, and the ID of the request it answers in `areq`: this request's `jti`, or for a request sent again after a lost answer, the earlier request's (see [License token](formats.md#license-token-elm-licensejws)). Tokens and certificates are shortened to `eyJ…` here:
 
 ```json
 {
@@ -265,6 +265,8 @@ The answer holds the activation ID and the license file, the same JSON as a `.el
 | `403` | `ELM_LICENSE_REVOKED`, `ELM_LICENSE_SUSPENDED`, `ELM_EXPIRED` | The license is revoked, suspended, or expired. |
 | `409` | `ELM_CLONE_DETECTED` | The same installation key activates again with a wrong `seq` under `cloneStrategy` `deny`, or its activation is stopped. |
 | `409` | `ELM_ACTIVATION_LIMIT` | A new activation, and the license has as many activations as its `maxActivations`. |
+
+A client keeps the file of an answer to an activation, a refresh, or a trial only when it verifies for the installation and answers the request: the token's `act` equals `activationId`; for a refresh, `act` is the activation it holds and `seq` is greater than the one it holds; and `areq` is this request's `jti` or one in the request's `retry`. Otherwise the client keeps what it has, keeps the request's `jti` for its next `retry`, and returns `ELM_REQUEST_MISMATCH`. A relay on the network path that hands back a genuine answer to another request gets this error.
 
 ### `POST /v1/activations/{id}/refresh`
 

@@ -180,7 +180,7 @@ Some rules make the exchange safe to repeat:
 
 - The service keeps the response it gave for each request, found by key thumbprint and `nonce`. A user who loses the response hands in the same request file again and gets the same response. A different request with the same `nonce` from the same key gets `ELM_REPLAYED`.
 - The response is bound to the key that signed the request, so it fails on another device. Importing it twice on the same device is harmless.
-- The app imports a response only if the token's `areq` claim equals the `nonce` of the request it is waiting for; otherwise `ELM_REQUEST_MISMATCH`.
+- The app imports a response only if the token's `act` claim equals the response's `activationId` and its `areq` claim equals the `nonce` of the request it is waiting for; otherwise `ELM_REQUEST_MISMATCH`.
 - Until a response is imported, the app hands out the same pending request again instead of making a new one. When the pending request is older than 7 days by the device's clock, the app makes a new request that names the old one in `retry`, so a request the service did process is not mistaken for a clone. If the device's clock is behind and the service refuses the request with `ELM_REQUEST_EXPIRED`, the app can pass `renew` to make a new one at once.
 
 **Offline refresh** works the same way: `CreateRefreshRequestAsync` writes a request with the activation ID and the last `seq`. With the defaults (30-day files, 7-day grace), a device that never goes online keeps working if someone carries a refresh request and its response at least every 37 days. Vendors can give offline customers a policy with a longer `tokenLifetime`. For `elm-server`, the customer's administrator does the same with `elm server refresh-request`.
@@ -250,8 +250,9 @@ Other answers change the state differently:
 | `ELM_PROOF_INVALID` (the key changed) | kept | `RefreshFailing`, no more automatic refresh |
 | Network errors, `5xx`, `429` | kept | `RefreshFailing` |
 | A successful answer that cannot be saved (it does not verify or cannot be written) | kept; the request's `jti` stays in `retry` | `RefreshFailing` |
+| A successful answer whose license file is not the answer to this request: of another activation, with no later `seq`, or naming another request in `areq` (`ELM_REQUEST_MISMATCH`) | kept; the request's `jti` stays in `retry` | `RefreshFailing` |
 
-In the last row the service has already moved `seq` forward, so the next request must name that `jti` to be taken as a retry rather than a clone. A kept file is usable until its expiry plus grace period. The app learns of state changes from the `StateChanged` event.
+In the last two rows the service may already have moved `seq` forward for the request, so the next request must name that `jti` to be taken as a retry rather than a clone. A kept file is usable until its expiry plus grace period. The app learns of state changes from the `StateChanged` event.
 
 ## What can go wrong and what to do
 

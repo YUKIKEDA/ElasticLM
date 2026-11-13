@@ -138,6 +138,60 @@ public sealed class ActivationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A refresh answered with the service's genuine answer to an earlier refresh, by a relay on the path, gives
+    /// ELM_REQUEST_MISMATCH and keeps the activation; the next refresh through the service succeeds (design §12.6.2, §17.5,
+    /// V1d5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service whose public URL is a relay that keeps the answer of the last refresh it passed on; an activation with
+    ///   the relay's URL and the state callback; a license key of 3 activations.
+    ///
+    /// Steps:
+    /// - Activate; refresh (the relay keeps this answer, sequence 2); refresh again (sequence 3); have the relay answer the
+    ///   next refresh with the kept answer; refresh; check; refresh once more.
+    ///
+    /// Expected:
+    /// - The replayed refresh is ELM_REQUEST_MISMATCH (38) with out null and "The service's refresh has no later sequence
+    ///   number than the activation kept."; the callback goes from Active to RefreshFailing with 38; the check still passes;
+    ///   the last refresh is 0 and the service's activation is at sequence 4; the relay replayed once.
+    /// </remarks>
+    [Fact]
+    public async Task Refresh_ReplayedAnswerOfAnotherRequest_Returns38AndKeepsTheActivation()
+    {
+        await using ReplayingRelay relay = await ReplayingRelay.StartAsync(path => path.EndsWith("/refresh", StringComparison.Ordinal));
+        await _test.DisposeAsync();
+        await OpenAsync(settings => settings with { PublicUrls = [relay.Url] });
+        relay.Target = _service.Url;
+        string key = (await LicenseAsync("\"maxActivations\":3")).Key;
+        nint activation = Create("a", relay.Url.ToString());
+
+        Assert.True(ActivationApi.Activate(_api, activation, key, out nint license, out _) == 0, NativeApi.LastError);
+        NativeApi.FreeLicense(license);
+        for (int i = 0; i < 2; i++)
+        {
+            Assert.True(ActivationApi.Refresh(activation, out license, out _) == 0, NativeApi.LastError);
+            NativeApi.FreeLicense(license);
+        }
+
+        relay.ReplayToNext();
+        Assert.Equal(
+            (38, (nint)0, "The service's refresh has no later sequence number than the activation kept."),
+            (ActivationApi.Refresh(activation, out license, out _), license, NativeApi.LastError)
+        );
+        Assert.Equal((1, 2, 38), (StateCallbacks.Changes()[^1].Previous, StateCallbacks.Changes()[^1].Current, StateCallbacks.Changes()[^1].Error));
+        Assert.Equal(0, ActivationApi.Check(_api, activation, "core", out nint checkedLicense));
+        NativeApi.FreeLicense(checkedLicense);
+
+        Assert.True(ActivationApi.Refresh(activation, out license, out _) == 0, NativeApi.LastError);
+        NativeApi.FreeLicense(license);
+        Assert.Equal(1, relay.Replayed);
+        Assert.Equal(0, ActivationApi.Id(activation, 128, out string id, out _));
+        Assert.Equal(4L, (await TestService.GetAsync(_admin, $"v1/admin/activations/{id}")).GetProperty("seq").GetInt64());
+        ActivationApi.Destroy(activation);
+    }
+
+    /// <summary>
     /// The options are checked, and an offline-only activation refuses the online operations.
     /// </summary>
     /// <remarks>

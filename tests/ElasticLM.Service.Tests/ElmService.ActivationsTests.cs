@@ -31,8 +31,9 @@ public sealed class ElmServiceActivationsTests
     ///
     /// Expected:
     /// - 201 with an ID and a fresh nonce header; the token is standard, for app, the license, core, expiring 30 days on
-    ///   with refresh 20 days, grace 7 days, the key's thumbprint, both fingerprints, and sequence 1; the activation shows
-    ///   both fingerprints, no client (the policy does not keep it), app 1.2, seq 1, not blocked; the audit row is by the
+    ///   with refresh 20 days, grace 7 days, the key's thumbprint, both fingerprints, and sequence 1, and names the request's
+    ///   jti (areq) and the activation (act, V1d5a); the activation shows both fingerprints, no client (the policy does not
+    ///   keep it), app 1.2, seq 1, not blocked; the audit row is by the
     ///   installation with the license and seq 1; the second token expires 10 days on.
     /// </remarks>
     [Theory]
@@ -67,6 +68,7 @@ public sealed class ElmServiceActivationsTests
             )
         );
         Assert.Equal(prints.Order(), license.Fingerprints.Order());
+        Assert.Equal((answer.Jti, answer.ActivationId), (license.AnsweredRequestId, license.ActivationId));
 
         JsonElement activation = await TestService.GetAsync(admin, $"v1/admin/activations/{answer.ActivationId}");
         Assert.Equal(
@@ -169,7 +171,9 @@ public sealed class ElmServiceActivationsTests
     ///   audit row; under Deny refresh it with seq 2, deactivate it with seq 0, then with seq 2.
     ///
     /// Expected:
-    /// - 201, 200 with the same ID and file, 200 with seq 2, 200 with the same file, 200 with the same ID, seq 3, and only the new fingerprint, 204 with no clone row. Under Deny each
+    /// - 201, 200 with the same ID and file, 200 with seq 2, 200 with the same file, 200 with the same ID, seq 3, and only the new fingerprint, 204 with no clone row. Each
+    ///   file names the activation (act) and the request it answers (areq): the first activation's jti for the first two, the
+    ///   first refresh's for the next two, the reactivation's for the reactivation, and under Flag the clone's (V1d5a). Under Deny each
     ///   clone gives 409 ELM_CLONE_DETECTED, the activation is blocked, its audit row says ELM_CLONE_DETECTED with the
     ///   strategy; the later refresh gives 409; the deactivation with seq 0 gives 409, with seq 2 gives 204. Under Flag each
     ///   gives 200 with seq 3, the activation is not blocked, the audit row says ELM_OK.
@@ -193,8 +197,10 @@ public sealed class ElmServiceActivationsTests
             DeviceAnswer lost = await device.ActivateAsync(key, prints, seq: 0, retry: [activated.Jti]);
             Assert.Equal((HttpStatusCode.OK, activated.ActivationId), (lost.Status, lost.ActivationId));
             Assert.Equal(activated.File, lost.File);
+            Assert.Equal(Answers(activated.Jti, activated.ActivationId), Answers(device.Verify(lost.File, prints)));
             DeviceAnswer second = await device.RefreshAsync(activated.ActivationId, 1);
             Assert.Equal(2L, device.Verify(second.File, prints).Sequence);
+            Assert.Equal(Answers(second.Jti, activated.ActivationId), Answers(device.Verify(second.File, prints)));
             DeviceAnswer retried = await device.RefreshAsync(activated.ActivationId, 1, ["unrelated", second.Jti]);
             Assert.Equal(HttpStatusCode.OK, retried.Status);
             Assert.Equal(second.File, retried.File);
@@ -202,6 +208,7 @@ public sealed class ElmServiceActivationsTests
             DeviceAnswer again = await device.ActivateAsync(key, moved, seq: 2);
             Assert.Equal((HttpStatusCode.OK, activated.ActivationId), (again.Status, again.ActivationId));
             Assert.Equal((3L, moved[0]), (device.Verify(again.File, moved).Sequence, device.Verify(again.File, moved).Fingerprints.Single()));
+            Assert.Equal(Answers(again.Jti, activated.ActivationId), Answers(device.Verify(again.File, moved)));
             Assert.Equal(HttpStatusCode.NoContent, (await device.DeactivateAsync(activated.ActivationId, 2, [again.Jti])).Status);
             Assert.DoesNotContain(
                 await TestService.AuditRowsAsync(test, service, owner),
@@ -255,6 +262,7 @@ public sealed class ElmServiceActivationsTests
             {
                 Assert.True(clone.Status == HttpStatusCode.OK, name + ": " + clone.Text);
                 Assert.Equal(3L, device.Verify(clone.File, prints).Sequence);
+                Assert.Equal(Answers(clone.Jti, id), Answers(device.Verify(clone.File, prints)));
                 Assert.Equal((JsonValueKind.Null, 3L), (activation.GetProperty("blockedAt").ValueKind, activation.GetProperty("seq").GetInt64()));
                 Assert.Equal("ELM_OK", row.GetProperty("result").GetString());
             }
@@ -894,4 +902,9 @@ public sealed class ElmServiceActivationsTests
     internal static DateTimeOffset Time(long seconds) => TestService.Start.AddSeconds(seconds);
 
     internal static string Iso(long seconds) => AdminApi.Time(TestService.Start.ToUnixTimeSeconds() + seconds);
+
+    // The request a token answers and its activation (areq and act, design §8.4.2, V1d5a).
+    internal static (string? Request, string? Activation) Answers(VerifiedLicense license) => (license.AnsweredRequestId, license.ActivationId);
+
+    internal static (string? Request, string? Activation) Answers(string request, string activation) => (request, activation);
 }
