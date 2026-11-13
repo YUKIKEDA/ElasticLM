@@ -154,6 +154,52 @@ public sealed class IssuingTests : IDisposable
     }
 
     /// <summary>
+    /// The issuer issues a license whose feature ID is 64 bytes in UTF-8, which the verifier accepts, and refuses one of 65
+    /// bytes before signing (design §8.4.2, §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid standard spec whose only feature has the ID of the case: 64 and 65 letters a; 21 times あ (3 bytes each)
+    ///   and one a, 64 bytes in 22 characters; 21 times あ and ab, 65 bytes in 23 characters.
+    ///
+    /// Steps:
+    /// - Issue it; verify what was issued for that feature.
+    ///
+    /// Expected:
+    /// - 64 bytes: issued, and Valid with the feature. 65 bytes: ArgumentException "The license breaks a rule of the token
+    ///   format: check the kind, the features, the limits, and the times." for the parameter spec.
+    /// </remarks>
+    [Theory]
+    [InlineData(0, 64, true)]
+    [InlineData(0, 65, false)]
+    [InlineData(21, 1, true)]
+    [InlineData(21, 2, false)]
+    public void Issue_FeatureIdLength_Issues64BytesRefuses65(int wide, int narrow, bool issued)
+    {
+        string id = string.Concat(Enumerable.Repeat("あ", wide)) + new string('a', narrow);
+        Assert.Equal(issued ? 64 : 65, System.Text.Encoding.UTF8.GetByteCount(id));
+        LicenseSpec spec = Spec(LicenseKind.Standard, bound: true, expires: true) with { Features = [new FeatureSpec(id)] };
+
+        if (issued)
+        {
+            IssuedLicense license = LicenseIssuer.Issue(_signing, [Certificate()], spec, _time);
+            LicenseRequirement requirement = Requirement(LicenseKind.Standard, true) with { FeatureId = id, FeatureVersion = null };
+            var valid = Assert.IsType<LicenseVerificationResult.Valid>(Verifier().Verify(license.File, requirement));
+            Assert.Equal(id, Assert.Single(valid.License.Features).Id);
+        }
+        else
+        {
+            ArgumentException refused = Assert.Throws<ArgumentException>(() => LicenseIssuer.Issue(_signing, [Certificate()], spec, _time));
+            Assert.StartsWith(
+                "The license breaks a rule of the token format: check the kind, the features, the limits, and the times.",
+                refused.Message,
+                StringComparison.Ordinal
+            );
+            Assert.Equal("spec", refused.ParamName);
+        }
+    }
+
+    /// <summary>
     /// The issuer refuses certificates that do not let the signing key sign licenses at the issue time.
     /// </summary>
     /// <remarks>
