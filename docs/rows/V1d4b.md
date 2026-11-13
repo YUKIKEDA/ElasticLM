@@ -12,14 +12,16 @@
   - 問 4b-3: トークンのエンドポイントの答え（`invalid_client`、`invalid_grant` とその説明）は、今のまま書く。
   - 問 4b-4: §18.3 と `logs.md`（英語と日本語）の、OIDC を例外とする文（表の行と `Trace` の文）を消し、`Hosting.Diagnostics` と同じ形の段落にする。`elm-service` の行に、拒否したサインインの理由がリクエストの文字を持たないこと（登録されたコードか決まった文）を足す。V1d4a の問 4a-3 が挙げた 3 つの分類は、2 つになる。
 - 持ち主が決めたこと（2026-11-14、PR #432 の実装とレビューのあと。Issue #415 のコメント。どれも推奨案）:
-  - 問 4b-2 の「クエリの `error` が空でないとき」を、「クエリに `error` という名前の引数があるとき（値が空でも）」に広げる。ハンドラーと `Request.Query` は、クエリを違うふうに読む。ハンドラーのメッセージ（Microsoft.IdentityModel 8.19.2 の `OpenIdConnectMessage.cs`）は、名前の大文字と小文字を区別し、同じ名前の値のうち null でない最初のものを取る。`Request.Query` は大文字と小文字を区別しない。そのため、`?error=&error=…` のように、ハンドラーとこちらで `error` の読み方が分かれる形があると、ハンドラーの文（クエリの文字を含む）が書かれる。読み手が失うのは、ハンドラーが `error` を読まない形（値が空か、名前の大文字と小文字が違う）で、その先の確かめかトークンのエンドポイントが断ったときの答えで、それは決まった文か「answered <コード>」になる。`/auth/callback` は GET だけを受ける（`RefuseWebPath`）ので、フォームの `error` は届かない。
+  - 問 4b-2 の「クエリの `error` が空でないとき」を、「クエリに `error` という名前の引数があるとき（値が空でも）」に広げる。ハンドラーと `Request.Query` は、クエリを違うふうに読む。ハンドラーのメッセージ（Microsoft.IdentityModel 8.19.2 の `OpenIdConnectMessage.cs`）は、名前の大文字と小文字を区別し、同じ名前の値のうち null でない最初のものを取る。`Request.Query` は大文字と小文字を区別しない。そのため、`?error=&error=…` のように、ハンドラーとこちらで `error` の読み方が分かれる形があると、ハンドラーの文（クエリの文字を含む）が書かれる。読み手が失うのは、ハンドラーが `error` を読まない形（値が空か、名前の大文字と小文字が違う）で、その先の確かめかトークンのエンドポイントが断ったときの答えである。そのときの理由は、決まった文か「answered <コード>」になる。`/auth/callback` は GET だけを受ける（`RefuseWebPath`）ので、フォームの `error` は届かない。
   - `ServiceLog.SignInRefused` を `Warning` に上げる。ハンドラーの行を止めたあと、断ったサインインの理由は `elm-service` の行だけに残るので、`Logging__LogLevel__Default=Warning` の運用者にも残す。
-  - クエリの誤りでない失敗では、理由に内側の例外の `Message` の連鎖を足す（トークンのエンドポイントへの TLS の失敗の理由、IDX の「see inner exception」の中身）。問 4b-1 で示した「失うもの」は、HTTP の状態コードと例外のスタックだけで、内側の例外の文を言っていなかった。`SignInUnavailable`（ログインのときと戻りのとき）にも同じつなぎ方を使った。
+  - クエリの誤りでない失敗では、理由に内側の例外の `Message` の連鎖を足す（トークンのエンドポイントへの TLS の失敗の理由、IDX の「see inner exception」の中身）。問 4b-1 で示した「失うもの」は、HTTP の状態コードと例外のスタックだけで、内側の例外の文を言っていなかった。
+  - 実装のあと、こちらが広げた 2 つを、持ち主が承認した（2026-11-14、Issue #415 の最後のコメント）。`SignInUnavailable`（ログインのときと戻りのとき）にも同じつなぎ方を使う。`access_denied` は、コードの一覧（`RegisteredErrors`、15 個）に入れない。ハンドラーはクエリの `access_denied` を `OnAccessDenied` に渡し、そこで同じ形の理由「the identity provider answered access_denied」を書くので、一覧を引くことはない（一覧に残すと、どの入力でも結果の変わらない項目になる）。テストは 16 のコードすべてで理由を確かめる。
 - こちらが決めたこと:
   - コードの置き場所: 型を足さずに、両方の製品の `HostRequestLog` を一般にし、分類と下限の段を引数で受ける形にした（`HostRequestLog.Raise(logging, category, floor)`）。`elm-server` は `Hosting.Diagnostics` と `Warning` で、`elm-service` はそれに加えて `OpenIdConnectHandler` と `None` で呼ぶ。2 つの `HostRequestLog.cs` は、名前空間のほかは同じままにした（§18.3 の「同じ形の `HostRequestLog.cs`」を「名前空間だけが違う同じ `HostRequestLog.cs`」にし、`elm-server` は `Raise` をこの分類だけに使うと書いた）。規則の選び方を写したコードを 2 つの型に分けると、`LoggerRuleSelector` の写しが 3 つになるためである。足す規則の名前は、分類、`*`、分類で、分類の長さを n 文字とすると 2n + 1 文字（`Hosting.Diagnostics` は 81 文字、`OpenIdConnectHandler` は 141 文字）。
   - 分類の名前は `typeof(OpenIdConnectHandler).FullName` で得る（`ElmService.SignInHandlerCategory`）。ハンドラーは `GetType().FullName` の分類でロガーを作る。テストは、名前を文字列としても確かめる。
   - 理由に書くのは、受けた文字列ではなく、サービス自身の一覧の文字列。比べ方は大文字と小文字を区別する（`StringComparer.Ordinal`）。
-  - `access_denied` は、コードの一覧（`RegisteredErrors`、15 個）に入れない。ハンドラーはクエリの `access_denied` を `OnAccessDenied` に渡し、そこで同じ形の理由「the identity provider answered access_denied」を書くので、一覧で見ることがない（一覧に残すと、どの入力でも結果の変わらない項目になる）。テストは 16 のコードすべてで理由を確かめる。
+  - V1d9a は、`ServiceLog.RequestUnreadable`（イベント 21）の段を「画面のログインの拒否（イベント 16）と同じ `Information`」とした（`docs/rows/V1d9a.md`）。イベント 16 が `Warning` になったので、この比べ方はもう当たらない。イベント 21 は `Information` のままにした（呼び出した側の誤りで、サービスの故障ではないという V1d9a の理由は変わらない）。
+  - `Default=Warning` でも、認証のない誰かの戻りは 1 回ごとに `Warning` の行を 1 つ書く。その数は `rateLimit.perIp`（既定は毎秒 20 件）で抑えられる。`GuardAsync` は認証より前に、`/auth/callback` への要求も数える（§18.3）。
   - クエリが `error` の名前を持つときは、どこで起きた `OpenIdConnectProtocolException` もこの形の理由になる。`Data["error"]` が一覧にあれば「answered <コード>」になる（トークンのエンドポイントも `invalid_request`、`unauthorized_client`、`invalid_scope`、`server_error` を答えうる）。なければ決まった文になる（`invalid_grant`、`invalid_client`、`Data["error"]` を持たない IDX21323（nonce）、`c_hash` と `at_hash` の確かめ、IDX21334（コードがない））。
   - 内側の例外のつなぎ方は、`Exception.ToString` と同じ「 ---> 」で、スタックは書かない（`ElmService.WithInnerMessages`）。
   - `CA1873`（ログの引数の評価）を避けるため、理由はいったん変数に入れてからログに渡す。
@@ -45,7 +47,8 @@
   10. 最初の `error` の値が空でないときだけ数える: `Callback_ErrorOrCorrelationCookie_…` が落ちた（`?error=&error=…`）。
   11. `SignInRefused` を `Information` に戻す: `Callback_ErrorOrCorrelationCookie_…` と `Callback_TokenEndpointRefusesTheClient_…` が落ちた。
   12. 内側の例外の文をつながない: `RefusalReason_InnerExceptions_…` と `SignIn_ProviderOutOfReach_…` が落ちた。
-  13. 戻りのときの `SignInUnavailable` だけ、ログインのときの `SignInUnavailable` だけ、`SignInRefused` だけを、内側の例外なしにする: それぞれ `SignIn_ProviderOutOfReach_…`、同じテスト、`RefusalReason_InnerExceptions_…` が落ちた。
+  13. 戻りのときの `SignInUnavailable` だけ、ログインのときの `SignInUnavailable` だけ、`SignInRefused` だけを、内側の例外なしにする: それぞれ `SignIn_ProviderOutOfReach_…`、同じテスト、`RefusalReason_InnerExceptions_…` が落ちた。ログインのときだけの変異は、初めは生き残った。IDX20803 の `Message` が、内側の例外を「 ---> 」と型の名前つきで持つので、「 ---> 」があることだけでは区別できなかった。テストに「 ---> IDX20804: 」を確かめる行を足して、落ちることを確かめた。
+  15. `OpenIdConnectProtocolException` のときは内側の例外をつながない: `RefusalReason_InnerExceptions_…` が落ちる（クエリに `error` のない要求の `OpenIdConnectProtocolException("outer", 内側 "inner")` が「outer ---> inner」になることを確かめる）。
   14. 一覧から `registration_not_supported` を外す: `Callback_ErrorOrCorrelationCookie_…` が落ちた。
 - レビュー（PR #432 の head bab36bf の正しさ、読み手、日本語のレビュー）のあとに直したこと: 上の持ち主の決定 3 つ、16 のコードと近い文字列とクエリの読み方の違いのテスト、`access_denied` を一覧から外したこと、`Data["error"]` による理由の文の書き直し、覆う名前の長さ 2n + 1、`logs.md` の表の行を短くして理由を表の下の段落に移したこと（2 つの警告の文、一覧の範囲、IdP の文であること、どのエントリーにもないものと IdP のログを見ること、ハンドラーの説明）。
 - 同じ種類を探した範囲: `elm-service` の `ServiceLog` で、要求から来た文字列を理由として書くもの。`SignInRefused` のほかの理由（`OnTokenValidated` などの決まった文、ライブラリーの IDX の文。IdentityModel は PII を伏せる）と `SignInUnavailable`（届かないときの例外の文）は、要求のクエリを持たない。`Trace` の場合のテストで、`OpenIdConnectHandler` のほかの分類が目印を書かないことも確かめた。

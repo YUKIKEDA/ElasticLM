@@ -697,11 +697,12 @@ public sealed class ElmServiceWebTests
     ///
     /// Steps:
     /// - Make the reason for: an exception "outer" with an inner exception "middle" that has an inner exception "inner",
-    ///   with the first query; an OpenIdConnectProtocolException "outer" whose error is server_error, with an inner
-    ///   exception "inner", with the second query; no exception.
+    ///   with the first query; an OpenIdConnectProtocolException "outer" with an inner exception "inner", with the first
+    ///   query; the same exception whose error is server_error, with the second query; no exception.
     ///
     /// Expected:
-    /// - "outer ---> middle ---> inner"; "the identity provider answered server_error"; "the sign-in failed".
+    /// - "outer ---> middle ---> inner"; "outer ---> inner"; "the identity provider answered server_error"; "the sign-in
+    ///   failed".
     /// </remarks>
     [Fact]
     public void RefusalReason_InnerExceptions_AreJoinedUnlessTheQueryHasAnError()
@@ -717,6 +718,7 @@ public sealed class ElmServiceWebTests
             "outer ---> middle ---> inner",
             ElmService.RefusalReason(new InvalidOperationException("outer", new IOException("middle", new TimeoutException("inner"))), plain.Request)
         );
+        Assert.Equal("outer ---> inner", ElmService.RefusalReason(protocol, plain.Request));
         Assert.Equal("the identity provider answered server_error", ElmService.RefusalReason(protocol, error.Request));
         Assert.Equal("the sign-in failed", ElmService.RefusalReason(null, plain.Request));
     }
