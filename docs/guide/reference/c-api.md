@@ -235,7 +235,7 @@ const char* elm_version(void);
 | `elm_activation_destroy` | `void` | Waits for running callbacks (no time bound), then stops the automatic refresh, waiting up to 5 seconds for it, and frees the handle. The activation stays kept on the device. |
 | `elm_lease_free` | `void` | Frees a lease handle without returning the lease. |
 | `elm_lease_list_free` | `void` | Frees the array of `elm_client_get_borrowed_leases` and its handles, with the same count. Freeing an element first is undefined behavior. |
-| `elm_client_destroy` | `void` | Waits for running callbacks and for an operation in progress (no time bound), then returns the leases that are not borrows within 5 seconds, and frees the handle. Borrows stay. |
+| `elm_client_destroy` | `void` | Waits for running callbacks and for an operation in progress (no time bound), then, within 5 seconds in all, sends the releases still owed for acquisitions whose answer did not come or was not taken and returns the leases that are not borrows, and frees the handle. Borrows stay. |
 | `elm_string_free` | `void` | Clears and frees a string that a function says to free with it. |
 
 ```c

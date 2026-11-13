@@ -90,7 +90,15 @@ When a virtual machine is copied with its installation key, both copies renew th
 
 The app returns a lease with `ReleaseLeaseAsync` (C: `elm_client_release_lease`), which sends `DELETE /v1/leases/{id}` with a proof from the lease's key. Nobody else can return it. A lease the server does not know answers `204`.
 
-A normal lease is `Released` after the call even if the server could not be reached; the seat is then freed at the lease's expiry. Disposing the client (`DisposeAsync`, `elm_client_destroy`) returns every lease that is not a borrow; leases it cannot return within 5 seconds end at their expiry.
+A normal lease is `Released` after the call even if the server could not be reached; the seat is then freed at the lease's expiry. Disposing the client (`DisposeAsync`, `elm_client_destroy`) sends the releases it still owes for answers it did not take (see [When an answer is lost](#when-an-answer-is-lost)) and returns every lease that is not a borrow; leases it cannot return within 5 seconds end at their expiry.
+
+### When an answer is lost
+
+An acquire or a borrow can reach the server while its answer does not reach the app: the network fails on the way back, no whole answer comes within 30 seconds, the app cancels the call, or the answer is not one the client takes (larger than 256 KiB, a token that does not check, or the answer to another request). The server may then have issued a lease that nobody holds, and it would take the seats until it expires; a borrow would take them for its whole period. No later request names that lease, and the client does not know its ID.
+
+So, before the call returns its error, the client sends `DELETE /v1/leases/requests/{jti}`, naming the proof ID (`jti`) of the request whose answer it did not take. The server removes the lease it issued for that request, only when the lease is bound to the same installation key and has not been renewed since. A lease the answer carried for another request is left alone. A borrow released this way counts as an early return, under the same limits as [Early return](#early-return); when it is refused, the borrow keeps its seats until it expires. A stopped lease is refused with `ELM_CLONE_DETECTED`, as any return of it is.
+
+When this release does not get through either, the client keeps the proof ID in memory, up to 16 of them, dropping the oldest. It sends them again, oldest first, before its next request to the server and when it is disposed, and stops at the first one that does not get through. A canceled call does not wait for the release: it is kept and sent with the next request. The list is not written to disk, so when the app exits before the release gets through, the seats are free at the lease's expiry. The route, with its checks, is in [Device protocol](../reference/device-protocol.md#delete-v1leasesrequestsjti).
 
 ## What the client checks in every lease
 
