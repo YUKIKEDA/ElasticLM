@@ -37,7 +37,9 @@ jobs:
           set -euo pipefail
           export LC_ALL=C
           names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
-          if [ -z "$names" ] || printf '%s\n' "$names" | grep -Evq '^[A-Za-z0-9_.+/-]+$'; then echo "::error::The folder holds no file, or a file whose name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
           sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
           printf '%s\n' "$sums"
           echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
@@ -125,23 +127,21 @@ jobs:
           echo "MEASURED: upload-artifact with overwrite: true, from another job of the same run, on tmp-v1d7-$CASE: $OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
 
   check:
-    name: Check ${{ matrix.case }}
+    name: Check ${{ matrix.case }} on ${{ matrix.os }}
     needs: [produce, replace]
-    # The replace jobs' own result is not a condition: the last job reads what happened.
+    # The replace jobs' own result is not a condition: each leg reads what happened.
     if: ${{ !cancelled() && needs.produce.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
         case: [untouched, changed, added, hidden, missing, renamed]
-    runs-on: ubuntu-latest
+        # Every runner on which a job of release.yml runs the check.
+        os: [ubuntu-latest, ubuntu-24.04-arm, windows-latest, windows-11-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 5
-    outputs:
-      untouched: ${{ steps.result.outputs.untouched }}
-      changed: ${{ steps.result.outputs.changed }}
-      added: ${{ steps.result.outputs.added }}
-      hidden: ${{ steps.result.outputs.hidden }}
-      missing: ${{ steps.result.outputs.missing }}
-      renamed: ${{ steps.result.outputs.renamed }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         id: download
@@ -165,46 +165,38 @@ jobs:
           sha256sum --check --strict "$RUNNER_TEMP/sums"
           diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
-      - name: Write the outcome
-        id: result
+      # The leg fails unless the outcome is the expected one, so the last job needs only the legs' result. The download
+      # succeeds in every case: download-artifact compares with the digest of the artifact that is there.
+      - name: Compare the outcome with what is expected
         env:
           CASE: ${{ matrix.case }}
+          OS: ${{ matrix.os }}
           DOWNLOAD: ${{ steps.download.outcome }}
           CHECK: ${{ steps.check.outcome }}
         run: |
-          echo "MEASURED: $CASE: download-artifact $DOWNLOAD, the check $CHECK" | tee -a "$GITHUB_STEP_SUMMARY"
-          echo "$CASE=download $DOWNLOAD, check $CHECK" >> "$GITHUB_OUTPUT"
+          sha256sum --version 2>&1 | head -n 1 || true
+          if [ "$CASE" = untouched ]; then expected=success; else expected=failure; fi
+          echo "MEASURED: $OS: $CASE: download-artifact $DOWNLOAD, the check $CHECK (expected: success, $expected)" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$DOWNLOAD" != success ] || [ "$CHECK" != "$expected" ]; then
+            echo "::error::$OS: $CASE: not as expected. A check that reads success for a replaced case means the artifact was not replaced (see the replace jobs' MEASURED lines) or the check missed it."
+            exit 1
+          fi
 
   assert:
-    name: The check refused every replaced artifact
-    needs: check
+    name: The check refused every replaced artifact on every runner
+    needs: [replace, check]
     if: ${{ !cancelled() && needs.check.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Compare with what is expected
+      - name: Every leg saw what is expected
         env:
-          UNTOUCHED: ${{ needs.check.outputs.untouched }}
-          CHANGED: ${{ needs.check.outputs.changed }}
-          ADDED: ${{ needs.check.outputs.added }}
-          HIDDEN: ${{ needs.check.outputs.hidden }}
-          MISSING: ${{ needs.check.outputs.missing }}
-          RENAMED: ${{ needs.check.outputs.renamed }}
+          REPLACE: ${{ needs.replace.result }}
+          CHECK: ${{ needs.check.result }}
         run: |
-          failed=0
-          expect() {
-            if [ "$2" = "$3" ]; then echo "ok:    $1: $2"; else echo "::error::$1: got '$2', expected '$3'."; failed=1; fi
-          }
-          # The download succeeds in every case: download-artifact compares with the digest of the artifact that is there.
-          expect untouched "$UNTOUCHED" "download success, check success"
-          expect changed "$CHANGED" "download success, check failure"
-          expect added "$ADDED" "download success, check failure"
-          expect hidden "$HIDDEN" "download success, check failure"
-          expect missing "$MISSING" "download success, check failure"
-          expect renamed "$RENAMED" "download success, check failure"
-          if [ "$failed" = 0 ]; then
-            echo "MEASURED: another job of the same run replaced five artifacts, and the check refused all five and accepted the untouched one." | tee -a "$GITHUB_STEP_SUMMARY"
-          else
-            echo "MEASURED: not as expected. A check that reads success for a replaced case means the artifact was not replaced (see the replace jobs' MEASURED lines) or the check missed it." | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "MEASURED: the replace jobs: $REPLACE; the 30 check legs (6 cases on 5 runners): $CHECK" | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$REPLACE" != success ] || [ "$CHECK" != success ]; then
+            echo "::error::A leg did not see what is expected; read its MEASURED line."
+            exit 1
           fi
-          exit "$failed"
+          echo "MEASURED: another job of the same run replaced five artifacts, and on each of the 5 runners the check refused all five and accepted the untouched one." | tee -a "$GITHUB_STEP_SUMMARY"
