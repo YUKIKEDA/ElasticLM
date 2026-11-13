@@ -2,6 +2,7 @@ using System.Data.Common;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ElasticLM.Issuing;
+using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -548,6 +549,7 @@ internal sealed partial class ElmService
     )
     {
         bool reactivated = operation == "activate";
+        long? flagged = null;
         switch (Activations.Judge(activation, seq, retry))
         {
             case SequenceJudgement.Blocked:
@@ -556,19 +558,33 @@ internal sealed partial class ElmService
                 // The answer to the request that got the last token was lost: the same file again, nothing changes.
                 return ClientResult.Issued(StatusCodes.Status200OK, activation.Id, activation.LastFile);
             case SequenceJudgement.Clone:
+                // A sequence number that no file can follow is refused before the clone is recorded (design §10.4, V1d5a).
+                if (policy.CloneStrategy != "deny" && LeaseRules.NextSequence(activation.Seq, seq) is null)
+                {
+                    return ClientResult.Fail(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
+                }
+
                 if (await CloneAsync(device, scope, policy, activation, seq, operation, at).ConfigureAwait(false) is ClientResult stopped)
                 {
                     return stopped;
                 }
 
+                flagged = seq;
                 break;
+        }
+
+        // design §10.4 (V1d5a, the owner's answer 5a-6): after a flagged clone the next file is later than the request's too,
+        // so a device ahead of a service restored from an older backup takes it.
+        if (LeaseRules.NextSequence(activation.Seq, flagged) is not long sequence)
+        {
+            return ClientResult.Fail(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
         }
 
         // design §12.8.4: an offline request judged a retry gets the next file, not the last one, whose areq is not its nonce;
         // a copy that got the last file sends one behind without this nonce next, and is judged a clone.
         ActivationRow next = change(activation) with
         {
-            Seq = activation.Seq + 1,
+            Seq = sequence,
             LastProof = device.RequestId,
             UpdatedAt = at,
         };

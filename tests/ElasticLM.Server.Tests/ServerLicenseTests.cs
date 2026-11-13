@@ -119,8 +119,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     ///
     /// Steps:
     /// - Start a server with no license, which makes its key; activate and refresh with elm server through the relay (it
-    ///   keeps the answer of sequence 2); start a server with service.url set to the relay; have the relay answer the next refresh with the kept answer; move the clock a minute at
-    ///   a time until the relay replayed; seal and read the usage log; move the clock until the server refreshes again.
+    ///   keeps the answer of sequence 2); start a server with service.url set to the relay; have the relay answer the next
+    ///   refresh with the kept answer; move the clock a minute at a time until the relay replayed; seal and read the usage
+    ///   log; move the clock until the server refreshes again.
     ///
     /// Expected:
     /// - The server starts with sequence 2; after the replay the server still uses sequence 2, the kept activation is at

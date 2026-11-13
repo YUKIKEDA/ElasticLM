@@ -14,6 +14,9 @@
   - 問 5a-3: 合わない答えは `ELM_REQUEST_MISMATCH`（38）。
   - 問 5a-4: 合わなかった要求の `jti` は、答えのない一覧に残す。
   - 問 5a-5: `areq` か `act` のない答えは断る。保存済みのファイルは、いまのまま `Check` を通る。
+- 独立レビュー（PR #418）のあとに持ち主が決めたこと（2026-11-13。どちらも推奨案 A）:
+  - 問 5a-7: 有効化と試用では、`pending` の `jti` のうち、同じ向け先（製品とライセンスキーの SHA-256、または製品と試用）の要求のものだけを受け取る。待っているオフラインの有効化の要求の `nonce` も、同じ向け先のときだけである。本文の `retry` には一覧のすべてを入れ続け、サービスの複製の判定は変えない。レビューは、ライセンス 1 の有効化（または試用）の答えを中継が止めると、その `jti` が `pending` に残り、そのあとのライセンス 2 の有効化に中継がその答えを返すと、クライアントがライセンス 1（または試用）を保存することを、2 つのテストで走らせて示した（R2 と R3 がもう一度起きる）。
+  - 問 5a-6: `flag` の複製のあとの有効化の次の `seq` を、最後に出した値と要求の `seq` の大きいほう + 1 にする（リースの `LeaseRules.NextSequence` と同じ）。サービスのデータベースを古いバックアップから戻して、サービスの `seq` S が端末の C より小さいと、`flag` の更新の答えは S + 1 になり、問 5a-1 の `seq` の比べで端末が断る。差 d = C − S が 15 以下なら d + 1 回の更新で戻るが、16 以上なら答えのない一覧が 16 件で埋まり、管理者の解除でしか戻らない。この行が持ち込む後退である。次の `seq` を作れない要求（`seq` が 64 ビットの整数の最大）は、複製を記録せずに `ELM_MALFORMED` で断る（リースと同じ）。
 - こちらが決めたこと:
   - .NET の名前。`VerifiedLicense.OfflineRequestNonce` と `LicenseSpec.OfflineRequestNonce` を `AnsweredRequestId` に改め、両方に `ActivationId` を足した。値はオンラインの要求の `jti` にもなるので、前の名前は意味に合わない。公開した版はまだない（V1d5 の記録と同じ）ので、前の名前は残さない（`.cursor/rules/no-dead-code.mdc`）。
   - 形。`areq` は 1〜64 文字（リーストークンの `areq` と同じ `Limits.IsProofId`）、`act` は `Guid.TryParseExact` の `D` の形（`Limits.IsActivationId`）。発行する側と検証器の両方が `LicensePayloadRules` で確かめる。どちらも任意のクレームで、ないトークンは検証に通る（問 5a-5 の後半）。
@@ -23,17 +26,31 @@
   - オフラインの応答の取り込みは、`act` と応答の `activationId` だけを足して比べ、保存した有効化の ID と `seq` とは比べない。待っている要求の `nonce` が有効化と `seq` を決めるので、本物の応答でこの 2 つが外れる道はない（M4c2 の変異の確かめと同じ理由。`.cursor/rules/testing.mdc` の、届かない検査は置かない規則）。`activationId` は応答を運ぶ人が書き換えられるので、`act` との比べは届く。
 - テスト:
   - クライアント（`tests/ElasticLM.Client.Tests/ActivationClientTests.Answers.cs`。`DelegatingHandler` の中継が、要求をサービスに渡したあとで答えを差し替える）: R1（`Refresh_ReplayedEarlierAnswer_IsRefusedAndTheRetryGetsTheServicesFile`。断ったあとの更新が、断った要求の `jti` を `areq` に持つサービスの最後のファイルを受け取ること、つまり再試行の答えを受け取ることも確かめる）、R2（`Activate_ReplayedAnswerOfAnotherLicense_IsRefusedAndTheRetryGetsItsOwn`）、R3 と試用（`Trial_ReplayedTrialAnswer_IsRefused`）、R5（`Answer_UnsignedActivationIdChanged_IsRefused`、有効化と更新）、署名鍵で署名したファイルのクレームを 1 つずつ変えたもの（`Refresh_SignedFileWithOtherClaims_IsRefusedWithItsMessage`。`areq` なし、別の `areq`、`act` なし、別の `act`、同じ `seq`、正しいもの）、オフラインの取り込みで `activationId` を書き換えたもの（`Import_UnsignedActivationIdChanged_IsRefused`）、`areq` と `act` のない保存済みのファイル（`KeptFile_WithoutTheAnswersClaims_StillChecksAndRefreshes`）。
+  - 独立レビューのあと: 答えのない別の要求への答え（`Activate_AnswerToAnotherPendingRequest_IsRefused`。別のキー、試用、待っているオフラインの別のキーの要求の 3 つ。どれも直す前のコードで落ちることを走らせて確かめた）、向け先が置き換えたオフラインの要求・解除の証明・オフラインの更新の取り込みを越えて残ること（`Activate_AimKeptThroughOtherSteps_TakesTheFileOfTheEarlierRequest`）、`aims` の形（`ActivationStoreTests.Read_EachOtherForm_IsDamaged`）、試用の更新を挟んだ購入の送り直し（`Trial_ThenPurchase_ReplacesTheTrial`）、`flag` のサービスを差 1 と差 20 だけ戻したときの更新（`Refresh_ServiceRestoredBehindUnderFlag_GetsALaterFile`）、`flag` の要求の `seq` 9 に 10 を返すこと、64 ビットの最大の `seq` が `flag` では複製を記録せずに `ELM_MALFORMED`、`deny` では `ELM_CLONE_DETECTED` になること（`Sequence_EachBranch_IsJudged`）。
   - C の関数（`tests/ElasticLM.Native.Tests/ActivationTests.cs` の `Refresh_ReplayedAnswerOfAnotherRequest_Returns38AndKeepsTheActivation`）と、`elm-server` が自分で行うサーバーライセンスの更新（`tests/ElasticLM.Server.Tests/ServerLicenseTests.cs` の `OwnRefresh_ReplayedAnswerOfAnotherRequest_KeepsTheLicenseAndLogsTheMismatch`）。どちらも、ループバックのポートで待つ中継（`ReplayingRelay`。V1d5 のリースの中継を、パスを選べるようにした）が、前の更新の答えを返す。
   - 発行と検証: `LicenseVerifierTests.Verify_AnswerClaims_HaveTheirForm`、`IssuingTests.Issue_AnswerClaims_WrittenOrRefused`。サービス: `ElmService.ActivationsTests`（オンラインの有効化、再試行、更新、再有効化、`flag` の複製の `areq` と `act`）、`ElmService.TrialsTests`、`ElmService.OfflineTests`。
 - 変異の確かめ（17 個。どれもビルドの終了コードを見てから、600 秒の上限つきで走らせ、`dotnet test` の終了コードで決めた。どれも落ちた。最初の回で、SA1119 でビルドに通らなかった 4 個と、テストを 1 つも選ばない絞り込みの 2 個は、書き直して走らせ直した）:
   - クライアントの比べ: `act` と `activationId` の比べを外す（R5 のテスト）、`act` のないトークンを通す、更新の `act` と保存した ID の比べを外す、`seq` の `<=` を `<` にする（どれも `Refresh_SignedFileWithOtherClaims_IsRefusedWithItsMessage`）、`seq` の比べを外す（R1 のテスト）、`areq` の比べを外す、`areq` のないトークンを通す（署名したファイルのテスト）、照らす集まりをこの要求の `jti` だけにする（R1 のテスト。再試行の答えを断る）、待っているオフラインの要求の `nonce` を集まりから外す（`ActivationClientTests` のオフラインのテスト）、合わない答えのハッシュを `unkept` に書く（R1 のテスト）、取り込みの `act` の比べを外す（`Import_UnsignedActivationIdChanged_IsRefused`）。
   - サービス: 更新の `areq` を前の要求の ID にする（`Sequence_EachBranch_IsJudged`）、`act` を書かない（`Activate_NewInstallation_IssuesABoundFile`）、試用の `areq` を証明の `jti` でなくする（`Trial_OncePerFingerprint_UntilRemoved`）。
   - 形の検査: `areq` の形を見ない（検証器と発行の両方のテスト）、`act` の形を見ない。
+- 独立レビューのあとの変異の確かめ（14 個。やり方は上と同じで、どれも落ちた。最初の回で残った 3 個（置き換えたオフラインの要求、解除の証明、オフラインの更新の取り込みで向け先を落とすもの）は、`Activate_AimKeptThroughOtherSteps_TakesTheFileOfTheEarlierRequest` を足して落ちた）: 向け先で絞らない、待っているオフラインの要求を向け先で絞らない、更新・解除の証明・オフラインの更新の取り込み・置き換えたオフラインの要求で向け先を落とす、`aims` を書かない、読まない、件数 16 を 17 に、長さの `<=` を `<` に、`jti` の長さを見ない、`flag` の次の `seq` に要求の値を使わない、複製を記録する前の検査を外す、`deny` でもその検査をする。
 - 測定: 有効化は §4.2 の測る道である。足した仕事は、サービスでは `Guid` を 1 つ文字列にしてトークンに 2 つのクレーム（約 80 バイト）を足すこと、クライアントでは文字列の比べが 4 つと一覧の中の探しである。手元では `tools/ElasticLM.Measure/run.ps1` を走らせていない（4 つの実行ファイルと `samples/VerifyLicense` の NativeAOT の発行が要る）。`Measure` は、行を持つ場で走らせる。
 - 同じ種類を探した範囲: ライセンスファイルを受け取るのは `ActivationClient` の `Keep`（オンラインの有効化・更新・試用）と `Import`（オフライン）だけで、`elm-server` の自分の更新、`elm server activate` などのコマンド、C の関数はどれもこのクラスを通る。サービスがライセンスファイルを出すのは `ElmService.IssueFile`（有効化の 3 つの道とオフライン）と、管理 API の `Unbound` のファイル（`ElmService.Licenses.cs`。有効化がないので、`areq` と `act` を持たない）だけである。`elm offline process` は、応答の有効化 ID とライセンス ID を表示のために確かめずに読むだけで、保存しない（§12.8.4）。
-- 行の外で見つけたこと（持ち主に問う。この行では直していない）: `elm-service` のデータベースを古いバックアップから戻すと、サービスの有効化の `seq` が端末の `seq` より小さくなる。`cloneStrategy` が `flag` なら、端末の更新は複製として記録されて進み、サービスは「最後に出した値 + 1」のファイルを返す。この値が端末の持つ `seq` 以下なら、問 5a-1 の `seq` の比べで、端末はどの更新も `ELM_REQUEST_MISMATCH` で断り続け、管理者の解除と有効化し直しでしか戻らない。V1d5 は、リースで同じ場合に次の `seq` を「サーバーの値と要求の値の大きいほう + 1」にした（§10.4 の `flag` の項、`LeaseRules.NextSequence`）。有効化にも同じ規則を当てるのが推奨案である。走らせて確かめてはいない（コードを読んだだけ）。`deny` では、もともと複製として止まる。
+- 行の外で見つけたこと: なし（独立レビューが見つけた 2 つは、問 5a-6 と問 5a-7 としてこの行で直した）。
 
 ## 退けた案
+
+### 有効化と試用が受け取る、前の要求の範囲（問 5a-7）
+
+- **決定:** `pending` のうち、同じ向け先の要求の `jti` だけを受け取る。向け先は `activation.json` の `aims` に書く。
+- **理由:** 答えを 1 つ止めた中継が、別のキーの有効化や購入の有効化に、止めた答えを返せる（独立レビューが走らせた）。
+- **却下した案:** (B) 一覧のどの `jti` も受け取る。答えを 1 つ止める中継には、R2 と R3 がそのまま残る。
+
+### `flag` のあとの有効化の `seq`（問 5a-6）
+
+- **決定:** 最後に出した値と要求の `seq` の大きいほう + 1。
+- **理由:** サービスが端末より遅れても、端末は持っているものより後のファイルを受け取り、問 5a-1 の比べに通る。
+- **却下した案:** (B) Issue と別の行にする。この行が持ち込む後退で、差が 16 以上なら管理者しか戻せない。
 
 ### 答えを要求に結ぶもの（問 5a-1）
 

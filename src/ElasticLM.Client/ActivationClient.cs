@@ -299,7 +299,8 @@ public sealed class ActivationClient : IAsyncDisposable
                         stored,
                         includeKey: true,
                         cancellationToken,
-                        pending: true
+                        pending: true,
+                        aim: Aim(licenseKey)
                     )
                     .ConfigureAwait(false);
                 return Keep(reply, Kinds(AnyKind), events, refreshed: null);
@@ -352,7 +353,8 @@ public sealed class ActivationClient : IAsyncDisposable
                         stored,
                         includeKey: true,
                         cancellationToken,
-                        pending: true
+                        pending: true,
+                        aim: Aim(null)
                     )
                     .ConfigureAwait(false);
                 return Keep(reply, Kinds([LicenseKind.Trial]), events, refreshed: null);
@@ -740,9 +742,11 @@ public sealed class ActivationClient : IAsyncDisposable
         string activationId = valid.License.ActivationId!;
 
         // A refresh clears its own list and keeps the activations and trials not yet answered; a new activation clears both.
+        StoredActivation? kept = refreshing ? _files.Read(out _) : null;
         var stored = new StoredActivation(activationId, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
         {
-            Pending = refreshing ? _files.Read(out _)?.Pending ?? [] : [],
+            Pending = kept?.Pending ?? [],
+            Aims = kept?.Aims ?? StoredActivation.NoAims,
         };
         try
         {
@@ -1017,7 +1021,8 @@ public sealed class ActivationClient : IAsyncDisposable
         StoredActivation? stored,
         bool includeKey,
         CancellationToken cancellationToken,
-        bool pending = false
+        bool pending = false,
+        string? aim = null
     )
     {
         var target = new Uri(_service!, path);
@@ -1053,7 +1058,7 @@ public sealed class ActivationClient : IAsyncDisposable
             byte[] bytes = body(stored);
             string proof = ProofBuilder.Create(_key!, "POST", target, _nonce, bytes, includeKey, _time, out string proofId);
             StoredActivation before = stored ?? new StoredActivation(null, 0, null, null, []);
-            stored = before.WithRetry(proofId, pending);
+            stored = before.WithRetry(proofId, pending, aim);
             try
             {
                 _files.Write(stored);
@@ -1064,9 +1069,11 @@ public sealed class ActivationClient : IAsyncDisposable
             }
 
             // design §12.6.2 (V1d5a): the requests a file may answer: this one, and those its retry names, whose last file the
-            // service returns again (design §10.4 step 3).
-            List<string> requests = [.. stored.ListFor(pending)];
-            if (stored.Offline is OfflineRequest waiting)
+            // service returns again (design §10.4 step 3). An activation or a trial takes only those sent for the same license
+            // key or trial (the review of PR #418): the whole list still goes in retry, so the service judges clones as before.
+            StoredActivation sent = stored;
+            List<string> requests = pending ? [.. sent.Pending.Where(j => sent.Aims.GetValueOrDefault(j) == aim)] : [.. sent.Retry];
+            if (sent.Offline is OfflineRequest waiting && (!pending || OfflineAim(waiting) == aim))
             {
                 requests.Add(waiting.Nonce);
             }
@@ -1192,7 +1199,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 return OfflineFail(ErrorCode.InvalidState, Full);
             }
 
-            current = current.WithRetry(earlier.Nonce, pending: !earlier.Refresh) with { Offline = null };
+            current = current.WithRetry(earlier.Nonce, pending: !earlier.Refresh, OfflineAim(earlier)) with { Offline = null };
         }
 
         var request = new OfflineRequest(
@@ -1253,6 +1260,12 @@ public sealed class ActivationClient : IAsyncDisposable
         return Sign(TokenTypes.ActivationRequest, payload);
     }
 
+    // design §12.6.2 (V1d5a): what an activation or a trial request was sent for, kept with its jti: the product and the
+    // SHA-256 of the license key, or the product and "trial".
+    private string Aim(string? licenseKey) => _options.ProductId + " " + (licenseKey is null ? "trial" : KeyHash(licenseKey));
+
+    private string? OfflineAim(OfflineRequest request) => request.KeyHash is string hash ? _options.ProductId + " " + hash : null;
+
     private static string KeyHash(string licenseKey) =>
         System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(licenseKey)));
 
@@ -1304,6 +1317,7 @@ public sealed class ActivationClient : IAsyncDisposable
         var next = new StoredActivation(valid.License.ActivationId, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
         {
             Pending = waiting.Refresh ? stored.Pending : [],
+            Aims = waiting.Refresh ? stored.Aims : StoredActivation.NoAims,
         };
         try
         {
@@ -1339,7 +1353,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 return OfflineFail(ErrorCode.InvalidState, Full);
             }
 
-            current = current.WithRetry(waiting.Nonce, pending: !waiting.Refresh) with { Offline = null };
+            current = current.WithRetry(waiting.Nonce, pending: !waiting.Refresh, OfflineAim(waiting)) with { Offline = null };
         }
 
         byte[] payload = Body(w =>
@@ -1353,7 +1367,14 @@ public sealed class ActivationClient : IAsyncDisposable
         string proof = Sign(TokenTypes.DeactivationProof, payload);
         try
         {
-            _files.Write(new StoredActivation(null, 0, null, null, []) { Pending = current.Pending, DeactivationProof = proof });
+            _files.Write(
+                new StoredActivation(null, 0, null, null, [])
+                {
+                    Pending = current.Pending,
+                    Aims = current.Aims,
+                    DeactivationProof = proof,
+                }
+            );
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

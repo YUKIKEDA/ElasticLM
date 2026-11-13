@@ -68,6 +68,47 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// Under cloneStrategy flag, a service restored from an older backup, whose activation is behind the device's sequence
+    /// number, records the refresh as a clone and answers with a file later than the device's, which the client keeps (design
+    /// §10.4, the owner's answer 5a-6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A policy with cloneStrategy flag; a client activated and refreshed until it holds sequence gap + 1.
+    ///
+    /// Steps:
+    /// - Set the service's activation back by the gap (1, then 20) in the database; refresh; read the activation and the
+    ///   audit log.
+    ///
+    /// Expected:
+    /// - Activated with one more than the device's sequence number; the service's activation has that number; one
+    ///   activation.clone row with ELM_OK.
+    /// </remarks>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(20)]
+    public async Task Refresh_ServiceRestoredBehindUnderFlag_GetsALaterFile(int gap)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"cloneStrategy\":\"flag\"");
+        await using ActivationClient client = vendor.Client("a");
+        Activated(await client.ActivateAsync(key, Cancel));
+        for (int i = 0; i < gap; i++)
+        {
+            Activated(await client.RefreshAsync(Cancel));
+        }
+
+        long held = vendor.Kept("a").Seq;
+        Assert.Equal(gap + 1, held);
+        await vendor.Test.ExecuteAsync($"UPDATE activations SET seq = {held - gap}");
+
+        Assert.Equal(held + 1, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Equal(held + 1, (await vendor.ActivationAsync(client.ActivationId!)).GetProperty("seq").GetInt64());
+        JsonElement clone = Assert.Single(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
+        Assert.Equal("ELM_OK", clone.GetProperty("result").GetString());
+    }
+
+    /// <summary>
     /// An activation of a second license answered with the service's genuine answer to the activation of the first is
     /// refused; the activation sent again gets the second license's own activation, which the service made for the refused
     /// request (the Issue's case R2).
@@ -153,6 +194,133 @@ public sealed partial class ActivationClientTests
         Assert.Equal((ErrorCode.RequestMismatch, AnswersAnother), Code(Failed(await client.StartTrialAsync(Cancel))));
         Assert.Equal(((string?)null, ActivationState.None), (vendor.Kept("a").ActivationId, client.State));
         Assert.Equal([relay.LastProofId!], vendor.Kept("a").Pending);
+    }
+
+    /// <summary>
+    /// An activation answered with the service's genuine answer to another request still waiting for its answer is refused
+    /// when that request was for another target: an activation of another license key, a trial, or an offline activation
+    /// request of another key (the review of PR #418, question 5a-7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Two licenses, and a product with a trial policy; a client behind a relay.
+    ///
+    /// Steps:
+    /// - key: activate license 1 with the answer dropped (its answer kept by the relay); have the relay answer the next
+    ///   activation with it; activate license 2; read the kept activation; activate license 2 again.
+    /// - trial: start a trial with the answer dropped; have the relay answer the next activation with the trial's answer;
+    ///   activate license 1; activate it again.
+    /// - offline: make an offline activation request for license 1 and have the service process it; have the relay answer
+    ///   the next online activation with that answer; activate license 2; activate it again.
+    ///
+    /// Expected:
+    /// - Each replayed answer: ELM_REQUEST_MISMATCH "…answers another request.", no activation kept, and the refused
+    ///   request's jti in the pending list. Each activation after it: Activated with the license activated, its areq the
+    ///   refused request's jti; no clone is recorded.
+    /// </remarks>
+    [Theory]
+    [InlineData("key")]
+    [InlineData("trial")]
+    [InlineData("offline")]
+    public async Task Activate_AnswerToAnotherPendingRequest_IsRefused(string kind)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string firstId, string first) = await vendor.LicenseWithIdAsync(string.Empty);
+        (string secondId, string second) = await vendor.LicenseWithIdAsync(string.Empty);
+        await vendor.TrialPolicyAsync();
+        var relay = new Relay();
+        await using ActivationClient client = vendor.Client("a", relay);
+        string other;
+        string wanted = kind == "trial" ? first : second;
+        string wantedId = kind == "trial" ? firstId : secondId;
+        switch (kind)
+        {
+            case "key":
+                relay.DropNext();
+                Assert.Equal(ErrorCode.NetworkError, Failed(await client.ActivateAsync(first, Cancel)).Code);
+                other = relay.LastAnswer!;
+                break;
+            case "trial":
+                relay.DropNext();
+                Assert.Equal(ErrorCode.NetworkError, Failed(await client.StartTrialAsync(Cancel)).Code);
+                other = relay.LastAnswer!;
+                break;
+            default:
+                string request = Created(await client.CreateActivationRequestAsync(first, cancellationToken: Cancel)).File;
+                other = await ProcessedAsync(vendor, request);
+                break;
+        }
+
+        relay.ReplaceNext((_, _) => other);
+        Assert.Equal((ErrorCode.RequestMismatch, AnswersAnother), Code(Failed(await client.ActivateAsync(wanted, Cancel))));
+        string refused = relay.LastProofId!;
+        Assert.Equal(((string?)null, ActivationState.None), (vendor.Kept("a").ActivationId, client.State));
+        Assert.Contains(refused, vendor.Kept("a").Pending);
+
+        VerifiedLicense license = Activated(await client.ActivateAsync(wanted, Cancel));
+        Assert.Equal((wantedId, refused), (license.LicenseId, license.AnsweredRequestId));
+        Assert.DoesNotContain(await vendor.AuditAsync(), r => r.GetProperty("action").GetString() == "activation.clone");
+    }
+
+    /// <summary>
+    /// The aim of a request that got no answer survives the steps between it and the activation sent again, which then gets
+    /// the file the service issued for it (design §12.6.2, V1d5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license, and a product with a trial policy; a client behind a relay.
+    ///
+    /// Steps:
+    /// - replaced-offline: make an offline activation request and have the service process it; make another with renew,
+    ///   which puts the first one's nonce in the pending list; activate online.
+    /// - deactivation-proof: start a trial; activate the license with the answer dropped; make a deactivation proof and
+    ///   forget it; activate again.
+    /// - offline-refresh: start a trial; activate the license with the answer dropped; make an offline refresh request,
+    ///   have the service process it, and import the answer; activate again.
+    ///
+    /// Expected:
+    /// - The last activation is Activated with the license, and its areq is the nonce of the first offline request, or the
+    ///   jti of the activation whose answer was dropped.
+    /// </remarks>
+    [Theory]
+    [InlineData("replaced-offline")]
+    [InlineData("deactivation-proof")]
+    [InlineData("offline-refresh")]
+    public async Task Activate_AimKeptThroughOtherSteps_TakesTheFileOfTheEarlierRequest(string kind)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string licenseId, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        await vendor.TrialPolicyAsync();
+        var relay = new Relay();
+        await using ActivationClient client = vendor.Client("a", relay);
+        string earlier;
+        if (kind == "replaced-offline")
+        {
+            string first = Created(await client.CreateActivationRequestAsync(key, cancellationToken: Cancel)).File;
+            await ProcessedAsync(vendor, first);
+            Assert.True(Created(await client.CreateActivationRequestAsync(key, renew: true, cancellationToken: Cancel)).Replaced);
+            earlier = NonceOf(first);
+        }
+        else
+        {
+            Activated(await client.StartTrialAsync(Cancel));
+            relay.DropNext();
+            Assert.Equal(ErrorCode.NetworkError, Failed(await client.ActivateAsync(key, Cancel)).Code);
+            earlier = relay.LastProofId!;
+            if (kind == "deactivation-proof")
+            {
+                Created(await client.CreateDeactivationProofAsync(Cancel));
+                Assert.Null(await client.ForgetDeactivationProofAsync(Cancel));
+            }
+            else
+            {
+                string refresh = Created(await client.CreateRefreshRequestAsync(cancellationToken: Cancel)).File;
+                Activated(await client.ImportResponseAsync(await ProcessedAsync(vendor, refresh), Cancel));
+            }
+        }
+
+        VerifiedLicense license = Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal((licenseId, earlier), (license.LicenseId, license.AnsweredRequestId));
     }
 
     /// <summary>
@@ -373,12 +541,16 @@ public sealed partial class ActivationClientTests
         private Func<string, string, string>? _replace;
         private volatile string? _lastProofId;
         private volatile string? _lastAnswer;
+        private volatile bool _dropNext;
 
         public string? LastProofId => _lastProofId;
 
         public string? LastAnswer => _lastAnswer;
 
         public void ReplaceNext(Func<string, string, string> replace) => Volatile.Write(ref _replace, replace);
+
+        // The next POST is passed on and its answer kept, and the client gets no answer, as when a connection is cut.
+        public void DropNext() => _dropNext = true;
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
@@ -394,6 +566,12 @@ public sealed partial class ActivationClientTests
             if (response.IsSuccessStatusCode)
             {
                 _lastAnswer = body;
+            }
+
+            if (_dropNext)
+            {
+                _dropNext = false;
+                throw new HttpRequestException("The relay dropped the answer.");
             }
 
             Func<string, string, string>? replace = Interlocked.Exchange(ref _replace, null);

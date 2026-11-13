@@ -77,10 +77,11 @@ public sealed class ActivationStoreTests : IDisposable
     /// - Read 16 jti of 64 characters; then 17 jti; a jti of 65 characters; an empty jti; an ID that is not a UUID; an ID
     ///   without a license; a license without an ID; seq -1; a missing member; a kind not in the three; an ID and license
     ///   without a kind; a pending list of 17 and one with an empty jti; an unkept hash of 42 and 44 characters and a
-    ///   number; an array; a member twice.
+    ///   number; an array; a member twice. Aims (V1d5a): 16 of a 64-character jti naming 128 characters; then 17; a jti of
+    ///   65 characters; an aim of 129 characters; an empty aim; an empty jti; a number; null; an array; aims null.
     ///
     /// Expected:
-    /// - The first reads; every other is null and damaged.
+    /// - The first reads, and so do the 16 aims; every other is null and damaged.
     /// </remarks>
     [Fact]
     public void Read_EachOtherForm_IsDamaged()
@@ -117,6 +118,27 @@ public sealed class ActivationStoreTests : IDisposable
         Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"unkept":1}"""));
         Assert.True(Damaged("[]"));
         Assert.True(Damaged("""{"activationId":null,"seq":0,"seq":0,"kind":null,"license":null,"retry":[]}"""));
+
+        // design §12.6.2 (V1d5a): the aims of the pending requests, at most 16, each a jti of 1 to 64 characters naming 1 to
+        // 128 characters.
+        string Aims(int count, int jti, int aim) =>
+            "{"
+            + string.Join(
+                ',',
+                Enumerable.Range(0, count).Select(i => $"\"{i}{new string('j', jti - i.ToString().Length)}\":\"{new string('a', aim)}\"")
+            )
+            + "}";
+        File.WriteAllText(path, $$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{{Aims(16, 64, 128)}}}""");
+        Assert.Equal((16, 128), (store.Read(out _)!.Aims.Count, store.Read(out _)!.Aims.Values.First().Length));
+        Assert.True(Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{{Aims(17, 2, 1)}}}"""));
+        Assert.True(Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{{Aims(1, 65, 1)}}}"""));
+        Assert.True(Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{{Aims(1, 1, 129)}}}"""));
+        Assert.True(Damaged($$"""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{{Aims(1, 1, 0)}}}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{"":"a"}}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{"j":1}}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":{"j":null}}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":[]}"""));
+        Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"aims":null}"""));
     }
 
     /// <summary>

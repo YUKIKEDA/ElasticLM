@@ -175,8 +175,11 @@ public sealed class ElmServiceActivationsTests
     ///   file names the activation (act) and the request it answers (areq): the first activation's jti for the first two, the
     ///   first refresh's for the next two, the reactivation's for the reactivation, and under Flag the clone's (V1d5a). Under Deny each
     ///   clone gives 409 ELM_CLONE_DETECTED, the activation is blocked, its audit row says ELM_CLONE_DETECTED with the
-    ///   strategy; the later refresh gives 409; the deactivation with seq 0 gives 409, with seq 2 gives 204. Under Flag each
-    ///   gives 200 with seq 3, the activation is not blocked, the audit row says ELM_OK.
+    ///   strategy; the later refresh gives 409; the deactivation with seq 0 gives 409, with seq 2 gives 204; a refresh with
+    ///   seq 9223372036854775807 of another device is stopped the same way. Under Flag each
+    ///   gives 200 with seq 3, or 10 for the request ahead with seq 9 (one more than the greater of the two, V1d5a), the
+    ///   activation is not blocked, the audit row says ELM_OK. Under Flag a refresh with seq 9223372036854775807 gives 400
+    ///   ELM_MALFORMED "The sequence number is too large for a next token." and records no clone.
     /// </remarks>
     [Theory]
     [InlineData("deny")]
@@ -257,15 +260,47 @@ public sealed class ElmServiceActivationsTests
                     "The activation was stopped as a clone; only the copy with the last sequence number, or an administrator, deactivates it."
                 );
                 Assert.Equal(HttpStatusCode.NoContent, (await device.DeactivateAsync(id, 2)).Status);
+                if (name == "ahead")
+                {
+                    // Under Deny no sequence number is too large to stop as a clone (V1d5a).
+                    using var last = TestDevice.Create(test, service);
+                    string lastId = (await last.ActivateAsync(key, prints)).ActivationId;
+                    AssertProblem(
+                        await last.RefreshAsync(lastId, long.MaxValue),
+                        HttpStatusCode.Conflict,
+                        "ELM_CLONE_DETECTED",
+                        "Another copy of the installation went ahead; the activation is stopped. Deactivate it and activate again."
+                    );
+                }
             }
             else
             {
                 Assert.True(clone.Status == HttpStatusCode.OK, name + ": " + clone.Text);
-                Assert.Equal(3L, device.Verify(clone.File, prints).Sequence);
+                long next = name == "ahead" ? 10 : 3;
+                Assert.Equal(next, device.Verify(clone.File, prints).Sequence);
                 Assert.Equal(Answers(clone.Jti, id), Answers(device.Verify(clone.File, prints)));
-                Assert.Equal((JsonValueKind.Null, 3L), (activation.GetProperty("blockedAt").ValueKind, activation.GetProperty("seq").GetInt64()));
+                Assert.Equal((JsonValueKind.Null, next), (activation.GetProperty("blockedAt").ValueKind, activation.GetProperty("seq").GetInt64()));
                 Assert.Equal("ELM_OK", row.GetProperty("result").GetString());
             }
+        }
+
+        if (strategy == "flag")
+        {
+            using var device = TestDevice.Create(test, service);
+            string id = (await device.ActivateAsync(key, prints)).ActivationId;
+            int clones = (await TestService.AuditRowsAsync(test, service, owner)).Count(r =>
+                r.GetProperty("action").GetString() == "activation.clone"
+            );
+            AssertProblem(
+                await device.RefreshAsync(id, long.MaxValue),
+                HttpStatusCode.BadRequest,
+                "ELM_MALFORMED",
+                "The sequence number is too large for a next token."
+            );
+            Assert.Equal(
+                clones,
+                (await TestService.AuditRowsAsync(test, service, owner)).Count(r => r.GetProperty("action").GetString() == "activation.clone")
+            );
         }
     }
 
