@@ -148,7 +148,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 - The server license expires (by default after 30 days) and is refreshed from `elm-service`. Each refresh checks the server's `seq`, so a copied server is found.
 - The client accepts the server's TLS certificate when the operating system trusts it, or when its key matches the key the server license names. The server's administrator decides which, not the app developer, who cannot know.
 
-**Reason.** A server whose key has been taken can sign leases only inside the server license's bounds, and a copied server is found at its next refresh. The bounds hold for each lease, not for their number: with the key, more leases can be signed than the seats allow, until the server license expires ([the security model](security-model.md#on-the-customers-license-server)).
+**Reason.** A server whose key has been taken can sign leases only inside the server license's bounds, and a copied server is found at its next refresh. The bounds hold for each lease, not for their number: with the key, leases can be signed for more seats than the server license grants, until the vendor stops renewing the server license and its expiry plus grace period pass ([the security model](security-model.md#on-the-customers-license-server)).
 
 **Rejected.** A long-lived server license, which would let a taken key or a copied server be used for good.
 
