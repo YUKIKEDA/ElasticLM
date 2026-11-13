@@ -89,6 +89,35 @@ internal sealed partial class ServiceStore<TDialect>
                             .Select(t => Count())
                             .SingleAsync(cancellationToken)
                             .ConfigureAwait(false);
+                        if (made >= dailyLimit)
+                        {
+                            // At the limit nothing is written: a fingerprint that had a trial is still told first (design
+                            // §12.6.1, the order of V1d17's question 17-2). The product's lock keeps a trial with the same
+                            // fingerprint from being written between this read and the answer.
+                            long used = await tx.From(TrialFingerprintRow.Table)
+                                .Where(f => And(Eq(f.ProductId, license.ProductId), In(f.Fingerprint, fingerprints)))
+                                .Select(f => Count())
+                                .SingleAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                            if (used > 0)
+                            {
+                                throw new TrialUsedException();
+                            }
+
+                            // A place frees when the (made − limit + 1)-th oldest trial of the 24 hours leaves them: the oldest
+                            // one when made is the limit, a later one when the limit was lowered below the count. Every trial
+                            // counted is later than since, so the seconds are at least 1.
+                            List<long> freeing = await tx.From(TrialRow.Table)
+                                .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
+                                .Select(t => t.CreatedAt)
+                                .OrderBy(t => [Asc(t.CreatedAt)])
+                                .Limit(1)
+                                .Offset(checked((int)(made - dailyLimit)))
+                                .ToListAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                            throw new TrialLimitedException(freeing[0] + Policies.Day - license.CreatedAt);
+                        }
+
                         await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
                         await tx.Insert(TrialRow.Table)
                             .Values(
@@ -123,20 +152,6 @@ internal sealed partial class ServiceStore<TDialect>
                             {
                                 throw new TrialUsedException();
                             }
-                        }
-
-                        // After the fingerprints, so a device that had its trial hears ELM_TRIAL_USED even at the limit. The
-                        // oldest trial counted is later than since, so the seconds until it leaves the 24 hours are at least 1.
-                        if (made >= dailyLimit)
-                        {
-                            long oldest = (
-                                await tx.From(TrialRow.Table)
-                                    .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
-                                    .Select(t => Min(t.CreatedAt))
-                                    .SingleAsync(cancellationToken)
-                                    .ConfigureAwait(false)
-                            )!.Value;
-                            throw new TrialLimitedException(oldest + Policies.Day - license.CreatedAt);
                         }
 
                         await InsertActivationAsync(tx, activation, cancellationToken).ConfigureAwait(false);

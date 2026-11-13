@@ -3,7 +3,7 @@ using System.Collections.Concurrent;
 namespace ElasticLM.Service;
 
 /// <summary>
-/// When this node warns that a product reached its limit of trials in 24 hours (design §12.9, §18.2, V1d17): once a product,
+/// When this node warns that a product reached its limit of trials in 24 hours (design §12.9, §18.3, V1d17): once a product,
 /// and again only 24 hours after its last warning. A node keeps the times in memory, one a product that reached its limit.
 /// </summary>
 internal sealed class TrialLimitWarnings

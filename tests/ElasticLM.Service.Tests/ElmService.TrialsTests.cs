@@ -256,6 +256,102 @@ public sealed class ElmServiceTrialsTests
     }
 
     /// <summary>
+    /// A limit lowered below the product's count of the last 24 hours refuses at once, with the seconds until enough trials
+    /// have left the 24 hours for one place to free (design §12.9, V1d17).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with a trial policy of trialDailyLimit 3; each engine. Times are seconds from the test's start, t0.
+    ///
+    /// Steps:
+    /// - Trials of devices A at t0, B at t0+100, and C at t0+200; the policy's trialDailyLimit is patched to 1; D asks at
+    ///   t0+300; D asks again at t0+86,599 and at t0+86,600.
+    ///
+    /// Expected:
+    /// - A, B, and C 201. D 429 ELM_RATE_LIMITED "The product has reached its limit of 1 trials in 24 hours." with
+    ///   Retry-After 86300: one place frees only when the third oldest, C (t0+200), leaves the 24 hours, not the oldest, A
+    ///   (which would give 86100). D 429 with Retry-After 1 at t0+86,599, and 201 at t0+86,600.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Trial_LimitLoweredBelowTheCount_WaitsForEnoughToLeave(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0,\"trialDailyLimit\":3");
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{policy}}"}""");
+        TestDevice[] devices = [.. Enumerable.Range(0, 4).Select(_ => TestDevice.Create(test, service))];
+        string[][] prints = [.. Enumerable.Range(0, 4).Select(_ => TestDevice.Fingerprints())];
+        for (int i = 0; i < 3; i++)
+        {
+            Assert.Equal(HttpStatusCode.Created, (await devices[i].TrialAsync("app", prints[i])).Status);
+            test.Time.Advance(TimeSpan.FromSeconds(100));
+        }
+
+        await TestService.PatchAsync(admin, $"v1/admin/policies/{policy}", """{"trialDailyLimit":1}""");
+        const string Limit1 = "The product has reached its limit of 1 trials in 24 hours.";
+        DeviceAnswer refused = await devices[3].TrialAsync("app", prints[3]);
+        ElmServiceActivationsTests.AssertProblem(refused, HttpStatusCode.TooManyRequests, "ELM_RATE_LIMITED", Limit1);
+        Assert.Equal("86300", refused.RetryAfter);
+        test.Time.Advance(TimeSpan.FromSeconds(86_299));
+        refused = await devices[3].TrialAsync("app", prints[3]);
+        ElmServiceActivationsTests.AssertProblem(refused, HttpStatusCode.TooManyRequests, "ELM_RATE_LIMITED", Limit1);
+        Assert.Equal("1", refused.RetryAfter);
+        test.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(HttpStatusCode.Created, (await devices[3].TrialAsync("app", prints[3])).Status);
+        foreach (TestDevice device in devices)
+        {
+            device.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// The limit counts the product's trials of every policy, and not the licenses an administrator makes from a trial
+    /// policy (design §12.9, V1d17).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with trial policies P1 and P2, each of trialDailyLimit 2; the product names P1; each engine.
+    ///
+    /// Steps:
+    /// - An administrator makes two licenses of P1; device A asks for a trial; the product is switched to P2; B asks; C asks.
+    ///
+    /// Expected:
+    /// - A 201 (the administrator's licenses do not count); B 201; C 429 ELM_RATE_LIMITED "The product has reached its limit
+    ///   of 2 trials in 24 hours.", as A's trial of P1 counts for P2 too.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Trial_DailyLimit_CountsEveryPolicyOfTheProduct(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        const string Members = "\"licenseKind\":\"trial\",\"gracePeriod\":0,\"trialDailyLimit\":2";
+        string first = await TestService.PolicyAsync(admin, product, Members);
+        string second = await TestService.PolicyAsync(admin, product, Members);
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{first}}"}""");
+        await ElmServiceActivationsTests.LicenseAsync(admin, first);
+        await ElmServiceActivationsTests.LicenseAsync(admin, first);
+        TestDevice[] devices = [.. Enumerable.Range(0, 3).Select(_ => TestDevice.Create(test, service))];
+
+        Assert.Equal(HttpStatusCode.Created, (await devices[0].TrialAsync("app", TestDevice.Fingerprints())).Status);
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{second}}"}""");
+        Assert.Equal(HttpStatusCode.Created, (await devices[1].TrialAsync("app", TestDevice.Fingerprints())).Status);
+        ElmServiceActivationsTests.AssertProblem(
+            await devices[2].TrialAsync("app", TestDevice.Fingerprints()),
+            HttpStatusCode.TooManyRequests,
+            "ELM_RATE_LIMITED",
+            "The product has reached its limit of 2 trials in 24 hours."
+        );
+        foreach (TestDevice device in devices)
+        {
+            device.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Trials sent at once never pass the product's limit: the product's row is locked while its trials are counted and
     /// written (design §12.9, V1d17).
     /// </summary>
@@ -297,7 +393,7 @@ public sealed class ElmServiceTrialsTests
 
     /// <summary>
     /// A product that reaches its trial limit writes one warning to the operational log, and another only 24 hours after
-    /// it; each product warns on its own (design §12.9, §18.2, V1d17).
+    /// it; each product warns on its own (design §12.9, §18.3, V1d17).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -359,7 +455,7 @@ public sealed class ElmServiceTrialsTests
         string Line(string code, long until) =>
             string.Create(
                 System.Globalization.CultureInfo.InvariantCulture,
-                $"The product {code} ({products[code]}) reached its limit of 1 trials in 24 hours; new trials are refused until {TestService.Start.AddSeconds(until)}."
+                $"The product {code} ({products[code]}) reached its limit of 1 trials in 24 hours; new trials are refused at least until {TestService.Start.AddSeconds(until)}."
             );
         Assert.Equal(
             [Line("app", 86_400), Line("other", 86_430), Line("app", 172_800)],

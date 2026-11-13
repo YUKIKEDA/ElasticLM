@@ -103,11 +103,12 @@ internal static partial class ServiceLog
     )]
     public static partial void RequestUnreadable(ILogger log, string action, int status);
 
-    // design §12.9, §18.2 (V1d17): once a product and 24 hours on each node; the refused trials write no audit row.
+    // design §12.9, §18.3 (V1d17): on each node, once a product and 24 hours; the refused trials write no audit row (design
+    // §18.2).
     [LoggerMessage(
         EventId = 22,
         Level = LogLevel.Warning,
-        Message = "The product {Code} ({ProductId}) reached its limit of {Limit} trials in 24 hours; new trials are refused until {Until}."
+        Message = "The product {Code} ({ProductId}) reached its limit of {Limit} trials in 24 hours; new trials are refused at least until {Until}."
     )]
     public static partial void TrialLimitReached(ILogger log, string code, Guid productId, long limit, DateTimeOffset until);
 }
