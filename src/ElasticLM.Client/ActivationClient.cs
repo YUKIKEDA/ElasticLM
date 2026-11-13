@@ -113,8 +113,9 @@ public abstract record OfflineRequestResult
 /// </remarks>
 public sealed class ActivationClient : IAsyncDisposable
 {
-    // design §16: elm reports this error of a server license command as a failed exchange, not as a refusal.
-    internal const string AnswerTooLarge = "The service's answer is larger than the limit.";
+    // design §16: elm reports this error of a server license command as a failed exchange, not as a refusal. It is one
+    // instance, which elm tells by reference, so a change of its wording does not change elm's exit code.
+    internal static readonly LicenseError AnswerTooLarge = new(ErrorCode.Malformed, "The service's answer is larger than the limit.");
 
     private const int MaxAppBytes = 64;
     private const int MaxAnswerBytes = 256 * 1024;
@@ -1085,12 +1086,13 @@ public sealed class ActivationClient : IAsyncDisposable
                 // design §12.1, §12.6.2: nothing of an answer that is too large is read, its nonce and Retry-After
                 // included. A service that answered with a success may have acted on the request, so its jti stays in
                 // the kept list; a refusal changed nothing there.
-                return Reply.Failure(new LicenseError(ErrorCode.Malformed, AnswerTooLarge)) with { Unanswered = answer.IsSuccess };
+                return Reply.Failure(AnswerTooLarge) with { Unanswered = answer.IsSuccess };
             }
 
+            byte[] content = whole.Body.ToArray();
             string? nonce = whole.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
-            LicenseError? error = whole.IsSuccess ? null : LicenseClient.ProblemOf(whole.Status, whole.Body, keepDetail: true);
-            return new Reply(whole.Body, error, LicenseClient.ValidNonce(nonce), whole.Headers.RetryAfter?.Delta);
+            LicenseError? error = whole.IsSuccess ? null : LicenseClient.ProblemOf(whole.Status, content, keepDetail: true);
+            return new Reply(content, error, LicenseClient.ValidNonce(nonce), whole.Headers.RetryAfter?.Delta);
         }
         catch (HttpRequestException e)
             when (e.HttpRequestError

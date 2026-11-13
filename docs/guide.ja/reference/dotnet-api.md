@@ -259,7 +259,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `AppVersion` | `string?` | `null` | いいえ | 監査ログのために送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | 時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション。`null` なら既定値。 |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。 |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |
 
 ### `LicenseClient`
 
@@ -295,4 +295,4 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `AppVersion` | `string?` | `null` | いいえ | 新しいリースごとに送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | サーバーライセンスとリースのための時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション（時刻のずれ）。`null` なら既定値。 |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。 |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |

@@ -73,8 +73,8 @@ internal abstract record BoundedAnswer
         {
             using HttpResponseMessage response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token)
                 .ConfigureAwait(false);
-            byte[]? body = await ReadAsync(response.Content, limit, linked.Token).ConfigureAwait(false);
-            return body is null ? new TooLarge(response.StatusCode) : new Whole(response.StatusCode, body, response.Headers);
+            ReadOnlyMemory<byte>? body = await ReadAsync(response.Content, limit, linked.Token).ConfigureAwait(false);
+            return body is ReadOnlyMemory<byte> read ? new Whole(response.StatusCode, read, response.Headers) : new TooLarge(response.StatusCode);
         }
         catch (Exception e) when (e is OperationCanceledException or IOException && deadline.IsCancellationRequested)
         {
@@ -82,14 +82,24 @@ internal abstract record BoundedAnswer
         }
         catch (IOException e)
         {
-            // With the headers read first, a body that breaks off surfaces from the stream, not from the HTTP client.
-            throw new HttpRequestException(HttpRequestError.ResponseEnded, "The answer ended before it was whole.", e);
+            // With the headers read first, a body that breaks off surfaces from the stream, not from the HTTP client. The
+            // stream names the kind of failure: a body that ends before its length, or chunks that are not valid HTTP.
+            HttpRequestError error = (e as HttpIOException)?.HttpRequestError ?? HttpRequestError.ResponseEnded;
+            string message = error switch
+            {
+                HttpRequestError.ResponseEnded => "The answer ended before it was whole.",
+                HttpRequestError.InvalidResponse => "The answer's body is not valid HTTP.",
+                _ => "The answer's body could not be read.",
+            };
+            throw new HttpRequestException(error, message, e);
         }
     }
 
     // Returns null for a body longer than the limit. A declared length is believed only to refuse or to size the buffer:
-    // the HTTP client's stream ends at the declared length, and a body that ends before it throws.
-    private static async Task<byte[]?> ReadAsync(HttpContent content, int limit, CancellationToken cancellationToken)
+    // the HTTP client's stream ends at the declared length, and a body that ends before it throws. The body is not copied
+    // once read: the caller gets the part of the buffer that holds it, so one answer holds at most 1.5 times the limit
+    // while the buffer grows, and the limit once it is read.
+    private static async Task<ReadOnlyMemory<byte>?> ReadAsync(HttpContent content, int limit, CancellationToken cancellationToken)
     {
         long? declared = content.Headers.ContentLength;
         if (declared > limit)
@@ -107,28 +117,37 @@ internal abstract record BoundedAnswer
                 return whole;
             }
 
-            // The buffer never grows past the limit and one byte, so a body of unknown length shows that it is too long
-            // without more of it being taken.
-            byte[] buffer = new byte[Math.Min(limit + 1, FirstBufferLength)];
+            // The buffer never grows past the limit. Once it holds the limit, one byte more is asked for into a byte of its
+            // own, so a body of unknown length shows that it is too long without more of it being taken.
+            byte[] buffer = new byte[Math.Min(limit, FirstBufferLength)];
+            byte[] probe = new byte[1];
             int length = 0;
             while (true)
             {
-                int read = await stream.ReadAsync(buffer.AsMemory(length), cancellationToken).ConfigureAwait(false);
-                if (read == 0)
+                if (length == limit)
                 {
-                    return buffer[..length];
-                }
+                    // Two returns, not a conditional: in `? buffer.AsMemory(…) : null` the null converts to an empty Memory
+                    // through a null array, and an answer over the limit read as an empty body (seen in this row's tests).
+                    if (await stream.ReadAsync(probe, cancellationToken).ConfigureAwait(false) != 0)
+                    {
+                        return null;
+                    }
 
-                length += read;
-                if (length > limit)
-                {
-                    return null;
+                    return buffer.AsMemory(0, length);
                 }
 
                 if (length == buffer.Length)
                 {
-                    Array.Resize(ref buffer, (int)Math.Min(limit + 1L, buffer.Length * 2L));
+                    Array.Resize(ref buffer, (int)Math.Min(limit, buffer.Length * 2L));
                 }
+
+                int read = await stream.ReadAsync(buffer.AsMemory(length), cancellationToken).ConfigureAwait(false);
+                if (read == 0)
+                {
+                    return buffer.AsMemory(0, length);
+                }
+
+                length += read;
             }
         }
     }
@@ -137,7 +156,7 @@ internal abstract record BoundedAnswer
     /// <param name="Status">The answer's status.</param>
     /// <param name="Body">The body.</param>
     /// <param name="Headers">The answer's headers.</param>
-    public sealed record Whole(HttpStatusCode Status, byte[] Body, HttpResponseHeaders Headers) : BoundedAnswer(Status);
+    public sealed record Whole(HttpStatusCode Status, ReadOnlyMemory<byte> Body, HttpResponseHeaders Headers) : BoundedAnswer(Status);
 
     /// <summary>
     /// An answer whose body is longer than the limit, or declares that it is. Only its status is known: its headers are

@@ -41,6 +41,19 @@ internal sealed record RawAnswer
     /// <summary>Gets a value indicating whether the server writes nothing at all, not even the head.</summary>
     public bool NoHead { get; init; }
 
+    /// <summary>Gets the whole body, when it is given as bytes; <see cref="Start"/> and <see cref="Length"/> are then not used.</summary>
+    public byte[]? Content { get; init; }
+
+    /// <summary>A whole answer of the given bytes, with a <c>Content-Length</c>.</summary>
+    public static RawAnswer Bytes(byte[] body, int status = 200) =>
+        new()
+        {
+            Status = status,
+            Content = body,
+            Length = body.Length,
+            Declared = body.Length,
+        };
+
     /// <summary>Gets no answer: the server reads the request and keeps the connection open.</summary>
     public static RawAnswer Silent { get; } = new() { NoHead = true, Hold = true };
 
@@ -340,7 +353,10 @@ internal sealed class RawAnswerServer : IAsyncDisposable
         long left = answer.Length;
         while (left > 0)
         {
-            ReadOnlyMemory<byte> part = left == answer.Length && start.Length > 0 ? start : Spaces.AsMemory(0, (int)Math.Min(left, Spaces.Length));
+            ReadOnlyMemory<byte> part =
+                answer.Content is byte[] content ? content.AsMemory((int)(answer.Length - left), (int)Math.Min(left, Spaces.Length))
+                : left == answer.Length && start.Length > 0 ? start
+                : Spaces.AsMemory(0, (int)Math.Min(left, Spaces.Length));
             if (answer.Chunked)
             {
                 await stream.WriteAsync(Encoding.ASCII.GetBytes(part.Length.ToString("x", CultureInfo.InvariantCulture) + "\r\n"), _stopping.Token);

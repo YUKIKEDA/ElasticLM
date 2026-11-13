@@ -72,7 +72,7 @@ public sealed class BoundedAnswerTests
         BoundedAnswer tooLarge = await SendAsync(http, over);
 
         BoundedAnswer.Whole read = Assert.IsType<BoundedAnswer.Whole>(whole);
-        Assert.Equal((HttpStatusCode.OK, Limit, "{} "), (read.Status, read.Body.Length, Encoding.ASCII.GetString(read.Body, 0, 3)));
+        Assert.Equal((HttpStatusCode.OK, Limit, "{} "), (read.Status, read.Body.Length, Encoding.ASCII.GetString(read.Body.Span[..3])));
         Assert.Equal(new BoundedAnswer.TooLarge(HttpStatusCode.OK), tooLarge);
     }
 
@@ -207,7 +207,7 @@ public sealed class BoundedAnswerTests
         time.Advance(TimeSpan.FromSeconds(10) - TimeSpan.FromTicks(1));
         server.Release();
         BoundedAnswer.Whole whole = Assert.IsType<BoundedAnswer.Whole>(await sending);
-        Assert.Equal("x", Encoding.ASCII.GetString(whole.Body));
+        Assert.Equal("x", Encoding.ASCII.GetString(whole.Body.Span));
     }
 
     /// <summary>
@@ -266,6 +266,77 @@ public sealed class BoundedAnswerTests
         HttpRequestException failed = await Assert.ThrowsAsync<HttpRequestException>(() => SendAsync(http, server));
 
         Assert.Equal((HttpRequestError.ResponseEnded, "The answer ended before it was whole."), (failed.HttpRequestError, failed.Message));
+    }
+
+    /// <summary>
+    /// With a limit that the doubling buffer does not meet exactly, a body of the limit is whole and one of a byte more is
+    /// too large: the buffer stops growing at the limit, and the byte after it is asked for on its own.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A limit of 1,500 bytes; the buffer starts at 1,024 bytes and would double to 2,048.
+    /// - A server whose answer has a body in one chunk, of 1,500 bytes, and of 1,501 bytes.
+    ///
+    /// Steps:
+    /// - Send a request with the limit 1,500 to each.
+    ///
+    /// Expected:
+    /// - 1,500 bytes: Whole with a body of 1,500 bytes. 1,501 bytes: TooLarge. A buffer that grew to 1,501 bytes would take
+    ///   the whole of the longer body in one read and return it as whole.
+    /// </remarks>
+    [Fact]
+    public async Task Send_LimitNotAPowerOfTwo_IsWholeAtItAndTooLargePastIt()
+    {
+        const int Odd = 1_500;
+        static RawAnswer Shaped(int length) =>
+            new()
+            {
+                Chunked = true,
+                Start = "{}",
+                Length = length,
+            };
+        await using RawAnswerServer atLimit = RawAnswerServer.Start(_ => Shaped(Odd));
+        await using RawAnswerServer over = RawAnswerServer.Start(_ => Shaped(Odd + 1));
+        using HttpClient http = BoundedAnswer.CreateClient(BoundedAnswer.CreateHandler());
+        var time = new FakeTimeProvider(Start);
+
+        using var first = new HttpRequestMessage(HttpMethod.Get, new Uri(atLimit.Url, "x"));
+        BoundedAnswer whole = await BoundedAnswer.SendAsync(http, first, Odd, time, Cancel).WaitAsync(Hang, Cancel);
+        using var second = new HttpRequestMessage(HttpMethod.Get, new Uri(over.Url, "x"));
+        BoundedAnswer tooLarge = await BoundedAnswer.SendAsync(http, second, Odd, time, Cancel).WaitAsync(Hang, Cancel);
+
+        Assert.Equal(Odd, Assert.IsType<BoundedAnswer.Whole>(whole).Body.Length);
+        Assert.Equal(new BoundedAnswer.TooLarge(HttpStatusCode.OK), tooLarge);
+    }
+
+    /// <summary>
+    /// A body whose chunks are not valid HTTP is a failed request that says so, not one that ended early.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server whose answer says Transfer-Encoding: chunked and then sends a chunk size that is not hexadecimal, "zz".
+    ///
+    /// Steps:
+    /// - Send a request.
+    ///
+    /// Expected:
+    /// - HttpRequestException with the error InvalidResponse and "The answer's body is not valid HTTP.".
+    /// </remarks>
+    [Fact]
+    public async Task Send_ChunksNotValid_IsAFailedRequestOfAnInvalidAnswer()
+    {
+        await using RawAnswerServer server = RawAnswerServer.Start(_ =>
+            RawAnswer.Bytes(Encoding.ASCII.GetBytes("zz\r\nabc\r\n0\r\n\r\n")) with
+            {
+                Declared = null,
+                Headers = "Transfer-Encoding: chunked\r\n",
+            }
+        );
+        using HttpClient http = BoundedAnswer.CreateClient(BoundedAnswer.CreateHandler());
+
+        HttpRequestException failed = await Assert.ThrowsAsync<HttpRequestException>(() => SendAsync(http, server));
+
+        Assert.Equal((HttpRequestError.InvalidResponse, "The answer's body is not valid HTTP."), (failed.HttpRequestError, failed.Message));
     }
 
     private static async Task<BoundedAnswer> SendAsync(HttpClient http, RawAnswerServer server, TimeProvider? time = null)

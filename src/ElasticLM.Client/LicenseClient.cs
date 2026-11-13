@@ -923,14 +923,13 @@ public sealed class LicenseClient : IAsyncDisposable
                     return new LicenseError(ErrorCode.Malformed, AnswerTooLarge);
                 }
 
+                body = whole.Body.ToArray();
                 if (!whole.IsSuccess)
                 {
                     // The code is read, and the detail, which whoever answers would choose, never becomes the app's
                     // message (design §12.1).
-                    return ProblemOf(whole.Status, whole.Body, keepDetail: false);
+                    return ProblemOf(whole.Status, body, keepDetail: false);
                 }
-
-                body = whole.Body;
             }
             catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
             {
@@ -1434,12 +1433,13 @@ public sealed class LicenseClient : IAsyncDisposable
                 return Reply.Failure(new LicenseError(ErrorCode.Malformed, AnswerTooLarge), unanswered: answer.IsSuccess);
             }
 
+            byte[] content = whole.Body.ToArray();
             string? nonce = whole.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
             string? serverLicense = whole.Headers.TryGetValues("ELM-Server-License", out IEnumerable<string>? licenses)
                 ? licenses.FirstOrDefault()
                 : null;
-            LicenseError? error = whole.IsSuccess ? null : ProblemOf(whole.Status, whole.Body, keepDetail: true);
-            return new Reply(whole.Body, error, ValidNonce(nonce), serverLicense, whole.Headers.RetryAfter?.Delta);
+            LicenseError? error = whole.IsSuccess ? null : ProblemOf(whole.Status, content, keepDetail: true);
+            return new Reply(content, error, ValidNonce(nonce), serverLicense, whole.Headers.RetryAfter?.Delta);
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
         {

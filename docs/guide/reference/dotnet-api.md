@@ -259,7 +259,7 @@ The settings, `ActivationClientOptions` (each property has an `init` accessor, s
 | `AppVersion` | `string?` | `null` | No | The app's version, sent for the audit log; at most 64 bytes in UTF-8. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options, or `null` for their defaults. |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |
 
 ### `LicenseClient`
 
@@ -295,4 +295,4 @@ The settings, `LicenseClientOptions` (each property has an `init` accessor, so i
 | `AppVersion` | `string?` | `null` | No | The app version sent with each new lease; at most 64 bytes in UTF-8. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard for the server license and the leases, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options (the clock skew), or `null` for their defaults. |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |

@@ -1,3 +1,4 @@
+using System.Net.Http.Headers;
 using System.Net.Sockets;
 using ElasticLM.Client;
 
@@ -46,7 +47,7 @@ internal static class ServerAdminApi
     /// </summary>
     /// <param name="host">The command's host, which may replace how the socket is connected.</param>
     /// <param name="endPoint">The server's socket file.</param>
-    public static SocketsHttpHandler CreateHandler(CliHost host, UnixDomainSocketEndPoint endPoint)
+    internal static SocketsHttpHandler CreateHandler(CliHost host, UnixDomainSocketEndPoint endPoint)
     {
         Func<UnixDomainSocketEndPoint, CancellationToken, ValueTask<Stream>> connect = host.ConnectAdminSocket ?? ConnectAsync;
         SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
@@ -72,7 +73,7 @@ internal static class ServerAdminApi
     {
         using HttpClient http = BoundedAnswer.CreateClient(CreateHandler(host, endPoint));
         using var request = new HttpRequestMessage(method, new Uri(BaseAddress, path));
-        request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
         return BoundedAnswer.SendAsync(http, request, MaxAnswerLength, host.Time, CancellationToken.None).GetAwaiter().GetResult();
     }
 
@@ -80,17 +81,9 @@ internal static class ServerAdminApi
     /// Returns the sentence for an answer of the administration API that is not the one asked for: its error code and
     /// detail when it has a code, or else its status code.
     /// </summary>
-    /// <param name="status">The answer's status code.</param>
-    /// <param name="answer">The answer's body as JSON, or the default value when it has none that can be read.</param>
-    public static string Unexpected(System.Net.HttpStatusCode status, System.Text.Json.JsonElement answer) =>
-        Text(answer, "code") is string code ? $"{code}: {Text(answer, "detail")}" : $"The server's administration API answered {(int)status}.";
-
-    private static string? Text(System.Text.Json.JsonElement value, string name) =>
-        value.ValueKind == System.Text.Json.JsonValueKind.Object
-        && value.TryGetProperty(name, out System.Text.Json.JsonElement member)
-        && member.ValueKind == System.Text.Json.JsonValueKind.String
-            ? member.GetString()
-            : null;
+    /// <param name="answer">The answer.</param>
+    public static string Unexpected(AdminAnswer answer) =>
+        answer.Text("code") is string code ? $"{code}: {answer.Text("detail")}" : $"The server's administration API answered {(int)answer.Status}.";
 
     private static async ValueTask<Stream> ConnectAsync(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
     {

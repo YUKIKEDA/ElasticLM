@@ -106,7 +106,7 @@ internal static class OfflineCommands
             throw new CliException($"ELM_MALFORMED: The service's answer is larger than {BoundedAnswer.MaxLength} bytes.", ExitCodes.NetworkError);
         }
 
-        byte[] body = whole.Body;
+        byte[] body = whole.Body.ToArray();
         if (!whole.IsSuccess)
         {
             (string code, string detail) = Problem(body);
