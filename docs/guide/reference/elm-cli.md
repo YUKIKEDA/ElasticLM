@@ -190,7 +190,7 @@ The value is the feature ID, then any of the parts below, each after a `;`. Quot
 
 | Part | Form | Meaning |
 | --- | --- | --- |
-| `ID` | Text | The feature ID that the app asks for. |
+| `ID` | Text, 1 to 64 bytes in UTF-8, without `;` | The feature ID that the app asks for. |
 | `ver=RANGE` | One to four comparators separated by spaces, all of which must hold. A comparator is `>=`, `<=`, `>`, `<`, or `=` followed by a version `major.minor` or `major.minor.patch` of digits only; a missing patch is 0. | The feature versions the license covers, such as `>=1.0 <2.0`. Without it, every version. |
 | `seats=N` | Whole number, at least 1 | The concurrent seats of the feature. Required for a `server` license, and not allowed otherwise. |
 | `exp=DATE` | ISO 8601 date or time, as for `--expires` | The feature's own expiry. Without it, the feature lasts as long as the license. |

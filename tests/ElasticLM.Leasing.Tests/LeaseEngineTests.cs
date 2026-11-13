@@ -1,3 +1,7 @@
+using System.Buffers.Text;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json.Nodes;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 
@@ -144,6 +148,53 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A refused acquisition names its feature only when the current server license grants a feature of that name, also when
+    /// the refusal comes before the feature is read (design §18.1): the usage log counts refusals under this name.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Features pro (&gt;=2.0 &lt;3.0, 5 seats) and cam (5 seats), a license that expires 15 minutes after the start with
+    ///   2 minutes of grace; the window (10 minutes) is over; one lease of cam.
+    ///
+    /// Steps:
+    /// - Acquire nope; pro 3.0. Replace the license with one that grants pro only and acquire cam, whose lease is still
+    ///   held. Advance 7 minutes, to exp + grace, and acquire pro and nope.
+    ///
+    /// Expected:
+    /// - ELM_FEATURE_NOT_LICENSED without a feature; ELM_FEATURE_VERSION_NOT_LICENSED with pro; ELM_FEATURE_NOT_LICENSED
+    ///   without a feature for cam; ELM_EXPIRED with pro; ELM_EXPIRED without a feature.
+    /// </remarks>
+    [Fact]
+    public void Acquire_Refused_NamesTheFeatureOnlyWhenTheLicenseGrantsIt()
+    {
+        using var server = new TestServer(
+            features: [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5), new FeatureSpec("cam", Seats: 5)],
+            expires: TestServer.Start.AddMinutes(15),
+            grace: TimeSpan.FromMinutes(2)
+        );
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(feature: "cam", version: null)));
+        static void AssertNames(ErrorCode code, string? feature, LeaseOutcome outcome)
+        {
+            var refused = Assert.IsType<LeaseOutcome.Refused>(outcome);
+            Assert.Equal(code, refused.Error.Code);
+            Assert.Equal(feature, refused.FeatureId);
+        }
+
+        AssertNames(ErrorCode.FeatureNotLicensed, null, engine.Acquire(client.Request(feature: "nope")));
+        AssertNames(ErrorCode.FeatureVersionNotLicensed, "pro", engine.Acquire(client.Request(version: "3.0")));
+
+        server.ReplaceServerLicense(spec => spec with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5)] });
+        engine.ReplaceLicense(server.Identity);
+        AssertNames(ErrorCode.FeatureNotLicensed, null, engine.Acquire(client.Request(feature: "cam", version: null)));
+
+        server.Time.Advance(TimeSpan.FromMinutes(7));
+        AssertNames(ErrorCode.Expired, "pro", engine.Acquire(client.Request()));
+        AssertNames(ErrorCode.Expired, null, engine.Acquire(client.Request(feature: "nope")));
+    }
+
+    /// <summary>
     /// A granted lease is a token the client accepts, for its key, with sequence number 1 and the license's lease duration.
     /// </summary>
     /// <remarks>
@@ -154,17 +205,20 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Acquire 2 seats; verify the token as the client does.
     ///
     /// Expected:
-    /// - Valid; 2 seats, sequence 1, 10 minutes, the server license's jti in slic; the outcome's expiry matches.
+    /// - Valid; 2 seats, sequence 1, 10 minutes, the server license's jti in slic, the request's proof ID in areq (design
+    ///   §8.4.3, V1d5); the outcome's expiry matches.
     /// </remarks>
     [Fact]
     public void Acquire_Token_PassesTheClientCheck()
     {
         LeaseEngine engine = _server.OpenEngine();
         TestClient client = _server.Client();
+        LeaseRequest request = client.Request(count: 2);
 
-        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(count: 2)));
+        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(request));
 
         VerifiedLease lease = Valid(granted.Token, client);
+        Assert.Equal(request.ProofId, lease.AnsweredProofId);
         Assert.Equal(granted.LeaseId, lease.LeaseId);
         Assert.Equal(2, lease.Seats);
         Assert.Equal(1, lease.Sequence);
@@ -220,7 +274,8 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Renew with 1 by proof P (its answer is lost); retry with 1 naming [Q, P]; renew with 2; renew with 0.
     ///
     /// Expected:
-    /// - Sequence 2; the same token again without a new signature; sequence 3; ELM_CLONE_DETECTED.
+    /// - Sequence 2 in a token whose areq is P; the same token again without a new signature, so its areq is still P and
+    ///   not the retry's R (design §8.4.3, V1d5); sequence 3 in a token whose areq is S; ELM_CLONE_DETECTED.
     /// </remarks>
     [Fact]
     public void Renew_Sequence_IsJudged()
@@ -230,15 +285,16 @@ public sealed class LeaseEngineTests : IDisposable
         var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
 
         var second = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "P", []));
-        Assert.Equal(2, Valid(second.Token, client).Sequence);
+        Assert.Equal((2L, "P"), (Valid(second.Token, client).Sequence, Valid(second.Token, client).AnsweredProofId));
         int signed = _server.Signed;
 
         var retried = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "R", ["Q", "P"]));
         Assert.Equal(second.Token, retried.Token);
         Assert.Equal(signed, _server.Signed);
+        Assert.Equal("P", Valid(retried.Token, client).AnsweredProofId);
 
-        var third = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId));
-        Assert.Equal(3, Valid(third.Token, client).Sequence);
+        var third = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId, "S", []));
+        Assert.Equal((3L, "S"), (Valid(third.Token, client).Sequence, Valid(third.Token, client).AnsweredProofId));
 
         AssertRefused(ErrorCode.CloneDetected, engine.Renew(granted.LeaseId, 1, client.KeyId));
     }
@@ -339,10 +395,10 @@ public sealed class LeaseEngineTests : IDisposable
     /// - Clone strategy flag; a lease renewed twice (sequence 3).
     ///
     /// Steps:
-    /// - Renew with 1; reclaim the first token.
+    /// - Renew with 1 by proof F; reclaim the first token.
     ///
     /// Expected:
-    /// - Granted with CloneFlagged and sequence 4; the reclaim succeeds with CloneFlagged.
+    /// - Granted with CloneFlagged, sequence 4, and areq F (design §8.4.3, V1d5); the reclaim succeeds with CloneFlagged.
     /// </remarks>
     [Fact]
     public void Flag_ReportsAndAnswersAsUsual()
@@ -354,9 +410,10 @@ public sealed class LeaseEngineTests : IDisposable
         Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
         Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 2, client.KeyId));
 
-        var flagged = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
+        var flagged = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId, "F", []));
         Assert.True(flagged.CloneFlagged);
-        Assert.Equal(4, Valid(flagged.Token, client, server).Sequence);
+        VerifiedLease next = Valid(flagged.Token, client, server);
+        Assert.Equal((4L, "F"), (next.Sequence, next.AnsweredProofId));
 
         ReclaimResult reclaimed = Assert.Single(engine.Reclaim([granted.Token], client.KeyId, client.PublicKey));
         Assert.Null(reclaimed.Error);
@@ -727,7 +784,129 @@ public sealed class LeaseEngineTests : IDisposable
             Duration = TimeSpan.FromMinutes(10),
             ServerLicenseTokenId = _server.Identity.License.TokenId,
             Sequence = 1,
+            AnsweredProofId = "proof-1",
         };
+
+    /// <summary>
+    /// Under clone strategy flag, the token after a flagged renewal is later than both the lease's sequence number and the
+    /// request's, and a sequence number that no token can follow is refused without changing the lease (design §10.4, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Clone strategy flag; a lease renewed once (sequence 2).
+    ///
+    /// Steps:
+    /// - Renew with 7 (ahead of the server); with 3 (behind it); with -5; with 9223372036854775807; with 10; with
+    ///   9223372036854775806; with 9223372036854775807.
+    ///
+    /// Expected:
+    /// - Flagged with sequence 8; flagged with 9; flagged with 10; ELM_MALFORMED "The sequence number is too large for a
+    ///   next token."; granted with 11 and not flagged, so the refusal changed nothing; flagged with
+    ///   9223372036854775807; ELM_MALFORMED with the same message, since the lease's own number cannot be followed.
+    /// </remarks>
+    [Fact]
+    public void Flag_TokenIsLaterThanTheLeaseAndTheRequest()
+    {
+        const string TooLarge = "The sequence number is too large for a next token.";
+        using var server = new TestServer(clone: CloneStrategy.Flag);
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        string id = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request())).LeaseId;
+        Assert.IsType<LeaseOutcome.Granted>(engine.Renew(id, 1, client.KeyId));
+        (bool Flagged, long Sequence) Renewed(long sequence)
+        {
+            var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(id, sequence, client.KeyId));
+            return (granted.CloneFlagged, Valid(granted.Token, client, server).Sequence);
+        }
+
+        Assert.Equal((true, 8L), Renewed(7));
+        Assert.Equal((true, 9L), Renewed(3));
+        Assert.Equal((true, 10L), Renewed(-5));
+        Assert.Equal(TooLarge, AssertRefused(ErrorCode.Malformed, engine.Renew(id, long.MaxValue, client.KeyId)).Error.Message);
+        Assert.Equal((false, 11L), Renewed(10));
+        Assert.Equal((true, long.MaxValue), Renewed(long.MaxValue - 1));
+        Assert.Equal(TooLarge, AssertRefused(ErrorCode.Malformed, engine.Renew(id, long.MaxValue, client.KeyId)).Error.Message);
+    }
+
+    /// <summary>
+    /// A lease token without the ID of the proof it answers (areq) is refused by a reclaim and skipped by the restore of the
+    /// borrow record, as by the client's check (design §8.4.3, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Lease tokens written by hand and signed with the server's key, for a client's key and the current server license:
+    ///   a lease and a borrow with areq, and a lease and a borrow without it.
+    ///
+    /// Steps:
+    /// - Reclaim the two leases in one request on a fresh engine. Restore each borrow, as a borrow record, into an engine of
+    ///   its own.
+    ///
+    /// Expected:
+    /// - The lease with areq is reclaimed; the one without is ELM_MALFORMED "The lease payload is not valid." with no lease
+    ///   ID, and the engine holds 1 seat. The borrow with areq is restored (1); the one without is not (0).
+    /// </remarks>
+    [Fact]
+    public void ReclaimAndRestore_TokenWithoutAnsweredProofId_IsRefused()
+    {
+        TestClient client = _server.Client();
+        LeaseEngine engine = _server.Engine();
+
+        IReadOnlyList<ReclaimResult> results = engine.Reclaim(
+            [HandSigned(client, "lease-A-AAAAAAAAAAAAAA", borrow: false, withAreq: true), HandSigned(client, "lease-B-AAAAAAAAAAAAAA", false, false)],
+            client.KeyId,
+            client.PublicKey
+        );
+
+        Assert.Equal("lease-A-AAAAAAAAAAAAAA", results[0].LeaseId);
+        Assert.Null(results[0].Error);
+        Assert.Null(results[1].LeaseId);
+        Assert.Equal(new LicenseError(ErrorCode.Malformed, "The lease payload is not valid."), results[1].Error);
+        Assert.Equal(1, engine.SeatsInUse("pro"));
+
+        BorrowRecord Record(bool withAreq) =>
+            new(HandSigned(client, "lease-C-AAAAAAAAAAAAAA", borrow: true, withAreq), "lic-srv", 5, TimeSpan.FromDays(7), [client.Fingerprint]);
+        Assert.Equal(1, _server.Engine().Restore([Record(withAreq: true)], []));
+        Assert.Equal(0, _server.Engine().Restore([Record(withAreq: false)], []));
+    }
+
+    // A lease token of the current server license for a client, signed with the server's key, with or without areq.
+    private string HandSigned(TestClient client, string leaseId, bool borrow, bool withAreq)
+    {
+        string kid = KeyFiles.KeyId(_server.Key);
+        long now = _server.Time.GetUtcNow().ToUnixTimeSeconds();
+        var payload = new JsonObject
+        {
+            ["ver"] = 1,
+            ["iss"] = kid,
+            ["iat"] = now,
+            ["exp"] = now + 600,
+            ["jti"] = "j",
+            ["lse"] = leaseId,
+            ["prd"] = "acme-cad",
+            ["lic"] = "lic-srv",
+            ["feat"] = "pro",
+            ["n"] = 1,
+            ["cnf"] = new JsonObject { ["jkt"] = client.KeyId },
+            ["brw"] = borrow,
+            ["srv"] = kid,
+            ["slic"] = _server.Identity.License.TokenId,
+            ["seq"] = 1,
+        };
+        if (withAreq)
+        {
+            payload["areq"] = "proof-1";
+        }
+
+        string header = $$"""{"alg":"ES256","kid":"{{kid}}","typ":"{{TokenTypes.Lease}}"}""";
+        string input =
+            Base64Url.EncodeToString(Encoding.UTF8.GetBytes(header)) + "." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload.ToJsonString()));
+        byte[] signature = _server.Key.SignData(
+            Encoding.ASCII.GetBytes(input),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation
+        );
+        return input + "." + Base64Url.EncodeToString(signature);
+    }
 
     private VerifiedLease Valid(string token, TestClient client, TestServer? server = null) =>
         Assert.IsType<LeaseVerificationResult.Valid>((server ?? _server).VerifyAsClient(token, client)).Lease;

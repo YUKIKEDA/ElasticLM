@@ -908,6 +908,46 @@ public sealed class LicenseVerifierTests : IDisposable
     }
 
     /// <summary>
+    /// A feature ID in a license is 1 to 64 bytes in UTF-8: a license with a 64-byte ID verifies and grants that feature, and
+    /// one with a 65-byte ID is malformed (design §8.4.2, §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A signed license whose second feature has the ID of the case: 64 and 65 letters a; 21 times あ (3 bytes each) and
+    ///   one a, 64 bytes in 22 characters; 21 times あ and ab, 65 bytes in 23 characters. Everything else is valid.
+    ///
+    /// Steps:
+    /// - Verify each for that feature.
+    ///
+    /// Expected:
+    /// - 64 bytes: Valid, and the license lists the ID. 65 bytes: ELM_MALFORMED, also for the ID of 23 characters, so the
+    ///   limit counts bytes.
+    /// </remarks>
+    [Theory]
+    [InlineData(0, 64, true)]
+    [InlineData(0, 65, false)]
+    [InlineData(21, 1, true)]
+    [InlineData(21, 2, false)]
+    public void Verify_FeatureIdLength_Accepts64BytesRejects65(int wide, int narrow, bool valid)
+    {
+        string id = string.Concat(Enumerable.Repeat("あ", wide)) + new string('a', narrow);
+        Assert.Equal(valid ? 64 : 65, System.Text.Encoding.UTF8.GetByteCount(id));
+        JsonObject license = _issuer.LicensePayload();
+        license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro" }, new JsonObject { ["id"] = id });
+
+        LicenseVerificationResult result = _issuer.Verifier().Verify(_issuer.File(license), _issuer.Requirement(feature: id, version: null));
+
+        if (valid)
+        {
+            Assert.Contains(Assert.IsType<LicenseVerificationResult.Valid>(result).License.Features, f => f.Id == id);
+        }
+        else
+        {
+            AssertError(ErrorCode.Malformed, result);
+        }
+    }
+
+    /// <summary>
     /// Payload shapes the design forbids are malformed: a server license without its server claims or with only clone
     /// missing, a clone strategy that is not deny or flag, a server license without brl or with brl of -1 or 1001, seats on
     /// a standard
