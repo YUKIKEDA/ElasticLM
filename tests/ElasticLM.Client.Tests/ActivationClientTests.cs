@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
@@ -143,7 +144,8 @@ public sealed partial class ActivationClientTests
     /// Steps:
     /// - Advance 12 hours and wait for the refresh; suspend the license; advance 12 hours and wait for the refusal's event;
     ///   check; resume the license; advance an hour and wait for the state; add a handler that disposes the client, revoke,
-    ///   advance a day. From the refusal on, each wait moves the clock 10 minutes every 10 polls (Issue #106).
+    ///   advance a day. From the refusal on, each wait moves the clock 10 minutes every 10 polls (Issue #106),
+    ///   and only while no request of the client is on its way (a move of more than 30 seconds would cancel it).
     ///
     /// Expected:
     /// - The service's activation reaches sequence 2; the state becomes Refused with ELM_LICENSE_SUSPENDED in the event; the
@@ -174,7 +176,7 @@ public sealed partial class ActivationClientTests
         // from the time it read (Issue #106).
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/suspend", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromHours(12));
-        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(Refusal(changes) is not null), Step);
+        await vendor.WaitWithClockAsync(() => Task.FromResult(Refusal(changes) is not null), Step);
 
         // The state is set before the event is raised: read the refusal from the event, not after the state.
         Assert.Equal(ErrorCode.LicenseSuspended, Refusal(changes)!.Error!.Code);
@@ -183,7 +185,7 @@ public sealed partial class ActivationClientTests
 
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/resume", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromHours(1));
-        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(client.State == ActivationState.Active), Step);
+        await vendor.WaitWithClockAsync(() => Task.FromResult(client.State == ActivationState.Active), Step);
 
         // A handler on the timer's thread may dispose the client and wait for it: the disposal does not wait for the refresh
         // that raised the event (design §12.6.2).
@@ -197,7 +199,7 @@ public sealed partial class ActivationClientTests
         };
         (await vendor.Admin.PostAsync($"v1/admin/licenses/{licenseId}/revoke", null, TestContext.Current.CancellationToken)).Dispose();
         vendor.Test.Time.Advance(TimeSpan.FromDays(1));
-        await vendor.Test.WaitWithClockAsync(() => Task.FromResult(disposed is not null), Step);
+        await vendor.WaitWithClockAsync(() => Task.FromResult(disposed is not null), Step);
         Assert.True(disposed);
     }
 
@@ -248,6 +250,86 @@ public sealed partial class ActivationClientTests
         Assert.Equal(ErrorCode.NetworkError, Failed(await client.StartTrialAsync(Cancel)).Code);
         VerifiedLicense trial = Activated(await client.StartTrialAsync(Cancel));
         Assert.Equal((LicenseKind.Trial, 1L), (trial.Kind, trial.Sequence));
+        Assert.Equal(1, (await vendor.GetAsync("v1/admin/trials")).GetProperty("items").GetArrayLength());
+    }
+
+    /// <summary>
+    /// A success answer that is larger than 256 KiB keeps its request's jti, so that sending again names it and gets the file
+    /// the service made; an error answer that is larger keeps none (design §12.6.2, §10.4, the V1d6 Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client whose HTTP handler, when armed, answers the next POST with a body of 262,145 spaces: after the
+    ///   service handled the request and with its status (a success), or without sending the request and with status 503.
+    ///
+    /// Steps:
+    /// - Arm for the first activation and activate; activate again.
+    /// - Arm for a refresh and refresh; refresh again.
+    /// - Arm with status 503 and refresh; refresh again.
+    /// - Arm for a deactivation and deactivate; deactivate again.
+    /// - Give the product a trial policy; arm for a trial and start it; start it again.
+    ///
+    /// Expected:
+    /// - Each armed call fails with ELM_MALFORMED and "The service's answer is larger than the limit.".
+    /// - After the oversized activation the kept file holds one pending jti, and the service one activation; the second
+    ///   activation's body names that jti in retry and gives sequence 1 of the same activation.
+    /// - After the oversized refresh the state is RefreshFailing and the kept file holds one jti in retry; the next
+    ///   refresh's body names it and gives sequence 2, the file the service made for the first refresh, and no jti is kept.
+    ///   A client that drops the jti would send sequence 1 again without it and be refused as a clone.
+    /// - After the oversized 503 no jti is kept; the next refresh's body has no retry and gives sequence 3.
+    /// - After the oversized deactivation the kept file holds one jti in retry, and the service has no activation of the
+    ///   license; the next deactivation names that jti, gets ELM_ACTIVATION_NOT_FOUND, which the client takes as done, and
+    ///   returns null with state None and no activation ID.
+    /// - After the oversized trial the kept file holds one pending jti, and the service one trial; the next trial names it
+    ///   and gets sequence 1 of a trial, and the service still has one trial.
+    /// </remarks>
+    [Fact]
+    public async Task OversizedAnswers_KeepTheJtiOnlyAfterASuccess()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        (string licenseId, string key) = await vendor.LicenseWithIdAsync(string.Empty);
+        var oversize = new OversizeNextAnswer();
+        await using ActivationClient client = vendor.Client("a", oversize);
+        var tooLarge = new LicenseError(ErrorCode.Malformed, "The service's answer is larger than the limit.");
+
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, Failed(await client.ActivateAsync(key, Cancel)));
+        string pending = Assert.Single(vendor.Kept("a").Pending);
+        Assert.Equal(1, await vendor.ActivationCountAsync(licenseId));
+        Assert.Equal(1L, Activated(await client.ActivateAsync(key, Cancel)).Sequence);
+        Assert.Equal([pending], oversize.RetryOfLastPost());
+        Assert.Equal(1, await vendor.ActivationCountAsync(licenseId));
+
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, Failed(await client.RefreshAsync(Cancel)));
+        Assert.Equal(ActivationState.RefreshFailing, client.State);
+        string unanswered = Assert.Single(vendor.Kept("a").Retry);
+        Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Equal([unanswered], oversize.RetryOfLastPost());
+        Assert.Empty(vendor.Kept("a").Retry);
+
+        oversize.Arm(afterTheService: false);
+        Assert.Equal(tooLarge, Failed(await client.RefreshAsync(Cancel)));
+        Assert.Empty(vendor.Kept("a").Retry);
+        Assert.Equal(3L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Empty(oversize.RetryOfLastPost());
+
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, await client.DeactivateAsync(Cancel));
+        string deactivation = Assert.Single(vendor.Kept("a").Retry);
+        Assert.Equal(0, await vendor.ActivationCountAsync(licenseId));
+        Assert.Null(await client.DeactivateAsync(Cancel));
+        Assert.Equal([deactivation], oversize.RetryOfLastPost());
+        Assert.Equal((ActivationState.None, (string?)null), (client.State, client.ActivationId));
+
+        await vendor.TrialPolicyAsync();
+        oversize.Arm(afterTheService: true);
+        Assert.Equal(tooLarge, Failed(await client.StartTrialAsync(Cancel)));
+        string trial = Assert.Single(vendor.Kept("a").Pending);
+        Assert.Equal(1, (await vendor.GetAsync("v1/admin/trials")).GetProperty("items").GetArrayLength());
+        VerifiedLicense started = Activated(await client.StartTrialAsync(Cancel));
+        Assert.Equal((LicenseKind.Trial, 1L), (started.Kind, started.Sequence));
+        Assert.Equal([trial], oversize.RetryOfLastPost());
         Assert.Equal(1, (await vendor.GetAsync("v1/admin/trials")).GetProperty("items").GetArrayLength());
     }
 
@@ -377,9 +459,10 @@ public sealed partial class ActivationClientTests
     /// - Product app with a trial policy, whose token ends with the trial and is within the refresh window at once.
     ///
     /// Steps:
-    /// - Start a trial; move the clock 59 minutes; move it 2 minutes more. Then read the kept file every 10 milliseconds,
-    ///   moving the clock 50 milliseconds each time: on Windows a read can hold the file at the moment the client replaces
-    ///   it, and the client tries again 100 milliseconds of its clock later.
+    /// - Start a trial; move the clock 59 minutes; move it 1 minute more, to the hour. Then read the kept file every 10
+    ///   milliseconds, moving the clock 50 milliseconds each time, 25 seconds at most: on Windows a read can hold the file
+    ///   at the moment the client replaces it, and the client tries again 100 milliseconds of its clock later. The clock
+    ///   stays short of the 30 seconds after which the client gives the refresh's request up (design §12.6.2).
     ///
     /// Expected:
     /// - The kept seq stays 1 for the 59 minutes; it is 2 after the hour.
@@ -394,7 +477,7 @@ public sealed partial class ActivationClientTests
         Assert.Equal(LicenseKind.Trial, Activated(await client.StartTrialAsync(Cancel)).Kind);
         await vendor.AdvanceForAsync(TimeSpan.FromMinutes(59), TimeSpan.FromMinutes(1));
         Assert.Equal(1L, vendor.Kept("a").Seq);
-        await vendor.AdvanceForAsync(TimeSpan.FromMinutes(2), TimeSpan.FromMinutes(1));
+        vendor.Test.Time.Advance(TimeSpan.FromMinutes(1));
         for (int i = 0; i < 500 && vendor.Kept("a").Seq != 2; i++)
         {
             vendor.Test.Time.Advance(TimeSpan.FromMilliseconds(50));
@@ -728,7 +811,7 @@ public sealed partial class ActivationClientTests
     /// Steps:
     /// - B refreshes; let B's own first timer end; count B's POSTs, advance 2 hours, count again. Arm the 429 on A; advance 12 hours and wait for A's
     ///   refresh to fail; advance an hour; advance another hour and wait for the refresh, moving the clock 10 minutes every 10
-    ///   polls (Issue #106).
+    ///   polls (Issue #106) while no request of the clients is on its way.
     ///
     /// Expected:
     /// - B Failed ELM_PROOF_INVALID, state RefreshFailing, no POST in the 2 hours. A: state RefreshFailing after the 429;
@@ -771,7 +854,7 @@ public sealed partial class ActivationClientTests
         vendor.Test.Time.Advance(TimeSpan.FromHours(1));
 
         // The retry's timer may have been set after the first hour's move, from the time before it (Issue #106).
-        await vendor.Test.WaitWithClockAsync(async () => (await vendor.ActivationAsync(a.ActivationId!)).GetProperty("seq").GetInt64() == 2, Step);
+        await vendor.WaitWithClockAsync(async () => (await vendor.ActivationAsync(a.ActivationId!)).GetProperty("seq").GetInt64() == 2, Step);
     }
 
     /// <summary>
@@ -1151,6 +1234,47 @@ public sealed partial class ActivationClientTests
         }
     }
 
+    // Once armed, answers the next POST with a body of 256 KiB and a byte: in place of the service's answer and with its
+    // status, after the service handled the request; or without sending the request, with status 503. Keeps the body of
+    // the last POST.
+    private sealed class OversizeNextAnswer : DelegatingHandler
+    {
+        private volatile string _armed = string.Empty;
+        private volatile string _lastBody = string.Empty;
+
+        public void Arm(bool afterTheService) => _armed = afterTheService ? "after" : "instead";
+
+        // The retry member of the last POST's body; empty when the body has none.
+        public string[] RetryOfLastPost()
+        {
+            using JsonDocument body = JsonDocument.Parse(_lastBody);
+            return body.RootElement.TryGetProperty("retry", out JsonElement retry) ? [.. retry.EnumerateArray().Select(e => e.GetString()!)] : [];
+        }
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (request.Method != HttpMethod.Post)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            _lastBody = await request.Content!.ReadAsStringAsync(cancellationToken);
+            string armed = Interlocked.Exchange(ref _armed, string.Empty);
+            if (armed.Length == 0)
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+
+            HttpResponseMessage response =
+                armed == "after"
+                    ? await base.SendAsync(request, cancellationToken)
+                    : new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { RequestMessage = request };
+            response.Content?.Dispose();
+            response.Content = new ByteArrayContent(Encoding.ASCII.GetBytes(new string(' ', (256 * 1024) + 1)));
+            return response;
+        }
+    }
+
     // Opens a reader of the activation file, as the client reads it, when the answer 200 of a refresh arrives.
     private sealed class ReadAfterTheRefreshAnswer(string file) : DelegatingHandler
     {
@@ -1199,10 +1323,28 @@ public sealed partial class ActivationClientTests
         }
     }
 
+    // Counts the requests of a vendor's clients that are on their way, for Vendor.WaitWithClockAsync.
+    private sealed class InFlight(Vendor vendor) : DelegatingHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            vendor.Enter();
+            try
+            {
+                return await base.SendAsync(request, cancellationToken);
+            }
+            finally
+            {
+                vendor.Leave();
+            }
+        }
+    }
+
     // A service with an owner key and product app (feature core), and clients of folders under the test's folder.
     private sealed class Vendor : IAsyncDisposable
     {
         private readonly List<ActivationClient> _clients = [];
+        private int _inFlight;
 
         private Vendor(TestService test, ElmService service, HttpClient admin, string product)
         {
@@ -1261,13 +1403,16 @@ public sealed partial class ActivationClientTests
                 TimeProvider = time ?? Test.Time,
                 ClockGuard = guard,
                 LicenseKept = kept,
-                WrapHandler = wrap is null
-                    ? null
-                    : inner =>
+                WrapHandler = inner =>
+                {
+                    if (wrap is not null)
                     {
                         wrap.InnerHandler = inner;
-                        return wrap;
-                    },
+                        inner = wrap;
+                    }
+
+                    return new InFlight(this) { InnerHandler = inner };
+                },
             };
             Assert.True(ActivationClient.TryCreate(options, out ActivationClient? client, out LicenseError? error), error?.Message);
             _clients.Add(client!);
@@ -1310,6 +1455,33 @@ public sealed partial class ActivationClientTests
 
         public async Task<JsonElement[]> AuditAsync() =>
             [.. (await GetAsync("v1/admin/audit?limit=200")).GetProperty("items").EnumerateArray().Select(e => e.Clone())];
+
+        public void Enter() => Interlocked.Increment(ref _inFlight);
+
+        public void Leave() => Interlocked.Decrement(ref _inFlight);
+
+        // Waits for a condition, moving the clock by a step every 10 polls, as TestService.WaitWithClockAsync does, but only
+        // while no request of the vendor's clients is on its way: a client gives a request up once 30 seconds of its clock
+        // have passed (design §12.1), so a step taken while a timer's refresh is answered would cancel that refresh.
+        public async Task WaitWithClockAsync(Func<Task<bool>> condition, TimeSpan step)
+        {
+            for (int i = 0; i < 500; i++)
+            {
+                if (await condition())
+                {
+                    return;
+                }
+
+                if (i % 10 == 9 && Volatile.Read(ref _inFlight) == 0)
+                {
+                    Test.Time.Advance(step);
+                }
+
+                await Task.Delay(20, TestContext.Current.CancellationToken);
+            }
+
+            Assert.Fail("The condition did not hold within 10 seconds.");
+        }
 
         // Moves the clock in small steps, giving the timers' work time to run between them.
         public async Task AdvanceForAsync(TimeSpan total, TimeSpan? step = null)

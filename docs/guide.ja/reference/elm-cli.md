@@ -73,9 +73,9 @@ elm <group> <command> [arguments] [options]
 | `0` | 成功 | コマンドが求められたことをした。`elm log verify` は、ログが壊れていなければ、警告があっても 0 を返す |
 | `1` | 検証の失敗 | ライセンスファイルやログの検証に失敗した。または、サーバー、`elm-service`、ID プロバイダーがリクエストを拒否したか、エラーを返した |
 | `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、信頼する鍵、資格情報のどれかが見つからない |
-| `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server` と `elm offline process` では）レスポンスを読めない |
+| `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server` と `elm offline process` では）レスポンスを読めないか、レスポンスが `elm` の読むサイズより大きい |
 
-`elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
+`elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。メッセージが、レスポンスが `elm` の読むサイズより大きいことを示す次の 3 つのときは、`ELM_MALFORMED` でも `3` になる。`The service's answer is larger than the limit.`（サーバーライセンスのコマンド）、`The service's answer is larger than 262144 bytes.`（`elm offline process`）、`The server's administration API answered with a body larger than 67108864 bytes.`（`elm server`）だ。`elm` はそのレスポンスを何も読んでいないので、拒否だったのか成功だったのかを判断できないからだ。ほかの `ELM_MALFORMED` は、ファイルが上限より大きいことを示すメッセージのものも含めて、`1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
 
 ## elm key
 
@@ -243,7 +243,7 @@ elm license verify <license-file> --product <id> [options]
 
 ## elm server
 
-`elm server` のコマンドは、同じマシン上のオンプレミスのライセンスサーバーを管理する。どのコマンドも、指定したデータフォルダーのサーバー 1 つだけを対象にする。`--data` がなければ、データフォルダーは `--product` のマシン全体用のフォルダーになる。Windows では `%ProgramData%\ElasticLM\<product>`、Linux では `/var/lib/elasticlm/<product>`、macOS では `/Library/Application Support/ElasticLM/<product>` だ。各リクエストは 30 秒でタイムアウトする。
+`elm server` のコマンドは、同じマシン上のオンプレミスのライセンスサーバーを管理する。どのコマンドも、指定したデータフォルダーのサーバー 1 つだけを対象にする。`--data` がなければ、データフォルダーは `--product` のマシン全体用のフォルダーになる。Windows では `%ProgramData%\ElasticLM\<product>`、Linux では `/var/lib/elasticlm/<product>`、macOS では `/Library/Application Support/ElasticLM/<product>` だ。各リクエストは、送ってから 30 秒以内に、本文を含むレスポンスの全体が届かなければタイムアウトする。
 
 `elm server` のコマンドは、`elm-server` を動かしているユーザーで実行する。コマンドはサーバーのデータフォルダーから管理者トークンを読み、Linux と macOS では、このフォルダーを開けるのがサーバーのユーザーと root だけだからだ（たとえば `sudo -u <server user> elm server status --product <id>`。root でも実行できる）。Windows では、フォルダーのアクセス制御リストが Administrators グループと SYSTEM にもアクセスを許し、管理者トークンは 1 人のユーザーではなくマシンに対して保護してある。そのため、これらのアカウントもトークンを読める。
 
@@ -271,8 +271,9 @@ Windows では、[サーバーライセンスのコマンド](#サーバーラ�
 | --- | --- | --- | --- |
 | フォルダーに読める管理者トークンがない。指定したフォルダーがサーバーのものではない、サーバーがサーバーライセンスを持って起動したことがない（サーバーは、ライセンスの検証が通ってからトークンを作る）、またはコマンドを実行しているユーザーがトークンを読めない | `error: The administrator token cannot be read in '<folder>'. Run elm server as the server's user, on its machine.` | 2 | サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する。または、サーバーを起動するか、サーバーのユーザーでコマンドを実行する |
 | フォルダーに `admin.sock` がない。サーバーが実行中ではない | `error: The server cannot be reached: the administration socket '<path>' does not exist.` | 3 | サーバーを起動する。または、サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する |
-| 接続に失敗した、または 30 秒以内にレスポンスが返らない。強制終了されたサーバーが残したソケットのファイルは、接続を拒否する | `error: The server cannot be reached: <reason>` | 3 | 行の理由が、接続が拒否されたことを示すときは、サーバーを起動する。または、サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する。強制終了されたサーバーが残したソケットのファイルは、消さなくてよい。サーバーの次の起動が消す。30 秒以内にレスポンスが返らなかったときは、サーバーは動いているが答えていない。コマンドをもう一度実行し、変わらなければサーバーを再起動する |
-| 成功でもエラーでも、レスポンスの本文が JSON でない | `error: The server answered <status> with a body that is not JSON.` | 3 | そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることと、`elm` と `elm-server` が同じリリースのものであることを確かめる。そのあと、サーバーを再起動する |
+| 接続に失敗した、または、リクエストから 30 秒以内に、本文を含むレスポンスの全体が届かない。強制終了されたサーバーが残したソケットのファイルは、接続を拒否する | `error: The server cannot be reached: <reason>` | 3 | 行の理由が、接続が拒否されたことを示すときは、サーバーを起動する。または、サーバーの `dataDirectory` が既定のものでなければ、`--data` でそのフォルダーを指定する。強制終了されたサーバーが残したソケットのファイルは、消さなくてよい。サーバーの次の起動が消す。理由が `No whole answer came within 30 seconds.` のときは、サーバーは動いているが答えていない。コマンドをもう一度実行し、変わらなければサーバーを再起動する |
+| 成功でもエラーでも、レスポンスの本文が 64 MiB より大きい | `error: ELM_MALFORMED: The server's administration API answered with a body larger than 67108864 bytes.` | 3 | サーバーの使われ方で大きくなるのは、`elm server leases` のレスポンスだけだ。リース 1 つは、機能のコードが 3 文字なら 162 バイト、最大で 554 バイトなので、64 MiB には少なくとも 121,135 個のリースが入る。それより多くのリースを持つサーバーでは、リースを一覧できない。ほかのコマンドでこの行が出たときは、そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることを確かめる |
+| 成功でもエラーでも、レスポンスの本文が JSON でない。または、`status`、`leases`、`reload` の成功のレスポンスが、JSON だがそのコマンドのレスポンスの形でない | `error: The server answered <status> with a body that is not JSON.` または `error: The server answered <status> with a body that is not the answer asked for.` | 3 | そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることと、`elm` と `elm-server` が同じリリースのものであることを確かめる。そのあと、サーバーを再起動する |
 | サーバーが管理者トークンを拒否した（`401`） | `error: ELM_UNAUTHORIZED: The administrator token is missing or wrong.` | 1 | コマンドをもう一度実行する。上の説明を参照 |
 | エラーコードのある、そのほかのエラーのレスポンス | `error: <code>: <reason>` | 1 | [エラーコード](error-codes.md)の、そのコードの行を参照 |
 | 本文が JSON か空で、エラーコードのないエラーのレスポンス | `error: The server's administration API answered <status>.` | 1 | そのフォルダーの `admin.sock` で待ち受けているのは、このリリースの `elm-server` ではない。`--data` か `--product` がサーバーのフォルダーを指していることを確かめ、サーバーと同じリリースの `elm` を使う |
@@ -349,7 +350,8 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 | --- | --- | --- | --- |
 | フォルダーに読める管理者トークンがない、フォルダーに `admin.sock` がない、または `admin.sock` への接続が拒否された（強制終了されたサーバーが残したソケットのファイル） | サーバーは実行中でないとみなす。状態の問い合わせのあとなら、コマンドは処理を続ける | 状態の問い合わせのあとは、なし。ファイルを書いたあとは、標準出力に `The server is not running; it reads the license when it starts.` | コマンドの処理の結果による。ファイルを書いたあとは 0 |
 | 接続がほかの理由で失敗した、または、レスポンスが最後まで届く前に接続が終わった。どちらも同じ行になる | 止まる | `error: The server's administration API gave no whole answer.` | 3 |
-| 何かが接続を受け付けたが、30 秒以内にレスポンスが最後まで返らない | 止まる | `error: The server's administration API did not answer in time.` | 3 |
+| 何かが接続を受け付けたが、リクエストから 30 秒以内に、本文を含むレスポンスが最後まで返らない | 止まる | `error: The server's administration API did not answer in time.` | 3 |
+| 成功でもエラーでも、レスポンスの本文が 64 MiB より大きい | 止まる | `error: ELM_MALFORMED: The server's administration API answered with a body larger than 67108864 bytes.` | 3 |
 | 成功のレスポンスの本文が JSON でない | 止まる | `error: The server's administration API answered with a body that is not JSON.` | 3 |
 | 状態の問い合わせに、`ELM_UNAUTHORIZED` など、コードのあるエラーが返った | 止まる | `error: <code>: <reason>` | 1 |
 | 状態の問い合わせに、状態ではなく、エラーコードもないレスポンスが返った | 止まる | `error: The server's administration API answered <status>.` | 1 |
@@ -523,7 +525,7 @@ elm offline process --url <url> --in <file> [--out <file>] [options]
 | `--force` | — | オフ | いいえ | レスポンスファイルがすでにあれば上書きする |
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
-`ELM_API_KEY` があるか、`--url` と同じオリジンへの `elm admin login` を保存してあれば、ファイルはサービスの管理用の窓口に送る。そうでなければ公開の窓口に送る。リダイレクトはたどらず、リクエストは 30 秒でタイムアウトする。
+`ELM_API_KEY` があるか、`--url` と同じオリジンへの `elm admin login` を保存してあれば、ファイルはサービスの管理用の窓口に送る。そうでなければ公開の窓口に送る。リダイレクトはたどらない。リクエストから 30 秒以内に、本文を含むレスポンスの全体が届かなければ、コマンドは終了コード 3 で打ち切る（`error: The service cannot be reached: No whole answer came within 30 seconds.`）。レスポンスの本文が 256 KiB より大きいときも、HTTP の状態にかかわらず、終了コード 3 で打ち切る（`error: ELM_MALFORMED: The service's answer is larger than 262144 bytes.`）。どちらの場合も、レスポンスファイルは書かない。
 
 ## elm secret
 

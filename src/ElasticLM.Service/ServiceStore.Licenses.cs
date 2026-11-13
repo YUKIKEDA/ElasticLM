@@ -11,7 +11,7 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task CreateLicenseAsync(LicenseRow license, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(license);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
@@ -74,7 +74,7 @@ internal sealed partial class ServiceStore<TDialect>
     {
         ArgumentNullException.ThrowIfNull(change);
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // A self-assignment locks the row on PostgreSQL, as SELECT … FOR UPDATE would; SQLite holds the write lock.

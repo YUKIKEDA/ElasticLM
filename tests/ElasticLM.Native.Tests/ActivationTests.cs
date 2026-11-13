@@ -326,7 +326,7 @@ public sealed class ActivationTests : IAsyncLifetime
     ///   suspended.
     ///
     /// Steps:
-    /// - Hold the callback; move the clock 23 hours and on in small steps until the callback is entered; destroy A on
+    /// - Hold the callback; move the clock 23 hours and wait, without moving it, until the callback is entered; destroy A on
     ///   another thread and see it has not returned after 300 ms, nor after the clock moves 6 seconds (past the 5 seconds
     ///   DisposeAsync waits for the timer's work); release the callback, which then calls state and check on A while
     ///   destroy waits; then move the clock a day. Make activation B on the same folder after another day (a refresh
@@ -349,8 +349,12 @@ public sealed class ActivationTests : IAsyncLifetime
 
         using var hold = new ManualResetEventSlim(false);
         StateCallbacks.Hold = hold;
+
+        // The refresh is due 23 hours after the activation, whose timer was set before this move. The clock then stands still:
+        // it also counts the 30 seconds the client gives the refresh's request (design §12.1), and a move while the request
+        // is on its way would end it as ELM_NETWORK_ERROR instead of the refusal.
         _test.Time.Advance(TimeSpan.FromHours(23));
-        await _test.WaitWithClockAsync(() => Task.FromResult(StateCallbacks.Entered.IsSet));
+        await TestService.WaitForAsync(() => Task.FromResult(StateCallbacks.Entered.IsSet));
         Task destroy = Task.Run(() => ActivationApi.Destroy(a), TestContext.Current.CancellationToken);
         Assert.NotSame(destroy, await Task.WhenAny(destroy, Task.Delay(300, TestContext.Current.CancellationToken)));
         _test.Time.Advance(TimeSpan.FromSeconds(6));
