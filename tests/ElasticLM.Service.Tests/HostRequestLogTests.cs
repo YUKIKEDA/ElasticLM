@@ -138,7 +138,7 @@ public sealed class HostRequestLogTests
     [InlineData("{provider}:LogLevel:*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
     [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnost*ics=Trace", false, true, true)]
     [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
-    public void RaiseToWarning_EachSetting_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
+    public void Raise_EachSetting_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
     {
         using var provider = new RecordingLoggerProvider();
         Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddProvider(provider)));
@@ -175,13 +175,117 @@ public sealed class HostRequestLogTests
     [InlineData("Console:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;{console}:LogLevel:Default=Trace", false, false, false)]
     [InlineData("{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;Console:LogLevel:Default=Trace", false, false, false)]
     [InlineData("Console:LogLevel:Default=Trace;{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=Error", false, false, true)]
-    public void RaiseToWarning_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
+    public void Raise_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
         Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddConsole()));
 
-    // Whether a logger of the web host's category writes Information, Warning, and Error, under settings of the form
-    // "key=value;…" below Logging, where {provider} and {console} stand for the full type names of the test's provider and
-    // the console's.
+    /// <summary>
+    /// The rule for the OpenIdConnect handler's category keeps it out at every level against every setting of the log level
+    /// (design §18.3, V1d4b): its entries quote the error, error_description, and error_uri of a return to the callback and
+    /// the value of a correlation cookie.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A logging builder as elm-service makes it: the settings' rules, the minimum level Information, a provider of the
+    ///   test, then the rule of the web host's request lines and the rule of the handler's category.
+    ///
+    /// Steps:
+    /// - For each case of settings, ask a logger of the category
+    ///   Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler whether it writes each level from Trace to
+    ///   Critical. The cases are those of the web host's category: no setting; Default None; Default Error; Default Debug
+    ///   with the category itself at Trace; Default Trace for the test's provider alone; the category at Trace for the
+    ///   test's provider alone; "Microsoft.AspNetCore.Authentication.*" at Trace; "Microsoft.*" at None; Default None with
+    ///   another category at Trace for the test's provider; Default Critical with the category at Information.
+    /// - Names with a '*' that cover the category and are longer than it, each at Trace, for all providers and for the
+    ///   test's provider alone: the category with '*' after it, before it, and in its middle, and the category, '*', and the
+    ///   category again (141 characters, the longest name that can cover it).
+    ///
+    /// Expected:
+    /// - No level is written in any case.
+    /// </remarks>
+    [Theory]
+    [InlineData("")]
+    [InlineData("LogLevel:Default=None")]
+    [InlineData("LogLevel:Default=Error")]
+    [InlineData("LogLevel:Default=Debug;LogLevel:{category}=Trace")]
+    [InlineData("{provider}:LogLevel:Default=Trace")]
+    [InlineData("{provider}:LogLevel:{category}=Trace")]
+    [InlineData("LogLevel:Microsoft.AspNetCore.Authentication.*=Trace")]
+    [InlineData("LogLevel:Microsoft.*=None")]
+    [InlineData("LogLevel:Default=None;{provider}:LogLevel:Other.Category=Trace")]
+    [InlineData("LogLevel:Default=Critical;LogLevel:{category}=Information")]
+    [InlineData("LogLevel:{category}*=Trace")]
+    [InlineData("LogLevel:*{category}=Trace")]
+    [InlineData("LogLevel:Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnect*Handler=Trace")]
+    [InlineData("LogLevel:{category}*{category}=Trace")]
+    [InlineData("{provider}:LogLevel:{category}*=Trace")]
+    [InlineData("{provider}:LogLevel:*{category}=Trace")]
+    [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnect*Handler=Trace")]
+    [InlineData("{provider}:LogLevel:{category}*{category}=Trace")]
+    public void Raise_SignInHandlerEachSetting_WritesNothing(string settings)
+    {
+        using var provider = new RecordingLoggerProvider();
+        Assert.Empty(Enabled(settings, logging => logging.AddProvider(provider), ElmService.SignInHandlerCategory));
+    }
+
+    /// <summary>
+    /// For the console, the provider the programs write to, rules named by its alias Console and by its full type name do not
+    /// bring the OpenIdConnect handler's category back at any level (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A logging builder as elm-service makes it, with the console provider: the settings' rules, the minimum level
+    ///   Information, the console, then the two rules.
+    ///
+    /// Steps:
+    /// - For each case of settings, ask a logger of the handler's category whether it writes each level from Trace to
+    ///   Critical. The cases, where Console is the alias and the full name is
+    ///   Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider: Default Trace for Console; Default Trace for the full
+    ///   name; the category with '*' after it at Trace for Console; the category, '*', and the category at Trace for the full
+    ///   name; the category at Trace for Console beside Default Trace for the full name; the category at Trace for the full
+    ///   name beside Default Trace for Console.
+    ///
+    /// Expected:
+    /// - No level is written in any case.
+    /// </remarks>
+    [Theory]
+    [InlineData("Console:LogLevel:Default=Trace")]
+    [InlineData("{console}:LogLevel:Default=Trace")]
+    [InlineData("Console:LogLevel:{category}*=Trace")]
+    [InlineData("{console}:LogLevel:{category}*{category}=Trace")]
+    [InlineData("Console:LogLevel:{category}=Trace;{console}:LogLevel:Default=Trace")]
+    [InlineData("{console}:LogLevel:{category}=Trace;Console:LogLevel:Default=Trace")]
+    public void Raise_SignInHandlerConsoleSettings_WritesNothing(string settings) =>
+        Assert.Empty(Enabled(settings, logging => logging.AddConsole(), ElmService.SignInHandlerCategory));
+
+    /// <summary>
+    /// The category of the rule is the one the OpenIdConnect handler writes its entries under.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - None.
+    ///
+    /// Steps:
+    /// - Read the category the service keeps out.
+    ///
+    /// Expected:
+    /// - Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler, the category of the handler's entries in
+    ///   the console's log of ASP.NET Core 10 (design §18.3, V1d4b).
+    /// </remarks>
+    [Fact]
+    public void SignInHandlerCategory_IsTheHandlersLogCategory() =>
+        Assert.Equal("Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler", ElmService.SignInHandlerCategory);
+
+    // Whether a logger of the web host's category writes Information, Warning, and Error.
     private static (bool Information, bool Warning, bool Error) Levels(string settings, Action<ILoggingBuilder> addProvider)
+    {
+        LogLevel[] enabled = Enabled(settings, addProvider, HostRequestLog.Category);
+        return (enabled.Contains(LogLevel.Information), enabled.Contains(LogLevel.Warning), enabled.Contains(LogLevel.Error));
+    }
+
+    // The levels from Trace to Critical that a logger of a category writes, under settings of the form "key=value;…" below
+    // Logging, where {provider} and {console} stand for the full type names of the test's provider and the console's, and
+    // {category} for the OpenIdConnect handler's category. The rules are added as elm-service adds them.
+    private static LogLevel[] Enabled(string settings, Action<ILoggingBuilder> addProvider, string category)
     {
         var values = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (string pair in settings.Split(';', StringSplitOptions.RemoveEmptyEntries))
@@ -189,7 +293,8 @@ public sealed class HostRequestLogTests
             string[] parts = pair.Split('=');
             string key = parts[0]
                 .Replace("{provider}", typeof(RecordingLoggerProvider).FullName, StringComparison.Ordinal)
-                .Replace("{console}", typeof(ConsoleLoggerProvider).FullName, StringComparison.Ordinal);
+                .Replace("{console}", typeof(ConsoleLoggerProvider).FullName, StringComparison.Ordinal)
+                .Replace("{category}", ElmService.SignInHandlerCategory, StringComparison.Ordinal);
             values["Logging:" + key] = parts[1];
         }
 
@@ -200,11 +305,12 @@ public sealed class HostRequestLogTests
             logging.AddConfiguration(configuration.GetSection("Logging"));
             logging.SetMinimumLevel(LogLevel.Information);
             addProvider(logging);
-            HostRequestLog.RaiseToWarning(logging);
+            HostRequestLog.Raise(logging, HostRequestLog.Category, LogLevel.Warning);
+            HostRequestLog.Raise(logging, ElmService.SignInHandlerCategory, LogLevel.None);
         });
         using ServiceProvider built = services.BuildServiceProvider();
-        ILogger logger = built.GetRequiredService<ILoggerFactory>().CreateLogger(HostRequestLog.Category);
-        return (logger.IsEnabled(LogLevel.Information), logger.IsEnabled(LogLevel.Warning), logger.IsEnabled(LogLevel.Error));
+        ILogger logger = built.GetRequiredService<ILoggerFactory>().CreateLogger(category);
+        return [.. Enum.GetValues<LogLevel>().Where(l => l != LogLevel.None && logger.IsEnabled(l))];
     }
 
     private static async Task<HttpStatusCode> SendAsync(HttpClient http, string pathAndQuery, string? key)

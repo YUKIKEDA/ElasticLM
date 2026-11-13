@@ -7,6 +7,7 @@ using ElasticLM.Server.Tests;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Service.Tests;
@@ -568,6 +569,131 @@ public sealed class ElmServiceWebTests
         }
 
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
+    }
+
+    /// <summary>
+    /// A return to the callback with an error in its query, or with a rewritten correlation cookie, leaves none of the
+    /// request's text in the operational log: the OpenIdConnect handler's category is not written, and the service's reason
+    /// for the refusal is a registered error code or a fixed sentence (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in whose log is recorded from the level of the case on: Information, the default, and
+    ///   Trace, the lowest.
+    ///
+    /// Steps:
+    /// - For each error, start a sign-in at /auth/login and come back to the callback with that error, the state the login
+    ///   gave, an error_description "elm-marker-description", and an error_uri "https://idp.example/elm-marker-uri", each
+    ///   of the two followed by CR LF and "fail: elm-forged-line". The errors: server_error (RFC 6749 §4.1.2.1),
+    ///   login_required (OpenID Connect Core 1.0 §3.1.2.6), Server_Error, and "elm-marker-error" followed by the same CR LF
+    ///   and line.
+    /// - Start one more sign-in, rewrite the value of its correlation cookie to "elm-marker-cookie-" and 1,000 letters, and
+    ///   finish it at the provider.
+    ///
+    /// Expected:
+    /// - The 400 page for each.
+    /// - The service's refusal reasons, in order: "the identity provider answered server_error", "the identity provider
+    ///   answered login_required", twice the fixed sentence for an error code that is not registered, and "Correlation
+    ///   failed.".
+    /// - No entry of any category holds "elm-marker" or "elm-forged-line", and no entry has the category
+    ///   Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler.
+    /// </remarks>
+    [Theory]
+    [InlineData(LogLevel.Information)]
+    [InlineData(LogLevel.Trace)]
+    public async Task Callback_ErrorOrCorrelationCookie_LeavesNoRequestTextInTheLog(LogLevel level)
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new RecordingLoggerProvider();
+        ServiceHostOptions host = test.HostOptions(log: log);
+        await using ElmService service = await ElmService.StartAsync(
+            test.Settings(s => s with { Oidc = idp.Settings(), Web = FakeIdp.WebSettings(Kek) }),
+            new ServiceHostOptions
+            {
+                Time = host.Time,
+                Environment = host.Environment,
+                MinimumLogLevel = level,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
+        const string Forged = "\r\nfail: elm-forged-line";
+        const string Unregistered = "the identity provider answered an error code that is not registered";
+        (string Error, string Reason)[] cases =
+        [
+            ("server_error", "the identity provider answered server_error"),
+            ("login_required", "the identity provider answered login_required"),
+            ("Server_Error", Unregistered),
+            ("elm-marker-error" + Forged, Unregistered),
+        ];
+        foreach ((string error, string reason) in cases)
+        {
+            using var browser = new WebBrowser();
+            using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+            Dictionary<string, string> authorize = Query(login.Headers.Location!);
+            var callback = new Uri(
+                authorize["redirect_uri"]
+                    + "?error="
+                    + Uri.EscapeDataString(error)
+                    + "&error_description="
+                    + Uri.EscapeDataString("elm-marker-description" + Forged)
+                    + "&error_uri="
+                    + Uri.EscapeDataString("https://idp.example/elm-marker-uri" + Forged)
+                    + "&state="
+                    + Uri.EscapeDataString(authorize["state"])
+            );
+            await AssertPageAsync(await browser.SendAsync(HttpMethod.Get, callback), HttpStatusCode.BadRequest, SignInFailed);
+            Assert.Equal("An admin UI sign-in was refused: " + reason, LastRefusal(log));
+        }
+
+        using (var browser = new WebBrowser())
+        {
+            using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+            Dictionary<string, string> jar = browser.Cookies(service.Url);
+            string correlation = jar.Keys.Single(k => k.StartsWith("__Host-elm-correlation.", StringComparison.Ordinal));
+            jar[correlation] = "elm-marker-cookie-" + new string('c', 1_000);
+            using HttpResponseMessage back = await browser.FollowAsync(login);
+            await AssertPageAsync(await browser.FollowAsync(back), HttpStatusCode.BadRequest, SignInFailed);
+            Assert.Equal("An admin UI sign-in was refused: Correlation failed.", LastRefusal(log));
+        }
+
+        IReadOnlyList<(string Category, LogLevel Level, string Message)> entries = log.Entries;
+        Assert.DoesNotContain(entries, e => e.Message.Contains("elm-marker", StringComparison.Ordinal));
+        Assert.DoesNotContain(entries, e => e.Message.Contains("elm-forged-line", StringComparison.Ordinal));
+        Assert.DoesNotContain(entries, e => e.Category == "Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler");
+    }
+
+    /// <summary>
+    /// An error that the token endpoint answers, which is the provider's text and not the request's, stays in the reason of
+    /// the refusal (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in whose client secret the provider does not take, its log recorded from Information
+    ///   up.
+    ///
+    /// Steps:
+    /// - Sign in: the provider's token endpoint answers 401 with the error invalid_client.
+    ///
+    /// Expected:
+    /// - The 400 page, and the reason "Message contains error: 'invalid_client', error_description: 'error_description is
+    ///   null', error_uri: 'error_uri is null'.".
+    /// </remarks>
+    [Fact]
+    public async Task Callback_TokenEndpointRefusesTheClient_KeepsItsAnswerInTheReason()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await StartAsync(test, idp, s => s with { Web = s.Web! with { ClientSecret = "another-secret-test-only" } }, log: log);
+
+        await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.BadRequest, SignInFailed);
+        Assert.Equal(
+            "An admin UI sign-in was refused: Message contains error: 'invalid_client', error_description: 'error_description is null', "
+                + "error_uri: 'error_uri is null'.",
+            LastRefusal(log)
+        );
     }
 
     /// <summary>
@@ -1444,6 +1570,9 @@ public sealed class ElmServiceWebTests
 
         return (status, type, body);
     }
+
+    private static string LastRefusal(RecordingLoggerProvider log) =>
+        log.Entries.Last(e => e.Message.StartsWith("An admin UI sign-in was refused:", StringComparison.Ordinal)).Message;
 
     private static async Task AssertPageAsync(HttpResponseMessage answer, HttpStatusCode status, string text)
     {
