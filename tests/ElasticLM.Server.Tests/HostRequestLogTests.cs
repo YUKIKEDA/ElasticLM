@@ -2,6 +2,7 @@ using System.Net;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Console;
 
 namespace ElasticLM.Server.Tests;
 
@@ -122,13 +123,16 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     ///   category itself at Trace; Default Trace for the test's provider alone; the category at Trace for the test's
     ///   provider alone; "Microsoft.AspNetCore.Hosting.*" at Trace; "Microsoft.*" at None; Default None with another
     ///   category at Trace for the test's provider; Default Critical with the category at Information.
+    /// - Names with a '*' that cover the category and are longer than it, each at Trace, for all providers and for the
+    ///   test's provider alone: the category with '*' after it (41 characters), before it, and in its middle, and the
+    ///   category, '*', and the category again (81 characters, the longest name that can cover it).
     ///
     /// Expected:
     /// - Information is never written. Warning and Error are written as the settings give the category, but never below
-    ///   Warning: Warning and Error for no setting and for every setting that asks for less; nothing for None; Error only for
-    ///   Default Error; nothing for "Microsoft.*" at None, and for Default None beside a rule of the provider that does not cover the
-    ///   category; Warning and Error for the category at Information under Default
-    ///   Critical, since the category's own setting is the one that applies to it.
+    ///   Warning: Warning and Error for no setting and for every setting that asks for less, the longer names included;
+    ///   nothing for None; Error only for Default Error; nothing for "Microsoft.*" at None, and for Default None beside a
+    ///   rule of the provider that does not cover the category; Warning and Error for the category at Information under
+    ///   Default Critical, since the category's own setting is the one that applies to it.
     /// </remarks>
     [Theory]
     [InlineData("", false, true, true)]
@@ -141,32 +145,81 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     [InlineData("LogLevel:Microsoft.*=None", false, false, false)]
     [InlineData("LogLevel:Default=None;{provider}:LogLevel:Other.Category=Trace", false, false, false)]
     [InlineData("LogLevel:Default=Critical;LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=Information", false, true, true)]
+    [InlineData("LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*=Trace", false, true, true)]
+    [InlineData("LogLevel:*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
+    [InlineData("LogLevel:Microsoft.AspNetCore.Hosting.Diagnost*ics=Trace", false, true, true)]
+    [InlineData("LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
+    [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*=Trace", false, true, true)]
+    [InlineData("{provider}:LogLevel:*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
+    [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnost*ics=Trace", false, true, true)]
+    [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
     public void RaiseToWarning_EachSetting_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
+    {
+        using var provider = new RecordingLoggerProvider();
+        Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddProvider(provider)));
+    }
+
+    /// <summary>
+    /// For the console, the provider the programs write to, a rule named by the provider's alias Console and one named by
+    /// its full type name are one provider's rules: the rule for the web host's request lines keeps them at Warning or
+    /// above, and keeps a higher level that those rules give together.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A logging builder as the host makes it, with the console provider: the settings' rules, the minimum level
+    ///   Information, the console, then the rule.
+    ///
+    /// Steps:
+    /// - For each case of settings, ask a logger of the category whether it writes Information, Warning, and Error. The
+    ///   cases, where Console is the alias and the full name is Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider:
+    ///   Default Trace for Console; Default None for Console; the category with '*' after it at Trace for Console; the
+    ///   category, '*', and the category at Trace for the full name; the category at None for Console beside Default Trace
+    ///   for the full name; the category at None for the full name beside Default Trace for Console; Default Trace for
+    ///   Console beside the category at Error for the full name.
+    ///
+    /// Expected:
+    /// - Information is never written. Warning and Error for the Trace settings; nothing for Default None and for the
+    ///   category at None under either name, since the longer name of the two names' rules applies; Error only for the
+    ///   category at Error.
+    /// </remarks>
+    [Theory]
+    [InlineData("Console:LogLevel:Default=Trace", false, true, true)]
+    [InlineData("Console:LogLevel:Default=None", false, false, false)]
+    [InlineData("Console:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*=Trace", false, true, true)]
+    [InlineData("{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
+    [InlineData("Console:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;{console}:LogLevel:Default=Trace", false, false, false)]
+    [InlineData("{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;Console:LogLevel:Default=Trace", false, false, false)]
+    [InlineData("Console:LogLevel:Default=Trace;{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=Error", false, false, true)]
+    public void RaiseToWarning_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
+        Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddConsole()));
+
+    // Whether a logger of the web host's category writes Information, Warning, and Error, under settings of the form
+    // "key=value;…" below Logging, where {provider} and {console} stand for the full type names of the test's provider and
+    // the console's.
+    private static (bool Information, bool Warning, bool Error) Levels(string settings, Action<ILoggingBuilder> addProvider)
     {
         var values = new Dictionary<string, string?>(StringComparer.Ordinal);
         foreach (string pair in settings.Split(';', StringSplitOptions.RemoveEmptyEntries))
         {
             string[] parts = pair.Split('=');
-            values["Logging:" + parts[0].Replace("{provider}", typeof(RecordingLoggerProvider).FullName, StringComparison.Ordinal)] = parts[1];
+            string key = parts[0]
+                .Replace("{provider}", typeof(RecordingLoggerProvider).FullName, StringComparison.Ordinal)
+                .Replace("{console}", typeof(ConsoleLoggerProvider).FullName, StringComparison.Ordinal);
+            values["Logging:" + key] = parts[1];
         }
 
         IConfiguration configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
-        using var provider = new RecordingLoggerProvider();
         var services = new ServiceCollection();
         services.AddLogging(logging =>
         {
             logging.AddConfiguration(configuration.GetSection("Logging"));
             logging.SetMinimumLevel(LogLevel.Information);
-            logging.AddProvider(provider);
+            addProvider(logging);
             HostRequestLog.RaiseToWarning(logging);
         });
         using ServiceProvider built = services.BuildServiceProvider();
         ILogger logger = built.GetRequiredService<ILoggerFactory>().CreateLogger(HostRequestLog.Category);
-
-        Assert.Equal(
-            (information, warning, error),
-            (logger.IsEnabled(LogLevel.Information), logger.IsEnabled(LogLevel.Warning), logger.IsEnabled(LogLevel.Error))
-        );
+        return (logger.IsEnabled(LogLevel.Information), logger.IsEnabled(LogLevel.Warning), logger.IsEnabled(LogLevel.Error));
     }
 
     private static async Task<HttpStatusCode> SendAsync(HttpClient http, string pathAndQuery)
