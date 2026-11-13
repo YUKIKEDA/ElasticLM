@@ -41,7 +41,7 @@ internal sealed partial class ServiceStore<TDialect> : Database
     )
     {
         ArgumentNullException.ThrowIfNull(owner);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // Two setups at once both try to add the owner; the second insert does nothing and both read the same row.
@@ -83,7 +83,7 @@ internal sealed partial class ServiceStore<TDialect> : Database
         Func<ApiKeyRecord, AuditEntry> audit,
         DateTimeOffset now,
         CancellationToken cancellationToken
-    ) => _db.InTransactionAsync(tx => InsertKeyAsync(tx, adminId, key, audit, now, cancellationToken), cancellationToken);
+    ) => InWriteTransactionAsync(tx => InsertKeyAsync(tx, adminId, key, audit, now, cancellationToken), cancellationToken);
 
     public override async Task<KeyHolder?> FindKeyAsync(byte[] hash, CancellationToken cancellationToken)
     {
@@ -143,7 +143,7 @@ internal sealed partial class ServiceStore<TDialect> : Database
     }
 
     public override Task<bool> RevokeKeyAsync(Guid id, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken) =>
-        _db.InTransactionAsync(
+        InWriteTransactionAsync(
             async tx =>
             {
                 long found = await tx.From(ApiKeyRow.Table)
@@ -168,7 +168,7 @@ internal sealed partial class ServiceStore<TDialect> : Database
         );
 
     public override Task<long> AppendAuditAsync(AuditEntry entry, DateTimeOffset now, CancellationToken cancellationToken) =>
-        _db.InTransactionAsync(tx => AppendAsync(tx, entry, now, cancellationToken), cancellationToken);
+        InWriteTransactionAsync(tx => AppendAsync(tx, entry, now, cancellationToken), cancellationToken);
 
     public override async Task<IReadOnlyList<AuditRow>> ListAuditAsync(long? after, bool descending, int limit, CancellationToken cancellationToken)
     {
@@ -232,7 +232,7 @@ internal sealed partial class ServiceStore<TDialect> : Database
     }
 
     public override Task<long> RemoveAuditOlderThanAsync(DateTimeOffset before, CancellationToken cancellationToken) =>
-        _db.InTransactionAsync(
+        InWriteTransactionAsync(
             async tx =>
             {
                 AuditStateRow state = await LockStateAsync(tx, cancellationToken).ConfigureAwait(false);
@@ -272,6 +272,53 @@ internal sealed partial class ServiceStore<TDialect> : Database
             },
             cancellationToken
         );
+
+    private async Task InWriteTransactionAsync(Func<Transaction<TDialect>, Task> body, CancellationToken cancellationToken) =>
+        _ = await InWriteTransactionAsync(
+                async tx =>
+                {
+                    await body(tx).ConfigureAwait(false);
+                    return true;
+                },
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+
+    // design §14.2, §18.2 (V1d9a): a write's transaction, run as AuraORM's InTransactionAsync runs it (AuraORM 0.1.0,
+    // Database.cs) except that the commit does not take the caller's token. AuraORM also skips the rollback when the body
+    // completed the transaction itself, through an internal member; no body here commits or rolls back. The body's
+    // statements still stop on that token; once the body has run, the commit goes through, so a caller who leaves while it
+    // runs does not leave a change whose commit may or may not have taken place. On PostgreSQL, Npgsql cancels a running
+    // COMMIT on the token (the V1d9a Grill: 3 runs of 3 rolled back); Microsoft.Data.Sqlite looks at it only before the
+    // commit begins.
+    private async Task<T> InWriteTransactionAsync<T>(Func<Transaction<TDialect>, Task<T>> body, CancellationToken cancellationToken)
+    {
+        Transaction<TDialect> tx = await _db.BeginTransactionAsync(IsolationLevel.Unspecified, cancellationToken).ConfigureAwait(false);
+        await using (tx.ConfigureAwait(false))
+        {
+            T result;
+            try
+            {
+                result = await body(tx).ConfigureAwait(false);
+            }
+            catch (Exception bodyError)
+            {
+                try
+                {
+                    await tx.RollbackAsync(CancellationToken.None).ConfigureAwait(false);
+                }
+                catch (Exception rollbackError)
+                {
+                    throw new AggregateException(bodyError, rollbackError);
+                }
+
+                throw;
+            }
+
+            await tx.CommitAsync(CancellationToken.None).ConfigureAwait(false);
+            return result;
+        }
+    }
 
     // Locks the chain's state row and reads it. An UPDATE that sets a column to itself takes the row lock on PostgreSQL as
     // SELECT … FOR UPDATE would, in the query builder; on SQLite the transaction already holds the write lock.

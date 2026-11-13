@@ -310,7 +310,6 @@ internal sealed partial class ElmService
                     await Database.RemoveAdminRoleAsync(admin, ip, now, http.RequestAborted).ConfigureAwait(false);
                 }
 
-                await RefuseSignInAsync(http, "the ID token's claims map to no role").ConfigureAwait(false);
                 string detail = AuditLog.Detail(w =>
                 {
                     w.WriteString("issuer", identity.Issuer);
@@ -325,7 +324,7 @@ internal sealed partial class ElmService
                     ip,
                     detail
                 );
-                await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                await AuditedRefusalAsync(http, () => RefuseSignInAsync(http, "the ID token's claims map to no role"), refused).ConfigureAwait(false);
                 return;
             }
 
@@ -367,7 +366,12 @@ internal sealed partial class ElmService
         catch (DbException e)
         {
             ServiceLog.RequestFailed(_log, e);
-            await PageAsync(http, StatusCodes.Status500InternalServerError, "The sign-in failed.").ConfigureAwait(false);
+
+            // The refused sign-in's row is written after its page, which leaves no answer to replace.
+            if (!http.Response.HasStarted)
+            {
+                await PageAsync(http, StatusCodes.Status500InternalServerError, "The sign-in failed.").ConfigureAwait(false);
+            }
         }
     }
 

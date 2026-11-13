@@ -94,4 +94,12 @@ internal static partial class ServiceLog
         Message = "The file {File} has the name of a usage log file but no real date and time; it is not read as one."
     )]
     public static partial void NotALogFile(ILogger log, string file);
+
+    // design §18.2 (V1d9a): the caller's request could not be read; one line, without the request and without a stack.
+    [LoggerMessage(
+        EventId = 21,
+        Level = LogLevel.Information,
+        Message = "The request of an administration call ({Action}) could not be read ({Status}); the connection was closed."
+    )]
+    public static partial void RequestUnreadable(ILogger log, string action, int status);
 }

@@ -30,7 +30,7 @@ internal sealed partial class ServiceStore<TDialect>
     {
         ArgumentNullException.ThrowIfNull(identity);
         long seconds = now.ToUnixTimeSeconds();
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // Two first requests at once both try to add the administrator; the second insert does nothing.
@@ -101,7 +101,7 @@ internal sealed partial class ServiceStore<TDialect>
         ArgumentNullException.ThrowIfNull(admin);
         return admin.Role == Permissions.RoleNone
             ? Task.CompletedTask
-            : _db.InTransactionAsync(tx => ChangeRoleAsync(tx, admin, Permissions.RoleNone, ip, now, cancellationToken), cancellationToken);
+            : InWriteTransactionAsync(tx => ChangeRoleAsync(tx, admin, Permissions.RoleNone, ip, now, cancellationToken), cancellationToken);
     }
 
     public override async Task<IReadOnlyList<AdminRow>> ListAdminsAsync(Guid? after, int limit, CancellationToken cancellationToken) =>
@@ -124,7 +124,7 @@ internal sealed partial class ServiceStore<TDialect>
     )
     {
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // The audit chain's lock first: every change of an administrator's state holds it, so the count of owners
