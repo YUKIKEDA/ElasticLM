@@ -175,6 +175,8 @@ An error is a problem response (RFC 9457) with the type `application/problem+jso
 
 A route path that does not exist gets `404` without a body, and a method that a path does not take gets `405` without a body. An `{id}` in a path that is not in the form of an ID gets the same answer as an unknown ID.
 
+A request whose body cannot be read, because of its form (for example, a bad chunk of `Transfer-Encoding: chunked`) or because it comes too slowly, gets no answer: the service closes the connection. The call is still recorded in the audit log, with `ELM_MALFORMED` or `ELM_NETWORK_ERROR` ([Logs](logs.md#row-fields)).
+
 #### Rate limits
 
 Every request is first limited per source address (an IPv4 address, or an IPv6 /64) by `rateLimit.perIp`. An authenticated request is then also limited by `rateLimit.perKey`: per API key, or per administrator for an access token or a session. The checks run in this order: the limit per source, authentication, the limit per key, the permission, then the route itself. The settings are in [elm-service configuration](service-configuration.md#ratelimit).
@@ -367,7 +369,7 @@ One row of the audit log. The meaning of each field is in [Logs](logs.md#row-fie
 | `actorId` | string or `null` | Who acted. |
 | `action` | string | The action. |
 | `target` | string or `null` | What it acted on. |
-| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
+| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the connection was closed or reset before the answer ended (also in the middle of the request body) or the request body came too slowly, `ELM_MALFORMED` when the request body could not be read because of its form on a connection that stayed open, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
 | `ip` | string or `null` | The source address. |
 | `detail` | string or `null` | The details: a JSON object as text, exactly as stored, so that the row's hash can be computed again. |
 | `prev` | string | The previous row's hash, in base64url. |

@@ -22,6 +22,8 @@ A license, a token, or a server answer that fails a check never throws, whatever
 
 Each result type has exactly these two cases, so a `switch` over them is complete. `Error` is a `LicenseError`: `Code` is an `ErrorCode` value, `WireName` is its name (such as `ELM_EXPIRED`), and `Message` is one English sentence for people that never contains key material or a full token. [Error codes](error-codes.md) lists every code, and which codes the client retries on its own before the app sees them. `RetryAfter` is a `TimeSpan?`: the wait the server asked for in the `Retry-After` header of its answer, as it does with `ELM_SERVER_RECOVERING` and `ELM_RATE_LIMITED`, or `null`; the client does not wait by itself.
 
+`ActivationClient` and `LicenseClient` bound every answer they read. A request ends as `ELM_NETWORK_ERROR` when its whole answer, the body included, has not come within 30 seconds of sending it; the 30 seconds are counted on the `TimeProvider` of the options. An answer whose body is larger than 256 KiB is `ELM_MALFORMED`, whatever its status. The client reads nothing else of such an answer, so `RetryAfter` is `null`.
+
 Exceptions are only for mistakes in the call: `ArgumentException` (an empty or invalid argument, such as a product ID or a URL), `ArgumentOutOfRangeException` (a seat count below 1, a borrow period below one second, a clock skew out of range), `ArgumentNullException` (a `null` argument, or a `null` `Trust` or `TimeProvider` in the options), and `ObjectDisposedException` after a client is disposed. The XML documentation of each member names the exceptions it throws.
 
 ## `ElasticLM.Licensing`
@@ -257,7 +259,7 @@ The settings, `ActivationClientOptions` (each property has an `init` accessor, s
 | `AppVersion` | `string?` | `null` | No | The app's version, sent for the audit log; at most 64 bytes in UTF-8. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options, or `null` for their defaults. |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |
 
 ### `LicenseClient`
 
@@ -293,4 +295,4 @@ The settings, `LicenseClientOptions` (each property has an `init` accessor, so i
 | `AppVersion` | `string?` | `null` | No | The app version sent with each new lease; at most 64 bytes in UTF-8. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard for the server license and the leases, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options (the clock skew), or `null` for their defaults. |
-| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. |
+| `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |

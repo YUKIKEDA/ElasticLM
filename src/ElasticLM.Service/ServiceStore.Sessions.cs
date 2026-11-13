@@ -22,7 +22,7 @@ internal sealed partial class ServiceStore<TDialect>
         ArgumentNullException.ThrowIfNull(audit);
         long seconds = now.ToUnixTimeSeconds();
         long idleBefore = seconds - (long)session.Idle.TotalSeconds;
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 Guid? replaced = null;
@@ -144,7 +144,7 @@ internal sealed partial class ServiceStore<TDialect>
         ArgumentNullException.ThrowIfNull(audit);
         long seconds = now.ToUnixTimeSeconds();
         long idleBefore = seconds - idleSeconds;
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 List<Guid> admins = await tx.Delete(AdminSessionRow.Table)
@@ -172,7 +172,7 @@ internal sealed partial class ServiceStore<TDialect>
     )
     {
         ArgumentNullException.ThrowIfNull(audit);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 AdminSessionRow? removed = await tx.Delete(AdminSessionRow.Table)
@@ -210,7 +210,7 @@ internal sealed partial class ServiceStore<TDialect>
     )
     {
         ArgumentNullException.ThrowIfNull(decide);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // SQLite's BEGIN IMMEDIATE already holds the write lock; PostgreSQL takes the advisory lock for the transaction.

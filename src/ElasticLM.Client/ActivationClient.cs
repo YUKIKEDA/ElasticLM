@@ -113,6 +113,10 @@ public abstract record OfflineRequestResult
 /// </remarks>
 public sealed class ActivationClient : IAsyncDisposable
 {
+    // design §16: elm reports this error of a server license command as a failed exchange, not as a refusal. It is one
+    // instance, which elm tells by reference, so a change of its wording does not change elm's exit code.
+    internal static readonly LicenseError AnswerTooLarge = new(ErrorCode.Malformed, "The service's answer is larger than the limit.");
+
     private const int MaxAppBytes = 64;
     private const int MaxAnswerBytes = 256 * 1024;
     private const long RequestLifetime = 7 * 24 * 60 * 60;
@@ -121,7 +125,6 @@ public sealed class ActivationClient : IAsyncDisposable
     private const string NotWaited = "The answer is not for the request this installation waits for.";
     private const string DamagedFile = "The kept activation file is damaged.";
     private const string Full = "16 requests got no answer; an administrator deactivates this installation before it activates again.";
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromHours(1);
     private static readonly TimeSpan LongestWait = TimeSpan.FromHours(24);
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
@@ -171,8 +174,9 @@ public sealed class ActivationClient : IAsyncDisposable
         _received = new LicenseVerifier(options.Trust, _time, StatelessClockGuard.Instance, options.VerifierOptions);
 
         // design §12.1: a redirect would send the body, a license key with it, to another place; a 3xx is an error.
-        var handler = new SocketsHttpHandler { PooledConnectionLifetime = TimeSpan.FromMinutes(2), AllowAutoRedirect = false };
-        _http = new HttpClient(options.WrapHandler?.Invoke(handler) ?? handler) { Timeout = RequestTimeout };
+        SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
+        handler.PooledConnectionLifetime = TimeSpan.FromMinutes(2);
+        _http = BoundedAnswer.CreateClient(options.WrapHandler?.Invoke(handler) ?? handler);
         if (key is not null)
         {
             UseKey(key);
@@ -1132,17 +1136,21 @@ public sealed class ActivationClient : IAsyncDisposable
 
         try
         {
-            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            byte[]? content = await LicenseClient.ReadLimitedAsync(response.Content).ConfigureAwait(false);
-            string? nonce = response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
-            TimeSpan? retryAfter = response.Headers.RetryAfter?.Delta;
-            if (content is null)
+            BoundedAnswer answer = await BoundedAnswer
+                .SendAsync(_http, request, BoundedAnswer.MaxLength, _time, cancellationToken)
+                .ConfigureAwait(false);
+            if (answer is not BoundedAnswer.Whole whole)
             {
-                return Reply.Failure(new LicenseError(ErrorCode.Malformed, "The service's answer is larger than the limit."));
+                // design §12.1, §12.6.2: nothing of an answer that is too large is read, its nonce and Retry-After
+                // included. A service that answered with a success may have acted on the request, so its jti stays in
+                // the kept list; a refusal changed nothing there.
+                return Reply.Failure(AnswerTooLarge) with { Unanswered = answer.IsSuccess };
             }
 
-            LicenseError? error = response.IsSuccessStatusCode ? null : LicenseClient.ProblemOf(response.StatusCode, content, keepDetail: true);
-            return new Reply(content, error, LicenseClient.ValidNonce(nonce), retryAfter);
+            byte[] content = whole.Body.ToArray();
+            string? nonce = whole.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
+            LicenseError? error = whole.IsSuccess ? null : LicenseClient.ProblemOf(whole.Status, content, keepDetail: true);
+            return new Reply(content, error, LicenseClient.ValidNonce(nonce), whole.Headers.RetryAfter?.Delta);
         }
         catch (HttpRequestException e)
             when (e.HttpRequestError
@@ -1155,7 +1163,7 @@ public sealed class ActivationClient : IAsyncDisposable
             // The request did not leave this device.
             return Reply.Failure(new LicenseError(ErrorCode.NetworkError, "The service cannot be reached: " + e.Message));
         }
-        catch (Exception e) when (e is HttpRequestException or OperationCanceledException)
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
         {
             return Reply.Failure(new LicenseError(ErrorCode.NetworkError, "The service did not answer: " + e.Message)) with { Unanswered = true };
         }

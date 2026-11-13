@@ -865,7 +865,7 @@ public sealed class ElmServiceAdminTests
     }
 
     // A service on the given clock, with the test's settings and environment.
-    private static Task<ElmService> StartOnClockAsync(TestService test, TimeProvider clock) =>
+    internal static Task<ElmService> StartOnClockAsync(TestService test, TimeProvider clock) =>
         ElmService.StartAsync(
             test.Settings(),
             new ServiceHostOptions
@@ -880,14 +880,14 @@ public sealed class ElmServiceAdminTests
     private static string Body(string name = "n", string permissions = "\"audit.read\"", string more = "") =>
         "{\"name\":" + JsonSerializer.Serialize(name) + ",\"permissions\":[" + permissions + "]" + more + "}";
 
-    private static async Task<AuditEntry[]> RowsAsync(ElmService service, string? action)
+    internal static async Task<AuditEntry[]> RowsAsync(ElmService service, string? action)
     {
         IReadOnlyList<AuditRow> rows = await service.Database.ListAuditAsync(null, false, AuditLog.MaxLimit, TestContext.Current.CancellationToken);
         return [.. rows.Select(r => r.Entry).Where(e => action is null || e.Action == action)];
     }
 
     // Sends one request on a connection of its own and returns the socket, so that the test decides when the caller goes.
-    private static async Task<Socket> SendAsync(ElmService service, string request)
+    internal static async Task<Socket> SendAsync(ElmService service, string request)
     {
         var socket = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp) { NoDelay = true };
         try
@@ -905,7 +905,7 @@ public sealed class ElmServiceAdminTests
 
     // The caller goes: it ends its side of the connection and reads until the service has closed it too, which Kestrel does
     // when it has taken the request as aborted. A connection that the service resets counts as closed.
-    private static async Task LeaveAsync(Socket caller)
+    internal static async Task LeaveAsync(Socket caller)
     {
         caller.Shutdown(SocketShutdown.Send);
         using var limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
@@ -966,77 +966,6 @@ public sealed class ElmServiceAdminTests
 
         await LeaveAsync(caller);
         await ScalarAsync(reader, "ROLLBACK", cancel);
-    }
-
-    // The test's fake clock for a service, which can make one read of the timestamp or of the time wait until the test lets
-    // it go on. The service reads the timestamp in its rate limits and the time in its operations, so a held read keeps a
-    // request between two of its steps.
-    private sealed class HeldClock(TimeProvider inner) : TimeProvider, IDisposable
-    {
-        private readonly ManualResetEventSlim _release = new(true);
-        private readonly Lock _lock = new();
-        private TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        private int _timestampsUntilHeld;
-        private int _timesUntilHeld;
-
-        public override long TimestampFrequency => inner.TimestampFrequency;
-
-        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
-
-        // Holds the given read of the timestamp, counted from this call, and returns a task that ends once that read waits.
-        public Task HoldAsync(int read) => HoldAsync(read, 0);
-
-        // Holds the given read of the time, counted from this call, and returns a task that ends once that read waits.
-        public Task HoldTimeAsync(int read) => HoldAsync(0, read);
-
-        public void Release() => _release.Set();
-
-        public override DateTimeOffset GetUtcNow()
-        {
-            Wait(ref _timesUntilHeld);
-            return inner.GetUtcNow();
-        }
-
-        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
-            inner.CreateTimer(callback, state, dueTime, period);
-
-        public override long GetTimestamp()
-        {
-            Wait(ref _timestampsUntilHeld);
-            return inner.GetTimestamp();
-        }
-
-        public void Dispose() => _release.Dispose();
-
-        private Task HoldAsync(int timestamp, int time)
-        {
-            lock (_lock)
-            {
-                _release.Reset();
-                _held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                (_timestampsUntilHeld, _timesUntilHeld) = (timestamp, time);
-                return _held.Task;
-            }
-        }
-
-        private void Wait(ref int readsUntilHeld)
-        {
-            bool hold;
-            lock (_lock)
-            {
-                hold = readsUntilHeld > 0 && --readsUntilHeld == 0;
-                if (hold)
-                {
-                    _held.SetResult();
-                }
-            }
-
-            if (hold)
-            {
-                // The limit only ends a test that never lets the read go on.
-                _release.Wait(TimeSpan.FromSeconds(30), CancellationToken.None);
-            }
-        }
     }
 
     // A body without Content-Length: HttpClient sends it chunked, so only the read loop's own limit can stop it.

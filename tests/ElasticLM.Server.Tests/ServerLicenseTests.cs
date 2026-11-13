@@ -43,7 +43,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     ///
     /// Steps:
     /// - Start a server with no license; activate with elm server; start the server with service.url; read the status; refresh
-    ///   with elm server; move the clock an hour and a minute; read the usage log; deactivate; stop the server; deactivate
+    ///   with elm server; move the clock an hour and wait for the server's refresh; read the usage log; deactivate; stop the server; deactivate
     ///   naming a file put there by hand; look for the activation in the service.
     ///
     /// Expected:
@@ -78,12 +78,10 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Contains("The server reloaded the license.", output, StringComparison.Ordinal);
         Assert.Equal(2L, server.Engine.Server.License.Sequence);
 
-        for (int minute = 0; minute < 61 && server.Engine.Server.License.Sequence != 3; minute++)
-        {
-            test.Time.Advance(TimeSpan.FromMinutes(1));
-            await Task.Delay(20, TestContext.Current.CancellationToken);
-        }
-
+        // The server's refresh is due an hour after the token of sequence 2 was issued, and the clock has not moved since.
+        // The clock then stands still: it also counts the 30 seconds the server's client gives its request (design §12.6.2),
+        // so a move while the refresh is on its way would end that request.
+        test.Time.Advance(TimeSpan.FromHours(1));
         await Deployment.WaitUntilAsync(() => server.Engine.Server.License.Sequence == 3);
         using (HttpClient seal = Deployment.AdminHttp(server))
         {
@@ -339,7 +337,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     ///
     /// Steps:
     /// - Read the status; activate with elm server while it runs; read the status; write the hand license again and reload;
-    ///   move the clock an hour and a minute.
+    ///   move the clock an hour and wait for the server's refresh.
     ///
     /// Expected:
     /// - autoRefresh false; the activation's license in use and autoRefresh true; the hand license in use, autoRefresh still
@@ -376,12 +374,10 @@ public sealed class ServerLicenseTests : IAsyncDisposable
 
         Assert.Equal("lic-hand", server.Engine.Server.License.LicenseId);
         Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
-        for (int minute = 0; minute < 61 && server.Engine.Server.License.LicenseId != activated; minute++)
-        {
-            test.Time.Advance(TimeSpan.FromMinutes(1));
-            await Task.Delay(20, TestContext.Current.CancellationToken);
-        }
 
+        // The activation's refresh is due an hour after its token was issued, and the clock has not moved since. The clock
+        // then stands still, so that it does not end the refresh's request (30 seconds of this clock, design §12.6.2).
+        test.Time.Advance(TimeSpan.FromHours(1));
         await Deployment.WaitUntilAsync(() => server.Engine.Server.License.LicenseId == activated);
         Assert.Equal(2L, server.Engine.Server.License.Sequence);
     }
