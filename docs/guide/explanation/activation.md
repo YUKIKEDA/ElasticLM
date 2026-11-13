@@ -85,6 +85,7 @@ A vendor chooses these settings per policy. The names and values are as the admi
 | `borrowReturnLimit` | 0 to 1,000 | 2 | How many borrows may be returned early in 30 days |
 | `clientInfoStrategy` | `none`, `hostAndUser` | `none` | Whether the service keeps the host name and OS user name the app sends |
 | `trialDuration` | seconds | 14 days | The length of a trial, for a `trial` policy |
+| `trialDailyLimit` | 1 to 100,000 | 1,000 | How many trials the product gives in any 24 hours, for the product's trial policy |
 
 The floating settings are explained in [Floating licenses](floating-licenses.md). A product offers trials by naming one `trial` policy in its `trialPolicyId` (see Trials below).
 
@@ -197,6 +198,7 @@ A trial lets a device use the product for a limited time without a key. The app 
 
 - The product must name a trial policy (`trialPolicyId`). Without one, or for an unknown product, the answer is `404` and `ELM_TRIAL_NOT_OFFERED`.
 - The service records each trial by product and fingerprint. If any of the device's fingerprints already has a trial of this product, the answer is `409` and `ELM_TRIAL_USED`, even from the same installation key.
+- If the product has already given its trial policy's `trialDailyLimit` trials in the last 24 hours, the answer is `429` and `ELM_RATE_LIMITED`, with a `Retry-After` of the seconds until the oldest of them is 24 hours old. Nothing is written. The limit keeps anyone who can reach the service from filling its database with trials; [Offer a trial](../how-to/offer-a-trial.md#set-how-many-trials-a-day-the-product-gives) shows how to set it.
 - Otherwise it creates a license without a key, named `trial`, that lasts `trialDuration`, with all of the product's current features, and activates it for this key. The file has no grace period.
 - A trial policy must be `nodeLocked`, must match fingerprints (`any` or `all`), and has a `gracePeriod` of 0. A device that cannot make any fingerprint gets no trial.
 - A trial is refreshed and checked for clones like any activation. Once it is deactivated or stopped by `deny`, it is over, because a trial license has no key to activate again with; only an administrator who deletes the trial record lets the device start a new one.

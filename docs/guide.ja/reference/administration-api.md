@@ -248,6 +248,7 @@ sidebar_position: 6
 | `borrowReturnLimit` | 数値 | 30 日間に借用を早期返却できる回数。 |
 | `clientInfoStrategy` | 文字列 | `none` か `hostAndUser`。 |
 | `trialDuration` | 数値 | トライアルが続く秒数。 |
+| `trialDailyLimit` | 数値 | これが製品のトライアルのポリシーのとき、その製品がどの 24 時間でも出せるトライアルの数。 |
 | `createdAt` | 時刻 | 作成した時刻。 |
 | `updatedAt` | 時刻 | 最後に変更した時刻。 |
 
@@ -821,6 +822,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `borrowReturnLimit` | 数値 | いいえ | 0 から 1,000。既定は 2。 |
 | `clientInfoStrategy` | 文字列 | いいえ | `none`（既定）か `hostAndUser`。 |
 | `trialDuration` | 数値 | いいえ | 秒数。86,400 から 31,536,000（365 日）。既定は 1,209,600（14 日）。 |
+| `trialDailyLimit` | 数値 | いいえ | 1 から 100,000。既定は 1,000。`trialPolicyId` でこのポリシーを指定した製品について数える。数えるのは、その製品のどのポリシーで作ったかを問わず、直近 24 時間に作ったトライアルだ。 |
 
 `null` を取らない数値の項目と、文字列の項目では、`null` は `ELM_MALFORMED` になる。設定どうしも次のように合っていなければならず、合わなければ `ELM_INVALID_ARGUMENT` になる。
 
@@ -871,6 +873,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
   "borrowReturnLimit": 2,
   "clientInfoStrategy": "none",
   "trialDuration": 1209600,
+  "trialDailyLimit": 1000,
   "createdAt": "2026-11-01T11:27:59Z",
   "updatedAt": "2026-11-01T11:27:59Z"
 }
@@ -918,6 +921,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
       "borrowReturnLimit": 2,
       "clientInfoStrategy": "none",
       "trialDuration": 1209600,
+      "trialDailyLimit": 1000,
       "createdAt": "2026-11-01T11:27:59Z",
       "updatedAt": "2026-11-01T11:27:59Z"
     }
@@ -955,7 +959,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `duration` | 数値または `null` | いいえ | 作成時と同じ。`null` なら有効期限はない。新しい値は、変更後に作るライセンスと、`fromFirstActivation` で有効期限のないライセンスの次のアクティベーションやクラウドのリースに適用する。すでに有効期限のあるライセンスは、その有効期限のままだ。 |
 | `overage` | 数値または `null` | いいえ | 作成時と同じ。`null` にすると、購入したシート数を超えるシートを貸し出さない。 |
 | `borrowLimit` | 数値または `null` | いいえ | 作成時と同じ。`null` にすると借用できなくなる。 |
-| `maxActivations`、`expirationBasis`、`tokenLifetime`、`refreshWindow`、`gracePeriod`、`fingerprintMatching`、`cloneStrategy`、`floating`、`leaseDuration`、`borrowReturnLimit`、`clientInfoStrategy`、`trialDuration` | 作成時と同じ | いいえ | `POST /v1/admin/policies` の範囲。`null` は `ELM_MALFORMED`。 |
+| `maxActivations`、`expirationBasis`、`tokenLifetime`、`refreshWindow`、`gracePeriod`、`fingerprintMatching`、`cloneStrategy`、`floating`、`leaseDuration`、`borrowReturnLimit`、`clientInfoStrategy`、`trialDuration`、`trialDailyLimit` | 作成時と同じ | いいえ | `POST /v1/admin/policies` の範囲。`null` は `ELM_MALFORMED`。 |
 | `productId`、`licenseKind`、`binding` | — | — | 変更できない。どれかを送ると `ELM_INVALID_ARGUMENT`。 |
 
 変更後のポリシー全体が、`POST /v1/admin/policies` のルールに合っていなければならない。

@@ -41,7 +41,7 @@ elm admin request POST /v1/admin/policies --body month-trial-policy.json --url h
 `elm` はポリシーを表示する。
 
 ```text
-{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Trial, 30 days","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":2592000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
+{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Trial, 30 days","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":2592000,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
 ```
 
 トライアルのポリシーはノードロックで、マシンのフィンガープリントを照合する（`fingerprintMatching` が既定の `any` か、`all`）。サービスは、ほかの値を `ELM_INVALID_ARGUMENT` で拒否する。機能の一覧は要らない。トライアルは、始まった時点で製品が持つ機能をすべて受け取るからだ。
@@ -67,6 +67,26 @@ elm admin request PATCH /v1/admin/products/<product-id> --body offer-trial.json 
 ```
 
 これ以降、`StartTrialAsync` を呼ぶアプリは 30 日のトライアルを受け取る。製品が指定できるトライアルのポリシーは、一度に 1 つだ。すでに動いているトライアルは、始まったときに決まった期限のままだ。
+
+## 製品が 1 日に出すトライアルの数を決める
+
+サービスに接続できる人なら誰でもトライアルを求められ、トライアルは 1 件ごとにサービスのデータベースに行を残す。行はトライアルが終わっても残る。新しいインストール鍵とフィンガープリントで何度も求めるスクリプトにデータベースを埋められないよう、製品が出すトライアルは、どの 24 時間でも `trialDailyLimit` 件までだ。これは製品のトライアルのポリシーの項目で、1 から 100,000、既定は 1,000 だ。製品のどのポリシーで作ったトライアルも数え、記録を削除したトライアル（後述）は数えない。1 日にこれより多くのマシンがトライアルを始める製品では、上限を上げる。次の例は 5,000 にする:
+
+<!-- steps:file path=daily-trials.json -->
+```json
+{"trialDailyLimit":5000}
+```
+
+<!-- steps:run -->
+```shell
+elm admin request PATCH /v1/admin/policies/<month-trial-policy-id> --body daily-trials.json --url http://127.0.0.1:8080
+```
+
+`elm` は、`"trialDailyLimit":5000` になったポリシーを表示する。
+
+直近 24 時間に製品がその数のトライアルを出していれば、サービスは次のトライアルを、ステータス 429 と `ELM_RATE_LIMITED` で断り、何も書き込まない。メッセージは "The product has reached its limit of 5000 trials in 24 hours." のようになる。レスポンスの `Retry-After` ヘッダーは、そのうち最も古いトライアルが 24 時間を過ぎるまでの秒数で、長くても 1 日だ。アプリは、エラーと一緒にこれを `RetryAfter` として受け取る。この製品のトライアルを使ったマシンには、上限に達していても `ELM_TRIAL_USED` が返る。レスポンスを受け取れなかったトライアルを求め直すアプリも、上限に達していてもそのトライアルを受け取る。また、サービスの各ノードは、製品が上限に達したとき、製品ごとに 1 日に 1 回まで、運用ログに警告を書く（[ログ](../reference/logs.md#運用ログ)を参照）。
+
+誰かが製品の 1 日分のトライアルを使い切ると、その人が求め続けるかぎり、最も古いトライアルが 24 時間を過ぎるまで、その製品の新しいトライアルは止まる。ほかの製品と、ライセンスキーでアクティベーションするデバイスには影響しない。警告が出たら、プロキシのログで送信元を見つけてそこで止めるか、上限を上げる。
 
 ## トライアルを使ったマシンでトライアルを始める
 
@@ -134,4 +154,4 @@ trial: pro
 
 - [トライアル](../explanation/activation.md#トライアル): サービスがトライアルを与える仕組みと、新しいマシン ID で新しいトライアルを受け取れる理由。
 - 管理 API の [`GET /v1/admin/trials`](../reference/administration-api.md#get-v1admintrials) と [`DELETE /v1/admin/trials/{id}`](../reference/administration-api.md#delete-v1admintrialsid)。
-- [エラーコード](../reference/error-codes.md): `ELM_TRIAL_USED`、`ELM_TRIAL_NOT_OFFERED`、`ELM_FINGERPRINT_UNAVAILABLE`。
+- [エラーコード](../reference/error-codes.md): `ELM_TRIAL_USED`、`ELM_TRIAL_NOT_OFFERED`、`ELM_FINGERPRINT_UNAVAILABLE`、`ELM_RATE_LIMITED`。

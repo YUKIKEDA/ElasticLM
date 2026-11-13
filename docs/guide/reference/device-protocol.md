@@ -24,7 +24,7 @@ The client accepts the TLS certificate of `elm-server` on either of two grounds.
 | `ELM-Proof` | Request | Both | The proof of the request (below). One header field: a request with two fields gets `ELM_PROOF_INVALID`. |
 | `ELM-Nonce` | Response | Both | A new nonce for the next proof. `elm-service` sends it in every answer of its device routes, errors included, except the answers of `POST /v1/offline` and the `429` of the per-source rate limit. `elm-server` sends it in every answer of `GET /v1/nonce` and of its four lease routes, errors included, except the `403` of its IP rules and the `429` of its rate limit. |
 | `ELM-Server-License` | Response | `elm-server` | The token ID (`jti`) of the server license file that the server issues leases under now, in the success answers of `POST /v1/leases` and `POST /v1/leases/{id}/renew`. It is the value that the local administration API shows as `licenseToken` (see [`GET /admin/v1/status`](administration-api.md#get-adminv1status)). When it differs from the token ID of the client's copy, the client fetches `GET /v1/server/license` again. |
-| `Retry-After` | Response | Both | Seconds to wait. With `ELM_RATE_LIMITED` it is always `1`. With `ELM_SERVER_RECOVERING` it is the rest of the reclaim window, rounded up. |
+| `Retry-After` | Response | Both | Seconds to wait. With `ELM_RATE_LIMITED` it is `1`, except for a trial over its product's limit (see [`POST /v1/trials`](#post-v1trials)). With `ELM_SERVER_RECOVERING` it is the rest of the reclaim window, rounded up. |
 
 ### The proof
 
@@ -200,6 +200,7 @@ An error is an RFC 9457 problem with the media type `application/problem+json`. 
 - `elm-service` limits every device route per source address before anything else (`rateLimit.clientPerIp`), and every request with a proof per installation key after the proof check and before its `jti` is recorded (`rateLimit.clientPerKey`, see [The proof](#the-proof)). An offline file counts against the key that signed it, after its signature and time checks.
 - `elm-server` applies its IP rules (`allow` and `deny`) first: a refused address gets `403` with `ELM_FORBIDDEN`. Then it limits every route per source address (`rateLimit.perIp`).
 - A request over a limit gets `429` with `ELM_RATE_LIMITED` and `Retry-After: 1`.
+- `elm-service` also limits the trials of each product in any 24 hours (`trialDailyLimit` of the product's trial policy); see [`POST /v1/trials`](#post-v1trials).
 
 The limits and their defaults are in [elm-service configuration](service-configuration.md#ratelimit) and [elm-server configuration](server-configuration.md#ratelimit).
 
@@ -328,7 +329,8 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 
 - Authentication: a proof with `jwk`.
 - Success: `201` for a new trial. `200` for a retry: the same installation key, an activation that is still at `seq` 1, and `retry` holding the `jti` of the request that got it. The retry gets the file it was issued.
-- Response headers: `ELM-Nonce`.
+- Response headers: `ELM-Nonce`. A refusal at the product's limit also has `Retry-After`.
+- Order: a retry of a trial whose answer was lost gets its file first, then a used fingerprint gets `ELM_TRIAL_USED`, and only then does the product's limit apply.
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
@@ -355,6 +357,7 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` is empty. |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | No product has the code, or the product has no trial policy. |
 | `409` | `ELM_TRIAL_USED` | One of the fingerprints already had a trial of the product. |
+| `429` | `ELM_RATE_LIMITED` | The product has given its trial policy's `trialDailyLimit` trials in the last 24 hours: "The product has reached its limit of N trials in 24 hours." `Retry-After` is the seconds until the oldest of them is 24 hours old, at least 1. Nothing is written. |
 
 ### `POST /v1/offline`
 
