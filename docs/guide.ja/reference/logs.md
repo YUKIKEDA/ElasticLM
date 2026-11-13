@@ -40,7 +40,7 @@ info: elm-server[2]
 
 - 名前の UTC 時刻は `yyyyMMddTHHmmssfffZ` の形で、たとえば `usage-20270125T093000123Z.jsonl` になる。名前を並べ替えると時刻の順になる。時計が戻っても、新しいファイルの名前が最新のファイルより前に来ることはない。
 - 起動のたびと、UTC で日付が変わるたびに、新しいファイルを始める。
-- 名前がこの形でも、数字が実在する日時を表していないファイル（たとえば 13 月を指す `usage-20271301T000000000Z.jsonl`）は、ログのファイルではない。プログラムはそのファイルを読まず、次のファイルの名前を決めるときにも使わない。起動のたびと、動いているあいだは UTC の 1 日に 1 度、運用ログに警告 `The file <name> has the name of a usage log file but no real date and time; it is not read as one.` を書く。プログラムはファイルをそのまま残す。警告を止めるには、ファイルをフォルダーの外へ移すか、削除する。`elm log verify` は、フォルダーの中のそういうファイルを検証せず、警告 `warning: <name>:0: The file's name has the form of a log file's name but no real date and time; the file was not verified.` でそのファイルを示す。ファイルのパスを直接指定すれば、検証する。
+- 名前がこの形でも、数字が実在する日時を表していないファイル（たとえば 13 月を指す `usage-20271301T000000000Z.jsonl`）は、ログのファイルではない。プログラムはそのファイルを読まず、次のファイルの名前を決めるときにも使わない。起動のたびと、動いているあいだは UTC の 1 日に 1 度、運用ログに警告 `The file <name> has the name of a usage log file but no real date and time; it is not read as one.` を書く。プログラムはファイルをそのまま残す。警告を止めるには、ファイルをフォルダーの外へ移すか、削除する。`elm log verify` は、フォルダーの中のそういうファイルを検証せず、警告 `warning: <name>:0: The file's name has the form of a log file's name but no real date and time; the file was not verified.` でそのファイルを示す。ファイルのパスを直接指定すれば、検証する。名前を変えても、削除より多くは隠せない。こうして検証から外れるのは、削除したときと同じく、いちばん新しいファイルだけである。途中のファイルの名前を変えると、そのあとのファイルとのつながりが切れ、`elm log verify` はそれを誤りとして報告する。
 - 時刻 `99991231T235959999Z` より後の名前は付けられない。最新のファイルの名前がこの時刻のとき、プログラムは起動しない。エラーは、利用ログに書き込めないことを伝え、`No file name comes after <name>, the newest file of the log.` で終わる。そのファイルをフォルダーの外へ移してから、プログラムを起動し直す。
 - 同じ名前の別のノードがすでにそのフォルダーに書き込んでいると、`elm-service` のノードは起動しない。各ノードは自分のファイルだけを書く。すべてのノードのファイルを集めるのは運用者の役目だ。
 - 古いファイルは、運用者が削除するまで残る。
