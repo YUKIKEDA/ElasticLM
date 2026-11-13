@@ -1797,6 +1797,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
   - `feature`: `elm-server` は形を確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
   - `fingerprints`: どちらも 8 個まで、各 32 文字の小文字の 16 進。`elm-service` は同じ値を 1 つにまとめ（`Activations.Fingerprints`）、`elm-server` はまとめずに受け取ったまま使う。
   - 更新の `seq`: `elm-server` は 64 ビットの整数なら負の値も受け、§10.4 の手順 3 で複製と判定する（`LeaseRules.Judge`。負の値は今の更新番号とも、その 1 つ前とも一致しない）。`elm-service` は負の値を `ELM_MALFORMED` で断る（`Activations.Sequence`）。
+  - 取得の `count`: 1 未満の値と、機能の席数を超える値は、どちらのサーバーも `ELM_INVALID_ARGUMENT` で断る（上の検査、`LeaseRules.CheckRequest`）。違うのは、32 ビットの整数に収まらない値である。`elm-server` は `count` を 32 ビットの整数として読むので（`AcquireBody.Count`）、収まらない値は `ELM_MALFORMED` である。`elm-service` は 64 ビットの整数として読み（`LeaseRequests.ReadAcquire`）、64 ビットに収まらない値だけが `ELM_MALFORMED` である。64 ビットに収まって 32 ビットに収まらない値は、負なら 0 に、正なら 32 ビットの最大値に置き換えてから上の検査にかけるので、`ELM_INVALID_ARGUMENT` になる（`ElmService.AcquireInScopeAsync`。機能の席数は 1,000,000 までなので、32 ビットの最大値は必ず席数を超える。§14.5）。どちらの答えも `400` で、リースは作らない。この違いはそろえない（§20.7 の「V1d12 の Grill」の問 12-1）。
   - 同じメンバーが 2 回ある本文: `elm-server` は、型が知るメンバーの 2 回だけを `ELM_MALFORMED` とし、知らないメンバーの 2 回は無視する。System.Text.Json のソース生成の読み手の `AllowDuplicateProperties = false` は、型のプロパティーにだけ効く（.NET 10 で試して確かめた）。`elm-service` は、どのメンバーの 2 回も `ELM_MALFORMED` とする（`JsonDocument` の `AllowDuplicateProperties = false`）。
 
 API（`ElasticLM.Client`、M3b で出荷した形。0.42）:
@@ -5482,6 +5483,29 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 空のパスを、`/` と同じに扱う（設計の独立レビューの指摘）。Kestrel は、要求の対象が `*` のとき、パスを空にする。ルーティングは、空のパスを `/` の経路に合わせるので、検査の前は、`OPTIONS *` が、画面の `404` でなくルーティングの `405` になっていた。ハンドラーは動かず、本文も読まれない。この行と同じ種類（検査が、ルーティングと違う形で比べる）なので、ここで直した。
     - 1 MiB を超える本文の `503` は、検査のあとでは起きない。メソッドの違う要求は、ハンドラーに届く前に画面の `404` になり、本文は読まれない（テストは、`Content-Length` が 921600 と 2097152 で、本文を 1,000 バイトだけ送った `POST /AUTH/CALLBACK` が、`404` になることを確かめる）。`GET` の要求の本文は、ハンドラーが読まない。
   - 同じ種類を探した範囲: `src/ElasticLM.Service` と `src/ElasticLM.Server` の、`Request.Path`、`PathString`、`StartsWithSegments` を使う所のすべて。大文字と小文字を区別していたのは、`ElmService.Web.cs` の `RefuseWebPath` の `switch` だけである。`ElmService.Admin.cs` の `StartsWithSegments`（`/v1/admin`、`/v1/activations` など）と `ElmService.AdminUi.cs` の `/assets` は、区別しない。証明の宛先を作る所（`ElmService.Client.cs`、`ElmServer.cs`）は、検査でない。
+- V1d12 の Grill（Issue #330 に記録した。問 12-1 と問 12-2。持ち主の決定はどちらも推奨案 A。2026-11-13）: `elm-service` の貸し出しの、0 以下の席の数を断る検査にテストを足す（V1d の指摘 R8-2）。製品のコードは変えない。退けた案は design-decisions.md にある。
+  - 測った事実（`origin/main` の db7a7bb）:
+    - `ElmService.Leases.cs` の `Math.Clamp` の下の境を 1 にする変異と、`Math.Clamp` を `unchecked` の変換にする変異は、`ElasticLM.Service.Tests` で落ちなかった。下の境を 1 にした変異の下で、`count` 0 と -1 が `201` になった。
+    - 変えていないコードは、0 以下の `count` を `400` と `ELM_INVALID_ARGUMENT` で断る。
+    - 32 ビットの整数に収まらない `count` は、`elm-service` が `ELM_INVALID_ARGUMENT` で、`elm-server` が `ELM_MALFORMED` で断る。
+  - 持ち主が決めたこと:
+    - 問 12-1: 2 つのサーバーの違いは、そのままにする。§12.7.1 の違いの一覧に書いて、それぞれテストで留める。
+    - 問 12-2: 行の外で見つけた文（リースの更新で、`seq` が -1 か `null` のときの文が「activation request」と言う）は、Issue にして、V1d26 の Grill の点に足す。
+  - こちらが決めたこと:
+    - `elm-service` のテストは SQLite だけにする。検査は、データベースごとの SQL の前にある。
+    - 通る側（`count` 1 と、機能の席数ちょうど）も留める。
+    - `elm-server` の HTTP のテストに、`count` -1 と、32 ビットに収まらない値を足す。
+    - `elm-service` が、64 ビットに収まらない `count`（9223372036854775808）を `ELM_MALFORMED` で断ることも留める（実装のときに足した）。§12.7.1 が、`ELM_INVALID_ARGUMENT` になるのを 64 ビットに収まる値までと書くためである。
+  - 足したテスト:
+    - `ElmServiceLeasesTests.Acquire_CountOutsideOneToTheSeats_IsRefusedWithoutALease`: 2 席の機能に、`count` 0、-1、-2147483648、-2147483649、2147483648、4294967297、3、9223372036854775808 を 1 つずつ送る。最後の値は `400` と `ELM_MALFORMED`、ほかは `400` と `ELM_INVALID_ARGUMENT` で、どの場合もリースの行は 0 である。
+    - `ElmServiceLeasesTests.Acquire_CountAtEachBound_IsGranted`: 2 席の機能に、`count` 1 と 2 を送る。`201` で、リースの席の数は送った値である。
+    - `ServerProtocolTests.Bodies_AreLimitedAndChecked` に足した場合: `count` -1 は `ELM_INVALID_ARGUMENT`、2147483648、-2147483649、4294967297 は `ELM_MALFORMED`。
+  - 変異の確かめ（テストを足したあと。どの変異もビルドは通った）:
+    - `Math.Clamp` の下の境を 1 にする: `Acquire_CountOutsideOneToTheSeats_IsRefusedWithoutALease` の 0、-1、-2147483648、-2147483649 の 4 つが落ちる。
+    - `Math.Clamp` を `unchecked((int)request.Count)` にする: 同じテストの 4294967297 が落ちる（32 ビットに切ると 1 になり、`201` になる）。
+    - `LeaseRules.CheckRequest` から `count < 1 ||` を外す: 同じテストの 0、-1、-2147483648、-2147483649 の 4 つと、`Bodies_AreLimitedAndChecked`（`count` 0 の行）と、`LeaseEngineTests.Acquire_Count_MustBeWithinTheFeatureSeats` の 0 と -1 が落ちる。
+    - `LeaseRules.CheckRequest` の `count < 1` を `count == 0` にする: `Bodies_AreLimitedAndChecked`（足した `count` -1 の行）と、`Acquire_Count_MustBeWithinTheFeatureSeats` の -1 が落ちる。`elm-service` のテストは落ちない。`elm-service` は負の値を 0 に置き換えてから検査にかけるので、この変異では答えが変わらない。
+    - `elm-server` の `AcquireBody.Count` を 64 ビットにして、`unchecked` の変換で 32 ビットに切る: `Bodies_AreLimitedAndChecked`（足した `count` 2147483648 の行）が落ちる（`ELM_MALFORMED` でなく `ELM_INVALID_ARGUMENT` になる）。
 
 ## 21. 依存
 
