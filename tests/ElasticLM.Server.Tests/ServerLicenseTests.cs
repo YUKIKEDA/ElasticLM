@@ -118,8 +118,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     /// Steps:
     /// - Start a server with no license, which makes its key; activate and refresh with elm server through the relay (it
     ///   keeps the answer of sequence 2); start a server with service.url set to the relay; have the relay answer the next
-    ///   refresh with the kept answer; move the clock a minute at a time until the relay replayed; seal and read the usage
-    ///   log; move the clock until the server refreshes again.
+    ///   refresh with the kept answer; move the clock an hour, to the refresh; seal and read the usage log until the line is
+    ///   there; move the clock an hour, to the retry. The clock stands still after each move, since a move of more than 30
+    ///   seconds while the refresh is on its way would end its request (design §12.6.2).
     ///
     /// Expected:
     /// - The server starts with sequence 2; after the replay the server still uses sequence 2, the kept activation is at
@@ -148,11 +149,11 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         ElmServer server = await StartAsync(test, settings);
         Assert.Equal(2L, server.Engine.Server.License.Sequence);
         relay.ReplayToNext();
-        for (int minute = 0; minute < 61 && relay.Replayed == 0; minute++)
-        {
-            test.Time.Advance(TimeSpan.FromMinutes(1));
-            await Task.Delay(20, TestContext.Current.CancellationToken);
-        }
+
+        // The refresh is due an hour after the token of sequence 2 was issued, and the clock has not moved since. The clock
+        // then stands still: it also counts the 30 seconds the server's client gives its request (design §12.6.2), so a move
+        // while the refresh is on its way would end that request.
+        test.Time.Advance(TimeSpan.FromHours(1));
 
         // Lines reach the disk when they are sealed (design §18.1), so the log is sealed until the line is there.
         bool logged = false;
@@ -175,12 +176,10 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         StoredActivation kept = new ActivationStore(folder, test.Time).Read(out _)!;
         Assert.Equal((2L, 2L, 1), (server.Engine.Server.License.Sequence, kept.Seq, kept.Retry.Count));
 
-        for (int minute = 0; minute < 61 && server.Engine.Server.License.Sequence != 3; minute++)
-        {
-            test.Time.Advance(TimeSpan.FromMinutes(1));
-            await Task.Delay(20, TestContext.Current.CancellationToken);
-        }
-
+        // A failed refresh tries again an hour later (design §12.6.2). The client sets that timer on the thread that wrote the
+        // line, right after it, while the test sees the line only after a seal and a read of the log. The clock again stands
+        // still once moved.
+        test.Time.Advance(TimeSpan.FromHours(1));
         await Deployment.WaitUntilAsync(() => server.Engine.Server.License.Sequence == 3);
         Assert.Equal(1, relay.Replayed);
     }
