@@ -14,6 +14,8 @@
     <!-- design §13.7: the server license is activated against a real elm-service (M4c3). -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <!-- design §12.7.5, V1d5: the relay that replays genuine lease answers, shared with the service's tests. -->
+    <Compile Include="..\ElasticLM.Service.Tests\Recorder.cs" Link="Recorder.cs" />
     <!-- design §20.7, V1c2: the reference pages are compared with the code. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\SettingsReference.cs" Link="SettingsReference.cs" />

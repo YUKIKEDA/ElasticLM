@@ -516,7 +516,7 @@ public sealed class HostedLeaseClientTests
         return node.ToJsonString();
     }
 
-    private static LicenseClient Client(
+    internal static LicenseClient Client(
         TestService test,
         ElmService service,
         string key,
@@ -540,7 +540,7 @@ public sealed class HostedLeaseClientTests
         return client!;
     }
 
-    private static Lease Acquired(LeaseResult result) =>
+    internal static Lease Acquired(LeaseResult result) =>
         result is LeaseResult.Acquired acquired ? acquired.Lease : throw new InvalidOperationException(result.ToString());
 
     // Product app with feature core, and a cloud-floating policy of it with the members given.

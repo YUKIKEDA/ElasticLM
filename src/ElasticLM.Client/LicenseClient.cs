@@ -173,7 +173,8 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="count">The number of seats, at least 1.</param>
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests; a canceled request ends as
     /// <c>ELM_NETWORK_ERROR</c>.</param>
-    /// <returns>The lease, or why there is none.</returns>
+    /// <returns>The lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease that is
+    /// not the answer to this request, which the client neither keeps nor returns.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
@@ -196,7 +197,8 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="version">The app's version of the feature, or <see langword="null"/>.</param>
     /// <param name="count">The number of seats, at least 1.</param>
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests.</param>
-    /// <returns>The borrowed lease, or why there is none.</returns>
+    /// <returns>The borrowed lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease
+    /// that is not the answer to this request, which the client neither keeps nor returns.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1, or the period is shorter
     /// than one second.</exception>
@@ -298,8 +300,11 @@ public sealed class LicenseClient : IAsyncDisposable
             (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
             switch (result)
             {
-                case LeaseVerificationResult.Valid valid when valid.Lease.IsBorrow != (borrow is not null):
-                    return new LeaseResult.Failed(new LicenseError(ErrorCode.Malformed, "The server's lease is not of the kind asked for."), null);
+                case LeaseVerificationResult.Valid valid
+                    when AcquireMismatch(valid.Lease, featureId, count, borrow, reply.ProofId) is LicenseError mismatch:
+                    // design §12.7.5 (V1d5): the lease is not kept, not saved, and not returned to the server. It may be
+                    // another holder's lease, which a return would end; it ends at its own expiry.
+                    return new LeaseResult.Failed(mismatch, null);
                 case LeaseVerificationResult.Valid valid:
                     var lease = new Lease(valid.Lease) { Owner = this, Certificates = certificates };
                     if (lease.IsBorrow && SaveBorrow(lease) is LicenseError saveError)
@@ -324,6 +329,91 @@ public sealed class LicenseClient : IAsyncDisposable
         {
             _gate.Release();
         }
+    }
+
+    // design §12.7.5 (V1d5). The fields come before the request's ID: a server that answers this request with a lease of
+    // another feature, count, kind, or period is told apart from an answer to another request.
+
+    /// <summary>
+    /// Compares a verified lease from the answer to an acquisition or a borrow with what was asked: the kind, the feature,
+    /// the number of seats, for a borrow that it is no longer than the period, and that the token names the proof of this
+    /// request.
+    /// </summary>
+    /// <param name="token">The verified lease of the answer.</param>
+    /// <param name="featureId">The feature asked for.</param>
+    /// <param name="count">The number of seats asked for.</param>
+    /// <param name="borrowSeconds">The borrow period asked for, or <see langword="null"/> for a lease that is renewed.</param>
+    /// <param name="proofId">The <c>jti</c> of the proof the request was sent with.</param>
+    /// <returns><see langword="null"/> when the lease is what was asked for, otherwise <c>ELM_REQUEST_MISMATCH</c>.</returns>
+    internal static LicenseError? AcquireMismatch(VerifiedLease token, string featureId, int count, long? borrowSeconds, string? proofId)
+    {
+        if (token.IsBorrow != (borrowSeconds is not null))
+        {
+            return Mismatch("The server's lease is not of the kind asked for.");
+        }
+
+        if (!string.Equals(token.FeatureId, featureId, StringComparison.Ordinal))
+        {
+            return Mismatch("The server's lease is for another feature than the one asked for.");
+        }
+
+        if (token.Seats != count)
+        {
+            return Mismatch("The server's lease is for another number of seats than the one asked for.");
+        }
+
+        // A server may cut a borrow at the end of its license, so a shorter one is what was asked for.
+        if (borrowSeconds is long period && token.ExpiresAt.ToUnixTimeSeconds() - token.IssuedAt.ToUnixTimeSeconds() > period)
+        {
+            return Mismatch("The server's borrow is longer than the period asked for.");
+        }
+
+        return token.AnsweredProofId != proofId ? Mismatch("The server's lease answers another request.") : null;
+    }
+
+    // design §12.7.5, §10.4 (V1d5). The fields come before the lease ID, the lease ID before the sequence number, and the
+    // request's ID last, so that each names the first thing that differs.
+
+    /// <summary>
+    /// Compares a verified lease from the answer to a renewal with the lease held: not a borrow, the same feature, number of
+    /// seats, and lease ID, a later sequence number, and a token that names the proof of this request or of an earlier
+    /// request for this lease that got no answer the client took, whose token a server returns again.
+    /// </summary>
+    /// <param name="token">The verified lease of the answer.</param>
+    /// <param name="lease">The lease held.</param>
+    /// <param name="proofId">The <c>jti</c> of the proof the request was sent with.</param>
+    /// <returns><see langword="null"/> when the token renews the lease, otherwise <c>ELM_REQUEST_MISMATCH</c>.</returns>
+    internal static LicenseError? RenewalMismatch(VerifiedLease token, Lease lease, string? proofId)
+    {
+        if (token.IsBorrow)
+        {
+            return Mismatch("The server's renewal is a borrow.");
+        }
+
+        if (!string.Equals(token.FeatureId, lease.FeatureId, StringComparison.Ordinal))
+        {
+            return Mismatch("The server's renewal is for another feature than the lease held.");
+        }
+
+        if (token.Seats != lease.Seats)
+        {
+            return Mismatch("The server's renewal is for another number of seats than the lease held.");
+        }
+
+        if (token.LeaseId != lease.Id)
+        {
+            return Mismatch("The server's renewal is for another lease than the one held.");
+        }
+
+        // A server returns more than the next number after it flagged a clone or after a request whose answer was lost.
+        if (token.Sequence <= lease.Token.Sequence)
+        {
+            return Mismatch("The server's renewal has no later sequence number than the lease held.");
+        }
+
+        return token.AnsweredProofId != proofId && !lease.UnansweredProofIds.Contains(token.AnsweredProofId)
+            ? Mismatch("The server's renewal answers another request.")
+            : null;
     }
 
     // design §12.7.1.
@@ -569,6 +659,8 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // A saved borrow that verified is used; an expired one is deleted; anything else is left alone and not returned.
+    // design §12.7.5 (V1d5): no request is sent here, so the token is not compared with one. It was compared with its
+    // request before it was saved, and the verifier still requires the proof ID it names to have its form.
     private Lease? Restored(string path, LeaseVerificationResult result, IReadOnlyList<string> certificates)
     {
         switch (result)
@@ -680,6 +772,9 @@ public sealed class LicenseClient : IAsyncDisposable
             // Tried again at the next GetBorrowedLeases.
         }
     }
+
+    // design §19 (V1d5): only the client makes this code; ProblemCodes takes it from no answer.
+    private static LicenseError Mismatch(string message) => new(ErrorCode.RequestMismatch, message);
 
     internal static ClientInfoBody? ClientInfo()
     {
@@ -1104,6 +1199,9 @@ public sealed class LicenseClient : IAsyncDisposable
                 (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
                 switch (result)
                 {
+                    case LeaseVerificationResult.Valid valid when RenewalMismatch(valid.Lease, lease, reply.ProofId) is LicenseError mismatch:
+                        error = mismatch;
+                        break;
                     case LeaseVerificationResult.Valid valid:
                         // The next renewal is set before the new token is visible, so whoever sees the new token also
                         // finds the renewal after it already scheduled.
@@ -1115,6 +1213,14 @@ public sealed class LicenseClient : IAsyncDisposable
                     case LeaseVerificationResult.Invalid invalid:
                         error = invalid.Error;
                         break;
+                }
+
+                if (reply.ProofId is string refused)
+                {
+                    // design §12.7.3, §10.4 (V1d5): an answer came and the client does not take it. The server may have
+                    // renewed for this request; the retry names it, so that server returns its token again and does not
+                    // take the retry for a clone.
+                    lease.AddUnanswered(refused);
                 }
             }
         }
@@ -1145,11 +1251,12 @@ public sealed class LicenseClient : IAsyncDisposable
             return;
         }
 
-        // design §12.7.3: retry from 15 s, doubling up to 60 s, until the lease expires.
-        SetState(lease, LeaseState.Retrying, error, events);
+        // design §12.7.3: retry from 15 s, doubling up to 60 s, until the lease expires. The retry is set before the state is
+        // visible, as the next renewal is before a new token: whoever sees Retrying and then moves the clock finds the timer.
         TimeSpan untilExpiry = lease.ExpiresAt - _time.GetUtcNow() + TimeSpan.FromSeconds(1);
         TimeSpan delay = lease.NextRetryDelay();
         Schedule(lease, delay < untilExpiry ? delay : untilExpiry);
+        SetState(lease, LeaseState.Retrying, error, events);
     }
 
     // Reclaims every lease this client holds on the server, 64 tokens per request (design §13.4). A lease whose reclaim is
@@ -1191,8 +1298,9 @@ public sealed class LicenseClient : IAsyncDisposable
             LicenseError error = reply.Error ?? new LicenseError(ErrorCode.Malformed, "The server's reclaim answer is not valid.");
             foreach (Lease lease in batch.Where(l => l.State == LeaseState.Reclaiming))
             {
-                SetState(lease, LeaseState.Retrying, error, events);
+                // The retry is set before the state is visible, as above.
                 Schedule(lease, lease.NextRetryDelay());
+                SetState(lease, LeaseState.Retrying, error, events);
             }
 
             return;

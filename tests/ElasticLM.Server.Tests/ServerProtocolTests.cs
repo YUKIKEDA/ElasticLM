@@ -455,6 +455,103 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A lease request names a feature of 1 to 64 bytes in UTF-8, as a license does: an empty or longer name is 400
+    /// ELM_MALFORMED before anything is counted, and a name the server license does not grant is counted without the name,
+    /// so the usage log never holds a name a client made up (design §12.7.1, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license with pro and a feature whose ID is 21 times あ (3 bytes each) and one a: 64 bytes in 22
+    ///   characters. The server is past its window; an installation key.
+    ///
+    /// Steps:
+    /// - Acquire the 64-byte feature; 64 letters a, which the license does not grant; 65 letters a; 21 times あ and ab (65
+    ///   bytes in 23 characters); an empty name. Stop and verify the usage log.
+    ///
+    /// Expected:
+    /// - 201; 403 ELM_FEATURE_NOT_LICENSED; then three times 400 ELM_MALFORMED "The request body is not a valid lease
+    ///   request.".
+    /// - The usage log is intact. Its lease.acquired line has the 64-byte feature. It has one lease.denied line, without
+    ///   feat, with ELM_FEATURE_NOT_LICENSED and count 1: the three malformed requests are in no line and no count. No file
+    ///   holds 64 letters a.
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_FeatureName_IsLimitedAndUnlistedNamesAreNotLogged()
+    {
+        string wide = string.Concat(Enumerable.Repeat("あ", 21));
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data, s => s with { Features = [.. s.Features, new FeatureSpec(wide + "a", Seats: 2)] });
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(10));
+        await using Raw raw = await Raw.StartAsync(_deployment, server);
+        static byte[] Body(string feature) => Raw.Json("{\"feature\":\"" + feature + "\",\"count\":1}");
+
+        using (HttpResponseMessage granted = await raw.SignedAsync(HttpMethod.Post, "v1/leases", Body(wide + "a"), includeKey: true))
+        {
+            Assert.Equal(HttpStatusCode.Created, granted.StatusCode);
+        }
+
+        await raw.AssertAcquireAsync(Body(new string('a', 64)), "ELM_FEATURE_NOT_LICENSED", HttpStatusCode.Forbidden);
+        foreach (string name in new[] { new string('a', 65), wide + "ab", string.Empty })
+        {
+            using HttpResponseMessage refused = await raw.SignedAsync(HttpMethod.Post, "v1/leases", Body(name), includeKey: true);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+            Assert.Equal("ELM_MALFORMED", problem.RootElement.GetProperty("code").GetString());
+            Assert.Equal("The request body is not a valid lease request.", problem.RootElement.GetProperty("detail").GetString());
+        }
+
+        await server.DisposeAsync();
+        IReadOnlyList<string> files = SignedLog.FindFiles(data, "usage");
+        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        Assert.True(usage.Intact);
+        Assert.Equal(wide + "a", Assert.Single(usage.Entries, e => e.Type == "lease.acquired").Value.GetProperty("feat").GetString());
+        JsonElement denied = Assert.Single(usage.Entries, e => e.Type == "lease.denied").Value;
+        Assert.False(denied.TryGetProperty("feat", out _));
+        Assert.Equal("ELM_FEATURE_NOT_LICENSED", denied.GetProperty("code").GetString());
+        Assert.Equal(1, denied.GetProperty("count").GetInt64());
+        Assert.All(files, file => Assert.DoesNotContain(new string('a', 64), File.ReadAllText(file), StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A request refused because the server license has expired is counted with its feature only when the license grants a
+    /// feature of that name (design §18.1): the refusal comes before the feature is looked up.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license of pro that expires one hour after the start, without grace; the clock is 70 minutes past the
+    ///   start; an installation key.
+    ///
+    /// Steps:
+    /// - Acquire pro; acquire made-up. Stop and verify the usage log.
+    ///
+    /// Expected:
+    /// - 403 ELM_EXPIRED twice. Two lease.denied lines with ELM_EXPIRED and count 1: one with feat pro and one without
+    ///   feat. No file holds "made-up".
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_ServerLicenseExpired_CountsTheFeatureOnlyWhenListed()
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data, s => s with { ExpiresAt = Deployment.Start.AddHours(1), GracePeriod = TimeSpan.Zero });
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(70));
+        await using Raw raw = await Raw.StartAsync(_deployment, server);
+
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":1}"""), "ELM_EXPIRED", HttpStatusCode.Forbidden);
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"made-up","count":1}"""), "ELM_EXPIRED", HttpStatusCode.Forbidden);
+
+        await server.DisposeAsync();
+        IReadOnlyList<string> files = SignedLog.FindFiles(data, "usage");
+        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        JsonElement[] denied = [.. usage.Entries.Where(e => e.Type == "lease.denied").Select(e => e.Value)];
+        Assert.Equal(2, denied.Length);
+        Assert.All(denied, d => Assert.Equal(("ELM_EXPIRED", 1L), (d.GetProperty("code").GetString(), d.GetProperty("count").GetInt64())));
+        Assert.Equal(["pro"], denied.Where(d => d.TryGetProperty("feat", out _)).Select(d => d.GetProperty("feat").GetString()));
+        Assert.All(files, file => Assert.DoesNotContain("made-up", File.ReadAllText(file), StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// Renewal and release name a lease: an unknown lease is 404 for renewal and 204 for release, and another key can neither
     /// renew nor release a lease (design §12.7.1).
     /// </summary>

@@ -55,8 +55,9 @@ internal static class LicensePayloadRules
 
         foreach (FeatureClaim feature in payload.Feat)
         {
+            // design §8.4.2 (V1d4): a feature ID is 1 to 64 UTF-8 bytes.
             if (
-                feature.Id.Length == 0
+                !Limits.IsFeatureId(feature.Id)
                 || !Limits.IsTime(feature.Exp)
                 || (feature.Ver is not null && !FeatureVersionRange.TryParse(feature.Ver, out _))
             )

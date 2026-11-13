@@ -47,7 +47,6 @@ internal sealed partial class ElmService
     private async Task<AdminOutcome> AdminOfflineAsync(HttpContext context, Caller caller)
     {
         (ClientResult result, string? operation, Guid? target) = await ProcessOfflineAsync(context, caller).ConfigureAwait(false);
-        await WriteOfflineAsync(context, result).ConfigureAwait(false);
         string detail = AuditLog.Detail(w =>
         {
             if (operation is null)
@@ -63,6 +62,13 @@ internal sealed partial class ElmService
         });
         string code = result.Error is ErrorCode error ? ErrorCodes.ToWireName(error) : "ELM_OK";
         Guid? id = result.ActivationId != Guid.Empty ? result.ActivationId : target;
+
+        // design §18.2 (V1d9): the file is processed, and what it changed is stored with a row of its own; the row of this
+        // call names the activation and the operation also when the answer cannot be written.
+        AdminProgress progress = Progress(context);
+        progress.Target = id?.ToString("D");
+        progress.Detail = detail;
+        await WriteOfflineAsync(context, result).ConfigureAwait(false);
         return new AdminOutcome(code, id?.ToString("D"), detail);
     }
 
