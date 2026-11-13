@@ -67,9 +67,15 @@ internal sealed partial class ElmService
                     return await RefuseAsync(context, ErrorCode.Conflict, $"The product code '{code}' is in use.").ConfigureAwait(false);
                 }
 
-                await WriteJsonAsync(context, StatusCodes.Status201Created, ToItem(product), ServiceJsonContext.Default.ProductItem)
+                return await WriteRecordedAsync(
+                        context,
+                        StatusCodes.Status201Created,
+                        ToItem(product),
+                        ServiceJsonContext.Default.ProductItem,
+                        product.Id,
+                        detail
+                    )
                     .ConfigureAwait(false);
-                return new AdminOutcome("ELM_OK", product.Id.ToString("D"), detail, Recorded: true);
             }
         );
 
@@ -149,9 +155,15 @@ internal sealed partial class ElmService
                         return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.ProductItem)
+                    return await WriteRecordedAsync(
+                            context,
+                            StatusCodes.Status200OK,
+                            ToItem(changed),
+                            ServiceJsonContext.Default.ProductItem,
+                            found.Id,
+                            detail
+                        )
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -186,9 +198,15 @@ internal sealed partial class ElmService
                             .ConfigureAwait(false);
                     }
 
-                    await WriteJsonAsync(context, StatusCodes.Status201Created, ToItem(feature), ServiceJsonContext.Default.FeatureItem)
+                    return await WriteRecordedAsync(
+                            context,
+                            StatusCodes.Status201Created,
+                            ToItem(feature),
+                            ServiceJsonContext.Default.FeatureItem,
+                            feature.Id,
+                            detail
+                        )
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", feature.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -259,9 +277,15 @@ internal sealed partial class ElmService
                         return await RefuseAsync(context, ErrorCode.NotFound, NoFeature, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.FeatureItem)
+                    return await WriteRecordedAsync(
+                            context,
+                            StatusCodes.Status200OK,
+                            ToItem(changed),
+                            ServiceJsonContext.Default.FeatureItem,
+                            found.Id,
+                            detail
+                        )
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);
@@ -297,9 +321,15 @@ internal sealed partial class ElmService
                 });
                 AuditEntry entry = Entry(context, caller, AuditActions.PolicyCreate, policy.Id, detail);
                 await Database.CreatePolicyAsync(policy, entry, now, context.RequestAborted).ConfigureAwait(false);
-                await WriteJsonAsync(context, StatusCodes.Status201Created, ToItem(policy), ServiceJsonContext.Default.PolicyItem)
+                return await WriteRecordedAsync(
+                        context,
+                        StatusCodes.Status201Created,
+                        ToItem(policy),
+                        ServiceJsonContext.Default.PolicyItem,
+                        policy.Id,
+                        detail
+                    )
                     .ConfigureAwait(false);
-                return new AdminOutcome("ELM_OK", policy.Id.ToString("D"), detail, Recorded: true);
             }
         );
 
@@ -396,9 +426,15 @@ internal sealed partial class ElmService
                         return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, found.Id.ToString("D")).ConfigureAwait(false);
                     }
 
-                    await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(changed), ServiceJsonContext.Default.PolicyItem)
+                    return await WriteRecordedAsync(
+                            context,
+                            StatusCodes.Status200OK,
+                            ToItem(changed),
+                            ServiceJsonContext.Default.PolicyItem,
+                            found.Id,
+                            detail
+                        )
                         .ConfigureAwait(false);
-                    return new AdminOutcome("ELM_OK", found.Id.ToString("D"), detail, Recorded: true);
                 }
             )
             .ConfigureAwait(false);

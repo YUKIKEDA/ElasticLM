@@ -41,7 +41,7 @@ public sealed class LeaseTests : IDisposable
     /// - Issue a 10-minute lease for 2 seats and a 7-day borrow; verify both.
     ///
     /// Expected:
-    /// - Valid, with the lease's values.
+    /// - Valid, with the lease's values, among them the ID of the answered proof, proof-1 (design §8.4.3, V1d5).
     /// </remarks>
     [Fact]
     public void VerifyOnPremises_IssuedLease_IsValid()
@@ -50,6 +50,7 @@ public sealed class LeaseTests : IDisposable
 
         var valid = Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyOnPremises(Lease(server), server, Expect()));
         Assert.Equal("lease-1-AAAAAAAAAAAAAA", valid.Lease.LeaseId);
+        Assert.Equal("proof-1", valid.Lease.AnsweredProofId);
         Assert.Equal(2, valid.Lease.Seats);
         Assert.False(valid.Lease.IsBorrow);
         Assert.Equal(server.License.TokenId, valid.Lease.ServerLicenseTokenId);
@@ -172,7 +173,8 @@ public sealed class LeaseTests : IDisposable
 
     /// <summary>
     /// Lease issuance refuses specs the verifier would reject: zero seats, a negative sequence, a duration under one
-    /// second, an empty ID, and an ID that is not 22 characters of base64url (design §8.4.3).
+    /// second, an empty ID, an ID that is not 22 characters of base64url, and an ID of the answered proof that is not 1 to
+    /// 64 characters (design §8.4.3).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -181,15 +183,20 @@ public sealed class LeaseTests : IDisposable
     /// Steps:
     /// - Issue with each change, the IDs a path with "..", one with a '.', one of 21 and one of 23 characters; issue with
     ///   an ID of 22 characters using each kind of character, and with the smallest seats, sequence, and duration.
+    /// - Issue with an ID of the answered proof that is empty and one of 65 characters; then with one of 1 and one of 64
+    ///   characters, and verify those two.
     ///
     /// Expected:
     /// - ArgumentException each time, for the IDs "The lease ID must be 22 characters of base64url."; the
     ///   last two are issued.
+    /// - "The ID of the answered proof must be 1 to 64 characters. (Parameter 'spec')" for the empty one and the 65
+    ///   characters; the tokens with 1 and with 64 characters are issued and verify with that ID.
     /// </remarks>
     [Fact]
     public void LeaseIssuer_InvalidSpec_Throws()
     {
-        LeaseSpec spec = Spec(Server());
+        ServerIdentity server = Server();
+        LeaseSpec spec = Spec(server);
 
         Assert.ThrowsAny<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { Seats = 0 }, _time));
         Assert.ThrowsAny<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { Sequence = -1 }, _time));
@@ -205,6 +212,21 @@ public sealed class LeaseTests : IDisposable
 
         Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { LeaseId = "Az09-_Az09-_Az09-_Az09" }, _time));
         Assert.NotEmpty(LeaseIssuer.Issue(_server, spec with { Seats = 1, Sequence = 0, Duration = TimeSpan.FromSeconds(1) }, _time));
+
+        foreach (string proofId in new[] { string.Empty, new string('p', 65) })
+        {
+            Assert.Equal(
+                "The ID of the answered proof must be 1 to 64 characters. (Parameter 'spec')",
+                Assert.Throws<ArgumentException>(() => LeaseIssuer.Issue(_server, spec with { AnsweredProofId = proofId }, _time)).Message
+            );
+        }
+
+        foreach (string proofId in new[] { "p", new string('p', 64) })
+        {
+            string token = LeaseIssuer.Issue(_server, spec with { AnsweredProofId = proofId }, _time);
+            LeaseVerificationResult result = Verifier().VerifyOnPremises(token, server, Expect());
+            Assert.Equal(proofId, Assert.IsType<LeaseVerificationResult.Valid>(result).Lease.AnsweredProofId);
+        }
     }
 
     /// <summary>
@@ -315,6 +337,7 @@ public sealed class LeaseTests : IDisposable
             Seats = 1,
             InstallationKeyThumbprint = ClientKid,
             Duration = TimeSpan.FromMinutes(10),
+            AnsweredProofId = "proof-1",
         };
         string lease = LeaseIssuer.Issue(_signing, spec, _time);
 
@@ -364,20 +387,32 @@ public sealed class LeaseTests : IDisposable
 
     /// <summary>
     /// Malformed lease payloads, correctly signed, are refused without an exception: null members, zero seats, an expiry
-    /// not after the issue time, a server ID other than the signer, an empty token, and a lease ID that is not 22
-    /// characters of base64url (design §8.4.3), since a client names a borrow's file after it.
+    /// not after the issue time, a server ID other than the signer, an empty token, a lease ID that is not 22
+    /// characters of base64url (design §8.4.3), since a client names a borrow's file after it, and an ID of the answered
+    /// proof (areq) that is missing, null, a number, an object, empty, or 65 characters long (design §8.4.3, V1d5).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Lease payloads written by hand and signed with the server key.
+    /// - A lease payload written by hand, which verifies as it is (the "valid" case, and with an areq of 1 and of 64
+    ///   characters), signed with the server key after one change.
     ///
     /// Steps:
     /// - Verify each.
     ///
     /// Expected:
-    /// - ELM_MALFORMED each time.
+    /// - Valid with the areq written for the three unchanged cases; ELM_MALFORMED with "The lease payload is not valid."
+    ///   for every changed payload, and with "The lease token is empty." for the empty token.
     /// </remarks>
     [Theory]
+    [InlineData("valid")]
+    [InlineData("areq-one")]
+    [InlineData("areq-longest")]
+    [InlineData("areq-missing")]
+    [InlineData("areq-null")]
+    [InlineData("areq-number")]
+    [InlineData("areq-object")]
+    [InlineData("areq-empty")]
+    [InlineData("areq-long")]
     [InlineData("lse-null")]
     [InlineData("cnf-null")]
     [InlineData("n-zero")]
@@ -411,9 +446,34 @@ public sealed class LeaseTests : IDisposable
             ["srv"] = kid,
             ["slic"] = server.License.TokenId,
             ["seq"] = 0,
+            ["areq"] = "proof-1",
         };
         switch (kind)
         {
+            case "areq-one":
+                payload["areq"] = "p";
+                break;
+            case "areq-longest":
+                payload["areq"] = new string('p', 64);
+                break;
+            case "areq-missing":
+                payload.Remove("areq");
+                break;
+            case "areq-null":
+                payload["areq"] = null;
+                break;
+            case "areq-number":
+                payload["areq"] = 7;
+                break;
+            case "areq-object":
+                payload["areq"] = new JsonObject { ["jti"] = "proof-1" };
+                break;
+            case "areq-empty":
+                payload["areq"] = string.Empty;
+                break;
+            case "areq-long":
+                payload["areq"] = new string('p', 65);
+                break;
             case "lse-null":
                 payload["lse"] = null;
                 break;
@@ -450,7 +510,95 @@ public sealed class LeaseTests : IDisposable
 
         string token = kind == "empty" ? string.Empty : SignJws(_server, kid, TokenTypes.Lease, payload.ToJsonString());
 
-        Assert.Equal(ErrorCode.Malformed, Invalid(Verifier().VerifyOnPremises(token, server, Expect())).Code);
+        LeaseVerificationResult result = Verifier().VerifyOnPremises(token, server, Expect());
+        if (kind is "valid" or "areq-one" or "areq-longest")
+        {
+            Assert.Equal(payload["areq"]!.GetValue<string>(), Assert.IsType<LeaseVerificationResult.Valid>(result).Lease.AnsweredProofId);
+            return;
+        }
+
+        Assert.Equal(
+            new LicenseError(ErrorCode.Malformed, kind == "empty" ? "The lease token is empty." : "The lease payload is not valid."),
+            Invalid(result)
+        );
+    }
+
+    /// <summary>
+    /// A lease of the hosted service whose payload does not name the proof it answers (areq), or names it in a wrong form,
+    /// is refused as malformed, as on premises (design §8.4.3, §12.7.5, V1d5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The signing key certified for lease by the root; a hosted lease payload written by hand (no slic), which verifies
+    ///   as it is, signed with the signing key after one change of areq.
+    ///
+    /// Steps:
+    /// - Verify with VerifyHosted: unchanged; without areq; with null, a number, an empty text, and 65 characters.
+    ///
+    /// Expected:
+    /// - Valid with the areq written; ELM_MALFORMED "The lease payload is not valid." for the five others.
+    /// </remarks>
+    [Theory]
+    [InlineData("valid")]
+    [InlineData("areq-missing")]
+    [InlineData("areq-null")]
+    [InlineData("areq-number")]
+    [InlineData("areq-empty")]
+    [InlineData("areq-long")]
+    public void VerifyHosted_AnsweredProofIdMissingOrMalformed_IsMalformed(string kind)
+    {
+        string leaseCert = CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
+        string kid = KeyFiles.KeyId(_signing);
+        long now = Now.ToUnixTimeSeconds();
+        var payload = new JsonObject
+        {
+            ["ver"] = 1,
+            ["iss"] = kid,
+            ["iat"] = now,
+            ["exp"] = now + 600,
+            ["jti"] = "j",
+            ["lse"] = "lease-h-AAAAAAAAAAAAAA",
+            ["prd"] = "acme-cad",
+            ["lic"] = "lic-h",
+            ["feat"] = "pro",
+            ["n"] = 1,
+            ["cnf"] = new JsonObject { ["jkt"] = ClientKid },
+            ["brw"] = false,
+            ["srv"] = kid,
+            ["seq"] = 1,
+            ["areq"] = "proof-1",
+        };
+        switch (kind)
+        {
+            case "areq-missing":
+                payload.Remove("areq");
+                break;
+            case "areq-null":
+                payload["areq"] = null;
+                break;
+            case "areq-number":
+                payload["areq"] = 7;
+                break;
+            case "areq-empty":
+                payload["areq"] = string.Empty;
+                break;
+            case "areq-long":
+                payload["areq"] = new string('p', 65);
+                break;
+            default:
+                break;
+        }
+
+        string token = SignJws(_signing, kid, TokenTypes.Lease, payload.ToJsonString());
+
+        LeaseVerificationResult result = Verifier().VerifyHosted(token, [leaseCert], Expect());
+        if (kind == "valid")
+        {
+            Assert.Equal("proof-1", Assert.IsType<LeaseVerificationResult.Valid>(result).Lease.AnsweredProofId);
+            return;
+        }
+
+        Assert.Equal(new LicenseError(ErrorCode.Malformed, "The lease payload is not valid."), Invalid(result));
     }
 
     private static LicenseError Invalid(LeaseVerificationResult result) => Assert.IsType<LeaseVerificationResult.Invalid>(result).Error;
@@ -580,6 +728,7 @@ public sealed class LeaseTests : IDisposable
             InstallationKeyThumbprint = ClientKid,
             Duration = TimeSpan.FromMinutes(10),
             ServerLicenseTokenId = server.License.TokenId,
+            AnsweredProofId = "proof-1",
         };
 
     private string Lease(ServerIdentity server, Func<LeaseSpec, LeaseSpec>? change = null) =>

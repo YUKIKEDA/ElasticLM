@@ -115,6 +115,7 @@ The payload is a UTF-8 JSON object. These rules hold for every payload on this p
 | A license file | 65,536 bytes (64 KiB) |
 | `certificates` in a license file | 1 to 4 |
 | `feat` in a license token | 256 features |
+| A feature ID (`id` in `feat`) | 64 bytes in UTF-8 |
 | `fp` in a license token | 8 fingerprints |
 | `meta` in a license token | 32 entries; each key at most 64 bytes and each value at most 1,024 bytes in UTF-8 |
 | JSON nesting | 8 levels |
@@ -223,7 +224,7 @@ Members of each item of `feat`:
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
-| `id` | string | yes | The feature ID, not empty. |
+| `id` | string | yes | The feature ID: 1 to 64 bytes in UTF-8, of any characters. |
 | `ver` | string | no | The feature versions the license covers: 1 to 4 comparators separated by spaces, all of which must hold. A comparator is `>=`, `<=`, `>`, `<`, or `=`, followed by a version `major.minor` or `major.minor.patch` of digits only, at most 9 digits each; a missing patch is 0. Without `ver`, every version. |
 | `seats` | integer | in a `server` token; not allowed otherwise | The concurrent seats of the feature, 1 or more. Required in every feature of a `server` token, and not allowed in other kinds. |
 | `exp` | integer | no | The feature's own expiry: a time. No grace period is added. |
@@ -330,6 +331,7 @@ Payload:
 | `srv` | string | yes | The key ID of the issuing server. It must equal `iss`. |
 | `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it holds; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
 | `seq` | integer | yes | The lease's sequence number. The verifier accepts 0 or more; `elm-server` and `elm-service` write 1 in the first token and one more at each renewal, so neither writes 0. |
+| `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters. A renewal sent again after an answer that was lost or refused gets the earlier token again, so that token names the earlier request. The verifier checks only the length. The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
 
 Member of `cnf`:
 
@@ -338,6 +340,8 @@ Member of `cnf`:
 | `jkt` | string | yes | The key ID of the installation key that holds the lease. |
 
 A lease from `elm-server` must also stay inside its server license: `exp` minus `iat` is at most the server license's `lease`, or its `borrow` when `brw` is `true`, and `exp` is no later than the server license's `exp` plus `grace`. A lease that breaks one of these gets `ELM_LEASE_OUT_OF_BOUNDS`.
+
+A client also compares the lease in an answer with what it asked for. For an acquisition or a borrow: the feature, the seats, whether it is a borrow, for a borrow that it is no longer than the period asked for, and `areq`. For a renewal: the lease ID, the feature, and the seats of the lease it holds, that it is not a borrow, a `seq` greater than the one it holds, and `areq`. A lease that differs gets `ELM_REQUEST_MISMATCH`. [Floating licenses](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) explains the comparison.
 
 A lease token that `elm-server` returned for `{"feature":"pro","version":"2.1","count":1}`, decoded:
 
@@ -363,7 +367,8 @@ A lease token that `elm-server` returned for `{"feature":"pro","version":"2.1","
   "brw": false,
   "srv": "FAKE-SERVER-KEY-ID-0000000000000000000000V1",
   "slic": "FAKEjti000000000000003",
-  "seq": 1
+  "seq": 1,
+  "areq": "FAKEjti000000000000006"
 }
 ```
 

@@ -860,7 +860,8 @@ internal sealed partial class ElmService
     /// proof check already answered.</summary>
     private sealed record ClientResult(int Status, ErrorCode? Error, string? Message, Guid ActivationId, byte[]? File, byte[]? Answer = null)
     {
-        /// <summary>Gets the feature a refused lease request named, for the usage log's count (design §18.1).</summary>
+        /// <summary>Gets the feature of a refused lease request, for the usage log's count (design §18.1): the lease's
+        /// feature, or the feature an acquisition named when its license grants it with seats.</summary>
         public string? Feature { get; init; }
 
         /// <summary>Gets what runs after the request's transaction committed and before the answer: its usage log line.</summary>
