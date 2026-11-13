@@ -5624,6 +5624,33 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `ActivationClient.Keep` は、オンラインの有効化・更新・試用の答えを、ファイルがこのインストールで検証に通れば保存する。答えの有効化 ID と `seq` を、持っているものと比べない。ライセンストークンは、オンラインでは要求に結ばれていない（`areq` はオフラインだけ）。コードを読んだだけで、測っていない（Issue #379）。
     - リースの答えのない要求の一覧（`Lease.AddUnanswered`）は、16 件を超えると古いものから落とす。有効化の一覧は、16 件で送るのをやめる（§12.6.2）。問 5-5 でこの一覧に入る `jti` が増えたので、中継が答えを 16 回続けて差し替えると、効く `jti` が落ち、サーバーが複製と判定しうる（Issue #380）。
     - 再試行に返るトークンが、入れ替える前のサーバーライセンスのもとで出したものだと、クライアントは `slic` の違いで断り続け、リースは期限で失われる。ヘッダーと `slic` が違いうることは §12.7.1 に書いてあり、この行で変えていない。
+- V1d13 の Grill（Issue #331 に記録した。問 13-1 と問 13-2。持ち主の決定はどちらも推奨案 A。2026-11-13）: `elm-service` に、同じ更新番号の更新を 2 つ同時に送るテストを足す（V1d の指摘 R8-3）。製品のコードは変えない。退けた案は design-decisions.md にある。
+  - 測った事実（Grill の前。`main` の db7a7bb）:
+    - `elm-service` は、有効化の更新とリースの更新で、行を 2 回読む。1 回目はロックの前で、証明を確かめる鍵と、ロックするライセンスの ID を得るために読む。2 回目はライセンスのロックの中（`WithLicenseAsync`）で読み直し、その行の `seq` で判定する（`ElmService.Client.cs` の `RefreshCoreAsync`、`ElmService.Leases.cs` の `RenewAsync`）。
+    - ロックの中の読み直しをやめて、ロックの前に読んだ行で判定する 2 つの変異（有効化の更新、リースの更新）は、どのテストでも落ちなかった。
+    - 同じ `seq` の 2 つの要求を同時に送る試し（20 回）は、変えていないコードでは、SQLite と PostgreSQL のどちらも 20 回とも正しかった。変異の下では、SQLite で 19 回、PostgreSQL で 20 回、2 つとも成功した。
+  - 持ち主が決めたこと:
+    - 問 13-1: 1 つのテストで 10 回くり返し、毎回確かめる。`deny` と `flag` の両方、SQLite と PostgreSQL の両方で行う。
+    - 問 13-2: `elm-server` にはテストを足さず、確かめたことを PR に書く。
+  - こちらが決めたこと:
+    - PR #382（V1d5）と同じファイルを変えるので、そのマージのあとに始めた。
+    - テストは、新しいファイル `ElmService.ConcurrentRenewalTests.cs`（`ElmServiceConcurrentRenewalTests`）に置く。開いている PR #387 と PR #390 が、リースと有効化のテストのファイルの終わりにテストを足しているためである。
+    - 2 つの要求は、同じインストール鍵を持つ 2 つの写しから送る（同じフォルダーの鍵を読む 2 つの `TestDevice`）。ノンスは送る前にそれぞれ取り、証明は別々のスレッドで作る。片方の要求が、もう片方の証明を待たずに出る。
+    - 落ちた回があっても 10 回を終わりまで走らせる。失敗の文には、違った回の数と、その回ごとの番号、2 つの答え、行の状態、監査の行を並べる。成功した答えの本文（トークン、ライセンスファイル）は載せず、検証して得た `seq` だけを載せる。
+    - 各回で、同時の 2 つの要求のあとに、行の `seq` で更新をもう 1 回送る。`deny` では止まっていること、`flag` では次の `seq` が出ることが分かる。
+    - リースのテストは、10 席のライセンスから、回ごとに新しいリースを取る。`deny` で止めたリースは期限まで席を埋めるので、回の数だけ席が要る。有効化のテストは、回ごとに新しいインストール鍵で有効化する（ポリシーの上限は 10 台）。回のあいだに、時計を 1 秒進める。実際の時計では待たない。
+  - テスト（エンジン 2 つ × 方針 2 つで、テストごとに 4 通り。各回で確かめること）:
+    - `Renew_SameSequenceAtOnce_OneIsTheRenewalAndOneAClone`（`POST /v1/leases/{id}/renew`）。`deny`: 答えは、`seq` 2 の `200` が 1 つと、`409` `ELM_CLONE_DETECTED`（「Another copy of the installation went ahead; the lease is stopped until it expires.」）が 1 つ。リースは `seq` 2 で、止まっている。あとの更新は `409` `ELM_CLONE_DETECTED`（「The lease was stopped because a clone of the installation was detected.」）。そのリースの `lease.clone` の行は 1 つで、`result` は `ELM_CLONE_DETECTED`、`seq` は 1、`lastSeq` は 2。`flag`: 答えは、`seq` 2 の `200` と `seq` 3 の `200`（§10.4 の `flag` の項。覚えている 2 と要求の 1 の大きいほうより 1 つ大きい）。リースは `seq` 3 で、止まっていない。あとの更新は `seq` 4。`lease.clone` の行は 1 つで、`result` は `ELM_OK`。どちらの方針でも、`200` のトークンの `areq` は、その要求の証明の `jti` である。
+    - `Refresh_SameSequenceAtOnce_OneIsTheRefreshAndOneAClone`（`POST /v1/activations/{id}/refresh`）。`deny`: 答えは、`seq` 2 の `200` が 1 つと、`409` `ELM_CLONE_DETECTED`（「Another copy of the installation went ahead; the activation is stopped. Deactivate it and activate again.」）が 1 つ。有効化は `seq` 2 で、止まっている（`blockedAt` がある）。あとの更新は `409` `ELM_CLONE_DETECTED`（「The activation was stopped because a clone of the installation was detected.」）。その有効化の `activation.clone` の行は 1 つで、`result` は `ELM_CLONE_DETECTED`、`operation` は `refresh`、`seq` は 1、`lastSeq` は 2。`flag`: 答えは、`seq` 2 の `200` と `seq` 3 の `200`。有効化は `seq` 3 で、止まっていない。あとの更新は `seq` 4。`activation.clone` の行は 1 つで、`result` は `ELM_OK`。
+    - §20.2 の「同じ時刻に更新する 2 つの写しを検出すること」を、`elm-service` では、この 2 つのテストが確かめる。
+  - 変異の確かめ（`main` の f64b5f1 にテストを足したもの。Windows 11、Release。PostgreSQL は、CI と同じイメージ（`postgres:18` のダイジェスト `sha256:edb0c08d…`）を WSL のコンテナーで動かした。どの変異も、ビルドの終了コードを見てから、180 秒の上限つきで `dotnet test` を 5 度走らせ、その終了コードで決めた。上限に当たったものはない。下では、テストの 1 通りを 1 度走らせることを「実行」、その中の 10 回のくり返しの 1 つを「回」と書く）:
+    - M13a（有効化の更新が、ロックの前に読んだ行で判定する）: `Refresh_…` の 4 通りは、それぞれ 5 つの実行のすべてで落ちた。10 回のうち違った回の数は、PostgreSQL では、`deny` も `flag` も、どの実行でも 10 回だった。SQLite では、`deny` も `flag` も、どの実行でも 9 回だった。`Renew_…` は落ちなかった。
+    - M13b（リースの更新が、ロックの前に読んだ行で判定する）: `Renew_…` の 4 通りは、それぞれ 5 つの実行のすべてで落ちた。違った回の数は、PostgreSQL では、`deny` も `flag` も、どの実行でも 10 回だった。SQLite の `deny` では、どの実行でも 9 回、SQLite の `flag` では、実行の順に 9、9、9、9、5 回だった。`Refresh_…` は落ちなかった。
+    - SQLite で違わなかった回は、変異が当たるテストの 20 の実行（変異 2 つ × 方針 2 つ × 5 つの実行）のすべてで、1 回目を含む。そのうち 19 の実行では 1 回目だけで、残りの 1 つでは 1、6、7、8、9 回目だった。同時の更新を 1 回だけ送るテストなら、測った SQLite の実行のどれでも、変異の下で通ったことになる。10 回くり返すテストが変異の下で通るのは、10 回のどれも違わないときで、測った 40 の実行（変異 2 つ × エンジン 2 つ × 方針 2 つ × 5 つの実行）にはなかった。違った回がいちばん少ない実行でも、5 回が違った。
+    - 違った回の中身は、どれも同じだった。2 つの答えがどちらも `seq` 2 の `200` で、行は `seq` 2 のまま止まらず、同時の 2 つの要求は複製の行を残さない。`flag` では、あとの更新（`seq` 3）が複製と記録される。
+  - 変えていないコード（同じ環境）: 2 つのテストの 8 通りを、それぞれ 25 度走らせ、200 の実行のどれも通った。エンジンごとに、4 通り × 25 の実行 × 10 回 = 1,000 回の同時の更新で、違った回はない。
+  - かかる時間（同じ環境。8 通りを並べて 3 度走らせたときの、1 つの実行の時間）: SQLite は 0.9〜1.5 秒、PostgreSQL は 1.3〜8.9 秒（8.9 秒は 1 つだけで、ほかは 4.0 秒まで）。この 8 通りだけを走らせる `dotnet test` は、始まりから終わりまで 7.6〜12.6 秒だった（22 度）。
+  - `elm-server` について確かめたこと（問 13-2。テストは足していない）: `LeaseEngine.RenewCore` は、ロックの前にリースの記録を読むが、それは機能のプールを決めるためだけに使う。判定は、プールのロック（`lock (pool.Lock)`）の中で `pool.Leases` から読み直した記録の `Sequence` で行う。記録はメモリの 1 つのオブジェクトで、その場で書き換える（`record.Stopped = true`、`IssueNext` の `record.Sequence = sequence`）ので、ロックの前に取った古い写しで判定する経路がない。Grill の前の、同じ `seq` を同時に送る 20 回の試しは、すべて正しかった。`elm-service` のような、外すと落ちる読み直しがないので、テストを足しても、それで初めて落ちる変異がない。
 
 ## 21. 依存
 
