@@ -105,16 +105,16 @@ Lease lines carry `lic` (the server license ID), `feat` (the feature), `n` (the 
 | `lease.expired` | A lease expires without renewal | `lic`, `feat`, `n`, `key`, `lease` |
 | `borrow.expired` | A borrow reaches its end | `lic`, `feat`, `n`, `key`, `lease` |
 | `lease.reclaimed` | A client reclaims a lease after a server restart | `lic`, `key`, `lease`, `cloneFlagged` |
-| `lease.denied` | Refused acquisitions, renewals, reclaims, and early returns, counted every 60 seconds and at stop | `feat` (when known), `code`, `count` |
+| `lease.denied` | Refused acquisitions, renewals, reclaims, and early returns, counted every 60 seconds and at stop | `feat` (for an early return, the feature of the lease; for an acquisition, the feature asked for when the server license grants it), `code`, `count` |
 | `admin.denied` | Administration requests without the right token, counted every 60 seconds and at stop | `code` (`ELM_UNAUTHORIZED`), `count` |
-| `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`), `result` (an error code name; `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, `ELM_INTERNAL_ERROR` when the operation failed inside the server) |
+| `admin.action` | An administration request with the right token | `action` (`status`, `leases`, `release`, `reload`, or `seal`), `target` (the lease ID of `release`; absent when the request's ID does not have the form of a lease ID), `result` (an error code name; `ELM_NETWORK_ERROR` when the connection was closed before the answer ended, `ELM_INTERNAL_ERROR` when the operation failed inside the server) |
 | `server.started` | The server starts | `lic`, `key` (here the server's key ID: the thumbprint of the server's own installation key, not a client's), `borrows` (the borrows restored) |
 | `server.stopped` | The server stops | `leases` (the leases not returned) |
 | `records.set_aside` | The server, run with `--set-aside-broken-records`, moved a broken borrow record aside at start, before it listens; the line is there also when the start then fails to listen | `file` |
 | `license.refreshed` | The server license was renewed from `elm-service` | `lic`, `token` (the token ID), `seq` |
 | `license.refresh_failed` | Renewing the server license failed | `stage` (`start`, `write`, `reload`, or `service`), `code` |
 
-A refusal line counts one kind (feature and code) for the period. Up to 100 kinds are counted in one period; beyond that, refusals are counted without their feature.
+A refusal line counts one kind (feature and code) for the period. Up to 100 kinds are counted in one period; beyond that, refusals are counted without their feature. A feature name that a request asks for and the server license does not grant is not written, so such refusals share one kind for each code.
 
 ### Events of `elm-service`
 
@@ -129,7 +129,7 @@ Lease lines carry `lic` (the license ID), `prd` (the product's `code`, the produ
 | `borrow.returned` | A borrow is returned early, or released by an administrator | As `lease.released` |
 | `lease.expired` | The cleanup removes an expired lease | `lic`, `prd`, `feat`, `n`, `key`, `lease` |
 | `borrow.expired` | The cleanup removes an ended borrow | `lic`, `prd`, `feat`, `n`, `key`, `lease` |
-| `lease.denied` | Acquisitions, renewals, and releases refused by the lease rules, counted every 60 seconds, at stop, and on a seal order; refusals for a bad proof, the rate limit (`429`), or the body size (`413`) are not counted | `feat` (when known), `code`, `count` |
+| `lease.denied` | Acquisitions, renewals, and releases refused by the lease rules, counted every 60 seconds, at stop, and on a seal order; refusals for a bad proof, the rate limit (`429`), or the body size (`413`) are not counted | `feat` (the feature of the lease, or the feature asked for when the license grants it), `code`, `count` |
 | `service.started` | The node starts, before it accepts requests | `node` |
 | `service.stopped` | The node stops, or a start fails after `service.started` was written (for example, the node cannot listen) | `node` |
 

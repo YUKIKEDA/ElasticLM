@@ -76,7 +76,8 @@ internal sealed class UsageLog : IDisposable
         Lease(type, lease.LeaseId, lease.FeatureId, lease.Seats, lease.KeyId, licenseId);
 
     /// <summary>Counts a refused lease request (<c>lease.denied</c>) for the line of this minute.</summary>
-    /// <param name="feature">The feature, when the request named one the server knows.</param>
+    /// <param name="feature">The feature of the lease, or the feature an acquisition named when the server license grants
+    /// it; otherwise <see langword="null"/>.</param>
     /// <param name="code">The error code of the refusal.</param>
     public void Denied(string? feature, ErrorCode code) => Count("lease.denied", feature, code);
 
