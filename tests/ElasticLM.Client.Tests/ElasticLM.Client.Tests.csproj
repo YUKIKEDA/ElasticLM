@@ -17,5 +17,7 @@
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <!-- design §20.7, V1c6: the XML documentation file of ElasticLM.Client is searched for internal identifiers. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\InternalReferences.cs" Link="InternalReferences.cs" />
+    <!-- design §20.7, V1d14: the forms of a token without a signature, shared by the tests of every verifier. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\SignatureForms.cs" Link="SignatureForms.cs" />
   </ItemGroup>
 </Project>

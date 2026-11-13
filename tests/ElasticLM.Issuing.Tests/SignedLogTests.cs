@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Issuing.Tests;
@@ -18,6 +19,9 @@ public sealed class SignedLogTests : IDisposable
     private readonly ECDsa _server = KeyFiles.CreateKey();
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "elm-log-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
     private readonly TrustStore _trust;
+
+    /// <summary>Gets each kind of log with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> LogsAndSignatureForms => SignatureForms.Cross("server", "service");
 
     public SignedLogTests()
     {
@@ -168,6 +172,102 @@ public sealed class SignedLogTests : IDisposable
 
         File.WriteAllText(file, string.Join('\n', lines) + "\n");
         Assert.False(Verify().Intact);
+    }
+
+    /// <summary>
+    /// A log whose last signature line carries no valid signature is not intact, for a server's log and for a log of
+    /// <c>elm-service</c>: with an empty signature part, with a signature that is not 64 bytes or not the key's, and with an
+    /// alg other than ES256 (design §8.2 rules 3 and 5, §18.1, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log of 4 events signed every 2 lines, of a server or of the service, that verifies with no finding.
+    /// - The JWS of its last signature line, which no later signature covers, in a form of <see cref="SignatureForms"/>
+    ///   with the same payload: an empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature
+    ///   and one more zero byte; alg none and an empty signature part; alg HS256 and an ES256 signature of the log's key
+    ///   over the changed header.
+    ///
+    /// Steps:
+    /// - Verify the log.
+    ///
+    /// Expected:
+    /// - Not intact, with one error. For the four signatures: "The signature is not made with the server's key." for the
+    ///   server's log, "The signature is not made with a key certified for log." for the service's. For the two algs: "The
+    ///   signature line is not an elm-log+jws.".
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(LogsAndSignatureForms))]
+    public void Verify_SealWithoutAValidSignature_IsNotIntact(string log, string form)
+    {
+        bool service = log == "service";
+        using (SignedLog written = service ? OpenService(Certificate(_signing, KeyUses.Log), _signing, sealEvery: 2) : Open(sealEvery: 2))
+        {
+            Append(written, 4);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage").Single();
+        LogReport Report() => service ? Verify2() : Verify();
+        Assert.Empty(Report().Issues);
+        const string Member = "\"sig\":\"";
+        List<string> lines = [.. File.ReadAllLines(file)];
+        int authLine = lines.FindLastIndex(l => l.Contains("\"type\":\"auth\"", StringComparison.Ordinal));
+        int start = lines[authLine].IndexOf(Member, StringComparison.Ordinal) + Member.Length;
+        int end = lines[authLine].LastIndexOf('"');
+        string seal = SignatureForms.Change(lines[authLine][start..end], form, SignatureForms.Es256(service ? _signing : _server));
+        lines[authLine] = lines[authLine][..start] + seal + lines[authLine][end..];
+        File.WriteAllText(file, string.Join('\n', lines) + "\n");
+
+        LogReport report = Report();
+
+        Assert.False(report.Intact);
+        string expected =
+            SignatureForms.ChangesAlgorithm(form) ? "The signature line is not an elm-log+jws."
+            : service ? "The signature is not made with a key certified for log."
+            : "The signature is not made with the server's key.";
+        Assert.Equal(expected, Assert.Single(report.Issues, i => i.Severity == LogIssueSeverity.Error).Message);
+    }
+
+    /// <summary>
+    /// A log of <c>elm-service</c> whose certificate carries no valid signature is refused, since nothing certifies its key
+    /// for log: with an empty signature part, with a signature that is not 64 bytes or not the root's, and with an alg other
+    /// than ES256 (design §8.2 rules 3 and 5, §18.1, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A certificate of the signing key for log from the trusted root, with which a log of 2 events verifies with no
+    ///   finding.
+    /// - The certificate in a form of <see cref="SignatureForms"/> with the same payload: an empty signature part; the first
+    ///   63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg none and an empty signature
+    ///   part; alg HS256 and an ES256 signature of the root key over the changed header.
+    ///
+    /// Steps:
+    /// - Write a log of 2 events with the changed certificate and verify it alone with no product.
+    ///
+    /// Expected:
+    /// - One error: "No certificate on the line is certified for log by the trust store at the line's time.".
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SignatureForms.All), MemberType = typeof(SignatureForms))]
+    public void ServiceLog_CertificateWithoutAValidSignature_IsRefused(string form)
+    {
+        string certificate = Certificate(_signing, KeyUses.Log);
+        using (SignedLog log = OpenService(certificate, _signing))
+        {
+            Append(log, 2);
+        }
+
+        Assert.Empty(Verify2().Issues);
+        ClearFolder();
+        using (SignedLog log = OpenService(SignatureForms.Change(certificate, form, SignatureForms.Es256(_root)), _signing))
+        {
+            Append(log, 2);
+        }
+
+        LogIssue error = Assert.Single(Verify2().Issues);
+        Assert.Equal(
+            (LogIssueSeverity.Error, "No certificate on the line is certified for log by the trust store at the line's time."),
+            (error.Severity, error.Message)
+        );
     }
 
     /// <summary>
