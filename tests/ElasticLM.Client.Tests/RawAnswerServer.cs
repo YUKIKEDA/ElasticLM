@@ -159,7 +159,8 @@ internal sealed class RawAnswerServer : IAsyncDisposable
     /// <summary>Gets the URL the server listens on. A server on a socket file has none that a client can connect to.</summary>
     public Uri Url { get; }
 
-    /// <summary>Gets the number of body bytes written so far on all connections. A chunk's frame is not counted.</summary>
+    /// <summary>Gets the number of body bytes written so far on all connections, a write counted as it starts, so that
+    /// every byte a client may have read is in the count. A chunk's frame is not counted.</summary>
     public long BodyBytesWritten => Interlocked.Read(ref _written);
 
     /// <summary>Gets a task that ends when an answer with <see cref="RawAnswer.Hold"/> has written its last byte and waits.</summary>
@@ -362,6 +363,11 @@ internal sealed class RawAnswerServer : IAsyncDisposable
                 await stream.WriteAsync(Encoding.ASCII.GetBytes(part.Length.ToString("x", CultureInfo.InvariantCulture) + "\r\n"), _stopping.Token);
             }
 
+            // Counted before the write: a write can deliver part of its bytes and then fail when the client closes, and the
+            // client may have read those bytes. Over TLS a part of 64 KiB goes out as several records; a client that
+            // stops one byte past the limit reads the first record and closes, and the rest of the write is refused, so a
+            // count made after the write left out bytes the client took (run 43416190635, windows-latest).
+            Interlocked.Add(ref _written, part.Length);
             await stream.WriteAsync(part, _stopping.Token);
             if (answer.Chunked)
             {
@@ -369,7 +375,6 @@ internal sealed class RawAnswerServer : IAsyncDisposable
             }
 
             await stream.FlushAsync(_stopping.Token);
-            Interlocked.Add(ref _written, part.Length);
             left -= part.Length;
         }
 
