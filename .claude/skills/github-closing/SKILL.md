@@ -19,7 +19,7 @@ Under `## Related`, one line, nothing else on it:
 Closes #12
 ```
 
-Do not repeat that verb next to the same number anywhere else, and never in a commit body.
+Do not repeat that verb next to the same number anywhere else, and never in a commit body. The body of a squash merge that an agent makes on the owner's order (`gh pr merge <n> --squash --body`) is a commit body: it names the Issue as `Refs #12`, and the `Closes` of the PR body closes it. The squash body of PR #381 held `Closes #327`.
 
 ## Leave the issue open
 

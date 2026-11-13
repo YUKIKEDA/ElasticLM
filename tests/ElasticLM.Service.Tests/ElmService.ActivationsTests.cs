@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 
 namespace ElasticLM.Service.Tests;
 
@@ -11,6 +12,9 @@ namespace ElasticLM.Service.Tests;
 public sealed class ElmServiceActivationsTests
 {
     private const long Day = 86_400;
+
+    /// <summary>Gets each way the service gets a proof's key with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> KeySourcesAndSignatureForms => SignatureForms.Cross("embedded", "known", "cached");
 
     /// <summary>
     /// A new installation gets a license file bound to its key and fingerprints, whose token follows the policy; the
@@ -491,6 +495,66 @@ public sealed class ElmServiceActivationsTests
         await Expect(a.RefreshAsync(Guid.CreateVersion7().ToString("D"), 1), HttpStatusCode.NotFound, "ELM_ACTIVATION_NOT_FOUND", None);
         await Expect(a.RefreshAsync("x", 1), HttpStatusCode.NotFound, "ELM_ACTIVATION_NOT_FOUND", None);
         Assert.All(answers, x => Assert.False(string.IsNullOrEmpty(x.Nonce)));
+    }
+
+    /// <summary>
+    /// A device request whose proof carries no valid signature is refused and changes nothing, whichever way the service
+    /// gets the key (from the proof, from the activation, or from the keys it has verified with before): with an empty
+    /// signature part, with a signature that is not 64 bytes or not the key's, and with an alg other than ES256 (design
+    /// §8.2 rules 3 and 5, §12.2, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a device. One of: the service has not seen the device, and the request is an activation whose proof
+    ///   embeds the key (embedded); the device is activated, and the request is a refresh with sequence number 1 whose proof
+    ///   carries no key, sent to the node that activated it (cached) or to a second node on the same database, which has
+    ///   only the activation's key (known).
+    /// - A valid proof of the request on a fresh nonce, in a form of <see cref="SignatureForms"/> with the same payload: an
+    ///   empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg
+    ///   none and an empty signature part; alg HS256 and an ES256 signature of the installation key over the changed header.
+    ///
+    /// Steps:
+    /// - Send the request with the changed proof, then with a good proof.
+    ///
+    /// Expected:
+    /// - 401 ELM_PROOF_INVALID: "The request proof signature does not verify." for the four signatures, "The request proof
+    ///   is missing or not a valid elm-proof+jws." for the two algs.
+    /// - The good request succeeds (201 for the activation, 200 for the refresh) and one activation is stored, so the
+    ///   refused request stored nothing and moved no sequence number.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(KeySourcesAndSignatureForms))]
+    public async Task Proof_WithoutAValidSignature_IsRefused(string keyFrom, string form)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core");
+        (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        string keyFolder = test.FilePath("device");
+        using var first = TestDevice.Create(test, service, keyFolder);
+        using TestDevice? onSecondNode = keyFrom == "known" ? TestDevice.Create(test, await test.StartAsync(), keyFolder) : null;
+        TestDevice device = onSecondNode ?? first;
+        string[] prints = TestDevice.Fingerprints();
+        bool embedded = keyFrom == "embedded";
+        string path = "v1/activations";
+        string body = $$"""{"licenseKey":"{{key}}","product":"app","fingerprints":["{{prints[0]}}"]}""";
+        if (!embedded)
+        {
+            DeviceAnswer activated = await first.ActivateAsync(key, prints);
+            Assert.True(activated.Status == HttpStatusCode.Created, activated.Text);
+            path = $"v1/activations/{activated.ActivationId}/refresh";
+            body = "{\"seq\":1}";
+        }
+
+        DeviceAnswer refused = await device.PostAsync(path, body, embedded, proof: p => SignatureForms.Change(p, form, device.Key.Sign));
+
+        string detail = SignatureForms.ChangesAlgorithm(form)
+            ? "The request proof is missing or not a valid elm-proof+jws."
+            : "The request proof signature does not verify.";
+        AssertProblem(refused, HttpStatusCode.Unauthorized, "ELM_PROOF_INVALID", detail);
+        DeviceAnswer accepted = await device.PostAsync(path, body, embedded);
+        Assert.True(accepted.Status == (embedded ? HttpStatusCode.Created : HttpStatusCode.OK), accepted.Text);
+        Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM activations"));
     }
 
     /// <summary>

@@ -210,6 +210,12 @@ internal sealed partial class ElmService : IAsyncDisposable
                 {
                     throw new ServiceStartException($"The usage log cannot be written in '{usageDirectory}': {e.Message}");
                 }
+
+                // design §18.1 (V1d8): as elm-server does, so that a chain that starts again is seen without a verification.
+                if (usage.ResetReason is string reason)
+                {
+                    ServiceLog.ChainReset(log, reason);
+                }
             }
 
             var service = new ElmService(app, settings, database, signingKey, certificates, signing, trust, tls, host.Time, log, usage)
