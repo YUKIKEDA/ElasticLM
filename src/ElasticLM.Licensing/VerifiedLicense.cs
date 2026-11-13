@@ -34,7 +34,8 @@ public sealed class VerifiedLicense
         InstallationKeyThumbprint = payload.Cnf?.Jkt;
         Fingerprints = payload.Fp ?? [];
         Sequence = payload.Seq;
-        OfflineRequestNonce = payload.Areq;
+        AnsweredRequestId = payload.Areq;
+        ActivationId = payload.Act;
         LeaseDuration = payload.Lease is long lease ? TimeSpan.FromSeconds(lease) : null;
         BorrowLimit = payload.Borrow is long borrow ? TimeSpan.FromSeconds(borrow) : null;
         OveragePercent = payload.Overage;
@@ -89,10 +90,17 @@ public sealed class VerifiedLicense
     /// <summary>Gets the activation sequence number, or <see langword="null"/>.</summary>
     public long? Sequence { get; }
 
-    // design §12.8.
+    // design §8.4.2, §12.6.2, §12.8 (V1d5a).
 
-    /// <summary>Gets the nonce of the offline request this license answers, or <see langword="null"/>.</summary>
-    public string? OfflineRequestNonce { get; }
+    /// <summary>
+    /// Gets the ID of the request this license answers, or <see langword="null"/> for a license issued by hand: the
+    /// <c>jti</c> of the proof of an online activation, refresh, or trial, or the nonce of an offline request.
+    /// </summary>
+    public string? AnsweredRequestId { get; }
+
+    /// <summary>Gets the ID of the activation that issued this license, or <see langword="null"/> for a license issued by
+    /// hand.</summary>
+    public string? ActivationId { get; }
 
     /// <summary>Gets the lease duration for server licenses, or <see langword="null"/>.</summary>
     public TimeSpan? LeaseDuration { get; }

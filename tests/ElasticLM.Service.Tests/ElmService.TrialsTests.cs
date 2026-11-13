@@ -25,8 +25,9 @@ public sealed class ElmServiceTrialsTests
     ///   again with f3, f2; remove it again.
     ///
     /// Expected:
-    /// - 201 with a trial token for app, core and pro, expiring 7 days on with no grace, sequence 1; 200 with the same
-    ///   activation and file; the refresh 200 with sequence 2; 409 ELM_TRIAL_USED twice; 400 ELM_FINGERPRINT_UNAVAILABLE; 404
+    /// - 201 with a trial token for app, core and pro, expiring 7 days on with no grace, sequence 1, naming the request's
+    ///   jti and the activation (areq, act, V1d5a); 200 with the same activation and file; the refresh 200 with sequence 2,
+    ///   naming the refresh's jti; 409 ELM_TRIAL_USED twice; 400 ELM_FINGERPRINT_UNAVAILABLE; 404
     ///   ELM_TRIAL_NOT_OFFERED twice; 400 ELM_MALFORMED; one trial
     ///   with f1 and f2; a license named trial with the 7-day expiry; the row by the installation; 204; 201; 404
     ///   ELM_NOT_FOUND.
@@ -62,10 +63,14 @@ public sealed class ElmServiceTrialsTests
                 license.Sequence!.Value
             )
         );
+        Assert.Equal(ElmServiceActivationsTests.Answers(trial.Jti, trial.ActivationId), ElmServiceActivationsTests.Answers(license));
         DeviceAnswer again = await a.TrialAsync("app", first, retry: [trial.Jti]);
         Assert.Equal((HttpStatusCode.OK, trial.ActivationId), (again.Status, again.ActivationId));
         Assert.Equal(trial.File, again.File);
-        Assert.Equal(2L, a.Verify((await a.RefreshAsync(trial.ActivationId, 1)).File, first, LicenseKind.Trial).Sequence);
+        DeviceAnswer refreshed = await a.RefreshAsync(trial.ActivationId, 1);
+        VerifiedLicense next = a.Verify(refreshed.File, first, LicenseKind.Trial);
+        Assert.Equal(2L, next.Sequence);
+        Assert.Equal(ElmServiceActivationsTests.Answers(refreshed.Jti, trial.ActivationId), ElmServiceActivationsTests.Answers(next));
 
         const string Used = "A fingerprint of this installation already had a trial of the product.";
         ElmServiceActivationsTests.AssertProblem(await a.TrialAsync("app", first), HttpStatusCode.Conflict, "ELM_TRIAL_USED", Used);
