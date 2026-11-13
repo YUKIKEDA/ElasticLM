@@ -5527,6 +5527,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 問 7-3: artifact は、決まった名前で取る。さらに、取ったフォルダーの中身が、作ったジョブの一覧とちょうど同じであることを確かめる。
     - 問 7-4: `SHA256SUMS` は、作ったジョブの出力の行をつないで作る。`attest` と `draft` は、それぞれ、`SHA256SUMS` のハッシュと中身を確かめる。
     - 問 7-5: サイトの artifact（`github-pages`）は、この行では確かめない。T28 の文を直し、同じ実行のどのジョブもこの artifact を置き換えることができることと、それを受け入れることを書く。
+    - 問 7-6（独立レビューの指摘 3 のあとに聞いた。持ち主の決定は推奨案 A、2026-11-13）: `build` の matrix の 1 つのジョブが、ほかの RID の出力も書けることは、受け入れる脅威として §5.4 に書く。`build` のジョブの中で動く依存や道具は、その RID の配布物を、もともと変えられる。退けた案: `build` を、RID ごとの 7 つのジョブの定義に分ける。
   - こちらが決めたこと:
     - 検査は、PR で走るジョブに置く。`attest` と `draft` の検査は、同じコマンドを `checksums` でも走らせる。`attest` と `draft` の段が初めて走るのは V1e である。
     - 別のジョブからの置き換えを、一時のワークフローで測った（実装の PR の実行 43367452071。ワークフロー `.github/workflows/tmp-v1d7-negative.yml` は、測り終えたあとに消した。中身は、PR #388 のコミット 8d4f092 にある）。`contents: read` だけを持つ別のジョブが、`actions/upload-artifact` の `overwrite: true` で、5 つの artifact（変えたファイル、足したファイル、足した隠しファイル、なくしたファイル、名前を変えたファイル）を置き換えた。5 つとも、置き換えは成功し、`actions/download-artifact` は通し、検査は落ちた。置き換えていない artifact では、検査は通った。この実行で検査が走ったのは `ubuntu-latest` だけである。次の実行 43368851526 では、同じ 6 つの場合を、`release.yml` が検査を走らせる 5 つのランナーのそれぞれで流した。`sha256sum` は、`ubuntu-latest` と `ubuntu-24.04-arm` が GNU coreutils 9.4、`windows-latest` と `windows-11-arm` が Git Bash の GNU coreutils 8.32、`macos-latest` が macOS のもの（`sha256sum (Darwin) 1.0`）である。30 のジョブのどれでも、`actions/download-artifact` は通し、置き換えた 5 つの場合で検査は落ち、置き換えていない場合で検査は通った。
