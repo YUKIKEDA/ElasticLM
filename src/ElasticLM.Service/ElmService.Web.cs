@@ -53,12 +53,12 @@ internal sealed partial class ElmService
     internal static readonly string SignInHandlerCategory = typeof(OpenIdConnectHandler).FullName!;
 
     // design §18.3 (V1d4b): the error codes of an authorization response that the reason names, those of RFC 6749 §4.1.2.1
-    // and of OpenID Connect Core 1.0 §3.1.2.6.
+    // and of OpenID Connect Core 1.0 §3.1.2.6. access_denied is not here: the handler gives it to OnAccessDenied, whose
+    // reason names it.
     private static readonly FrozenSet<string> RegisteredErrors = FrozenSet.Create(
         StringComparer.Ordinal,
         "invalid_request",
         "unauthorized_client",
-        "access_denied",
         "unsupported_response_type",
         "invalid_scope",
         "server_error",
@@ -245,7 +245,8 @@ internal sealed partial class ElmService
         }
         catch (Exception e) when (IsUnreachable(e, context))
         {
-            ServiceLog.SignInUnavailable(_log, e.Message);
+            string reason = WithInnerMessages(e);
+            ServiceLog.SignInUnavailable(_log, reason);
             await PageAsync(context, StatusCodes.Status503ServiceUnavailable, "The identity provider cannot be reached.").ConfigureAwait(false);
         }
     }
@@ -428,7 +429,8 @@ internal sealed partial class ElmService
         Exception? failure = context.Failure;
         if (failure is not null && IsUnreachable(failure, http))
         {
-            ServiceLog.SignInUnavailable(_log, failure.Message);
+            string unreachable = WithInnerMessages(failure);
+            ServiceLog.SignInUnavailable(_log, unreachable);
             await PageAsync(http, StatusCodes.Status503ServiceUnavailable, "The identity provider cannot be reached.").ConfigureAwait(false);
             return;
         }
@@ -443,10 +445,13 @@ internal sealed partial class ElmService
     // whose message quotes the query's error, error_description, and error_uri; the handler checks the correlation before
     // it reads the error, and does not redeem the code after one (OpenIdConnectHandler.cs of dotnet/aspnetcore v10.0.14,
     // 723-746). Its reason is the code, if the code is a registered one, or a fixed sentence, never the request's text.
-    // Any other failure (the token endpoint's answer, a check of the ID token, the correlation) keeps its message. The
-    // callback answers GET only (RefuseWebPath), so the handler reads the response from the query; a query that has the
-    // key error at all counts, so that no form of it makes the handler's message written.
-    private static string RefusalReason(Exception? failure, HttpRequest request)
+    // Any other failure (the token endpoint's answer, a check of the ID token, the correlation) keeps its message, with the
+    // messages of its inner exceptions. The callback answers GET only (RefuseWebPath), so the handler reads the response
+    // from the query. A query with the name error at all counts, with an empty value or in another case: the handler's
+    // message takes the first value that is not null and compares names with their case (OpenIdConnectMessage.cs of
+    // Microsoft.IdentityModel 8.19.2), while Request.Query ignores the case, so a narrower test could read a query
+    // otherwise than the handler and let its message through.
+    internal static string RefusalReason(Exception? failure, HttpRequest request)
     {
         if (failure is OpenIdConnectProtocolException && request.Query.ContainsKey("error"))
         {
@@ -455,7 +460,21 @@ internal sealed partial class ElmService
                 : UnregisteredError;
         }
 
-        return failure?.Message ?? "the sign-in failed";
+        return failure is null ? "the sign-in failed" : WithInnerMessages(failure);
+    }
+
+    // design §18.3 (V1d4b): a failure's message and those of its inner exceptions, as Exception.ToString joins them, without
+    // the stack. They hold no text of the request: Microsoft.IdentityModel hides personal data, and the back channel's
+    // messages tell what the identity provider's side did.
+    internal static string WithInnerMessages(Exception failure)
+    {
+        var reason = new StringBuilder(failure.Message);
+        for (Exception? inner = failure.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            _ = reason.Append(" ---> ").Append(inner.Message);
+        }
+
+        return reason.ToString();
     }
 
     private async Task OnAccessDeniedAsync(AccessDeniedContext context)
