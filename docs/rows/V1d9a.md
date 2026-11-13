@@ -38,6 +38,10 @@
   - M9 確定に要求のトークンを渡す: `WriteTransaction_TokenCanceledAfterItsBody_Commits` が両方のエンジンで、`StateChange_CallerGoneWhileItsCommitRuns_IsStoredWithOneRow` が PostgreSQL で落ちた。
   - M10 画面のログインで、書いたページのあとにも `500` のページを書く: `SignInRefusal_RowCannotBeWritten_KeepsTheRefusalPage` が落ちた。
 - 同じ種類を探した範囲: `elm-service` の `AdminAsync` の認証の部分と、画面のログイン（`ElmService.Web.cs`）の、答えのあとに行を書く所のすべて（3 か所。どれも直した）。管理 API の本文を読む所（`ReadBodyAsync` を使う、API キー、モデル、オフラインの処理）。`ServiceStore` の `InTransactionAsync` のすべて（23 か所。どれも新しい手順にした）。`elm-server` のローカルの管理 API は、本文を読む操作がなく、`BadHttpRequestException` の道がない。認証の途中の拒否もない（トークンが合わなければ行を書かない、§13.7）。
+- PR #417 のレビューのあとで直したこと:
+  - 本文の途中で接続を切った呼び出しの結果が揺れた（レビューが SQLite で測った。RST では 40 回のうち 16 回が `ELM_INTERNAL_ERROR`、FIN では 9 回が `ELM_MALFORMED`）。本文の読み取りが `IOException` で終わり、要求がまだ取り消されていなければ、サービスの時計で最大 1 秒、取り消しを待つ（`ReadBodyAsync`、`AbortWait`）。`Body_CallerLeavesInTheMiddle_IsAuditedAsNetworkErrorEachTime` が、RST と FIN をそれぞれ 40 回、4 度走らせて、どれも `ELM_NETWORK_ERROR` だった。`IOException` だけを `ELM_NETWORK_ERROR` にする案は、FIN の 400 を分けられないので選ばなかった。変異の確かめ: 待ちを 0 にすると、RST で `ELM_INTERNAL_ERROR`、FIN で `ELM_MALFORMED` になって落ちた。
+  - 接続を切る道は、状態が 400 か 408 の `BadHttpRequestException` に限った（`IsUnreadableBody`）。変異の確かめ: 413 を足すと `FailureCode_ByCancellationAndStatus_GivesTheResult` が落ちた。
+  - 確定にトークンを渡さないことの結果（止まった `COMMIT` は取り消せず、停止はそれを待つ。上限は PostgreSQL の `Command Timeout` と SQLite の 5 秒）を、設計 §18.2 に書いた。時間の上限を別に付ける案は、確定したかどうかが決まらない形に戻るので選ばなかった。
 - 行の外で見つけたこと: 端末の API（`elm-service` の `ElmService.Client.cs` と `ElmService.Leases.cs` の本文の読み取り、`elm-server` の `ElmServer.cs` の `ReadBodyAsync`）も、本文を読めない `BadHttpRequestException` を Kestrel に渡すので、呼び出した側が `Error` の段の `Kestrel[13]` を書かせられると読める（コードを読んだだけで、走らせていない）。端末の要求は監査の行を書かないので、この行の監査の抜けではない。
 
 ## 退けた案

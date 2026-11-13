@@ -369,7 +369,7 @@ One row of the audit log. The meaning of each field is in [Logs](logs.md#row-fie
 | `actorId` | string or `null` | Who acted. |
 | `action` | string | The action. |
 | `target` | string or `null` | What it acted on. |
-| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the connection was closed before the answer ended or the request body came too slowly, `ELM_MALFORMED` when the request body could not be read because of its form, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
+| `result` | string | `ELM_OK` or an error code. `ELM_NETWORK_ERROR` when the connection was closed or reset before the answer ended (also in the middle of the request body) or the request body came too slowly, `ELM_MALFORMED` when the request body could not be read because of its form on a connection that stayed open, `ELM_INTERNAL_ERROR` when the operation failed inside the service. |
 | `ip` | string or `null` | The source address. |
 | `detail` | string or `null` | The details: a JSON object as text, exactly as stored, so that the row's hash can be computed again. |
 | `prev` | string | The previous row's hash, in base64url. |

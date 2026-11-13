@@ -7,6 +7,7 @@ using ElasticLM.Licensing;
 using ElasticLM.Server.Tests;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Service.Tests;
 
@@ -188,7 +189,8 @@ public sealed class ElmServiceEndedEarlyTests
     ///
     /// Steps:
     /// - On a socket of its own, POST /v1/admin/api-keys with Transfer-Encoding: chunked and the chunk size "zz"; read until
-    ///   the service has closed the connection; wait for the apikey.create row.
+    ///   the service has closed the connection, moving the service's clock a second every 50 ms while it waits, since the
+    ///   failed read waits up to a second on that clock for Kestrel to cancel the request; wait for the apikey.create row.
     ///
     /// Expected:
     /// - No byte of an answer. Exactly one apikey.create row, with the result ELM_MALFORMED and no target or detail. The log
@@ -207,7 +209,7 @@ public sealed class ElmServiceEndedEarlyTests
             + "Content-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n";
 
         using Socket caller = await ElmServiceAdminTests.SendAsync(service, request);
-        Assert.Equal(0, await ReadToCloseAsync(caller, TimeSpan.FromSeconds(10)));
+        Assert.Equal(0, await ReadToCloseAsync(caller, TimeSpan.FromSeconds(10), test.Time));
         await TestService.WaitForAsync(async () => (await ElmServiceAdminTests.RowsAsync(service, "apikey.create")).Length > 1);
 
         AuditEntry row = (await ElmServiceAdminTests.RowsAsync(service, "apikey.create"))[^1];
@@ -227,7 +229,8 @@ public sealed class ElmServiceEndedEarlyTests
     ///
     /// Steps:
     /// - On a socket of its own, POST /v1/admin/api-keys with Content-Length 100 and 9 bytes of the body; read until the
-    ///   service has closed the connection, for at most 30 seconds; wait for the apikey.create row.
+    ///   service has closed the connection, for at most 30 seconds, moving the service's clock a second every 50 ms; wait for
+    ///   the apikey.create row.
     ///
     /// Expected:
     /// - No byte of an answer. Exactly one more apikey.create row, with the result ELM_NETWORK_ERROR. The log has the line
@@ -246,13 +249,77 @@ public sealed class ElmServiceEndedEarlyTests
             + "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"name\":\"";
 
         using Socket caller = await ElmServiceAdminTests.SendAsync(service, request);
-        Assert.Equal(0, await ReadToCloseAsync(caller, TimeSpan.FromSeconds(30)));
+        Assert.Equal(0, await ReadToCloseAsync(caller, TimeSpan.FromSeconds(30), test.Time));
         await TestService.WaitForAsync(async () => (await ElmServiceAdminTests.RowsAsync(service, "apikey.create")).Length > 1);
 
         AuditEntry[] rows = await ElmServiceAdminTests.RowsAsync(service, "apikey.create");
         Assert.Equal(2, rows.Length);
         Assert.Equal("ELM_NETWORK_ERROR", rows[^1].Result);
         AssertOneLine(log, "The request of an administration call (apikey.create) could not be read (408); the connection was closed.");
+    }
+
+    /// <summary>
+    /// A caller who resets or ends the connection in the middle of the request body is audited with ELM_NETWORK_ERROR every
+    /// time, whether the read of the body fails before Kestrel cancels the request's token or after (design §18.2, V1d9a
+    /// review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service on a clock that can hold one read of the timestamp; an owner key. The clock is never moved, so the failed
+    ///   read's wait for Kestrel's cancellation can only end by that cancellation.
+    ///
+    /// Steps:
+    /// - Hold the second read of the timestamp from here on: the limit per key, after authentication and before the body is
+    ///   read.
+    /// - On a socket of its own, POST /v1/admin/api-keys with Content-Length 100 and 9 bytes of the body. Once the service
+    ///   waits in the held read, let it go on, and wait 100 ms, while the service waits in the read of the body for the
+    ///   rest. Then: reset, close the socket with a linger time of 0, which sends RST; end, end the caller's side, which
+    ///   sends FIN. The failed read of the body races Kestrel's cancellation. Wait for one more apikey.create row.
+    /// - Run these steps 40 times. Before the wait, 16 runs of 40 with RST gave ELM_INTERNAL_ERROR, and 9 of 40 with FIN gave
+    ///   ELM_MALFORMED (the review of PR #417).
+    ///
+    /// Expected:
+    /// - Each run adds exactly one apikey.create row, with the result ELM_NETWORK_ERROR.
+    /// </remarks>
+    [Theory]
+    [InlineData("reset")]
+    [InlineData("end")]
+    public async Task Body_CallerLeavesInTheMiddle_IsAuditedAsNetworkErrorEachTime(string leave)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        using var clock = new HeldClock(test.Time);
+        await using ElmService service = await ElmServiceAdminTests.StartOnClockAsync(test, clock);
+        string request =
+            $"POST /v1/admin/api-keys HTTP/1.1\r\nHost: {service.Url.Authority}\r\nAuthorization: Bearer {owner}\r\n"
+            + "Content-Type: application/json\r\nContent-Length: 100\r\n\r\n{\"name\":\"";
+
+        for (int run = 0; run < 40; run++)
+        {
+            Task held = clock.HoldAsync(2);
+            using (Socket caller = await ElmServiceAdminTests.SendAsync(service, request))
+            {
+                await held.WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+                clock.Release();
+
+                // The service goes on to read the body, and waits there for the 91 bytes that never come.
+                await Task.Delay(100, TestContext.Current.CancellationToken);
+                if (leave == "reset")
+                {
+                    caller.LingerState = new LingerOption(true, 0);
+                    caller.Close();
+                }
+                else
+                {
+                    caller.Shutdown(SocketShutdown.Send);
+                }
+            }
+
+            await TestService.WaitForAsync(async () => (await ElmServiceAdminTests.RowsAsync(service, "apikey.create")).Length > run + 1);
+            AuditEntry[] rows = await ElmServiceAdminTests.RowsAsync(service, "apikey.create");
+            Assert.Equal(run + 2, rows.Length);
+            Assert.Equal("ELM_NETWORK_ERROR", rows[^1].Result);
+        }
     }
 
     /// <summary>
@@ -270,6 +337,8 @@ public sealed class ElmServiceEndedEarlyTests
     ///
     /// Expected:
     /// - Not canceled: Malformed, NetworkError, InternalError, InternalError. Canceled: NetworkError for each.
+    /// - Only 400 and 408 count as a body the caller sent that could not be read, which ends with the service's own log line
+    ///   and a closed connection; 413 goes on as other exceptions do.
     /// </remarks>
     [Fact]
     public void FailureCode_ByCancellationAndStatus_GivesTheResult()
@@ -289,6 +358,7 @@ public sealed class ElmServiceEndedEarlyTests
             exceptions.Select(e => ElmService.FailureCode(open, e))
         );
         Assert.All(exceptions, e => Assert.Equal(ErrorCode.NetworkError, ElmService.FailureCode(canceled, e)));
+        Assert.Equal([true, true, false], exceptions.OfType<BadHttpRequestException>().Select(ElmService.IsUnreadableBody));
     }
 
     /// <summary>
@@ -430,11 +500,21 @@ public sealed class ElmServiceEndedEarlyTests
         clock.Release();
     }
 
-    // Reads until the service has closed the connection, or reset it, and returns the bytes that came.
-    private static async Task<int> ReadToCloseAsync(Socket caller, TimeSpan limit)
+    // Reads until the service has closed the connection, or reset it, and returns the bytes that came. Meanwhile the service's
+    // clock moves a second every 50 ms, for a wait of the service that is counted on it.
+    private static async Task<int> ReadToCloseAsync(Socket caller, TimeSpan limit, FakeTimeProvider clock)
     {
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         bound.CancelAfter(limit);
+        using var moved = new CancellationTokenSource();
+        Task mover = Task.Run(async () =>
+        {
+            while (!moved.IsCancellationRequested)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(50, CancellationToken.None);
+            }
+        });
         byte[] buffer = new byte[1_024];
         int total = 0;
         try
@@ -446,6 +526,11 @@ public sealed class ElmServiceEndedEarlyTests
             }
         }
         catch (SocketException) { }
+        finally
+        {
+            await moved.CancelAsync();
+            await mover;
+        }
 
         return total;
     }
