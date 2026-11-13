@@ -6,6 +6,7 @@
 - 持ち主が決めたこと（2026-11-13。どちらも推奨案 A）:
   - 問 4a-1: その分類を、コードで `Warning` に上げる（要求ごとの行はなくなる）。
   - 問 4a-2: 利用者の文書に、既定の段で書く `Microsoft.*` の分類を 1 つずつ挙げる。
+  - 問 4a-3（独立レビューの指摘 2 のあとに聞いた。推奨案 A、2026-11-13）: 既定より低い段でリクエストの文字を書く 3 つの分類（`Routing.Matching.DfaMatcher`、`Server.Kestrel.BadRequests`、`OpenIdConnectHandler`）は、上げずに、利用者の文書と設計に書く。退けた案: (B) この 3 つもコードで Information 以上に上げる（運用者が、経路に合わないリクエストの調べに、パスを見られなくなる）。
 - こちらが決めたこと:
   - 規則の足し方（§18.3）。単に `AddFilter(分類, Warning)` とすると、2 つの点で設計の文と合わなかった。実装の head（`origin/main` の a2a3c91 に変更を足したもの）で、`WebApplication.CreateSlimBuilder` の構成に規則を入れて、その分類の `ILogger.IsEnabled` を見て測った。
     - `Logging:LogLevel:Default` を `None` か `Error` にしても、この分類の `Warning` が有効のままだった（コードの規則が、いちばん詳しい分類として選ばれるため）。利用者の文書は、`None` で何も書かないと言っている。
