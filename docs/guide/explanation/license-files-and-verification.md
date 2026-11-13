@@ -158,7 +158,7 @@ A token without `exp` never expires. Only license files issued by hand with `elm
 - `cnf.jkt`, the thumbprint of the device's installation key. This is the real identifier of the device. The requirement passes an `InstallationIdentity` with the key's thumbprint; if the token has `cnf` and the requirement passes no identity, verification fails with `ELM_WRONG_INSTALLATION`.
 - `fp`, the machine fingerprints, compared as `fpm` says: `any` passes when one fingerprint in the token matches the machine, `all` needs every one to match, and `ignore` skips the comparison. The policy setting `fingerprintMatching` decides `fpm`.
 
-Both claims are signed, so a licensee cannot edit them. Copying the file to another machine fails because that machine has a different installation key. How the installation key and the fingerprints are made, and why the key is the identifier rather than the OS machine ID, is in [devices and proofs](devices-and-proofs.md).
+Both claims are signed, so a licensee cannot edit them. Copying the file to another machine fails because that machine has a different installation key. Someone who copies the installation key along with it (an administrator of the device, or with the default user scope the device's user) makes the file work there, when the fingerprints also match or `fpm` is `ignore` ([the security model](security-model.md#on-the-licensees-machine)). How the installation key and the fingerprints are made, and why the key is the identifier rather than the OS machine ID, is in [devices and proofs](devices-and-proofs.md).
 
 An unbound license has neither `cnf` nor `fp` and passes on any machine. Use it only when that is what you sell.
 
@@ -176,7 +176,7 @@ A user whose clock jumped forward and then came back is locked out until real ti
 
 What the guard does not stop:
 
-- **Deleting or editing the state.** The guard then falls back to the token's `iat`. A licensee can still set the clock back to any time after `iat`, so the real limit is the token's expiry. Keep `tokenLifetime` short.
+- **Deleting or editing the state.** The guard then falls back to the token's `iat`. A licensee can still set the clock back to any time after `iat`, and by deleting the state each time, keep it between `iat` and the token's expiry for as long as they stay offline: the guard limits the window the clock must stay in, not how long the token is used. Keep `tokenLifetime` short to narrow the window.
 - **An unsigned state.** Without an installation key (an unbound license), the state is not signed, and anyone who can write the file can reset the guard to the `iat` floor.
 - **A stateless guard.** `StatelessClockGuard` keeps no state and checks only that `iat` is not in the future (step 6). In C you get it when you pass neither an installation nor a `clock_guard_path`.
 - **Patching the app** to skip the check. This is out of scope, as [the security model](security-model.md) explains.

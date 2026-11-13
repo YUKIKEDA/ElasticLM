@@ -82,7 +82,7 @@ dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem trial-data
 ELM_TRIAL_USED: A fingerprint of this installation already had a trial of the product.
 ```
 
-The service keeps a record of each trial with the fingerprints of the machine that had it, and refuses a second trial of the product to a machine with any of those fingerprints, whichever data folder or installation key asks. This machine had a trial in the tutorial. On a machine that never had a trial of the product, this run succeeds at once and prints `trial: pro`; follow the steps below all the same: they delete the record of that trial and start another one in a second data folder.
+The service keeps a record of each trial with the fingerprints of the machine that had it, and refuses a second trial of the product to a machine with any of those fingerprints, whichever data folder or installation key asks. An administrator who changes every machine ID that the fingerprints come from (on Windows both) can start another trial that works. Made-up fingerprints sent with a new key do get a trial, but its license file names those fingerprints and fails on the machine ([the security model](../explanation/security-model.md#on-the-licensees-machine)). This machine had a trial in the tutorial. On a machine that never had a trial of the product, this run succeeds at once and prints `trial: pro`; follow the steps below all the same: they delete the record of that trial and start another one in a second data folder.
 
 ## See the trials
 
