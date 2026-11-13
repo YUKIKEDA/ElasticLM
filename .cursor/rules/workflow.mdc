@@ -23,7 +23,7 @@ Grill (when the design branches) → Issue → branch → work → PR → human 
 
 Rows that touch different projects run at the same time, at most four, each with its own Issue, worktree, branch, and PR. Two rows of one group do not run together. The groups of the V1d rows: the on-premises server (`ElasticLM.Server`), the client and `elm` (`ElasticLM.Client`, `ElasticLM.Cli`), the service (`ElasticLM.Service`), verification and issuing (`ElasticLM.Licensing`, `ElasticLM.Issuing`, `ElasticLM.Leasing`), the workflows (`.github/`, `eng/`), tests and documents only, and the owner's repository settings. A row that turns out to touch another group's project waits for that group's open row.
 
-An agent per row may write the code and the tests in the row's worktree. The session that holds the rows writes the design, runs the reviews, opens the PRs, and keeps the roadmap. Every PR still changes `docs/roadmap.md`, the design tables, and the end of `docs/design-decisions.md`; the conflict that the second merge brings is solved as `.cursor/rules/git.mdc` says. Until 2026-11-13 the roadmap allowed one row at a time, and thirty rows without a dependency on each other stood in one line (Issue #372).
+An agent per row may write the code and the tests in the row's worktree, and may draft the row's design text and its user documentation (the owner's answer to question P-1, 2026-11-13). An agent other than the one that wrote a draft reviews it independently. The session that holds the rows checks each draft against the owner's decisions, runs the reviews, opens the PRs, and keeps the roadmap. It puts every design choice that a review surfaces to the owner: question 5-6 of PR #382, questions 8-5 and 8-6 of PR #391, and question 7-6 of PR #388 came from such reviews. Every PR still changes `docs/roadmap.md`, the design tables, and the end of `docs/design-decisions.md`; the conflict that the second merge brings is solved as `.cursor/rules/git.mdc` says. Until 2026-11-13 the roadmap allowed one row at a time, and thirty rows without a dependency on each other stood in one line (Issue #372).
 
 ## Issue templates and labels
 
@@ -46,6 +46,8 @@ Labels have the form `<axis>:<value>`. The only axis today is `type`.
 - The NativeAOT publish check runs where the Issue names it (`.cursor/rules/aot.mdc`).
 - After each merge, read `main`'s CI. A red `main` gets its own Issue and PR before the next merge.
 - A `main` run cancelled before any job started is not a failure. It was waiting in its concurrency group, and the next merge's run took its place: "By default, any existing `pending` job or workflow in the same concurrency group will be canceled" (GitHub Docs, Workflow syntax, `concurrency`). The newer run holds the cancelled commit, so read that run instead. After PR #164, the run of PR #167's merge was cancelled this way by the run of PR #169.
+- A job that no runner took ("The job was not acquired by Runner") is not a failure either: run it again. A macOS job of `main`'s CI at db7a7bb ended this way.
+- A test that the PR did not change and that fails once on CI gets an Issue, after a search for one that already names it. The failed job is then run again, and the PR body says so. In PR #390 `ServerAnswerTests.ServerLicenseRequest_ProblemAnswer_GivesTheListedCodeAndNeverTheDetail` failed once on macOS (Debug) and became Issue #392. In PR #391 `Measure` run 43372657476 failed with "The response ended prematurely" and became Issue #393; a rerun of the whole `Measure` passed.
 
 ## Forbidden
 
