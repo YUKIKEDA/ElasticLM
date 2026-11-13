@@ -19,8 +19,8 @@ info: elm-server[2]
 
 | Category | Messages |
 | --- | --- |
-| `elm-server` | The start (port, public URLs, key ID, server license ID, and the end of the reclaim window) and the stop; each lease acquired, released, or reclaimed; detected clones; administration requests; license reloads and failed license renewals; a usage log that cannot be written, or whose chain could not continue at the start; a borrow record set aside; a failed cleanup. |
-| `elm-service` | The start (address, database, signing key, and the end of its certificates) and the stop; the database schema versions applied; signing key certificates that end within 30 days; where the usage log is; audit log rows and admin UI sessions removed; failed periodic tasks and database requests; a license file or lease that could not be signed; a usage log that cannot be written; the keys of the admin UI's sign-in made or skipped; refused API keys of inactive administrators; refused admin UI sign-ins; an identity provider that cannot be reached; and, at the `Debug` level, why an access token was refused. |
+| `elm-server` | The start (port, public URLs, key ID, server license ID, and the end of the reclaim window) and the stop; each lease acquired, released, or reclaimed; detected clones; administration requests; license reloads and failed license renewals; a usage log that cannot be written, or whose chain could not continue at the start; a file with the name of a usage log file or a borrow record but no real date and time; a borrow record that cannot be written; a borrow record set aside; a failed cleanup. |
+| `elm-service` | The start (address, database, signing key, and the end of its certificates) and the stop; the database schema versions applied; signing key certificates that end within 30 days; where the usage log is; audit log rows and admin UI sessions removed; failed periodic tasks and database requests; a license file or lease that could not be signed; a usage log that cannot be written, or whose chain could not continue at the start; a file with the name of a usage log file but no real date and time; the keys of the admin UI's sign-in made or skipped; refused API keys of inactive administrators; refused admin UI sign-ins; an identity provider that cannot be reached; and, at the `Debug` level, why an access token was refused. |
 | `Microsoft.*` | The web host's own messages, such as the address it listens on and its start and stop. |
 
 The level is `Information` by default. To change it, set the environment variable `Logging__LogLevel__Default` to `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, or `None`: for example, `Logging__LogLevel__Default=Warning` writes only warnings and errors.
@@ -40,6 +40,8 @@ The usage log records leases, borrows, refusals, and events of the program that 
 
 - The UTC time in a name has the form `yyyyMMddTHHmmssfffZ`, for example `usage-20270125T093000123Z.jsonl`. Names sort in time order: a new file is never named before the newest one, even when the clock went back.
 - A new file starts at each start and at each new UTC day.
+- A file whose name has this form but whose digits are not a real date and time, such as month 13 in `usage-20271301T000000000Z.jsonl`, is not a file of the log. The program does not read it, and its name does not decide the name of the next file. At each start, and once in each UTC day while it runs, the program writes a warning to the operational log: `The file <name> has the name of a usage log file but no real date and time; it is not read as one.` The program leaves the file where it is; to stop the warning, move the file out of the folder or delete it. `elm log verify` does not verify such a file in a folder: it names the file in a warning, `warning: <name>:0: The file's name has the form of a log file's name but no real date and time; the file was not verified.` It still verifies the file when the file's own path is given. Renaming hides no more than deleting does: only the newest files can drop out this way, as when they are deleted, and a file renamed in the middle breaks the link of the file after it, which `elm log verify` reports as an error.
+- No file name comes after the time `99991231T235959999Z`. When the newest file has that time in its name, the program does not start: the error says that the usage log cannot be written, and ends with `No file name comes after <name>, the newest file of the log.` Move that file out of the folder, and start the program again.
 - A node of `elm-service` does not start when another node of the same name already writes in the folder. Each node writes only its own files; collecting the files of every node is the operator's job.
 - Old files stay until the operator deletes them.
 - `elm-server` also keeps the borrow record, `borrows-<UTC time>.jsonl` in its data folder. It is a separate log, described in [Borrow record (elm-server)](#borrow-record-elm-server).
@@ -67,6 +69,16 @@ The other members depend on the type. For example, a lease granted by `elm-serve
 | `chain.reset` | First line of a file whose chain cannot continue: the previous file cannot be read, has no signature in its last 1 MiB, or a write failed | `stream`, `reason`, then the key members below. Signature numbering starts again at 1. |
 | `key.changed` | `elm-server` only, when the server license changes while it runs | `license` (the new server license file), `key` (the new public key, as a JWK). The next signature is still made with the old key; later ones use the new key. |
 | `auth` | After the first lines of each file, after every 100 lines, every 60 seconds when lines are pending, before a file is closed, and on an administrator's order | `sig`: an `elm-log+jws` token. |
+
+At a start, the program reads the last 1 MiB of the previous file from its end and continues the chain from the first `auth` line it finds. It passes over the lines after that one, whatever they hold: a line cut in the middle, text that is not JSON, or JSON that is not an `auth` line. When it has to start with `chain.reset`, it also writes a warning with the reason to the operational log.
+
+The `reason` of a `chain.reset` names a file by its name, without its folder:
+
+| `reason` | When |
+| --- | --- |
+| `the previous file <name> cannot be read` | The previous file cannot be opened or read. |
+| `no signature was found at the end of the previous file <name>` | The last 1 MiB of the previous file holds no `auth` line. |
+| `a write to <name> failed` | A line or a signature could not be written to the file `<name>`; the next write started this file. The operational log has the cause; when a license reload could not be written to the borrow record, the answer to the reload has it. |
 
 The key members of the first line say which key signs the file:
 
@@ -156,9 +168,9 @@ The command checks the key material of each first line against the trust store a
 | 1 | Not intact: at least one error. |
 | 2 | Invalid input, such as a path that is not a file or folder, or no log file found. |
 
-Errors: a file that cannot be read or is empty, a line that is not JSON or is longer than 1 MiB, a first line that is not `chain.start` or `chain.reset`, a chain line after the first line, another stream, key material that does not verify, a signature that is not by the file's key, a `digest` or line count that does not match, a break in `prev` or `n`, no old-key signature after `key.changed`, a missing or cut file between files, a file that continues with another key than the previous file's last key under another license, files of a server and of `elm-service` mixed in one chain, and for `elm-service` a file that names another node or no node, or a `key.changed` line.
+Errors: a file that cannot be read or is empty, a line that is not a JSON object (text that is not JSON, or JSON such as `[]` or `123`) or is longer than 1 MiB, a string that is not valid Unicode in a line's `type`, in a first line, in an `auth` line, or in a `key.changed` line (for example the escape `\ud800` without its pair), a first line that is not `chain.start` or `chain.reset`, a chain line after the first line, another stream, key material that does not verify, a signature that is not by the file's key, a `digest` or line count that does not match, a break in `prev` or `n`, no old-key signature after `key.changed`, a missing or cut file between files, a file that continues with another key than the previous file's last key under another license, files of a server and of `elm-service` mixed in one chain, and for `elm-service` a file that names another node or no node, or a `key.changed` line.
 
-Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle, a server that moved (another key of the same server license), and an `elm-service` signing key that was replaced.
+Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle, a server that moved (another key of the same server license), an `elm-service` signing key that was replaced, and a file in a folder whose name has the form of a log file's name but no real date and time, which is not verified.
 
 Deleting or cutting the newest file, which has no next file, is not detected.
 
@@ -171,6 +183,7 @@ A borrowed client is away from the network and cannot reclaim its lease after a 
 - `borrows-<UTC time>.jsonl` in the server's data folder (`dataDirectory`), with the same time form as the usage log, for example `borrows-20270125T093000123Z.jsonl`. Unlike the usage log, it has no setting of its own.
 - A new file starts at each start and at each new UTC day. Its first lines after the chain line copy the borrows that have not expired and the early returns of the last 30 days, so the newest file alone holds the whole state. A copied line has the `ts` of the copy.
 - Old files stay until the operator deletes them. The server reads only the newest one.
+- As in the usage log, a file whose name has this form but no real date and time is not a file of the record, and the warning in the operational log calls it `a borrow record file`. When the newest file has the time `99991231T235959999Z` in its name, the server does not start: the error says that the borrow record cannot be read or written. Move that file out of the data folder, and start the server again.
 - A file set aside with `--set-aside-broken-records` is named `borrows-broken-<UTC time>.jsonl`, where the time has the form `yyyyMMddTHHmmssZ`. The server does not read it again.
 
 ### Line format and signatures
@@ -180,7 +193,7 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 - The stream is `borrows`, in the first line and in every `auth` token.
 - An `auth` line follows every event line, and each `auth` line is flushed to the disk before the borrow or the return takes effect.
 - The first line is `chain.start` or `chain.reset` with `license` and `key`, and the server signs with its installation key. When the server license changes while it runs, a `key.changed` line is written as in the usage log; when that line cannot be written, the record keeps the old license.
-- When a line cannot be written, the borrow is refused with `ELM_INTERNAL_ERROR`, or the early return with `ELM_RETURN_NOT_ALLOWED`. The next line starts a new file with `chain.reset`.
+- When a line cannot be written, the borrow is refused with `ELM_INTERNAL_ERROR`, or the early return with `ELM_RETURN_NOT_ALLOWED`. The operational log has the error `The borrow record cannot be written; the borrow or the early return is refused.` with the cause. The next line starts a new file with `chain.reset`.
 - After `--set-aside-broken-records`, the next file starts with `chain.reset` whose `reason` names the file that was set aside.
 
 ### Events
@@ -213,7 +226,7 @@ For example, an early return (fake values):
 
 1. The server verifies the newest file as `elm log verify` does. The file's last key must be the server's own key, or a key of the same server license (the server moved to another machine). A record of another server counts as broken.
 2. A broken record stops the start with exit code 1, and the message names the problem. With `--set-aside-broken-records`, the server renames the file, starts without its borrows, and writes `records.set_aside` with the file name to the usage log.
-3. From an intact file, the server restores the borrows whose lease token it signed and that have not expired, less the returned ones.
+3. From an intact file, the server restores the borrows whose lease token it signed and that have not expired, less the returned ones. It skips a `borrow.started` or `borrow.returned` line whose members are not as the table above gives them, or that holds a string that is not valid Unicode.
 
 The borrows in a file that was set aside, deleted, or edited are not counted until they end. An administrator who can write to the data folder can free borrowed seats this way; the traces are `records.set_aside` and `chain.reset` in the logs, or a missing file.
 
