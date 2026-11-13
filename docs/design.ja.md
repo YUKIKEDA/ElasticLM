@@ -1811,6 +1811,11 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
   - `feature`: `elm-server` は、空の値と、UTF-8 で 64 バイトを超える値を、`400` と `ELM_MALFORMED`（「The request body is not a valid lease request.」）で断る（V1d4。機能の ID の上限と同じ。§8.6）。`version` や `app` と同じ検査で、証明の検証のあと、リースの処理と利用ログの前に行うので、こういう要求は `lease.denied` に数えない。文字の種類は確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。V1d4 より前は、長さを確かめなかった。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
   - `fingerprints`: どちらも 8 個まで、各 32 文字の小文字の 16 進。`elm-service` は同じ値を 1 つにまとめ（`Activations.Fingerprints`）、`elm-server` はまとめずに受け取ったまま使う。
   - 更新の `seq`: `elm-server` は 64 ビットの整数なら負の値も受け、§10.4 の手順 3 で複製と判定する（`LeaseRules.Judge`。負の値は今の更新番号とも、その 1 つ前とも一致しない）。`elm-service` は負の値を `ELM_MALFORMED` で断る（`Activations.Sequence`）。
+  - 取得の `count`:
+    - 2 つのサーバーで同じこと: 1 未満の値と、機能の席数を超える値は、この節の `count` の検査（1 以上、機能の席数以下。`LeaseRules.CheckRequest`）が、`400` と `ELM_INVALID_ARGUMENT` で断る。この検査は、どちらのサーバーでも、機能の確かめ（ライセンスにあるか、期限、版）のあとにある。違うのは、32 ビットの整数に収まらない値の扱いである。
+    - `elm-server`: `count` を 32 ビットの整数として読む（`AcquireBody.Count`）。収まらない値は、本文を読むところで `400` と `ELM_MALFORMED` になる。本文を読むのは、証明を確かめたあと、`client` の許可と機能を確かめる前である（`ElmServer.AcquireAsync`）。
+    - `elm-service`: `count` を 64 ビットの整数として読む（`LeaseRequests.ReadAcquire`）。64 ビットに収まらない値は、本文を読むところで `400` と `ELM_MALFORMED` になる。64 ビットに収まる値は、負の値は 0 に、32 ビットの最大値を超える値はその最大値に置き換えてから、この節の `count` の検査にかける（`ElmService.AcquireInScopeAsync`）。機能の席数は 1,000,000 までなので（§14.5）、32 ビットの最大値は必ず席数を超える。そのため、32 ビットに収まらない値は `400` と `ELM_INVALID_ARGUMENT` になる。ただし、そうなるのは、その前の検査（ライセンスキー、製品、ポリシー、ライセンスの状態、機能。§12.7.6 の取得の手順）を通った要求だけである。前の検査で断られる要求は、`count` の値によらず、その検査の状態コードとコードで答える（知らないライセンスキーなら `404` と `ELM_LICENSE_NOT_FOUND`）。
+    - どちらのサーバーも、断った要求ではリースを作らない。この違いはそろえない（§20.7 の「V1d12 の Grill」の問 12-1）。
   - 同じメンバーが 2 回ある本文: `elm-server` は、型が知るメンバーの 2 回だけを `ELM_MALFORMED` とし、知らないメンバーの 2 回は無視する。System.Text.Json のソース生成の読み手の `AllowDuplicateProperties = false` は、型のプロパティーにだけ効く（.NET 10 で試して確かめた）。`elm-service` は、どのメンバーの 2 回も `ELM_MALFORMED` とする（`JsonDocument` の `AllowDuplicateProperties = false`）。
 
 API（`ElasticLM.Client`、M3b で出荷した形。0.42）:
@@ -4385,7 +4390,7 @@ V1 を V1a〜V1e の 5 行に分け、この順に進める（0.112）。V1c は
 | V1d24a | V1d2a の正しさのレビューが行の外で見つけ、持ち主の決定（2026-11-12、PR #367）で足した行（Issue #364）。置き換えに失敗したあとに残る一時ファイル（借り出しのファイル、サーバーライセンスのファイル）と、Windows で、読み手が開いているファイルの削除や移動が断られることを確かめて直す。この行の Grill で決める点: Windows で読み手を開いたまま、それぞれの操作を走らせた結果。残った一時ファイルを、失敗のときに消すか、次に書くときに消すか。断られた削除を、やり直すか、次に読むときに回すか。`src/` の `File.Delete` をどこまで読むか。`FileReplacement.Move` の待ちに実時間の上限を置くか、公開の設定（`ActivationClientOptions.TimeProvider`、`LicenseClientOptions.TimeProvider`）の XML ドキュメントに、偽の時計は進める必要があると書くだけにするか（PR #367 の持ち主のレビューの S1。進めない偽の時計を渡したアプリのテストでは、Windows で置き換えが読み手に断られると、待ちが終わらず、クライアントが端末のロックを持ったまま戻らない）。V1d24 のあと、V1d25 の前に置く |
 | V1d24b | V1d5 の作業（PR #382）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行（Issue #380）。リースの「答えのないリクエスト」の一覧が、16 件になるといちばん古いものを落とし、効いている `jti` を失うことがあるのを確かめて直す。この行の Grill で決める点: 答えを 16 回続けて差し替える中継で、効いている `jti` が押し出され、そのあとの更新が複製と判定されることを走らせた結果。上限に達したときの扱い（アクティベーションの一覧と同じに、落とさずに送るのをやめるか。そのときのリースの状態と誤りのコード）。上限の数。V1d24a のあと、V1d25 の前に置く |
 | V1d25 | PR #334 の問 11 の持ち主の決定で足した行（Issue #344）。オンプレミスのサーバーの、V1d の低の指摘を片付ける（F32、F35）。この行の Grill で決める点: 指摘ごとに、直すか、§5.4 に書くか（書くなら持ち主に聞く）。直し方。同じ種類をどこまで探すか。F32 は、設計が `detail` に何を書くと決めているかを、先に読む。V1d のあと、V1e の前に置く |
-| V1d26 | PR #334 の問 11 の持ち主の決定で足した行（Issue #345）。サービスの、V1d の低の指摘を片付ける（F38〜F45）。この行の Grill で決める点: 指摘ごとに、直すか、§5.4 に書くか（書くなら持ち主に聞く）。直し方。同じ種類をどこまで探すか。F43 は、PostgreSQL で走らせてから決める。F45 は、設計のとおりかを先に読む。V1d のあと、V1e の前に置く |
+| V1d26 | PR #334 の問 11 の持ち主の決定で足した行（Issue #345）。サービスの、V1d の低の指摘を片付ける（F38〜F45）。この行の Grill で決める点: 指摘ごとに、直すか、§5.4 に書くか（書くなら持ち主に聞く）。直し方。同じ種類をどこまで探すか。F43 は、PostgreSQL で走らせてから決める。F45 は、設計のとおりかを先に読む。V1d12 の Grill の問 12-2 の持ち主の決定（2026-11-13）で足した点（Issue #385）: リースの更新（`POST /v1/leases/{id}/renew`）で、`seq` が -1 か `null` のときの答えの `detail` の文が「activation request」と言うのを、リースのリクエストの文に直すか。同じ処理を呼ぶリースのほかの経路があるか。V1d のあと、V1e の前に置く |
 | V1d26a | V1d4 の作業（PR #377）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行（Issue #376）。`elm-service` の管理 API が、経路の `{id}` の文字を、形と長さを確かめずに監査の行の `target` にすることを確かめて直す。この行の Grill で決める点: 管理 API の `{id}` を取る経路のすべてを読み、長い文字や形の違う文字を送って、監査の行を確かめた結果。`RouteText` と監査のログが、長さや形を限っているか。形に合わない ID の答え（`elm-server` の V1d4 と同じに、探さずに `404` にするか）と、そのときの `target`。V1d26 のあと、V1d27 の前に置く |
 | V1d27 | PR #334 の問 11 の持ち主の決定で足した行（Issue #346）。`elm` の、V1d の低の指摘を片付ける（F21、F30、F31、T15-3）。この行の Grill で決める点: 指摘ごとに、直すか、§5.4 に書くか（書くなら持ち主に聞く）。直し方。同じ種類をどこまで探すか。V1d のあと、V1e の前に置く |
 | V1d28 | PR #334 の問 8、問 9、問 11 の持ち主の決定で足した行（Issue #347）。ワークフローとリポジトリの設定の、V1d の低の指摘を片付ける（F23〜F27。Dependabot の警告と、プライベートな脆弱性報告を、持ち主が有効にする）。この行の Grill で決める点: Dependabot のセキュリティの更新も有効にするか。CodeQL の開いている 2 件と、木にない 4 つのワークフローの扱い。`nuget.config` の、取得元の対応づけの形。V1d のあと、V1e の前に置く |
@@ -5637,6 +5642,29 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - `ActivationClient.Keep` は、オンラインの有効化・更新・試用の答えを、ファイルがこのインストールで検証に通れば保存する。答えの有効化 ID と `seq` を、持っているものと比べない。ライセンストークンは、オンラインでは要求に結ばれていない（`areq` はオフラインだけ）。コードを読んだだけで、測っていない（Issue #379）。
     - リースの答えのない要求の一覧（`Lease.AddUnanswered`）は、16 件を超えると古いものから落とす。有効化の一覧は、16 件で送るのをやめる（§12.6.2）。問 5-5 でこの一覧に入る `jti` が増えたので、中継が答えを 16 回続けて差し替えると、効く `jti` が落ち、サーバーが複製と判定しうる（Issue #380）。
     - 再試行に返るトークンが、入れ替える前のサーバーライセンスのもとで出したものだと、クライアントは `slic` の違いで断り続け、リースは期限で失われる。ヘッダーと `slic` が違いうることは §12.7.1 に書いてあり、この行で変えていない。
+- V1d12 の Grill（Issue #330 に記録した。問 12-1 と問 12-2。持ち主の決定はどちらも推奨案 A。2026-11-13）: `elm-service` の貸し出しの、0 以下の席の数を断る検査にテストを足す（V1d の指摘 R8-2）。製品のコードは変えない。退けた案は design-decisions.md にある。
+  - 測った事実（`origin/main` の db7a7bb）:
+    - `ElmService.Leases.cs` の `Math.Clamp(request.Count, 0, int.MaxValue)` の下限 0 を 1 にする変異と、この `Math.Clamp` を `unchecked` の変換にする変異は、`ElasticLM.Service.Tests` で落ちなかった。下限を 1 にした変異の下で、`count` 0 と -1 が `201` になった。
+    - 変えていないコードは、0 以下の `count` を `400` と `ELM_INVALID_ARGUMENT` で断る。
+    - 32 ビットの整数に収まらない `count` は、`elm-service` が `ELM_INVALID_ARGUMENT` で、`elm-server` が `ELM_MALFORMED` で断る。
+  - 持ち主が決めたこと:
+    - 問 12-1: 2 つのサーバーの違いは、そのままにする。§12.7.1 の違いの一覧に書いて、それぞれテストで確かめる。
+    - 問 12-2: 行の外で見つけた、答えの `detail` の文（リースの更新で、`seq` が -1 か `null` のときの文が「activation request」と言う）は、Issue #385 にして、V1d26 の Grill の点に足した（§20.7 の表の V1d26 の行）（退けた案: この行で直す）。
+  - こちらが決めたこと:
+    - `elm-service` のテストは SQLite だけにする。検査は、データベースごとの SQL の前にある。
+    - 通る側（`count` 1 と、機能の席数ちょうど）も確かめる。
+    - `elm-server` の HTTP のテストに、`count` -1 と、32 ビットに収まらない値を足す。
+    - `elm-service` が、64 ビットに収まらない `count`（9223372036854775808 と -9223372036854775809）を `ELM_MALFORMED` で断ることと、64 ビットの両端の値（9223372036854775807 と -9223372036854775808）を `ELM_INVALID_ARGUMENT` で断ることも確かめる。これは Issue の記録にはなく、実装とそのレビューのときに足した。§12.7.1 が、`ELM_INVALID_ARGUMENT` になるのを 64 ビットに収まる値までと書くためである。
+  - 足したテスト:
+    - `ElmServiceLeasesTests.Acquire_CountBelowOneOrAboveTheSeats_IsRefusedWithoutALease`: 2 席の機能に、`count` 0、-1、-2147483648、-2147483649、2147483648、4294967297、3、9223372036854775807、-9223372036854775808、9223372036854775808、-9223372036854775809 を 1 つずつ送る。最後の 2 つ（64 ビットに収まらない値）は `400` と `ELM_MALFORMED`、ほかは `400` と `ELM_INVALID_ARGUMENT` で、どの場合もリースの行は 0 である。
+    - `ElmServiceLeasesTests.Acquire_CountAtEachBound_IsGranted`: 2 席の機能に、`count` 1 と 2 を送る。`201` で、リースの席の数は送った値である。
+    - `ServerProtocolTests.Bodies_AreLimitedAndChecked` に足した場合: `count` -1 は `ELM_INVALID_ARGUMENT`、2147483648、-2147483649、4294967297 は `ELM_MALFORMED`。
+  - 変異の確かめ（テストを足したあと。どの変異もビルドは通った。レビューのあとでテストの場合を足してから、はじめの 3 つを `ElasticLM.Service.Tests` でやり直した）:
+    - `Math.Clamp` の下限 0 を 1 にする: `Acquire_CountBelowOneOrAboveTheSeats_IsRefusedWithoutALease` の 0、-1、-2147483648、-2147483649、-9223372036854775808 の 5 つが落ちる。
+    - `Math.Clamp` を `unchecked((int)request.Count)` にする: 同じテストの 4294967297 が落ちる（32 ビットに切ると 1 になり、`201` になる）。
+    - `LeaseRules.CheckRequest` から `count < 1 ||` を外す: 同じテストの 0、-1、-2147483648、-2147483649、-9223372036854775808 の 5 つと、`Bodies_AreLimitedAndChecked`（`count` 0 の行）と、`LeaseEngineTests.Acquire_Count_MustBeWithinTheFeatureSeats` の 0 と -1 が落ちる。
+    - `LeaseRules.CheckRequest` の `count < 1` を `count == 0` にする: `Bodies_AreLimitedAndChecked`（足した `count` -1 の行）と、`Acquire_Count_MustBeWithinTheFeatureSeats` の -1 が落ちる。`elm-service` のテストは落ちない。`elm-service` は負の値を 0 に置き換えてから検査にかけるので、この変異では答えが変わらない。
+    - `elm-server` の `AcquireBody.Count` を 64 ビットにして、`unchecked` の変換で 32 ビットに切る: `Bodies_AreLimitedAndChecked`（足した `count` 2147483648 の行）が落ちる（`ELM_MALFORMED` でなく `ELM_INVALID_ARGUMENT` になる）。
 - V1d8 の Grill（Issue #326 に記録した。問 8-1〜問 8-4。持ち主の決定はどれも推奨案 A。2026-11-13）: 前の利用ログのファイルの最後の行が署名の行として読めないとき、またはファイル名の日時が実在しないとき、`elm-server` と `elm-service` が、処理されない例外で起動しないことを直す（V1d の指摘 F14）。借り出しの記録と検証（`elm log verify`）の同じ形も直す（V1d の指摘 F20 のうち、ログの読み手の分）。退けた案は design-decisions.md にある。
   - 測った事実（Grill の前。Windows、SDK 10.0.404、Debug）:
     - 前の利用ログのファイルの最後の行が `[]`、`"x"`、`123`、`null`、`true` か、`type` や `sig` が対のないサロゲートのとき、`SignedLog.Open` が `InvalidOperationException` を出し、`elm-server` も `elm-service` も起動しない（プロセスは、処理されなかった例外で終わる）。`{}` と JSON でない行は、直しの前から読み飛ばされ、その前の署名につながる。
