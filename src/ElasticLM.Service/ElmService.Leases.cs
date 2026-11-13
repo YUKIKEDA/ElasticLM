@@ -529,6 +529,15 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", RouteText(context, "id")).ConfigureAwait(false);
         }
 
+        // design §18.1, §18.2 (V1d9a): the product's code for the usage line is read before the transaction, as the device's
+        // release reads it, so that nothing after the commit can fail.
+        string? productCode = null;
+        if (_usage is not null)
+        {
+            (_, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
+            productCode = product.Code;
+        }
+
         DateTimeOffset now = Time.GetUtcNow();
         string detail = AuditLog.Detail(w =>
         {
@@ -567,12 +576,9 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", found.Id).ConfigureAwait(false);
         }
 
-        if (_usage is not null)
+        if (productCode is not null)
         {
-            // design §18.2 (V1d9): the transaction committed the row; a read that fails for the usage line adds no second one.
-            Progress(context).Recorded = true;
-            (_, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, context.RequestAborted).ConfigureAwait(false);
-            ReleasedLine(found, product.Code, "admin");
+            ReleasedLine(found, productCode, "admin");
         }
 
         context.Response.StatusCode = StatusCodes.Status204NoContent;

@@ -217,9 +217,13 @@ internal sealed partial class ElmService
                         w.WriteString("issuer", result.Identity!.Issuer);
                         w.WriteString("subject", result.Identity.Subject);
                     });
-                    await ProblemAsync(context, ErrorCode.Forbidden, "The access token's claims map to no role.").ConfigureAwait(false);
                     var refused = new AuditEntry(AuditActors.Oidc, result.Caller?.ActorId, action, null, "ELM_FORBIDDEN", ip, detail);
-                    await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                    await AuditedRefusalAsync(
+                            context,
+                            () => ProblemAsync(context, ErrorCode.Forbidden, "The access token's claims map to no role."),
+                            refused
+                        )
+                        .ConfigureAwait(false);
                     return;
                 }
 
@@ -230,11 +234,14 @@ internal sealed partial class ElmService
                 (Caller? found, bool csrf) = await AuthenticateSessionAsync(context).ConfigureAwait(false);
                 if (csrf)
                 {
-                    await ProblemAsync(context, ErrorCode.Forbidden, "The request lacks the CSRF header or comes from another site.")
-                        .ConfigureAwait(false);
                     string detail = AuditLog.Detail(w => w.WriteString("reason", "csrf"));
                     var refused = new AuditEntry(found!.ActorType, found.ActorId, action, null, "ELM_FORBIDDEN", ip, detail);
-                    await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+                    await AuditedRefusalAsync(
+                            context,
+                            () => ProblemAsync(context, ErrorCode.Forbidden, "The request lacks the CSRF header or comes from another site."),
+                            refused
+                        )
+                        .ConfigureAwait(false);
                     return;
                 }
 
@@ -292,33 +299,31 @@ internal sealed partial class ElmService
                     outcome = await operation(context, caller).ConfigureAwait(false);
                 }
             }
-            catch (Exception) when (!progress.Recorded)
+            catch (Exception e) when (!progress.Recorded)
             {
-                // design §18.2 (V1d9): the row of a call that ended with an exception. The caller cut the connection when the
-                // request's token is canceled; anything else is the service's failure. The row is written with a token of its
-                // own, since the request's may be canceled, and the exception goes on, so that the caller never takes a cut
-                // answer for a whole one.
-                ErrorCode code = context.RequestAborted.IsCancellationRequested ? ErrorCode.NetworkError : ErrorCode.InternalError;
+                // design §18.2 (V1d9): the row of a call that ended with an exception, written with a token of its own, since
+                // the request's may be canceled.
                 var failed = new AuditEntry(
                     caller.ActorType,
                     caller.ActorId,
                     action,
                     progress.Target,
-                    ErrorCodes.ToWireName(code),
+                    ErrorCodes.ToWireName(FailureCode(context, e)),
                     ip,
                     progress.Detail
                 );
-                try
+                await AppendFailureAsync(failed).ConfigureAwait(false);
+                if (e is BadHttpRequestException bad)
                 {
-                    await Database.AppendAuditAsync(failed, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
-                }
-                catch (Exception e)
-                {
-                    // A row that cannot be written, whatever stopped it, goes to the service log and does not replace the
-                    // exception of the call.
-                    ServiceLog.RequestFailed(_log, e);
+                    // design §18.2 (V1d9a): Kestrel could not read the request the caller sent. That is the caller's doing, so
+                    // it ends with one line of the service's own and a closed connection, not with Kestrel's error entry and
+                    // its stack.
+                    ServiceLog.RequestUnreadable(_log, action, bad.StatusCode);
+                    context.Abort();
+                    return;
                 }
 
+                // Any other exception goes on, so that the caller never takes a cut answer for a whole one.
                 throw;
             }
 
@@ -619,6 +624,54 @@ internal sealed partial class ElmService
         {
             return true;
         }
+    }
+
+    // design §18.2 (V1d9, V1d9a): the result of a call that ended with an exception. The caller cut the connection when the
+    // request's token is canceled. Otherwise Kestrel's BadHttpRequestException, raised while the request body is read, gives
+    // the result by its status: 400 for a body of the wrong shape (a bad chunk, or fewer bytes than Content-Length), 408 for
+    // a body that came too slowly. Anything else is the service's failure.
+    internal static ErrorCode FailureCode(HttpContext context, Exception exception) =>
+        context.RequestAborted.IsCancellationRequested ? ErrorCode.NetworkError
+        : exception is BadHttpRequestException { StatusCode: StatusCodes.Status400BadRequest } ? ErrorCode.Malformed
+        : exception is BadHttpRequestException { StatusCode: StatusCodes.Status408RequestTimeout } ? ErrorCode.NetworkError
+        : ErrorCode.InternalError;
+
+    // design §18.2 (V1d9): a failure's row that cannot be written, whatever stopped it, goes to the service log and does not
+    // replace the exception of the call.
+    private async Task AppendFailureAsync(AuditEntry failed)
+    {
+        try
+        {
+            await Database.AppendAuditAsync(failed, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            ServiceLog.RequestFailed(_log, e);
+        }
+    }
+
+    // design §18.2 (V1d9a): a refusal made while the caller is authenticated, or at the admin UI's sign-in, is audited as a
+    // refusal after authentication is: the answer first, then the row, with a token of its own. When the answer met a closed
+    // connection, or its write threw, the row keeps the refusal's actor and detail and takes the result of a call that ended
+    // that way; a thrown exception goes on.
+    private async Task AuditedRefusalAsync(HttpContext context, Func<Task> answer, AuditEntry refused)
+    {
+        try
+        {
+            await answer().ConfigureAwait(false);
+        }
+        catch (Exception e)
+        {
+            await AppendFailureAsync(refused with { Result = ErrorCodes.ToWireName(FailureCode(context, e)) }).ConfigureAwait(false);
+            throw;
+        }
+
+        if (await AnswerMetClosedConnectionAsync(context).ConfigureAwait(false))
+        {
+            refused = refused with { Result = ErrorCodes.ToWireName(ErrorCode.NetworkError) };
+        }
+
+        await Database.AppendAuditAsync(refused, Time.GetUtcNow(), CancellationToken.None).ConfigureAwait(false);
     }
 
     // design §18.2 (V1d9): what the wrapper reads when the operation ends with an exception.

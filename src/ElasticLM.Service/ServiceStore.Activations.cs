@@ -11,7 +11,7 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<T> WithLicenseAsync<T>(Guid id, Func<LicenseScope?, Task<T>> work, DateTimeOffset now, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(work);
-        return _db.InTransactionAsync(
+        return InWriteTransactionAsync(
             async tx =>
             {
                 // A self-assignment locks the row on PostgreSQL, as SELECT … FOR UPDATE would; SQLite holds the write lock (design §14.4).
@@ -72,7 +72,7 @@ internal sealed partial class ServiceStore<TDialect>
         ArgumentNullException.ThrowIfNull(fingerprints);
         try
         {
-            await _db.InTransactionAsync(
+            await InWriteTransactionAsync(
                     async tx =>
                     {
                         await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
@@ -156,7 +156,7 @@ internal sealed partial class ServiceStore<TDialect>
     }
 
     public override Task<bool> DeleteTrialAsync(Guid licenseId, AuditEntry audit, DateTimeOffset now, CancellationToken cancellationToken) =>
-        _db.InTransactionAsync(
+        InWriteTransactionAsync(
             async tx =>
             {
                 await tx.Delete(TrialFingerprintRow.Table)
