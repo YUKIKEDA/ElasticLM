@@ -10,6 +10,9 @@ public sealed class LicenseVerifierTests : IDisposable
 {
     private readonly TestIssuer _issuer = new();
 
+    /// <summary>Gets each part of a license file that carries a signature with each form of a token without a valid one.</summary>
+    public static TheoryData<string, string> PartsAndSignatureForms => SignatureForms.Cross("token", "certificate");
+
     public void Dispose() => _issuer.Dispose();
 
     /// <summary>
@@ -211,6 +214,53 @@ public sealed class LicenseVerifierTests : IDisposable
         };
 
         AssertError(expected, _issuer.Verifier().Verify(TestIssuer.File(token, _issuer.Certificate()), _issuer.Requirement()));
+    }
+
+    /// <summary>
+    /// A license token or a key certificate that carries no valid signature is refused as an error, not an exception: with
+    /// an empty signature part, with a signature that is not 64 bytes or not the key's, and with an alg other than ES256
+    /// (design §8.2 rules 3 and 5, §11.2 steps 3 and 4, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid license token and its certificate. One of the two, the token or the certificate, is put into a form of
+    ///   <see cref="SignatureForms"/> with the same payload: an empty signature part; the first 63 bytes of its signature; 64
+    ///   zero bytes; its signature and one more zero byte; alg none and an empty signature part; alg HS256 and an ES256
+    ///   signature of its own key over the changed header.
+    ///
+    /// Steps:
+    /// - Verify the file of the token and the certificate.
+    ///
+    /// Expected:
+    /// - For the token: ELM_BAD_SIGNATURE, "The license signature does not verify." for the four signatures and "The token
+    ///   algorithm is not ES256." for the two algs.
+    /// - For the certificate: ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for all six.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(PartsAndSignatureForms))]
+    public void Verify_TokenOrCertificateWithoutAValidSignature_IsRejected(string part, string form)
+    {
+        string token = _issuer.License();
+        string certificate = _issuer.Certificate();
+        (ErrorCode Code, string Message) expected;
+        if (part == "token")
+        {
+            token = SignatureForms.Change(token, form, SignatureForms.Es256(_issuer.Signing));
+            expected = (
+                ErrorCode.BadSignature,
+                SignatureForms.ChangesAlgorithm(form) ? "The token algorithm is not ES256." : "The license signature does not verify."
+            );
+        }
+        else
+        {
+            certificate = SignatureForms.Change(certificate, form, SignatureForms.Es256(_issuer.Root));
+            expected = (ErrorCode.UntrustedKey, "No trusted certificate certifies the license signing key.");
+        }
+
+        var invalid = Assert.IsType<LicenseVerificationResult.Invalid>(
+            _issuer.Verifier().Verify(TestIssuer.File(token, certificate), _issuer.Requirement())
+        );
+        Assert.Equal(expected, (invalid.Error.Code, invalid.Error.Message));
     }
 
     /// <summary>

@@ -856,7 +856,13 @@ ElasticLM のプログラムは、ヘッダーとペイロードの文字列を 
 
 1. コンパクト形式（`.` で区切った 3 つの base64url）だけを受け付ける。JSON 形式は受け付けない。
 2. ヘッダーに上の 3 つ以外のメンバー（`crit`, `jku`, `jwk`, `x5u`, `x5c` を含む）があれば拒否する（RFC 8725 §3.10 の鍵の注入を避ける）。
-3. `kid` で鍵を引く。鍵の記録が持つアルゴリズムと `alg` が一致しなければ拒否する（RFC 8725 §2.1, §3.1）。v1 では `ES256` でない `alg` を `ELM_BAD_SIGNATURE` で拒む（`CompactJws`）。
+3. `kid` で鍵を引く。鍵の記録が持つアルゴリズムと `alg` が一致しなければ拒否する（RFC 8725 §2.1, §3.1）。v1 では、`CompactJws.TryParse` が、`alg` が `ES256` でないトークンを、鍵を引く前に、署名の部分を見ずに断る。`alg` が `none` で署名の部分が空のトークンも、`alg` が `HS256` で ES256 の署名を持つトークンも、同じに断る。答えは、トークンを読む側ごとに違う（V1d14 の Grill の問 14-3、§20.7）。
+   - ライセンストークン（`LicenseVerifier`、§11.2）とリース（`LeaseVerifier` の、クライアントの検証と `elm-server` の回収。§12.7.5、§13.4）: `ELM_BAD_SIGNATURE`（「The token algorithm is not ES256.」）。
+   - 鍵の証明書（`CertificateSet.TryVerify`）: その証明書を候補にしない。候補がほかになければ、ライセンスとリースの検証は `ELM_UNTRUSTED_KEY` になり（§11.2 の手順 3、§12.7.5）、`elm-service` のログの検証は「No certificate on the line is certified for log by the trust store at the line's time.」の誤りになる（§18.1）。
+   - 証明（`ProofVerifier`。`elm-server` と `elm-service`、§12.2）: `401` と `ELM_PROOF_INVALID`（「The request proof is missing or not a valid elm-proof+jws.」）。証明でない文字列と同じ答えである。
+   - オフラインのファイル（`OfflineRequestFile.TryRead`、§12.8.4 の手順 3）: `400` と `ELM_MALFORMED`（「The file is not an elm-actreq+jws or elm-deact+jws.」）。
+   - `elm-server` の借り出しの記録のトークン（`LeaseVerifier.TryReadOwnLease`、§13.4）: 読まない。その借り出しは、記録から戻らない。
+   - ログの署名の行（`LogVerifier`、`elm log verify`、§18.1）: 「The signature line is not an elm-log+jws.」の誤りになる。
 4. 検証する関数は受け付ける `typ` を 1 つだけ持ち、一致しなければ拒否する（RFC 8725 §3.11）。
 5. 署名は IEEE P1363 形式（`r || s`、64 バイト）である（RFC 7518 §3.4）。DER は受け付けない。
 6. 署名は、受け取った `header.payload` の ASCII バイト列に対して検証する。ペイロードは署名の検証が済むまで JSON として解釈しない。
@@ -5482,6 +5488,34 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 空のパスを、`/` と同じに扱う（設計の独立レビューの指摘）。Kestrel は、要求の対象が `*` のとき、パスを空にする。ルーティングは、空のパスを `/` の経路に合わせるので、検査の前は、`OPTIONS *` が、画面の `404` でなくルーティングの `405` になっていた。ハンドラーは動かず、本文も読まれない。この行と同じ種類（検査が、ルーティングと違う形で比べる）なので、ここで直した。
     - 1 MiB を超える本文の `503` は、検査のあとでは起きない。メソッドの違う要求は、ハンドラーに届く前に画面の `404` になり、本文は読まれない（テストは、`Content-Length` が 921600 と 2097152 で、本文を 1,000 バイトだけ送った `POST /AUTH/CALLBACK` が、`404` になることを確かめる）。`GET` の要求の本文は、ハンドラーが読まない。
   - 同じ種類を探した範囲: `src/ElasticLM.Service` と `src/ElasticLM.Server` の、`Request.Path`、`PathString`、`StartsWithSegments` を使う所のすべて。大文字と小文字を区別していたのは、`ElmService.Web.cs` の `RefuseWebPath` の `switch` だけである。`ElmService.Admin.cs` の `StartsWithSegments`（`/v1/admin`、`/v1/activations` など）と `ElmService.AdminUi.cs` の `/assets` は、区別しない。証明の宛先を作る所（`ElmService.Client.cs`、`ElmServer.cs`）は、検査でない。
+- V1d14 の Grill（Issue #332 に記録した。問 14-1〜問 14-3。持ち主の決定はどれも推奨案 A。2026-11-13）: 製品のどの検証にも、署名の部分が空のトークンを断るテストを足す（V1d の指摘 R8-4）。製品のコードは変えない。退けた案は design-decisions.md にある。
+  - 測った事実（`origin/main` の db7a7bb、Windows 11、SDK 10.0.404、Release）:
+    - `CompactJws` に、署名の長さを見る検査はない。空の署名と、64 バイトでない署名を断るのは、`CompactJws.VerifyEs256` が呼ぶ BCL の `ECDsa.VerifyData`（`DSASignatureFormat.IeeeP1363FixedFieldConcatenation`）だけである。`alg` が `ES256` でないトークンは、その前に `CompactJws.TryParse` が断る。
+    - `VerifyEs256` を、署名が空なら通す形（`signature.Length == 0 || key.VerifyData(…)`）に変えても、この行の前のテストは、8 つのテストのプロジェクトのどれでも落ちなかった（Issue #332 の Grill の記録）。
+    - 変えていないコードは、下の一覧のどの検証でも、署名の部分が空のトークン、63 バイト、64 バイトの 0、65 バイトの署名、`ES256` でない `alg` のトークンを断った。例外は出なかった。確かめたのは Windows だけで、Linux と macOS は CI が流す。
+  - 持ち主が決めたこと:
+    - 問 14-1: `CompactJws` に長さの検査は足さない。0、63、64（誤った値）、65 バイトの署名のテストを、3 つの OS で流す。どれかの OS で例外が出たら、`bug` の Issue にして直す。
+    - 問 14-2: Issue が挙げた検証（ライセンス、リース、鍵の証明書、証明、オフラインのファイル）に、ログの署名（`elm log verify`）、回収、借り出しの記録、`elm-server` の証明、SaaS 型のリースの経路の証明書を足す。トークンの種類ごとに、`alg` を替えた場合も足す。
+    - 問 14-3: `alg` が `ES256` でないときの、いまの答えをテストで留め、§8.2 の規則 3 を、読む側ごとの答えに直した。読む側を `ELM_BAD_SIGNATURE` にそろえることはしない。
+  - こちらが決めたこと:
+    - 署名のないトークンの形は 6 つで、テストの共通の型 `SignatureForms`（`tests/ElasticLM.Licensing.Tests`。ほかの 4 つのテストのプロジェクトは同じファイルを取り込む）が作る。どの形も、テストが作った正しいトークンのペイロードを保つ。`empty`（署名の部分が空で、トークンは 2 つ目の `.` で終わる）、`63-bytes`（正しい署名の先頭の 63 バイト）、`64-zero-bytes`（64 バイトの 0）、`65-bytes`（正しい署名に 0 を 1 バイト足す）、`alg-none-empty`（`alg` が `none` で署名の部分が空）、`alg-hs256-signed`（`alg` が `HS256` で、変えたヘッダーとペイロードに、そのトークンの鍵で付けた ES256 の署名を持つ。誤りは `alg` だけになる）。
+    - テストは、検証の道と形の組ごとに 1 つの場合にした（theory）。1 つのテストの中で形を順に試すと、最初に落ちた形が残りを隠し、変異がどの形で落ちたかを読めない。`elm-server` の回収の HTTP のテストだけは、6 つの形を 1 つの要求で送り、答えのコードの並びを 1 度に比べる。
+    - どのテストも、形を変える前のトークンが受け付けられることを確かめる。HTTP のテストは、断られた要求のあとに、同じ要求を正しい署名で送り、受け付けられることも確かめる（断られた要求は、席も、有効化も、ノンスも、更新番号も動かしていない）。
+    - `alg-hs256-signed` の署名は、`HS256` の MAC ではなく、ES256 の署名にした。MAC（32 バイト）にすると、`alg` のほかに、署名の長さも誤りになる。誤りを `alg` だけにすれば、`alg` の検査を外した変異が、この形で落ちる（下の変異の確かめ）。
+  - 検証と、テストが留める答え（形 `empty`、`63-bytes`、`64-zero-bytes`、`65-bytes` の答え。`alg-` の 2 つの形の答えは §8.2 の規則 3 にある）:
+    - ライセンストークン（`LicenseVerifier.Verify`）: `ELM_BAD_SIGNATURE`「The license signature does not verify.」。その鍵の証明書: `ELM_UNTRUSTED_KEY`「No trusted certificate certifies the license signing key.」（`LicenseVerifierTests.Verify_TokenOrCertificateWithoutAValidSignature_IsRejected`）。
+    - リース（`LeaseTests.Verify_LeaseWithoutAValidSignature_IsRejected`）: オンプレミスのリースのクライアントの検証（`VerifyOnPremises`）と、サーバー自身のリースの回収の検証（`VerifyOwnLease`）は `ELM_BAD_SIGNATURE`「The lease is not signed by the server's key.」。借り出しの記録のトークン（`TryReadOwnLease`）は読まない。SaaS 型のリース（`VerifyHosted`）は `ELM_BAD_SIGNATURE`「The lease signature does not verify.」、その証明書は `ELM_UNTRUSTED_KEY`「No trusted certificate certifies the lease signing key.」。
+    - `elm-server` の `POST /v1/leases/reclaim`（`ServerProtocolTests.Reclaim_LeaseWithoutAValidSignature_IsRefused`）: `200` で、6 つのトークンのどれも `ELM_BAD_SIGNATURE`。サーバーはリースを持たない。
+    - 証明（`ProofVerifier.Verify`）: `ELM_PROOF_INVALID`「The request proof signature does not verify.」。鍵を、証明の `jwk` から得る道、呼び出す側が渡す道、検証する側が覚えている道の 3 つ（`ProofTests.Verify_ProofWithoutAValidSignature_IsRefused`）。`elm-server` では `401` で、取得（`jwk` の道）と更新（覚えている道）（`ServerProtocolTests.Proofs_WithoutAValidSignature_AreRefused`）。`elm-service` では `401` で、有効化（`jwk` の道）と、更新（有効化したノードの覚えている道と、同じデータベースの 2 つ目のノードの、有効化の鍵を渡す道）（`ElmServiceActivationsTests.Proof_WithoutAValidSignature_IsRefused`）。
+    - `elm-service` の `/v1/offline`（`ElmServiceOfflineTests.Offline_FileWithoutAValidSignature_IsRefused`）: 有効化の要求と更新の要求は `400` と `ELM_PROOF_INVALID`「The request's signature does not verify with its key.」、解除の証明は `400` と `ELM_PROOF_INVALID`「The proof is not signed with the activation's installation key.」。
+    - ログの署名の行（`LogVerifier.Verify`。`SignedLogTests.Verify_SealWithoutAValidSignature_IsNotIntact`）: 誤りが 1 つ出る。サーバーのログは「The signature is not made with the server's key.」、`elm-service` のログは「The signature is not made with a key certified for log.」。`elm-service` のログの証明書は「No certificate on the line is certified for log by the trust store at the line's time.」（`SignedLogTests.ServiceLog_CertificateWithoutAValidSignature_IsRefused`）。
+  - 変異の確かめ（`src/ElasticLM.Licensing/CompactJws.cs` を変え、ソリューションを Release でビルドし、触った 5 つのテストのプロジェクトを流して、戻した。足した場合は 127 で、形ごとに 21 と、回収の HTTP のテストが 1 つである）:
+    - 署名が空なら通す（`signature.Length == 0 || key.VerifyData(…)`）: 22 が落ちた。形 `empty` の 21 のすべてと、回収の HTTP のテストである。通った `empty` の場合はない。ほかのテストは落ちなかった。
+    - `ES256` の `alg` の検査を外す（`header.Alg != Es256 && header.Alg.Length == 0`）: 形 `alg-hs256-signed` の 21 のすべて、形 `alg-none-empty` の 17、回収の HTTP のテスト、前からある `Verify_JwsRuleBroken_IsRejected` の 2 つが落ちた。`alg-none-empty` で落ちなかったのは 4 つで、ライセンスの証明書、SaaS 型のリースの証明書、`elm-service` のログの証明書、借り出しの記録である。この 4 つは、`alg` の検査を外しても、空の署名を `VerifyData` が断り、答えが変わらない（証明書は候補にならず、借り出しは読まれない）。
+    - 2 つを合わせる: 形 `alg-none-empty` の 21 のすべてが落ちた（上の 4 つも落ちた）。落ちたのは合わせて 66 である（3 つの形の 63、回収の HTTP のテスト、`Verify_JwsRuleBroken_IsRejected` の 2 つ）。
+  - テストが届かない道: `elm-server` の HTTP では、呼び出す側が鍵を渡す道（`ProofVerifier.TryVerifySignature` の `knownKey`）に届かない。リースを取った証明が鍵を覚えさせ、再起動のあとは回収の証明が `jwk` を持つので、覚えた鍵が先に使われる。この道は `ProofTests` と、`elm-service` の 2 つ目のノードのテストが通る。回収の HTTP のテストは、6 つの形を 1 つの並びで比べるので、変異がどの形で落ちたかは、`LeaseTests` の `VerifyOwnLease` の場合で読む。
+  - 同じ種類を探した範囲: `src/` の `CompactJws.TryParse`、`CompactJws.Verify`、`VerificationKey.Verify`、`TryVerifyWithEmbeddedKey`、`VerifyData` を呼ぶ所のすべて。署名を確かめる所は、上の一覧で尽きる。`LicenseIssuer.Check` と `SignedLog.TryReadAuth` は、`CompactJws.TryParse` で読むだけで、署名を確かめない（発行する側が自分の証明書のファイルを読む所と、ログを書く側が番号を続ける所）。`FileClockGuard`（§11.4）は JWS でなく、`VerifyData` の前に、署名が 64 バイトであることを自分で確かめる。OIDC の ID トークンの署名のない場合は、V1c16 が扱った。
+  - この行の外で見つけたもの: 時計の守りのファイル（`FileClockGuard`）に、署名のメンバーがない場合と、署名が 64 バイトでない場合のテストが見つからない（`FileClockGuardTests` は `lastSeen` を書き換えた場合を、`InstallationClockGuardTests` は別の鍵の場合を持つ。変異では確かめていない）。利用者の文書の `docs/guide/reference/formats.md` と日本語の頁の「JWS rules」の表は、`alg` がほかの値なら `ELM_BAD_SIGNATURE` になると、どのトークンについても書く。証明、オフラインのファイル、鍵の証明書、ログの署名の行の答えは、§8.2 の規則 3 のとおり、それと違う。どちらも、この行では変えていない。
 
 ## 21. 依存
 
