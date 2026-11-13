@@ -320,7 +320,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     ///   ELM_FINGERPRINT_UNAVAILABLE (400) for the borrow without fingerprints; ELM_MALFORMED for borrows out of range and ELM_BORROW_NOT_ALLOWED (past the size check) for 100 years; the reclaim is
     ///   ELM_MALFORMED. The 32-character version is ELM_INVALID_ARGUMENT (past the size check); every field at its limit is 201 and one byte
     ///   over is ELM_MALFORMED; the renewal at the limits is 200
-    ///   and the three over it are ELM_MALFORMED.
+    ///   and the three over it are ELM_MALFORMED. At the end the server holds 2 leases, the two that were granted.
     /// </remarks>
     [Fact]
     public async Task Bodies_AreLimitedAndChecked()

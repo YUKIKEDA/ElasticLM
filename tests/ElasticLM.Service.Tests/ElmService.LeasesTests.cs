@@ -13,6 +13,8 @@ public sealed class ElmServiceLeasesTests
 {
     private const string Cloud = "\"floating\":\"cloud\"";
     private const string TwoSeats = """[{"code":"core","seats":2}]""";
+    private const string BadSeatCount = "The seat count must be at least 1 and at most the feature's seats.";
+    private const string BadLeaseRequest = "The request body is not a valid lease request.";
 
     /// <summary>
     /// A cloud-floating license lends a seat as a lease token the client verifies with the service's certificates; the
@@ -508,7 +510,7 @@ public sealed class ElmServiceLeasesTests
 
     /// <summary>
     /// A seat count below 1 or above the feature's seats is refused and makes no lease, also when the count is outside
-    /// 32 bits; a count outside 64 bits is not a lease request (design §12.7.1, §12.7.6).
+    /// 32 bits; a count outside 64 bits is refused as malformed (ELM_MALFORMED) (design §12.7.1, §12.7.6).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -516,25 +518,29 @@ public sealed class ElmServiceLeasesTests
     ///   SQL of each engine).
     ///
     /// Steps:
-    /// - Acquire core with count 0; -1; -2147483648 (the least 32-bit value); -2147483649, 2147483648, and 4294967297
-    ///   (outside 32 bits; cut to 32 bits the last is 1); 3 (one above the seats); 9223372036854775808 (outside 64 bits).
-    ///   Then list the license's leases and count the rows of leases.
+    /// - Acquire core with count 0; -1; -2147483648 (the smallest 32-bit value); -2147483649 and 2147483648 (outside
+    ///   32 bits); 4294967297 (2^32 + 1, which is 1 when cut to 32 bits); 3 (one above the seats); 9223372036854775807
+    ///   and -9223372036854775808 (the largest and the smallest 64-bit value); 9223372036854775808 and
+    ///   -9223372036854775809 (outside 64 bits). Then list the license's leases and count the rows of leases.
     ///
     /// Expected:
     /// - 400 ELM_INVALID_ARGUMENT "The seat count must be at least 1 and at most the feature's seats." for each count
-    ///   inside 64 bits; 400 ELM_MALFORMED "The request body is not a valid lease request." for the one outside; the list
+    ///   inside 64 bits; 400 ELM_MALFORMED "The request body is not a valid lease request." for the two outside; the list
     ///   is empty and the table has no row.
     /// </remarks>
     [Theory]
-    [InlineData("0", "ELM_INVALID_ARGUMENT")]
-    [InlineData("-1", "ELM_INVALID_ARGUMENT")]
-    [InlineData("-2147483648", "ELM_INVALID_ARGUMENT")]
-    [InlineData("-2147483649", "ELM_INVALID_ARGUMENT")]
-    [InlineData("2147483648", "ELM_INVALID_ARGUMENT")]
-    [InlineData("4294967297", "ELM_INVALID_ARGUMENT")]
-    [InlineData("3", "ELM_INVALID_ARGUMENT")]
-    [InlineData("9223372036854775808", "ELM_MALFORMED")]
-    public async Task Acquire_CountOutsideOneToTheSeats_IsRefusedWithoutALease(string count, string code)
+    [InlineData("0", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-1", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-2147483648", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-2147483649", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("2147483648", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("4294967297", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("3", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("9223372036854775807", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("-9223372036854775808", "ELM_INVALID_ARGUMENT", BadSeatCount)]
+    [InlineData("9223372036854775808", "ELM_MALFORMED", BadLeaseRequest)]
+    [InlineData("-9223372036854775809", "ELM_MALFORMED", BadLeaseRequest)]
+    public async Task Acquire_CountBelowOneOrAboveTheSeats_IsRefusedWithoutALease(string count, string code, string detail)
     {
         await using TestService test = TestService.Open("sqlite");
         (ElmService service, HttpClient admin, _) = await StartAsync(test);
@@ -546,10 +552,6 @@ public sealed class ElmServiceLeasesTests
             $$"""{"licenseKey":"{{key}}","product":"app","feature":"core","count":{{count}}}"""
         );
 
-        string detail =
-            code == "ELM_MALFORMED"
-                ? "The request body is not a valid lease request."
-                : "The seat count must be at least 1 and at most the feature's seats.";
         AssertProblem(answer, HttpStatusCode.BadRequest, code, detail);
         Assert.Equal(0, (await TestService.GetAsync(admin, $"v1/admin/licenses/{licenseId}/leases")).GetProperty("items").GetArrayLength());
         Assert.Equal(0, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
