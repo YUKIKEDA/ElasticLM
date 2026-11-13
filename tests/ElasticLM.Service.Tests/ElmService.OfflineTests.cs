@@ -3,6 +3,7 @@ using System.Net;
 using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 using static ElasticLM.Service.Tests.ElmServiceActivationsTests;
 
 namespace ElasticLM.Service.Tests;
@@ -15,6 +16,9 @@ public sealed class ElmServiceOfflineTests
 {
     private const long Day = 86_400;
     private const string NoActivation = "No activation has this ID; activate again.";
+
+    /// <summary>Gets each kind of offline file with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> FilesAndSignatureForms => SignatureForms.Cross("activation", "refresh", "deactivation");
 
     /// <summary>
     /// A request file activates, the same file gets the same answer, a refresh file gives the next sequence number, and a
@@ -241,6 +245,66 @@ public sealed class ElmServiceOfflineTests
             "ELM_PAYLOAD_TOO_LARGE",
             "The request body is larger than 64 KiB."
         );
+    }
+
+    /// <summary>
+    /// An offline file that carries no valid signature is refused and changes nothing, for an activation request, a refresh
+    /// request, and a deactivation proof: with an empty signature part, with a signature that is not 64 bytes or not the
+    /// key's, and with an alg other than ES256 (design §8.2 rules 3 and 5, §12.8, §12.8.4, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a device. For a refresh request and a deactivation proof, an activation of the device made by a request
+    ///   file; both name it with seq 1.
+    /// - The file of the case in a form of <see cref="SignatureForms"/> with the same payload: an empty signature part; the
+    ///   first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg none and an empty
+    ///   signature part; alg HS256 and an ES256 signature of the installation key over the changed header.
+    ///
+    /// Steps:
+    /// - Post the changed file, then the file itself.
+    ///
+    /// Expected:
+    /// - For the four signatures 400 ELM_PROOF_INVALID: "The request's signature does not verify with its key." for the two
+    ///   requests, "The proof is not signed with the activation's installation key." for the proof. For the two algs 400
+    ///   ELM_MALFORMED "The file is not an elm-actreq+jws or elm-deact+jws.".
+    /// - The file itself is accepted (200 for the requests, 204 for the proof), so the refused file stored no activation and
+    ///   no nonce, moved no sequence number, and freed no place.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(FilesAndSignatureForms))]
+    public async Task Offline_FileWithoutAValidSignature_IsRefused(string kind, string form)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core");
+        (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        using var device = TestDevice.Create(test, service);
+        string file = device.ActivationFile(key, TestDevice.Fingerprints());
+        if (kind != "activation")
+        {
+            DeviceAnswer activated = await device.OfflineAsync(file);
+            Assert.True(activated.Status == HttpStatusCode.OK, activated.Text);
+            file = kind == "refresh" ? device.RefreshFile(activated.ActivationId, 1) : device.DeactivationFile(activated.ActivationId, 1);
+        }
+
+        DeviceAnswer refused = await device.OfflineAsync(SignatureForms.Change(file, form, device.Key.Sign));
+
+        if (SignatureForms.ChangesAlgorithm(form))
+        {
+            AssertProblem(refused, HttpStatusCode.BadRequest, "ELM_MALFORMED", "The file is not an elm-actreq+jws or elm-deact+jws.");
+        }
+        else
+        {
+            string detail =
+                kind == "deactivation"
+                    ? "The proof is not signed with the activation's installation key."
+                    : "The request's signature does not verify with its key.";
+            AssertProblem(refused, HttpStatusCode.BadRequest, "ELM_PROOF_INVALID", detail);
+        }
+
+        DeviceAnswer accepted = await device.OfflineAsync(file);
+        Assert.True(accepted.Status == (kind == "deactivation" ? HttpStatusCode.NoContent : HttpStatusCode.OK), accepted.Text);
+        Assert.Equal(kind == "deactivation" ? 0L : 1L, await test.ScalarAsync("SELECT COUNT(*) FROM activations"));
     }
 
     /// <summary>

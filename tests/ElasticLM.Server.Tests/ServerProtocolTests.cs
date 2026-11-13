@@ -17,6 +17,9 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 {
     private readonly Deployment _deployment = new();
 
+    /// <summary>Gets each way the server gets a proof's key with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> KeySourcesAndSignatureForms => SignatureForms.Cross("embedded", "cached");
+
     public ValueTask DisposeAsync() => _deployment.DisposeAsync();
 
     /// <summary>
@@ -173,6 +176,45 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             Assert.StartsWith($"The server license '{heldPath}' cannot be read: ", unreadable, StringComparison.Ordinal);
             Assert.Equal(0, Codes(unreadable, Deployment.ServerKeyId(held)));
         }
+    }
+
+    /// <summary>
+    /// The server does not start on a server license whose token carries no valid signature: with an empty signature part,
+    /// with a signature that is not 64 bytes or not the signing key's, and with an alg other than ES256 (design §8.2 rules
+    /// 3 and 5, §13.1, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder with a server license on which a server starts and stops.
+    /// - The token in that file in a form of <see cref="SignatureForms"/> with the same payload and the same certificate: an
+    ///   empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg
+    ///   none and an empty signature part; alg HS256 and an ES256 signature of the signing key over the changed header.
+    ///
+    /// Steps:
+    /// - Start a server on the folder.
+    ///
+    /// Expected:
+    /// - ServerStartException "ELM_BAD_SIGNATURE: The server license does not verify: {reason} This server's installation
+    ///   key is {thumbprint}.", where the reason is "The license signature does not verify." for the four signatures and
+    ///   "The token algorithm is not ES256." for the two algs.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(SignatureForms.All), MemberType = typeof(SignatureForms))]
+    public async Task Start_ServerLicenseWithoutAValidSignature_Fails(string form)
+    {
+        string data = _deployment.NewFolder();
+        await (await _deployment.StartServerAsync(data)).DisposeAsync();
+        _deployment.ChangeServerLicenseToken(data, (token, sign) => SignatureForms.Change(token, form, sign));
+
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() =>
+            ElmServer.StartAsync(_deployment.Settings(data), _deployment.HostOptions(), TestContext.Current.CancellationToken)
+        );
+
+        string reason = SignatureForms.ChangesAlgorithm(form) ? "The token algorithm is not ES256." : "The license signature does not verify.";
+        Assert.Equal(
+            $"ELM_BAD_SIGNATURE: The server license does not verify: {reason} This server's installation key is {Deployment.ServerKeyId(data)}.",
+            refused.Message
+        );
     }
 
     /// <summary>
@@ -562,6 +604,101 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A request whose proof carries no valid signature is refused and changes nothing, both when the proof brings its key
+    /// and when the server already holds the key: with an empty signature part, with a signature that is not 64 bytes or
+    /// not the key's, and with an alg other than ES256 (design §8.2 rules 3 and 5, §12.2, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its window; an installation key. Either the server has not seen the key and the request is an
+    ///   acquire whose proof embeds it, or the key holds a lease and the request is that lease's renewal with sequence
+    ///   number 1, whose proof carries no key.
+    /// - A valid proof of the request on a fresh nonce, in a form of <see cref="SignatureForms"/> with the same payload: an
+    ///   empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg
+    ///   none and an empty signature part; alg HS256 and an ES256 signature of the installation key over the changed header.
+    ///
+    /// Steps:
+    /// - Send the request with the changed proof, then with a good proof.
+    ///
+    /// Expected:
+    /// - 401 ELM_PROOF_INVALID: "The request proof signature does not verify." for the four signatures, "The request proof
+    ///   is missing or not a valid elm-proof+jws." for the two algs.
+    /// - The good request succeeds (201 for the acquire, 200 for the renewal) and the server holds one lease, so the refused
+    ///   request took no seat and moved no sequence number.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(KeySourcesAndSignatureForms))]
+    public async Task Proofs_WithoutAValidSignature_AreRefused(string keyFrom, string form)
+    {
+        await using Raw raw = await Raw.StartAsync(_deployment);
+        bool embedded = keyFrom == "embedded";
+        string path = "v1/leases";
+        byte[] body = Raw.Json("""{"feature":"pro","count":1}""");
+        if (!embedded)
+        {
+            path = $"v1/leases/{await raw.AcquireAsync()}/renew";
+            body = Raw.Json("""{"seq":1}""");
+        }
+
+        string proof = raw.Proof(HttpMethod.Post, path, body, await raw.NonceAsync(), includeKey: embedded);
+        using HttpResponseMessage refused = await raw.SendAsync(HttpMethod.Post, path, body, SignatureForms.Change(proof, form, raw.Sign));
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        string detail = SignatureForms.ChangesAlgorithm(form)
+            ? "The request proof is missing or not a valid elm-proof+jws."
+            : "The request proof signature does not verify.";
+        await Raw.AssertCodeAsync(refused, "ELM_PROOF_INVALID", detail);
+        using HttpResponseMessage accepted = await raw.SignedAsync(HttpMethod.Post, path, body, includeKey: embedded);
+        Assert.Equal(embedded ? HttpStatusCode.Created : HttpStatusCode.OK, accepted.StatusCode);
+        Assert.Equal(1, raw.Server.Engine.LeaseCount);
+    }
+
+    /// <summary>
+    /// After a restart the server takes back only a lease that carries its own signature: a token with an empty signature
+    /// part, with a signature that is not 64 bytes or not the server key's, or with an alg other than ES256 is refused and
+    /// holds no seat (design §8.2 rules 3 and 5, §13.4, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A lease of one seat that the server issued to an installation key; the server restarted on the same data folder,
+    ///   inside the lease's time.
+    /// - One copy of the lease token in each form of <see cref="SignatureForms"/>, with the same payload: an empty signature
+    ///   part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more zero byte; alg none and an
+    ///   empty signature part; alg HS256 and an ES256 signature of the server's installation key over the changed header.
+    ///
+    /// Steps:
+    /// - Reclaim the six copies in one request with the installation key's proof; reclaim the token itself.
+    ///
+    /// Expected:
+    /// - 200 with ELM_BAD_SIGNATURE for each copy, in order, and no lease on the server; then ELM_OK and one lease.
+    /// </remarks>
+    [Fact]
+    public async Task Reclaim_LeaseWithoutAValidSignature_IsRefused()
+    {
+        string data = _deployment.NewFolder();
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, data).TryLoadOrCreate(out InstallationKey? serverKey, out _));
+        using InstallationKey signer = serverKey!;
+        string keyFolder = _deployment.NewFolder();
+        ElmServer before = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(10));
+        string lease;
+        await using (Raw first = await Raw.StartAsync(_deployment, before, keyFolder))
+        {
+            lease = await first.AcquireTokenAsync();
+        }
+
+        await before.DisposeAsync();
+        ElmServer after = await _deployment.StartServerAsync(data);
+        await using Raw raw = await Raw.StartAsync(_deployment, after, keyFolder);
+        string[] unsigned = [.. SignatureForms.Names.Select(form => SignatureForms.Change(lease, form, signer.Sign))];
+
+        Assert.Equal(Enumerable.Repeat("ELM_BAD_SIGNATURE", unsigned.Length), await raw.ReclaimAsync(unsigned));
+        Assert.Equal(0, after.Engine.LeaseCount);
+        Assert.Equal(["ELM_OK"], await raw.ReclaimAsync([lease]));
+        Assert.Equal(1, after.Engine.LeaseCount);
+    }
+
+    /// <summary>
     /// Each source address may send rateLimit.perIp requests per second (design §13.8, T16).
     /// </summary>
     /// <remarks>
@@ -676,7 +813,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         public ElmServer Server { get; }
 
-        public static async Task<Raw> StartAsync(Deployment deployment, ElmServer? server = null)
+        public static async Task<Raw> StartAsync(Deployment deployment, ElmServer? server = null, string? keyFolder = null)
         {
             if (server is null)
             {
@@ -684,18 +821,22 @@ public sealed class ServerProtocolTests : IAsyncDisposable
                 deployment.Time.Advance(TimeSpan.FromMinutes(10));
             }
 
-            var store = new InstallationKeyStore("acme-cad", KeyScope.User, deployment.NewFolder());
+            var store = new InstallationKeyStore("acme-cad", KeyScope.User, keyFolder ?? deployment.NewFolder());
             Assert.True(store.TryLoadOrCreate(out InstallationKey? key, out _));
             return new Raw(deployment, server, key!);
         }
 
         public static byte[] Json(string text) => Encoding.UTF8.GetBytes(text);
 
-        public static async Task AssertCodeAsync(HttpResponseMessage response, string code)
+        public static async Task AssertCodeAsync(HttpResponseMessage response, string code, string? detail = null)
         {
             using JsonDocument problem = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
             Assert.Equal(code, problem.RootElement.GetProperty("code").GetString());
             Assert.Equal((int)response.StatusCode, problem.RootElement.GetProperty("status").GetInt32());
+            if (detail is not null)
+            {
+                Assert.Equal(detail, problem.RootElement.GetProperty("detail").GetString());
+            }
         }
 
         public async Task<string> NonceAsync()
@@ -706,6 +847,9 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         public string Proof(HttpMethod method, string path, byte[] body, string nonce, bool includeKey = true) =>
             ProofBuilder.Create(_key, method.Method, new Uri(Server.PublicUrls[0], path), nonce, body, includeKey, _deployment.Time);
+
+        /// <summary>Signs as the installation key signs a proof.</summary>
+        public byte[] Sign(byte[] input) => _key.Sign(input);
 
         public async Task<HttpResponseMessage> SendAsync(HttpMethod method, string path, byte[] body, string? proof, bool chunked = false)
         {
@@ -729,6 +873,14 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         public async Task<string> AcquireAsync()
         {
+            string token = await AcquireTokenAsync();
+            using JsonDocument payload = JsonDocument.Parse(Convert.FromBase64String(Pad(token.Split('.')[1])));
+            return payload.RootElement.GetProperty("lse").GetString()!;
+        }
+
+        /// <summary>Acquires one seat of pro and returns the lease token.</summary>
+        public async Task<string> AcquireTokenAsync()
+        {
             using HttpResponseMessage response = await SignedAsync(
                 HttpMethod.Post,
                 "v1/leases",
@@ -737,9 +889,17 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             );
             Assert.Equal(HttpStatusCode.Created, response.StatusCode);
             using JsonDocument answer = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
-            string token = answer.RootElement.GetProperty("lease").GetString()!;
-            using JsonDocument payload = JsonDocument.Parse(Convert.FromBase64String(Pad(token.Split('.')[1])));
-            return payload.RootElement.GetProperty("lse").GetString()!;
+            return answer.RootElement.GetProperty("lease").GetString()!;
+        }
+
+        /// <summary>Reclaims lease tokens and returns the code of each result, in order.</summary>
+        public async Task<string?[]> ReclaimAsync(IEnumerable<string> tokens)
+        {
+            byte[] body = Json($$"""{"leases":[{{string.Join(',', tokens.Select(token => $"\"{token}\""))}}]}""");
+            using HttpResponseMessage response = await SignedAsync(HttpMethod.Post, "v1/leases/reclaim", body, includeKey: true);
+            Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+            using JsonDocument answer = JsonDocument.Parse(await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+            return [.. answer.RootElement.GetProperty("results").EnumerateArray().Select(result => result.GetProperty("code").GetString())];
         }
 
         public async Task AssertAcquireAsync(byte[] body, string code, HttpStatusCode status = HttpStatusCode.BadRequest, bool chunked = false)

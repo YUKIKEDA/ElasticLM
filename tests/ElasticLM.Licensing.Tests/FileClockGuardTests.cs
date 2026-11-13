@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Security.Cryptography;
+using System.Text.Json.Nodes;
 
 namespace ElasticLM.Licensing.Tests;
 
@@ -123,6 +125,61 @@ public sealed class FileClockGuardTests : IDisposable
         );
 
         Assert.True(new FileClockGuard(StatePath, key).Observe(T0.AddDays(10), T0, Skew));
+    }
+
+    /// <summary>
+    /// With an installation key, a state file that carries no valid signature counts as missing: without the sig member,
+    /// with an empty signature, and with a signature that is not 64 bytes or not the key's. The guard falls back to the
+    /// token's iat and writes a new signed state, without an exception (design §11.4, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A signed state at T0 + 30 days, which a new guard of the same key honors: it rejects T0 + 10 days.
+    /// - The same file with its time kept and its sig changed in one way: the member removed; an empty string; the first 63
+    ///   bytes of the signature; 64 zero bytes; the signature and one more zero byte.
+    ///
+    /// Steps:
+    /// - Observe T0 + 10 days with a token issued at T0 in a new guard; observe 301 s earlier in another new guard.
+    ///
+    /// Expected:
+    /// - Accepted: the state is ignored, and the floor is the token's iat. Then rejected: the first guard replaced the state
+    ///   with a signed one at T0 + 10 days.
+    /// </remarks>
+    [Theory]
+    [InlineData("missing")]
+    [InlineData("empty")]
+    [InlineData("63-bytes")]
+    [InlineData("64-zero-bytes")]
+    [InlineData("65-bytes")]
+    public void Observe_StateWithoutAValidSignature_FallsBackToIssuedAt(string form)
+    {
+        using var key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        Assert.True(new FileClockGuard(StatePath, key).Observe(T0.AddDays(30), T0, Skew));
+        Assert.False(new FileClockGuard(StatePath, key).Observe(T0.AddDays(10), T0, Skew));
+        JsonObject state = JsonNode.Parse(File.ReadAllText(StatePath))!.AsObject();
+        byte[] signature = Base64Url.DecodeFromChars(state["sig"]!.GetValue<string>());
+        Assert.Equal(64, signature.Length);
+        byte[]? changed = form switch
+        {
+            "missing" => null,
+            "empty" => [],
+            "63-bytes" => signature[..63],
+            "64-zero-bytes" => new byte[64],
+            _ => [.. signature, 0],
+        };
+        if (changed is null)
+        {
+            Assert.True(state.Remove("sig"));
+        }
+        else
+        {
+            state["sig"] = Base64Url.EncodeToString(changed);
+        }
+
+        File.WriteAllText(StatePath, state.ToJsonString());
+
+        Assert.True(new FileClockGuard(StatePath, key).Observe(T0.AddDays(10), T0, Skew));
+        Assert.False(new FileClockGuard(StatePath, key).Observe(T0.AddDays(10).AddSeconds(-301), T0, Skew));
     }
 
     /// <summary>

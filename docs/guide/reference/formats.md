@@ -78,11 +78,11 @@ The header is a JSON object with exactly three members:
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
-| `alg` | string | yes | `ES256`. Another value gets `ELM_BAD_SIGNATURE`. |
+| `alg` | string | yes | `ES256`. Another value is refused; the code depends on the token type (see below the table). |
 | `kid` | string | yes | The key ID of the key that signed the token. The header check requires only that it is not empty; it must then name a key that the verifier knows, and a value that names none fails later. |
 | `typ` | string | yes | The token type, from the table below. Each verifier accepts one type only. |
 
-A header with any other member (such as `jwk`, `x5c`, or `crit`), with a member missing or given twice, with a value that is not a string, or with the wrong `typ` gets `ELM_MALFORMED`. Member names are compared exactly, case included. So a token cannot carry its own key, and one kind of token cannot be passed off as another.
+A header with any other member (such as `jwk`, `x5c`, or `crit`), with a member missing or given twice, with a value that is not a string, or with the wrong `typ` gets `ELM_MALFORMED` in a license token, a lease token, an offline request, and an offline deactivation proof. What another `alg` and such a header get depends on which of the [token types](#token-types) the token is. A license token or a lease token with another `alg` gets `ELM_BAD_SIGNATURE`. A request proof with another `alg` or with such a header gets `ELM_PROOF_INVALID`. An offline request or an offline deactivation proof gets `ELM_MALFORMED` in both cases. A [key certificate](#key-certificate-elm-certjws) is skipped in both cases, and a token left without a certificate for its key gets `ELM_UNTRUSTED_KEY`. A log signature (`elm-log+jws`) gets no `ELM_` code in either case: [`elm log verify`](logs.md#verifying-the-usage-log) reports it as an error. Member names are compared exactly, case included. So a token cannot carry its own key, and one kind of token cannot be passed off as another.
 
 The programs write some characters inside JSON strings as `\uXXXX` escapes: `+`, `<`, `>`, `&`, `'`, `"`, `` ` ``, and every character outside ASCII. So the header of a certificate reads `"typ":"elm-cert\u002Bjws"`, as in the examples on this page. A JSON parser reads an escape as the character itself, so a reader must decode the JSON and compare the values, not the raw text.
 
