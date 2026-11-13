@@ -114,8 +114,8 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
     /// Steps:
     /// - Acquire pro (J1); acquire pro again (L).
     /// - Arm the relay again; acquire pro (J2); move the clock 200 s, so the client renews L.
-    /// - Arm the relay again; acquire pro (J3); return L; acquire pro (M).
-    /// - Arm the relay again; acquire pro (J4); dispose the client.
+    /// - Arm the relay again; acquire pro (J3); return L; acquire pro (M); return M.
+    /// - Arm the relay again; acquire pro (J4); dispose the client, which then holds no lease.
     ///
     /// Expected:
     /// - The first acquisition fails with ELM_NETWORK_ERROR and its release fails: 1 seat is held. The next acquisition
@@ -123,8 +123,8 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
     /// - J2's lease holds a seat until the renewal, which sends DELETE /v1/leases/requests/J2 before L's renewal: then 1 seat.
     /// - J3's lease holds a seat until L is returned: DELETE /v1/leases/requests/J3 goes before DELETE /v1/leases/L, and then
     ///   no seat is held; M holds 1.
-    /// - J4's lease holds a seat until the client is disposed, which sends DELETE /v1/leases/requests/J4 and returns M: then
-    ///   no seat.
+    /// - J4's lease holds a seat until the client is disposed, which sends DELETE /v1/leases/requests/J4 although it has no
+    ///   lease to return: then no seat.
     /// </remarks>
     [Fact]
     public async Task Acquire_ReleaseNotThrough_IsSentBeforeTheNextRequestAndOnDispose()
@@ -153,11 +153,12 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
         Assert.Equal(["DELETE " + RequestReleases + j3, $"DELETE /v1/leases/{lease.Id}"], After(relay, j3));
         Assert.Equal(0, server.Engine.SeatsInUse("pro"));
         Lease next = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.Null(await client.ReleaseLeaseAsync(next, cancel));
 
         string j4 = await LoseAcquisitionAsync(client, relay);
-        Assert.Equal(2, server.Engine.SeatsInUse("pro"));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
         await client.DisposeAsync();
-        Assert.Equal(["DELETE " + RequestReleases + j4, $"DELETE /v1/leases/{next.Id}"], After(relay, j4));
+        Assert.Equal(["DELETE " + RequestReleases + j4], After(relay, j4));
         Assert.Equal(0, server.Engine.SeatsInUse("pro"));
     }
 
