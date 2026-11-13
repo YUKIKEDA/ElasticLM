@@ -84,4 +84,14 @@ internal static partial class ServiceLog
 
     [LoggerMessage(EventId = 18, Level = LogLevel.Information, Message = "session.removed: {Count} sessions past their end or idle time")]
     public static partial void SessionsRemoved(ILogger log, long count);
+
+    [LoggerMessage(EventId = 19, Level = LogLevel.Warning, Message = "The usage log could not continue its chain: {Reason}")]
+    public static partial void ChainReset(ILogger log, string reason);
+
+    [LoggerMessage(
+        EventId = 20,
+        Level = LogLevel.Warning,
+        Message = "The file {File} has the name of a usage log file but no real date and time; it is not read as one."
+    )]
+    public static partial void NotALogFile(ILogger log, string file);
 }

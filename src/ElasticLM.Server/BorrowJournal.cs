@@ -4,6 +4,7 @@ using System.Text.Json;
 using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Server;
 
@@ -117,14 +118,27 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     }
 
     /// <summary>
-    /// Opens the record for writing: a new file that carries forward what is still needed.
+    /// Opens the record for writing: a new file that carries forward what is still needed. A file with the name of a record
+    /// file but no real date and time is reported in the operational log, at this start and before each later file.
     /// </summary>
-    public void Open(SigningKeyAccess key, byte[] licenseFile, byte[] keyJwk)
+    public void Open(SigningKeyAccess key, byte[] licenseFile, byte[] keyJwk, ILogger operational)
     {
         string? reset = SetAside is null ? null : $"the broken record {Path.GetFileName(SetAside)} was set aside by the operator";
         lock (_lock)
         {
-            _log = SignedLog.Open(_directory, BaseName, BaseName, key, licenseFile, keyJwk, _time, sealEvery: 1, CarryForward, reset);
+            _log = SignedLog.Open(
+                _directory,
+                BaseName,
+                BaseName,
+                key,
+                licenseFile,
+                keyJwk,
+                _time,
+                sealEvery: 1,
+                CarryForward,
+                reset,
+                name => ServerLog.NotALogFile(operational, name, "borrow record")
+            );
         }
     }
 
@@ -178,7 +192,8 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     }
 
     // The lease ID and expiry of a token, read without verifying it: the engine verifies tokens when it restores them; here
-    // they only decide what to carry forward.
+    // they only decide what to carry forward. JsonElement throws InvalidOperationException from TryGetProperty on a payload
+    // that is not an object ("[]") and from GetString on a lone surrogate escape (measured on .NET 10.0.15, Windows).
     private static (string LeaseId, long Expires) ReadToken(string token)
     {
         string[] parts = token.Split('.');
@@ -198,7 +213,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
                     return (lse.GetString()!, expires);
                 }
             }
-            catch (JsonException)
+            catch (Exception e) when (e is JsonException or InvalidOperationException)
             {
                 // Not a token: kept with no expiry, and the engine skips it.
             }
@@ -252,8 +267,23 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             }
         );
 
-    // One recorded line; lines of another shape are skipped (the verifier has checked the signatures over them).
+    // One recorded line; lines of another shape are skipped (the verifier has checked the signatures over them). A line with
+    // a string or a member name that is not text (a lone surrogate escape, bytes that are not UTF-8) is of another shape:
+    // JsonElement throws InvalidOperationException from GetString and TryGetProperty there (measured on .NET 10.0.15,
+    // Windows), before the line changes anything.
     private void Read(string type, JsonElement line)
+    {
+        try
+        {
+            ReadLine(type, line);
+        }
+        catch (InvalidOperationException)
+        {
+            // Skipped.
+        }
+    }
+
+    private void ReadLine(string type, JsonElement line)
     {
         if (
             type == BorrowStarted
@@ -292,9 +322,9 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             && atSeconds is >= 0 and <= 253_402_300_799
         )
         {
-            string leaseId = id.GetString()!;
-            _borrows.RemoveAll(b => b.LeaseId == leaseId);
-            _returns.Add(new BorrowReturn(leaseId, key.GetString()!, ReadFingerprints(line), DateTimeOffset.FromUnixTimeSeconds(atSeconds)));
+            var returned = new BorrowReturn(id.GetString()!, key.GetString()!, ReadFingerprints(line), DateTimeOffset.FromUnixTimeSeconds(atSeconds));
+            _borrows.RemoveAll(b => b.LeaseId == returned.LeaseId);
+            _returns.Add(returned);
         }
     }
 

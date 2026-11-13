@@ -399,6 +399,53 @@ public sealed class ElmCommandsTests : IAsyncDisposable
         Assert.Equal(2, Run(["log", "verify", data, "--product", "acme-cad", "--stream", "other"]).Code);
     }
 
+    /// <summary>
+    /// elm log verify reports a line that is JSON but not an object, and a line whose type is not text, as an error with
+    /// exit code 1, not as an unhandled exception; in a folder it does not read a file whose name has no real date and time
+    /// (design §16, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped; an empty file usage-20261301T000000000Z.jsonl (month 13) in its data folder.
+    ///
+    /// Steps:
+    /// - Verify the data folder. Append [] to the usage log file and verify; replace that line with an object whose type is
+    ///   a lone surrogate escape and verify.
+    ///
+    /// Expected:
+    /// - Exit 0 and "intact: 1 file(s)". Then exit 1 each time, with the line "error: {file}:{line}: The line is not a JSON
+    ///   object." or "… The line holds a string that is not valid Unicode.", and "NOT INTACT".
+    /// </remarks>
+    [Fact]
+    public async Task LogVerify_LinesThatAreNotObjectsOrNotText_AreErrors()
+    {
+        ElmServer server = await _deployment.StartServerAsync();
+        await server.DisposeAsync();
+        string data = server.DataDirectory;
+        File.WriteAllBytes(Path.Combine(data, "usage-20261301T000000000Z.jsonl"), []);
+
+        (int code, string output, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
+        Assert.Equal(0, code);
+        Assert.StartsWith("intact: 1 file(s)", output.Trim(), StringComparison.Ordinal);
+
+        string usage = SignedLog.FindFiles(data, "usage").Single();
+        string written = File.ReadAllText(usage);
+        int line = written.Count(c => c == '\n') + 1;
+        (string Line, string Message)[] cases =
+        [
+            ("[]", "The line is not a JSON object."),
+            ("{\"type\":\"\\ud800\"}", "The line holds a string that is not valid Unicode."),
+        ];
+        foreach ((string appended, string message) in cases)
+        {
+            File.WriteAllText(usage, written + appended + "\n");
+            (int broken, string brokenOutput, string fault) = Run(["log", "verify", data, "--product", "acme-cad"]);
+            Assert.Equal((1, string.Empty), (broken, fault));
+            Assert.Contains($"error: {Path.GetFileName(usage)}:{line}: {message}", brokenOutput, StringComparison.Ordinal);
+            Assert.Contains("NOT INTACT", brokenOutput, StringComparison.Ordinal);
+        }
+    }
+
     // Each of the thirteen elm server commands, with a data folder and the other options it needs; the commands that write
     // a file write the one given.
     private static string[][] AllServerCommands(string data, string made)

@@ -56,6 +56,13 @@ internal static partial class ServerLog
     [LoggerMessage(EventId = 32, Level = LogLevel.Warning, Message = "The {Stream} log could not continue its chain: {Reason}")]
     public static partial void ChainReset(ILogger log, string stream, string reason);
 
+    [LoggerMessage(
+        EventId = 33,
+        Level = LogLevel.Warning,
+        Message = "The file {File} has the name of a {Kind} file but no real date and time; it is not read as one."
+    )]
+    public static partial void NotALogFile(ILogger log, string file, string kind);
+
     [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
     public static partial void AdminAction(ILogger log, string action, string? target, string result);
 

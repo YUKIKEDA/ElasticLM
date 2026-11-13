@@ -44,11 +44,13 @@ public static class LogLineTypes
 /// included. Each signature is flushed to the disk before the call that wrote it returns. A write that fails closes the
 /// file; the next call starts a new file with <c>chain.reset</c> that names the failure, so a half-written line is not
 /// taken for tampering. A new file's name never sorts before the newest file of the log, even when the clock went back.
-/// The class is safe to call from several threads.
+/// A file whose name has the form of a log file's name but no real date and time (month 13) is not a file of the log: it is
+/// not read, and it does not decide the next name. The class is safe to call from several threads.
 /// </remarks>
 public sealed partial class SignedLog : IDisposable
 {
     private const int TailSearchBytes = 1024 * 1024;
+    private const string FileTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
     private readonly string _directory;
     private readonly string _baseName;
@@ -57,6 +59,7 @@ public sealed partial class SignedLog : IDisposable
     private readonly int _sealEvery;
     private readonly Lock _lock = new();
     private readonly Action<SignedLog>? _fileStarted;
+    private readonly Action<string>? _notALogFile;
     private SigningKeyAccess _key;
     private LogKeyMaterial _material;
     private FileStream? _file;
@@ -77,7 +80,8 @@ public sealed partial class SignedLog : IDisposable
         LogKeyMaterial material,
         TimeProvider time,
         int sealEvery,
-        Action<SignedLog>? fileStarted
+        Action<SignedLog>? fileStarted,
+        Action<string>? notALogFile
     )
     {
         _directory = directory;
@@ -88,6 +92,7 @@ public sealed partial class SignedLog : IDisposable
         _time = time;
         _sealEvery = sealEvery;
         _fileStarted = fileStarted;
+        _notALogFile = notALogFile;
     }
 
     /// <summary>Gets the name of the file being written.</summary>
@@ -121,8 +126,11 @@ public sealed partial class SignedLog : IDisposable
     /// records forward into it.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason instead of
     /// continuing the newest file (for a record the operator set aside).</param>
+    /// <param name="notALogFile">Called before each new file, under the log's lock, with the name of each file in the folder
+    /// whose name has the form of the log's file names but no real date and time; such a file is not a file of the log.</param>
     /// <returns>The open log.</returns>
-    /// <exception cref="IOException">The folder or the new file cannot be written.</exception>
+    /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
+    /// file can have (<c>99991231T235959999Z</c>).</exception>
     public static SignedLog Open(
         string directory,
         string baseName,
@@ -133,12 +141,26 @@ public sealed partial class SignedLog : IDisposable
         TimeProvider time,
         int sealEvery = 100,
         Action<SignedLog>? fileStarted = null,
-        string? resetReason = null
-    ) => Open(directory, baseName, stream, key, LogKeyMaterial.ServerLicense(licenseFile, keyJwk), time, sealEvery, fileStarted, resetReason);
+        string? resetReason = null,
+        Action<string>? notALogFile = null
+    ) =>
+        Open(
+            directory,
+            baseName,
+            stream,
+            key,
+            LogKeyMaterial.ServerLicense(licenseFile, keyJwk),
+            time,
+            sealEvery,
+            fileStarted,
+            resetReason,
+            notALogFile
+        );
 
     /// <summary>
     /// Opens a log signed with a key that <paramref name="material"/> lets a reader verify, as
-    /// <see cref="Open(string, string, string, SigningKeyAccess, byte[], byte[], TimeProvider, int, Action{SignedLog}?, string?)"/> does.
+    /// <see cref="Open(string, string, string, SigningKeyAccess, byte[], byte[], TimeProvider, int, Action{SignedLog}?, string?, Action{string}?)"/>
+    /// does.
     /// </summary>
     /// <param name="directory">The folder of the files.</param>
     /// <param name="baseName">The file name prefix; files are named <c>{baseName}-{UTC time}.jsonl</c>.</param>
@@ -149,8 +171,11 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
     /// <param name="fileStarted">Called after the first line of each new file, under the log's lock.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason.</param>
+    /// <param name="notALogFile">Called before each new file, under the log's lock, with the name of each file in the folder
+    /// whose name has the form of the log's file names but no real date and time.</param>
     /// <returns>The open log.</returns>
-    /// <exception cref="IOException">The folder or the new file cannot be written.</exception>
+    /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
+    /// file can have.</exception>
     public static SignedLog Open(
         string directory,
         string baseName,
@@ -160,7 +185,8 @@ public sealed partial class SignedLog : IDisposable
         TimeProvider time,
         int sealEvery = 100,
         Action<SignedLog>? fileStarted = null,
-        string? resetReason = null
+        string? resetReason = null,
+        Action<string>? notALogFile = null
     )
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
@@ -171,40 +197,23 @@ public sealed partial class SignedLog : IDisposable
         ArgumentNullException.ThrowIfNull(time);
         ArgumentOutOfRangeException.ThrowIfLessThan(sealEvery, 1);
         Directory.CreateDirectory(directory);
-        var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, fileStarted);
+        var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, fileStarted, notALogFile);
         lock (log._lock)
         {
-            IReadOnlyList<string> files = FindFiles(directory, baseName);
-            string? previous = files.Count > 0 ? files[^1] : null;
-            log.StartFile(previous, continueChain: true, resetReason);
+            log.StartFile(previous: null, continueChain: true, resetReason);
         }
 
         return log;
     }
 
     /// <summary>
-    /// Returns the files of a log in the folder, oldest first.
+    /// Returns the files of a log in the folder, oldest first. A file whose name has the form of a log file's name but no
+    /// real date and time is not one of them.
     /// </summary>
     /// <param name="directory">The folder.</param>
     /// <param name="baseName">The file name prefix.</param>
     /// <returns>The full paths.</returns>
-    public static IReadOnlyList<string> FindFiles(string directory, string baseName)
-    {
-        if (!Directory.Exists(directory))
-        {
-            return [];
-        }
-
-        Regex pattern = FileNamePattern();
-        return
-        [
-            .. Directory
-                .EnumerateFiles(directory, baseName + "-*.jsonl")
-                .Where(p => Path.GetFileName(p) is string name && name.StartsWith(baseName + "-", StringComparison.Ordinal))
-                .Where(p => pattern.IsMatch(Path.GetFileName(p)[(baseName.Length + 1)..]))
-                .Order(StringComparer.Ordinal),
-        ];
-    }
+    public static IReadOnlyList<string> FindFiles(string directory, string baseName) => [.. Scan(directory, baseName).Files.Select(f => f.Path)];
 
     /// <summary>
     /// Appends an event line <c>{"type": ..., "ts": ..., ...}</c> and signs when <c>sealEvery</c> lines are pending. A new UTC
@@ -341,7 +350,8 @@ public sealed partial class SignedLog : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            return (null, 0, $"the previous file {Path.GetFileName(path)} cannot be read: {e.Message}");
+            // The exception's message is left out: it can hold the file's full path, and the reason is read outside this machine.
+            return (null, 0, $"the previous file {Path.GetFileName(path)} cannot be read");
         }
 
         int end = tail.Length;
@@ -366,7 +376,11 @@ public sealed partial class SignedLog : IDisposable
         return (null, 0, $"no signature was found at the end of the previous file {Path.GetFileName(path)}");
     }
 
-    // Reads the payload of an auth line without verifying it: the writer only continues the numbering.
+    // Reads the payload of an auth line without verifying it: the writer only continues the numbering. A line that is not
+    // JSON, not an object, or whose text cannot be read is not a signature. JsonElement throws InvalidOperationException
+    // from TryGetProperty on a value that is not an object ("[]"), from GetString on a lone surrogate escape ("\ud800") or
+    // on bytes that are not UTF-8, and from TryGetProperty when it passes a member name of that kind (measured on .NET
+    // 10.0.15, Windows).
     private static bool TryReadAuth(ReadOnlySpan<byte> line, out LogPayload? payload)
     {
         payload = null;
@@ -388,23 +402,71 @@ public sealed partial class SignedLog : IDisposable
             payload = JsonSerializer.Deserialize(jws!.Payload, LicensingJsonContext.Default.LogPayload);
             return payload is not null;
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
             return false;
         }
     }
 
+    // The form of a log file's name after the prefix. \d also takes digits outside ASCII, so that such a name is reported
+    // rather than passed over.
     [GeneratedRegex(@"^\d{8}T\d{9}Z\.jsonl$", RegexOptions.CultureInvariant)]
     private static partial Regex FileNamePattern();
 
-    // The time in the name of a log file found by FindFiles.
-    private static DateTimeOffset FileTime(string path, string baseName) =>
-        DateTimeOffset.ParseExact(
-            Path.GetFileName(path)[(baseName.Length + 1)..^".jsonl".Length],
-            "yyyyMMdd'T'HHmmssfff'Z'",
-            CultureInfo.InvariantCulture,
-            DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal
-        );
+    // The files of a log, oldest first, each with the time in its name, and the names that have the form but no real date
+    // and time. DateTimeOffset.TryParseExact refuses month 13, February 31, hour 25, year 0, and digits outside ASCII
+    // (measured on .NET 10.0.15, Windows), so the names it takes sort by time in ordinal order.
+    private static (List<(string Path, DateTimeOffset Time)> Files, List<string> NotLogFiles) Scan(string directory, string baseName)
+    {
+        var files = new List<(string Path, DateTimeOffset Time)>();
+        var notLogFiles = new List<string>();
+        if (!Directory.Exists(directory))
+        {
+            return (files, notLogFiles);
+        }
+
+        Regex pattern = FileNamePattern();
+        foreach (string path in Directory.EnumerateFiles(directory, baseName + "-*.jsonl").Order(StringComparer.Ordinal))
+        {
+            string name = Path.GetFileName(path);
+            if (!name.StartsWith(baseName + "-", StringComparison.Ordinal) || !pattern.IsMatch(name[(baseName.Length + 1)..]))
+            {
+                continue;
+            }
+
+            if (
+                DateTimeOffset.TryParseExact(
+                    name.AsSpan((baseName.Length + 1)..^".jsonl".Length),
+                    FileTimeFormat,
+                    CultureInfo.InvariantCulture,
+                    DateTimeStyles.AssumeUniversal | DateTimeStyles.AdjustToUniversal,
+                    out DateTimeOffset time
+                )
+            )
+            {
+                files.Add((path, time));
+            }
+            else
+            {
+                notLogFiles.Add(name);
+            }
+        }
+
+        return (files, notLogFiles);
+    }
+
+    // The time of the name after a name. The last name a file can have is 99991231T235959999Z: one millisecond more is past
+    // DateTimeOffset.MaxValue, and AddMilliseconds throws ArgumentOutOfRangeException there.
+    private static DateTimeOffset NextFileTime(DateTimeOffset time, string baseName)
+    {
+        if (time.UtcTicks > DateTimeOffset.MaxValue.UtcTicks - TimeSpan.TicksPerMillisecond)
+        {
+            string name = $"{baseName}-{time.UtcDateTime.ToString(FileTimeFormat, CultureInfo.InvariantCulture)}.jsonl";
+            throw new IOException($"No file name comes after {name}, the newest file of the log.");
+        }
+
+        return time.AddMilliseconds(1);
+    }
 
     private void Take(LogKeyMaterial material, SigningKeyAccess key)
     {
@@ -430,7 +492,8 @@ public sealed partial class SignedLog : IDisposable
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            _failure = $"a write to {_fileName} failed: {e.Message}";
+            // The exception's message is left out of the next file's chain.reset: it can hold a full path.
+            _failure = $"a write to {_fileName} failed";
             try
             {
                 _file?.Dispose();
@@ -466,6 +529,21 @@ public sealed partial class SignedLog : IDisposable
     private void StartFile(string? previous, bool continueChain, string? forcedReset = null)
     {
         DateTimeOffset now = _time.GetUtcNow();
+        (List<(string Path, DateTimeOffset Time)> existing, List<string> notLogFiles) = Scan(_directory, _baseName);
+        if (_notALogFile is not null)
+        {
+            foreach (string name in notLogFiles)
+            {
+                _notALogFile(name);
+            }
+        }
+
+        // At a start the chain continues from the newest file of the folder.
+        if (continueChain && existing.Count > 0)
+        {
+            previous = existing[^1].Path;
+        }
+
         string? reset = forcedReset;
         string? previousName = previous is null ? null : Path.GetFileName(previous);
         if (reset is null && continueChain && previous is not null)
@@ -494,10 +572,9 @@ public sealed partial class SignedLog : IDisposable
 
         // A clock set back must not name a file that sorts before the newest one: the newest file is the one read at start.
         DateTimeOffset named = now;
-        IReadOnlyList<string> existing = FindFiles(_directory, _baseName);
-        if (existing.Count > 0 && FileTime(existing[^1], _baseName) is DateTimeOffset newest && newest >= named)
+        if (existing.Count > 0 && existing[^1].Time >= named)
         {
-            named = newest.AddMilliseconds(1);
+            named = NextFileTime(existing[^1].Time, _baseName);
         }
 
         _file = CreateFile(named);
@@ -542,11 +619,12 @@ public sealed partial class SignedLog : IDisposable
         WriteAuth();
     }
 
-    private FileStream CreateFile(DateTimeOffset now)
+    private FileStream CreateFile(DateTimeOffset first)
     {
+        DateTimeOffset time = first;
         for (int attempt = 0; ; attempt++)
         {
-            string stamp = now.AddMilliseconds(attempt).UtcDateTime.ToString("yyyyMMdd'T'HHmmssfff'Z'", CultureInfo.InvariantCulture);
+            string stamp = time.UtcDateTime.ToString(FileTimeFormat, CultureInfo.InvariantCulture);
             _fileName = $"{_baseName}-{stamp}.jsonl";
             try
             {
@@ -556,6 +634,8 @@ public sealed partial class SignedLog : IDisposable
             {
                 // Two files in one millisecond: take the next one.
             }
+
+            time = NextFileTime(time, _baseName);
         }
     }
 

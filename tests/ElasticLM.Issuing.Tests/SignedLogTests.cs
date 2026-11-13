@@ -540,7 +540,8 @@ public sealed class SignedLogTests : IDisposable
     ///
     /// Expected:
     /// - The second Append throws IOException; the first file holds the signed event on the disk; two files; intact, with
-    ///   warnings for the unsigned line and for the reset that names the failed write.
+    ///   warnings for the unsigned line and for the reset, "The chain was reset: a write to {first file} failed": the reason
+    ///   names the file and does not carry the exception's message, which can hold a path.
     /// </remarks>
     [Fact]
     public void Append_AfterAFailedWrite_StartsANewFile()
@@ -579,7 +580,8 @@ public sealed class SignedLogTests : IDisposable
         LogReport report = Verify();
         Assert.True(report.Intact);
         Assert.Contains(report.Issues, i => i.Message.Contains("not signed", StringComparison.Ordinal));
-        Assert.Contains(report.Issues, i => i.Message.StartsWith("The chain was reset: a write to", StringComparison.Ordinal));
+        string failed = Path.GetFileName(SignedLog.FindFiles(_dir, "usage")[0]);
+        Assert.Contains(report.Issues, i => i.Message == $"The chain was reset: a write to {failed} failed");
     }
 
     /// <summary>
@@ -1133,6 +1135,457 @@ public sealed class SignedLogTests : IDisposable
         Assert.Empty(LogVerifier.Verify([a], _trust, null, "usage").Issues);
     }
 
+    /// <summary>
+    /// A last line of the previous file that is JSON but not a signature the writer can read is passed over, and the chain
+    /// goes on from the signature before it (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log with one line appended: [], "x", 123, null, true, an object whose type is a lone surrogate
+    ///   escape, a signature line whose sig is one, an object with a member name that is one, an object whose type holds
+    ///   bytes that are not UTF-8, or a signature line whose payload holds a lone surrogate escape.
+    ///
+    /// Steps:
+    /// - A minute later, open the log and close it; read the first line and the first signature of the new file.
+    ///
+    /// Expected:
+    /// - No exception and no ResetReason. The first line is chain.start, and its prev names the previous file and the hash
+    ///   of that file's last signature; the first signature has the number after that signature's.
+    /// </remarks>
+    [Theory]
+    [InlineData("array")]
+    [InlineData("text")]
+    [InlineData("number")]
+    [InlineData("null")]
+    [InlineData("true")]
+    [InlineData("type-surrogate")]
+    [InlineData("sig-surrogate")]
+    [InlineData("name-surrogate")]
+    [InlineData("type-not-utf8")]
+    [InlineData("payload-surrogate")]
+    public void Open_LastLineIsNotASignature_ContinuesFromTheSignatureBefore(string shape)
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 2);
+        }
+
+        string previous = SignedLog.FindFiles(_dir, "usage").Single();
+        string lastAuth = File.ReadAllLines(previous).Last(l => l.StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal));
+        AppendLine(previous, NotASignature(shape));
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        string? reason;
+        using (SignedLog log = Open())
+        {
+            reason = log.ResetReason;
+        }
+
+        Assert.Null(reason);
+        string[] lines = File.ReadAllLines(SignedLog.FindFiles(_dir, "usage")[^1]);
+        using var first = System.Text.Json.JsonDocument.Parse(lines[0]);
+        Assert.Equal(
+            ("chain.start", Path.GetFileName(previous), SignedLog.Hash(Encoding.UTF8.GetBytes(lastAuth + "\n"))),
+            (
+                first.RootElement.GetProperty("type").GetString(),
+                first.RootElement.GetProperty("prev").GetProperty("file").GetString(),
+                first.RootElement.GetProperty("prev").GetProperty("auth").GetString()
+            )
+        );
+        Assert.Equal(ReadPayload(lastAuth).N + 1, ReadPayload(lines[1]).N);
+    }
+
+    /// <summary>
+    /// When no line of the previous file is a signature, lines that are not objects or whose text cannot be read give the
+    /// same chain.reset reason as any file without a signature (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A previous file of the log that holds only [], or only an object whose type is a lone surrogate escape.
+    ///
+    /// Steps:
+    /// - Open the log.
+    ///
+    /// Expected:
+    /// - ResetReason is "no signature was found at the end of the previous file usage-20260930T000000000Z.jsonl".
+    /// </remarks>
+    [Theory]
+    [InlineData("array")]
+    [InlineData("type-surrogate")]
+    public void Open_PreviousHoldsOnlyLinesThatAreNotSignatures_ResetsTheChain(string shape)
+    {
+        string previous = Path.Combine(_dir, "usage-20260930T000000000Z.jsonl");
+        File.WriteAllBytes(previous, []);
+        AppendLine(previous, NotASignature(shape));
+
+        using SignedLog log = Open();
+        Assert.Equal("no signature was found at the end of the previous file usage-20260930T000000000Z.jsonl", log.ResetReason);
+    }
+
+    /// <summary>
+    /// The reason of a chain.reset names the previous file by its name only: the usage log is read outside the machine, and
+    /// the folder's path is not written into it (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log, held open by the test for itself alone, so that the log cannot read it.
+    ///
+    /// Steps:
+    /// - A minute later, open the log; read the first line of the new file.
+    ///
+    /// Expected:
+    /// - ResetReason is exactly "the previous file {name} cannot be read"; the first line is chain.reset with that reason
+    ///   and does not hold the folder's name.
+    /// </remarks>
+    [Fact]
+    public void Open_PreviousFileCannotBeRead_ResetReasonNamesOnlyTheFile()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string previous = SignedLog.FindFiles(_dir, "usage").Single();
+        _time.Advance(TimeSpan.FromMinutes(1));
+        string? reason;
+        using (new FileStream(previous, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        using (SignedLog log = Open())
+        {
+            reason = log.ResetReason;
+        }
+
+        Assert.Equal($"the previous file {Path.GetFileName(previous)} cannot be read", reason);
+        string first = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
+        Assert.Contains(
+            $"\"type\":\"chain.reset\",\"ts\":{_time.GetUtcNow().ToUnixTimeSeconds()},\"stream\":\"usage\",\"reason\":\"{reason}\"",
+            first,
+            StringComparison.Ordinal
+        );
+        Assert.DoesNotContain(Path.GetFileName(_dir), first, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A file whose name has the form of a log file's name but no real date and time is not a file of the log: it is not
+    /// listed, it is reported when a file starts, and it decides neither the previous file nor the next name (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log written now, and an empty file named with month 13, February 31, hour 25, 99999999 as the
+    ///   date, year 0000, full-width digits, or Arabic-Indic digits.
+    ///
+    /// Steps:
+    /// - List the files; a minute later open the log with a callback for such names, append, and close; list and verify.
+    ///
+    /// Expected:
+    /// - Only the real file is listed. The callback gets the name once; no ResetReason; the new file is named with the
+    ///   clock's time; the two files verify with no issue.
+    /// </remarks>
+    [Theory]
+    [InlineData("usage-20261301T000000000Z.jsonl")]
+    [InlineData("usage-20270231T000000000Z.jsonl")]
+    [InlineData("usage-20261001T250000000Z.jsonl")]
+    [InlineData("usage-99999999T000000000Z.jsonl")]
+    [InlineData("usage-00000101T000000000Z.jsonl")]
+    [InlineData("usage-２０２６1002T000000000Z.jsonl")]
+    [InlineData("usage-٢٠٢٦1002T000000000Z.jsonl")]
+    public void FindFiles_NameWithoutARealTime_IsNotAFileOfTheLog(string name)
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string real = SignedLog.FindFiles(_dir, "usage").Single();
+        File.WriteAllBytes(Path.Combine(_dir, name), []);
+        Assert.Equal([real], SignedLog.FindFiles(_dir, "usage"));
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        var reported = new List<string>();
+        string? reason;
+        string opened;
+        using (SignedLog log = Open(notALogFile: reported.Add))
+        {
+            reason = log.ResetReason;
+            opened = log.FileName;
+            Append(log, 1);
+        }
+
+        Assert.Equal([name], reported);
+        Assert.Null(reason);
+        Assert.Equal("usage-20261001T120100000Z.jsonl", opened);
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Equal([Path.GetFileName(real), opened], files.Select(Path.GetFileName));
+        Assert.Empty(Verify(files).Issues);
+    }
+
+    /// <summary>
+    /// A running log starts its file of the new UTC day while the folder holds a file whose name has no real date and time,
+    /// and reports that file again (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An open log with one event; then an empty file usage-20261301T000000000Z.jsonl put into the folder.
+    ///
+    /// Steps:
+    /// - Move the clock one day; append an event; close; list and verify.
+    ///
+    /// Expected:
+    /// - Nothing is reported at the start, and the name once at the new day. Two files, the second named with the clock's
+    ///   time, which verify with no issue.
+    /// </remarks>
+    [Fact]
+    public void Append_NewDayBesideANameWithoutARealTime_StartsTheNextFile()
+    {
+        var reported = new List<string>();
+        using (SignedLog log = Open(notALogFile: reported.Add))
+        {
+            Append(log, 1);
+            File.WriteAllBytes(Path.Combine(_dir, "usage-20261301T000000000Z.jsonl"), []);
+            Assert.Empty(reported);
+
+            _time.Advance(TimeSpan.FromDays(1));
+            Append(log, 1);
+        }
+
+        Assert.Equal(["usage-20261301T000000000Z.jsonl"], reported);
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Equal(["usage-20261001T120000000Z.jsonl", "usage-20261002T120000000Z.jsonl"], files.Select(Path.GetFileName));
+        Assert.Empty(Verify(files).Issues);
+    }
+
+    /// <summary>
+    /// The last name a file can have is 99991231T235959999Z. Beside a newest file of one millisecond before it the log still
+    /// opens; beside a newest file of that name it cannot be written, which is an IOException and not another exception.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file usage-99991231T235959998Z.jsonl, or usage-99991231T235959999Z.jsonl, holding "{}".
+    ///
+    /// Steps:
+    /// - Open the log.
+    ///
+    /// Expected:
+    /// - Beside 998, the log opens a file usage-99991231T235959999Z.jsonl. Beside 999, IOException "No file name comes
+    ///   after usage-99991231T235959999Z.jsonl, the newest file of the log.".
+    /// </remarks>
+    [Fact]
+    public void Open_NewestFileHasTheLastName_ThrowsIOException()
+    {
+        File.WriteAllText(Path.Combine(_dir, "usage-99991231T235959998Z.jsonl"), "{}\n");
+        using (SignedLog log = Open())
+        {
+            Assert.Equal("usage-99991231T235959999Z.jsonl", log.FileName);
+        }
+
+        IOException refused = Assert.Throws<IOException>(() => Open());
+        Assert.Equal("No file name comes after usage-99991231T235959999Z.jsonl, the newest file of the log.", refused.Message);
+    }
+
+    /// <summary>
+    /// A running log that reaches a new UTC day beside a file of the last name fails that write and the next ones as writes
+    /// that cannot be made, with IOException.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An open log with one event; then a file usage-99991231T235959999Z.jsonl put into the folder.
+    ///
+    /// Steps:
+    /// - Move the clock one day; append twice.
+    ///
+    /// Expected:
+    /// - Each append throws IOException whose message ends with "No file name comes after
+    ///   usage-99991231T235959999Z.jsonl, the newest file of the log.".
+    /// </remarks>
+    [Fact]
+    public void Append_NewDayBesideTheLastName_ThrowsIOException()
+    {
+        using SignedLog log = Open();
+        Append(log, 1);
+        File.WriteAllText(Path.Combine(_dir, "usage-99991231T235959999Z.jsonl"), "{}\n");
+        _time.Advance(TimeSpan.FromDays(1));
+
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            IOException refused = Assert.Throws<IOException>(() => Append(log, 1));
+            Assert.EndsWith(
+                "No file name comes after usage-99991231T235959999Z.jsonl, the newest file of the log.",
+                refused.Message,
+                StringComparison.Ordinal
+            );
+        }
+    }
+
+    /// <summary>
+    /// A line that is JSON but not an object is an error of the verification, wherever it stands (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log of one event (four lines), with [], "x", 123, null, or true appended as a fifth line; and a file
+    ///   whose only line is that value.
+    ///
+    /// Steps:
+    /// - Verify each file.
+    ///
+    /// Expected:
+    /// - One error each, "The line is not a JSON object.", at line 5 and at line 1.
+    /// </remarks>
+    [Theory]
+    [InlineData("array")]
+    [InlineData("text")]
+    [InlineData("number")]
+    [InlineData("null")]
+    [InlineData("true")]
+    public void Verify_LineThatIsNotAnObject_IsAnError(string shape)
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage").Single();
+        AppendLine(file, NotASignature(shape));
+        LogIssue appended = Assert.Single(Verify([file]).Issues);
+        Assert.Equal((5, LogIssueSeverity.Error, "The line is not a JSON object."), (appended.Line, appended.Severity, appended.Message));
+
+        string alone = Path.Combine(_dir, "usage-20261002T000000000Z.jsonl");
+        File.WriteAllBytes(alone, []);
+        AppendLine(alone, NotASignature(shape));
+        LogIssue first = Assert.Single(Verify([alone]).Issues);
+        Assert.Equal((1, LogIssueSeverity.Error, "The line is not a JSON object."), (first.Line, first.Severity, first.Message));
+    }
+
+    /// <summary>
+    /// A line whose text the verification reads and cannot read as text (a lone surrogate escape, bytes that are not UTF-8)
+    /// is an error, not an exception: the type of any line, and every string and member name of a chain line, a signature
+    /// line, and a key change (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log of one event (four lines) with one line appended: an event whose type is a lone surrogate escape; an
+    ///   event with such a member name after its type; an event whose type holds bytes that are not UTF-8; a signature line
+    ///   whose sig is a lone surrogate escape; a key.changed line with such a member name before its type. Or a file whose
+    ///   only line is a chain.start whose stream is a lone surrogate escape, or a chain.reset of stream usage whose reason
+    ///   is one.
+    ///
+    /// Steps:
+    /// - Verify the file.
+    ///
+    /// Expected:
+    /// - One error, "The line holds a string that is not valid Unicode.", at the appended line (5) or at line 1.
+    /// </remarks>
+    [Theory]
+    [InlineData("type-surrogate", 5)]
+    [InlineData("name-after-type", 5)]
+    [InlineData("type-not-utf8", 5)]
+    [InlineData("sig-surrogate", 5)]
+    [InlineData("key-changed-name", 5)]
+    [InlineData("chain-start-stream", 1)]
+    [InlineData("chain-reset-reason", 1)]
+    public void Verify_TextThatIsNotUnicode_IsAnError(string shape, int line)
+    {
+        string file;
+        if (line == 1)
+        {
+            file = Path.Combine(_dir, "usage-20261002T000000000Z.jsonl");
+            File.WriteAllBytes(file, []);
+        }
+        else
+        {
+            using (SignedLog log = Open())
+            {
+                Append(log, 1);
+            }
+
+            file = SignedLog.FindFiles(_dir, "usage").Single();
+        }
+
+        AppendLine(file, NotASignature(shape));
+
+        LogIssue issue = Assert.Single(Verify([file]).Issues);
+        Assert.Equal(
+            (line, LogIssueSeverity.Error, "The line holds a string that is not valid Unicode."),
+            (issue.Line, issue.Severity, issue.Message)
+        );
+    }
+
+    /// <summary>
+    /// A signature of the file's own key whose payload holds a lone surrogate escape is an error of the verification, not an
+    /// exception: whoever holds a server's key can write one.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log of one event (four lines), with a signature line appended that the server's key signed over a payload
+    ///   whose jti is a lone surrogate escape.
+    ///
+    /// Steps:
+    /// - Verify.
+    ///
+    /// Expected:
+    /// - One error at line 5, "The signature's payload is not valid.".
+    /// </remarks>
+    [Fact]
+    public void Verify_SignaturePayloadThatIsNotUnicode_IsAnError()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage").Single();
+        AppendLine(file, NotASignature("payload-surrogate"));
+
+        LogIssue issue = Assert.Single(Verify([file]).Issues);
+        Assert.Equal((5, LogIssueSeverity.Error, "The signature's payload is not valid."), (issue.Line, issue.Severity, issue.Message));
+    }
+
+    // Appends bytes and a line feed to a file.
+    private static void AppendLine(string path, byte[] line)
+    {
+        using var stream = new FileStream(path, FileMode.Append, FileAccess.Write);
+        stream.Write(line);
+        stream.WriteByte((byte)'\n');
+    }
+
+    // A line that is JSON and that the writer cannot continue from: not an object, or with text that cannot be read. The
+    // lone surrogate is written as its escape, the six characters \ud800.
+    private byte[] NotASignature(string shape) =>
+        shape switch
+        {
+            "array" => "[]"u8.ToArray(),
+            "text" => "\"x\""u8.ToArray(),
+            "number" => "123"u8.ToArray(),
+            "null" => "null"u8.ToArray(),
+            "true" => "true"u8.ToArray(),
+            "type-surrogate" => """{"type":"\ud800","ts":1,"sig":"x"}"""u8.ToArray(),
+            "sig-surrogate" => """{"type":"auth","ts":1,"sig":"\ud800"}"""u8.ToArray(),
+            "name-surrogate" => """{"sig":"x","\ud800":1}"""u8.ToArray(),
+            "name-after-type" => """{"type":"lease.acquired","ts":1,"\ud800":1}"""u8.ToArray(),
+            "key-changed-name" => """{"\ud800":1,"type":"key.changed","ts":1}"""u8.ToArray(),
+            "chain-start-stream" => """{"type":"chain.start","ts":1,"stream":"\ud800"}"""u8.ToArray(),
+            "chain-reset-reason" => """{"type":"chain.reset","ts":1,"stream":"usage","reason":"\ud800"}"""u8.ToArray(),
+            "type-not-utf8" => [.. "{\"type\":\""u8, 0xC3, 0x28, .. "\",\"ts\":1}"u8],
+            "payload-surrogate" => Encoding.UTF8.GetBytes(
+                $$"""{"type":"auth","ts":1,"sig":"{{SignRaw(
+                    _server,
+                    """{"ver":1,"iat":1,"jti":"\ud800","stream":"usage","n":2,"prev":"","digest":"","lines":0}"""
+                )}}"}"""
+            ),
+            _ => throw new ArgumentOutOfRangeException(nameof(shape)),
+        };
+
+    // An elm-log+jws of the key over a payload given as JSON text, for a payload that JwsWriter does not write.
+    private static string SignRaw(ECDsa key, string payloadJson)
+    {
+        string header = JwsWriter.Sign(key, TokenTypes.Log, new LogPayload(), LicensingJsonContext.Default.LogPayload).Split('.')[0];
+        string signingInput = header + "." + Base64UrlCodec.Encode(Encoding.UTF8.GetBytes(payloadJson));
+        byte[] signature = key.SignData(
+            Encoding.ASCII.GetBytes(signingInput),
+            HashAlgorithmName.SHA256,
+            DSASignatureFormat.IeeeP1363FixedFieldConcatenation
+        );
+        return signingInput + "." + Base64UrlCodec.Encode(signature);
+    }
+
     private static void Append(SignedLog log, int count)
     {
         for (int i = 0; i < count; i++)
@@ -1152,8 +1605,18 @@ public sealed class SignedLogTests : IDisposable
 
     private static SigningKeyAccess Access(ECDsa key) => use => use(key);
 
-    private SignedLog Open(int sealEvery = 100) =>
-        SignedLog.Open(_dir, "usage", "usage", Access(_server), LicenseFile(_server), KeyFiles.ExportPublicJwk(_server), _time, sealEvery);
+    private SignedLog Open(int sealEvery = 100, Action<string>? notALogFile = null) =>
+        SignedLog.Open(
+            _dir,
+            "usage",
+            "usage",
+            Access(_server),
+            LicenseFile(_server),
+            KeyFiles.ExportPublicJwk(_server),
+            _time,
+            sealEvery,
+            notALogFile: notALogFile
+        );
 
     private SignedLog OpenService(string certificate, ECDsa signer, int sealEvery = 100) =>
         SignedLog.Open(_dir, "usage", "usage", Access(signer), LogKeyMaterial.Certificates([certificate]), _time, sealEvery);

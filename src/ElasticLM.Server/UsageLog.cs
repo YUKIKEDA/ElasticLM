@@ -41,7 +41,19 @@ internal sealed class UsageLog : IDisposable
         string full = Path.GetFullPath(path);
         string directory = Path.GetDirectoryName(full)!;
         string baseName = Path.GetFileNameWithoutExtension(full);
-        return new UsageLog(SignedLog.Open(directory, baseName, Stream, key, licenseFile, keyJwk, time), operational);
+        return new UsageLog(
+            SignedLog.Open(
+                directory,
+                baseName,
+                Stream,
+                key,
+                licenseFile,
+                keyJwk,
+                time,
+                notALogFile: name => ServerLog.NotALogFile(operational, name, "usage log")
+            ),
+            operational
+        );
     }
 
     /// <summary>Writes an event about a lease.</summary>

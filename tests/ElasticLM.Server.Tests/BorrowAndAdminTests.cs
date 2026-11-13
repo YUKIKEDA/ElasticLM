@@ -1,9 +1,12 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Server.Tests;
 
@@ -782,7 +785,348 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(1, Assert.Single(server.Engine.Usage()).Borrowed);
     }
 
+    /// <summary>
+    /// The server starts when the last line of its previous usage log file is JSON but not a signature it can read, and its
+    /// new file continues the chain from the signature before that line (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped; [] or an object whose type is a lone surrogate escape appended to its usage log file.
+    ///
+    /// Steps:
+    /// - Start the server; read the first line of the new usage log file and the warnings of the operational log.
+    ///
+    /// Expected:
+    /// - The server starts. The first line is chain.start whose prev names the previous file and the hash of its last
+    ///   signature; no warning that the chain could not continue.
+    /// </remarks>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{\"type\":\"\\ud800\",\"sig\":\"x\"}")]
+    public async Task Start_UsageLogEndsWithALineThatIsNotASignature_ContinuesTheChain(string line)
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string previous = SignedLog.FindFiles(serverData, "usage")[^1];
+        string lastAuth = File.ReadAllLines(previous).Last(l => l.StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal));
+        File.AppendAllText(previous, line + "\n");
+
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+
+        string hash = System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(lastAuth + "\n")));
+        string first = FirstLine(SignedLog.FindFiles(serverData, "usage")[^1]);
+        Assert.StartsWith("{\"type\":\"chain.start\"", first, StringComparison.Ordinal);
+        Assert.Contains($"\"prev\":{{\"file\":\"{Path.GetFileName(previous)}\",\"auth\":\"{hash}\"}}", first, StringComparison.Ordinal);
+        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("could not continue its chain", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A file in the data folder whose name has the form of a usage log file's or a borrow record's but no real date and
+    /// time is not read as one: the server starts, restores its borrows from the real record, continues the usage log's
+    /// chain, and names each such file in a warning of the operational log (design §13.1, §13.4, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that lent a borrow and stopped; empty files usage-20261301T000000000Z.jsonl and
+    ///   borrows-20261301T000000000Z.jsonl (month 13) in its data folder. Both names sort after the real files'.
+    ///
+    /// Steps:
+    /// - Start the server; read its borrowed seats, the operational log, and the first line of the new usage log file.
+    ///
+    /// Expected:
+    /// - The server starts with 1 borrowed seat. The operational log holds one warning for each file, "The file {name} has
+    ///   the name of a usage log file (or: a borrow record file) but no real date and time; it is not read as one.", and no
+    ///   warning that the chain could not continue; the new usage log file starts with chain.start.
+    /// </remarks>
+    [Fact]
+    public async Task Start_FilesNamedWithoutARealTime_AreNotReadAndAreReported()
+    {
+        string serverData = _deployment.NewFolder();
+        ElmServer before = await StartOpenServerAsync(serverData);
+        Acquired(
+            await _deployment.Client(before.PublicUrls[0]).BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken)
+        );
+        await before.DisposeAsync();
+        File.WriteAllBytes(Path.Combine(serverData, "usage-20261301T000000000Z.jsonl"), []);
+        File.WriteAllBytes(Path.Combine(serverData, "borrows-20261301T000000000Z.jsonl"), []);
+
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+
+        Assert.Equal(1, Assert.Single(server.Engine.Usage()).Borrowed);
+        Assert.Equal(
+            [
+                "The file usage-20261301T000000000Z.jsonl has the name of a usage log file but no real date and time; it is not read as one.",
+                "The file borrows-20261301T000000000Z.jsonl has the name of a borrow record file but no real date and time; it is not read as one.",
+            ],
+            log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message)
+        );
+        Assert.StartsWith("{\"type\":\"chain.start\"", FirstLine(SignedLog.FindFiles(serverData, "usage")[^1]), StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A running server starts the usage log file and the borrow record of a new UTC day while its data folder holds files
+    /// whose names have no real date and time, and names each of them in a warning (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server; then empty files usage-20261301T000000000Z.jsonl and borrows-20261301T000000000Z.jsonl put into
+    ///   its data folder.
+    ///
+    /// Steps:
+    /// - Move the clock one day, which fires the 60-second timer that signs the logs and starts the files of a new day; wait
+    ///   for the second file of each log; read the operational log.
+    ///
+    /// Expected:
+    /// - Two usage log files and two borrow records. One warning for each of the two names, written at the new day (none at
+    ///   the start), and no error in the operational log.
+    /// </remarks>
+    [Fact]
+    public async Task NewDay_BesideFilesNamedWithoutARealTime_StartsNewFiles()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        File.WriteAllBytes(Path.Combine(serverData, "usage-20261301T000000000Z.jsonl"), []);
+        File.WriteAllBytes(Path.Combine(serverData, "borrows-20261301T000000000Z.jsonl"), []);
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Warning);
+
+        _deployment.Time.Advance(Day);
+        await Deployment.WaitUntilAsync(() =>
+            SignedLog.FindFiles(serverData, "usage").Count == 2 && SignedLog.FindFiles(serverData, "borrows").Count == 2
+        );
+
+        Assert.Equal(
+            [
+                "The file borrows-20261301T000000000Z.jsonl has the name of a borrow record file but no real date and time; it is not read as one.",
+                "The file usage-20261301T000000000Z.jsonl has the name of a usage log file but no real date and time; it is not read as one.",
+            ],
+            log.Entries.Where(e => e.Level >= LogLevel.Warning).Select(e => e.Message).Order(StringComparer.Ordinal)
+        );
+    }
+
+    /// <summary>
+    /// A newest usage log file or borrow record with the last name a file can have (99991231T235959999Z) stops the start
+    /// with the start error of a log that cannot be written, not with another exception (design §13.1, §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped. First a file usage-99991231T235959999Z.jsonl holding "{}" in its data folder; then,
+    ///   with that file removed, a copy of its newest borrow record named borrows-99991231T235959999Z.jsonl.
+    ///
+    /// Steps:
+    /// - Start the server each time.
+    ///
+    /// Expected:
+    /// - ServerStartException "The usage log '{data folder}/usage.jsonl' cannot be written: No file name comes after
+    ///   usage-99991231T235959999Z.jsonl, the newest file of the log."; then "The borrow record cannot be read or written: No
+    ///   file name comes after borrows-99991231T235959999Z.jsonl, the newest file of the log.".
+    /// </remarks>
+    [Fact]
+    public async Task Start_NewestFileHasTheLastName_IsAStartError()
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string lastUsage = Path.Combine(serverData, "usage-99991231T235959999Z.jsonl");
+        File.WriteAllText(lastUsage, "{}\n");
+
+        var usage = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
+        Assert.Equal(
+            $"The usage log '{Path.Combine(serverData, "usage.jsonl")}' cannot be written: "
+                + "No file name comes after usage-99991231T235959999Z.jsonl, the newest file of the log.",
+            usage.Message
+        );
+
+        File.Delete(lastUsage);
+        File.Copy(SignedLog.FindFiles(serverData, "borrows")[^1], Path.Combine(serverData, "borrows-99991231T235959999Z.jsonl"));
+        var borrows = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
+        Assert.Equal(
+            "The borrow record cannot be read or written: "
+                + "No file name comes after borrows-99991231T235959999Z.jsonl, the newest file of the log.",
+            borrows.Message
+        );
+    }
+
+    /// <summary>
+    /// A line of the borrow record with a string or a member name that is not text (a lone surrogate escape) is a line of
+    /// another shape: it is skipped as a whole, and reading the record does not throw (design §13.4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A borrow record signed with the server's key whose lines are: a valid borrow of lease x; a borrow whose lic is a
+    ///   lone surrogate escape; one whose lease is; one whose fp holds one; a return of lease x whose key is one. After the
+    ///   last signature, a borrow line with such a member name before its type.
+    ///
+    /// Steps:
+    /// - Load the record.
+    ///
+    /// Expected:
+    /// - Exactly the valid borrow, and no return: the return with the unreadable key did not remove the borrow.
+    /// </remarks>
+    [Fact]
+    public async Task BorrowRecord_LinesWithTextThatIsNotUnicode_AreSkipped()
+    {
+        const string Lone = "\"\\ud800\"";
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string valid = Token($"{{\"lse\":\"x\",\"exp\":{_deployment.Time.GetUtcNow().AddDays(1).ToUnixTimeSeconds()}}}");
+        using (ServerRecord record = ServerRecord.Open(serverData, _deployment.Time))
+        {
+            SignedLog log = record.Log;
+            void Borrow(string leaseJson, string licJson, string fpJson) =>
+                log.Append(
+                    "borrow.started",
+                    w =>
+                    {
+                        w.WritePropertyName("lease");
+                        w.WriteRawValue(leaseJson);
+                        w.WritePropertyName("lic");
+                        w.WriteRawValue(licJson);
+                        w.WriteNumber("seats", 1);
+                        w.WriteNumber("borrow", 86_400);
+                        w.WritePropertyName("fp");
+                        w.WriteRawValue(fpJson);
+                    }
+                );
+
+            Borrow($"\"{valid}\"", "\"l\"", "[]");
+            Borrow("\"a.b.c\"", Lone, "[]");
+            Borrow(Lone, "\"l\"", "[]");
+            Borrow("\"a.b.c\"", "\"l\"", $"[{Lone}]");
+            log.Append(
+                "borrow.returned",
+                w =>
+                {
+                    w.WriteString("id", "x");
+                    w.WritePropertyName("key");
+                    w.WriteRawValue(Lone);
+                    w.WriteNumber("at", 2);
+                }
+            );
+        }
+
+        string file = SignedLog.FindFiles(serverData, "borrows")[^1];
+        File.AppendAllText(file, "{\"\\ud800\":1,\"type\":\"borrow.started\",\"ts\":1,\"lic\":\"l\",\"seats\":1,\"borrow\":1}\n");
+
+        using ServerIdentity server = ServerIdentityOf(serverData);
+        using BorrowJournal journal = BorrowJournal.Load(serverData, _deployment.Trust, server, setAsideBroken: false, _deployment.Time);
+        Assert.Equal(valid, Assert.Single(journal.Borrows).Token);
+        Assert.Empty(journal.Returns);
+    }
+
+    /// <summary>
+    /// A recorded borrow whose token's payload is not an object, or holds a lone surrogate escape as its lease ID, is kept
+    /// with no expiry, signed or not, and reading the record does not throw; the engine skips such a token (design §13.4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A borrow record signed with the server's key with two borrows, whose tokens' payloads are [] and an object whose lse
+    ///   is a lone surrogate escape; after the last signature, a borrow line whose token's payload is [].
+    ///
+    /// Steps:
+    /// - Load the record.
+    ///
+    /// Expected:
+    /// - Three borrows with those tokens, and no return.
+    /// </remarks>
+    [Fact]
+    public async Task BorrowRecord_TokenPayloadOfAnotherShape_IsKept()
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string array = Token("[]");
+        string lone = Token("{\"lse\":\"\\ud800\",\"exp\":1}");
+        using (ServerRecord record = ServerRecord.Open(serverData, _deployment.Time))
+        {
+            foreach (string token in new[] { array, lone })
+            {
+                record.Log.Append(
+                    "borrow.started",
+                    w =>
+                    {
+                        w.WriteString("lease", token);
+                        w.WriteString("lic", "l");
+                        w.WriteNumber("seats", 1);
+                        w.WriteNumber("borrow", 86_400);
+                    }
+                );
+            }
+        }
+
+        string file = SignedLog.FindFiles(serverData, "borrows")[^1];
+        File.AppendAllText(file, $"{{\"type\":\"borrow.started\",\"ts\":1,\"lease\":\"{array}\",\"lic\":\"l\",\"seats\":1,\"borrow\":1}}\n");
+
+        using ServerIdentity server = ServerIdentityOf(serverData);
+        using BorrowJournal journal = BorrowJournal.Load(serverData, _deployment.Trust, server, setAsideBroken: false, _deployment.Time);
+        Assert.Equal([array, lone, array], journal.Borrows.Select(b => b.Token));
+        Assert.Empty(journal.Returns);
+    }
+
+    /// <summary>
+    /// A borrow record whose last line is JSON but not an object, or has a type that is not text, is a broken record: the
+    /// start stops with the reason, and --set-aside-broken-records moves the file aside (design §13.4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that ran and stopped; [] or an object whose type is a lone surrogate escape appended to its newest borrow
+    ///   record as its third line (after the chain line and its signature).
+    ///
+    /// Steps:
+    /// - Start; start with the set-aside option.
+    ///
+    /// Expected:
+    /// - ServerStartException that names --set-aside-broken-records and line 3 with "The line is not a JSON object." or "The
+    ///   line holds a string that is not valid Unicode."; then a running server and a borrows-broken file.
+    /// </remarks>
+    [Theory]
+    [InlineData("[]", "line 3: The line is not a JSON object.")]
+    [InlineData("{\"type\":\"\\ud800\"}", "line 3: The line holds a string that is not valid Unicode.")]
+    public async Task BorrowRecord_EndsWithALineTheVerifierRefuses_IsABrokenRecord(string line, string problem)
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        string record = SignedLog.FindFiles(serverData, "borrows")[^1];
+        File.AppendAllText(record, line + "\n");
+
+        var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
+        Assert.Equal(
+            $"The borrow record '{record}' is broken ({problem}). Start with --set-aside-broken-records to move it aside; "
+                + "the borrows in it are then not counted until they expire.",
+            refused.Message
+        );
+
+        await _deployment.StartServerAsync(serverData, setAside: true);
+        Assert.Single(Directory.GetFiles(serverData, "borrows-broken-*.jsonl"));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
+
+    // A token of three parts whose payload is the given JSON text; it is not signed, and the record's reader does not verify.
+    private static string Token(string payloadJson) => $"a.{System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payloadJson))}.c";
+
+    // The first line of a log file that a running server may hold open.
+    private static string FirstLine(string path)
+    {
+        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var reader = new StreamReader(stream);
+        return reader.ReadLine()!;
+    }
+
+    // Starts a server on a data folder that has its license, with the operational log written to the provider from Warning up.
+    private Task<ElmServer> StartLoggedAsync(string serverData, RecordingLoggerProvider log) =>
+        ElmServer.StartAsync(
+            _deployment.Settings(serverData),
+            new ServerHostOptions
+            {
+                Time = _deployment.Time,
+                Environment = _ => null,
+                MinimumLogLevel = LogLevel.Warning,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
 
     // The server identity of a data folder: its license verified for its installation key.
     private ServerIdentity ServerIdentityOf(string serverData)

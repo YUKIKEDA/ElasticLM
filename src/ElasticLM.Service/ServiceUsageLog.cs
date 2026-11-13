@@ -40,6 +40,9 @@ internal sealed class ServiceUsageLog : IDisposable
     /// <summary>Gets the files' name prefix, <c>usage-&lt;node&gt;</c>.</summary>
     public string BaseName { get; }
 
+    /// <summary>Gets why the chain could not be continued at the start, or <see langword="null"/>.</summary>
+    public string? ResetReason => _log.ResetReason;
+
     /// <summary>
     /// Opens this node's log in the folder, continuing its chain from the node's newest file. The node holds
     /// <c>usage-&lt;node&gt;.lock</c> in the folder, open for itself alone, while it writes (decision 0.95): two nodes of one
@@ -72,7 +75,15 @@ internal sealed class ServiceUsageLog : IDisposable
 
         try
         {
-            SignedLog log = SignedLog.Open(full, baseName, Stream, key, LogKeyMaterial.Certificates(certificates, node), time);
+            SignedLog log = SignedLog.Open(
+                full,
+                baseName,
+                Stream,
+                key,
+                LogKeyMaterial.Certificates(certificates, node),
+                time,
+                notALogFile: name => ServiceLog.NotALogFile(operational, name)
+            );
             return new ServiceUsageLog(log, nodeLock, full, baseName, operational);
         }
         catch
