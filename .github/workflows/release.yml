@@ -660,7 +660,7 @@ jobs:
           DIGEST: ${{ needs.image.outputs.digest }}
           VERSION: ${{ needs.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
-        run: ./eng/container/Test-Image.ps1 -ImageTar image/elm-service-image.tar-ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
+        run: ./eng/container/Test-Image.ps1 -ImageTar image/elm-service-image.tar -ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
 
   guide-containers:
     # design §20.7 (V1c4d2, Q2, Q9, and review R10; V1c4d2b, Q1): the How-to guides that run elm-service in a container,
