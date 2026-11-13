@@ -1,4 +1,8 @@
+using System.Globalization;
 using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
+using System.Text;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -48,8 +52,8 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     ///   letters; a Host header "elm-host." followed by 15 labels of 60 letters.
     ///
     /// Steps:
-    /// - On the https listener: GET the long path with the query and the Host header; GET /v1/nonce with the query and the
-    ///   Host header.
+    /// - On the https listener, over a TLS connection whose server name is 127.0.0.1: GET the long path with the query and
+    ///   the Host header; GET /v1/nonce with the query and the Host header.
     /// - On the socket file with the administrator token: GET the long path; GET /admin/v1/status; each with the query and
     ///   the Host header.
     /// - On the socket file without a token: the same two requests.
@@ -79,11 +83,10 @@ public sealed class HostRequestLogTests : IAsyncDisposable
 
         await using (ElmServer server = await ElmServer.StartAsync(_deployment.Settings(data), host, cancel))
         {
-            using HttpClient https = Deployment.RawHttp(server.PublicUrls[0]);
             using HttpClient admin = Deployment.AdminHttp(server);
             using HttpClient anonymous = Deployment.AdminHttp(server, authenticate: false);
-            Assert.Equal(HttpStatusCode.NotFound, await SendAsync(https, LongPath + LongQuery));
-            Assert.Equal(HttpStatusCode.OK, await SendAsync(https, "/v1/nonce" + LongQuery));
+            Assert.Equal(HttpStatusCode.NotFound, await SendOverTlsAsync(server.PublicUrls[0], LongPath + LongQuery));
+            Assert.Equal(HttpStatusCode.OK, await SendOverTlsAsync(server.PublicUrls[0], "/v1/nonce" + LongQuery));
             Assert.Equal(HttpStatusCode.NotFound, await SendAsync(admin, LongPath + LongQuery));
             Assert.Equal(HttpStatusCode.OK, await SendAsync(admin, "/admin/v1/status" + LongQuery));
             Assert.Equal(HttpStatusCode.NotFound, await SendAsync(anonymous, LongPath + LongQuery));
@@ -220,6 +223,32 @@ public sealed class HostRequestLogTests : IAsyncDisposable
         using ServiceProvider built = services.BuildServiceProvider();
         ILogger logger = built.GetRequiredService<ILoggerFactory>().CreateLogger(HostRequestLog.Category);
         return (logger.IsEnabled(LogLevel.Information), logger.IsEnabled(LogLevel.Warning), logger.IsEnabled(LogLevel.Error));
+    }
+
+    // A GET with the long Host header over a TLS connection of the test's own, whose server name is the URL's host. .NET's
+    // HTTP client takes the Host header as the TLS server name; on Linux and macOS it then refuses the long header before it
+    // connects, with "IDN names must be between 1 and 254 characters long." (CI run 43424427122), while Windows sent it.
+    private static async Task<HttpStatusCode> SendOverTlsAsync(Uri server, string pathAndQuery)
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using var tcp = new TcpClient();
+        await tcp.ConnectAsync(server.Host, server.Port, cancel);
+        await using var tls = new SslStream(tcp.GetStream());
+        await tls.AuthenticateAsClientAsync(
+            new SslClientAuthenticationOptions
+            {
+                TargetHost = server.Host,
+                RemoteCertificateValidationCallback = (_, certificate, _, _) => certificate is not null,
+            },
+            cancel
+        );
+        await tls.WriteAsync(Encoding.ASCII.GetBytes($"GET {pathAndQuery} HTTP/1.1\r\nHost: {LongHost}\r\nConnection: close\r\n\r\n"), cancel);
+
+        // The server closes the connection after the answer; its first line is "HTTP/1.1 <status> <reason>".
+        using var reader = new StreamReader(tls, Encoding.ASCII);
+        string answer = await reader.ReadToEndAsync(cancel);
+        string status = answer.Split(' ', 3)[1];
+        return (HttpStatusCode)int.Parse(status, NumberStyles.None, CultureInfo.InvariantCulture);
     }
 
     private static async Task<HttpStatusCode> SendAsync(HttpClient http, string pathAndQuery)
