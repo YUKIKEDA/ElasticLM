@@ -2,6 +2,14 @@
 # A tag v<version> builds, checks, attests, and drafts a release; the owner's approval of the environment "release" pushes
 # the NuGet packages and publishes the release. workflow_dispatch and every pull request run the same build and checks
 # without publishing (workflow_dispatch also attests). Every action is pinned to a commit of its own repository's tag.
+#
+# design §20.5 (V1d7): any job of a run can replace another job's artifact, so a job that uploads one hashes its files
+# before the upload and gives the sha256sum lines as a job output, which the job's own runner sets. A job that downloads
+# the artifact checks the files against those lines and that the folder holds exactly the listed files. The steps named
+# "Hash …" and "Check … against …" carry the same commands in every job. Two downloads are not checked this way: the
+# site's artifact, which the pages job deploys (github-pages; T28, accepted in §5.4), and image-oci in the publish job,
+# which compares the tar's index digest with the image job's output and not the file's hash (unchanged in V1d7; row
+# V1d10, Issue #328, changes publish). The legs of the build matrix share its outputs, so one leg could set another's.
 name: Release
 
 on:
@@ -39,6 +47,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
       suffix: ${{ steps.version.outputs.suffix }}
       prerelease: ${{ steps.version.outputs.prerelease }}
+      release-notes: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -66,6 +75,15 @@ jobs:
           git merge-base --is-ancestor $env:GITHUB_SHA origin/main
           if ($LASTEXITCODE -ne 0) { "::error::The tag's commit is not on main."; exit 1 }
 
+      - name: Hash the release notes
+        id: sums
+        shell: bash
+        run: |
+          set -euo pipefail
+          sums=$(sha256sum -- release-notes.md | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-notes
@@ -77,6 +95,8 @@ jobs:
     name: Admin UI (web/admin)
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      admin-ui-dist: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -97,6 +117,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit 1 }
           corepack pnpm build
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Hash admin-ui-dist
+        id: sums
+        shell: bash
+        working-directory: web/admin/dist
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
+          sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -130,6 +166,17 @@ jobs:
             os: macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    # One output for each runtime identifier: the jobs of a matrix share the outputs, and the last job to set one wins
+    # (https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idoutputs). Each job
+    # sets only its own.
+    outputs:
+      archives-win-x64: ${{ steps.sums.outputs.archives-win-x64 }}
+      archives-win-arm64: ${{ steps.sums.outputs.archives-win-arm64 }}
+      archives-linux-x64: ${{ steps.sums.outputs.archives-linux-x64 }}
+      archives-linux-arm64: ${{ steps.sums.outputs.archives-linux-arm64 }}
+      archives-linux-musl-x64: ${{ steps.sums.outputs.archives-linux-musl-x64 }}
+      archives-osx-arm64: ${{ steps.sums.outputs.archives-osx-arm64 }}
+      archives-osx-x64: ${{ steps.sums.outputs.archives-osx-x64 }}
     defaults:
       run:
         shell: pwsh
@@ -146,6 +193,19 @@ jobs:
         with:
           name: admin-ui-dist
           path: web/admin/dist
+
+      - name: Check admin-ui-dist against the spa job's hashes
+        shell: bash
+        working-directory: web/admin/dist
+        env:
+          SUMS: ${{ needs.spa.outputs.admin-ui-dist }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
@@ -247,6 +307,22 @@ jobs:
           }
           exit $failed
 
+      - name: Hash the archives
+        id: sums
+        shell: bash
+        working-directory: artifacts/release/archives
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
+          sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
+          printf 'archives-%s<<SUMS_END\n%s\nSUMS_END\n' "$RID" "$sums" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: archives-${{ matrix.rid }}
@@ -258,6 +334,8 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      packages: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -286,6 +364,22 @@ jobs:
 
       - name: Check the packages
         run: ./eng/release/Test-Package.ps1 -PackageDir artifacts/packages -Version $env:VERSION
+
+      - name: Hash the packages
+        id: sums
+        shell: bash
+        working-directory: artifacts/packages
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
+          sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -322,6 +416,19 @@ jobs:
           name: packages
           path: artifacts/packages
 
+      - name: Check the packages against the pack job's hashes
+        shell: bash
+        working-directory: artifacts/packages
+        env:
+          SUMS: ${{ needs.pack.outputs.packages }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
@@ -346,6 +453,8 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      sbom: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -368,6 +477,22 @@ jobs:
           New-Item -ItemType Directory -Force sbom | Out-Null
           ./eng/release/New-Sbom.ps1 -Version $env:VERSION -Commit $env:GITHUB_SHA -OutFile "sbom/elasticlm-$env:VERSION.spdx.json"
 
+      - name: Hash the SBOM
+        id: sums
+        shell: bash
+        working-directory: sbom
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
+          sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
@@ -382,6 +507,7 @@ jobs:
     timeout-minutes: 20
     outputs:
       digest: ${{ steps.build.outputs.digest }}
+      image-oci: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -395,9 +521,28 @@ jobs:
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: archives-linux-x64
           path: archives
-          pattern: archives-linux-*64
-          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-linux-arm64
+          path: archives
+
+      - name: Check the archives against the build jobs' hashes
+        shell: bash
+        working-directory: archives
+        env:
+          SUMS: |-
+            ${{ needs.build.outputs.archives-linux-x64 }}
+            ${{ needs.build.outputs.archives-linux-arm64 }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
       # The docker driver has no OCI exporter. No version is given, so the runner's buildx is used and nothing is cached.
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -433,6 +578,15 @@ jobs:
           if ($second -ne $env:FIRST) { "::error::A second build gave $second, not $env:FIRST."; exit 1 }
           "Two builds gave the same index digest $second." >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Hash the image tar
+        id: sums
+        shell: bash
+        run: |
+          set -euo pipefail
+          sums=$(sha256sum -- elm-service-image.tar | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-oci
@@ -442,7 +596,7 @@ jobs:
 
   image-test:
     name: Container image (linux/${{ matrix.arch }})
-    needs: [version, image]
+    needs: [version, build, image]
     strategy:
       fail-fast: false
       matrix:
@@ -466,18 +620,47 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: image-oci
+          path: image
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: archives-${{ matrix.rid }}
           path: archives
 
+      # Into its own folder and checked before anything runs: a replaced artifact could otherwise put files over the
+      # checkout, such as the script of the last step.
+      - name: Check the image tar against the image job's hash
+        shell: bash
+        working-directory: image
+        env:
+          SUMS: ${{ needs.image.outputs.image-oci }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      - name: Check the archives against the build job's hashes
+        shell: bash
+        working-directory: archives
+        env:
+          SUMS: ${{ needs.build.outputs[format('archives-{0}', matrix.rid)] }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
       - name: Check and run the image
         env:
           DIGEST: ${{ needs.image.outputs.digest }}
           VERSION: ${{ needs.version.outputs.version }}
           ARCH: ${{ matrix.arch }}
-        run: ./eng/container/Test-Image.ps1 -ImageTar elm-service-image.tar -ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
+        run: ./eng/container/Test-Image.ps1 -ImageTar image/elm-service-image.tar -ExpectedDigest $env:DIGEST -ArchiveDir archives -Version $env:VERSION -Arch $env:ARCH | Tee-Object -Variable out; $out | Select-Object -Last 1 >> $env:GITHUB_STEP_SUMMARY
 
   guide-containers:
     # design §20.7 (V1c4d2, Q2, Q9, and review R10; V1c4d2b, Q1): the How-to guides that run elm-service in a container,
@@ -514,6 +697,46 @@ jobs:
           name: image-oci
           path: image
 
+      - name: Check the archives against the build job's hashes
+        shell: bash
+        working-directory: archives
+        env:
+          SUMS: ${{ needs.build.outputs.archives-linux-x64 }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      - name: Check the packages against the pack job's hashes
+        shell: bash
+        working-directory: packages
+        env:
+          SUMS: ${{ needs.pack.outputs.packages }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      # The tar's own hash: the pages load the image with docker load, which is given no index digest to compare.
+      - name: Check the image tar against the image job's hash
+        shell: bash
+        working-directory: image
+        env:
+          SUMS: ${{ needs.image.outputs.image-oci }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
       - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
@@ -537,15 +760,58 @@ jobs:
     name: SHA256SUMS
     # The image test and the container pages are here too, so that no draft is made when the image or a page fails (design
     # §20.6; §20.7, V1c4d2, review R10).
-    needs: [build, pack, consume, sbom, image-test, guide-containers]
+    needs: [version, build, pack, consume, sbom, image-test, guide-containers]
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    outputs:
+      sha256sums: ${{ steps.sums.outputs.sums }}
+    env:
+      # The lines that the jobs that made the release's files gave for them.
+      SUMS: |-
+        ${{ needs.build.outputs.archives-win-x64 }}
+        ${{ needs.build.outputs.archives-win-arm64 }}
+        ${{ needs.build.outputs.archives-linux-x64 }}
+        ${{ needs.build.outputs.archives-linux-arm64 }}
+        ${{ needs.build.outputs.archives-linux-musl-x64 }}
+        ${{ needs.build.outputs.archives-osx-arm64 }}
+        ${{ needs.build.outputs.archives-osx-x64 }}
+        ${{ needs.pack.outputs.packages }}
+        ${{ needs.sbom.outputs.sbom }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
+          name: archives-win-x64
           path: assets
-          pattern: archives-*
-          merge-multiple: true
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-win-arm64
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-linux-x64
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-linux-arm64
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-linux-musl-x64
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-osx-arm64
+          path: assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: archives-osx-x64
+          path: assets
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -557,18 +823,72 @@ jobs:
           name: sbom
           path: assets
 
-      - name: Write SHA256SUMS
+      - name: Check the files against the hashes of the jobs that made them
         working-directory: assets
         run: |
-          sha256sum -- * > ../SHA256SUMS
-          mv ../SHA256SUMS .
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      - name: Write SHA256SUMS
+        id: sums
+        # design §20.5 (V1d7): the lines of the jobs that made the files, in the order of the names, not hashes of the
+        # bytes this job downloaded. The output is the line of SHA256SUMS itself, for the jobs that take release-assets.
+        working-directory: assets
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" | sort -k 2 > SHA256SUMS
           cat SHA256SUMS
+          sums=$(sha256sum -- SHA256SUMS | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-assets
           path: assets
           retention-days: 7
+
+      # The attest and draft jobs run only on a tag or a manual run, so their two checks run here on every pull request,
+      # on this job's own download, with the same commands (design §20.5, V1d7).
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-assets
+          path: check/assets
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-notes
+          path: check/notes
+
+      - name: Check release-assets against this job's hash of SHA256SUMS
+        working-directory: check/assets
+        env:
+          SUMS: ${{ steps.sums.outputs.sums }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          sha256sum --check --strict SHA256SUMS
+          diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | cut -c67- | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      - name: Check the release notes against the version job's hash
+        working-directory: check/notes
+        env:
+          SUMS: ${{ needs.version.outputs.release-notes }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
   attest:
     # T24: provenance for every file SHA256SUMS lists, and for SHA256SUMS itself. No build code runs here.
@@ -587,6 +907,21 @@ jobs:
           name: release-assets
           path: assets
 
+      # design §20.5 (V1d7): SHA256SUMS is the one the checksums job wrote, the files are the ones it lists, and there
+      # are no others, before anything is signed.
+      - name: Check release-assets against the checksums job's hash of SHA256SUMS
+        working-directory: assets
+        env:
+          SUMS: ${{ needs.checksums.outputs.sha256sums }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          sha256sum --check --strict SHA256SUMS
+          diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | cut -c67- | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
       - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-checksums: assets/SHA256SUMS
@@ -598,7 +933,7 @@ jobs:
   draft:
     # Q16: a draft release with every file; the owner looks at it before approving the environment. No build code runs here.
     name: Draft the release
-    needs: [version, attest]
+    needs: [version, checksums, attest]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -613,6 +948,33 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-notes
+          path: notes
+
+      # design §20.5 (V1d7): this job's own download is checked again; the attest job checked another download.
+      - name: Check release-assets against the checksums job's hash of SHA256SUMS
+        working-directory: assets
+        env:
+          SUMS: ${{ needs.checksums.outputs.sha256sums }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          sha256sum --check --strict SHA256SUMS
+          diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | cut -c67- | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
+
+      - name: Check the release notes against the version job's hash
+        working-directory: notes
+        env:
+          SUMS: ${{ needs.version.outputs.release-notes }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
       - name: Create the draft
         env:
@@ -623,7 +985,7 @@ jobs:
         run: |
           flags="--draft --verify-tag"
           if [ "$PRERELEASE" = "true" ]; then flags="$flags --prerelease"; fi
-          gh release create "$TAG" $flags --title "$TAG" --notes-file release-notes.md assets/*
+          gh release create "$TAG" $flags --title "$TAG" --notes-file notes/release-notes.md assets/*
 
   publish:
     # Q6, Q16, T23: after the owner approves the environment, push the packages from the draft (checked against its
