@@ -20,7 +20,12 @@
       disk, so the same run is left out and the report passes;
     - the target itself: an activation p99 of exactly 200 ms on a normal disk passes;
     - a run without its activations (it stopped before them) is not left out: exit 1, the activation p99 named as having
-      no value in that run.
+      no value in that run;
+    - a left-out run (43425339215/3) is still judged on the other activation targets: with one failed activation, and
+      with a send lag of 1,500 ms, exit 1 with that target named;
+    - a run's values are read run by run: a run without its self-test, with one self-test of four, with a self-test
+      without its figure, without its server starts, or without its count of failed renewals misses that target with
+      exit 1, while the other runs have theirs.
     The files are made in a temporary folder that is removed at the end.
 #>
 [CmdletBinding()]
@@ -34,7 +39,7 @@ $failures = 0
 
 # A run with the figures of 43425339215's run 1 that the report checks against a target, and the given activation and
 # flush p99. $null for the activation p99 leaves out the activations as a run that stopped before them does.
-function New-Run([object]$activationP99, [double]$flushP99) {
+function New-Run([object]$activationP99, [double]$flushP99, [scriptblock]$change) {
     $run = [ordered]@{
         commit = '5feb83be3ad9ea5ee126c77d215c530f115cd3c3'
         sizes = [ordered]@{ elmServer = 13276720; elmService = 26804760; libelasticlm = 7171624 }
@@ -49,6 +54,7 @@ function New-Run([object]$activationP99, [double]$flushP99) {
     if ($null -ne $activationP99) {
         $run.activations = [ordered]@{ maxSendLagMs = 3.9; activate = [ordered]@{ failed = 0; p99Ms = $activationP99 }; flush = [ordered]@{ p99Ms = $flushP99 } }
     }
+    if ($change) { & $change $run }
     $run
 }
 
@@ -108,7 +114,7 @@ try {
 
     Invoke-Case 'three runs on a slow disk fail' @((New-Run 630.14 180.27), (New-Run 269.96 104.63), (New-Run 207.41 36.96)) 1 @(
         "$target no run | ≤ 200.00 ms | NO |"
-        '- activation p99, 50/s for 60 s, runs with disk flush p99 ≤ 20 ms: no run had a normal disk (disk flush p99 at most 20 ms).'
+        '- activation p99, 50/s for 60 s, runs with disk flush p99 ≤ 20 ms: no run had a normal disk (disk flush p99 at most 20 ms): a slow runner disk, or a change that makes the disk flush slow on every run.'
         '- run-1: activation p99 630.14 ms, disk flush p99 180.27 ms, more than 20 ms.'
         '- run-2: activation p99 269.96 ms, disk flush p99 104.63 ms, more than 20 ms.'
         '- run-3: activation p99 207.41 ms, disk flush p99 36.96 ms, more than 20 ms.'
@@ -130,6 +136,36 @@ try {
         '- activation p99, 50/s for 60 s, runs with disk flush p99 ≤ 20 ms: no value in run-3.'
         '- activations: failed: no value in run-3.'
     ) @($listed)
+
+    $slow = { param($change) New-Run 269.96 104.63 $change }
+    Invoke-Case 'a left-out run is still judged on failed activations' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (& $slow { param($r) $r.activations.activate.failed = 1 })) 1 @(
+        '- activations: failed: 1 , more than 0 .'
+        '- run-3: activation p99 269.96 ms, disk flush p99 104.63 ms, more than 20 ms.'
+    )
+
+    Invoke-Case 'a left-out run is still judged on the send lag' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (& $slow { param($r) $r.activations.maxSendLagMs = 1500 })) 1 @(
+        '- activations: send lag: 1500 ms, more than 1000 ms.'
+    )
+
+    Invoke-Case 'a run without its self-test misses the verification target' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (New-Run 7.93 2.33 { param($r) $r.Remove('selfTest') })) 1 @(
+        '- license file verification: no value in run-3.'
+    )
+
+    Invoke-Case 'a run with one self-test of four misses the verification target' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (New-Run 7.93 2.33 { param($r) $r.selfTest = @($r.selfTest[0]) })) 1 @(
+        '- license file verification: 1 of 4 values in run-3.'
+    )
+
+    Invoke-Case 'a run with a self-test without its figure misses the verification target' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (New-Run 7.93 2.33 { param($r) $r.selfTest[1].Remove('verifyUs') })) 1 @(
+        '- license file verification: no value in run-3.'
+    )
+
+    Invoke-Case 'a run without its server starts misses the start target' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (New-Run 7.93 2.33 { param($r) $r.Remove('serverStart') })) 1 @(
+        '- elm-server start, server.started: no value in run-3.'
+    )
+
+    Invoke-Case 'a run without its failed renewals misses the failure target' @((New-Run 5.04 1.02), (New-Run 7.93 2.33), (New-Run 7.93 2.33 { param($r) $r.leases.load.renew.Remove('failed') })) 1 @(
+        '- lease load: failed acquisitions and renewals: no value in run-3.'
+    )
 }
 finally {
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue

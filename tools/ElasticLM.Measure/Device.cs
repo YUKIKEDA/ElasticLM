@@ -17,7 +17,19 @@ namespace ElasticLM.Measure;
 /// <param name="Milliseconds">The time from building the proof to the answer.</param>
 /// <param name="RetryAfter">The answer's <c>Retry-After</c>, if any.</param>
 /// <param name="Error">The messages of the exception of a request without a whole answer, or <see langword="null"/>.</param>
-internal sealed record Answer(HttpStatusCode Status, string? Code, string Body, double Milliseconds, TimeSpan? RetryAfter, string? Error = null);
+/// <param name="FailedRequest">
+/// The method and path of the request without a whole answer: the request itself, or the nonce's
+/// <c>GET v1/nonce (before …)</c> when that broke off first; otherwise <see langword="null"/>.
+/// </param>
+internal sealed record Answer(
+    HttpStatusCode Status,
+    string? Code,
+    string Body,
+    double Milliseconds,
+    TimeSpan? RetryAfter,
+    string? Error = null,
+    string? FailedRequest = null
+);
 
 /// <summary>
 /// One installation key and the requests it signs (design §12.2), one at a time, with the nonce of its last answer, as a
@@ -74,11 +86,15 @@ internal sealed class Device : IDisposable
     {
         await _one.WaitAsync();
         long start = TimeProvider.System.GetTimestamp();
+        string request = method.Method + " " + path;
+        string sending = request;
         try
         {
             if (_nonce is null)
             {
+                sending = $"GET v1/nonce (before {request})";
                 await PrepareAsync();
+                sending = request;
             }
 
             byte[] bytes = Encoding.UTF8.GetBytes(body);
@@ -92,10 +108,10 @@ internal sealed class Device : IDisposable
                 includeKey,
                 TimeProvider.System
             );
-            using var request = new HttpRequestMessage(method, path) { Content = new ByteArrayContent(bytes) };
-            request.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
-            request.Headers.Add(ProofBuilder.HeaderName, proof);
-            using HttpResponseMessage response = await _http.SendAsync(request);
+            using var message = new HttpRequestMessage(method, path) { Content = new ByteArrayContent(bytes) };
+            message.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/json");
+            message.Headers.Add(ProofBuilder.HeaderName, proof);
+            using HttpResponseMessage response = await _http.SendAsync(message);
             string text = await response.Content.ReadAsStringAsync();
             double milliseconds = TimeProvider.System.GetElapsedTime(start).TotalMilliseconds;
             _nonce = response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? values) ? values.First() : null;
@@ -113,13 +129,26 @@ internal sealed class Device : IDisposable
             // design §20.7 (V1d31, Issue #393): a request whose answer broke off is a failed request of the load, not the end
             // of the run. The server may have taken its nonce, so the next request gets a new one.
             _nonce = null;
-            return new Answer(0, NoAnswer, string.Empty, TimeProvider.System.GetElapsedTime(start).TotalMilliseconds, null, Messages(exception));
+            return new Answer(
+                0,
+                NoAnswer,
+                string.Empty,
+                TimeProvider.System.GetElapsedTime(start).TotalMilliseconds,
+                null,
+                Messages(exception),
+                sending
+            );
         }
         finally
         {
             _one.Release();
         }
     }
+
+    /// <summary>Returns a refusal's code and status, and for a request without a whole answer the request and the messages.</summary>
+    /// <param name="answer">The answer.</param>
+    public static string Describe(Answer answer) =>
+        answer.Code == NoAnswer ? $"{answer.Code} at {answer.FailedRequest}: {answer.Error}" : $"{answer.Code} ({(int)answer.Status})";
 
     // The messages of an exception and of the exceptions inside it, which name where the request broke off.
     private static string Messages(Exception exception)

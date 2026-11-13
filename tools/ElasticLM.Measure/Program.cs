@@ -84,11 +84,10 @@ internal sealed class BrokenRequests
     private readonly List<(double At, string Path, string Error)> _requests = [];
     private readonly Lock _gate = new();
 
-    /// <summary>Keeps a request if its answer is <see cref="Device.NoAnswer"/>.</summary>
+    /// <summary>Keeps a request if its answer is <see cref="Device.NoAnswer"/>, with the request that broke off.</summary>
     /// <param name="sentAt">When the request was sent, in seconds from the start of the load.</param>
-    /// <param name="path">The method and the path.</param>
     /// <param name="answer">The answer.</param>
-    public void Add(double sentAt, string path, Answer answer)
+    public void Add(double sentAt, Answer answer)
     {
         if (answer.Code != Device.NoAnswer)
         {
@@ -97,7 +96,7 @@ internal sealed class BrokenRequests
 
         lock (_gate)
         {
-            _requests.Add((sentAt, path, answer.Error ?? string.Empty));
+            _requests.Add((sentAt, answer.FailedRequest ?? string.Empty, answer.Error ?? string.Empty));
         }
     }
 
@@ -119,6 +118,29 @@ internal sealed class BrokenRequests
 
             writer.WriteEndArray();
         }
+    }
+}
+
+/// <summary>
+/// The renewals of the lease load (Issue #393, design §20.7): the refusal of a renewal that follows one without a whole
+/// answer is counted apart from the failures. The server may have taken that renewal and moved the lease's sequence number
+/// on, while the tool still sends the one before it; the renewal without an answer is already one of the failures.
+/// </summary>
+internal sealed class Renewals
+{
+    /// <summary>Gets the renewals that succeeded and those that failed, the requests without a whole answer among them.</summary>
+    public Latencies Renewed { get; } = new();
+
+    /// <summary>Gets the refusals of renewals that follow a renewal without a whole answer.</summary>
+    public Latencies AfterBroken { get; } = new();
+
+    /// <summary>Records a renewal that failed, and returns whether the lease's sequence number is unsure afterwards.</summary>
+    /// <param name="unsure">Whether a renewal of the lease before this one got no whole answer and none has succeeded since.</param>
+    /// <param name="code">The error code, or <see cref="Device.NoAnswer"/>.</param>
+    public bool Refused(bool unsure, string code)
+    {
+        (unsure && code != Device.NoAnswer ? AfterBroken : Renewed).Failed(code);
+        return unsure || code == Device.NoAnswer;
     }
 }
 
@@ -149,13 +171,18 @@ internal static class Leases
                 Answer probe = await devices[0].PostAsync("v1/leases", Acquire, includeKey: true);
                 if (probe.Code is null)
                 {
-                    await devices[0].DeleteAsync($"v1/leases/{Device.Lease(probe.Body).Id}");
+                    Answer released = await devices[0].DeleteAsync($"v1/leases/{Device.Lease(probe.Body).Id}");
+                    if (released.Code is not null)
+                    {
+                        throw new InvalidOperationException($"The release of the first lease was refused with {Device.Describe(released)}.");
+                    }
+
                     break;
                 }
 
                 if (probe.Code != "ELM_SERVER_RECOVERING")
                 {
-                    throw new InvalidOperationException($"The first acquisition was refused with {probe.Code} ({(int)probe.Status}).");
+                    throw new InvalidOperationException($"The first acquisition was refused with {Device.Describe(probe)}.");
                 }
 
                 await Task.Delay(probe.RetryAfter ?? TimeSpan.FromSeconds(5), TimeProvider.System);
@@ -166,8 +193,7 @@ internal static class Leases
 
             double recoveryWait = TimeProvider.System.GetElapsedTime(waitStart).TotalSeconds;
             var acquired = new Latencies();
-            var renewed = new Latencies();
-            var afterBroken = new Latencies();
+            var renewals = new Renewals();
             var broken = new BrokenRequests();
             var lag = new Lag();
             using LeaseChecker checker = await LeaseChecker.CreateAsync(http, options["trust"]);
@@ -188,7 +214,7 @@ internal static class Leases
                                 const string path = "v1/leases";
                                 double sentAt = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
                                 Answer answer = await device.PostAsync(path, Acquire, includeKey: true);
-                                broken.Add(sentAt, "POST " + path, answer);
+                                broken.Add(sentAt, answer);
                                 if (answer.Code is string refused)
                                 {
                                     acquired.Failed(refused);
@@ -210,17 +236,14 @@ internal static class Leases
                                     string path = $"v1/leases/{id}/renew";
                                     double sentAt = TimeProvider.System.GetElapsedTime(start).TotalSeconds;
                                     Answer answer = await device.PostAsync(path, $$"""{"seq":{{seq}}}""", includeKey: false);
-                                    broken.Add(sentAt, "POST " + path, answer);
+                                    broken.Add(sentAt, answer);
                                     if (answer.Code is string refused)
                                     {
-                                        // Issue #393: a refusal of the seq that a renewal without an answer may have moved on is
-                                        // counted apart from the failures; that renewal is already one of them.
-                                        (unsure && refused != Device.NoAnswer ? afterBroken : renewed).Failed(refused);
-                                        held[k] = (at, id, seq, unsure || refused == Device.NoAnswer);
+                                        held[k] = (at, id, seq, renewals.Refused(unsure, refused));
                                         continue;
                                     }
 
-                                    renewed.Succeeded(answer.Milliseconds);
+                                    renewals.Renewed.Succeeded(answer.Milliseconds);
                                     held[k] = (at, id, Device.Lease(answer.Body).Seq, false);
                                     checker.Check(answer.Body, device.Thumbprint);
                                 }
@@ -234,8 +257,8 @@ internal static class Leases
             writer.WriteNumber("recoveryWaitSeconds", Math.Round(recoveryWait, 1));
             writer.WriteNumber("maxSendLagMs", Math.Round(lag.Max.TotalMilliseconds, 1));
             acquired.Write(writer, "acquire");
-            renewed.Write(writer, "renew");
-            afterBroken.Write(writer, "renewAfterBroken");
+            renewals.Renewed.Write(writer, "renew");
+            renewals.AfterBroken.Write(writer, "renewAfterBroken");
             broken.Write(writer);
             writer.WriteNumber("tokensVerified", checker.Verified);
             writer.WriteNumber("tokensRefused", checker.Refused);
@@ -387,8 +410,8 @@ internal static class Activations
                                 includeKey: true
                             );
                             int others = Interlocked.Decrement(ref inFlight);
-                            broken.Add(sentAt, "POST " + path, answer);
-                            if (answer.Milliseconds > SlowMilliseconds)
+                            broken.Add(sentAt, answer);
+                            if (answer.Milliseconds > SlowMilliseconds && answer.Code != Device.NoAnswer)
                             {
                                 lock (slow)
                                 {

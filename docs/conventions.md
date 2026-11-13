@@ -56,6 +56,7 @@ website/                     利用者の文書の Docusaurus のサイト（doc
 | `tests/ElasticLM.Leasing.Tests` | `ElasticLM.Leasing` のテスト。偽の時計で、席・`seq`・回収の時間・期限を確かめる |
 | `tests/ElasticLM.Server.Tests` | `elm-server` と `LicenseClient` の結合テスト。サーバーを同じプロセスのループバックの TLS で立て、本物のクライアントから呼ぶ。`elm server` と `elm log verify` も同じプロセスで `ElmApp.Run` から呼ぶ |
 | `tests/ElasticLM.Service.Tests` | `elm-service` のテスト。サービスを同じプロセスのループバックで立て、SQLite で流す。環境変数 `ELM_TEST_POSTGRES` に PostgreSQL の接続文字列があれば、同じテストをテストごとのスキーマで PostgreSQL でも流す（CI の Linux） |
+| `tests/ElasticLM.Measure.Tests` | 計測の道具 `tools/ElasticLM.Measure` のテスト（design §20.7 の V1d31）。応答が途中で切れた要求の扱いを、偽の `HttpMessageHandler` で確かめる |
 | `tests/ElasticLM.Cli.Tests` | `elm` のコマンドのテスト。一時フォルダのファイルで、鍵の作成から検証までを流す |
 | `web/admin` | 管理画面の SPA（design §15.2、0.96、0.100）。Preact 11 と TypeScript、Vite 8、テストは Vitest と happy-dom。Node.js は `.node-version`、pnpm は `package.json` の `packageManager`（Corepack が確かめる）、依存は `pnpm-lock.yaml`、pnpm の守りは `pnpm-workspace.yaml`。`build.ps1` がビルドし、`dist` を `ElasticLM.Service` が埋め込んで `/` と `/assets/` で配る。文言は `src/messages.ts` |
 | `samples/VerifyLicense` | ライセンスファイルを検証する最小のアプリ。`--self-test` で NativeAOT の確認と検証時間の計測を行う |

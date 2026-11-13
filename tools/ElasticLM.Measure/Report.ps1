@@ -42,15 +42,23 @@ function Format-Range([double[]]$values, [string]$format = 'N1') {
     $low -eq $high ? (Format-Number $low $format) : "$(Format-Number $low $format)–$(Format-Number $high $format)"
 }
 
-# Each target: a label, the runs it is checked on, the value of a run, the limit, and whether a value at most the limit
-# meets it. A run without the value misses the target (design §20.7, V1d31): a run that stopped early leaves its result too.
+# Each target: a label, the runs it is checked on, the values of a run, how many values a run has (the self-test runs 4
+# times, the server start 5), the limit, and whether a value at most the limit meets it. The values are read run by run, so
+# a run with too few values cannot borrow another run's. A run without its values, with another count, or with a $null
+# among them misses the target (design §20.7, V1d31): a run that stopped early leaves its result too.
 $rows = [Collections.Generic.List[object]]::new()
-function Add-Target([string]$label, [string]$unit, [object[]]$jobs, [scriptblock]$value, [double]$limit, [string]$format = 'N1') {
-    $values = @($jobs | ForEach-Object $value)
-    $missing = @(for ($i = 0; $i -lt $jobs.Count; $i++) { if ($null -eq $values[$i]) { $jobs[$i].job } })
-    $present = [double[]]@($values | Where-Object { $null -ne $_ })
+function Add-Target([string]$label, [string]$unit, [object[]]$jobs, [scriptblock]$value, [double]$limit, [string]$format = 'N1', [int]$count = 1) {
+    $values = [Collections.Generic.List[double]]::new()
+    $missing = [Collections.Generic.List[string]]::new()
+    foreach ($job in $jobs) {
+        $items = @($job | ForEach-Object $value)
+        if ($items.Count -eq 0 -or @($items | Where-Object { $null -eq $_ }).Count -gt 0) { $missing.Add("no value in $($job.job)"); continue }
+        if ($items.Count -ne $count) { $missing.Add("$($items.Count) of $count values in $($job.job)"); continue }
+        $items | ForEach-Object { $values.Add([double]$_) }
+    }
+    $present = [double[]]$values.ToArray()
     $missed = @($present | Where-Object { $_ -gt $limit })
-    if ($missing.Count -gt 0) { $failures.Add("$label`: no value in $($missing -join ', ').") }
+    if ($missing.Count -gt 0) { $failures.Add("$label`: $($missing -join '; ').") }
     if ($missed.Count -gt 0) { $failures.Add("$label`: $($missed -join ', ') $unit, more than $limit $unit.") }
     $met = $missing.Count -eq 0 -and $missed.Count -eq 0
     $rows.Add([pscustomobject]@{ Figure = $label; Range = "$(Format-Range $present $format) $unit"; Target = "≤ $(Format-Number $limit $format) $unit"; Met = $met ? 'yes' : 'NO' })
@@ -66,18 +74,18 @@ if ($runs.Count -gt 0) {
     Add-Target 'elm-server size' 'bytes' $runs { $_.sizes.elmServer } 30000000 'N0'
     Add-Target 'libelasticlm size' 'bytes' $runs { $_.sizes.libelasticlm } 8000000 'N0'
     Add-Record 'elm size' 'bytes' { $_.sizes.elm } 'N0'
-    Add-Target 'license file verification' 'µs' $runs { $_.selfTest.verifyUs } 1000
+    Add-Target 'license file verification' 'µs' $runs { $_.selfTest.verifyUs } 1000 'N1' 4
     Add-Record 'proof create (M3b)' 'µs' { $_.selfTest.proofCreateUs }
     Add-Record 'proof verify (M3b)' 'µs' { $_.selfTest.proofVerifyUs }
     Add-Record 'renewal, server side without the proof (M3b)' 'µs' { $_.selfTest.renewalServerUs }
-    Add-Target 'elm-server start, server.started' 'ms' $runs { $_.serverStart.recordMs } 1000
+    Add-Target 'elm-server start, server.started' 'ms' $runs { $_.serverStart.recordMs } 1000 'N1' 5
     Add-Record 'elm-server start, from outside' 'ms' { $_.serverStart.outsideMs }
     Add-Target 'renewal p99, 10,000 leases' 'ms' $runs { $_.leases.load.renew.p99Ms } 50 'N2'
     Add-Record 'renewal p50, 10,000 leases' 'ms' { $_.leases.load.renew.p50Ms } 'N2'
     Add-Record 'renewal max, 10,000 leases' 'ms' { $_.leases.load.renew.maxMs } 'N2'
     Add-Target 'elm-server peak memory (VmHWM)' 'bytes' $runs { $_.leases.memory.vmHwmBytes } 200000000 'N0'
     Add-Record 'elm-server cgroup memory.peak' 'bytes' { $_.leases.memory.cgroupPeakBytes } 'N0'
-    Add-Target 'lease load: failed acquisitions and renewals' '' $runs { $_.leases.load ? $_.leases.load.acquire.failed + $_.leases.load.renew.failed : $null } 0 'N0'
+    Add-Target 'lease load: failed acquisitions and renewals' '' $runs { $load = $_.leases.load; ($null -eq $load.acquire.failed -or $null -eq $load.renew.failed) ? $null : $load.acquire.failed + $load.renew.failed } 0 'N0'
     # Issue #393: the requests whose answer broke off are among the failures above; a renewal that the server may have taken
     # leaves the tool with the sequence number before it, and the refusal of the next renewal is counted apart.
     Add-Record 'lease load: requests without a whole answer' '' { $_.leases.load ? @($_.leases.load.broken | Where-Object { $_ }).Count : $null } 'N0'
@@ -98,7 +106,7 @@ if ($runs.Count -gt 0) {
         Add-Target $activationLabel 'ms' $normal { $_.activations.activate.p99Ms } 200 'N2'
     }
     else {
-        $failures.Add("$activationLabel`: no run had a normal disk (disk flush p99 at most $slowFlushMs ms).")
+        $failures.Add("$activationLabel`: no run had a normal disk (disk flush p99 at most $slowFlushMs ms): a slow runner disk, or a change that makes the disk flush slow on every run.")
         $rows.Add([pscustomobject]@{ Figure = $activationLabel; Range = 'no run'; Target = '≤ 200.00 ms'; Met = 'NO' })
     }
     foreach ($run in $leftOut) {
