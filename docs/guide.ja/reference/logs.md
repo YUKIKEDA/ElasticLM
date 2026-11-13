@@ -21,7 +21,15 @@ info: elm-server[2]
 | --- | --- |
 | `elm-server` | 起動（ポート、公開 URL、鍵 ID、サーバーライセンス ID、リースの再登録の期間の終わり）と停止。リースの取得、返却、再登録のそれぞれ。見つかったクローン。管理リクエスト。ライセンスの読み直しと、ライセンスの更新の失敗。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルや借用の記録の名前を持つが、実在する日時を表していないファイル。書き込めない借用の記録。借用の記録の退避。片付けの処理の失敗。 |
 | `elm-service` | 起動（アドレス、データベース、署名鍵と、その証明書の期限）と停止。適用したデータベースのスキーマのバージョン。30 日以内に期限が切れる署名鍵の鍵証明書。利用ログの場所。削除した監査ログの行と管理画面のセッション。定期的な処理とデータベースへのリクエストの失敗。署名できなかったライセンスファイルやリース。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルの名前を持つが、実在する日時を表していないファイル。管理画面のサインインに使う鍵を作ったこと、または作らなかったこと。長くサインインしていない管理者の API キーを拒否したこと。拒否した管理画面のサインイン。接続できない ID プロバイダー。`Debug` レベルでは、アクセストークンを拒否した理由。 |
-| `Microsoft.*` | Web ホスト自身のメッセージ。待ち受けるアドレス、起動と停止など。 |
+| `Microsoft.Hosting.Lifetime` | Web ホストの起動と停止。待ち受けるアドレスとソケットのファイルのそれぞれ（`Now listening on: …`）、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、コンテンツのルートのパス、`Application is shutting down...`。 |
+| `Microsoft.Extensions.Hosting.Internal.Host` | プログラムが待ち受けられないときのエラー `Hosting failed to start` と、その例外。 |
+| `Microsoft.AspNetCore.Routing.EndpointMiddleware` | エンドポイントに届いたリクエストごとに、そのメソッドとルートのパターンを、処理の前とあとに書く。たとえば `Executing endpoint 'HTTP: GET /v1/nonce'` と `Executed endpoint 'HTTP: GET /v1/nonce'` だ。パスの中の値は、`HTTP: DELETE /admin/v1/leases/{id}` の `{id}` のように、プレースホルダーのまま書く。 |
+| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。 |
+| `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | 管理画面のサインインを使う `elm-service` だけ。サインイン用の鍵を作る起動で、`Creating key {…} …` と、警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` を書く。[OIDC でサインインする](../how-to/sign-in-with-oidc.md)で説明しているとおり、サービスはこの鍵を保存する前に自分で暗号化する。 |
+| `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler` | OIDC の管理者を使う `elm-service` だけ。アクセストークンを拒否した理由を、`Failed to validate the token.` と `elm-oidc was not authenticated. Failure message: …` として書く。 |
+| `Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler` | 管理画面のサインインを使う `elm-service` だけ。ID プロバイダーに送ったサインインのそれぞれ（`AuthenticationScheme: elm-web was challenged.`）と、`/auth/callback` への戻りを拒否した理由を書く。これらのエントリーは、そのリクエストの文字を引用することがある。エラー `Message contains error: '…', error_description: '…', error_uri: '…'.` とエントリー `Error from RemoteAuthentication: …` は、クエリの `error`、`error_description`、`error_uri` を引用する。警告 `The correlation cookie value '…' did not match the expected value '…'.` は、リクエストが送った Cookie の値を引用する。拒否したサインインについての `elm-service` のエントリーも、同じ理由を引用する。 |
+
+リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、どのレベルを設定しても、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。最後の行にある `elm-service` のサインインのエントリーを除き、リクエストのパス、クエリ文字列、ヘッダーを含むエントリーはない。
 
 レベルの既定は `Information` だ。変えるには、環境変数 `Logging__LogLevel__Default` に `Trace`、`Debug`、`Information`、`Warning`、`Error`、`Critical`、`None` のどれかを設定する。たとえば `Logging__LogLevel__Default=Warning` にすると、警告とエラーだけを書く。
 
