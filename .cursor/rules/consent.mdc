@@ -30,7 +30,7 @@ A question built from a review finding shows every fix the finding proposes, as 
 
 A Grill that decides where the findings of a security review are written reads `SECURITY.md` and the repository's visibility first, and puts the choice to the owner. In V1d the Grill's Q4 put every finding on Issues; the repository is public, and `SECURITY.md` says not to write a vulnerability in a public Issue. The owner was asked only after the record and sixteen Issues were public (PR #334, question 13).
 
-Before recommending a design, search `docs/design-decisions.md` for a rejection of the same shape, and say how the recommendation differs from it.
+Before recommending a design, search `docs/design-decisions.md` and `docs/rows/` for a rejection of the same shape, and say how the recommendation differs from it.
 
 Before recommending where an operation lives (an API of a component, a command, a service), check that the place runs at the first moment the operation is needed. In M4c3 the recommendation put the server license's activation in the server's local API, but the server does not start without a license, so the first activation could not run there; the answer had to go back to the owner (PR #79).
 

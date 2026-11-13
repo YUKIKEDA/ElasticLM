@@ -10,7 +10,8 @@ alwaysApply: true
 | Document | Role |
 | --- | --- |
 | `docs/design.ja.md` | Canonical design (Japanese). Requirements, threat model, formats, protocols, contracts, phases |
-| `docs/design-decisions.md` | Rejected alternatives and why (Decision / Reason / Rejected) |
+| `docs/design-decisions.md` | Rejected alternatives and why (Decision / Reason / Rejected), up to the rows merged before Issue #407 |
+| `docs/rows/<row ID>.md` | One file per roadmap row: its Grill record and its rejected alternatives (`docs/rows/README.md`). Rows merged after Issue #407 put their record here, not at the end of design §20.7 or of `docs/design-decisions.md` |
 | `docs/adr/NNNN-*.md` | One decision per file whose reason is a measurement or an outside fact (Status, Date, Issue, Context, Decision, Consequences) |
 | `docs/roadmap.md` | Rows: ID, title, Issue, status. No acceptance text |
 | `docs/conventions.md` | Directory tree, project responsibilities, coding conventions |
