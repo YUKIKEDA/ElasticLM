@@ -355,16 +355,15 @@ leased: pro
 borrowed: pro for 1 hour
 ```
 
-Meanwhile, the server terminal shows the requests. The web host adds a few `info:` entries for each request, from `Request starting` to `Request finished` with the HTTP status. Among them are these lines, here with the other lines left out and with fake IDs:
+Meanwhile, the server terminal shows the requests. For each request, the web host adds two `info:` entries that name the endpoint the request reached, such as `Executing endpoint 'HTTP: POST /v1/leases'`, and the server adds an entry for each lease it lends or takes back. Among them are these lines, here with the other lines left out and with fake IDs:
 
 ```text
-      Request finished HTTP/1.1 POST https://127.0.0.1:7070/v1/leases - 503 - application/problem+json 0.9008ms
       lease.acquired: FAKE-LEASE-ID-00000001 pro x1 for key FAKE-APP-KEY-00000000000000000000000000000A
       lease.released: FAKE-LEASE-ID-00000001
       lease.acquired: FAKE-LEASE-ID-00000002 pro x1 for key FAKE-APP-KEY-00000000000000000000000000000A
 ```
 
-The first request for a lease finished with status 503, because the server was still reclaiming; this is the wait the app printed. Then the server lent the lease, the app returned it, and the server lent the borrow, which the log also calls `lease.acquired`. The key at the end is the app's installation key. If the app did not have to wait, the 503 line is not there.
+The server lent the lease, the app returned it, and the server lent the borrow, which the log also calls `lease.acquired`. The key at the end is the app's installation key. A request that the server refused while it was still reclaiming, which made the app wait, has no `lease.acquired` entry.
 
 If the app prints an error code instead, the code says what failed:
 

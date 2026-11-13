@@ -764,6 +764,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         listening = () => https!.IPEndPoint!;
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
+        HostRequestLog.RaiseToWarning(builder.Logging);
         if (host.LoggerProvider is ILoggerProvider provider)
         {
             // Registered through a factory, so the host's services dispose it as they dispose the console logger.

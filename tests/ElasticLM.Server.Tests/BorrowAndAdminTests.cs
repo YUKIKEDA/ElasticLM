@@ -812,8 +812,6 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A server whose host records the operational log from the level Information on.
-    /// - The web host's own request lines (the categories Microsoft.AspNetCore.*) hold the path of every request and are
-    ///   not part of this check.
     ///
     /// Steps:
     /// - With the administrator token, DELETE /admin/v1/leases/{id} for: 22 letters A (well formed, unknown); "other~form";
@@ -826,8 +824,8 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///   with target 22 letters A, the others without target. The operational log has "admin.action: release
     ///   AAAAAAAAAAAAAAAAAAAAAA -> ELM_UNKNOWN_LEASE" once and five lines "admin.action: release (null) ->
     ///   ELM_UNKNOWN_LEASE".
-    /// - No usage log file and no entry of the category elm-server in the operational log holds "other~form", the ID with
-    ///   the dot, 21 letters B, 23 letters C, or 100 letters z.
+    /// - No usage log file and no entry of any category in the operational log holds "other~form", the ID with the dot, 21
+    ///   letters B, 23 letters C, or 100 letters z: the web host's request lines are not written (design §18.3, V1d4a).
     /// </remarks>
     [Fact]
     public async Task AdminApi_ReleaseOfAnIdOfAnotherForm_IsRefusedAndNotLogged()
@@ -885,7 +883,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         foreach (string text in absent)
         {
             Assert.All(files, file => Assert.DoesNotContain(text, File.ReadAllText(file), StringComparison.Ordinal));
-            Assert.DoesNotContain(log.Entries, e => e.Category == "elm-server" && e.Message.Contains(text, StringComparison.Ordinal));
+            Assert.DoesNotContain(log.Entries, e => e.Message.Contains(text, StringComparison.Ordinal));
         }
     }
 
