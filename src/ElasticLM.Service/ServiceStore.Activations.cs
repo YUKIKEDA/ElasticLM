@@ -58,10 +58,11 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override async Task<bool> CreateTrialAsync(
+    public override async Task<TrialWrite> CreateTrialAsync(
         LicenseRow license,
         ActivationRow activation,
         IReadOnlyList<string> fingerprints,
+        long dailyLimit,
         AuditEntry audit,
         DateTimeOffset now,
         CancellationToken cancellationToken
@@ -75,6 +76,19 @@ internal sealed partial class ServiceStore<TDialect>
             await InWriteTransactionAsync(
                     async tx =>
                     {
+                        // design §12.9 (V1d17): a self-assignment locks the product's row on PostgreSQL, so the trials of one
+                        // product are counted and written one at a time; SQLite holds the write lock (design §14.4).
+                        await tx.Update(ProductRow.Table)
+                            .Set(p => [Set(p.Name, p.Name)])
+                            .Where(p => Eq(p.Id, license.ProductId))
+                            .ExecuteAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                        long since = license.CreatedAt - Policies.Day;
+                        long made = await tx.From(TrialRow.Table)
+                            .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
+                            .Select(t => Count())
+                            .SingleAsync(cancellationToken)
+                            .ConfigureAwait(false);
                         await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
                         await tx.Insert(TrialRow.Table)
                             .Values(
@@ -111,17 +125,35 @@ internal sealed partial class ServiceStore<TDialect>
                             }
                         }
 
+                        // After the fingerprints, so a device that had its trial hears ELM_TRIAL_USED even at the limit. The
+                        // oldest trial counted is later than since, so the seconds until it leaves the 24 hours are at least 1.
+                        if (made >= dailyLimit)
+                        {
+                            long oldest = (
+                                await tx.From(TrialRow.Table)
+                                    .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
+                                    .Select(t => Min(t.CreatedAt))
+                                    .SingleAsync(cancellationToken)
+                                    .ConfigureAwait(false)
+                            )!.Value;
+                            throw new TrialLimitedException(oldest + Policies.Day - license.CreatedAt);
+                        }
+
                         await InsertActivationAsync(tx, activation, cancellationToken).ConfigureAwait(false);
                         await AppendAsync(tx, audit, now, cancellationToken).ConfigureAwait(false);
                     },
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-            return true;
+            return new TrialWrite.Created();
         }
         catch (TrialUsedException)
         {
-            return false;
+            return new TrialWrite.Used();
+        }
+        catch (TrialLimitedException e)
+        {
+            return new TrialWrite.Limited(e.RetryAfter);
         }
     }
 
@@ -247,6 +279,12 @@ internal sealed partial class ServiceStore<TDialect>
 
     // Stops a trial's transaction when a fingerprint already had a trial, so everything it wrote rolls back.
     private sealed class TrialUsedException : Exception;
+
+    // Stops a trial's transaction when the product has made its limit of trials in the last 24 hours (design §12.9, V1d17).
+    private sealed class TrialLimitedException(long retryAfter) : Exception
+    {
+        public long RetryAfter { get; } = retryAfter;
+    }
 
     private sealed class Scope(Transaction<TDialect> tx, LicenseRow license, DateTimeOffset now) : LicenseScope
     {

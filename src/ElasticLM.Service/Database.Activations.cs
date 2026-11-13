@@ -70,6 +70,22 @@ internal abstract class LicenseScope
 /// <summary>A trial with the fingerprints it holds (design §12.9).</summary>
 internal sealed record TrialRecord(TrialRow Trial, IReadOnlyList<string> Fingerprints);
 
+/// <summary>What became of a trial's write (design §12.9).</summary>
+internal abstract record TrialWrite
+{
+    private TrialWrite() { }
+
+    /// <summary>The trial was written.</summary>
+    public sealed record Created : TrialWrite;
+
+    /// <summary>One of the fingerprints already had a trial of the product; nothing was written.</summary>
+    public sealed record Used : TrialWrite;
+
+    /// <summary>The product has made its policy's number of trials in the last 24 hours; nothing was written.</summary>
+    /// <param name="RetryAfter">The seconds until the oldest of those trials leaves the 24 hours, at least 1.</param>
+    public sealed record Limited(long RetryAfter) : TrialWrite;
+}
+
 /// <content>
 /// Activations, trials, and the proofs' jti (design §10.4, §12.2, §12.4 to §12.6, §12.9, M4b1).
 /// </content>
@@ -102,14 +118,17 @@ internal abstract partial class Database
     );
 
     /// <summary>
-    /// Stores a trial in one transaction: its license, the trial, its activation, its fingerprints, and the audit row.
+    /// Stores a trial in one transaction: its license, the trial, its activation, its fingerprints, and the audit row. The
+    /// transaction holds the product's row locked while it counts the product's trials of the last 24 hours, so two trials
+    /// at once cannot both pass <paramref name="dailyLimit"/> (design §12.9).
     /// </summary>
-    /// <returns><see langword="false"/> when one of the fingerprints already had a trial of the product; nothing is written
-    /// then.</returns>
-    public abstract Task<bool> CreateTrialAsync(
+    /// <returns>Whether the trial was written; a fingerprint that already had a trial of the product is told before the
+    /// limit.</returns>
+    public abstract Task<TrialWrite> CreateTrialAsync(
         LicenseRow license,
         ActivationRow activation,
         IReadOnlyList<string> fingerprints,
+        long dailyLimit,
         AuditEntry audit,
         DateTimeOffset now,
         CancellationToken cancellationToken

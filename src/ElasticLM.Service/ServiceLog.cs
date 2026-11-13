@@ -102,4 +102,12 @@ internal static partial class ServiceLog
         Message = "The request of an administration call ({Action}) could not be read ({Status}); the connection was closed."
     )]
     public static partial void RequestUnreadable(ILogger log, string action, int status);
+
+    // design §12.9, §18.2 (V1d17): once a product and 24 hours on each node; the refused trials write no audit row.
+    [LoggerMessage(
+        EventId = 22,
+        Level = LogLevel.Warning,
+        Message = "The product {Code} ({ProductId}) reached its limit of {Limit} trials in 24 hours; new trials are refused until {Until}."
+    )]
+    public static partial void TrialLimitReached(ILogger log, string code, Guid productId, long limit, DateTimeOffset until);
 }

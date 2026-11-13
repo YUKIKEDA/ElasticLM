@@ -1,4 +1,5 @@
 using System.Data.Common;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ElasticLM.Issuing;
@@ -19,6 +20,7 @@ internal sealed partial class ElmService
     private const string InstallationActor = "installation";
     private const string NoActivation = "No activation has this ID; activate again.";
     private static readonly TimeSpan ProofSkew = TimeSpan.FromMinutes(1);
+    private readonly TrialLimitWarnings _trialLimitWarnings = new();
 
     private void MapClient()
     {
@@ -55,7 +57,7 @@ internal sealed partial class ElmService
 
             if (result.Error is ErrorCode code)
             {
-                await ProblemAsync(context, code, result.Message!).ConfigureAwait(false);
+                await ProblemAsync(context, code, result.Message!, retryAfter: result.RetryAfter).ConfigureAwait(false);
             }
             else if (result.Answer is byte[] stored)
             {
@@ -525,9 +527,29 @@ internal sealed partial class ElmService
             w.WriteString("expiresAt", AdminApi.Time(license.ExpiresAt!.Value));
         });
         var entry = new AuditEntry(InstallationActor, proof.KeyId, AuditActions.TrialCreate, license.Id.ToString("D"), "ELM_OK", Ip(context), detail);
-        return await Database.CreateTrialAsync(license, activation, request.Fingerprints, entry, now, context.RequestAborted).ConfigureAwait(false)
-            ? ClientResult.Issued(StatusCodes.Status201Created, activation.Id, file)
-            : ClientResult.Fail(ErrorCode.TrialUsed, "A fingerprint of this installation already had a trial of the product.");
+        TrialWrite written = await Database
+            .CreateTrialAsync(license, activation, request.Fingerprints, policy.TrialDailyLimit, entry, now, context.RequestAborted)
+            .ConfigureAwait(false);
+        switch (written)
+        {
+            case TrialWrite.Used:
+                return ClientResult.Fail(ErrorCode.TrialUsed, "A fingerprint of this installation already had a trial of the product.");
+            case TrialWrite.Limited limited:
+                if (_trialLimitWarnings.Begin(product.Id, at))
+                {
+                    ServiceLog.TrialLimitReached(_log, product.Code, product.Id, policy.TrialDailyLimit, now.AddSeconds(limited.RetryAfter));
+                }
+
+                return ClientResult.Fail(
+                    ErrorCode.RateLimited,
+                    string.Create(CultureInfo.InvariantCulture, $"The product has reached its limit of {policy.TrialDailyLimit} trials in 24 hours.")
+                ) with
+                {
+                    RetryAfter = limited.RetryAfter,
+                };
+            default:
+                return ClientResult.Issued(StatusCodes.Status201Created, activation.Id, file);
+        }
     }
 
     // design §10.4 step 3 for a refresh or a reactivation, in the license's write transaction.
@@ -866,6 +888,10 @@ internal sealed partial class ElmService
 
         /// <summary>Gets what runs after the request's transaction committed and before the answer: its usage log line.</summary>
         public Action? After { get; init; }
+
+        /// <summary>Gets the seconds of <c>Retry-After</c> of an <c>ELM_RATE_LIMITED</c> refusal (design §12.1): 1 but for a
+        /// trial at its product's limit (design §12.9).</summary>
+        public long RetryAfter { get; init; } = 1;
 
         public static ClientResult Answered { get; } = new(0, null, null, Guid.Empty, null);
 
