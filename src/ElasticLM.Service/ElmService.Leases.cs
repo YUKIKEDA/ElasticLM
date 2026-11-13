@@ -576,6 +576,9 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", found.Id).ConfigureAwait(false);
         }
 
+        // The ELM_OK row is committed. The usage log line below still runs, so an exception it throws must not add a
+        // second row (design §18.2, V1d9).
+        Progress(context).Recorded = true;
         if (productCode is not null)
         {
             ReleasedLine(found, productCode, "admin");

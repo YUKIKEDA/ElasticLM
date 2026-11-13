@@ -18,7 +18,7 @@
   - 自前の 1 行は `ServiceLog.RequestUnreadable`（イベント 21、`Information`）。`The request of an administration call (<action>) could not be read (<状態>); the connection was closed.` で、要求の中身もスタックも書かない。段は、画面のログインの拒否（イベント 16）と同じ `Information` にした。呼び出した側の誤りで、サービスの故障ではないためである。
   - 認証の途中の拒否は、1 つの手順（`ElmService.AuditedRefusalAsync`）にまとめ、OIDC、CSRF、画面のログインの 3 か所がそれを使う。答えの書き込みが例外になったときは、認証のあとと同じく、行を書いてから例外を投げ直す。
   - 確定にトークンを渡さない形（`ServiceStore.InWriteTransactionAsync`）は、管理 API に限らず、`ServiceStore` のすべての書き込みのトランザクションに当てる。決定は「PostgreSQL の確定」だが、トランザクションは両方のエンジンで同じ手順を通り、SQLite でも、確定の前に取り消されていれば確定しない（下のテストで測った）。
-  - 強制返却の確定のあとに付けていた「行は書いた」という印（`Progress(context).Recorded = true`）は外した。確定のあとに例外になりうる所がなくなったためで、V1d9 の「確定のあとに何もしない操作には付けない」に合わせた。
+  - 強制返却の確定のあとの「行は書いた」という印（`Progress(context).Recorded = true`）は、確定のあと、利用ログの 1 行（`ReleasedLine`）の前に置く。確定のあとに読み取りはなくなったが、利用ログの 1 行が残るので、そこで例外が出ても失敗の行を足さないためである（持ち主のレビュー S1、PR #417。いったん外した形は、`ServiceUsageLog.Write` が例外を外に出さないことに頼っていた）。
   - 画面のログインの拒否で、行が書けない（`DbException`）ときは、もう書いたページのあとで `500` のページを書かない（`Response.HasStarted` を見る）。前は、書いたページのあとで状態を変えようとして例外になり、ページが途中で切れた（下の M10 で確かめた）。同じ所を直したので、この行で直した。
 - テスト（`tests/ElasticLM.Service.Tests`）:
   - 問 9a-1: `ElmServiceEndedEarlyTests.AuthenticationRefusal_CallerGoneBeforeItsAnswer_IsAuditedAsNetworkError`（CSRF と役割のないトークン、それぞれ 50 回）、`SignInRefusal_CallerGoneBeforeItsPage_IsAuditedAsNetworkError`（20 回）、`SignInRefusal_RowCannotBeWritten_KeepsTheRefusalPage`。時計の読み取りを、認証の手順が自分でする読み取り（`HeldClock.HoldTimeReadInAsync`）で止め、その間に呼び出した側が切る。Issue の再現と同じ形である。
@@ -42,6 +42,8 @@
   - 本文の途中で接続を切った呼び出しの結果が揺れた（レビューが SQLite で測った。RST では 40 回のうち 16 回が `ELM_INTERNAL_ERROR`、FIN では 9 回が `ELM_MALFORMED`）。本文の読み取りが `IOException` で終わり、要求がまだ取り消されていなければ、サービスの時計で最大 1 秒、取り消しを待つ（`ReadBodyAsync`、`AbortWait`）。`Body_CallerLeavesInTheMiddle_IsAuditedAsNetworkErrorEachTime` が、RST と FIN をそれぞれ 40 回、4 度走らせて、どれも `ELM_NETWORK_ERROR` だった。`IOException` だけを `ELM_NETWORK_ERROR` にする案は、FIN の 400 を分けられないので選ばなかった。変異の確かめ: 待ちを 0 にすると、RST で `ELM_INTERNAL_ERROR`、FIN で `ELM_MALFORMED` になって落ちた。
   - 接続を切る道は、状態が 400 か 408 の `BadHttpRequestException` に限った（`IsUnreadableBody`）。変異の確かめ: 413 を足すと `FailureCode_ByCancellationAndStatus_GivesTheResult` が落ちた。
   - 確定にトークンを渡さないことの結果（止まった `COMMIT` は取り消せず、停止はそれを待つ。上限は PostgreSQL の `Command Timeout` と SQLite の 5 秒）を、設計 §18.2 に書いた。時間の上限を別に付ける案は、確定したかどうかが決まらない形に戻るので選ばなかった。
+  - 持ち主のレビュー（8daa564）の S1: 上の「こちらが決めたこと」の印を戻した。変異の確かめはしていない（`ReleasedLine` に例外を出させる道が、テストからない）。
+  - `InWriteTransactionAsync` と AuraORM 0.1.0 の `InTransactionAsync`（パッケージのコミット 44283d0 の `src/AuraORM/Execution/Database.cs` と `Transaction.cs` を読んだ）の違いは 2 つ。確定にトークンを渡さないこと。AuraORM は、本体がトランザクションを自分で確定か巻き戻しをしていれば巻き戻しを飛ばす（内部の `_completed` を見る `RollbackAfterAsync`）が、こちらは飛ばさないこと。`ServiceStore` の本体は、どれも自分で確定も巻き戻しもしないので、動きは同じである。巻き戻しが失敗したときに、本体の例外と合わせて `AggregateException` にするのは、AuraORM と同じである。
 - 行の外で見つけたこと: 端末の API（`elm-service` の `ElmService.Client.cs` と `ElmService.Leases.cs` の本文の読み取り、`elm-server` の `ElmServer.cs` の `ReadBodyAsync`）も、本文を読めない `BadHttpRequestException` を Kestrel に渡すので、呼び出した側が `Error` の段の `Kestrel[13]` を書かせられると読める（コードを読んだだけで、走らせていない）。端末の要求は監査の行を書かないので、この行の監査の抜けではない。
 
 ## 退けた案

@@ -285,10 +285,12 @@ internal sealed partial class ServiceStore<TDialect> : Database
             .ConfigureAwait(false);
 
     // design §14.2, §18.2 (V1d9a): a write's transaction, run as AuraORM's InTransactionAsync runs it (AuraORM 0.1.0,
-    // Database.cs) except that the commit does not take the caller's token. The body's statements still stop on that token;
-    // once the body has run, the commit goes through, so a caller who leaves while it runs does not leave a change whose
-    // commit may or may not have taken place. On PostgreSQL, Npgsql cancels a running COMMIT on the token (the V1d9a Grill:
-    // 3 runs of 3 rolled back); Microsoft.Data.Sqlite looks at it only before the commit begins.
+    // Database.cs) except that the commit does not take the caller's token. AuraORM also skips the rollback when the body
+    // completed the transaction itself, through an internal member; no body here commits or rolls back. The body's
+    // statements still stop on that token; once the body has run, the commit goes through, so a caller who leaves while it
+    // runs does not leave a change whose commit may or may not have taken place. On PostgreSQL, Npgsql cancels a running
+    // COMMIT on the token (the V1d9a Grill: 3 runs of 3 rolled back); Microsoft.Data.Sqlite looks at it only before the
+    // commit begins.
     private async Task<T> InWriteTransactionAsync<T>(Func<Transaction<TDialect>, Task<T>> body, CancellationToken cancellationToken)
     {
         Transaction<TDialect> tx = await _db.BeginTransactionAsync(IsolationLevel.Unspecified, cancellationToken).ConfigureAwait(false);
