@@ -226,6 +226,16 @@ internal sealed class TestService : IAsyncDisposable
         return [.. page.RootElement.GetProperty("items").EnumerateArray().Select(e => e.Clone())];
     }
 
+    /// <summary>Asserts that the chain of the audit log verifies through the API (the check adds its own row).</summary>
+    public static async Task AssertAuditIntactAsync(HttpClient admin)
+    {
+        using HttpResponseMessage response = await admin.PostAsync("v1/admin/audit/verify", null, TestContext.Current.CancellationToken);
+        string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
+        Assert.True(response.StatusCode == HttpStatusCode.OK, text);
+        using JsonDocument answer = JsonDocument.Parse(text);
+        Assert.True(answer.RootElement.GetProperty("intact").GetBoolean(), text);
+    }
+
     /// <summary>Asserts a problem answer: its status, code, and detail.</summary>
     public static async Task AssertProblemAsync(HttpResponseMessage response, HttpStatusCode status, string code, string detail)
     {

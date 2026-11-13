@@ -27,18 +27,20 @@ public sealed class BorrowTests : IDisposable
     /// - Borrow 7 days and 7 days + 1 s; with the operator's limit borrow 1 day and 1 day + 1 s; borrow 0.5 s; renew a borrow.
     ///
     /// Expected:
-    /// - Granted (the client accepts the token: brw, 7 days); ELM_BORROW_NOT_ALLOWED; granted; ELM_BORROW_NOT_ALLOWED;
-    ///   ELM_INVALID_ARGUMENT; ELM_INVALID_ARGUMENT.
+    /// - Granted (the client accepts the token: brw, 7 days, the request's proof ID in areq, design §8.4.3, V1d5);
+    ///   ELM_BORROW_NOT_ALLOWED; granted; ELM_BORROW_NOT_ALLOWED; ELM_INVALID_ARGUMENT; ELM_INVALID_ARGUMENT.
     /// </remarks>
     [Fact]
     public void Borrow_UpToTheLimits_IsGrantedAndNotRenewed()
     {
         LeaseEngine engine = _server.OpenEngine();
         TestClient client = _server.Client();
+        LeaseRequest request = client.Borrow(Week);
 
-        var week = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+        var week = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(request));
         VerifiedLease lease = Assert.IsType<LeaseVerificationResult.Valid>(_server.VerifyAsClient(week.Token, client)).Lease;
         Assert.True(lease.IsBorrow);
+        Assert.Equal(request.ProofId, lease.AnsweredProofId);
         Assert.Equal(Week, lease.ExpiresAt - lease.IssuedAt);
         AssertRefused(ErrorCode.BorrowNotAllowed, engine.Acquire(client.Borrow(Week + TimeSpan.FromSeconds(1))));
         AssertRefused(ErrorCode.InvalidArgument, engine.Acquire(client.Borrow(TimeSpan.FromMilliseconds(500))));
@@ -334,6 +336,7 @@ public sealed class BorrowTests : IDisposable
                     InstallationKeyThumbprint = client.KeyId,
                     Duration = Week,
                     IsBorrow = true,
+                    AnsweredProofId = "proof-1",
                 },
                 _server.Time
             );

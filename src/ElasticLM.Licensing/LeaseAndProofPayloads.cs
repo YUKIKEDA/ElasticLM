@@ -67,6 +67,11 @@ internal sealed class LeasePayload
     [JsonPropertyName("seq")]
     [JsonRequired]
     public long Seq { get; set; }
+
+    // design §8.4.3 (V1d5): the jti of the proof of the request the token answers.
+    [JsonPropertyName("areq")]
+    [JsonRequired]
+    public string Areq { get; set; } = string.Empty;
 }
 
 // design §12.2.

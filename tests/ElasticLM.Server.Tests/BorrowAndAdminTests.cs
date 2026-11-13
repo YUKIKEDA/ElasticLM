@@ -678,42 +678,161 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
     /// <summary>
     /// Refused requests are written as counts per feature and code each minute, with at most 100 kinds: refusals beyond them
-    /// are counted without their feature, so many feature names cannot grow the log line by line.
+    /// are counted without their feature. A name the server license does not grant is never a kind of its own, so made-up
+    /// names cannot use up the kinds, and the refusals of granted features after them still carry their feature (design
+    /// §18.1).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A server past its window.
+    /// - A server license that grants f-0 to f-104, each for versions &gt;=2.0 &lt;3.0; the server is past its window. The
+    ///   clock does not move, so every refusal falls into one minute's count.
     ///
     /// Steps:
-    /// - Acquire 105 features the license does not grant, f-0 to f-104, and f-0 again; stop and verify the usage log.
+    /// - Acquire 105 features the license does not grant, made-up-0 to made-up-104; acquire version 1.0 of f-0 to f-104,
+    ///   and of f-0 again; stop and verify the usage log.
     ///
     /// Expected:
-    /// - 101 lease.denied lines with ELM_FEATURE_NOT_LICENSED: f-0 with count 2, 99 more with a feature and count 1, and
-    ///   one without a feature with count 5.
+    /// - Every made-up name is ELM_FEATURE_NOT_LICENSED and every f is ELM_FEATURE_VERSION_NOT_LICENSED.
+    /// - 101 lease.denied lines. One has ELM_FEATURE_NOT_LICENSED, no feature, and count 105. The others have
+    ///   ELM_FEATURE_VERSION_NOT_LICENSED: f-0 with count 2, f-1 to f-98 with count 1 (99 kinds beside the first line's),
+    ///   and one without a feature with count 6, for f-99 to f-104. No file holds "made-up-".
     /// </remarks>
     [Fact]
     public async Task Denials_AreCountedWithBoundedKinds()
     {
-        ElmServer server = await StartOpenServerAsync();
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(
+            serverData,
+            s => s with { Features = [.. Enumerable.Range(0, 105).Select(i => new FeatureSpec($"f-{i}", ">=2.0 <3.0", Seats: 1))] }
+        );
+        ElmServer server = await StartOpenServerAsync(serverData);
         LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 105; i++)
+        {
+            LeaseResult made = await client.AcquireLeaseAsync($"made-up-{i}", cancellationToken: cancel);
+            Assert.Equal(ErrorCode.FeatureNotLicensed, Assert.IsType<LeaseResult.Failed>(made).Error.Code);
+        }
+
         foreach (int i in Enumerable.Range(0, 105).Append(0))
         {
-            Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync($"f-{i}", cancellationToken: TestContext.Current.CancellationToken));
+            LeaseResult granted = await client.AcquireLeaseAsync($"f-{i}", "1.0", cancellationToken: cancel);
+            Assert.Equal(ErrorCode.FeatureVersionNotLicensed, Assert.IsType<LeaseResult.Failed>(granted).Error.Code);
         }
 
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
-        LogEntry[] denied = [.. usage.Entries.Where(e => e.Type == "lease.denied")];
+        IReadOnlyList<string> files = SignedLog.FindFiles(serverData, "usage");
+        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        (string? Feature, string? Code, long Count)[] denied =
+        [
+            .. usage
+                .Entries.Where(e => e.Type == "lease.denied")
+                .Select(e =>
+                    (
+                        e.Value.TryGetProperty("feat", out JsonElement f) ? f.GetString() : null,
+                        e.Value.GetProperty("code").GetString(),
+                        e.Value.GetProperty("count").GetInt64()
+                    )
+                ),
+        ];
         Assert.Equal(101, denied.Length);
-        Assert.All(denied, e => Assert.Equal("ELM_FEATURE_NOT_LICENSED", e.Value.GetProperty("code").GetString()));
-        long Count(string? feature) =>
+        long Count(string? feature, string code) => denied.Single(d => d.Feature == feature && d.Code == code).Count;
+        Assert.Equal(105, Count(null, "ELM_FEATURE_NOT_LICENSED"));
+        Assert.Equal(2, Count("f-0", "ELM_FEATURE_VERSION_NOT_LICENSED"));
+        Assert.Equal(
+            Enumerable.Range(1, 98).Select(i => $"f-{i}").Order(StringComparer.Ordinal),
             denied
-                .Single(e => (e.Value.TryGetProperty("feat", out JsonElement f) ? f.GetString() : null) == feature)
-                .Value.GetProperty("count")
-                .GetInt64();
-        Assert.Equal(2, Count("f-0"));
-        Assert.Equal(1, Count("f-99"));
-        Assert.Equal(5, Count(null));
+                .Where(d => d.Feature is not null && d.Code == "ELM_FEATURE_VERSION_NOT_LICENSED" && d.Count == 1)
+                .Select(d => d.Feature!)
+                .Order(StringComparer.Ordinal)
+        );
+        Assert.Equal(6, Count(null, "ELM_FEATURE_VERSION_NOT_LICENSED"));
+        Assert.All(files, file => Assert.DoesNotContain("made-up-", File.ReadAllText(file), StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// A forced release names a lease by an ID of the form of a lease ID. A well-formed ID the server does not know is
+    /// answered and recorded as before; text of another form is answered the same way, and the server writes it neither to
+    /// the usage log nor to its messages in the operational log (design §13.7).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server whose host records the operational log from the level Information on.
+    /// - The web host's own request lines (the categories Microsoft.AspNetCore.*) hold the path of every request and are
+    ///   not part of this check.
+    ///
+    /// Steps:
+    /// - With the administrator token, DELETE /admin/v1/leases/{id} for: 22 letters A (well formed, unknown); "other~form";
+    ///   21 letters A and a dot (22 characters, one outside base64url); 21 letters B; 23 letters C; 4,000 letters z. Stop
+    ///   and verify the usage log.
+    ///
+    /// Expected:
+    /// - 404 ELM_UNKNOWN_LEASE "The server does not know the lease." six times.
+    /// - The usage log is intact and has six admin.action lines with action release and result ELM_UNKNOWN_LEASE: the first
+    ///   with target 22 letters A, the others without target. The operational log has "admin.action: release
+    ///   AAAAAAAAAAAAAAAAAAAAAA -> ELM_UNKNOWN_LEASE" once and five lines "admin.action: release (null) ->
+    ///   ELM_UNKNOWN_LEASE".
+    /// - No usage log file and no entry of the category elm-server in the operational log holds "other~form", the ID with
+    ///   the dot, 21 letters B, 23 letters C, or 100 letters z.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_ReleaseOfAnIdOfAnotherForm_IsRefusedAndNotLogged()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        var host = new ServerHostOptions
+        {
+            Time = _deployment.Time,
+            Environment = _ => null,
+            MinimumLogLevel = LogLevel.Information,
+            LoggerProvider = log,
+        };
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string wellFormed = new('A', 22);
+        string dotted = new string('A', 21) + ".";
+        string[] ids = [wellFormed, "other~form", dotted, new string('B', 21), new string('C', 23), new string('z', 4_000)];
+        string[] absent = ["other~form", dotted, new string('B', 21), new string('C', 23), new string('z', 100)];
+
+        await using (ElmServer server = await ElmServer.StartAsync(_deployment.Settings(serverData), host, cancel))
+        {
+            using HttpClient admin = Deployment.AdminHttp(server);
+            foreach (string id in ids)
+            {
+                using HttpResponseMessage refused = await admin.DeleteAsync($"admin/v1/leases/{id}", cancel);
+                Assert.Equal(HttpStatusCode.NotFound, refused.StatusCode);
+                using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(cancel));
+                Assert.Equal("ELM_UNKNOWN_LEASE", problem.RootElement.GetProperty("code").GetString());
+                Assert.Equal("The server does not know the lease.", problem.RootElement.GetProperty("detail").GetString());
+            }
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(serverData, "usage");
+        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        Assert.True(usage.Intact);
+        JsonElement[] actions = [.. usage.Entries.Where(e => e.Type == "admin.action").Select(e => e.Value)];
+        Assert.Equal(ids.Length, actions.Length);
+        Assert.All(
+            actions,
+            a => Assert.Equal(("release", "ELM_UNKNOWN_LEASE"), (a.GetProperty("action").GetString(), a.GetProperty("result").GetString()))
+        );
+        Assert.Equal(
+            [wellFormed, null, null, null, null, null],
+            actions.Select(a => a.TryGetProperty("target", out JsonElement target) ? target.GetString() : null)
+        );
+        string[] operational = [.. log.Entries.Where(e => e.Message.StartsWith("admin.action:", StringComparison.Ordinal)).Select(e => e.Message)];
+        Assert.Equal(
+            [
+                $"admin.action: release {wellFormed} -> ELM_UNKNOWN_LEASE",
+                .. Enumerable.Repeat("admin.action: release (null) -> ELM_UNKNOWN_LEASE", ids.Length - 1),
+            ],
+            operational
+        );
+        foreach (string text in absent)
+        {
+            Assert.All(files, file => Assert.DoesNotContain(text, File.ReadAllText(file), StringComparison.Ordinal));
+            Assert.DoesNotContain(log.Entries, e => e.Category == "elm-server" && e.Message.Contains(text, StringComparison.Ordinal));
+        }
     }
 
     /// <summary>
@@ -1111,6 +1230,104 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Single(Directory.GetFiles(serverData, "borrows-broken-*.jsonl"));
     }
 
+    /// <summary>
+    /// An administration operation that ends with an exception is written to the usage log as admin.action with the
+    /// result ELM_INTERNAL_ERROR, and the caller gets no answer of the operation (design §13.7, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on a clock whose next read the test can make throw an InvalidOperationException. No setting of a deployed
+    ///   server makes an operation of the administration API throw, so the exception comes from the host's clock.
+    ///
+    /// Steps:
+    /// - Make the next read throw; get the status, which reads the clock; get the status again; stop and verify the usage
+    ///   log.
+    ///
+    /// Expected:
+    /// - 500 without a body, then 200. The usage log is intact, and its admin.action lines are status with
+    ///   ELM_INTERNAL_ERROR and status with ELM_OK, in this order.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_OperationThrows_IsRecordedAsInternalError()
+    {
+        using var clock = new HeldClock(_deployment.Time);
+        await using ElmServer server = await StartOnClockAsync(clock, new RecordingLoggerProvider());
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using HttpClient admin = Deployment.AdminHttp(server);
+
+        clock.FailNextRead();
+        using (HttpResponseMessage failed = await admin.GetAsync("admin/v1/status", cancel))
+        {
+            Assert.Equal(HttpStatusCode.InternalServerError, failed.StatusCode);
+            Assert.Empty(await failed.Content.ReadAsByteArrayAsync(cancel));
+        }
+
+        Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("admin/v1/status", cancel)).StatusCode);
+
+        await server.DisposeAsync();
+        Assert.Equal(["status:ELM_INTERNAL_ERROR", "status:ELM_OK"], AdminActions(server));
+    }
+
+    /// <summary>
+    /// An administration operation whose answer cannot be written because the caller is gone is written to the usage log
+    /// as admin.action with the result ELM_NETWORK_ERROR (design §13.7, V1d9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server on a clock that can hold its next read, with a log the test reads.
+    ///
+    /// Steps:
+    /// - Hold the next read of the clock, which the status operation makes after the token is checked.
+    /// - On a connection of its own to the socket file, GET /admin/v1/status with the administrator token. Once the server
+    ///   waits in the held read, end the caller's side and read until the server has closed the connection; let the held
+    ///   read go on; wait for one more admin.action entry in the server's log.
+    /// - Run these steps 30 times. Kestrel cancels the request's token on the thread pool after it has closed the
+    ///   connection, and until then it drops the answer's write without an exception; the server asks the response's
+    ///   writer whether the connection is closed, so both orders give the same line.
+    /// - Stop and verify the usage log.
+    ///
+    /// Expected:
+    /// - Each run adds exactly one admin.action entry, with ELM_NETWORK_ERROR. The usage log is intact, and its 30
+    ///   admin.action lines are status with ELM_NETWORK_ERROR.
+    /// </remarks>
+    [Fact]
+    public async Task AdminApi_CallerGoneBeforeTheAnswer_IsRecordedAsNetworkError()
+    {
+        var log = new RecordingLoggerProvider();
+        using var clock = new HeldClock(_deployment.Time);
+        await using ElmServer server = await StartOnClockAsync(clock, log);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        byte[] request = System.Text.Encoding.ASCII.GetBytes(
+            $"GET /admin/v1/status HTTP/1.1\r\nHost: elm-server.invalid\r\nAuthorization: Bearer {AdminToken.Read(server.DataDirectory)}\r\n\r\n"
+        );
+        string[] Logged() => [.. log.Entries.Select(e => e.Message).Where(m => m.StartsWith("admin.action: status ", StringComparison.Ordinal))];
+
+        for (int run = 0; run < 30; run++)
+        {
+            int before = Logged().Length;
+            Task held = clock.HoldNextReadAsync();
+            using var caller = new System.Net.Sockets.Socket(
+                System.Net.Sockets.AddressFamily.Unix,
+                System.Net.Sockets.SocketType.Stream,
+                System.Net.Sockets.ProtocolType.Unspecified
+            );
+            await caller.ConnectAsync(new System.Net.Sockets.UnixDomainSocketEndPoint(server.AdminSocketPath), cancel);
+            await caller.SendAsync(request, cancel);
+            await held.WaitAsync(TimeSpan.FromSeconds(10), cancel);
+            await LeaveAsync(caller);
+            clock.Release();
+            await Deployment.WaitUntilAsync(() => Logged().Length > before);
+            string[] entries = Logged();
+            Assert.Equal(before + 1, entries.Length);
+            Assert.EndsWith("-> ELM_NETWORK_ERROR", entries[^1], StringComparison.Ordinal);
+        }
+
+        await server.DisposeAsync();
+        string[] actions = AdminActions(server);
+        Assert.Equal(30, actions.Length);
+        Assert.All(actions, a => Assert.Equal("status:ELM_NETWORK_ERROR", a));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     // A token of three parts whose payload is the given JSON text; it is not signed, and the record's reader does not verify.
@@ -1232,6 +1449,124 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
             },
             TestContext.Current.CancellationToken
         );
+
+    // A server with a license in a new data folder, on the given clock, whose log goes to the given provider too.
+    private async Task<ElmServer> StartOnClockAsync(TimeProvider clock, RecordingLoggerProvider log)
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        return await ElmServer.StartAsync(
+            _deployment.Settings(data),
+            new ServerHostOptions
+            {
+                Time = clock,
+                Environment = _ => null,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Information,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
+    }
+
+    // The admin.action lines of a stopped server's usage log, which must verify, as "action:result".
+    private string[] AdminActions(ElmServer server)
+    {
+        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        Assert.True(usage.Intact);
+        return
+        [
+            .. usage
+                .Entries.Where(e => e.Type == "admin.action")
+                .Select(e => e.Value.GetProperty("action").GetString() + ":" + e.Value.GetProperty("result").GetString()),
+        ];
+    }
+
+    // The caller goes: it ends its side of the connection and reads until the server has closed it too, which Kestrel does
+    // when it has taken the request as aborted. A connection that the server resets counts as closed.
+    private static async Task LeaveAsync(System.Net.Sockets.Socket caller)
+    {
+        caller.Shutdown(System.Net.Sockets.SocketShutdown.Send);
+        using var limit = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        limit.CancelAfter(TimeSpan.FromSeconds(10));
+        byte[] buffer = new byte[1_024];
+        try
+        {
+            while (await caller.ReceiveAsync(buffer, limit.Token) > 0) { }
+        }
+        catch (System.Net.Sockets.SocketException) { }
+    }
+
+    // The deployment's fake clock for a server, whose next read of the time the test can hold until it lets it go on, or
+    // make throw. The status operation reads the time, so a held read keeps a request inside that operation.
+    private sealed class HeldClock(TimeProvider inner) : TimeProvider, IDisposable
+    {
+        private readonly ManualResetEventSlim _release = new(true);
+        private readonly Lock _lock = new();
+        private TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _hold;
+        private bool _fail;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        // Holds the next read of the time and returns a task that ends once that read waits.
+        public Task HoldNextReadAsync()
+        {
+            lock (_lock)
+            {
+                _release.Reset();
+                _held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                _hold = true;
+                return _held.Task;
+            }
+        }
+
+        public void Release() => _release.Set();
+
+        public void FailNextRead()
+        {
+            lock (_lock)
+            {
+                _fail = true;
+            }
+        }
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period) =>
+            inner.CreateTimer(callback, state, dueTime, period);
+
+        public override DateTimeOffset GetUtcNow()
+        {
+            bool hold;
+            bool fail;
+            lock (_lock)
+            {
+                (hold, fail) = (_hold, _fail);
+                (_hold, _fail) = (false, false);
+                if (hold)
+                {
+                    _held.SetResult();
+                }
+            }
+
+            if (fail)
+            {
+                throw new InvalidOperationException("The test's clock cannot be read.");
+            }
+
+            if (hold)
+            {
+                // The limit only ends a test that never lets the read go on.
+                _release.Wait(TimeSpan.FromSeconds(30), CancellationToken.None);
+            }
+
+            return inner.GetUtcNow();
+        }
+
+        public void Dispose() => _release.Dispose();
+    }
 
     // The server identity of a data folder: its license verified for its installation key.
     private ServerIdentity ServerIdentityOf(string serverData)

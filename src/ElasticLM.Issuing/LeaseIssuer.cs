@@ -37,6 +37,10 @@ public sealed record LeaseSpec
 
     /// <summary>Gets the lease sequence number (design §10.4).</summary>
     public long Sequence { get; init; }
+
+    /// <summary>Gets the <c>jti</c> of the proof of the request the token answers, 1 to 64 characters (design §8.4.3, §12.2).
+    /// The client that sent the request refuses a token that names another proof (design §12.7.5).</summary>
+    public required string AnsweredProofId { get; init; }
 }
 
 /// <summary>
@@ -53,7 +57,8 @@ public static class LeaseIssuer
     /// <param name="time">The time provider, for the issue time.</param>
     /// <returns>The lease token.</returns>
     /// <exception cref="ArgumentException">A required value is empty, the seat count is less than 1, the duration is not
-    /// positive or longer than design §8.6 allows, or the sequence number is negative.</exception>
+    /// positive or longer than design §8.6 allows, the sequence number is negative, or the ID of the answered proof is not
+    /// 1 to 64 characters.</exception>
     public static string Issue(ECDsa signingKey, LeaseSpec spec, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(time);
@@ -69,7 +74,8 @@ public static class LeaseIssuer
     /// <param name="issuedAt">The issue time; its whole seconds become <c>iat</c>.</param>
     /// <returns>The lease token.</returns>
     /// <exception cref="ArgumentException">A required value is empty, the seat count is less than 1, the duration is not
-    /// positive or longer than design §8.6 allows, or the sequence number is negative.</exception>
+    /// positive or longer than design §8.6 allows, the sequence number is negative, or the ID of the answered proof is not
+    /// 1 to 64 characters.</exception>
     public static string Issue(ECDsa signingKey, LeaseSpec spec, DateTimeOffset issuedAt)
     {
         ArgumentNullException.ThrowIfNull(signingKey);
@@ -88,6 +94,12 @@ public static class LeaseIssuer
         if (spec.Seats < 1 || spec.Sequence < 0)
         {
             throw new ArgumentException("The seat count must be at least 1 and the sequence number not negative.", nameof(spec));
+        }
+
+        if (!Limits.IsProofId(spec.AnsweredProofId))
+        {
+            // design §8.4.3 (V1d5): the form a proof's jti has (design §12.2).
+            throw new ArgumentException("The ID of the answered proof must be 1 to 64 characters.", nameof(spec));
         }
 
         long seconds = (long)Math.Floor(spec.Duration.TotalSeconds);
@@ -122,6 +134,7 @@ public static class LeaseIssuer
             Srv = kid,
             Slic = spec.ServerLicenseTokenId,
             Seq = spec.Sequence,
+            Areq = spec.AnsweredProofId,
         };
         return JwsWriter.Sign(signingKey, TokenTypes.Lease, payload, LicensingJsonContext.Default.LeasePayload);
     }

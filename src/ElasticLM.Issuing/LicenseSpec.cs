@@ -20,7 +20,7 @@ public enum FingerprintMatching
 /// <summary>
 /// A feature to grant (design §8.4.2).
 /// </summary>
-/// <param name="Id">The feature ID.</param>
+/// <param name="Id">The feature ID: 1 to 64 bytes in UTF-8.</param>
 /// <param name="VersionRange">The allowed version range (design §9.2), or <see langword="null"/> for every version.</param>
 /// <param name="Seats">The seat count; required for server licenses and not allowed otherwise.</param>
 /// <param name="ExpiresAt">The feature's own expiry, or <see langword="null"/>.</param>

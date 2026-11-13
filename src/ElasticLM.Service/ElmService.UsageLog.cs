@@ -1,3 +1,5 @@
+using System.Buffers;
+using System.IO.Pipelines;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -12,6 +14,9 @@ internal sealed partial class ElmService
 {
     private const string NoUsageLog = "This node writes no usage log; set usageLog.directory.";
     private const string NoUsageFile = "No usage log file of this node has this name.";
+
+    // The least length of a download's buffer, which Stream.CopyToAsync asks of the pool too; the pool may give a longer one.
+    private const int CopyBufferLength = 81_920;
 
     private void MapUsageLog()
     {
@@ -94,15 +99,69 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.NotFound, NoUsageFile, file).ConfigureAwait(false);
         }
 
+        // design §18.2 (V1d9): the row says how much of the file was handed to the response, also when the download ends early.
+        // The file is sent up to the length it has now; the node may add lines to its newest file while it is read.
         await using (stream.ConfigureAwait(false))
         {
-            context.Response.StatusCode = StatusCodes.Status200OK;
-            context.Response.ContentType = "application/x-ndjson";
-            await stream.CopyToAsync(context.Response.Body, context.RequestAborted).ConfigureAwait(false);
-        }
+            AdminProgress progress = Progress(context);
+            progress.Target = file;
+            long size = stream.Length;
+            long sent = 0;
+            byte[] buffer = ArrayPool<byte>.Shared.Rent(CopyBufferLength);
+            try
+            {
+                context.Response.StatusCode = StatusCodes.Status200OK;
+                context.Response.ContentType = "application/x-ndjson";
 
-        return new AdminOutcome("ELM_OK", file);
+                // The length is fixed, so the answer names it: a transfer that stops short of it is an error for every
+                // caller, also for one whose answer ends when the connection closes.
+                context.Response.ContentLength = size;
+                while (sent < size)
+                {
+                    int wanted = (int)Math.Min(buffer.Length, size - sent);
+                    int read = await stream.ReadAsync(buffer.AsMemory(0, wanted), context.RequestAborted).ConfigureAwait(false);
+                    if (read == 0)
+                    {
+                        // Ending the answer here would hand the caller a part of the file; the exception cuts the connection.
+                        throw new EndOfStreamException($"The usage log file '{file}' became shorter while it was sent.");
+                    }
+
+                    // Counted when the bytes are handed over: a write that fails may have sent a part of them.
+                    sent += read;
+                    FlushResult written = await context
+                        .Response.BodyWriter.WriteAsync(buffer.AsMemory(0, read), context.RequestAborted)
+                        .ConfigureAwait(false);
+                    if (written.IsCompleted)
+                    {
+                        // The connection is closed, and Kestrel drops this write and every later one without an exception
+                        // until it cancels the request's token (design §18.2, V1d9). Going on would count the rest of the
+                        // file as sent.
+                        return new AdminOutcome(ErrorCodes.ToWireName(ErrorCode.NetworkError), file, SentDetail(sent, size));
+                    }
+                }
+            }
+            catch (Exception)
+            {
+                progress.Detail = SentDetail(sent, size);
+                throw;
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(buffer);
+            }
+
+            return new AdminOutcome("ELM_OK", file, SentDetail(sent, size));
+        }
     }
+
+    // design §18.2 (V1d9): the bytes handed to the response, which are at least what the caller read, and the file's length
+    // when the download began.
+    private static string SentDetail(long sent, long size) =>
+        AuditLog.Detail(w =>
+        {
+            w.WriteNumber("sent", sent);
+            w.WriteNumber("size", size);
+        });
 
     // design §18.1: the counted refusals and a signature over the pending lines now, as the minute's timer does.
     private async Task<AdminOutcome> SealUsageLogAsync(HttpContext context, Caller caller)
