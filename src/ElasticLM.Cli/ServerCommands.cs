@@ -1,8 +1,6 @@
 using System.CommandLine;
 using System.Globalization;
-using System.Net.Http.Headers;
 using System.Net.Sockets;
-using System.Text.Json;
 using ElasticLM.Client;
 
 namespace ElasticLM.Cli;
@@ -14,8 +12,6 @@ namespace ElasticLM.Cli;
 /// </summary>
 internal static class ServerCommands
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-
     public static Command Create(CliHost host)
     {
         var server = new Command("server", "Administer an on-premises license server on this machine.");
@@ -66,7 +62,7 @@ internal static class ServerCommands
         string description,
         HttpMethod method,
         string path,
-        Action<JsonElement, TextWriter> print
+        Action<AdminAnswer, TextWriter> print
     )
     {
         var command = new Command(name, description);
@@ -98,7 +94,7 @@ internal static class ServerCommands
         HttpMethod method,
         string path,
         bool json,
-        Action<JsonElement, TextWriter> print
+        Action<AdminAnswer, TextWriter> print
     )
     {
         // design §17.3 (V1c10): the key store's own refusal of an empty product ID does not name the option; an empty --data
@@ -122,18 +118,12 @@ internal static class ServerCommands
             throw new CliException($"The server cannot be reached: the administration socket '{socketPath}' does not exist.", ExitCodes.NetworkError);
         }
 
-        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, RequestTimeout);
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
-        HttpResponseMessage response;
-        string body;
+        BoundedAnswer answer;
         try
         {
-            response = http.Send(request);
-            using var reader = new StreamReader(response.Content.ReadAsStream());
-            body = reader.ReadToEnd();
+            answer = ServerAdminApi.Send(host, endPoint, method, path, token);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (Exception e) when (e is HttpRequestException or TimeoutException)
         {
             // The HTTP client adds the request's host to a connection error's sentence, and the host is not where the
             // request goes; the socket's own sentence says what happened.
@@ -141,87 +131,77 @@ internal static class ServerCommands
             throw new CliException("The server cannot be reached: " + reason, ExitCodes.NetworkError);
         }
 
-        using (response)
+        if (answer is not BoundedAnswer.Whole whole)
         {
-            JsonElement value = default;
-            if (body.Length > 0)
-            {
-                try
-                {
-                    using var document = JsonDocument.Parse(body);
-                    value = document.RootElement.Clone();
-                }
-                catch (JsonException)
-                {
-                    throw new CliException($"The server answered {(int)response.StatusCode} with a body that is not JSON.", ExitCodes.NetworkError);
-                }
-            }
-
-            if (!response.IsSuccessStatusCode)
-            {
-                // The same line as the server license commands print for an answer that is not the one asked for.
-                host.Error.WriteLine("error: " + ServerAdminApi.Unexpected(response.StatusCode, value));
-                return ExitCodes.VerificationFailed;
-            }
-
-            if (json && value.ValueKind != JsonValueKind.Undefined)
-            {
-                host.Out.WriteLine(JsonSerializer.Serialize(value, CliJsonContext.Default.JsonElement));
-            }
-            else
-            {
-                print(value, host.Out);
-            }
-
-            return ExitCodes.Success;
+            throw new CliException(ServerAdminApi.AnswerTooLarge, ExitCodes.NetworkError);
         }
+
+        // design §13.7 (V1d6): the body is checked and read without a document model, which would take many times its length.
+        AdminAnswer value = AdminAnswer.Of(whole);
+        if (!value.IsJson)
+        {
+            throw new CliException($"The server answered {(int)value.Status} with a body that is not JSON.", ExitCodes.NetworkError);
+        }
+
+        if (!value.IsSuccess)
+        {
+            // The same line as the server license commands print for an answer that is not the one asked for.
+            host.Error.WriteLine("error: " + ServerAdminApi.Unexpected(value));
+            return ExitCodes.VerificationFailed;
+        }
+
+        if (json && !value.IsEmpty)
+        {
+            value.WriteIndented(host.Out);
+        }
+        else
+        {
+            print(value, host.Out);
+        }
+
+        return ExitCodes.Success;
     }
 
     private static string Time(long seconds) => DateTimeOffset.FromUnixTimeSeconds(seconds).ToString("u", CultureInfo.InvariantCulture);
 
-    private static void PrintStatus(JsonElement status, TextWriter writer)
+    private static void PrintStatus(AdminAnswer answer, TextWriter writer)
     {
-        writer.WriteLine($"product: {status.GetProperty("product").GetString()}");
-        writer.WriteLine($"license: {status.GetProperty("license").GetString()} (token {status.GetProperty("licenseToken").GetString()})");
+        AdminStatus status = answer.Read(AdminJsonContext.Default.AdminStatus);
+        writer.WriteLine($"product: {status.Product}");
+        writer.WriteLine($"license: {status.License} (token {status.LicenseToken})");
 
         // elm-server leaves licenseExpires out when the server license has no expiry (design §13.7).
-        writer.WriteLine(
-            "expires: "
-                + (
-                    status.TryGetProperty("licenseExpires", out JsonElement expires) && expires.ValueKind == JsonValueKind.Number
-                        ? Time(expires.GetInt64())
-                        : "never"
+        writer.WriteLine("expires: " + (status.LicenseExpires is long expires ? Time(expires) : "never"));
+        writer.WriteLine($"key: {status.Key}");
+        writer.WriteLine(status.Recovering ? $"reclaiming leases until {Time(status.RecoveryEnds)}" : "serving");
+        writer.WriteLine($"leases: {status.Leases}");
+        answer.ReadEach(
+            "features",
+            AdminJsonContext.Default.AdminFeature,
+            feature =>
+                writer.WriteLine(
+                    $"  {feature.Feature}: {feature.InUse} of {feature.Seats} seats in use "
+                        + $"({feature.Allowed} with overage, {feature.Borrowed} borrowed)"
                 )
         );
-        writer.WriteLine($"key: {status.GetProperty("key").GetString()}");
-        writer.WriteLine(
-            status.GetProperty("recovering").GetBoolean()
-                ? $"reclaiming leases until {Time(status.GetProperty("recoveryEnds").GetInt64())}"
-                : "serving"
+    }
+
+    // design §13.7 (V1d6): the leases are read and printed one at a time; the list is the answer that grows with the use.
+    private static void PrintLeases(AdminAnswer answer, TextWriter writer) =>
+        answer.ReadEach(
+            "leases",
+            AdminJsonContext.Default.AdminLease,
+            lease =>
+            {
+                string kind = lease.Borrow ? "borrow" : "lease";
+                string stopped = lease.Stopped ? " stopped" : string.Empty;
+                writer.WriteLine($"{lease.Id} {kind}{stopped} {lease.Feature} x{lease.Seats} key {lease.Key} until {Time(lease.Expires)}");
+            }
         );
-        writer.WriteLine($"leases: {status.GetProperty("leases").GetInt32()}");
-        foreach (JsonElement feature in status.GetProperty("features").EnumerateArray())
-        {
-            writer.WriteLine(
-                $"  {feature.GetProperty("feature").GetString()}: {feature.GetProperty("inUse").GetInt64()} of {feature.GetProperty("seats").GetInt32()} seats in use "
-                    + $"({feature.GetProperty("allowed").GetInt64()} with overage, {feature.GetProperty("borrowed").GetInt64()} borrowed)"
-            );
-        }
-    }
 
-    private static void PrintLeases(JsonElement answer, TextWriter writer)
+    private static void PrintReload(AdminAnswer answer, TextWriter writer)
     {
-        foreach (JsonElement lease in answer.GetProperty("leases").EnumerateArray())
-        {
-            string kind = lease.GetProperty("borrow").GetBoolean() ? "borrow" : "lease";
-            string stopped = lease.GetProperty("stopped").GetBoolean() ? " stopped" : string.Empty;
-            writer.WriteLine(
-                $"{lease.GetProperty("id").GetString()} {kind}{stopped} {lease.GetProperty("feature").GetString()} x{lease.GetProperty("seats").GetInt32()} "
-                    + $"key {lease.GetProperty("key").GetString()} until {Time(lease.GetProperty("expires").GetInt64())}"
-            );
-        }
+        AdminReload reload = answer.Read(AdminJsonContext.Default.AdminReload);
+        writer.WriteLine($"reloaded: license {reload.License}, token {reload.LicenseToken}");
     }
-
-    private static void PrintReload(JsonElement answer, TextWriter writer) =>
-        writer.WriteLine($"reloaded: license {answer.GetProperty("license").GetString()}, token {answer.GetProperty("licenseToken").GetString()}");
 }

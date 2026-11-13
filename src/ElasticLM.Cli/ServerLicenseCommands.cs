@@ -17,9 +17,6 @@ internal static class ServerLicenseCommands
 {
     private const int MaxAnswerBytes = 256 * 1024;
 
-    // How long a call to the server's local administration API waits for the whole answer.
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
-
     public static void Add(Command server, CliHost host)
     {
         server.Subcommands.Add(Online(host, "activate", "Activate this server's license online and write the license file.", activate: true));
@@ -372,10 +369,10 @@ internal static class ServerLicenseCommands
     private static int Reload(CliHost host, Common common, ParseResult parse, string tokenId)
     {
         const string Written = "The license file is written; the server did not confirm a reload.";
-        (HttpStatusCode Status, JsonElement Answer)? sent;
+        AdminAnswer? answer;
         try
         {
-            sent = Send(host, common, parse, HttpMethod.Post, "admin/v1/license/reload");
+            answer = Send(host, common, parse, HttpMethod.Post, "admin/v1/license/reload");
         }
         catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
         {
@@ -384,7 +381,7 @@ internal static class ServerLicenseCommands
             return ExitCodes.NetworkError;
         }
 
-        if (sent is not (HttpStatusCode status, JsonElement answer))
+        if (answer is null)
         {
             host.Out.WriteLine("The server is not running; it reads the license when it starts.");
             return ExitCodes.Success;
@@ -392,15 +389,15 @@ internal static class ServerLicenseCommands
 
         // 409 with an error code is the server's refusal of the file. Any other answer that is not the reload's own says
         // nothing about the file, so the line names the answer and says that the file is written.
-        if (status == HttpStatusCode.Conflict && Text(answer, "code") is string refused)
+        if (answer.Status == HttpStatusCode.Conflict && answer.Text("code") is string refused)
         {
-            host.Error.WriteLine($"error: the server kept its license: {refused}: {Text(answer, "detail")}");
+            host.Error.WriteLine($"error: the server kept its license: {refused}: {answer.Text("detail")}");
             return ExitCodes.VerificationFailed;
         }
 
-        if (!IsSuccess(status) || Text(answer, "licenseToken") is not string loaded)
+        if (!answer.IsSuccess || answer.Text("licenseToken") is not string loaded)
         {
-            host.Error.WriteLine($"error: {ServerAdminApi.Unexpected(status, answer)} {Written}");
+            host.Error.WriteLine($"error: {ServerAdminApi.Unexpected(answer)} {Written}");
             return ExitCodes.VerificationFailed;
         }
 
@@ -430,21 +427,15 @@ internal static class ServerLicenseCommands
     // (R8, R9).
     private static bool? Status(CliHost host, Common common, ParseResult parse)
     {
-        if (Send(host, common, parse, HttpMethod.Get, "admin/v1/status") is not (HttpStatusCode status, JsonElement answer))
+        if (Send(host, common, parse, HttpMethod.Get, "admin/v1/status") is not AdminAnswer answer)
         {
             return null;
         }
 
-        return
-            IsSuccess(status)
-            && answer.ValueKind == JsonValueKind.Object
-            && answer.TryGetProperty("autoRefresh", out JsonElement auto)
-            && auto.ValueKind is JsonValueKind.True or JsonValueKind.False
-            ? auto.GetBoolean()
-            : throw new CliException(ServerAdminApi.Unexpected(status, answer), ExitCodes.VerificationFailed);
+        return answer.IsSuccess && answer.Boolean("autoRefresh") is bool auto
+            ? auto
+            : throw new CliException(ServerAdminApi.Unexpected(answer), ExitCodes.VerificationFailed);
     }
-
-    private static bool IsSuccess(HttpStatusCode status) => (int)status is >= 200 and <= 299;
 
     // design §13.7 (V1d2): the commands that do not ask the server before their own work check the length of the socket's
     // path first, as the others do through Send, so that a folder whose path is too long is never taken for one whose
@@ -456,7 +447,7 @@ internal static class ServerLicenseCommands
     // the socket file is refused (a file that a killed server left). The server's lock file is not looked at. Every other
     // connection error, and something that listens there and gives no whole answer in time, stops the call with a network
     // error: a server that is slow or stopping still runs.
-    private static (HttpStatusCode Status, JsonElement Answer)? Send(CliHost host, Common common, ParseResult parse, HttpMethod method, string path)
+    private static AdminAnswer? Send(CliHost host, Common common, ParseResult parse, HttpMethod method, string path)
     {
         string folder = Folder(parse, common);
         (string socketPath, UnixDomainSocketEndPoint endPoint) = ServerAdminApi.SocketOf(folder);
@@ -469,26 +460,11 @@ internal static class ServerLicenseCommands
             return null;
         }
 
-        // The wait is counted on the host's clock, not on the HTTP client's own timer.
-        using HttpClient http = ServerAdminApi.CreateClient(host, endPoint, Timeout.InfiniteTimeSpan);
-        using var waited = new CancellationTokenSource(RequestTimeout, host.Time);
-        using var request = new HttpRequestMessage(method, path);
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        // The wait covers the answer's body too, and is counted on the host's clock, not on the HTTP client's own timer.
+        BoundedAnswer answer;
         try
         {
-            using HttpResponseMessage response = http.Send(request, waited.Token);
-            using var reader = new StreamReader(response.Content.ReadAsStream());
-            string body = reader.ReadToEnd();
-            try
-            {
-                using var document = JsonDocument.Parse(body.Length == 0 ? "{}" : body);
-                return (response.StatusCode, document.RootElement.Clone());
-            }
-            catch (JsonException) when (!response.IsSuccessStatusCode)
-            {
-                // Another program on the socket answers an error with a page; the status code is all there is to tell.
-                return (response.StatusCode, default);
-            }
+            answer = ServerAdminApi.Send(host, endPoint, method, path, token);
         }
         catch (HttpRequestException e) when (e.InnerException is SocketException { SocketErrorCode: SocketError.ConnectionRefused })
         {
@@ -499,26 +475,34 @@ internal static class ServerLicenseCommands
             // Every other failure to get an HTTP answer: something took the connection, so a server may run there.
             throw new CliException("The server's administration API gave no whole answer.", ExitCodes.NetworkError);
         }
-        catch (OperationCanceledException)
+        catch (TimeoutException)
         {
             throw new CliException("The server's administration API did not answer in time.", ExitCodes.NetworkError);
         }
-        catch (JsonException)
+
+        if (answer is not BoundedAnswer.Whole whole)
         {
-            throw new CliException("The server's administration API answered with a body that is not JSON.", ExitCodes.NetworkError);
+            // Something that listens answered, so a server may run there, as above.
+            throw new CliException(ServerAdminApi.AnswerTooLarge, ExitCodes.NetworkError);
         }
+
+        // design §13.7 (V1d6): the body is checked and read without a document model, which would take many times its
+        // length. Another program on the socket answers an error with a page; its status code is all there is to tell.
+        AdminAnswer read = AdminAnswer.Of(whole);
+        return read.IsJson || !read.IsSuccess
+            ? read
+            : throw new CliException("The server's administration API answered with a body that is not JSON.", ExitCodes.NetworkError);
     }
 
-    private static string? Text(JsonElement value, string name) =>
-        value.ValueKind == JsonValueKind.Object && value.TryGetProperty(name, out JsonElement member) && member.ValueKind == JsonValueKind.String
-            ? member.GetString()
-            : null;
-
-    // design §16, §13.7: the network is exit code 3; anything the service, the checks, or the kept state said is 1.
+    // design §16, §13.7: the network is exit code 3, and so is an answer of the service that is larger than its limit, of
+    // which nothing was read (V1d6): ActivationClient returns that one error instance, told by reference, not by its
+    // wording. Anything the service, the checks, or the kept state said is 1.
     private static int Refused(CliHost host, LicenseError error)
     {
         host.Error.WriteLine($"error: {ErrorCodes.ToWireName(error.Code)}: {error.Message}");
-        return error.Code == ErrorCode.NetworkError ? ExitCodes.NetworkError : ExitCodes.VerificationFailed;
+        return error.Code == ErrorCode.NetworkError || ReferenceEquals(error, ActivationClient.AnswerTooLarge)
+            ? ExitCodes.NetworkError
+            : ExitCodes.VerificationFailed;
     }
 
     private static byte[]? KeptLicense(CliHost host, Common common, ParseResult parse) =>

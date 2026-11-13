@@ -26,7 +26,7 @@ namespace ElasticLM.Client;
 /// </remarks>
 public sealed class LicenseClient : IAsyncDisposable
 {
-    private const int MaxResponseLength = 256 * 1024;
+    private const string AnswerTooLarge = "The server's answer is larger than the limit.";
     private const int MaxClientNameBytes = 255;
     private const int MaxAppBytes = 64;
     private const int MaxIdentities = 8;
@@ -37,7 +37,6 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxCertificateLength = 16 * 1024; // design §8.6: one token
     private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
     private readonly LicenseClientOptions _options;
     private readonly Uri _server;
@@ -85,17 +84,13 @@ public sealed class LicenseClient : IAsyncDisposable
         _storeDirectory = store.Directory;
 
         // design §12.7.6 (M4d2's Grill): elm-service is checked with the OS's trust, as ActivationClient does.
-        var handler = new SocketsHttpHandler
-        {
-            PooledConnectionLifetime = TimeSpan.FromMinutes(2),
-
-            // design §12.1: a redirect would send the body, a license key with it, to another place; a 3xx is an error.
-            AllowAutoRedirect = false,
-            SslOptions = _hosted
-                ? new SslClientAuthenticationOptions()
-                : new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = ValidateServerCertificate },
-        };
-        _http = new HttpClient(options.WrapHandler?.Invoke(handler) ?? handler) { Timeout = RequestTimeout };
+        // design §12.1: a redirect would send the body, a license key with it, to another place; a 3xx is an error.
+        SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
+        handler.PooledConnectionLifetime = TimeSpan.FromMinutes(2);
+        handler.SslOptions = _hosted
+            ? new SslClientAuthenticationOptions()
+            : new SslClientAuthenticationOptions { RemoteCertificateValidationCallback = ValidateServerCertificate };
+        _http = BoundedAnswer.CreateClient(options.WrapHandler?.Invoke(handler) ?? handler);
     }
 
     /// <summary>
@@ -797,30 +792,6 @@ public sealed class LicenseClient : IAsyncDisposable
         return key is { KeySize: 256 } ? KeyIds.Of(key) : null;
     }
 
-    internal static async Task<byte[]?> ReadLimitedAsync(HttpContent content)
-    {
-        if (content.Headers.ContentLength > MaxResponseLength)
-        {
-            return null;
-        }
-
-        await using Stream stream = await content.ReadAsStreamAsync().ConfigureAwait(false);
-        using var buffer = new MemoryStream();
-        byte[] chunk = new byte[8192];
-        int read;
-        while ((read = await stream.ReadAsync(chunk).ConfigureAwait(false)) > 0)
-        {
-            if (buffer.Length + read > MaxResponseLength)
-            {
-                return null;
-            }
-
-            buffer.Write(chunk, 0, read);
-        }
-
-        return buffer.ToArray();
-    }
-
     // design §12.1 (the V1d1 Grill, Q1 to Q3). The status is not compared with the code's own status in design §19.
 
     /// <summary>
@@ -924,46 +895,49 @@ public sealed class LicenseClient : IAsyncDisposable
 
         string? seenKeyId = null;
         bool osValidated = false;
-        var handler = new SocketsHttpHandler
+        SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
+        handler.SslOptions = new SslClientAuthenticationOptions
         {
-            AllowAutoRedirect = false,
-            SslOptions = new SslClientAuthenticationOptions
+            // The certificate is recorded here and checked against the server license once it has verified
+            // (design §13.5, first connection); what this connection returns is discarded on a mismatch.
+            RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
             {
-                // The certificate is recorded here and checked against the server license once it has verified
-                // (design §13.5, first connection); what this connection returns is discarded on a mismatch.
-                RemoteCertificateValidationCallback = (_, certificate, _, errors) =>
-                {
-                    osValidated = errors == SslPolicyErrors.None;
-                    seenKeyId = KeyIdOf(certificate);
-                    return certificate is not null;
-                },
+                osValidated = errors == SslPolicyErrors.None;
+                seenKeyId = KeyIdOf(certificate);
+                return certificate is not null;
             },
         };
-        byte[]? body;
-        using (var bootstrap = new HttpClient(handler) { Timeout = RequestTimeout })
+        byte[] body;
+        using (HttpClient bootstrap = BoundedAnswer.CreateClient(handler))
         {
             try
             {
-                using HttpResponseMessage response = await bootstrap
-                    .GetAsync(new Uri(_server, "v1/server/license"), cancellationToken)
+                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(_server, "v1/server/license"));
+                BoundedAnswer answer = await BoundedAnswer
+                    .SendAsync(bootstrap, request, BoundedAnswer.MaxLength, _time, cancellationToken)
                     .ConfigureAwait(false);
-                body = await ReadLimitedAsync(response.Content).ConfigureAwait(false);
-                if (!response.IsSuccessStatusCode)
+                if (answer is not BoundedAnswer.Whole whole)
                 {
-                    // This connection takes any certificate, so anyone on the path can answer it: the code is read, and the
-                    // detail, which that party would choose, never becomes the app's message (design §12.1).
-                    return body is null
-                        ? new LicenseError(ErrorCode.Malformed, "The server's answer is larger than the limit.")
-                        : ProblemOf(response.StatusCode, body, keepDetail: false);
+                    // This connection takes any certificate, so anyone on the path can answer it, with a body of any
+                    // length (design §12.1, §13.5).
+                    return new LicenseError(ErrorCode.Malformed, AnswerTooLarge);
+                }
+
+                body = whole.Body.ToArray();
+                if (!whole.IsSuccess)
+                {
+                    // The code is read, and the detail, which whoever answers would choose, never becomes the app's
+                    // message (design §12.1).
+                    return ProblemOf(whole.Status, body, keepDetail: false);
                 }
             }
-            catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+            catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
             {
                 return new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: " + e.Message);
             }
         }
 
-        if (body is null || !TryReadServerLicense(body, out byte[]? licenseFile, out byte[]? keyJwk))
+        if (!TryReadServerLicense(body, out byte[]? licenseFile, out byte[]? keyJwk))
         {
             return new LicenseError(ErrorCode.Malformed, "The server's license answer is not valid.");
         }
@@ -1448,22 +1422,26 @@ public sealed class LicenseClient : IAsyncDisposable
         try
         {
             _pinFailed = false;
-            using HttpResponseMessage response = await _http.SendAsync(request, cancellationToken).ConfigureAwait(false);
-            byte[]? content = await ReadLimitedAsync(response.Content).ConfigureAwait(false);
-            string? nonce = response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
-            string? serverLicense = response.Headers.TryGetValues("ELM-Server-License", out IEnumerable<string>? licenses)
-                ? licenses.FirstOrDefault()
-                : null;
-            TimeSpan? retryAfter = response.Headers.RetryAfter?.Delta;
-            if (content is null)
+            BoundedAnswer answer = await BoundedAnswer
+                .SendAsync(_http, request, BoundedAnswer.MaxLength, _time, cancellationToken)
+                .ConfigureAwait(false);
+            if (answer is not BoundedAnswer.Whole whole)
             {
-                return Reply.Failure(new LicenseError(ErrorCode.Malformed, "The server's answer is larger than the limit."));
+                // design §12.1, §12.7.3: nothing of an answer that is too large is read, its nonce and Retry-After
+                // included. A server that answered with a success may have acted on the request, so the request counts
+                // as one without an answer; a refusal changed nothing there.
+                return Reply.Failure(new LicenseError(ErrorCode.Malformed, AnswerTooLarge), unanswered: answer.IsSuccess);
             }
 
-            LicenseError? error = response.IsSuccessStatusCode ? null : ProblemOf(response.StatusCode, content, keepDetail: true);
-            return new Reply(content, error, ValidNonce(nonce), serverLicense, retryAfter);
+            byte[] content = whole.Body.ToArray();
+            string? nonce = whole.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces) ? nonces.FirstOrDefault() : null;
+            string? serverLicense = whole.Headers.TryGetValues("ELM-Server-License", out IEnumerable<string>? licenses)
+                ? licenses.FirstOrDefault()
+                : null;
+            LicenseError? error = whole.IsSuccess ? null : ProblemOf(whole.Status, content, keepDetail: true);
+            return new Reply(content, error, ValidNonce(nonce), serverLicense, whole.Headers.RetryAfter?.Delta);
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)
         {
             if (_pinFailed)
             {

@@ -3,6 +3,7 @@ using System.CommandLine;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using ElasticLM.Client;
 
 namespace ElasticLM.Cli;
 
@@ -14,8 +15,6 @@ namespace ElasticLM.Cli;
 internal static class OfflineCommands
 {
     private const int MaxRequestBytes = 64 * 1024;
-    private const int MaxAnswerBytes = 256 * 1024;
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(30);
 
     public static Command Create(CliHost host)
     {
@@ -80,7 +79,7 @@ internal static class OfflineCommands
         string? apiKey = AdminCredentials.ApiKey(host) ?? AdminCredentials.AccessToken(host, service);
 
         // design §12.1: a redirect would send the request file, the license key in it, to another place; a 3xx is an error.
-        using var http = new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = RequestTimeout };
+        using HttpClient http = BoundedAnswer.CreateClient(BoundedAnswer.CreateHandler());
         using var request = new HttpRequestMessage(HttpMethod.Post, new Uri(service, apiKey is null ? "v1/offline" : "v1/admin/offline"))
         {
             Content = new StringContent(text, Encoding.ASCII, "application/jose"),
@@ -90,20 +89,25 @@ internal static class OfflineCommands
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
         }
 
-        int status;
-        byte[] body;
+        // design §12.8.4 (V1d6): the answer is read up to its limit, and the whole exchange ends after 30 seconds of the
+        // host's clock.
+        BoundedAnswer answer;
         try
         {
-            using HttpResponseMessage response = http.Send(request);
-            status = (int)response.StatusCode;
-            body = ReadLimited(response.Content.ReadAsStream());
+            answer = BoundedAnswer.SendAsync(http, request, BoundedAnswer.MaxLength, host.Time, CancellationToken.None).GetAwaiter().GetResult();
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
+        catch (Exception e) when (e is HttpRequestException or TimeoutException)
         {
             throw new CliException("The service cannot be reached: " + e.Message, ExitCodes.NetworkError);
         }
 
-        if (status is < 200 or >= 300)
+        if (answer is not BoundedAnswer.Whole whole)
+        {
+            throw new CliException($"ELM_MALFORMED: The service's answer is larger than {BoundedAnswer.MaxLength} bytes.", ExitCodes.NetworkError);
+        }
+
+        byte[] body = whole.Body.ToArray();
+        if (!whole.IsSuccess)
         {
             (string code, string detail) = Problem(body);
             host.Error.WriteLine($"error: {code}: {detail}");
@@ -165,24 +169,6 @@ internal static class OfflineCommands
         {
             return null;
         }
-    }
-
-    private static byte[] ReadLimited(Stream stream)
-    {
-        using var buffer = new MemoryStream();
-        byte[] chunk = new byte[8192];
-        int read;
-        while ((read = stream.Read(chunk)) > 0)
-        {
-            if (buffer.Length + read > MaxAnswerBytes)
-            {
-                throw new CliException($"The service's answer is larger than {MaxAnswerBytes} bytes.", ExitCodes.NetworkError);
-            }
-
-            buffer.Write(chunk, 0, read);
-        }
-
-        return buffer.ToArray();
     }
 
     private static (string Code, string Detail) Problem(byte[] body)
