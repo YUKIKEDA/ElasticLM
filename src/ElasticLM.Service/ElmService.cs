@@ -9,6 +9,7 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -139,7 +140,8 @@ internal sealed partial class ElmService : IAsyncDisposable
     public TimeProvider Time { get; }
 
     /// <summary>
-    /// Starts the service: settings, trust store, signing key and certificates, database and schema, then listening.
+    /// Starts the service: settings, trust store, signing key and certificates, database and schema, then listening, and on
+    /// Windows the check that the intermediates of the TLS certificate file are sent (design §13.5).
     /// </summary>
     /// <exception cref="ServiceStartException">The service cannot start; the message says why.</exception>
     public static async Task<ElmService> StartAsync(ServiceSettings settings, ServiceHostOptions host, CancellationToken cancellationToken = default)
@@ -186,7 +188,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             }
 
             var hooks = new WebHooks();
-            WebApplication app = Build(settings, tls, host, database, hooks);
+            WebApplication app = Build(settings, tls, host, database, hooks, out Func<IPEndPoint> listening);
             disposables.Add(app);
             ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
 
@@ -234,6 +236,18 @@ internal sealed partial class ElmService : IAsyncDisposable
                 // (Socket.Bind to 192.0.2.1: SocketError.AddressNotAvailable on Windows 11 with .NET 10 and on Ubuntu 22.04
                 // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, §14.8, V1c9).
                 throw new ServiceStartException($"elm-service cannot listen on {settings.Listen}: {e.Message}");
+            }
+
+            // design §13.5 (V1d3a): as in elm-server, a start on Windows that left an intermediate of the PEM file out of its
+            // first handshake stops here, before the service says it has started. The catch below disposes the host, which
+            // closes the listener, as after a failure to listen.
+            if (
+                tls is not null
+                && await TlsChainSelfCheck.RunAsync(settings.TlsCertificate!, tls, listening(), host.Time, cancellationToken).ConfigureAwait(false)
+                    is string unsent
+            )
+            {
+                throw new ServiceStartException(unsent);
             }
 
             service.AfterStart(applied, host.Time.GetElapsedTime(started));
@@ -432,9 +446,14 @@ internal sealed partial class ElmService : IAsyncDisposable
         TlsServerCertificate? tls,
         ServiceHostOptions host,
         Database database,
-        WebHooks hooks
+        WebHooks hooks,
+        out Func<IPEndPoint> listening
     )
     {
+        // Kestrel puts the endpoint it bound, with the port the system chose for port 0, into the listener's options, as in
+        // elm-server.
+        ListenOptions? listener = null;
+        listening = () => listener!.IPEndPoint!;
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
         if (host.LoggerProvider is ILoggerProvider provider)
@@ -459,6 +478,7 @@ internal sealed partial class ElmService : IAsyncDisposable
                 settings.Listen.Port,
                 options =>
                 {
+                    listener = options;
                     if (tls is not null)
                     {
                         // design §13.5 (V1c12): the intermediates of the PEM file go with the certificate, as in elm-server.

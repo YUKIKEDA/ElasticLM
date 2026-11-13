@@ -186,10 +186,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <summary>
     /// Starts the server as design §13.1 says: settings and the length of the administration socket's path, trust store,
     /// installation key, the lock file and a socket file that is left, server license, the borrow record, a new administrator
-    /// token, TLS, the usage log, then listening with the reclaim window open.
+    /// token, TLS, the usage log, then listening with the reclaim window open, and on Windows the check that the intermediates
+    /// of the operator's TLS certificate file are sent (design §13.5).
     /// </summary>
     /// <exception cref="ServerStartException">The server cannot start, including when another server runs on the data
-    /// folder and when it cannot listen on <c>listen</c> or on the administration socket; the message says why.</exception>
+    /// folder, when it cannot listen on <c>listen</c> or on the administration socket, and when Windows does not send an
+    /// intermediate of the TLS certificate file; the message says why.</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -267,7 +269,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 : new TlsServerCertificate(TlsCertificates.SelfSigned(key, publicUrls, host.Time), []);
             disposables.Add(certificate);
 
-            WebApplication app = Build(settings, certificate, host, adminSocketPath);
+            WebApplication app = Build(settings, certificate, host, adminSocketPath, out Func<IPEndPoint> listening);
 
             // design §13.1 (V1c9, R2): a failed start disposes the host too, which writes out the console log before Program
             // prints the last line.
@@ -349,6 +351,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, V1c9).
                 // Kestrel has closed the socket listener by then, which removes admin.sock (design §13.7).
                 throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {adminSocketPath}: {e.Message}");
+            }
+
+            // design §13.5 (V1d3a): on Windows, what the first handshake of this process sends stays for the process, so a
+            // start that left an intermediate of the operator's file out stops here, before the server says it has started.
+            // The catch below disposes the host, which closes both listeners, as after a failure to listen.
+            if (
+                settings.TlsCertificate is string checkedPath
+                && await TlsChainSelfCheck.RunAsync(checkedPath, certificate, listening(), host.Time, cancellationToken).ConfigureAwait(false)
+                    is string unsent
+            )
+            {
+                throw new ServerStartException(unsent);
             }
 
             server.AfterStart(host.Time.GetElapsedTime(started));
@@ -725,8 +739,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
         return [new UriBuilder(listen) { Port = port, Path = "/" }.Uri];
     }
 
-    private static WebApplication Build(ServerSettings settings, TlsServerCertificate certificate, ServerHostOptions host, string adminSocketPath)
+    private static WebApplication Build(
+        ServerSettings settings,
+        TlsServerCertificate certificate,
+        ServerHostOptions host,
+        string adminSocketPath,
+        out Func<IPEndPoint> listening
+    )
     {
+        // Kestrel puts the endpoint it bound, with the port the system chose for port 0, into the listener's options: the tests
+        // listen on port 0, and the check of the intermediates reaches the server there (TlsChainTests).
+        ListenOptions? https = null;
+        listening = () => https!.IPEndPoint!;
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
         if (host.LoggerProvider is ILoggerProvider provider)
@@ -766,11 +790,14 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 ServerSettings.ListenAddress(settings.Listen),
                 settings.Listen.Port,
                 options =>
-                    options.UseHttps(https =>
+                {
+                    https = options;
+                    options.UseHttps(tls =>
                     {
-                        https.ServerCertificate = certificate.Certificate;
-                        https.ServerCertificateChain = certificate.Intermediates;
-                    })
+                        tls.ServerCertificate = certificate.Certificate;
+                        tls.ServerCertificateChain = certificate.Intermediates;
+                    });
+                }
             );
         });
         return builder.Build();

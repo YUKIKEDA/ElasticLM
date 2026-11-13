@@ -1,0 +1,314 @@
+using System.Net;
+using System.Net.Sockets;
+using System.Security.Cryptography.X509Certificates;
+using ElasticLM.Issuing;
+using Microsoft.Extensions.Time.Testing;
+
+namespace ElasticLM.Server.Tests;
+
+/// <summary>
+/// The check that elm-server and elm-service make on Windows right after they start to listen: one TLS handshake with their own
+/// listener, which reads whether the intermediates of the certificate file are sent (design §13.5, V1d3a). Here the check runs
+/// against listeners of the test, which send what the test decides; the servers' own starts are in <see cref="TlsChainTests"/>.
+/// </summary>
+public sealed class TlsChainSelfCheckTests : IDisposable
+{
+    private const string Path = "chain.crt";
+
+    private readonly CancellationTokenSource _stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+    private readonly List<IDisposable> _owned = [];
+    private readonly FakeTimeProvider _time = new(Deployment.Start);
+
+    public void Dispose()
+    {
+        _stop.Cancel();
+        foreach (IDisposable owned in Enumerable.Reverse(_owned))
+        {
+            owned.Dispose();
+        }
+
+        _stop.Dispose();
+    }
+
+    /// <summary>
+    /// A listener that sends the certificate alone gives the sentence that names the intermediate left out; a wildcard listen
+    /// address is reached through loopback.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; a listener of the test on 127.0.0.1 (for the case "::", on ::1) that answers TLS handshakes with the
+    ///   chain's certificate alone; the certificate with the intermediate as the intermediates of its file.
+    ///
+    /// Steps:
+    /// - Run the check with the listener's own endpoint, with 0.0.0.0 and the listener's port, and with :: and the port of the
+    ///   listener on ::1.
+    ///
+    /// Expected:
+    /// - "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS certificate 'chain.crt'
+    ///   out of the first TLS handshake, and what that handshake sent stays for as long as this process runs. Start again; if
+    ///   this happens at every start, add the certificate to the machine's Intermediate Certification Authorities store." with
+    ///   the intermediate's subject and thumbprint, in every case.
+    /// </remarks>
+    [Theory]
+    [InlineData("127.0.0.1", "127.0.0.1")]
+    [InlineData("127.0.0.1", "0.0.0.0")]
+    [InlineData("::1", "::")]
+    public async Task Run_IntermediateNotSent_NamesIt(string listenOn, string configured)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        Assert.SkipUnless(listenOn != "::1" || Socket.OSSupportsIPv6, "This machine has no IPv6.");
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        (IPEndPoint endPoint, _) = chain.Listen(IPAddress.Parse(listenOn), [], _stop.Token);
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+
+        string? problem = await TlsChainSelfCheck.RunAsync(
+            Path,
+            certificate,
+            new IPEndPoint(IPAddress.Parse(configured), endPoint.Port),
+            _time,
+            _stop.Token
+        );
+
+        Assert.Equal(LeftOut(chain), problem);
+    }
+
+    /// <summary>
+    /// After earlier checks of the same listener in the same process, each check still makes a full handshake and reads the
+    /// certificates sent: a resumed session would carry none.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain that a server sends (it holds the mutex of the tests that change the CA stores); a listener of the
+    ///   test that sends the chain's certificate with its intermediate; the certificate with the intermediate as the
+    ///   intermediates of its file.
+    ///
+    /// Steps:
+    /// - Connect to the listener once (with a new chain, at most three in all, until the chain builds), then run the check
+    ///   with the listener's endpoint three times in a row.
+    ///
+    /// Expected:
+    /// - Null each time.
+    /// </remarks>
+    [Fact]
+    public async Task Run_SameListenerAgain_MakesAFullHandshake()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        (TestCertificateChain chain, IPEndPoint endPoint, _, _) = await ListenSendingAsync(c => c.Intermediate);
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+
+        string?[] problems = new string?[3];
+        for (int i = 0; i < problems.Length; i++)
+        {
+            problems[i] = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+        }
+
+        Assert.Equal(new string?[3], problems);
+    }
+
+    /// <summary>
+    /// An intermediate counts as sent when the listener sends another certificate of the same CA: the same name and key.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain that a server sends (it holds the mutex of the tests that change the CA stores); a listener of the
+    ///   test that sends the chain's certificate with the renewed certificate of the intermediate CA (the same name and key,
+    ///   another serial number); the certificate with the first certificate of the intermediate CA as the intermediates of
+    ///   its file.
+    ///
+    /// Steps:
+    /// - Connect to the listener and read what it sends; when the chain does not build (the listener's first handshake lost
+    ///   the renewed certificate), try a new chain, at most three in all. Run the check with the listener's endpoint.
+    ///
+    /// Expected:
+    /// - The listener sends a certificate with the intermediate's subject, and not the certificate of the file; the check
+    ///   returns null.
+    /// </remarks>
+    [Fact]
+    public async Task Run_RenewedIntermediateSent_Passes()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        (TestCertificateChain chain, IPEndPoint endPoint, bool sentTheFiles, bool builds) = await ListenSendingAsync(c => c.IntermediateRenewed);
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        string? problem = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+
+        Assert.False(sentTheFiles);
+        Assert.True(builds);
+        Assert.Null(problem);
+    }
+
+    /// <summary>
+    /// A certificate without an intermediate in its chain is not checked, and no connection is made: a file with the
+    /// certificate alone, with the root after it, and with a CA certificate of another chain after it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. Two chains; a TCP listener of the test that accepts nothing.
+    ///
+    /// Steps:
+    /// - Run the check with the listener's endpoint and the first chain's certificate: alone; with its root as the file's
+    ///   second certificate; with the second chain's intermediate as the file's second certificate.
+    ///
+    /// Expected:
+    /// - Null each time, and the listener has no connection waiting.
+    /// </remarks>
+    [Fact]
+    public async Task Run_NoIntermediateInTheChain_MakesNoConnection()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TestCertificateChain unrelated = Own(new TestCertificateChain());
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endPoint = (IPEndPoint)listener.LocalEndpoint;
+
+        foreach (X509Certificate2[] after in new X509Certificate2[][] { [], [chain.Root], [unrelated.Intermediate] })
+        {
+            TlsServerCertificate certificate = Own(chain.ServerWith(after));
+
+            Assert.Null(await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token));
+            Assert.False(listener.Pending());
+        }
+    }
+
+    /// <summary>
+    /// On Linux and macOS the check does nothing: it makes no connection and returns null.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of
+    ///   the test that accepts nothing.
+    ///
+    /// Steps:
+    /// - Run the check with the listener's endpoint.
+    ///
+    /// Expected:
+    /// - Null, and the listener has no connection waiting.
+    /// </remarks>
+    [Fact]
+    public async Task Run_NotWindows_MakesNoConnection()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "On Windows the check runs; the other tests of this class cover it.");
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+
+        Assert.Null(await TlsChainSelfCheck.RunAsync(Path, certificate, (IPEndPoint)listener.LocalEndpoint, _time, _stop.Token));
+        Assert.False(listener.Pending());
+    }
+
+    /// <summary>
+    /// A listener that accepts the connection and never answers ends the check when its clock has moved 10 seconds, not before.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test
+    ///   that accepts connections into its backlog and sends nothing; a fake clock.
+    ///
+    /// Steps:
+    /// - Start the check with the listener's endpoint; move the clock 10 seconds less one millisecond; then one millisecond.
+    ///
+    /// Expected:
+    /// - After the first move the check has not ended. After the second it returns "The check that Windows sends the
+    ///   intermediate CA certificates of the TLS certificate 'chain.crt' did not get an answer: the TLS handshake with
+    ///   127.0.0.1:{port} did not finish within 10 seconds."
+    /// </remarks>
+    [Fact]
+    public async Task Run_ListenerNeverAnswers_EndsAtTheLimit()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endPoint = (IPEndPoint)listener.LocalEndpoint;
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+        using TcpClient accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+        _time.Advance(TlsChainSelfCheck.Limit - TimeSpan.FromMilliseconds(1));
+        bool endedEarly = check.IsCompleted;
+        _time.Advance(TimeSpan.FromMilliseconds(1));
+
+        // The bound of the real clock only ends a run in which the check does not end at its limit.
+        string? problem = await check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token);
+
+        Assert.False(endedEarly);
+        Assert.Equal(TimeSpan.FromSeconds(10), TlsChainSelfCheck.Limit);
+        Assert.Equal(NoAnswer(endPoint, "did not finish within 10 seconds"), problem);
+    }
+
+    /// <summary>
+    /// A listener that closes the connection without a TLS answer, and a port where nothing listens, each give the sentence of
+    /// a handshake without an answer.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test.
+    ///
+    /// Steps:
+    /// - Start the check with the listener's endpoint, accept its connection, and close it. Then stop the listener and run the
+    ///   check with the same endpoint.
+    ///
+    /// Expected:
+    /// - "… did not get an answer: the TLS handshake with 127.0.0.1:{port} failed." for the closed connection, and
+    ///   "… failed (socket error ConnectionRefused)." for the port where nothing listens.
+    /// </remarks>
+    [Fact]
+    public async Task Run_NoTlsAnswer_SaysTheHandshakeFailed()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endPoint = (IPEndPoint)listener.LocalEndpoint;
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+        (await listener.AcceptTcpClientAsync(_stop.Token)).Dispose();
+        string? closed = await check;
+        listener.Dispose();
+        string? refused = await TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, _time, _stop.Token);
+
+        Assert.Equal(NoAnswer(endPoint, "failed"), closed);
+        Assert.Equal(NoAnswer(endPoint, "failed (socket error ConnectionRefused)"), refused);
+    }
+
+    private static string LeftOut(TestCertificateChain chain) =>
+        $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the "
+        + $"TLS certificate '{Path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process runs. "
+        + "Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification Authorities store.";
+
+    private static string NoAnswer(IPEndPoint endPoint, string how) =>
+        $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{Path}' did not get an answer: the TLS "
+        + $"handshake with {endPoint} {how}.";
+
+    // A chain that a server sends, with a listener of the test that sends the chain's certificate and the given intermediate,
+    // and what a first connection to it got. The listener's own first handshake can lose the intermediate to another program
+    // that changes the store at that moment, as a server's can (design §20.7, the V1d3a Grill); then a new chain is tried, at
+    // most StartAttempts in all. A chain holds the mutex until it is disposed, so the chain of a failed try is disposed before
+    // the next is made.
+    private async Task<(TestCertificateChain Chain, IPEndPoint EndPoint, bool SentTheFiles, bool Builds)> ListenSendingAsync(
+        Func<TestCertificateChain, X509Certificate2> intermediate
+    )
+    {
+        for (int attempt = 1; ; attempt++)
+        {
+            var chain = new TestCertificateChain(sentByServer: true);
+            (IPEndPoint endPoint, _) = chain.Listen(IPAddress.Loopback, [intermediate(chain)], _stop.Token);
+            (bool sent, bool builds, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{endPoint.Port}/"), _stop.Token);
+            if (builds || attempt == TestCertificateChain.StartAttempts)
+            {
+                return (Own(chain), endPoint, sent, builds);
+            }
+
+            chain.Dispose();
+        }
+    }
+
+    private T Own<T>(T owned)
+        where T : IDisposable
+    {
+        _owned.Add(owned);
+        return owned;
+    }
+}

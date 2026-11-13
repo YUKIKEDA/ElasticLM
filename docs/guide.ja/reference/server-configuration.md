@@ -42,6 +42,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - 設定で指定したファイル（ルート鍵、サーバーライセンス、TLS 証明書）を読めないか、有効でない。
 - TLS 証明書に拡張キー使用法（証明書を使ってよい用途の一覧）があり、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication` と表示される）がない。
 - TLS 証明書のファイルで、サーバーの証明書のあとにある証明書が CA の証明書ではない。メッセージは、ファイルの中で何枚目かと、そのサブジェクトを示す: `The TLS certificate '<file>' cannot be used by a server: its certificate 2 (CN=…) is not a CA certificate.`
+- Windows で、サーバーが TLS 証明書のファイルの中間 CA の証明書を送らなかった。または、送っているかを確かめられなかった。2 つのメッセージと対処は[中間 CA の証明書](#tls)にある。
 - サーバーライセンスの検証に失敗した。`error:` のあとのメッセージは、失敗した確認のエラーコードで始まる。たとえば、別のインストール鍵に紐付いたライセンスでは `error: ELM_WRONG_INSTALLATION: The server license does not verify: The license is bound to another installation key. This server's installation key is <thumbprint>.` となる。すべてのコードは[エラーコード](error-codes.md)に挙げている。
 - `service.url` を設定しているのに、サーバーライセンスを書き込めない。
 - 借用の記録が壊れているか、読み書きできない。
@@ -168,7 +169,10 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - CA が中間 CA でサーバーの証明書に署名しているなら、中間 CA の証明書を同じファイルに入れる。サーバーは自分の証明書と一緒にそれを送る。PEM のファイルでは、サーバーの証明書を最初に、中間 CA をそのあとに並べる。サーバーは `tls.key` を最初の証明書と組み合わせる。PKCS#12 のファイルでは、秘密鍵を持つ最初の証明書がサーバーの証明書で、秘密鍵を持たない証明書が中間 CA になる。ルート CA は要らない。ルート CA は、アプリを動かすマシンが自分で信頼していなければならない。
 - サーバーの証明書のあとにある証明書は、どれも CA の証明書（基本制約で CA とされた証明書）でなければならない。そうでなければサーバーは起動しない（終了コード 1）。サーバーの証明書からルートへつながらない中間 CA は、サーバーがメッセージを出さずに外す。
 - サーバーは起動のときに、これらの証明書から証明書チェーンを組む。そのとき、システムの証明書ストアと、証明書に書かれたアドレス（Authority Information Access）も使う。サーバーのマシンが知っているルートまでチェーンが届かないと、足りない証明書をダウンロードしようとする。そのアドレスが応答しないネットワークでは、ファイルに中間 CA がなくても起動が遅くなる。Linux では 15 秒ほど遅くなった。Windows と macOS では測っていない。Linux では、サーバーは自分の証明書に書かれた OCSP レスポンダーにも証明書の状態を問い合わせ、証明書と一緒に送る（OCSP ステープリング）。
-- Windows では、証明書ストアだけでチェーンを組めないとき、.NET が中間 CA を、中間証明機関の証明書ストア（マシンのストア、書き込めなければサーバーのユーザーのストア）に入れ、そのまま残す。Windows はそのストアにある中間 CA しか送らないためだ。それでもマシンが信頼するルートまでチェーンが届かないと、.NET はチェーンの最後の証明書も同じストアに入れる。ファイルやダウンロードから得た、マシンが信頼していないルートである。そのストアに入った証明書があっても、ルートを含めて、信頼されるものは増えない。サーバーのユーザーがどちらのストアにも書き込めなければ、中間 CA は送られない。
+- Windows では、証明書ストアだけでチェーンを組めないとき、.NET が中間 CA を、中間証明機関の証明書ストア（マシンのストア、書き込めなければサーバーのユーザーのストア）に入れ、そのまま残す。Windows はそのストアにある中間 CA しか送らないためだ。それでもマシンが信頼するルートまでチェーンが届かないと、.NET はチェーンの最後の証明書も同じストアに入れる。ファイルやダウンロードから得た、マシンが信頼していないルートである。そのストアに入った証明書があっても、ルートを含めて、信頼されるものは増えない。サーバーのユーザーがどちらのストアにも書き込めなければ、Windows は中間 CA を送れず、サーバーは起動しない（次の項目を参照）。
+- Windows では、ファイルに中間 CA があると、サーバーは起動のたびに、待ち受けを始めた直後に、自分の `listen` のアドレスへ TLS で 1 回接続する（`listen` が `0.0.0.0` か `[::]` のときは、ループバックアドレスへ接続する）。送られてきた証明書を読み、リクエストを送らずに接続を閉じる。Windows は、サーバーの証明書と一緒にどの証明書を送るかを、プロセスの最初の TLS ハンドシェイクで決め、プロセスが終わるまで変えない。そのときにほかのプログラムが証明書ストアを書き換えていると、Windows が中間 CA を送らないことがある。サーバーのチェーンに入る中間 CA が送られていなければ、サーバーはその証明書を示して、終了コード 1 で止まる: `error: Windows left the intermediate CA certificate <subject> (thumbprint <thumbprint>) of the TLS certificate '<file>' out of the first TLS handshake, and what that handshake sent stays for as long as this process runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification Authorities store.` サーバーを起動し直す。起動のたびにこうなるなら、サーバーのユーザーがどちらのストアにも書き込めない。中間 CA を、マシンの中間証明機関の証明書ストアに入れる。Windows が同じ CA の別の証明書（サブジェクトと鍵が同じもの。ストアにある、更新された証明書など）を送っていれば、その中間 CA は送られたものとして扱う。
+- その接続が失敗するか、10 秒以内に証明書が届かなければ、サーバーはやはり終了コード 1 で止まる: `error: The check that Windows sends the intermediate CA certificates of the TLS certificate '<file>' did not get an answer: the TLS handshake with <address> <what happened>.` `<what happened>` は、`failed`、`failed (socket error <name>)`、`did not finish within 10 seconds` のどれかだ。サーバーを起動し直す。
+- サーバーが待ち受けを始めてから、この確かめが終わるまでの間（ふつうは数十ミリ秒）に接続したアプリは、中間 CA のないサーバーの証明書を受け取ることがある。サーバーが止まると、その接続は切れる。サーバーがこの確かめをするのは、Windows だけだ。
 
 ## `borrow`
 

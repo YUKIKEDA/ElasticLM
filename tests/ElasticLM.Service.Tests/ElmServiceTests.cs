@@ -321,32 +321,97 @@ public sealed class ElmServiceTests
     ///   time; a PEM file with the certificate and then the intermediate, and a PEM file with the certificate's key.
     ///
     /// Steps:
-    /// - Start on https://127.0.0.1:0 with the two files; connect with SslStream, and in the validation callback read the
-    ///   certificates the service sent (the chain's ExtraStore), then build the chain trusting only the root, with downloads off
-    ///   and no revocation check.
+    /// - Start on https://127.0.0.1:0 with the two files, holding the mutex of the tests that change the Windows CA stores, and
+    ///   with a new chain when the service stops at its own check of the intermediates (TestCertificateChain.StartAsync);
+    ///   connect with SslStream, and in the validation callback read the certificates the service sent (the chain's
+    ///   ExtraStore), then build the chain trusting only the root, with downloads off and no revocation check.
     ///
     /// Expected:
-    /// - The intermediate is among the certificates the service sent, and the chain builds.
+    /// - The service starts (on Windows, after its check that the intermediate is sent, design §13.5, V1d3a), the intermediate
+    ///   is among the certificates the service sent, and the chain builds.
     /// </remarks>
     [Fact]
     public async Task Start_HttpsListenWithIntermediate_SendsTheIntermediate()
     {
         await using TestService test = TestService.Open("sqlite");
-        using var chain = new TestCertificateChain();
-        (string certificate, string key) = chain.WritePem(test.FilePath("chain.crt"), test.FilePath("chain.key"), chain.Intermediate);
+        (TestCertificateChain chain, ElmService service) = await TestCertificateChain.StartAsync(c =>
+        {
+            (string certificate, string key) = c.WritePem(test.FilePath("chain.crt"), test.FilePath("chain.key"), c.Intermediate);
+            return test.StartAsync(s => s with { Listen = new Uri("https://127.0.0.1:0"), TlsCertificate = certificate, TlsKey = key });
+        });
+        try
+        {
+            (bool sent, bool builds, _) = await chain.ConnectAsync(service.Url, TestContext.Current.CancellationToken);
 
-        ElmService service = await test.StartAsync(s =>
-            s with
-            {
-                Listen = new Uri("https://127.0.0.1:0"),
-                TlsCertificate = certificate,
-                TlsKey = key,
-            }
+            Assert.True(sent);
+            Assert.True(builds);
+        }
+        finally
+        {
+            // The service stops before the chain's certificates leave the stores and the mutex is given back.
+            await service.DisposeAsync();
+            chain.Dispose();
+        }
+    }
+
+    /// <summary>
+    /// On Windows, a service whose first handshake cannot have the intermediate stops at the start with a sentence that names
+    /// the certificate left out, and leaves nothing listening (design §13.5, V1d3a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; a listener of the test that answers TLS handshakes with the chain's certificate alone, with the
+    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate. From
+    ///   then on Windows sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
+    /// - A PEM file with the certificate and then the intermediate, and the key.
+    ///
+    /// Steps:
+    /// - Start the service with the two files on a port of the test's choice; then connect to that port.
+    ///
+    /// Expected:
+    /// - ServiceStartException "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS
+    ///   certificate '{path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process
+    ///   runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification
+    ///   Authorities store." with the intermediate's subject and thumbprint; the connection afterwards is refused.
+    /// </remarks>
+    [Fact]
+    public async Task Start_FirstHandshakeWithoutTheIntermediate_Throws()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await using TestService test = TestService.Open("sqlite");
+        using var chain = new TestCertificateChain(sentByServer: true);
+        using (var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel))
+        {
+            (IPEndPoint alone, Task served) = chain.Listen(IPAddress.Loopback, [], stop.Token);
+            (bool primed, _, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{alone.Port}/"), cancel);
+            Assert.False(primed);
+            await stop.CancelAsync();
+            await served;
+        }
+
+        (string certificate, string key) = chain.WritePem(test.FilePath("first.crt"), test.FilePath("first.key"), chain.Intermediate);
+        int port;
+        using (var free = new TcpListener(IPAddress.Loopback, 0))
+        {
+            free.Start();
+            port = ((IPEndPoint)free.LocalEndpoint).Port;
+        }
+
+        var refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            test.StartAsync(s => s with { Listen = new Uri($"https://127.0.0.1:{port}"), TlsCertificate = certificate, TlsKey = key })
         );
-        (bool sent, bool builds, _) = await chain.ConnectAsync(service.Url, TestContext.Current.CancellationToken);
 
-        Assert.True(sent);
-        Assert.True(builds);
+        Assert.Equal(
+            $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the TLS "
+                + $"certificate '{certificate}' out of the first TLS handshake, and what that handshake sent stays for as long as this "
+                + "process runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate "
+                + "Certification Authorities store.",
+            refused.Message
+        );
+        using var client = new TcpClient();
+        SocketException closed = await Assert.ThrowsAsync<SocketException>(() => client.ConnectAsync(IPAddress.Loopback, port, cancel).AsTask());
+        Assert.Equal(SocketError.ConnectionRefused, closed.SocketErrorCode);
     }
 
     /// <summary>
