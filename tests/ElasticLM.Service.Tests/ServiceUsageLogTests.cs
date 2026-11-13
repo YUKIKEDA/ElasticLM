@@ -4,6 +4,8 @@ using System.Text;
 using System.Text.Json;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using ElasticLM.Server.Tests;
+using Microsoft.Extensions.Logging;
 using static ElasticLM.Service.Tests.ElmServiceActivationsTests;
 
 namespace ElasticLM.Service.Tests;
@@ -285,7 +287,7 @@ public sealed class ServiceUsageLogTests
             {
                 Time = test.Time,
                 Environment = test.HostOptions().Environment,
-                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Critical,
+                MinimumLogLevel = LogLevel.Critical,
                 WrapUsageLogKey = Wrap,
             },
             TestContext.Current.CancellationToken
@@ -815,6 +817,206 @@ public sealed class ServiceUsageLogTests
         TrustStore trust = TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []);
         Assert.Empty(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n1").Issues);
         Assert.False(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n2").Intact);
+    }
+
+    /// <summary>
+    /// The service starts when the last line of its node's previous usage log file is JSON but not a signature it can read,
+    /// and its new file continues the chain from the signature before that line (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Node n1 that ran and stopped; [] or an object whose type is a lone surrogate escape appended to its usage log file.
+    ///
+    /// Steps:
+    /// - Start the node again; read the first line of the new file and the operational log.
+    ///
+    /// Expected:
+    /// - The service starts. The first line is chain.start whose prev names the previous file and the hash of its last
+    ///   signature; no warning that the chain could not continue.
+    /// </remarks>
+    [Theory]
+    [InlineData("[]")]
+    [InlineData("{\"type\":\"\\ud800\",\"sig\":\"x\"}")]
+    public async Task Start_UsageLogEndsWithALineThatIsNotASignature_ContinuesTheChain(string line)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService first, _) = await StartLoggedAsync(test, "n1");
+        await first.StopAsync();
+        string previous = Files(test, "n1")[^1];
+        string lastAuth = File.ReadAllLines(previous).Last(l => l.StartsWith("{\"type\":\"auth\"", StringComparison.Ordinal));
+        File.AppendAllText(previous, line + "\n");
+        test.Time.Advance(TimeSpan.FromMinutes(1));
+
+        using var log = new RecordingLoggerProvider();
+        await using ElmService second = await ElmService.StartAsync(
+            Logged(test, "n1"),
+            test.HostOptions(log: log),
+            TestContext.Current.CancellationToken
+        );
+
+        string hash = System.Buffers.Text.Base64Url.EncodeToString(
+            System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(lastAuth + "\n"))
+        );
+        string firstLine = Text(test, "n1").Split('\n').First(l => l.Contains("\"prev\":", StringComparison.Ordinal));
+        Assert.StartsWith("{\"type\":\"chain.start\"", firstLine, StringComparison.Ordinal);
+        Assert.Contains($"\"prev\":{{\"file\":\"{Path.GetFileName(previous)}\",\"auth\":\"{hash}\"}}", firstLine, StringComparison.Ordinal);
+        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("could not continue its chain", StringComparison.Ordinal));
+    }
+
+    /// <summary>
+    /// When the service cannot continue its usage log's chain at the start, it says so in a warning of the operational log,
+    /// as elm-server does, and the reason names the previous file without its folder (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A usage folder with a file usage-n1-20260930T000000000Z.jsonl holding only "{}", which has no signature.
+    ///
+    /// Steps:
+    /// - Start node n1; read the warnings of the operational log and the first line of the new file, which is the second
+    ///   line of the node's files read in order.
+    ///
+    /// Expected:
+    /// - One warning, "The usage log could not continue its chain: no signature was found at the end of the previous file
+    ///   usage-n1-20260930T000000000Z.jsonl"; the new file starts with chain.reset.
+    /// </remarks>
+    [Fact]
+    public async Task Start_ChainReset_IsWarnedInTheOperationalLog()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        Directory.CreateDirectory(test.FilePath("usage"));
+        File.WriteAllText(Path.Combine(test.FilePath("usage"), "usage-n1-20260930T000000000Z.jsonl"), "{}\n");
+
+        using var log = new RecordingLoggerProvider();
+        await using ElmService service = await ElmService.StartAsync(
+            Logged(test, "n1"),
+            test.HostOptions(log: log),
+            TestContext.Current.CancellationToken
+        );
+
+        Assert.Equal(
+            [
+                "The usage log could not continue its chain: "
+                    + "no signature was found at the end of the previous file usage-n1-20260930T000000000Z.jsonl",
+            ],
+            log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message)
+        );
+        Assert.StartsWith("{\"type\":\"chain.reset\"", Text(test, "n1").Split('\n')[1], StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A file in the usage folder whose name has the form of this node's usage log files but no real date and time is not
+    /// read as one: the service starts beside it and, while it runs, starts the file of a new UTC day, and names the file in
+    /// a warning of the operational log each time (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A usage folder with an empty file usage-n1-20261301T000000000Z.jsonl (month 13).
+    ///
+    /// Steps:
+    /// - Start node n1; read the warnings. Move the clock in steps of six hours until the node has a second file; read the
+    ///   warnings and the errors.
+    ///
+    /// Expected:
+    /// - The service starts, with one warning "The file usage-n1-20261301T000000000Z.jsonl has the name of a usage log file
+    ///   but no real date and time; it is not read as one." and no warning about the chain. After the new day, the same
+    ///   warning a second time, two files that verify with no issue, and no error in the operational log.
+    /// </remarks>
+    [Fact]
+    public async Task Start_AndNewDay_BesideAFileNamedWithoutARealTime_GoOn()
+    {
+        const string Warning =
+            "The file usage-n1-20261301T000000000Z.jsonl has the name of a usage log file but no real date and time; it is not read as one.";
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        Directory.CreateDirectory(test.FilePath("usage"));
+        File.WriteAllBytes(Path.Combine(test.FilePath("usage"), "usage-n1-20261301T000000000Z.jsonl"), []);
+
+        using var log = new RecordingLoggerProvider();
+        string[] Warnings() => [.. log.Entries.Where(e => e.Level == LogLevel.Warning).Select(e => e.Message)];
+        await using ElmService service = await ElmService.StartAsync(
+            Logged(test, "n1"),
+            test.HostOptions(log: log),
+            TestContext.Current.CancellationToken
+        );
+        Assert.Equal([Warning], Warnings());
+
+        await test.WaitWithClockAsync(() => Task.FromResult(Files(test, "n1").Count == 2), TimeSpan.FromHours(6));
+        Assert.Equal([Warning, Warning], Warnings());
+        Assert.DoesNotContain(log.Entries, e => e.Level >= LogLevel.Error);
+        await service.StopAsync();
+        Assert.Empty(Verify(test, "n1").Issues);
+    }
+
+    /// <summary>
+    /// A newest usage log file of the node with the last name a file can have (99991231T235959999Z) stops the start with
+    /// the start error of a usage log that cannot be written, not with another exception (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A usage folder with a file usage-n1-99991231T235959999Z.jsonl holding "{}".
+    ///
+    /// Steps:
+    /// - Start node n1.
+    ///
+    /// Expected:
+    /// - ServiceStartException "The usage log cannot be written in '{usage folder}': No file name comes after
+    ///   usage-n1-99991231T235959999Z.jsonl, the newest file of the log.".
+    /// </remarks>
+    [Fact]
+    public async Task Start_NewestFileHasTheLastName_IsAStartError()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        Directory.CreateDirectory(test.FilePath("usage"));
+        File.WriteAllText(Path.Combine(test.FilePath("usage"), "usage-n1-99991231T235959999Z.jsonl"), "{}\n");
+
+        ServiceStartException refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(Logged(test, "n1"), test.HostOptions(), TestContext.Current.CancellationToken)
+        );
+        Assert.Equal(
+            $"The usage log cannot be written in '{test.FilePath("usage")}': "
+                + "No file name comes after usage-n1-99991231T235959999Z.jsonl, the newest file of the log.",
+            refused.Message
+        );
+    }
+
+    /// <summary>
+    /// A running service that reaches a new UTC day beside a newest file with the last name a file can have cannot start
+    /// its new file: the operational log has the error of the usage log, and lease requests go on (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Node n1 running with its usage log; then a file usage-n1-99991231T235959999Z.jsonl put into the usage folder.
+    ///
+    /// Steps:
+    /// - Move the clock in steps of six hours until the operational log has the usage log's error (the 60-second timer
+    ///   tries to start the file of the new day). Make a cloud-floating policy and a license; acquire a lease.
+    ///
+    /// Expected:
+    /// - The error "The usage log cannot be written; the request goes on."; the lease is granted with 201.
+    /// </remarks>
+    [Fact]
+    public async Task NewDay_BesideAFileWithTheLastName_RequestsGoOn()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await test.StartAsync(_ => Logged(test, "n1"), log);
+        HttpClient admin = test.Http(service, owner);
+        File.WriteAllText(Path.Combine(test.FilePath("usage"), "usage-n1-99991231T235959999Z.jsonl"), "{}\n");
+
+        await test.WaitWithClockAsync(
+            () =>
+                Task.FromResult(
+                    log.Entries.Any(e => e.Level == LogLevel.Error && e.Message == "The usage log cannot be written; the request goes on.")
+                ),
+            TimeSpan.FromHours(6)
+        );
+
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin), ThreeSeats);
+        using var device = TestDevice.Create(test, service);
+        Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key)).Status);
     }
 
     /// <summary>

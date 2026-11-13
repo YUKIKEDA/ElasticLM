@@ -320,7 +320,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
             engine.Restore(journal.Borrows, journal.Returns);
             Journal(() =>
             {
-                journal.Open(access, licenseFile!, keyJwk);
+                journal.Open(access, licenseFile!, keyJwk, log);
                 return journal;
             });
             var server = new ElmServer(

@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 using ElasticLM.Licensing;
+using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Issuing.Tests;
@@ -26,6 +27,10 @@ public sealed class LeaseTests : IDisposable
         _server.Dispose();
         _client.Dispose();
     }
+
+    /// <summary>Gets each path that checks a lease or its certificate with each form of a token without a valid signature.</summary>
+    public static TheoryData<string, string> PathsAndSignatureForms =>
+        SignatureForms.Cross("on-premises", "reclaim", "borrow-record", "hosted", "hosted-certificate");
 
     private string ClientKid => KeyFiles.KeyId(_client);
 
@@ -169,6 +174,81 @@ public sealed class LeaseTests : IDisposable
         string token = lease[..last] + "." + System.Buffers.Text.Base64Url.EncodeToString(forged);
 
         Assert.Equal(ErrorCode.BadSignature, Invalid(Verifier().VerifyOnPremises(token, server, Expect())).Code);
+    }
+
+    /// <summary>
+    /// A lease, or the certificate of a hosted lease, that carries no valid signature is refused on every path as an error,
+    /// not an exception: with an empty signature part, with a signature that is not 64 bytes or not the key's, and with an
+    /// alg other than ES256 (design §8.2 rules 3 and 5, §12.7.5 step 1, §13.4, §20.7 V1d14).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - One path per case, on which the token as issued is accepted: a client's check of an on-premises lease; the server's
+    ///   check of its own lease at a reclaim; the server's reading of a borrow from its record; a client's check of a hosted
+    ///   lease; the same check, for the hosted lease's certificate.
+    /// - The token of the path, or the certificate on the last path, in a form of <see cref="SignatureForms"/> with the same
+    ///   payload: an empty signature part; the first 63 bytes of its signature; 64 zero bytes; its signature and one more
+    ///   zero byte; alg none and an empty signature part; alg HS256 and an ES256 signature of its own key over the changed
+    ///   header.
+    ///
+    /// Steps:
+    /// - Run the path's check on the changed token or certificate.
+    ///
+    /// Expected:
+    /// - On-premises and reclaim: ELM_BAD_SIGNATURE, "The lease is not signed by the server's key." for the four signatures
+    ///   and "The token algorithm is not ES256." for the two algs.
+    /// - The borrow record: the token is not read.
+    /// - Hosted: ELM_BAD_SIGNATURE, "The lease signature does not verify." for the four signatures and "The token algorithm
+    ///   is not ES256." for the two algs.
+    /// - The hosted lease's certificate: ELM_UNTRUSTED_KEY "No trusted certificate certifies the lease signing key.".
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(PathsAndSignatureForms))]
+    public void Verify_LeaseWithoutAValidSignature_IsRejected(string path, string form)
+    {
+        const string NotEs256 = "ELM_BAD_SIGNATURE: The token algorithm is not ES256.";
+        bool algorithm = SignatureForms.ChangesAlgorithm(form);
+        string expected = path switch
+        {
+            "on-premises" or "reclaim" => algorithm ? NotEs256 : "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.",
+            "borrow-record" => "not read",
+            "hosted" => algorithm ? NotEs256 : "ELM_BAD_SIGNATURE: The lease signature does not verify.",
+            _ => "ELM_UNTRUSTED_KEY: No trusted certificate certifies the lease signing key.",
+        };
+        Assert.Equal("valid", Outcome(path, (token, _) => token));
+
+        Assert.Equal(expected, Outcome(path, (token, key) => SignatureForms.Change(token, form, SignatureForms.Es256(key))));
+    }
+
+    // What a path answers to its token, or to the certificate of a hosted lease, after a change by the function, which
+    // also gets the key that signed the token: "valid", "not read", or the error's code and message.
+    private string Outcome(string path, Func<string, ECDsa, string> change)
+    {
+        ServerIdentity server = Server();
+        (string hosted, string certificate) = HostedLease();
+        LeaseVerificationResult result;
+        switch (path)
+        {
+            case "on-premises":
+                result = Verifier().VerifyOnPremises(change(Lease(server), _server), server, Expect());
+                break;
+            case "reclaim":
+                result = Verifier().VerifyOwnLease(change(Lease(server), _server), server, Expect());
+                break;
+            case "borrow-record":
+                string borrow = Lease(server, spec => spec with { IsBorrow = true, Duration = TimeSpan.FromDays(7) });
+                return LeaseVerifier.TryReadOwnLease(change(borrow, _server), server, out VerifiedLease? read) && read!.IsBorrow
+                    ? "valid"
+                    : "not read";
+            case "hosted":
+                result = Verifier().VerifyHosted(change(hosted, _signing), [certificate], Expect());
+                break;
+            default:
+                result = Verifier().VerifyHosted(hosted, [change(certificate, _root)], Expect());
+                break;
+        }
+
+        return result is LeaseVerificationResult.Invalid invalid ? $"{ErrorCodes.ToWireName(invalid.Error.Code)}: {invalid.Error.Message}" : "valid";
     }
 
     /// <summary>
@@ -733,6 +813,26 @@ public sealed class LeaseTests : IDisposable
 
     private string Lease(ServerIdentity server, Func<LeaseSpec, LeaseSpec>? change = null) =>
         LeaseIssuer.Issue(_server, (change ?? (s => s))(Spec(server)), _time);
+
+    // A lease as the hosted service issues it, with the certificate of its signing key for lease.
+    private (string Lease, string Certificate) HostedLease()
+    {
+        var spec = new LeaseSpec
+        {
+            LeaseId = "lease-h-AAAAAAAAAAAAAA",
+            ProductId = "acme-cad",
+            LicenseId = "lic-h",
+            FeatureId = "pro",
+            Seats = 1,
+            InstallationKeyThumbprint = ClientKid,
+            Duration = TimeSpan.FromMinutes(10),
+            AnsweredProofId = "proof-1",
+        };
+        return (
+            LeaseIssuer.Issue(_signing, spec, _time),
+            CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time)
+        );
+    }
 
     private sealed class RejectingGuard : IClockGuard
     {

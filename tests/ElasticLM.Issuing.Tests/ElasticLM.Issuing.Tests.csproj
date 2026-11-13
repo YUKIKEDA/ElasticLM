@@ -8,5 +8,7 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\..\src\ElasticLM.Issuing\ElasticLM.Issuing.csproj" />
+    <!-- design §20.7, V1d14: the forms of a token without a signature, shared by the tests of every verifier. -->
+    <Compile Include="..\ElasticLM.Licensing.Tests\SignatureForms.cs" Link="SignatureForms.cs" />
   </ItemGroup>
 </Project>
