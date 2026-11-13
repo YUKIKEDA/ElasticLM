@@ -2432,7 +2432,7 @@ Windows で PEM から読んだ鍵は一時的な鍵になり、SChannel の TLS
 - 期待する中間 CA: ファイルの証明書を手元に置いて（ダウンロードと失効の確かめは切る）サーバーの証明書から連なりを組み、サーバーの証明書と自己署名の証明書（ルート）を除いた、ファイルにある証明書。連なりに入らない CA の証明書（V1c12 の Q3 で、黙って落ちるとしたもの）は期待しない。.NET も同じ組み方で送るものを決めるためである。
 - 送られたかの決め方: ハンドシェイクの検証のコールバックの `chain.ChainPolicy.ExtraStore`（相手が送った証明書。§13.5 の V1c12 の Q4 と同じ）に、ファイルの中間 CA そのもの（拇印が同じ）があれば、送られたとする。ファイルのものでなくても、主体の名前と公開鍵の両方が同じで、確かめのときにホストの `TimeProvider` の時刻がその証明書の期間の中にあれば、送られたとする（`TlsChainSelfCheck.StandsFor`）。Windows がストアにある、更新した同じ CA の証明書を送ることがあり、そのときクライアントは、同じ CA を通ってルートまでの連なりを組めるためである。クライアントがその連なりを受け入れるかは、クライアントの時刻と規則による（ここでは決めない）。
 - つなぐ先: `listen` のアドレスとポート（ポート 0 なら Kestrel が選んだポート）。`0.0.0.0` は `127.0.0.1`、`[::]` は `[::1]` につなぐ。待ち受けは `listen` の 1 つだけである（`elm-server` の管理 API はソケットのファイルで、TLS を使わない）。
-- ハンドシェイク: `SslStream` で、`TargetHost` はつなぐ先の IP アドレス（SNI は送らない。待ち受けの証明書は 1 枚）、TLS の再開は切る（`AllowTlsResume = false`）、連なりの組み立てのダウンロードと失効の確かめは切る。証明書はどれも受け入れ、信頼は判断しない。送るのはハンドシェイクだけで、要求は送らずに閉じる。読むのは終わったハンドシェイクだけである（2 つの製品の待ち受けはクライアント証明書を求めないので、自分のハンドシェイクが失敗するのは、送られたものを読めないときである）。
+- ハンドシェイク: `SslStream` で、`TargetHost` はつなぐ先の IP アドレス（SNI は送らない。待ち受けの証明書は 1 枚）、TLS の再開は切る（`AllowTlsResume = false`）、連なりの組み立てのダウンロードと失効の確かめは切る。証明書はどれも受け入れ、信頼は判断しない。送るのはハンドシェイクだけで、要求は送らずに閉じる。サーバーの証明書はハンドシェイクの終わりより前に届くので、届いていれば読む。届かなければ、答えが得られないときとする。
 - 時間の上限: 接続とハンドシェイクを合わせて 10 秒。呼び出す側の `TimeProvider` で数える（`TlsChainSelfCheck.Limit`）。Kestrel がクライアントに許すハンドシェイクの時間の既定（`HttpsConnectionAdapterOptions.HandshakeTimeout`）と同じ値で、自分のハンドシェイクがそれより長く待つ意味はない。
 - 送られていないとき: 待ち受けをやめ（起動の失敗の破棄がホストを破棄する）、`ServerStartException` か `ServiceStartException` で、終了コード 1 で終わる。文は `Windows left the intermediate CA certificate {Subject} (thumbprint {Thumbprint}) of the TLS certificate '{path}' out of the first TLS handshake, and what that handshake sent stays for as long as this process runs. Start again; if this happens at every start, add the certificate to the machine's Intermediate Certification Authorities store.` で、足りない証明書が 2 枚以上なら ` and ` でつなぎ（連なりの順、サーバーの証明書に近いものから）、最後の `add the certificate` は `add these certificates` になる。拇印は秘密でない。どちらのストアにも書けないアカウント（§13.5 の V1c12 の R1）でも同じ文になる。ストアを読んで 2 つを分けることはしない。ストアがほかに書き換えられている間は、ストアを読んでも、あるはずの中間 CA を見落とした（§20.7 の「V1d3a の Grill」）。
 - 答えが得られないとき（接続の失敗、ハンドシェイクの失敗、10 秒を過ぎた）: 送られたかが分からないので、同じく起動しない（持ち主の決定 3a-3。§20.7 の「V1d3a の Grill」）。呼び出し側の取り消し（`StartAsync` の `CancellationToken`）は、この文にせず、取り消しの例外のまま上げる。文は `The check that Windows sends the intermediate CA certificates of the TLS certificate '{path}' did not get an answer: the TLS handshake with {address} {what happened}.` で、`{what happened}` は `failed`、`failed (socket error {SocketError})`、`did not finish within 10 seconds` のどれか（例外の文は出さない）。
@@ -5638,13 +5638,13 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
       | 呼び出し側の取り消しも上限の文にする | 落ちた | `Run_CallerCancels_ThrowsTheCancellation` |
       | `catch` の条件から `IOException` を外す | 落ちた | `Run_NoTlsAnswer_SaysTheHandshakeFailed` |
       | TLS の再開を許す | 生き残った | — |
-      | 途中で失敗したハンドシェイクでも読む（`unfinished is not null` を外す） | 生き残った | — |
+      | 途中で失敗したハンドシェイクでも読む（`unfinished is not null` を外す） | 生き残った（検査を消した） | — |
       | 証明書のダウンロードを許す | 生き残った | — |
       | 失効をオンラインで確かめる | 生き残った | — |
 
       - 再開: テストの待ち受けを TLS 1.2 だけにしても（`Run_SameListenerAgain_MakesAFullHandshake(Tls12)`）、変異のある版で 3 回続けた確かめがどれも中間 CA を読めた。この使い方で再開が起きたかは、.NET の API から読めず、確かめていない。再開を起こせなかったので、この変異は、テストでは区別できないものとして記録する。設定は、再開のセッションが証明書を持たない作りのときの守りとして残す。
-      - 途中で失敗したハンドシェイク: 製品の待ち受けはクライアント証明書を求めないので、サーバーの証明書を受けたあとでハンドシェイクが失敗する状態を、テストの待ち受けで作れなかった（クライアント証明書を求める待ち受けでも、クライアントの側のハンドシェイクは終わった）。届く状態がない検査である。
-      - ダウンロードと失効: テストの証明書には AIA と CRL の配布点がなく、連なりを組むときに取りに行くものがないので、変異は結果を変えない。設定は、運用者の証明書が AIA や CRL を持つときに、確かめの中でネットワークに出ないためのもので、それを試すテストはない。
+      - 途中で失敗したハンドシェイク: 製品の待ち受けはクライアント証明書を求めないので、サーバーの証明書を受けたあとでハンドシェイクが失敗する状態を、テストの待ち受けで作れなかった（クライアント証明書を求める待ち受けでも、クライアントの側のハンドシェイクは終わった）。届く状態がない検査なので、`.cursor/rules/testing.mdc` のとおり消した（コーディネーターの指示、2026-11-13）。いまは、サーバーの証明書が届いていれば、そのあとでハンドシェイクが失敗しても、届いたものを読む。
+      - ダウンロードと失効: テストの証明書には AIA と CRL の配布点がなく、連なりを組むときに取りに行くものがないので、変異は結果を変えない（テストの証明書では見えない）。設定は、運用者の証明書が AIA や CRL を持つときに、確かめの中でネットワークに出ないためのもので、残す。それを試すテストはない。
     - 最後のコードで、ストアを書き換える別のプロセスの下で鎖のテストを 50 回流した（前と同じ形。2 つの `dotnet test` を同時に流し、別のプロセスが 4 つのループで `CN=elm-v1d3a-impl-writer-` の CA の証明書を `CurrentUser\CA` に足して消した。45 万 2,768 件）: 1,400 のテストのうち落ちたものは 0。その前の版の 50 回では、1,400 のうち 1 つ（`Run_RenewedIntermediateSent_Passes`）が落ちた。テストの待ち受けが更新した中間 CA を送ったかを、連なりが組めるかで決めていたためで（ストアの写しでも組める）、拇印で決めるように直した。ストアの数は、測る前と後で `CurrentUser\CA` が 38 件、`LocalMachine\CA` が 9 件だった。
     - 行の外で見つけたもの: 4 つのプロジェクトのテストを流したとき、`BackupTests.Run_RefusedInputs_FailWithTheReason` が 1 回落ちた（データベースのファイルの長さが、断られたバックアップの前後で 69,632 から 229,376 に変わった）。そのテストだけを 10 回流すと 10 回とも通った。この行は触っていない。
 - V1d4 の Grill（Issue #322 と Issue #374 に記録した。問 4-1〜問 4-4。持ち主の決定はどれも推奨案 A。2026-11-13）: `elm-server` が、断った貸し出しの要求の、長さの上限のない機能名を利用ログに書くこと（V1d の指摘 F04）を直す。退けた案は design-decisions.md にある。

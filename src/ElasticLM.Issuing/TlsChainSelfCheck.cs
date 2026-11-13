@@ -127,9 +127,8 @@ public static class TlsChainSelfCheck
         List<X509Certificate2> missing;
         try
         {
-            // Only a whole handshake counts: the servers' listeners ask for no client certificate, so a handshake of their own
-            // that fails is not one that can be read.
-            if (sent is null || unfinished is not null)
+            // The servers' certificates arrive before the handshake ends; the check reads them whenever they arrived.
+            if (sent is null)
             {
                 return $"The check that Windows sends the intermediate CA certificates of the TLS certificate '{certificatePath}' did "
                     + $"not get an answer: the TLS handshake with {target} {unfinished ?? "failed"}.";
