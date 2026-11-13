@@ -248,8 +248,12 @@ public sealed class LeaseTests : IDisposable
                 break;
         }
 
-        return result is LeaseVerificationResult.Invalid invalid ? $"{ErrorCodes.ToWireName(invalid.Error.Code)}: {invalid.Error.Message}" : "valid";
+        return Describe(result);
     }
+
+    // "valid", or the error's code and message.
+    private static string Describe(LeaseVerificationResult result) =>
+        result is LeaseVerificationResult.Invalid invalid ? $"{ErrorCodes.ToWireName(invalid.Error.Code)}: {invalid.Error.Message}" : "valid";
 
     /// <summary>
     /// Lease issuance refuses specs the verifier would reject: zero seats, a negative sequence, a duration under one
@@ -681,6 +685,172 @@ public sealed class LeaseTests : IDisposable
         Assert.Equal(new LicenseError(ErrorCode.Malformed, "The lease payload is not valid."), Invalid(result));
     }
 
+    /// <summary>
+    /// A hosted lease is checked against the trust store's revoked key IDs: a revoked signing key is refused as revoked,
+    /// before any certificate is looked at; a revoked root certifies nothing; a revoked ID of another key changes nothing
+    /// (design §7.5, §11.2 steps 2 and 3, §12.7.5 step 1, §20.2, §20.7 V1d11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A hosted lease issued now by the signing key; the root's certificate of the signing key, from a day ago for 30
+    ///   days, for lease or for license only.
+    /// - A trust store with the root that revokes: the signing key's ID; nothing; the root's ID; the ID of a key that
+    ///   signed nothing here.
+    ///
+    /// Steps:
+    /// - Verify the lease with the one certificate.
+    ///
+    /// Expected:
+    /// - Signing key revoked: ELM_KEY_REVOKED "The lease was signed by a revoked key.", with the lease certificate and with
+    ///   the license-only certificate, which certifies nothing for a lease (the revocation, step 2, comes before the
+    ///   certificates, step 3).
+    /// - Nothing revoked: valid with the lease certificate; ELM_UNTRUSTED_KEY with the license-only certificate.
+    /// - Root revoked: ELM_UNTRUSTED_KEY "No trusted certificate certifies the lease signing key.".
+    /// - Another key's ID revoked: valid.
+    /// </remarks>
+    [Theory]
+    [InlineData("signing-key", "lease", "ELM_KEY_REVOKED: The lease was signed by a revoked key.")]
+    [InlineData("signing-key", "license", "ELM_KEY_REVOKED: The lease was signed by a revoked key.")]
+    [InlineData("nothing", "lease", "valid")]
+    [InlineData("nothing", "license", "ELM_UNTRUSTED_KEY: No trusted certificate certifies the lease signing key.")]
+    [InlineData("root", "lease", "ELM_UNTRUSTED_KEY: No trusted certificate certifies the lease signing key.")]
+    [InlineData("unrelated", "lease", "valid")]
+    public void VerifyHosted_RevokedKeyIds_AreChecked(string revoked, string use, string expected)
+    {
+        using ECDsa unrelated = KeyFiles.CreateKey();
+        string[] revokedIds = revoked switch
+        {
+            "signing-key" => [KeyFiles.KeyId(_signing)],
+            "root" => [KeyFiles.KeyId(_root)],
+            "unrelated" => [KeyFiles.KeyId(unrelated)],
+            _ => [],
+        };
+        TrustStore trust = TrustStore.Create([KeyFiles.ExportPublic(_root)], revokedIds);
+        KeyUses uses = use == "lease" ? KeyUses.Lease : KeyUses.License;
+        string certificate = CertificateIssuer.Issue(_root, _signing, uses, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
+
+        Assert.Equal(expected, Describe(Verifier(trust: trust).VerifyHosted(HostedLeaseAt(Now), [certificate], Expect())));
+    }
+
+    /// <summary>
+    /// A hosted lease's iat must lie inside its certificate's nbf..exp, widened by the clock skew of 300 s, on both ends
+    /// (design §7.5, §11.2 step 5, §11.3, §12.7.5 step 1, §20.7 V1d11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A hosted lease issued now (iat), verified now; the skew is the default 300 s.
+    /// - The certificate of the signing key for lease: from a day before iat to iat − 300 s or iat − 301 s (exp); or from
+    ///   iat + 300 s or iat + 301 s (nbf) for 30 days.
+    ///
+    /// Steps:
+    /// - Verify the lease with the certificate.
+    ///
+    /// Expected:
+    /// - exp at iat − 300 and nbf at iat + 300: valid.
+    /// - exp at iat − 301 and nbf at iat + 301: ELM_CERTIFICATE_EXPIRED "The lease was issued outside the validity period of
+    ///   its key certificates.".
+    /// </remarks>
+    [Theory]
+    [InlineData("exp", -300, "valid")]
+    [InlineData("exp", -301, "ELM_CERTIFICATE_EXPIRED: The lease was issued outside the validity period of its key certificates.")]
+    [InlineData("nbf", 300, "valid")]
+    [InlineData("nbf", 301, "ELM_CERTIFICATE_EXPIRED: The lease was issued outside the validity period of its key certificates.")]
+    public void VerifyHosted_IssuedAtAgainstCertificatePeriod_HonorsBoundsWithSkew(string bound, int offset, string expected)
+    {
+        DateTimeOffset bounded = Now.AddSeconds(offset);
+        string certificate =
+            bound == "exp" ? LeaseCertificate(Now.AddDays(-1), bounded - Now.AddDays(-1)) : LeaseCertificate(bounded, TimeSpan.FromDays(30));
+
+        Assert.Equal(expected, Describe(Verifier().VerifyHosted(HostedLeaseAt(Now), [certificate], Expect())));
+    }
+
+    /// <summary>
+    /// A certificate whose period ended before the lease's iat, kept beside a good certificate of the same signing key, does
+    /// not fail the lease, in either order; alone, it does (design §11.2 steps 3 and 5, §20.2, §20.7 V1d11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A hosted lease issued now; two certificates of the signing key for lease: an ended one, from 60 days ago for 30
+    ///   days, and a good one, from a day ago for 30 days.
+    ///
+    /// Steps:
+    /// - Verify with the ended certificate first and the good one second; with the good one first; with the ended one
+    ///   alone.
+    ///
+    /// Expected:
+    /// - Valid; valid; ELM_CERTIFICATE_EXPIRED "The lease was issued outside the validity period of its key certificates.".
+    /// </remarks>
+    [Theory]
+    [InlineData("ended-first", "valid")]
+    [InlineData("ended-last", "valid")]
+    [InlineData("ended-alone", "ELM_CERTIFICATE_EXPIRED: The lease was issued outside the validity period of its key certificates.")]
+    public void VerifyHosted_EndedCertificateBesideAGoodOne_IsSkipped(string order, string expected)
+    {
+        string ended = LeaseCertificate(Now.AddDays(-60), TimeSpan.FromDays(30));
+        string good = LeaseCertificate(Now.AddDays(-1), TimeSpan.FromDays(30));
+        string[] certificates = order switch
+        {
+            "ended-first" => [ended, good],
+            "ended-last" => [good, ended],
+            _ => [ended],
+        };
+
+        Assert.Equal(expected, Describe(Verifier().VerifyHosted(HostedLeaseAt(Now), certificates, Expect())));
+    }
+
+    /// <summary>
+    /// The steps that a hosted lease shares with an on-premises lease refuse it on the hosted path too: another
+    /// installation key, an iat past the clock skew, a clock guard that sees the clock set back, and the expiry, each at
+    /// and past its bound (design §11.2 step 6, §11.4, §12.7.5 steps 2 and 6, §20.7 V1d11).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The certificate of the signing key for lease, from a day ago for 30 days; the skew is the default 300 s.
+    /// - A 10-minute hosted lease: issued now; bound to another installation key; issued 300 s and 301 s from now; verified
+    ///   at its exp and a second after; verified now with a clock guard that rejects every token.
+    ///
+    /// Steps:
+    /// - Verify the lease.
+    ///
+    /// Expected:
+    /// - As issued, 300 s ahead, and at exp: valid.
+    /// - Another installation key: ELM_WRONG_INSTALLATION "The lease is bound to another installation key.".
+    /// - 301 s ahead: ELM_CLOCK_TAMPERED "The lease is issued in the future.".
+    /// - A second after exp: ELM_EXPIRED "The lease has expired.".
+    /// - The rejecting clock guard: ELM_CLOCK_TAMPERED "The clock has been set back.".
+    /// </remarks>
+    [Theory]
+    [InlineData("as-issued", "valid")]
+    [InlineData("installation", "ELM_WRONG_INSTALLATION: The lease is bound to another installation key.")]
+    [InlineData("future-at-skew", "valid")]
+    [InlineData("future-past-skew", "ELM_CLOCK_TAMPERED: The lease is issued in the future.")]
+    [InlineData("at-exp", "valid")]
+    [InlineData("past-exp", "ELM_EXPIRED: The lease has expired.")]
+    [InlineData("clock-guard", "ELM_CLOCK_TAMPERED: The clock has been set back.")]
+    public void VerifyHosted_ClientAndTimeSteps_RejectAtTheirBounds(string kind, string expected)
+    {
+        Func<LeaseSpec, LeaseSpec> change = kind == "installation" ? s => s with { InstallationKeyThumbprint = "another" } : s => s;
+        DateTimeOffset issueAt = kind switch
+        {
+            "future-at-skew" => Now.AddSeconds(300),
+            "future-past-skew" => Now.AddSeconds(301),
+            _ => Now,
+        };
+        string lease = HostedLeaseAt(issueAt, change);
+        string certificate = LeaseCertificate(Now.AddDays(-1), TimeSpan.FromDays(30));
+        _time.SetUtcNow(
+            kind switch
+            {
+                "at-exp" => Now.AddMinutes(10),
+                "past-exp" => Now.AddMinutes(10).AddSeconds(1),
+                _ => Now,
+            }
+        );
+        IClockGuard guard = kind == "clock-guard" ? new RejectingGuard() : StatelessClockGuard.Instance;
+
+        Assert.Equal(expected, Describe(Verifier(guard).VerifyHosted(lease, [certificate], Expect())));
+    }
+
     private static LicenseError Invalid(LeaseVerificationResult result) => Assert.IsType<LeaseVerificationResult.Invalid>(result).Error;
 
     private static byte[] Jwk(ECDsa key)
@@ -815,7 +985,11 @@ public sealed class LeaseTests : IDisposable
         LeaseIssuer.Issue(_server, (change ?? (s => s))(Spec(server)), _time);
 
     // A lease as the hosted service issues it, with the certificate of its signing key for lease.
-    private (string Lease, string Certificate) HostedLease()
+    private (string Lease, string Certificate) HostedLease() =>
+        (HostedLeaseAt(_time.GetUtcNow()), LeaseCertificate(Now.AddDays(-1), TimeSpan.FromDays(30)));
+
+    // A 10-minute lease as the hosted service issues it at the time given, after the change to its spec.
+    private string HostedLeaseAt(DateTimeOffset issuedAt, Func<LeaseSpec, LeaseSpec>? change = null)
     {
         var spec = new LeaseSpec
         {
@@ -828,11 +1002,12 @@ public sealed class LeaseTests : IDisposable
             Duration = TimeSpan.FromMinutes(10),
             AnsweredProofId = "proof-1",
         };
-        return (
-            LeaseIssuer.Issue(_signing, spec, _time),
-            CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time)
-        );
+        return LeaseIssuer.Issue(_signing, (change ?? (s => s))(spec), issuedAt);
     }
+
+    // The root's certificate of the signing key for lease, valid from the start given for the length given.
+    private string LeaseCertificate(DateTimeOffset notBefore, TimeSpan validity) =>
+        CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, notBefore, validity, _time);
 
     private sealed class RejectingGuard : IClockGuard
     {
