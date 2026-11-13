@@ -22,6 +22,9 @@ public enum LeaseSequence
 /// </summary>
 public static class LeaseRules
 {
+    /// <summary>The message of <c>ELM_MALFORMED</c> for a renewal whose sequence number no token can follow (design §10.4).</summary>
+    public const string SequenceTooLarge = "The sequence number is too large for a next token.";
+
     /// <summary>The window of early returns that count against the limit (design §12.7.4).</summary>
     public static readonly TimeSpan ReturnWindow = TimeSpan.FromDays(30);
 
@@ -130,6 +133,21 @@ public static class LeaseRules
         }
 
         return sequence == last - 1 && issuedBy is not null && retry.Contains(issuedBy) ? LeaseSequence.Retry : LeaseSequence.Clone;
+    }
+
+    /// <summary>
+    /// Returns the sequence number of the next token of a lease (design §10.4, V1d5): one more than the lease's. After a
+    /// clone was flagged it is one more than the greater of the lease's and the request's, so that the copy that asked, which
+    /// may be ahead of a server that lost its state, gets a token later than the one it holds.
+    /// </summary>
+    /// <param name="last">The lease's sequence number.</param>
+    /// <param name="flaggedRequest">The sequence number of a request that was flagged as a clone, or <see langword="null"/>
+    /// for a request with the lease's sequence number.</param>
+    /// <returns>The next sequence number, or <see langword="null"/> when no greater number exists.</returns>
+    public static long? NextSequence(long last, long? flaggedRequest = null)
+    {
+        long floor = flaggedRequest is long sent && sent > last ? sent : last;
+        return floor == long.MaxValue ? null : floor + 1;
     }
 
     /// <summary>

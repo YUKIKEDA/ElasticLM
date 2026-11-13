@@ -35,7 +35,6 @@ public abstract record ProofResult
 /// </summary>
 public sealed class ProofVerifier
 {
-    private const int MaxJtiLength = 64;
     private const int MaxCachedKeys = 10_000;
 
     private readonly NonceService _nonces;
@@ -119,7 +118,8 @@ public sealed class ProofVerifier
             payload = null;
         }
 
-        if (payload is null || payload.Ver != 1 || payload.Jti.Length is 0 or > MaxJtiLength || !Limits.IsTime(payload.Iat))
+        // design §8.4.3 (V1d5): a lease token carries this jti, and its verifier holds it to the same form.
+        if (payload is null || payload.Ver != 1 || !Limits.IsProofId(payload.Jti) || !Limits.IsTime(payload.Iat))
         {
             return Invalid(ErrorCode.ProofInvalid, "The request proof payload is not valid.");
         }
