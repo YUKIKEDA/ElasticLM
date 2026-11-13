@@ -3965,7 +3965,7 @@ M3c で作った形:
 | 1 | `ELM_INVALID_ARGUMENT` | 引数の誤り | 400 |
 | 2 | `ELM_MALFORMED` | 形式・大きさの誤り | 400 |
 | 3 | `ELM_UNTRUSTED_KEY` | 信頼できない鍵 | —（再読み込みは 409、下を見よ） |
-| 4 | `ELM_BAD_SIGNATURE` | 署名が合わない。`elm-service` は誤りの応答としては返さない。`elm-server` は、回収の応答（§13.4）の各リースの `code` と、サーバーライセンスの再読み込みの `409`（下を見よ）でだけ返す | —（再読み込みは 409、下を見よ） |
+| 4 | `ELM_BAD_SIGNATURE` | 署名が合わない。ライセンストークンかリースの `alg` が `ES256` でない（§8.2 の規則 3）。`elm-service` は誤りの応答としては返さない。`elm-server` は、回収の応答（§13.4）の各リースの `code` と、サーバーライセンスの再読み込みの `409`（下を見よ）でだけ返す | —（再読み込みは 409、下を見よ） |
 | 5 | `ELM_CERTIFICATE_EXPIRED` | 鍵の証明書の期限外 | —（再読み込みは 409、下を見よ） |
 | 6 | `ELM_CLOCK_TAMPERED` | 時計の巻き戻し。`elm-server` の回収の応答の各リースの `code` では、トークンの `iat` がサーバーの時計より 5 分を超えて先のときだけ返す（§13.4） | —（再読み込みは 409、下を見よ） |
 | 7 | `ELM_WRONG_PRODUCT` | 製品が違う（`elm-service` では、有効化のキーが要求の `product` の製品のものでない、M4b2） | 400 |
@@ -3981,7 +3981,7 @@ M3c で作った形:
 | 17 | `ELM_KEY_REVOKED` | 無効にした鍵 | —（再読み込みは 409、下を見よ） |
 | 18 | `ELM_LEASE_OUT_OF_BOUNDS` | リースがサーバーライセンスの範囲外（§12.7.5） | — |
 | 19 | `ELM_INVALID_STATE` | 呼び出してはいけない状態での呼び出し（C ABI のコールバックの中など）。`elm` では、動いているサーバーが自動の更新をしている間の `elm server activate-request` と `refresh-request`（§13.7、`ServerLicenseCommands`）。`ActivationClient` では、有効化があるときの別の有効化と試用、ほかのプロセスが有効化のロックを持つとき、応答のわからない要求が 16 件たまったとき（§12.6.2）。`ServiceUrl` のないクライアントのオンラインの操作、解除の証明が残るうちの有効化・試用・有効化の要求、有効化のないときの更新の要求と解除の証明（§12.8.5） | — |
-| 20 | `ELM_PROOF_INVALID` | 証明が無効（署名・メソッド・URI・本文）。オフラインの要求ファイルの署名が無効 | 401（オフラインの要求は 400、§12.8.4） |
+| 20 | `ELM_PROOF_INVALID` | 証明が無効（ない、`elm-proof+jws` の形でない、署名・メソッド・URI・本文）。オフラインの要求ファイルの署名が無効 | 401（オフラインの要求は 400、§12.8.4） |
 | 21 | `ELM_NONCE_REQUIRED` | 証明のノンスが空か、サーバーの知らない値か、期限切れ（`ELM-Nonce` で新しいノンスを返す）。`nonce` のクレームのない証明は `ELM_PROOF_INVALID`（`ProofPayload` の `JsonRequired`） | 401 |
 | 22 | `ELM_REPLAYED` | `jti` の再利用。オフラインの要求の `nonce` を、中身の違う要求が使った | 401（オフラインの要求は 409、§12.8.4） |
 | 23 | `ELM_SERVER_PIN_MISMATCH` | オンプレミスのサーバーが期待したものと違う（§13.5） | — |
@@ -5506,7 +5506,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 時計の守りのファイル（`FileClockGuard`、§11.4）に、署名のない状態のテストを足した。JWS でないので `SignatureForms` は使わず、状態のファイルの `sig` を、メンバーごと消す、空にする、先頭の 63 バイトにする、0 が 64 バイト並ぶ値にする、0 を 1 バイト足して 65 バイトにする、の 5 つに変える。
     - `elm-server` の起動と再読み込みのサーバーライセンス（§13.1、§13.7）に、6 つの形のテストを足した。どちらも `LicenseVerifier` を `ElmServer.TryVerifyLicense` から呼ぶ道で、起動を止めることと、動いているサーバーが前のライセンスを保つことは、この道でしか見えない。
     - `LicenseVerifierTests` のテストに、形を変える前のファイルが `Valid` になる確かめを足した。
-    - 利用者の文書の `docs/guide/reference/formats.md` と日本語の頁の「JWS rules」のヘッダーの表は、`alg` がほかの値なら `ELM_BAD_SIGNATURE` になると、どのトークンについても書いていた。表の `alg` の行と、表の次の文（ヘッダーの形の誤りは `ELM_MALFORMED`）を、§8.2 の規則 3 と `ProofVerifier` の答えに合わせて直した（リクエストのプルーフは `ELM_PROOF_INVALID`、鍵の証明書は飛ばす）。
+    - 利用者の文書の `docs/guide/reference/formats.md` と日本語の頁の「JWS rules」のヘッダーの表は、`alg` がほかの値なら `ELM_BAD_SIGNATURE` になると、どのトークンについても書いていた。表の `alg` の行と、表の次の文（ヘッダーの形の誤りは `ELM_MALFORMED`）を、§8.2 の規則 3 と `ProofVerifier` の答えに合わせて直した（リクエストのプルーフは `ELM_PROOF_INVALID`、鍵の証明書は飛ばす）。その頁の変更のレビューのあと、表の `alg` の行は短くし、決まりを表の次の段落に 1 度だけ、トークンの種類ごとに書いた（証明書が残らないトークンの `ELM_UNTRUSTED_KEY` と、コードを持たないログの署名を足した）。`error-codes.md` と日本語の頁の `ELM_BAD_SIGNATURE` の行（ES256 でない署名は、ライセンストークンとリーストークンについてだけ言う）と `ELM_PROOF_INVALID` の行（有効な `elm-proof+jws` でない場合を足す）、§19 の表の同じ 2 行も、それに合わせた。
   - 検証と、テストが留める答え（形 `empty`、`63-bytes`、`64-zero-bytes`、`65-bytes` の答え。`alg-` の 2 つの形の答えは §8.2 の規則 3 にある）:
     - ライセンストークン（`LicenseVerifier.Verify`）: `ELM_BAD_SIGNATURE`「The license signature does not verify.」。その鍵の証明書: `ELM_UNTRUSTED_KEY`「No trusted certificate certifies the license signing key.」（`LicenseVerifierTests.Verify_TokenOrCertificateWithoutAValidSignature_IsRejected`）。
     - リース（`LeaseTests.Verify_LeaseWithoutAValidSignature_IsRejected`）: オンプレミスのリースのクライアントの検証（`VerifyOnPremises`）と、サーバー自身のリースの回収の検証（`VerifyOwnLease`）は `ELM_BAD_SIGNATURE`「The lease is not signed by the server's key.」。借り出しの記録のトークン（`TryReadOwnLease`）は読まない。SaaS 型のリース（`VerifyHosted`）は `ELM_BAD_SIGNATURE`「The lease signature does not verify.」、その証明書は `ELM_UNTRUSTED_KEY`「No trusted certificate certifies the lease signing key.」。
