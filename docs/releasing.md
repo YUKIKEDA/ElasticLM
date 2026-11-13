@@ -93,15 +93,18 @@ release is published (design §20.7, T28).
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release. A job that takes files from another
    job checks them against the SHA-256 lines that job gave as its output, and that there are no other files; a job
-   whose check fails stops the run before the draft. Two downloads are not checked this way: the site's artifact,
-   which the `pages` job deploys, and the image tar in the `publish` job, which compares only the tar's index digest
-   with the `image` job's output (design §20.5, "ジョブの間の artifact の確かめ"; §5.4).
+   whose check fails stops the run before the draft. One download is not checked this way: the site's artifact,
+   which the `pages` job deploys (design §20.5, "ジョブの間の artifact の確かめ"; §5.4).
 5. Open the draft. Check the files, the notes, and the job summaries (sizes, runtime dependencies, glibc version). Each
    `libelasticlm-<version>-<rid>` archive holds the library, `elasticlm.h`, and `LICENSE` at its top; on `win-*` it also
    holds the import library `elasticlm.lib`, which stays out of the `-symbols` archive (decision 0.118). The build job
    has checked that the two `win-*` zips hold exactly these files and `elasticlm.pdb`.
-6. Approve the `release` environment in the run. The `publish` job pushes the `.nupkg` and `.snupkg` from the draft to
-   nuget.org after checking them against `SHA256SUMS`, and then publishes the release.
+6. Approve the `release` environment in the run. The `publish` job downloads every file of the draft and checks it
+   before it pushes anything: `SHA256SUMS` against the `checksums` job's hash of it, every file against `SHA256SUMS`,
+   and that the draft holds exactly the files `SHA256SUMS` lists and `SHA256SUMS` itself. It checks the image tar
+   against the `image` job's hash too. Then it pushes the `.nupkg` and `.snupkg` to nuget.org and publishes the release
+   (design §20.5, "公開のジョブの確かめ"). Do not add a file to the draft: the job stops on any file `SHA256SUMS`
+   does not list.
 7. If the push succeeds and publishing the release fails, re-run the `publish` job: the push skips versions that exist.
 8. After `publish`, approve the `github-pages` environment in the same run. The `pages` job deploys the site the `site` job
    built from the tag. The site's artifact is kept for 7 days: approve both environments within that time. If the `pages` job fails because the artifact expired, re-run the `site` job of the same run: `gh run rerun <run ID> --job <site job ID>` (the job IDs are in `gh run view <run ID> --json jobs`). GitHub runs `site` again from the same tag, then `pages`, which needs the approval again; the jobs `site` does not depend on, `publish` among them, are not run again. A run can be re-run for up to 30 days. The tag's run does not run `pnpm audit`, so an advisory published since the tag does not stop it.
