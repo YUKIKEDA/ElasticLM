@@ -16,7 +16,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** V1d3a（`TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す。design.ja.md §20.7 の表の V1d3a の行）
+- **フェーズ:** V1d3b（テストの助け `ProblemServer` が、ときどき、片づけのときに例外を出して、関係のないテストを落とす原因を調べて直す。design.ja.md §20.7 の表の V1d3b の行）
 
 ## v1 まで
 
@@ -90,19 +90,20 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1d2 | `elm server` のコマンドが、サーバーの管理者トークンを、サーバーと確かめていない相手に送ることを直す（V1d の指摘 F02、重さは高）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d2 の行。決めた形は §20.7 の「V1d2 の Grill」） | done | [#320](https://github.com/YUKIKEDA/ElasticLM/issues/320) |
 | V1d2a | `ActivationClientTests.Refresh_AlreadyDue_WaitsTheRetryInterval` が、ときどき、更新されないまま（seq が 1 のまま）で落ちる原因を調べて直す（原因は、Windows で、読み手が開いているファイルの置き換えが断られること。置き換えをやり直すようにした。決めた形は design.ja.md §20.7 の「V1d2a の Grill」）（PR #360 のゲートで見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d2 のあと、V1d3 の前。Grill で決める点は design.ja.md §20.7 の表の V1d2a の行） | done | [#359](https://github.com/YUKIKEDA/ElasticLM/issues/359) |
 | V1d3 | `elm-service` の、パスを守る検査が大文字と小文字を区別することを直す（V1d の指摘 F03 のうち、サービスの側。`elm-server` の側は、V1d2 の PR #355 で直した）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d3 の Grill」） | done | [#321](https://github.com/YUKIKEDA/ElasticLM/issues/321) |
-| V1d3a | `TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す（V1d2 の作業で見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d3 のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3a の行） | not-started | [#356](https://github.com/YUKIKEDA/ElasticLM/issues/356) |
+| V1d3a | `TlsChainTests` のテストが、ときどき「中間証明書が送られていない」で落ちる原因を調べて直す（V1d2 の作業で見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d3 のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3a の行） | done | [#356](https://github.com/YUKIKEDA/ElasticLM/issues/356) |
 | V1d3b | テストの助け `ProblemServer` が、ときどき、片づけのときに例外を出して、関係のないテストを落とす原因を調べて直す（PR #390（V1d14）の CI が見つけ、持ち主の決定（2026-11-13、Issue #395）で足した行。V1d3a のあと、V1d4 の前。Grill で決める点は design.ja.md §20.7 の表の V1d3b の行） | not-started | [#392](https://github.com/YUKIKEDA/ElasticLM/issues/392) |
 | V1d4 | `elm-server` が、断った貸し出しの要求の、長さの上限のない機能名を利用ログに書くことを直す（V1d の指摘 F04）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d4 の Grill」。管理 API のリースの ID の検査（Issue #374）も、この行で直した） | done | [#322](https://github.com/YUKIKEDA/ElasticLM/issues/322) |
-| V1d4a | Web ホスト（`Microsoft.AspNetCore.Hosting.Diagnostics`）が、リクエストごとに、リクエストのパスの文字を運用のログに書くことを確かめて直す（V1d4 の作業（PR #377）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行。V1d4 のあと、V1d5 の前。Grill で決める点は design.ja.md §20.7 の表の V1d4a の行） | not-started | [#375](https://github.com/YUKIKEDA/ElasticLM/issues/375) |
+| V1d4a | Web ホスト（`Microsoft.AspNetCore.Hosting.Diagnostics`）が、リクエストごとに、リクエストのパスの文字を運用のログに書くことを確かめて直す（V1d4 の作業（PR #377）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行。V1d4 のあと、V1d5 の前。Grill で決める点は design.ja.md §20.7 の表の V1d4a の行。決めた形は design.ja.md §18.3 と rows/V1d4a.md） | done | [#375](https://github.com/YUKIKEDA/ElasticLM/issues/375) |
 | V1d4b | `elm-service` の管理画面のサインインの経路（`/auth/callback`）が、リクエストの文字を運用のログに書くことを確かめて直す（V1d4a の作業（PR #416）が行の外で見つけ、持ち主の決定（2026-11-13、問 R-7）で足した行。V1d4a のあと、V1d5 の前。Grill で決める点は design.ja.md §20.7 の表の V1d4b の行） | not-started | [#415](https://github.com/YUKIKEDA/ElasticLM/issues/415) |
 | V1d5 | クライアントが、貸し出しの答えのリースを頼んだ機能と席の数に照らさず、更新の答えのリースを更新を頼んだリースに照らさないことを直す（V1d の指摘 F06）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d5 の Grill」） | done | [#323](https://github.com/YUKIKEDA/ElasticLM/issues/323) |
 | V1d5a | クライアントが、オンラインのアクティベーション、更新、トライアルの答えを、頼んだリクエストに照らさないことを確かめて直す（V1d5 の作業（PR #382）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行。V1d5 のあと、V1d6 の前。決めた形は rows/V1d5a.md） | done | [#379](https://github.com/YUKIKEDA/ElasticLM/issues/379) |
+| V1d5b | 取得と借り出しの成功の答えがクライアントの上限を超えたとき、サーバーはリースを出したまま、クライアントは持たず、席がリースの期限まで埋まることを確かめて直す（V1d6 の作業（PR #400）が行の外で見つけ、持ち主の決定（2026-11-13、問 R-9）で足した行。V1d5a のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d5b の行） | not-started | [#420](https://github.com/YUKIKEDA/ElasticLM/issues/420) |
 | V1d6 | クライアントと `elm` が、答えの本文を全部読み込んだあとで大きさの上限を確かめることを直す（V1d の指摘 F07）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d6 の行） | done | [#324](https://github.com/YUKIKEDA/ElasticLM/issues/324) |
 | V1d7 | `release.yml` が、ジョブのあいだで渡す成果物をダイジェストで確かめないことを直す（V1d の指摘 F09）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d7 の行） | done | [#325](https://github.com/YUKIKEDA/ElasticLM/issues/325) |
 | V1d8 | 前の利用ログのファイルの最後の行がオブジェクトでない JSON のとき、またはファイル名の日時があり得ないとき、サーバーが起動しないことを直す（V1d の指摘 F14 と、F20 のうちログの読み手の分）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d8 の行。決めた形は §20.7 の「V1d8 の Grill」） | done | [#326](https://github.com/YUKIKEDA/ElasticLM/issues/326) |
 | V1d9 | `elm-service` が、管理 API の操作の途中で呼び出した側が接続を切ったとき、その操作の監査の行を書かないことを直す（V1d の指摘 F15）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。決めた形は design.ja.md §20.7 の「V1d9 の Grill」。`elm-server` の `admin.action` も、この行で直した） | done | [#327](https://github.com/YUKIKEDA/ElasticLM/issues/327) |
 | V1d9a | 途中で終わった管理 API の呼び出しの監査の行に残っている抜けを確かめて直す（V1d9 の作業（PR #381）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #383）で足した行。V1d9 のあと、V1d10 の前。Grill で決める点は design.ja.md §20.7 の表の V1d9a の行） | done | [#378](https://github.com/YUKIKEDA/ElasticLM/issues/378) |
-| V1d10 | `release.yml` の `publish` が、`SHA256SUMS` に載っていないパッケージも公開することを直す（V1d の指摘 F16）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d10 の行） | not-started | [#328](https://github.com/YUKIKEDA/ElasticLM/issues/328) |
+| V1d10 | `release.yml` の `publish` が、`SHA256SUMS` に載っていないパッケージも公開することを直す（V1d の指摘 F16）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d10 の行） | done | [#328](https://github.com/YUKIKEDA/ElasticLM/issues/328) |
 | V1d10a | `ci.yml` と `measure.yml` が、ジョブのあいだで渡す成果物を確かめないことについて、検査を入れるか、受け入れるかを決めて、そのとおりにする（V1d7 の作業（PR #388）が行の外で見つけ、持ち主の決定（2026-11-13、Issue #395）で足した行。V1d10 のあと、V1d11 の前。Grill で決める点は design.ja.md §20.7 の表の V1d10a の行） | not-started | [#389](https://github.com/YUKIKEDA/ElasticLM/issues/389) |
 | V1d11 | SaaS 型のリースの検証の、失効した鍵と証明書の期間の検査にテストを足す（V1d の指摘 R8-1）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d11 の行） | done | [#329](https://github.com/YUKIKEDA/ElasticLM/issues/329) |
 | V1d12 | `elm-service` の貸し出しの、0 以下の席の数を断る検査にテストを足す（V1d の指摘 R8-2）（V1d の Grill の Q4 で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d12 の行） | done | [#330](https://github.com/YUKIKEDA/ElasticLM/issues/330) |

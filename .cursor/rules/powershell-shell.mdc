@@ -52,6 +52,7 @@ body
 - On Linux, filter file names with brackets through `Where-Object Name -Match '^cpu\d+$'`, not `Get-ChildItem -Filter 'cpu[0-9]*'`. In V1b that filter matched nothing on the `ubuntu-latest` runner, and the CPU topology went unrecorded; the split fell back to its default, which happened to match (PR #183).
 - Quote paths with spaces. Prefer repository-relative paths, except for .NET methods: `[IO.File]::ReadAllText` and the like read a relative path from the process's working directory, not from `Set-Location`. Pass them an absolute path.
 - In Bash, `rm -rf "$DIR"/*` is refused by the agent's safety check, because an empty `$DIR` would make it `/*`. Write `"${DIR:?}"/*` or a literal path.
+- In Git Bash, an argument of the form `<rev>:<path>` (`git show origin/main:docs/roadmap.md`) is rewritten by MSYS into a Windows path, and git refuses it as an ambiguous argument. Set `MSYS_NO_PATHCONV=1` for that command. It happened while PR #401's workflow was read (Issue #421).
 
 ## Writing files
 
