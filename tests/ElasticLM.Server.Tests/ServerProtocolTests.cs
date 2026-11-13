@@ -307,18 +307,20 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// Steps:
     /// - Acquire with: a body of exactly 64 KiB of padding and one byte more, with Content-Length and chunked; not JSON; 9 fingerprints; an upper-case
     ///   fingerprint; a host of 256 bytes; an app of 65 bytes; a version of 33 characters; borrow 0; borrow 7 days + 1 s
-    ///   (the license allows 7 days); borrow 60 s without fingerprints; borrow -1 and 100 years + 1 s; borrow of exactly 100 years; count 0.
+    ///   (the license allows 7 days); borrow 60 s without fingerprints; borrow -1 and 100 years + 1 s; borrow of exactly 100 years; count 0 and -1;
+    ///   count 2147483648, -2147483649, and 4294967297 (outside 32 bits).
     ///   Acquire with a version of exactly 32 characters; with every other field exactly at its limit (names with a two-byte
     ///   character); with an app one byte over. Renew
     ///   with 16 retry IDs of 64 characters, 17 IDs, an ID of 65 characters, and a null ID. Reclaim 65 tokens.
     ///
     /// Expected:
     /// - 64 KiB is read (a JSON error, ELM_MALFORMED) and 64 KiB + 1 is 413 ELM_PAYLOAD_TOO_LARGE; ELM_MALFORMED for the
-    ///   shapes; ELM_INVALID_ARGUMENT for borrow 0 and count 0; ELM_BORROW_NOT_ALLOWED for the borrow over 7 days;
+    ///   shapes; ELM_INVALID_ARGUMENT for borrow 0 and counts 0 and -1; ELM_MALFORMED for the counts outside 32 bits;
+    ///   ELM_BORROW_NOT_ALLOWED for the borrow over 7 days;
     ///   ELM_FINGERPRINT_UNAVAILABLE (400) for the borrow without fingerprints; ELM_MALFORMED for borrows out of range and ELM_BORROW_NOT_ALLOWED (past the size check) for 100 years; the reclaim is
     ///   ELM_MALFORMED. The 32-character version is ELM_INVALID_ARGUMENT (past the size check); every field at its limit is 201 and one byte
     ///   over is ELM_MALFORMED; the renewal at the limits is 200
-    ///   and the three over it are ELM_MALFORMED.
+    ///   and the three over it are ELM_MALFORMED. At the end the server holds 2 leases, the two that were granted.
     /// </remarks>
     [Fact]
     public async Task Bodies_AreLimitedAndChecked()
@@ -353,6 +355,13 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             HttpStatusCode.Forbidden
         );
         await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":0}"""), "ELM_INVALID_ARGUMENT");
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":-1}"""), "ELM_INVALID_ARGUMENT");
+
+        // The body's count is a 32-bit integer, so a value outside it is not read (design §12.7.1); cut to 32 bits,
+        // 4294967297 would be 1.
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":2147483648}"""), "ELM_MALFORMED");
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":-2147483649}"""), "ELM_MALFORMED");
+        await raw.AssertAcquireAsync(Raw.Json("""{"feature":"pro","count":4294967297}"""), "ELM_MALFORMED");
 
         // A version of 32 characters passes the size check and is refused only as a version (each part has at most 9 digits,
         // so a valid version has at most 29 characters).
