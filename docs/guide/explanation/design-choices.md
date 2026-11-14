@@ -144,7 +144,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 
 **Choice.** The customer's administrator controls the machine `elm-server` runs on and can take out its installation key, so ElasticLM does not trust that key beyond what the vendor signed:
 
-- The client checks every lease against the server license: the right product and server, a feature and seat count within the license, a length no longer than the license allows, and an end no later than the server license's own end plus its grace period.
+- The client checks every lease against the server license: the right product and server, a feature and seat count within the license, a length no longer than the license allows, and an end no later than the server license's own end plus its grace period, or than the feature's own end.
 - The server license expires (by default after 30 days) and is refreshed from `elm-service`. Each refresh checks the server's `seq`, so a copied server is found.
 - The client accepts the server's TLS certificate when the operating system trusts it, or when its key matches the key the server license names. The server's administrator decides which, not the app developer, who cannot know.
 

@@ -29,6 +29,8 @@ Because the token is signed, the app can check it without asking anyone. Because
 
 Where the lease time comes from depends on the server. On `elm-service`, it is the policy's `leaseDuration`: 10 minutes by default, from 2 minutes to 24 hours. On `elm-server`, it is the lease duration in the server license. A server license that `elm-service` issues holds the policy's `leaseDuration`. One that `elm license issue` makes holds the value of `--lease-minutes`, 10 minutes by default; it must be at least one second, so it can be shorter than 2 minutes (see [`elm license issue`](../reference/elm-cli.md#elm-license-issue)).
 
+Both servers shorten a lease or a borrow so that it ends no later than the license and the feature. On `elm-server`, that is the server license's expiry plus its grace period, and the feature's own expiry in the server license, which has no grace period. On `elm-service`, it is the license's and the feature's expiry, with no grace period. When less than a second would be left, the request is refused with `403` and `ELM_EXPIRED`.
+
 ## How seats are counted
 
 For each feature, the server adds up the `n` of every lease that has not expired. A request for `count` seats is refused with `409` and `ELM_NO_SEATS` when that sum plus `count` is more than:
@@ -108,12 +110,14 @@ The client does not trust a lease because a server sent it. Each time it receive
 
 1. The signature: on premises, with the server key that the verified server license names (below); on the hosted service, with a vendor signing key certified for leases by a root key in the app's trust store.
 2. `prd` is the app's product and `cnf.jkt` is this device's installation key.
-3. On premises: the license, feature, and seat count, the lease or borrow length, and the end date are all within the server license (its expiry plus grace period at the latest).
+3. On premises: the license, feature, and seat count, the lease or borrow length, and the end date are all within the server license. The end is no later than the server license's expiry plus its grace period, and no later than the feature's own expiry in the server license, which has no grace period.
 4. The clock checks, as for license files (see [license files and verification](license-files-and-verification.md)).
 
 If a check fails, the lease is not used (`ELM_LEASE_OUT_OF_BOUNDS` or the error of the failed step). Step 3 keeps an on-premises server honest: an administrator who pulls the server's key out of the machine can sign any lease, but the app still refuses what the vendor's server license does not allow. The app checks each lease on its own, so that administrator can sign leases for more seats than the server license grants ([the security model](security-model.md#on-the-customers-license-server)).
 
 The client also compares each answer with the request it sent, because a relay on the network path could hand it a genuine lease that answers another request, such as the answer that another process with the same installation key received. For an acquisition or a borrow, the lease must be a borrow exactly when a borrow was asked for, be for the feature and the number of seats asked for, for a borrow be no longer than the period asked for, and its `areq` must be the proof ID of this request. For a renewal, it must not be a borrow, must have the feature, the seats, and the ID of the lease held and a higher `seq`, and its `areq` must be the proof ID of this renewal or of an earlier renewal of this lease in the client's `retry` list. Otherwise the result is `ELM_REQUEST_MISMATCH`. An acquisition or a borrow then gives no lease, and the client does not return the lease that the answer carried, which ends at its expiry. A renewal counts as failed, and the lease moves to `Retrying`. A borrowed lease read from disk has no request to compare with; it was compared when it was borrowed.
+
+On premises, the client also checks the version of an acquisition or a borrow, because the lease token does not carry it. When the app passed its version of the feature and the server license gives that feature a version range, the version must be in the range. Otherwise the call fails with `ELM_FEATURE_VERSION_NOT_LICENSED`: the client keeps and saves no lease, and it asks the server to release what it issued for this request (see [When an answer is lost](#when-an-answer-is-lost)). A server that follows its license refuses such a version itself, with the same code. On the hosted service the client checks neither the version nor the feature's expiry; `elm-service` does.
 
 ## The server license: how the client trusts an on-premises server
 
@@ -229,7 +233,7 @@ The `elm server` commands work through a local administration API that listens o
 
 The administrator can see the server's state and leases (`elm server status`, `elm server leases`), force-return a normal lease (`elm server release <ID>`, for example for a machine that crashed), reload, activate, or renew the server license, allow or deny clients by IP address or range (`allow`, `deny`), set the per-IP request limit (`rateLimit.perIp`, 20 per second by default), limit borrowing, and choose the TLS certificate. Every admin action is written to the usage log as `admin.action`.
 
-Through the server, the administrator cannot lend more than the server license allows (the server counts the seats against it, and the client refuses a lease outside it), cannot lend past the license's expiry plus grace period (`ELM_EXPIRED`), and cannot force-return a borrow (`409`, `ELM_RETURN_NOT_ALLOWED`), because the borrowed machine is offline and would keep using a seat the server lent again.
+Through the server, the administrator cannot lend more than the server license allows (the server counts the seats against it, and the client refuses a lease outside it), cannot lend past the license's expiry plus grace period (`ELM_EXPIRED`) or past a feature's own expiry (`ELM_FEATURE_EXPIRED`, and a lease ends at that expiry at the latest), and cannot force-return a borrow (`409`, `ELM_RETURN_NOT_ALLOWED`), because the borrowed machine is offline and would keep using a seat the server lent again.
 
 Rules on host and user names (`host:<name>`, `user:<name>`) use names the client reports and cannot check, so only IP rules are reliable. Behind a reverse proxy, IP rules and rate limits see the proxy's address, because `elm-server` does not trust `X-Forwarded-For`.
 

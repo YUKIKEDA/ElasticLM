@@ -342,9 +342,9 @@ Member of `cnf`:
 | --- | --- | --- | --- |
 | `jkt` | string | yes | The key ID of the installation key that holds the lease. |
 
-A lease from `elm-server` must also stay inside its server license: `exp` minus `iat` is at most the server license's `lease`, or its `borrow` when `brw` is `true`, and `exp` is no later than the server license's `exp` plus `grace`. A lease that breaks one of these gets `ELM_LEASE_OUT_OF_BOUNDS`.
+A lease from `elm-server` must also stay inside its server license: `exp` minus `iat` is at most the server license's `lease`, or its `borrow` when `brw` is `true`, and `exp` is no later than the server license's `exp` plus `grace`, nor than the `exp` of the feature `feat` in the server license, which has no grace. A lease that breaks one of these gets `ELM_LEASE_OUT_OF_BOUNDS`.
 
-A client also compares the lease in an answer with what it asked for. For an acquisition or a borrow: the feature, the seats, whether it is a borrow, for a borrow that it is no longer than the period asked for, and `areq`. For a renewal: the lease ID, the feature, and the seats of the lease it holds, that it is not a borrow, a `seq` greater than the one it holds, and `areq`. A lease that differs gets `ELM_REQUEST_MISMATCH`. [Floating licenses](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) explains the comparison.
+A client also compares the lease in an answer with what it asked for. For an acquisition or a borrow: the feature, the seats, whether it is a borrow, for a borrow that it is no longer than the period asked for, and `areq`. For a renewal: the lease ID, the feature, and the seats of the lease it holds, that it is not a borrow, a `seq` greater than the one it holds, and `areq`. A lease that differs gets `ELM_REQUEST_MISMATCH`. From `elm-server`, when the app asked for a version and the server license gives the feature a range, a version outside it gets `ELM_FEATURE_VERSION_NOT_LICENSED`, since the token has no version. [Floating licenses](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) explains the comparison.
 
 A lease token that `elm-server` returned for `{"feature":"pro","version":"2.1","count":1}`, decoded:
 
