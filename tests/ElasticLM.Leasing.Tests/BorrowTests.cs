@@ -54,6 +54,45 @@ public sealed class BorrowTests : IDisposable
     }
 
     /// <summary>
+    /// A borrow taken a minute before the feature's own expiry ends at that expiry, not 7 days later, and the client accepts
+    /// it; once past it, a new engine does not restore it from the record (design §12.7.1, §13.4, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - pro (5 seats) expires 20 minutes after the start, the server license 30 days after with 7 days of grace, so the
+    ///   feature's expiry is the earlier bound; an engine with a record, past its 10-minute window.
+    ///
+    /// Steps:
+    /// - At minute 19 borrow 7 days; verify the token as the client does. Move to minute 20, then a second past it; each
+    ///   time restore the record into a new engine.
+    ///
+    /// Expected:
+    /// - Granted, ending at minute 20 (60 seconds long), and the client accepts it (before V1d18 it lasted 7 days and the
+    ///   client accepted that too).
+    /// - At minute 20 the borrow is restored with its seat; a second later it is skipped as expired.
+    /// </remarks>
+    [Fact]
+    public void Borrow_BeforeTheFeatureExpiry_EndsAtIt()
+    {
+        DateTimeOffset featureEnd = TestServer.Start.AddMinutes(20);
+        using var server = new TestServer(features: [new FeatureSpec("pro", Seats: 5, ExpiresAt: featureEnd)]);
+        var journal = new FakeJournal();
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient client = server.Client();
+        server.Time.Advance(TimeSpan.FromMinutes(9));
+
+        var borrow = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+        Assert.Equal(featureEnd, borrow.ExpiresAt);
+        VerifiedLease lease = Assert.IsType<LeaseVerificationResult.Valid>(server.VerifyAsClient(borrow.Token, client)).Lease;
+        Assert.Equal((true, TimeSpan.FromMinutes(1)), (lease.IsBorrow, lease.ExpiresAt - lease.IssuedAt));
+
+        server.Time.Advance(TimeSpan.FromMinutes(1));
+        Assert.Equal(1, server.Engine().Restore(journal.Borrows, journal.Returns));
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(0, server.Engine().Restore(journal.Borrows, journal.Returns));
+    }
+
+    /// <summary>
     /// A license with a borrow limit of 0 lends no borrow.
     /// </summary>
     /// <remarks>

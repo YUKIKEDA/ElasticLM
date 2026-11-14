@@ -118,6 +118,105 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A lease or a borrow that an on-premises server lends for a version outside the server license's range of the feature
+    /// is refused with ELM_FEATURE_VERSION_NOT_LICENSED: the client holds and saves nothing and releases it by its request's
+    /// jti. A version in the range, no version, and a feature without a range are taken (design §12.7.5 step 7, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with pro (&gt;=2.0 &lt;3.0, 5 seats) and cam (no range, 3 seats), past its reclaim window; a client behind
+    ///   a relay that answers its acquisition, without passing it on, with a lease or a borrow of an hour that the server's
+    ///   engine grants for that request's jti, the client's key, and no version, as a server that ignores the version would.
+    ///
+    /// Steps:
+    /// - Acquire or borrow, as the case says: a lease of pro 3.0; a borrow of pro 3.0; a lease of pro "two"; a lease of pro
+    ///   2.5; a lease of pro without a version; a lease of cam 3.0. Dispose the client when it refused.
+    ///
+    /// Expected:
+    /// - The first three: Failed with ELM_FEATURE_VERSION_NOT_LICENSED "The feature version is outside the range of the
+    ///   server license." and no retry time; no borrow file; the only DELETE is DELETE /v1/leases/requests/ with the request's
+    ///   jti, and the server's seats of the feature go back to 0.
+    /// - The last three: Acquired, with the server's lease; the server counts its seat until the client is disposed.
+    /// </remarks>
+    /// <param name="feature">The feature asked for.</param>
+    /// <param name="version">The version asked for, or <see langword="null"/>.</param>
+    /// <param name="borrow">Whether the request is a borrow.</param>
+    /// <param name="taken">Whether the client takes the lease.</param>
+    [Theory]
+    [InlineData("pro", "3.0", false, false)]
+    [InlineData("pro", "3.0", true, false)]
+    [InlineData("pro", "two", false, false)]
+    [InlineData("pro", "2.5", false, true)]
+    [InlineData("pro", null, false, true)]
+    [InlineData("cam", "3.0", false, true)]
+    public async Task Acquire_VersionOutsideTheServerLicense_IsRefused(string feature, string? version, bool borrow, bool taken)
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        ElmServer server = await StartOpenServerAsync(s =>
+            s with
+            {
+                Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5), new FeatureSpec("cam", Seats: 3)],
+            }
+        );
+        var relay = new Recorder();
+        string folder = _deployment.NewFolder();
+        LicenseClient client = Client(server, relay, folder);
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.User, folder).TryLoadOrCreate(out InstallationKey? key, out _));
+        System.Security.Cryptography.ECParameters publicKey;
+        using (key)
+        {
+            publicKey = key!.PublicParameters();
+        }
+
+        var hour = TimeSpan.FromHours(1);
+        relay.AnswerNextAcquisition(sent =>
+        {
+            var request = new LeaseRequest(
+                feature,
+                null,
+                1,
+                client.InstallationKeyThumbprint,
+                publicKey,
+                sent.ProofId!,
+                borrow ? hour : null,
+                borrow ? ["00112233445566778899aabbccddeeff"] : null
+            );
+            var granted = Assert.IsType<LeaseOutcome.Granted>(server.Engine.Acquire(request));
+            return new KeptAnswer(
+                sent.Path,
+                HttpStatusCode.Created,
+                $$"""{"lease":"{{granted.Token}}","certificates":[]}""",
+                server.Engine.Server.License.TokenId
+            );
+        });
+
+        LeaseResult result = borrow
+            ? await client.BorrowLeaseAsync(feature, hour, version, cancellationToken: cancel)
+            : await client.AcquireLeaseAsync(feature, version, cancellationToken: cancel);
+
+        Assert.Equal(1, relay.Replayed);
+        string asked = relay.Requests().Single(r => r.Method == "POST" && r.Path == "/v1/leases").ProofId!;
+        if (taken)
+        {
+            Assert.Equal(feature, Acquired(result).FeatureId);
+            Assert.Equal(1, server.Engine.SeatsInUse(feature));
+            Assert.DoesNotContain(relay.Requests(), r => r.Method == "DELETE");
+            return;
+        }
+
+        var failed = Assert.IsType<LeaseResult.Failed>(result);
+        Assert.Equal(
+            new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the range of the server license."),
+            failed.Error
+        );
+        Assert.Null(failed.RetryAfter);
+        Assert.Empty(BorrowFiles(folder));
+        await client.DisposeAsync();
+        Assert.Equal(["/v1/leases/requests/" + asked], relay.Requests().Where(r => r.Method == "DELETE").Select(r => r.Path));
+        Assert.Equal(0, server.Engine.SeatsInUse(feature));
+    }
+
+    /// <summary>
     /// An answer to a renewal that differs from the lease held in one thing is refused with ELM_REQUEST_MISMATCH and the
     /// sentence for that thing: the lease keeps its token, goes to Retrying, and renews at the retry.
     /// </summary>
