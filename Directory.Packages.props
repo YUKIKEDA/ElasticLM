@@ -24,6 +24,10 @@
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
   </ItemGroup>
+  <ItemGroup Label="Tools">
+    <!-- tools/ElasticLM.ActionPins only: reads the workflows as YAML (design §20.5, V1d22; §21). MIT, no dependency. -->
+    <PackageVersion Include="YamlDotNet" Version="18.1.0" />
+  </ItemGroup>
   <ItemGroup Label="Tests">
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
