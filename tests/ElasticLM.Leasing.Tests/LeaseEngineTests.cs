@@ -269,8 +269,8 @@ public sealed class LeaseEngineTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - pro (5 seats) expires 15 minutes after the start; the server license 30 days after with 7 days of grace, so the
-    ///   feature's expiry is the earlier bound; the window (10 minutes) is over.
+    /// - pro (5 seats) expires 15 minutes after the start; the server license either expires 30 days after with 7 days of
+    ///   grace, so the feature's expiry is the earlier bound, or has no expiry and no grace; the window (10 minutes) is over.
     ///
     /// Steps:
     /// - Acquire at minute 10; renew at minute 14; acquire at minute 15 less a second; acquire and renew at minute 15;
@@ -281,11 +281,19 @@ public sealed class LeaseEngineTests : IDisposable
     ///   acquisition a second before gets a lease of one second; at minute 15 both are ELM_EXPIRED "The feature of the
     ///   server license has expired."; a second later ELM_FEATURE_EXPIRED.
     /// </remarks>
-    [Fact]
-    public void Lease_IsCappedAtTheFeatureExpiry()
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Lease_IsCappedAtTheFeatureExpiry(bool licenseExpires)
     {
         DateTimeOffset limit = TestServer.Start.AddMinutes(15);
         using var server = new TestServer(features: [new FeatureSpec("pro", Seats: 5, ExpiresAt: limit)]);
+        if (!licenseExpires)
+        {
+            server.ReplaceServerLicense(spec => spec with { ExpiresAt = null, GracePeriod = TimeSpan.Zero });
+            Assert.Null(server.Identity.License.ExpiresAt);
+        }
+
         LeaseEngine engine = server.OpenEngine();
         TestClient client = server.Client();
         var expired = new LicenseError(ErrorCode.Expired, "The feature of the server license has expired.");
