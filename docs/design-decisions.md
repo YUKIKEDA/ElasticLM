@@ -2101,3 +2101,9 @@
 - **決定:** Issue #386（大きさを確かめてから全部読むファイル）は、V1d24b のあとの行にする（V1d24c）。Issue #389（`ci.yml` と `measure.yml` の成果物）は、V1d10 のあとの行にする（V1d10a）。Issue #392（テストの助け `ProblemServer` が、ときどき片づけで例外を出す）は、V1d3a のあとの行にする（V1d3b）。Issue #393（`Measure` で、応答が 1 回途中で切れた）は、行を足さず、V1d31 の Grill の点にする（持ち主の決定、問 R-2〜問 R-5 の推奨案 A。2026-11-13。行の ID は、Issue を書いた側が決めた。[design.ja.md](./design.ja.md) §20.7 の表と §22 の表）。
 - **理由:** Issue #386 は、クライアントのファイルの読み書きを扱う V1d24、V1d24a と、同じ所を読む。Issue #389 は、リリースのワークフローの 2 つの行（V1d7、V1d10）の検査の文を、そのまま使える。Issue #392 のように、ときどき落ちるテストは、関係のない PR の CI を止めるので、同じ種類の V1d2a、V1d3a と同じ所に置く。Issue #393 は、出たのが 1 回で、サーバーの側の誤りは見えていない。同じワークフローの、測定がときどき落ちることを扱う V1d31 で、合わせて扱える。もう一度出たら、行を前に移すかを、持ち主に聞く。
 - **却下した案:** 4 つとも、(B) 別の場所に置く（Issue #386 は V1d6 のすぐあと。脅威が違う（同じ端末の中の攻撃者）ので、V1d6 の測定はほとんど使えない。Issue #389 と Issue #392 は V1d31 のあと。同じ検査を間をあけて書くことになり、それまで関係のない PR がときどき落ちる。Issue #393 は V1d3a のあとの行。1 回しか出ていないものに、行を 1 つ使う）。(C) 置き場所を決めない（`pace.mdc` が求める行がなく、いつ扱うかが決まらない）。
+
+### `release.yml` の、PR で走る `attest`・`draft`・`publish` の確かめを置くジョブ（Issue #451）
+
+- **決定:** `checksums` の中で `release-assets` を上げたあとに取り直していた確かめ（`release-assets` と `release-notes` のダウンロード、`attest` と `draft` の確かめ、`publish` の 2 と 5 の確かめ）を、新しいジョブ `checksums-check`（`needs: [version, checksums]`）に移す。ハッシュは `checksums` と `version` の出力で受け、`attest` と `draft` は `checksums-check` を待つ（持ち主の決定。2026-11-14、Issue #451 のコメント、PR #452。[design.ja.md](./design.ja.md) §20.5 の「PR で走る場所」）。
+- **理由:** 同じジョブの中で、上げた 0.1〜0.3 秒後に名前で取ると、`actions/download-artifact` v8.0.2 がときどき「Artifact not found for name: release-assets」で落ちた（Issue #451 が挙げる 6 つのジョブ）。ジョブをまたいで取る artifact は、Issue #451 が見た範囲では、この誤りで落ちていない。別のジョブにすれば、ほかのジョブの間の受け渡しと同じ形になる。`attest` と `draft` が待つので、確かめが通らなければ、証明も下書きも作らない。
+- **却下した案:** 同じジョブのまま `artifact-ids` で取る（固定したコミットの `src/download-artifact.ts` は、ID のときも `listArtifacts` で一覧を引いてから ID で絞るので、一覧に載る前なら同じく見つからない。測ってはいない）。落ちたら待って取り直す（待つ長さの根拠になる測りがなく、測っていない待ちを足すことになる。`open-ends.mdc`）。
