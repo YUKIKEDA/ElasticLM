@@ -28,6 +28,7 @@
     <Project Path="tests/ElasticLM.Issuing.Tests/ElasticLM.Issuing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Leasing.Tests/ElasticLM.Leasing.Tests.csproj" />
     <Project Path="tests/ElasticLM.Licensing.Tests/ElasticLM.Licensing.Tests.csproj" />
+    <Project Path="tests/ElasticLM.Measure.Tests/ElasticLM.Measure.Tests.csproj" />
     <Project Path="tests/ElasticLM.Native.Tests/ElasticLM.Native.Tests.csproj" />
     <Project Path="tests/ElasticLM.Server.Tests/ElasticLM.Server.Tests.csproj" />
     <Project Path="tests/ElasticLM.Service.Tests/ElasticLM.Service.Tests.csproj" />
