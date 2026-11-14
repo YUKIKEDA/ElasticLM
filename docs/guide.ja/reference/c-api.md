@@ -186,7 +186,7 @@ int32_t elm_activation_state(const elm_activation* activation);
 | `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。サーバーは、借用がライセンスか機能の終わりを過ぎないように、期間を短くすることがある。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。`elm_client_acquire_lease` と同じ場合に `ELM_REQUEST_MISMATCH` と `ELM_FEATURE_VERSION_NOT_LICENSED` を返し、レスポンスが届かなかったか受け取らなかった借用は、同じように返却を頼む。保存できなかった借用も返却を頼む。 |
 | `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが引き取らなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |
 | `elm_client_get_borrowed_leases` | エラー番号 | 保存してある借用のうち、まだ有効なものを、新しいハンドルの配列で返す。配列は `elm_lease_list_free` で解放する。 |
-| `elm_client_reset_server_pin` | エラー番号 | オンプレミスのサーバーのピンを削除する。`server_url` は `http` か `https` の絶対 URL でなければならず、そうでなければ `ELM_INVALID_ARGUMENT` になる。ピンを削除したときは `*deleted` が `1` になる。ライセンスキーを持つクライアントにはピンがないので、その場合は常に `0` だ。 |
+| `elm_client_reset_server_pin` | エラー番号 | オンプレミスのサーバーのピンを削除する。`server_url` は `http` か `https` の絶対 URL でなければならず、そうでなければ `ELM_INVALID_ARGUMENT` になる。ピンを削除したときは `*deleted` が `1` になる。ライセンスキーを持つクライアントにはピンがないので、その場合は常に `0` だ。前のサーバーライセンスのファイルに戻ったサーバーから、またリースを受けるためにも使う（[新しいファイルでは取り上げられないもの](../how-to/renew-a-server-license.md#新しいファイルでは取り上げられないもの)を参照）。 |
 | `elm_lease_id` | エラー番号 | リース ID を返す。 |
 | `elm_lease_feature_id` | エラー番号 | リースの機能 ID を返す。 |
 | `elm_lease_expires_at` | エラー番号 | 現在のリーストークンの有効期限を UNIX 秒で返す。リースの更新で変わる。 |

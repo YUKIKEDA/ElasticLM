@@ -23,7 +23,7 @@ The client accepts the TLS certificate of `elm-server` on either of two grounds.
 | --- | --- | --- | --- |
 | `ELM-Proof` | Request | Both | The proof of the request (below). One header field: a request with two fields gets `ELM_PROOF_INVALID`. |
 | `ELM-Nonce` | Response | Both | A new nonce for the next proof. `elm-service` sends it in every answer of its device routes, errors included, except the answers of `POST /v1/offline` and the `429` of the per-source rate limit. `elm-server` sends it in every answer of `GET /v1/nonce` and of its four lease routes, errors included, except the `403` of its IP rules and the `429` of its rate limit. |
-| `ELM-Server-License` | Response | `elm-server` | The token ID (`jti`) of the server license file that the server issues leases under now, in the success answers of `POST /v1/leases` and `POST /v1/leases/{id}/renew`. It is the value that the local administration API shows as `licenseToken` (see [`GET /admin/v1/status`](administration-api.md#get-adminv1status)). When it names a server license the client has not seen, the client fetches `GET /v1/server/license` again. A new lease or a renewal is checked only with the server license the client uses now, also when the header names an earlier one that the client keeps for its older leases; a token issued under that earlier one is refused with `ELM_LEASE_OUT_OF_BOUNDS`. |
+| `ELM-Server-License` | Response | `elm-server` | The token ID (`jti`) of the server license file that the server issues leases under now, in the success answers of `POST /v1/leases` and `POST /v1/leases/{id}/renew`. It is the value that the local administration API shows as `licenseToken` (see [`GET /admin/v1/status`](administration-api.md#get-adminv1status)). When it names a server license the client has not seen, the client fetches `GET /v1/server/license` again. A new lease or a renewal is checked only with the server license the client uses now (the one it fetched and verified last; earlier ones it keeps only to return and reclaim the leases issued under them), also when the header names an earlier one that the client keeps for its older leases; a token issued under that earlier one is refused with `ELM_LEASE_OUT_OF_BOUNDS`. |
 | `Retry-After` | Response | Both | Seconds to wait. With `ELM_RATE_LIMITED` it is `1`, except for a trial over its product's limit (see [`POST /v1/trials`](#post-v1trials)). With `ELM_SERVER_RECOVERING` it is the rest of the reclaim window, rounded up. |
 
 ### The proof
@@ -455,7 +455,7 @@ The lease lasts the policy's `leaseDuration`, or the `borrow` period, cut at the
 | `403` | `ELM_BORROW_NOT_ALLOWED` | `borrow` is longer than the policy's `borrowLimit`, or the policy has none. |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | A borrow without fingerprints. |
 | `409` | `ELM_NO_SEATS` | The seats held and `count` together are more than the feature's seats with the overage. Stopped leases and borrows are counted. |
-| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second of the lease would be left. |
+| `403` | `ELM_EXPIRED` | The request came in the very second that the feature expires, so less than one second of the lease would be left. |
 
 ### `POST /v1/leases/{id}/renew`
 
@@ -490,7 +490,7 @@ The new token lasts the policy's current `leaseDuration`, cut as on acquire.
 | `403` | `ELM_FEATURE_NOT_LICENSED`, `ELM_FEATURE_EXPIRED` | The license no longer grants the feature with `seats`, or the feature has expired. |
 | `409` | `ELM_NO_SEATS` | The seats held, this lease included, are more than the license allows now. |
 | `409` | `ELM_CLONE_DETECTED` | A wrong `seq` under `cloneStrategy` `deny`; the lease is stopped until it expires. |
-| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second would be left. |
+| `403` | `ELM_EXPIRED` | The request came in the very second that the feature expires, so less than one second of the lease would be left. |
 
 ### `DELETE /v1/leases/{id}`
 
@@ -616,7 +616,7 @@ An example of `ELM-Server-License`: `ELM-Server-License: FAKElicenseJti00000001`
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | A borrow without fingerprints. |
 | `503` | `ELM_SERVER_RECOVERING` | The reclaim window after a start has not ended. `Retry-After` gives its rest. |
 | `409` | `ELM_NO_SEATS` | The seats held and `count` together are more than the feature's seats with the overage; for a borrow, less the seats kept by `borrow.reserve`. |
-| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second of the lease would be left. |
+| `403` | `ELM_EXPIRED` | The request came in the very second that the feature expires, so less than one second of the lease would be left. |
 | `500` | `ELM_INTERNAL_ERROR` | A borrow, and the borrow record cannot be written. |
 
 The answer to a request in the reclaim window, as `elm-server` sent it with `Retry-After: 15`:
@@ -706,7 +706,7 @@ The new token lasts the server license's lease period, cut as on acquire.
 | `403` | `ELM_FEATURE_NOT_LICENSED`, `ELM_FEATURE_EXPIRED` | The server license no longer grants the feature, or the feature has expired. |
 | `409` | `ELM_NO_SEATS` | The server license now allows fewer seats than are held. |
 | `409` | `ELM_CLONE_DETECTED` | A wrong `seq` under the server license's `clone` `deny`; the lease is stopped until it expires. |
-| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second would be left. |
+| `403` | `ELM_EXPIRED` | The request came in the very second that the feature expires, so less than one second of the lease would be left. |
 
 ### `DELETE /v1/leases/{id}` on `elm-server`
 

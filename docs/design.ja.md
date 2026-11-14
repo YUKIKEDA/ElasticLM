@@ -1974,6 +1974,7 @@ stateDiagram-v2
     Reclaiming --> Held: 回収の成功
     Reclaiming --> Lost: 回収の拒否
     Retrying --> Lost: 期限
+    Held --> Lost: 期限（更新の前）
     Held --> Lost: ELM_CLONE_DETECTED
     Retrying --> Lost: ELM_CLONE_DETECTED
     Held --> Reclaiming: ELM_UNKNOWN_LEASE（オンプレミス）
