@@ -960,7 +960,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `grace` | int | 任意（省略は 0） | 期限の後に使える秒数。`exp` のないトークンにもあってよく、そのときは使わない。発行する側は `exp` があるときだけ書く（`LicenseIssuer`）。`kind: trial` では 0 か省略 |
 | `refresh` | int | オンラインで更新するとき | 更新を試み始める、期限までの残り秒数 |
 | `seq` | int | 有効化から出したとき | 有効化の更新番号（§10.4）。`elm` の手動発行では省略 |
-| `areq` | string | 有効化から出したとき | このトークンが答えた要求の ID。オンラインの有効化・更新・試用は要求の証明（§12.2）の `jti`、オフラインの応答は要求の `nonce`（§12.8）。1〜64 文字（V1d5a） |
+| `areq` | string | 有効化から出したとき | このトークンが答えた要求の ID。オンラインの有効化・更新・試用は要求の証明（§12.2）の `jti`、オフラインの応答は要求の `nonce`（§12.8）。base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（V1d5a。文字の限りは V1d26） |
 | `act` | string | 有効化から出したとき | 有効化 ID（§12.6.1。UUID をハイフンつきで書いた 36 文字。V1d5a） |
 | `lease` | int | `kind: server` のとき | リースの期間の秒数（ポリシーの `LeaseDuration`）。回収の時間にも使う（§13.4）。`kind: server` では 1 以上、ほかの種類では 0 も受け付ける |
 | `borrow` | int | `kind: server` のとき | 借り出しの上限の秒数。0 なら借り出しを許さない |
@@ -971,7 +971,7 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 
 `areq` と `act` を書く側と確かめる側（V1d5a、Issue #379。記録は `rows/V1d5a.md`）:
 
-- `LicenseIssuer` は、`LicenseSpec.AnsweredRequestId` を `areq` に、`LicenseSpec.ActivationId` を `act` に書く。`areq` が 1〜64 文字でないか、`act` が UUID（`Guid.TryParseExact` の `D` の形）でなければ、署名の前に `ArgumentException` を投げる（`LicensePayloadRules`）。`elm license issue` の手動の発行は、どちらも書かない。
+- `LicenseIssuer` は、`LicenseSpec.AnsweredRequestId` を `areq` に、`LicenseSpec.ActivationId` を `act` に書く。`areq` が base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字でないか、`act` が UUID（`Guid.TryParseExact` の `D` の形）でなければ、署名の前に `ArgumentException` を投げる（`LicensePayloadRules`）。`elm license issue` の手動の発行は、どちらも書かない。
 - `elm-service`（`ElmService.IssueFile`）は、有効化・更新・試用のトークン（オンラインとオフライン、§12.6.1、§12.8.4）の `areq` に、有効化が `LastProof` として覚える、そのファイルを出した要求の ID（オンラインは証明の `jti`、オフラインは要求の `nonce`）を、`act` に有効化 ID を入れる。再試行に返す最後のファイル（§10.4 の手順 3）は残したものをそのまま返すので、その `areq` は前の要求の ID である。
 - `LicenseVerifier` は、`areq` と `act` のないトークンを受け付ける。手で出したファイルと、V1d5a より前に保存した有効化のファイルは、これまでどおり `Check` を通る（問 5a-5）。あれば形を確かめ、外れれば `ELM_MALFORMED`。値は `VerifiedLicense.AnsweredRequestId` と `VerifiedLicense.ActivationId` で渡す。要求と比べるのは、要求を送った `ActivationClient` である（§12.6.2、§12.8.5）。
 - `act` を入れるのは、M4b の Grill の「有効化 ID をトークンのクレームにする」の却下（`design-decisions.md`）を戻したものである（問 5a-2）。理由は `rows/V1d5a.md` に書く。
@@ -992,11 +992,11 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `srv` | string | 必須 | 発行したサーバーの `kid`。`iss`（とヘッダーの `kid`）と同じでなければ拒否する |
 | `slic` | string | オンプレミスのとき | 発行に使ったサーバーライセンスの `jti`（§13.5） |
 | `seq` | int | 必須 | リースの更新番号。更新のたびに 1 増える |
-| `areq` | string | 必須 | このトークンが答えた要求の証明（§12.2）の `jti`。1〜64 文字（V1d5） |
+| `areq` | string | 必須 | このトークンが答えた要求の証明（§12.2）の `jti`。base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（V1d5。文字の限りは V1d26） |
 
 `areq` を書く側と確かめる側（V1d5）:
 
-- `LeaseIssuer` は、`LeaseSpec.AnsweredProofId` を `areq` に書く。1〜64 文字でなければ `ArgumentException` を投げる。
+- `LeaseIssuer` は、`LeaseSpec.AnsweredProofId` を `areq` に書く。base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字でなければ `ArgumentException` を投げる。
 - `elm-server`（`LeaseEngine.IssueNext`）は、取得・借り出し・更新の要求の証明の `jti` を入れる。複製を記録して続ける更新（`flag`、§10.4）でも同じである。`elm-service`（`ElmService.IssueLease`）は、リースの行の `issued_by` を入れる（§12.7.6）。
 - 再試行に返すトークン（§10.4 の手順 3）は、残してある最後のトークンそのものである。その `areq` は、そのトークンを出した前の要求の `jti` で、再試行の要求の `jti` ではない。
 - `LeaseVerifier` は、`areq` がないトークンと、`areq` が `null`、文字列でない値、空、65 文字以上であるトークンを断る。`VerifyOnPremises`、`VerifyHosted`、回収の `VerifyOwnLease` は `ELM_MALFORMED`（「The lease payload is not valid.」）を返し、借り出しの記録を読む `TryReadOwnLease` は、その記録を戻さない。
@@ -1073,12 +1073,12 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | `meta` の組の数 | 32（キー 64 バイト、値 1 KiB まで） |
 | JSON の入れ子の深さ | 8 |
 | 要求の `fingerprints` の数 | 8（各 32 文字の 16 進。`elm-service` は同じ値を 1 つにまとめ、`elm-server` はまとめない。§12.7.1） |
-| 要求の `client` のホスト名・ユーザー名 | 各 255 バイト（`elm-server` では各々任意、`elm-service` では両方とも必須。§12.7.1） |
-| 要求の `app` | 64 バイト |
+| 要求の `client` のホスト名・ユーザー名 | 各 255 バイト。C0 の制御文字（U+0000〜U+001F）を含まない（`elm-server` では各々任意、`elm-service` では両方とも必須。§12.7.1） |
+| 要求の `app` | 64 バイト。C0 の制御文字を含まない |
 | 回収の要求のリーストークンの数 | 64 |
 | 更新の要求の `retry`（応答のなかった要求の `jti`） | 16 件、各 64 文字 |
 | クライアントが送り直す、答えの届かなかった取得の返却の `jti`（§12.7.7） | 16 件。超えたら古いものから落とす（V1d5b） |
-| §12.7.7 の返却のパスに入れる `jti` | 1〜64 文字（`Limits.IsProofId`。外れれば `204`） |
+| §12.7.7 の返却のパスに入れる `jti` | base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（`Limits.IsProofId`。外れれば `204`） |
 | サーバーライセンスの `brl` | 0 以上、1,000 以下 |
 | ライセンストークンの `overage` | 0 以上、1,000 以下（どの種類でも。`LicensePayloadRules`） |
 | 取得の要求の `borrow` | 0 以上、100 年（3,162,240,000 秒）以下。範囲の外は `ELM_MALFORMED`、1 秒未満は `ELM_INVALID_ARGUMENT` |
@@ -1101,8 +1101,8 @@ ECDSA の署名は可鍛性を持つ（`(r, n - s)` も有効）。署名のバ�
 | 頻度の制限が覚える送信元（IPv4 のアドレスか IPv6 の /64） | 100,000。超えたら新しい送信元は 1 つの溢れ用のバケットを分け合う（§13.8） |
 | ノンスの文字列 | 1〜128 文字。クライアントは外れた値を無いとみなす（§12.1）（正しいノンスは 56 バイトの base64url で 75 文字） |
 | 証明の `jti` | 64 文字 |
-| リーストークンの `areq` | 1〜64 文字（証明の `jti` と同じ。`Limits.IsProofId`。V1d5） |
-| ライセンストークンの `areq` と `act` | `areq` は 1〜64 文字（`Limits.IsProofId`）、`act` は UUID のハイフンつきの形（`Limits.IsActivationId`）。どちらも任意（V1d5a） |
+| リーストークンの `areq` | base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（証明の `jti` と同じ。`Limits.IsProofId`。V1d5） |
+| ライセンストークンの `areq` と `act` | `areq` は base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（`Limits.IsProofId`）、`act` は UUID のハイフンつきの形（`Limits.IsActivationId`）。どちらも任意（V1d5a） |
 | リースの `seq` | 9,223,372,036,854,775,807（64 ビットの整数の最大）。これより後のトークンは出さず、その更新は `ELM_MALFORMED`（§10.4 の `flag` の項。V1d5） |
 | インストール鍵のファイル | 16 KiB |
 | 時刻のクレーム（`iat`, `exp`, `nbf`, 機能の `exp`） | 0 以上、253,402,300,799（9999-12-31T23:59:59Z、`DateTimeOffset` が表せる最後の秒）以下 |
@@ -1510,7 +1510,7 @@ M3a（Issue #15）のレビューで、手順 3 を「それ以外は変えな�
 | クレーム | 意味 |
 | --- | --- |
 | `ver` | 形式の版。`1` でなければ `ELM_PROOF_INVALID`（`ProofVerifier.Verify`） |
-| `jti` | 一度だけ使う識別子。検証する側は 1〜64 文字を受け、それ以外は `ELM_PROOF_INVALID`。`ElasticLM.Client` は 128 ビットの乱数の base64url を送る（`ProofBuilder.Create`） |
+| `jti` | 一度だけ使う識別子。検証する側は base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字を受け、それ以外は `ELM_PROOF_INVALID`（`Limits.IsProofId`。両方のサーバーと、リーストークンとライセンストークンの `areq` を確かめる側に同じ形で効く）。`ElasticLM.Client` は 128 ビットの乱数の base64url を送る（`ProofBuilder.Create`）。文字を限るのは V1d26 の問 26-6 の持ち主の決定である（記録は [rows/V1d26.md](rows/V1d26.md)）。V1d26 の前は、1〜64 文字のどの文字も受けた。PostgreSQL のサービスは、U+0000 を持つ `jti` を記録できずに `500` と `ELM_INTERNAL_ERROR` を返し、SQLite のサービスは、それを記録して、ライセンストークンの `areq` に入れた（V1d26 で走らせた） |
 | `htm` | HTTP メソッド |
 | `htu` | 要求の URI（クエリと断片を除く。RFC 9449 §4.2） |
 | `iat` | 作った時刻 |
@@ -1646,8 +1646,8 @@ M4b1（0.88）で、§12.4〜§12.6 と §12.9 を次の形で出す。
 | `fingerprints` | 文字列の配列 | 有効化と試用で必須 | 0〜8 個（重なりを除く前に数える）、各 32 文字の小文字の 16 進（§10.3）。同じ値は 1 つに数える。外れれば `ELM_MALFORMED` |
 | `seq` | 0 以上の 64 ビットの整数 | 更新と解除で必須（`null` も誤り）、有効化で任意 | 最後に受け取った更新番号。最初の有効化の再試行は 0（§10.4 の手順 4）。外れれば `ELM_MALFORMED` |
 | `retry` | 文字列の配列 | 有効化・更新・解除・試用で任意 | §10.4 の手順 2。16 件まで、各 1〜64 文字。外れれば `ELM_MALFORMED` |
-| `client` | `{host, user}` | 任意 | `host` と `user` は両方とも必須の文字列で、各 255 バイトまで（UTF-8）。外れれば `ELM_MALFORMED`。ポリシーが `hostAndUser` のときだけ保存し、ほかは捨てる。クライアントは有効化の前にポリシーを知らないので、断ると有効化できなくなる |
-| `app` | 文字列 | 任意 | 64 バイトまで（UTF-8）。外れれば `ELM_MALFORMED` |
+| `client` | `{host, user}` | 任意 | `host` と `user` は両方とも必須の文字列で、各 255 バイトまで（UTF-8）で、C0 の制御文字（U+0000〜U+001F）を含まない。外れれば `ELM_MALFORMED`。ポリシーが `hostAndUser` のときだけ保存し、ほかは捨てる。クライアントは有効化の前にポリシーを知らないので、断ると有効化できなくなる |
+| `app` | 文字列 | 任意 | 64 バイトまで（UTF-8）で、C0 の制御文字を含まない。外れれば `ELM_MALFORMED`（制御文字は V1d26 の問 26-6。PostgreSQL は U+0000 を持つ文字列を保存できず、V1d26 の前は `500` と `ELM_INTERNAL_ERROR` になった。ほかの制御文字は、保存されて管理 API の答えと画面、利用ログに届いた。`client` も同じ） |
 | `product` | 文字列 | 有効化と試用で必須 | 製品の `code`（クライアントの製品 ID と同じ値、§9.1 の `^[a-z0-9-]{1,64}$`）。形が違えば `ELM_MALFORMED`。有効化では、キーのライセンスの製品と違えば `400` と `ELM_WRONG_PRODUCT`（M4b2 の設計のレビュー）。試用では、知らない製品は `404` と `ELM_TRIAL_NOT_OFFERED` |
 
 有効化の検査の順:
@@ -1895,7 +1895,7 @@ public abstract record OfflineRequestResult                 // M4c2（§12.8.5�
 - 借り出しの返却の証明は `jwk` を持つ。サーバーが再起動の後に記録から戻した借り出しは、取得の証明の公開鍵を知らないためである。
 - 借り出しの取得は、本文の `fingerprints`（§10.3）を 1 つ以上要る（0.57）。なければ、期間の上限の判定の後に `400` と `ELM_FINGERPRINT_UNAVAILABLE` を返す。
 - 本文の読み方は、`elm-server` と `elm-service` で次の点が違う。`elm-server` は本文をソース生成の型（`ServerJson` の `AcquireBody`・`RenewBody`・`ReclaimBody`）で読み、`elm-service` は `RequestBody`（`JsonDocument`）で読む（§12.6.1, §12.7.6）。
-  - `client` の `host` と `user`: `elm-server` では各々任意（なくても `null` でもよい）で、各 255 バイトまで（`ElmServer.AcquireAsync`）。`elm-service` では両方とも必須で、欠ければ `ELM_MALFORMED`（`Activations.Client`）。
+  - `client` の `host` と `user`: `elm-server` では各々任意（なくても `null` でもよい）で、各 255 バイトまで（`ElmServer.AcquireAsync`）。どちらのサーバーも、`client` の値と `app` に C0 の制御文字（U+0000〜U+001F）があれば `ELM_MALFORMED` で断る（`Limits.HasControlCharacter`。V1d26 の問 26-6。`elm-server` はデータベースを持たないが、同じ値を利用ログに書くので、対のサーバーと同じに読む）。`elm-service` では両方とも必須で、欠ければ `ELM_MALFORMED`（`Activations.Client`）。
   - `feature`: `elm-server` は、空の値と、UTF-8 で 64 バイトを超える値を、`400` と `ELM_MALFORMED`（「The request body is not a valid lease request.」）で断る（V1d4。機能の ID の上限と同じ。§8.6）。`version` や `app` と同じ検査で、証明の検証のあと、リースの処理と利用ログの前に行うので、こういう要求は `lease.denied` に数えない。文字の種類は確かめず、サーバーライセンスにない値は `403` と `ELM_FEATURE_NOT_LICENSED` である。V1d4 より前は、長さを確かめなかった。`elm-service` は製品の `code` と同じ形（§9.1）を確かめ、外れれば `ELM_MALFORMED`（`LeaseRequests.ReadAcquire`）。
   - `fingerprints`: どちらも 8 個まで、各 32 文字の小文字の 16 進。`elm-service` は同じ値を 1 つにまとめ（`Activations.Fingerprints`）、`elm-server` はまとめずに受け取ったまま使う。
   - 更新の `seq`: `elm-server` は 64 ビットの整数なら負の値も受け、§10.4 の手順 3 で複製と判定する（`LeaseRules.Judge`。負の値は今の更新番号とも、その 1 つ前とも一致しない）。`elm-service` は負の値を `ELM_MALFORMED` で断る（`Activations.Sequence`）。
@@ -2212,7 +2212,7 @@ M4d1（0.93）で、§12.7.1〜§12.7.4 を `elm-service` に出す。プロト�
 検査の順（§12.7.6 の返却の順に合わせた。リースの鍵を知るには証明が要るので、証明はリースを探すより前にある）:
 
 1. 送信元ごとの頻度の制限（`elm-server` では、その前に送信元の IP の許可。§13.8）。
-2. `{jti}` の形。1〜64 文字（証明の `jti` と同じ `Limits.IsProofId`）でなければ、証明を確かめず、何も読まずに `204`（返却の、ID の形でないリース ID と同じ）。
+2. `{jti}` の形。base64url の文字（`A-Z`、`a-z`、`0-9`、`-`、`_`）の 1〜64 文字（証明の `jti` と同じ `Limits.IsProofId`）でなければ、証明を確かめず、何も読まずに `204`（返却の、ID の形でないリース ID と同じ）。
 3. 本文の大きさ、証明（`jwk` を持つ。この要求自身の `jti` を記録する）。`elm-service` では、続けてインストール鍵ごとの頻度と `jti` の記録（§12.7.6 の返却の 3 と同じ）。
 4. 上の条件でリースを探す。なければ `204`。`elm-service` は、ロックせずに `key_id` と `issued_by` で読み、ライセンスの行をロックしてからリース ID で読み直す。読み直した行がない、期限が来ている、`seq` が 1 でないときは `204`（更新も同じロックを取るので、2 つの読みのあいだの更新はここで分かる。行の `key_id` は変わらず、`issued_by` は `seq` と一緒にしか変わらないので、`seq` だけを見る。PR #440 の独立レビュー K2）。
 5. 止めたリースは `409` と `ELM_CLONE_DETECTED`。
@@ -3530,7 +3530,7 @@ M5b の形（0.99）:
     - IdP に届かない: `HttpRequestException`、時間切れの `TaskCanceledException`（要求の中止 `RequestAborted` でないもの）、discovery の取り出しの `InvalidOperationException`、トークンのエンドポイントの 5xx の `OpenIdConnectProtocolException`。`503`。件数には数えない。
     - それ以外（IdP の誤り `error`、`access_denied`、`state` か相関の Cookie の食い違い、時間切れ、確かめられないトークン、トークンのエンドポイントの 4xx）: `400`。1 分ごとの認証の失敗の件数に数える。
     - どちらも理由はサービスのログに書く。ブラウザが要求を中止したとき（`RequestAborted`）は、IdP の失敗として書かない。IdP が戻りのクエリの `error` で答えたときの理由は、登録された誤りのコードか決まった文で、`error_description` と `error_uri` は書かない（§18.3、V1d4b）。
-- 画面が読む管理 API の答え（`/v1/admin/`）は、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: frame-ancestors 'none'` を持つ（§14.5。後の 2 つは V1d26 の問 26-2 で足した）。答えは HTML ではないので、`default-src 'none'` は付けない（OWASP の REST Security Cheat Sheet は、それを HTML を返しうる API に限る）。
+- 画面が読む管理 API の答え（`/v1/admin/`）は、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: frame-ancestors 'none'` を持つ（§14.5。後の 2 つは V1d26 の問 26-2 で足した）。答えは HTML ではないので、`default-src 'none'` は付けない（OWASP の REST Security Cheat Sheet は、それを HTML を返しうる API に限る）。同じ表が CSP Level 2 を持たない古いブラウザーのために勧める `X-Frame-Options: DENY` は、管理 API にも画面にも付けない。画面の頁と同じく CSP の `frame-ancestors` だけにそろえる（持ち主の決定、2026-11-14、Issue #345。対象のブラウザーがすべて CSP Level 2 を持つかは確かめていない。退けた案: 管理 API と画面の両方に付ける）。
 - 画面（`400`、`403`、`503`）: `text/plain; charset=utf-8`、`Cache-Control: no-store`、`X-Content-Type-Options: nosniff`、`Content-Security-Policy: default-src 'none'; frame-ancestors 'none'`。本文は状態ごとに決めた短い英語の文で、IdP の `error_description` などの入力を映さない。
 - IdP の設定（運用者が行う。テストの realm も同じにする）: Web のクライアントは秘密を持つクライアントで、認可コードのフロー（PKCE）だけを許す（Keycloak はサービスアカウントと Direct access grants を切る。Entra ID はアプリ自身にアプリのロールを与えない。T13）。戻りの URL（`publicUrls` の最初の URL + `/auth/callback`）を、ワイルドカードなしでそのまま登録し、ログアウトの後の戻り先（`publicUrls` の最初の URL）も登録する。クライアントの認証に `client_secret_post` を許す。
 - 役割のクレーム: 役割は、画面のログインでは ID トークンから、CLI ではアクセストークンから決まり、同じ管理者の行を書き換える。片方にだけクレームがあると役割が行き来するので、`oidc.roleClaim` のクレームを ID トークンとアクセストークンの両方に入れるよう IdP を設定する（Keycloak はマッパーの「ID トークンに入れる」と「アクセストークンに入れる」。テストの realm も両方に入れる、T13）。アクセストークンとリフレッシュトークンは使わず（`SaveTokens` は `false`）、ブラウザにも渡さない。
@@ -4241,7 +4241,7 @@ M3c で作った形:
 - `elm-server` と `elm-service` は、自分の処理のメッセージを、.NET のコンソールのロガーで標準出力に書く。署名はなく、ファイルにも残さない。段の既定は `Information` で、.NET の構成の `Logging` の節（環境変数 `Logging__LogLevel__Default` など）で変えられる。分類ごとに書くものの一覧は Reference の `docs/guide/reference/logs.md` にある。
 - `elm-service` は、試用が製品の 24 時間の上限に達したことを、ノードごとに、製品ごとに 24 時間に 1 回、`Warning` で書く（§12.9、V1d17）。前の警告から 24 時間のうちの 2 回目の上限は書かない。警告の時刻を過ぎても、断りは続きうる。
 - Web ホストの要求ごとの行は書かない（V1d4a、Issue #375。記録は [rows/V1d4a.md](rows/V1d4a.md)）。ASP.NET Core は、分類 `Microsoft.AspNetCore.Hosting.Diagnostics` に、要求ごとに `Information` で「Request starting」と「Request finished」を書き、どの経路にも合わない要求には「Request reached the end of the middleware pipeline …」（イベント 16）も書く。3 つとも、要求のパス（復号したもので、`%0A` は本物の改行になる）、クエリ、`Host` ヘッダーをそのまま持つ（`Microsoft.AspNetCore.Hosting.dll` 10.0.15 のメッセージの雛形。この DLL のメッセージの雛形で要求の文字を持つものは、この 3 つだけ）。そのままでは、待ち受けに届く誰でも、1 行に数 KB の文字と偽の行を運用のログに書けた。
-  - 両方の製品は、この分類を、コードで `Warning` より下では書かない（`HostRequestLog.Raise` に分類と下限の段 `Warning` を渡す。`ElmServer.Build` と `ElmService.Build` が、`SetMinimumLevel` のすぐあとで呼ぶ）。2 つの製品は、名前空間だけが違う同じ `HostRequestLog.cs` をそれぞれ持つ。`Raise` は分類と下限の段を引数に取り、`elm-service` は同じ方法で、下の `OpenIdConnectHandler` の分類も書かない（V1d4b）。`elm-server` は OIDC のサインインを持たないので、`Raise` をこの分類だけに使う。名前空間はアセンブリ名に合わせる（`docs/conventions.md`）ので、1 つのファイルを両方のプロジェクトに結び付けることはできず、2 つの製品が共に参照するプロジェクト（`ElasticLM.Leasing`、`ElasticLM.Issuing`）は、ログに依存しない。
+  - 両方の製品は、この分類を、コードで `Warning` より下では書かない（`HostRequestLog.Raise` に分類と下限の段 `Warning` を渡す。`ElmServer.Build` と `ElmService.Build` が、`SetMinimumLevel` のすぐあとで呼ぶ）。2 つの製品は、名前空間だけが違う同じ `HostRequestLog.cs` をそれぞれ持つ。`Raise` は分類と下限の段を引数に取り、`elm-service` は同じ方法で、下の `OpenIdConnectHandler` の分類（V1d4b）と `JwtBearerHandler` の分類（V1d26）も書かない。`elm-server` は OIDC のサインインを持たないので、`Raise` をこの分類だけに使う。名前空間はアセンブリ名に合わせる（`docs/conventions.md`）ので、1 つのファイルを両方のプロジェクトに結び付けることはできず、2 つの製品が共に参照するプロジェクト（`ElasticLM.Leasing`、`ElasticLM.Issuing`）は、ログに依存しない。
   - 規則の足し方: 構成から読んだ規則とコードの規則のすべてのあと（`PostConfigure`）に、この分類の規則を、提供者を問わないものと、規則が名前を挙げた提供者ごとのものとして足す。段は、それまでの規則がこの分類に与える段と `Warning` の高いほうである。それまでの規則の選び方は、`LoggerRuleSelector.Select`（dotnet/runtime の release/10.0、`src/libraries/Microsoft.Extensions.Logging/src/LoggerRuleSelector.cs`）と同じにする。提供者の規則が提供者を問わない規則より先で、その中では分類を覆ういちばん長い名前、同じ長さなら後のもの、規則がなければ最小の段である。名前の長さは `*` を含めて数える。`*` を 1 つ含む名前は、分類がその前の部分で始まり、後の部分で終われば分類を覆い、2 つの部分は重なってよい（`IsBetter`）。提供者の規則がこの分類を覆わない提供者には足さない（提供者を問わない規則がその分類を決めるため）。
   - 足す規則の名前は、分類、`*`、分類を続けたもの（この分類では 81 文字の `Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics`、`OpenIdConnectHandler` の分類では 141 文字）にする。分類を覆う名前は `*` を高々 1 つ持ち（2 つ以上なら `LoggerRuleSelector` が例外を投げる）、その前と後はそれぞれ分類より長くなれないので、分類の長さを n 文字とすると、2n + 1 文字が覆う名前のいちばん長いものである（`Microsoft.AspNetCore.Hosting.Diagnostics` は 40 文字なので 81 文字、`OpenIdConnectHandler` の分類は 70 文字なので 141 文字）。足す規則は最後に来るので、同じ長さの規則にも勝つ。初めの実装は分類の名前（40 文字）で足していたため、`Microsoft.AspNetCore.Hosting.Diagnostics*` のような、分類を覆うより長い名前の設定（`*` を後ろ、前、途中に置いた 41 文字と、81 文字。提供者を問わないものと、提供者のもの）で要求の行が戻った（独立レビューの指摘。手元で、`WebApplication.CreateSlimBuilder` の構成とコンソールの提供者で確かめた）。41 文字の名前で足しても、81 文字の設定には負ける（変異の確かめで確かめた）。
   - 提供者の別名: `LoggerRuleSelector` は、提供者の型の完全な名前の規則と、`ProviderAlias` 属性の別名の規則を、同じ提供者の規則として扱う。製品が登録する、別名を持つ提供者はコンソール（`Console` と `Microsoft.Extensions.Logging.Console.ConsoleLoggerProvider`）だけなので、`HostRequestLog` は、`Console` の規則を完全な名前の規則として数え、完全な名前で 1 つの規則を足す。分けて数えると、`Console` の側で分類を `None` にし、完全な名前の側で `Default` を `Trace` にした設定で、足した 2 つの規則のうち後の `Warning` の規則が勝ち、設定の `None` が効かなかった。
@@ -4256,7 +4256,11 @@ M3c で作った形:
   - クエリの誤りでない失敗の理由（`SignInRefused` のそのほかの理由と、`SignInUnavailable` のログインのときと戻りのときの理由）は、例外の `Message` に、内側の例外の `Message` を「 ---> 」でつないで書く（`ElmService.WithInnerMessages`。`Exception.ToString` と同じつなぎ方）。つなぎ方はスタックを足さない。ただし、ログインのときの discovery の失敗（IDX20803）は、それ自身の `Message` に、内側の例外の `ToString`（スタックを含む）を持つ。トークンのエンドポイントへの TLS の失敗の理由や、IDX の文が「see inner exception」と言う中身が、これで残る。Microsoft.IdentityModel は個人のデータを伏せ、HttpClient の文は IdP の側で起きたこと（接続、TLS、状態）を言うので、サービスとライブラリーの文は要求の文字を持たない（持ち主の決定、2026-11-14、Issue #415。問 4b-1 で示した「失うもの」は、HTTP の状態コードと例外のスタックだけで、内側の例外の文を言っていなかった。`SignInUnavailable` にも同じつなぎ方を使うことも、持ち主が決めた）。
   - トークンのエンドポイントの答え（問 4b-3）は、IdP の文をそのまま書く。IdP が要求の値（たとえば、攻撃者が自分の `/auth/login` のあとに `/auth/callback` へ送ったコード）を答えに引けば、その値も理由に入る。
   - そのほかの理由（トークンのエンドポイントの答えの `invalid_client` や `invalid_grant` とその説明、ID トークンの確かめ、「Correlation failed.」など）は、そのまま書く（V1d4b の問 4b-3）。これらはライブラリーか IdP の文で、要求の文字を持たない。
-- 既定の段で書く `Microsoft.*` の分類（V1d4a の実装の head で、Windows 11、Debug のビルドで、同じプロセスで起動し、`elm-server` の https とソケットのファイル（管理者トークンありとなし）、`elm-service` の http と管理画面のサインインに要求を送り、止めて測った）: `Microsoft.Hosting.Lifetime`（待ち受けるアドレス、起動、環境、コンテンツのルート、停止）、`Microsoft.Extensions.Hosting.Internal.Host`（待ち受けられないときの誤り「Hosting failed to start」）、`Microsoft.AspNetCore.Routing.EndpointMiddleware`（要求ごとの「Executing endpoint」「Executed endpoint」。経路の形 `HTTP: DELETE /admin/v1/leases/{id}` だけを持ち、パスの値を持たない）、`Microsoft.AspNetCore.Server.Kestrel`（操作が例外で終わったときの誤り「An unhandled exception was thrown by the application.」。接続と要求の ID と例外を持つ）。`elm-service` で画面のログインがあるときは `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager`（鍵を作る起動の「Creating key」と警告「No XML encryptor configured」）と `Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler`（V1d4b からはどの段でも書かない）、OIDC の管理者があるときは `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler`（アクセストークンを断った理由。トークンの全体は Microsoft.IdentityModel が伏せる。ただし、V1d26 で測ると、ヘッダーの `kid`（IDX10503）とペイロードの `iss`（IDX10205）の値は、JSON の中の逃がし（`\r\n` などの 2 文字）のまま、イベント 1 と 7 に `Information` で書く。本物の改行は入らない。同じ文が `ServiceLog.TokenRefused`（イベント 12、`Debug`）の理由にも入る。どうするかは、V1d26 で持ち主に聞いている）も書く。
+- 既定の段で書く `Microsoft.*` の分類（V1d4a の実装の head で、Windows 11、Debug のビルドで、同じプロセスで起動し、`elm-server` の https とソケットのファイル（管理者トークンありとなし）、`elm-service` の http と管理画面のサインインに要求を送り、止めて測った）: `Microsoft.Hosting.Lifetime`（待ち受けるアドレス、起動、環境、コンテンツのルート、停止）、`Microsoft.Extensions.Hosting.Internal.Host`（待ち受けられないときの誤り「Hosting failed to start」）、`Microsoft.AspNetCore.Routing.EndpointMiddleware`（要求ごとの「Executing endpoint」「Executed endpoint」。経路の形 `HTTP: DELETE /admin/v1/leases/{id}` だけを持ち、パスの値を持たない）、`Microsoft.AspNetCore.Server.Kestrel`（操作が例外で終わったときの誤り「An unhandled exception was thrown by the application.」。接続と要求の ID と例外を持つ）。`elm-service` で画面のログインがあるときは `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager`（鍵を作る起動の「Creating key」と警告「No XML encryptor configured」）と `Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler`（V1d4b からはどの段でも書かない）も書く。OIDC の管理者があるときの `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler` は、V1d26 からどの段でも書かない（下）。
+- 管理 API の OIDC のアクセストークンを確かめるハンドラー（ASP.NET Core の `JwtBearerHandler`）の分類 `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler` は、どの段でも書かない（V1d26 の F38 の探し直しで見つけ、持ち主が決めた。2026-11-14、Issue #345。記録は [rows/V1d26.md](rows/V1d26.md)）。Microsoft.IdentityModel 8.19.2 がアクセストークンを断る文は、トークンの全体を伏せるが、ヘッダーの `kid`（IDX10503「The token's kid is: '…'」）とペイロードの `iss`（IDX10205「Issuer: '…'」）の値をそのまま持つ。ハンドラーはその文を、イベント 1（「Failed to validate the token.」と例外）と 7（「elm-oidc was not authenticated. Failure message: …」）に `Information` で書いていた。`oidc.issuer` を置いたサービスでは、管理 API に届く誰でも、1 つの要求で、トークンの上限（8,192 文字）までの文字を既定の段のログに書けた（V1d26 で測った。CR LF は JSON の逃がしのまま書かれ、本物の改行は入らなかった）。
+  - `elm-service` は、`HostRequestLog.Raise` に、この分類と下限の段 `None` を渡す（`ElmService.Build`。分類の名前は `typeof(JwtBearerHandler).FullName`、`ElmService.AccessTokenHandlerCategory`）。`OpenIdConnectHandler` の分類と同じ形である。
+  - 断った理由は、`ServiceLog.TokenRefused`（イベント 12、`Debug`）に残る。理由は、ライブラリーの文の頭の IDX のコード（`IDX10503` など）、サービス自身の `typ` の文（「The token's typ is not at+jwt or JWT.」）、トークンがないときの「no token」、それ以外の決まった文「the access token is not valid」のどれかで、ライブラリーの文の残りは書かない（`ElmService.TokenRefusal`）。V1d26 の前は、ライブラリーの文をそのまま書いていた。
+  - 退けた案: `JwtBearerHandler` だけを `Warning` に上げる（`TokenRefused` の `Debug` に文字が残る）。§5.4 で受け入れる（偽の行は作れないが、文字そのものは既定の段に残る）。
 - 既定の段の運用のログに、要求のパス、クエリ、ヘッダーの文字は入らない。
 - 既定より低い段では、ほかの分類も要求の文字を書く（V1d4a の独立レビューの指摘のあと、同じ head と方法で、`Trace` で測った。`Request starting` などの分類 `Microsoft.AspNetCore.Hosting.Diagnostics` は、`Trace` でも 0 行だった）。`Debug` では、`Microsoft.AspNetCore.Routing.Matching.DfaMatcher` が要求ごとに復号したパスを書き（イベント 1000「No candidates found for the request path '…'」、1001、1005。`%0A` は本物の改行になる）、`Microsoft.AspNetCore.Server.Kestrel.BadRequests` が、Kestrel が断った要求の部分を書く（イベント 17「bad request data: …」。「Invalid request line: '…'」「Invalid request header: '…'」「Invalid Host header: '…'」「Invalid content length: …」と、`Transfer-Encoding` の値。制御文字は `\x0D` のように逃がす）。これらの分類は、上げない。低い段は、運用者が調べるために自分で選ぶもので、パスが見えることが調べるのに役立つ。利用者の文書が、低い段ではリクエストの文字を書くと言う（持ち主の決定、V1d4a の問 4a-3 の推奨案 A。2026-11-13。退けた案: これらもコードで Information 以上に上げる）。問 4a-3 は `OpenIdConnectHandler`（`Trace` のイベント 24）を含む 3 つの分類を挙げていたが、V1d4b でこの分類はどの段でも書かなくなったので、2 つになった（持ち主の決定、V1d4b の Grill、2026-11-14）。
 
