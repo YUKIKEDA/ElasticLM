@@ -1163,8 +1163,8 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
-    // Reads a lease answer and verifies the token with the identity of the server license the answer names (design §13.5,
-    // the ELM-Server-License header); a new server license is fetched and checked first. From elm-service, the token is
+    // Reads a lease answer and verifies the token with the server license in use; when the answer names a server license
+    // the client does not know (design §13.5, the ELM-Server-License header), that one is fetched and checked first. From elm-service, the token is
     // verified with the certificates of the answer (design §12.7.5 steps 1, 2, and 6), which are returned with the result.
     // The identity that verified an on-premises token is returned too, for the version check of an acquisition (step 7).
     private async Task<(LeaseVerificationResult Result, IReadOnlyList<string> Certificates, ServerIdentity? Identity)> ReadLeaseAsync(Reply reply)
@@ -1193,8 +1193,15 @@ public sealed class LicenseClient : IAsyncDisposable
             return (_leaseVerifier.VerifyHosted(answer.Lease, answer.Certificates!, expectation), answer.Certificates!, null);
         }
 
-        ServerIdentity? identity = _identities.Find(i => i.License.TokenId == reply.ServerLicenseTokenId);
-        if (identity is null)
+        // design §13.5 (V1d18, the owner's answer to K4 of PR #446): an acquisition or a renewal is verified with the server
+        // license in use only. An earlier server license kept for the leases tied to it never verifies a new token, so an
+        // answer that names one is checked against the current license and fails at slic; only a license the client does
+        // not know yet is fetched.
+        ServerIdentity? identity = Volatile.Read(ref _current);
+        if (
+            identity is null
+            || (identity.License.TokenId != reply.ServerLicenseTokenId && !_identities.Exists(i => i.License.TokenId == reply.ServerLicenseTokenId))
+        )
         {
             Volatile.Write(ref _current, null);
             if (await EnsureConnectedAsync().ConfigureAwait(false) is LicenseError error)

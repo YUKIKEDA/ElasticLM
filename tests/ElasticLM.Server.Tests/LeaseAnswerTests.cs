@@ -277,6 +277,80 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// An acquisition or a renewal answer that names an earlier server license the client still keeps is checked against
+    /// the server license in use, and refused (design §13.5, V1d18): an earlier license, with a later feature expiry or a
+    /// wider version range, never lets a new lease through. A lease tied to the earlier license is still released.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with server license A, past its reclaim window; a client behind a relay that keeps answers; a lease of pro
+    ///   under A, whose genuine answer (ELM-Server-License A) the relay keeps.
+    /// - The server reloads server license B (a new jti, the same grants); the client takes a second lease, so it fetches B
+    ///   and uses it, and keeps A for the first lease.
+    /// - The client releases the first lease; the server then loads A again, so that a fetch of the server license would
+    ///   give A (before V1d18 the client verified with the A it kept; a client that fetched again would take A).
+    ///
+    /// Steps:
+    /// - As the case says: acquire pro, which the relay answers with the kept answer under
+    ///   A; or move the clock 200 s so the second lease renews, and the relay answers the renewal with it.
+    ///
+    /// Expected:
+    /// - The release gives no error and the lease is Released.
+    /// - acquire: Failed with ELM_LEASE_OUT_OF_BOUNDS "The lease was issued under another server license; fetch the server
+    ///   license again." (before V1d18 the token verified with A, and the answer failed only at areq as
+    ///   ELM_REQUEST_MISMATCH).
+    /// - renew: the second lease is Retrying with the same error, and keeps its token.
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    [Theory]
+    [InlineData("acquire")]
+    [InlineData("renew")]
+    public async Task Answer_UnderAnEarlierServerLicense_IsOutOfBounds(string kind)
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string data = _deployment.NewFolder();
+        string path = _deployment.WriteServerLicense(data);
+        byte[] fileA = File.ReadAllBytes(path);
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(Window);
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        Lease first = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        KeptAnswer underA = Assert.Single(relay.Answers());
+
+        _deployment.WriteServerLicense(data);
+        Assert.Null(server.ReloadLicense());
+        Lease second = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.NotEqual(underA.ServerLicense, second.Token.ServerLicenseTokenId);
+        Assert.Null(await client.ReleaseLeaseAsync(first, cancel));
+        Assert.Equal(LeaseState.Released, first.State);
+
+        var outOfBounds = new LicenseError(
+            ErrorCode.LeaseOutOfBounds,
+            "The lease was issued under another server license; fetch the server license again."
+        );
+
+        // The server goes back to A, which it may (a file loaded by hand is not compared with the one it replaces), so a
+        // fetch of the server license now gives A: the client must not fetch it for an answer that names A.
+        File.WriteAllBytes(path, fileA);
+        Assert.Null(server.ReloadLicense());
+        if (kind == "acquire")
+        {
+            relay.ReplayToNextAcquisition(underA);
+            Assert.Equal(outOfBounds, Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("pro", cancellationToken: cancel)).Error);
+        }
+        else
+        {
+            VerifiedLease held = second.Token;
+            relay.ReplayToNextRenewal(underA);
+            _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+            await Deployment.WaitUntilAsync(() => second.State == LeaseState.Retrying);
+            Assert.Equal(outOfBounds, second.LastError);
+            Assert.Same(held, second.Token);
+        }
+    }
+
+    /// <summary>
     /// An answer to a renewal that differs from the lease held in one thing is refused with ELM_REQUEST_MISMATCH and the
     /// sentence for that thing: the lease keeps its token, goes to Retrying, and renews at the retry.
     /// </summary>
