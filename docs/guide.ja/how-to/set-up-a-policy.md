@@ -56,7 +56,7 @@ elm admin request POST /v1/admin/policies --body three-devices-policy.json --url
 `elm` は、既定の値を含むすべての設定とともにポリシーを表示する。
 
 ```text
-{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Standard, 3 devices","licenseKind":"standard","binding":"nodeLocked","maxActivations":3,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":31622400,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":259200,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
+{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Standard, 3 devices","licenseKind":"standard","binding":"nodeLocked","maxActivations":3,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":31622400,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":259200,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"serverBorrowReturnLimit":10000,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
 ```
 
 `id` が、下の `<three-devices-policy-id>` だ。このポリシーのライセンスは、チュートリアルのライセンスと同じようにアクティベーションする。ライセンスを作る。
@@ -130,7 +130,7 @@ elm admin request PATCH /v1/admin/policies/<three-devices-policy-id> --body poli
 `elm` は、変わったポリシーを表示する。
 
 ```text
-{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Standard, 3 devices","licenseKind":"standard","binding":"nodeLocked","maxActivations":5,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":31622400,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":604800,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:31:00Z"}
+{"id":"01960000-0000-7000-8000-000000000203","productId":"01960000-0000-7000-8000-000000000101","name":"Standard, 3 devices","licenseKind":"standard","binding":"nodeLocked","maxActivations":5,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":31622400,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":604800,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"serverBorrowReturnLimit":10000,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:31:00Z"}
 ```
 
 変更は、サービスが次に発行するライセンスファイルかリースから、そのポリシーのすべてのライセンスに反映される。発行済みのファイルとリースは、期限が切れるまで元の値のままだ。新しい `duration` は、変更のあとに作ったライセンスに反映される。`fromFirstActivation` のときは、期限のないライセンスにも、次のアクティベーションかクラウドのリースのときに反映される。すでに期限のあるライセンスは、その期限のままだ。`productId`、`licenseKind`、`binding` は変えられず、変えようとするとサービスは `ELM_INVALID_ARGUMENT` を返す。これらを変えるには、別のポリシーを作り、その下で新しいライセンスを作る。

@@ -83,6 +83,7 @@ A vendor chooses these settings per policy. The names and values are as the admi
 | `overage` | percent, or none | none | How many seats above the bought number may be lent |
 | `borrowLimit` | seconds, or none | none (no borrowing) | The longest time a lease may be borrowed for use away from the network |
 | `borrowReturnLimit` | 0 to 1,000 | 2 | How many borrows may be returned early in 30 days |
+| `serverBorrowReturnLimit` | 1 to 10,000 | 10,000 | How many early returns of borrows a customer's `elm-server` takes in 30 days, from all installations together; written into the server license |
 | `clientInfoStrategy` | `none`, `hostAndUser` | `none` | Whether the service keeps the host name and OS user name the app sends |
 | `trialDuration` | seconds | 14 days | The length of a trial, for a `trial` policy |
 | `trialDailyLimit` | 1 to 100,000 | 1,000 | How many trials the product gives in any 24 hours; used only while the policy is the product's trial policy |

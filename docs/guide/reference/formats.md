@@ -219,6 +219,7 @@ Payload:
 | `overage` | integer | in a `server` token; optional otherwise | How many seats over `seats` may be lent, in percent: 0 to 1,000. |
 | `clone` | string | in a `server` token; optional otherwise | What `elm-server` does when a copied app installation renews the same lease as the original: `deny` or `flag` ([Retries and clones](../explanation/floating-licenses.md#retries-and-clones)). |
 | `brl` | integer | in a `server` token; optional otherwise | How many early returns of borrows one installation key, or one machine fingerprint, may make in 30 days: 0 to 1,000. |
+| `sbrl` | integer | in a `server` token; optional otherwise | How many early returns of borrows the server takes in 30 days, from all installation keys and machines together: 1 to 10,000. |
 | `meta` | object | no | Vendor values: 0 to 32 members, each a string. A key is at most 64 bytes and a value at most 1,024 bytes in UTF-8. The verifier does not read them. |
 
 Members of each item of `feat`:
@@ -510,6 +511,7 @@ The license token in it, decoded. It is a server license, so it also has the mem
   "overage": 0,
   "clone": "deny",
   "brl": 2,
+  "sbrl": 10000,
   "meta": {
     "customer": "Contoso"
   }
@@ -572,6 +574,7 @@ A token of kind `server` must have these members, besides the ones every license
 | `overage` | integer | yes | Seats over `seats`, in percent: 0 to 1,000. |
 | `clone` | string | yes | `deny` or `flag`: what `elm-server` does when a copied app installation renews the same lease as the original ([Retries and clones](../explanation/floating-licenses.md#retries-and-clones)). |
 | `brl` | integer | yes | Early returns of borrows allowed in 30 days: 0 to 1,000. |
+| `sbrl` | integer | yes | Early returns of borrows the server takes in 30 days, from all installations together: 1 to 10,000. |
 
 `fp` and `fpm` are optional: `elm-server` checks them against its own machine each time it reads the file, and clients do not check them. `elm-service` writes a server license from a policy with `licenseKind` `server`; `elm license issue --kind server` writes one by hand (see [elm command reference](elm-cli.md#elm-license-issue)).
 
@@ -609,7 +612,8 @@ A server license that `elm license issue --kind server --feature "pro;seats=5" -
   "borrow": 86400,
   "overage": 0,
   "clone": "deny",
-  "brl": 2
+  "brl": 2,
+  "sbrl": 10000
 }
 ```
 

@@ -117,7 +117,7 @@ The client also compares each answer with the request it sent, because a relay o
 
 ## The server license: how the client trusts an on-premises server
 
-`elm-server` is a generic binary. What makes it a server for one vendor's product is its server license: a license token with `kind: server`, signed by the vendor. It names the server's installation key and, when the vendor binds them, its machine fingerprints (`cnf.jkt`, `fp`), so it works only on that machine; the features and their seats (`feat`); the lease time, longest borrow (0 means none), overage percentage, early borrow returns allowed in 30 days, and what to do when a copied app installation renews a lease (`lease`, `borrow`, `overage`, `brl`, `clone`); and its expiry and grace period (`exp`, `grace`), by default 30 days after issue from the server policy's `tokenLifetime`. The claims a server license must have, and the answer of `GET /v1/server/license`, are in [Token and file formats](../reference/formats.md#server-license).
+`elm-server` is a generic binary. What makes it a server for one vendor's product is its server license: a license token with `kind: server`, signed by the vendor. It names the server's installation key and, when the vendor binds them, its machine fingerprints (`cnf.jkt`, `fp`), so it works only on that machine; the features and their seats (`feat`); the lease time, longest borrow (0 means none), overage percentage, early borrow returns allowed in 30 days to one installation and to the whole server, and what to do when a copied app installation renews a lease (`lease`, `borrow`, `overage`, `brl`, `sbrl`, `clone`); and its expiry and grace period (`exp`, `grace`), by default 30 days after issue from the server policy's `tokenLifetime`. The claims a server license must have, and the answer of `GET /v1/server/license`, are in [Token and file formats](../reference/formats.md#server-license).
 
 Before the client takes any lease from a server, it checks the server:
 
@@ -201,9 +201,10 @@ A borrow longer than the limit is refused with `403` and `ELM_BORROW_NOT_ALLOWED
 
 ### Early return
 
-The app can return a borrow early with `ReleaseLeaseAsync`. The server refuses with `409` and `ELM_RETURN_NOT_ALLOWED`, and the borrow stays valid until its expiry, in two cases:
+The app can return a borrow early with `ReleaseLeaseAsync`. The server refuses with `409` and `ELM_RETURN_NOT_ALLOWED`, and the borrow stays valid until its expiry, in these cases:
 
 - The installation key, or any machine fingerprint the borrow was made with, has already made `borrowReturnLimit` early returns in the last 30 days (the server license's `brl`, 2 by default). Counting fingerprints stops a user from resetting the count with a new key alone. The client reports its fingerprints, though, and the server cannot check them, so a new key sent with made-up fingerprints resets the count ([the security model](security-model.md#on-the-licensees-machine)).
+- On `elm-server`: the server has already taken `serverBorrowReturnLimit` early returns in the last 30 days, from all installations together (the server license's `sbrl`, 10,000 by default). A new key with made-up fingerprints does not reset this count, so the record of early returns the server keeps, and copies into each new file, stays bounded. Someone who borrows and returns again and again with new keys can use up the count; early returns are then refused for everyone until enough of the counted ones are 30 days old, and the operational log warns once in 30 days ([the security model](security-model.md#on-the-customers-license-server)).
 - The server license changed since the borrow in a way that matters: another license, the feature removed, fewer seats, or a shorter `borrow`. A routine renewal does not count.
 
 The limit exists because a returned borrow's token stays valid until its `exp`; without it, a user could borrow and return again and again and hold many valid tokens for one counted seat.

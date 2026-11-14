@@ -24,6 +24,7 @@ Two parties limit borrows:
 | --- | --- | --- |
 | The longest borrow | The vendor | The server license: `--borrow-days` of `elm license issue`. `0`, the default, turns borrowing off. |
 | How often one installation may return a borrow early | The vendor | The server license: `--borrow-returns`, 2 in 30 days by default. |
+| How many early returns the server takes from all installations | The vendor | The server license: `--server-borrow-returns`, 10,000 in 30 days by default. |
 | A shorter longest borrow | You | `borrow.maxDuration` in the server's settings. The server uses the shorter of this and the server license's limit. |
 | Seats kept for normal leases | You | `borrow.reserve` in the server's settings, 0 by default: a borrow that would leave fewer free seats than this is refused. |
 
