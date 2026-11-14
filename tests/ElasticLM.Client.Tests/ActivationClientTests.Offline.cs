@@ -52,7 +52,7 @@ public sealed partial class ActivationClientTests
 
         string answer = await ProcessedAsync(vendor, again.File);
         VerifiedLicense license = Activated(await client.ImportResponseAsync(answer, Cancel));
-        Assert.Equal((licenseId, 1L, NonceOf(first.File)), (license.LicenseId, license.Sequence!.Value, license.OfflineRequestNonce));
+        Assert.Equal((licenseId, 1L, NonceOf(first.File)), (license.LicenseId, license.Sequence!.Value, license.AnsweredRequestId));
         Assert.Equal(1L, Activated(await client.ImportResponseAsync(answer, Cancel)).Sequence);
         Assert.Equal(ActivationState.Active, client.State);
         Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null));
@@ -106,7 +106,7 @@ public sealed partial class ActivationClientTests
 
         Assert.Equal(ErrorCode.RequestMismatch, Failed(await client.ImportResponseAsync(lost, Cancel)).Code);
         VerifiedLicense license = Activated(await client.ImportResponseAsync(await ProcessedAsync(vendor, c.File), Cancel));
-        Assert.Equal((2L, NonceOf(c.File)), (license.Sequence!.Value, license.OfflineRequestNonce));
+        Assert.Equal((2L, NonceOf(c.File)), (license.Sequence!.Value, license.AnsweredRequestId));
         Assert.Equal((0, 0), (vendor.Kept("a").Pending.Count, vendor.Kept("a").Retry.Count));
     }
 

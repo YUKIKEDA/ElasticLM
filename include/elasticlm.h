@@ -287,7 +287,8 @@ ELM_FUNCTION(int32_t, elm_activation_create, (const elm_activation_options* opti
  * operation of the same activation, the automatic refresh included (no bound); another process's lock on this
  * installation (10 s); and up to 3 sends of at most 30 s each. retry_after_seconds may be NULL; otherwise it gets 0, or
  * when to try again after a refusal (seconds, rounded up). On success *out is a new license; free it with
- * elm_license_free.
+ * elm_license_free. An answer whose license file is not the answer to this request (another activation, for a refresh no
+ * later sequence number, or another request) is ELM_REQUEST_MISMATCH: the kept activation does not change.
  */
 ELM_FUNCTION(int32_t, elm_activation_activate, (elm_activation* activation, const char* license_key, elm_license** out, int64_t* retry_after_seconds))
 ELM_FUNCTION(int32_t, elm_activation_start_trial, (elm_activation* activation, elm_license** out, int64_t* retry_after_seconds))

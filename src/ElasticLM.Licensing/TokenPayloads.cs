@@ -159,6 +159,9 @@ internal sealed class LicensePayload
     [JsonPropertyName("areq")]
     public string? Areq { get; set; }
 
+    [JsonPropertyName("act")]
+    public string? Act { get; set; }
+
     [JsonPropertyName("lease")]
     public long? Lease { get; set; }
 

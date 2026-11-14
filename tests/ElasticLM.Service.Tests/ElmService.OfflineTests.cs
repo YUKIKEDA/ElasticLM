@@ -34,9 +34,11 @@ public sealed class ElmServiceOfflineTests
     ///   the refresh file again.
     ///
     /// Expected:
-    /// - 200 without an ELM-Nonce header; a standard token bound to the device, sequence 1, areq the request's nonce; the
+    /// - 200 without an ELM-Nonce header; a standard token bound to the device, sequence 1, areq the request's nonce, act
+    ///   the activation (V1d5a); the
     ///   activation has no client and no app; one activation.activate row by the installation with "channel": "offline";
-    ///   the same body again, still one row, seq 1; the refresh gives sequence 2 with its own nonce; one kept answer; 204;
+    ///   the same body again, still one row, seq 1; the refresh gives sequence 2 with its own nonce and the same act; one
+    ///   kept answer; 204;
     ///   404 for the activation; one activation.deactivate row with "channel": "offline"; then 404 ELM_ACTIVATION_NOT_FOUND
     ///   for the proof and for the refresh file.
     /// </remarks>
@@ -57,7 +59,8 @@ public sealed class ElmServiceOfflineTests
         Assert.True(activated.Status == HttpStatusCode.OK, activated.Text);
         Assert.Null(activated.Nonce);
         VerifiedLicense license = device.Verify(activated.File, prints);
-        Assert.Equal((LicenseKind.Standard, 1L, first), (license.Kind, license.Sequence!.Value, license.OfflineRequestNonce));
+        Assert.Equal((LicenseKind.Standard, 1L, first), (license.Kind, license.Sequence!.Value, license.AnsweredRequestId));
+        Assert.Equal(activated.ActivationId, license.ActivationId);
         JsonElement activation = await TestService.GetAsync(admin, $"v1/admin/activations/{activated.ActivationId}");
         Assert.Equal((JsonValueKind.Null, JsonValueKind.Null), (activation.GetProperty("client").ValueKind, activation.GetProperty("app").ValueKind));
         JsonElement row = (await TestService.AuditRowsAsync(test, service, owner)).Single(r =>
@@ -78,7 +81,7 @@ public sealed class ElmServiceOfflineTests
         DeviceAnswer refreshed = await device.OfflineAsync(refreshFile);
         Assert.True(refreshed.Status == HttpStatusCode.OK, refreshed.Text);
         VerifiedLicense next = device.Verify(refreshed.File, prints);
-        Assert.Equal((2L, second), (next.Sequence!.Value, next.OfflineRequestNonce));
+        Assert.Equal((2L, second, activated.ActivationId), (next.Sequence!.Value, next.AnsweredRequestId, next.ActivationId));
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"));
 
         DeviceAnswer deactivated = await device.OfflineAsync(device.DeactivationFile(activated.ActivationId, 2));
@@ -402,7 +405,7 @@ public sealed class ElmServiceOfflineTests
         DeviceAnswer offline = await a.OfflineAsync(a.RefreshFile(online.ActivationId, 1, [lost.Jti], nonce));
         Assert.True(offline.Status == HttpStatusCode.OK, offline.Text);
         VerifiedLicense next = a.Verify(offline.File, prints);
-        Assert.Equal((3L, nonce), (next.Sequence!.Value, next.OfflineRequestNonce));
+        Assert.Equal((3L, nonce), (next.Sequence!.Value, next.AnsweredRequestId));
         Assert.Equal(HttpStatusCode.Conflict, (await a.RefreshAsync(online.ActivationId, 2)).Status);
 
         string first = TestDevice.NewNonce();
@@ -414,7 +417,7 @@ public sealed class ElmServiceOfflineTests
         );
         Assert.True(again.Status == HttpStatusCode.OK, again.Text);
         VerifiedLicense renewed = b.Verify(again.File, prints);
-        Assert.Equal((2L, second), (renewed.Sequence!.Value, renewed.OfflineRequestNonce));
+        Assert.Equal((2L, second), (renewed.Sequence!.Value, renewed.AnsweredRequestId));
         Assert.Single(await TestService.AuditRowsAsync(test, service, owner), r => r.GetProperty("action").GetString() == "activation.clone");
     }
 
@@ -617,7 +620,7 @@ public sealed class ElmServiceOfflineTests
                 license.OveragePercent!.Value,
                 license.BorrowReturnLimit!.Value,
                 license.CloneStrategy!.Value,
-                license.OfflineRequestNonce
+                license.AnsweredRequestId
             )
         );
     }

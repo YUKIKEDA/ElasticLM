@@ -260,7 +260,8 @@ public sealed class ActivationClient : IAsyncDisposable
     /// </summary>
     /// <param name="licenseKey">The license key.</param>
     /// <param name="cancellationToken">Cancels the waits and the request; a canceled request ends as <c>ELM_NETWORK_ERROR</c>.</param>
-    /// <returns>The license, or why there is none.</returns>
+    /// <returns>The license, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the answer carries a license file that
+    /// answers another request.</returns>
     /// <exception cref="ArgumentException">The license key is empty.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public Task<ActivationResult> ActivateAsync(string licenseKey, CancellationToken cancellationToken = default)
@@ -302,10 +303,11 @@ public sealed class ActivationClient : IAsyncDisposable
                         stored,
                         includeKey: true,
                         cancellationToken,
-                        pending: true
+                        pending: true,
+                        aim: Aim(licenseKey)
                     )
                     .ConfigureAwait(false);
-                return Keep(reply, Kinds(AnyKind), events, refreshing: false);
+                return Keep(reply, Kinds(AnyKind), events, refreshed: null);
             },
             cancellationToken
         );
@@ -318,7 +320,8 @@ public sealed class ActivationClient : IAsyncDisposable
     /// <c>ELM_INVALID_STATE</c>.
     /// </summary>
     /// <param name="cancellationToken">Cancels the waits and the request.</param>
-    /// <returns>The trial license, or why there is none.</returns>
+    /// <returns>The trial license, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the answer carries a license file
+    /// that answers another request.</returns>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public Task<ActivationResult> StartTrialAsync(CancellationToken cancellationToken = default)
     {
@@ -354,10 +357,11 @@ public sealed class ActivationClient : IAsyncDisposable
                         stored,
                         includeKey: true,
                         cancellationToken,
-                        pending: true
+                        pending: true,
+                        aim: Aim(null)
                     )
                     .ConfigureAwait(false);
-                return Keep(reply, Kinds([LicenseKind.Trial]), events, refreshing: false);
+                return Keep(reply, Kinds([LicenseKind.Trial]), events, refreshed: null);
             },
             cancellationToken
         );
@@ -370,7 +374,8 @@ public sealed class ActivationClient : IAsyncDisposable
     /// starts.
     /// </summary>
     /// <param name="cancellationToken">Cancels the waits and the request.</param>
-    /// <returns>The new license, or why there is none.</returns>
+    /// <returns>The new license, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the answer carries a license file
+    /// that is not of the kept activation, has no later sequence number, or answers another request.</returns>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
     public Task<ActivationResult> RefreshAsync(CancellationToken cancellationToken = default)
     {
@@ -697,12 +702,14 @@ public sealed class ActivationClient : IAsyncDisposable
                 cancellationToken
             )
             .ConfigureAwait(false);
-        return Keep(reply, Kinds(AnyKind), events, refreshing: true);
+        return Keep(reply, Kinds(AnyKind), events, refreshed: stored);
     }
 
-    // Keeps an issued license file once it verifies for this installation; a failure leaves the kept file as it was.
-    private ActivationResult Keep(Reply reply, LicenseKind[] kinds, List<ActivationStateChangedEventArgs> events, bool refreshing)
+    // Keeps an issued license file once it verifies for this installation and answers the request sent; a failure leaves the
+    // kept file as it was. refreshed is the activation a refresh was sent for, or null for an activation or a trial.
+    private ActivationResult Keep(Reply reply, LicenseKind[] kinds, List<ActivationStateChangedEventArgs> events, StoredActivation? refreshed)
     {
+        bool refreshing = refreshed is not null;
         if (reply.Error is LicenseError error)
         {
             Refuse(error, events, refreshing);
@@ -721,10 +728,29 @@ public sealed class ActivationClient : IAsyncDisposable
             return Unkept(((LicenseVerificationResult.Invalid)checkedFile).Error, events, refreshing, reply.Body);
         }
 
-        // A refresh clears its own list and keeps the activations and trials not yet answered; a new activation clears both.
-        var stored = new StoredActivation(id, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
+        // design §12.6.2 (V1d5a): a genuine answer to another request, which a relay on the path can hand out again, is not
+        // kept. It is taken as an answer that did not come: the request's jti stays in its list and no hash is kept.
+        string? mismatch =
+            Mismatch(valid.License, id, refreshed)
+            ?? (
+                valid.License.AnsweredRequestId is string answered && reply.Requests.Contains(answered, StringComparer.Ordinal)
+                    ? null
+                    : "The service's license file answers another request."
+            );
+        if (mismatch is not null)
         {
-            Pending = refreshing ? _files.Read(out _)?.Pending ?? [] : [],
+            return Unkept(new LicenseError(ErrorCode.RequestMismatch, mismatch), events, refreshing, null);
+        }
+
+        // The signed ID, which Mismatch found equal to the unsigned one of the answer.
+        string activationId = valid.License.ActivationId!;
+
+        // A refresh clears its own list and keeps the activations and trials not yet answered; a new activation clears both.
+        StoredActivation? kept = refreshing ? _files.Read(out _) : null;
+        var stored = new StoredActivation(activationId, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
+        {
+            Pending = kept?.Pending ?? [],
+            Aims = kept?.Aims ?? StoredActivation.NoAims,
         };
         try
         {
@@ -736,7 +762,28 @@ public sealed class ActivationClient : IAsyncDisposable
             return Unkept(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message), events, refreshing, null);
         }
 
-        return Accept(valid, id, license, events, serverTime: true);
+        return Accept(valid, activationId, license, events, serverTime: true);
+    }
+
+    // design §12.6.2, §12.8.5 (V1d5a): the signed activation ID is the answer's, and an online refresh's file is of the kept
+    // activation with a later sequence number. The request it answers is compared after these, so each names the first thing
+    // that differs. Returns why the file is not for the request, or null.
+    private static string? Mismatch(VerifiedLicense license, string answerId, StoredActivation? refreshed)
+    {
+        if (license.ActivationId is not string signed || signed != answerId)
+        {
+            return "The service's answer names another activation than its license file.";
+        }
+
+        if (refreshed is not null && signed != refreshed.ActivationId)
+        {
+            return "The service's refresh is for another activation than the one kept.";
+        }
+
+        // The service returns its last file again for a retry, whose sequence number is still one above the kept one.
+        return refreshed is not null && (license.Sequence ?? 0) <= refreshed.Seq
+            ? "The service's refresh has no later sequence number than the activation kept."
+            : null;
     }
 
     // After a new file was kept: the guard takes the service's time when the file comes straight from the service (an offline
@@ -978,7 +1025,8 @@ public sealed class ActivationClient : IAsyncDisposable
         StoredActivation? stored,
         bool includeKey,
         CancellationToken cancellationToken,
-        bool pending = false
+        bool pending = false,
+        string? aim = null
     )
     {
         var target = new Uri(_service!, path);
@@ -1014,7 +1062,7 @@ public sealed class ActivationClient : IAsyncDisposable
             byte[] bytes = body(stored);
             string proof = ProofBuilder.Create(_key!, "POST", target, _nonce, bytes, includeKey, _time, out string proofId);
             StoredActivation before = stored ?? new StoredActivation(null, 0, null, null, []);
-            stored = before.WithRetry(proofId, pending);
+            stored = before.WithRetry(proofId, pending, aim);
             try
             {
                 _files.Write(stored);
@@ -1024,7 +1072,17 @@ public sealed class ActivationClient : IAsyncDisposable
                 return Reply.Failure(new LicenseError(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message));
             }
 
-            reply = await SendAsync(HttpMethod.Post, target, bytes, proof, linked.Token).ConfigureAwait(false);
+            // design §12.6.2 (V1d5a): the requests a file may answer: this one, and those its retry names, whose last file the
+            // service returns again (design §10.4 step 3). An activation or a trial takes only those sent for the same license
+            // key or trial (the review of PR #418): the whole list still goes in retry, so the service judges clones as before.
+            StoredActivation sent = stored;
+            List<string> requests = pending ? [.. sent.Pending.Where(j => sent.Aims.GetValueOrDefault(j) == aim)] : [.. sent.Retry];
+            if (sent.Offline is OfflineRequest waiting && (!pending || OfflineAim(waiting) == aim))
+            {
+                requests.Add(waiting.Nonce);
+            }
+
+            reply = (await SendAsync(HttpMethod.Post, target, bytes, proof, linked.Token).ConfigureAwait(false)) with { Requests = requests };
             if (!reply.Unanswered && reply.Error is not null)
             {
                 // Refused, or never sent: this request is not the one the service acted on (design §12.6.2). A success keeps
@@ -1149,7 +1207,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 return OfflineFail(ErrorCode.InvalidState, Full);
             }
 
-            current = current.WithRetry(earlier.Nonce, pending: !earlier.Refresh) with { Offline = null };
+            current = current.WithRetry(earlier.Nonce, pending: !earlier.Refresh, OfflineAim(earlier)) with { Offline = null };
         }
 
         var request = new OfflineRequest(
@@ -1210,6 +1268,12 @@ public sealed class ActivationClient : IAsyncDisposable
         return Sign(TokenTypes.ActivationRequest, payload);
     }
 
+    // design §12.6.2 (V1d5a): what an activation or a trial request was sent for, kept with its jti: the product and the
+    // SHA-256 of the license key, or the product and "trial".
+    private string Aim(string? licenseKey) => _options.ProductId + " " + (licenseKey is null ? "trial" : KeyHash(licenseKey));
+
+    private string? OfflineAim(OfflineRequest request) => request.KeyHash is string hash ? _options.ProductId + " " + hash : null;
+
     private static string KeyHash(string licenseKey) =>
         System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(licenseKey)));
 
@@ -1219,7 +1283,8 @@ public sealed class ActivationClient : IAsyncDisposable
         return damaged;
     }
 
-    // design §12.8.5: an answer is kept only when it is for the waiting request and verifies for this installation.
+    // design §12.8.5: an answer is kept only when it is for the waiting request and verifies for this installation. Its
+    // activation ID comes before the request, as for an online answer (V1d5a).
     private ActivationResult Import(StoredActivation? stored, byte[] bytes, List<ActivationStateChangedEventArgs> events)
     {
         if (bytes.Length > MaxAnswerBytes || ReadIssued(bytes) is not (string id, byte[] license))
@@ -1242,16 +1307,25 @@ public sealed class ActivationClient : IAsyncDisposable
         }
 
         // A refresh request is for the kept activation: whatever replaces the activation (an online answer, an import, a
-        // deactivation proof) drops the waiting request too, so the nonce alone names the activation.
-        if (stored?.Offline is not OfflineRequest waiting || valid.License.OfflineRequestNonce != waiting.Nonce)
+        // deactivation proof) drops the waiting request too, so the nonce alone names the activation and its sequence number.
+        // The unsigned ID of the answer, which the person who carries the file can change, must still be the signed one
+        // (V1d5a).
+        if (Mismatch(valid.License, id, null) is string mismatch)
+        {
+            return Fail(ErrorCode.RequestMismatch, mismatch);
+        }
+
+        if (stored?.Offline is not OfflineRequest waiting || valid.License.AnsweredRequestId != waiting.Nonce)
         {
             return Fail(ErrorCode.RequestMismatch, NotWaited);
         }
 
-        // As an online answer is kept: an activation clears both lists, a refresh only its own (design §12.6.2).
-        var next = new StoredActivation(id, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
+        // As an online answer is kept: an activation clears both lists, a refresh only its own (design §12.6.2). The ID is
+        // the signed one, which Mismatch found equal to the answer's.
+        var next = new StoredActivation(valid.License.ActivationId, valid.License.Sequence ?? 0, KindName(valid.License.Kind), license, [])
         {
             Pending = waiting.Refresh ? stored.Pending : [],
+            Aims = waiting.Refresh ? stored.Aims : StoredActivation.NoAims,
         };
         try
         {
@@ -1262,7 +1336,7 @@ public sealed class ActivationClient : IAsyncDisposable
             return Fail(ErrorCode.InternalError, "The activation file cannot be written: " + e.Message);
         }
 
-        return Accept(valid, id, license, events, serverTime: false);
+        return Accept(valid, next.ActivationId!, license, events, serverTime: false);
     }
 
     // design §12.8.2, §12.8.5: the proof names the activation, its sequence number, and the requests that got no answer. The
@@ -1287,7 +1361,7 @@ public sealed class ActivationClient : IAsyncDisposable
                 return OfflineFail(ErrorCode.InvalidState, Full);
             }
 
-            current = current.WithRetry(waiting.Nonce, pending: !waiting.Refresh) with { Offline = null };
+            current = current.WithRetry(waiting.Nonce, pending: !waiting.Refresh, OfflineAim(waiting)) with { Offline = null };
         }
 
         byte[] payload = Body(w =>
@@ -1301,7 +1375,14 @@ public sealed class ActivationClient : IAsyncDisposable
         string proof = Sign(TokenTypes.DeactivationProof, payload);
         try
         {
-            _files.Write(new StoredActivation(null, 0, null, null, []) { Pending = current.Pending, DeactivationProof = proof });
+            _files.Write(
+                new StoredActivation(null, 0, null, null, [])
+                {
+                    Pending = current.Pending,
+                    Aims = current.Aims,
+                    DeactivationProof = proof,
+                }
+            );
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -1588,10 +1669,13 @@ public sealed class ActivationClient : IAsyncDisposable
         }
     }
 
-    // Unanswered: the request may have reached the service, which may have acted on it.
+    // Unanswered: the request may have reached the service, which may have acted on it. Requests: the IDs of the requests
+    // whose file this answer may be.
     private readonly record struct Reply(byte[] Body, LicenseError? Error, string? Nonce, TimeSpan? RetryAfter)
     {
         public bool Unanswered { get; init; }
+
+        public IReadOnlyList<string> Requests { get; init; } = [];
 
         public static Reply Failure(LicenseError error) => new([], error, null, null);
     }

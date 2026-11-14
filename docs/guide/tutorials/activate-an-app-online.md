@@ -427,7 +427,7 @@ The first `dotnet run` builds the app, which takes some seconds with no output. 
 trial: pro
 ```
 
-The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial.
+The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial. [The security model](../explanation/security-model.md#on-the-licensees-machine) says how far this holds.
 
 Now activate with the license key, in the same data folder. Replace `<license-key>` with the key from the license's answer:
 

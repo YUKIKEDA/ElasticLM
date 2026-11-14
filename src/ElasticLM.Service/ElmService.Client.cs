@@ -3,6 +3,7 @@ using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
 using ElasticLM.Issuing;
+using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -228,9 +229,10 @@ internal sealed partial class ElmService
             await scope.UpdateLicenseAsync(license, device.Aborted).ConfigureAwait(false);
         }
 
-        byte[] file = IssueFile(license, policy, product, device.KeyId, request.Fingerprints, 1, offline?.Nonce);
+        Guid id = Guid.CreateVersion7(now);
+        byte[] file = IssueFile(license, policy, product, device.KeyId, request.Fingerprints, 1, id, device.RequestId);
         var activation = new ActivationRow(
-            Guid.CreateVersion7(now),
+            id,
             license.Id,
             device.KeyId,
             device.Key.Q.X!,
@@ -502,9 +504,10 @@ internal sealed partial class ElmService
             at
         );
         ClientInfo? client = policy.ClientInfoStrategy == "hostAndUser" ? request.Client : null;
-        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1, null);
+        Guid activationId = Guid.CreateVersion7(now);
+        byte[] file = IssueFile(license, policy, product, proof.KeyId, request.Fingerprints, 1, activationId, proof.ProofId);
         var activation = new ActivationRow(
-            Guid.CreateVersion7(now),
+            activationId,
             license.Id,
             proof.KeyId,
             proof.Key.Q.X!,
@@ -568,6 +571,7 @@ internal sealed partial class ElmService
     )
     {
         bool reactivated = operation == "activate";
+        long? flagged = null;
         switch (Activations.Judge(activation, seq, retry))
         {
             case SequenceJudgement.Blocked:
@@ -576,23 +580,37 @@ internal sealed partial class ElmService
                 // The answer to the request that got the last token was lost: the same file again, nothing changes.
                 return ClientResult.Issued(StatusCodes.Status200OK, activation.Id, activation.LastFile);
             case SequenceJudgement.Clone:
+                // A sequence number that no file can follow is refused before the clone is recorded (design §10.4, V1d5a).
+                if (policy.CloneStrategy != "deny" && LeaseRules.NextSequence(activation.Seq, seq) is null)
+                {
+                    return ClientResult.Fail(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
+                }
+
                 if (await CloneAsync(device, scope, policy, activation, seq, operation, at).ConfigureAwait(false) is ClientResult stopped)
                 {
                     return stopped;
                 }
 
+                flagged = seq;
                 break;
+        }
+
+        // design §10.4 (V1d5a, the owner's answer 5a-6): after a flagged clone the next file is later than the request's too,
+        // so a device ahead of a service restored from an older backup takes it.
+        if (LeaseRules.NextSequence(activation.Seq, flagged) is not long sequence)
+        {
+            return ClientResult.Fail(ErrorCode.Malformed, LeaseRules.SequenceTooLarge);
         }
 
         // design §12.8.4: an offline request judged a retry gets the next file, not the last one, whose areq is not its nonce;
         // a copy that got the last file sends one behind without this nonce next, and is judged a clone.
         ActivationRow next = change(activation) with
         {
-            Seq = activation.Seq + 1,
+            Seq = sequence,
             LastProof = device.RequestId,
             UpdatedAt = at,
         };
-        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq, offlineNonce);
+        byte[] file = IssueFile(scope.License, policy, product, next.KeyId, Activations.Load(next.Fingerprints), next.Seq, next.Id, next.LastProof);
         next = next with { LastFile = file };
         await scope.UpdateActivationAsync(next, device.Aborted).ConfigureAwait(false);
         if (reactivated)
@@ -727,7 +745,9 @@ internal sealed partial class ElmService
     }
 
     // design §8.4.2: the token of an activation; its expiry is the earlier of TokenLifetime and the license's (Round 1 of the
-    // M4b Grill), and every member follows the policy and the license as they are now (decision 0.68).
+    // M4b Grill), and every member follows the policy and the license as they are now (decision 0.68). It names the activation
+    // and the request it answers, the one the activation keeps as LastProof, so a client can tell it from an answer to another
+    // request (V1d5a).
     private byte[] IssueFile(
         LicenseRow license,
         PolicyRow policy,
@@ -735,7 +755,8 @@ internal sealed partial class ElmService
         string keyId,
         IReadOnlyList<string> fingerprints,
         long seq,
-        string? offlineNonce
+        Guid activationId,
+        string requestId
     )
     {
         long now = Time.GetUtcNow().ToUnixTimeSeconds();
@@ -781,7 +802,8 @@ internal sealed partial class ElmService
             BorrowReturnLimit = server ? (int)policy.BorrowReturnLimit : null,
             CloneStrategy = server ? (policy.CloneStrategy == "flag" ? CloneStrategy.Flag : CloneStrategy.Deny) : null,
             Metadata = Licenses.LoadMeta(license.Meta),
-            OfflineRequestNonce = offlineNonce,
+            AnsweredRequestId = requestId,
+            ActivationId = activationId.ToString("D"),
         };
 
         // Checked with the service's own trust store before it is returned, as the CLI does (design §16). The issuer refuses

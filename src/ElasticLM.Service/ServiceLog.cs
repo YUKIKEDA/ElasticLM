@@ -76,7 +76,9 @@ internal static partial class ServiceLog
     [LoggerMessage(EventId = 15, Level = LogLevel.Information, Message = "A Data Protection key was made: {Count}.")]
     public static partial void DataProtectionKeyMade(ILogger log, int count);
 
-    [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "An admin UI sign-in was refused: {Reason}")]
+    // design §18.3 (V1d4b): Warning, so that a log of warnings and errors keeps why each sign-in was refused, which no
+    // entry of the OpenIdConnect handler holds any more.
+    [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "An admin UI sign-in was refused: {Reason}")]
     public static partial void SignInRefused(ILogger log, string reason);
 
     [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "The identity provider cannot be reached for the admin UI's sign-in: {Reason}")]

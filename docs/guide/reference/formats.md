@@ -212,7 +212,8 @@ Payload:
 | `grace` | integer | no | How long after `exp` the token is still valid, in the grace period: a duration. It must be `0` or absent in a `trial` token. The issuers write it only with `exp`, and it has no effect without `exp`. |
 | `refresh` | integer | no | How long before `exp` the client starts to refresh online: a duration. `elm-service` writes the policy's `refreshWindow`; `elm license issue` writes it only with `--refresh-days`. |
 | `seq` | integer | no | The activation's sequence number: `1` in the first file of an activation, and one more in each new file. `elm-service` writes it in every file of an activation; `elm license issue` and the file of an unbound license leave it out. |
-| `areq` | string | no | The `nonce` of the offline request that this token answers. Only in an [offline answer](#offline-answer-elmresp). |
+| `areq` | string | no | The ID of the request that this token answers, 1 to 64 characters: the `jti` of the [request proof](#request-proof-elm-proofjws) of an online activation, refresh, or trial, or the `nonce` of an [offline request](#offline-request-elm-actreqjws). `elm-service` writes it in every file of an activation. A request sent again after its answer was lost gets the earlier file, so that file names the earlier request. `elm license issue` and the file of an unbound license leave it out. |
+| `act` | string | no | The activation ID: a UUID, 36 characters with hyphens. `elm-service` writes it in every file of an activation; `elm license issue` and the file of an unbound license leave it out. |
 | `lease` | integer | in a `server` token; optional otherwise | The lease time, in seconds: a duration, and at least 1 in a `server` token. |
 | `borrow` | integer | in a `server` token; optional otherwise | The longest borrow, in seconds: a duration. `0` allows no borrowing. |
 | `overage` | integer | in a `server` token; optional otherwise | How many seats over `seats` may be lent, in percent: 0 to 1,000. |
@@ -236,6 +237,8 @@ Member of `cnf`:
 | `jkt` | string | yes | The key ID of the installation key. |
 
 A token that breaks a rule of these tables, such as `seats` in a `standard` token or a `server` token without `lease`, gets `ELM_MALFORMED` once its signature is checked. The members that only a server license needs are listed again in [Server license](#server-license).
+
+The verifier checks only the form of `areq` and `act`, and a token without them verifies. The client that sent an activation, refresh, or trial request compares them with its request, and refuses a file that answers another request with `ELM_REQUEST_MISMATCH` (see [`POST /v1/activations`](device-protocol.md#post-v1activations)).
 
 A token that `elm license issue` wrote, decoded:
 
@@ -447,9 +450,9 @@ The answer file has the extension `.elmresp`. It is the body of the service's `2
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
 | `activationId` | string | yes | The activation ID, a UUID. |
-| `license` | object | yes | The [license file](#license-file-elmlic). Its token is bound to the request's installation key and fingerprints, and its `areq` is the request's `nonce`. |
+| `license` | object | yes | The [license file](#license-file-elmlic). Its token is bound to the request's installation key and fingerprints, its `areq` is the request's `nonce`, and its `act` is the activation ID. |
 
-The device accepts the answer only when it is at most 256 KiB and is this JSON with an `activationId` in UUID form, its license file verifies for this installation, and `areq` is the `nonce` of the request it is waiting for. An answer that is larger or is not this JSON gets `ELM_MALFORMED`, a license file that does not verify gets the verification error, and a token whose `areq` is not the waiting request's `nonce` gets `ELM_REQUEST_MISMATCH`.
+The device accepts the answer only when it is at most 256 KiB and is this JSON with an `activationId` in UUID form, its license file verifies for this installation, its token's `act` equals `activationId`, and `areq` is the `nonce` of the request it is waiting for. An answer that is larger or is not this JSON gets `ELM_MALFORMED`, a license file that does not verify gets the verification error, and a token whose `act` is not `activationId`, or whose `areq` is not the waiting request's `nonce`, gets `ELM_REQUEST_MISMATCH`. The device keeps the activation ID of the token, which the signature covers.
 
 The answer to the request above, as `elm offline process` saved it:
 
@@ -501,6 +504,7 @@ The license token in it, decoded. It is a server license, so it also has the mem
   "refresh": 1728000,
   "seq": 1,
   "areq": "FAKEnonce0000000000001",
+  "act": "01900000-0000-7000-8000-00000000a001",
   "lease": 600,
   "borrow": 86400,
   "overage": 0,

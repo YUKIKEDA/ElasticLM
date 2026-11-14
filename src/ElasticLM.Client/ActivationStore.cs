@@ -47,12 +47,25 @@ internal sealed record StoredActivation(string? ActivationId, long Seq, string? 
     /// <summary>Returns the list a kind of request keeps its jti in.</summary>
     public IReadOnlyList<string> ListFor(bool pending) => pending ? Pending : Retry;
 
-    /// <summary>Returns this activation with a <c>jti</c> added last to one list, the oldest dropped past <see cref="MaxRetry"/>.</summary>
-    public StoredActivation WithRetry(string jti, bool pending = false) =>
+    /// <summary>Gets an empty map of aims.</summary>
+    public static IReadOnlyDictionary<string, string> NoAims { get; } = new Dictionary<string, string>(StringComparer.Ordinal);
+
+    // design §12.6.2 (V1d5a).
+
+    /// <summary>
+    /// Gets what each <c>jti</c> of <see cref="Pending"/> was sent for: the product and the SHA-256 of the license key, or the
+    /// product and <c>trial</c>. An answer to an activation or a trial is taken only for a request of the same aim.
+    /// </summary>
+    public IReadOnlyDictionary<string, string> Aims { get; init; } = NoAims;
+
+    /// <summary>Returns this activation with a <c>jti</c> added last to one list, the oldest dropped past <see cref="MaxRetry"/>;
+    /// a pending one keeps its aim.</summary>
+    public StoredActivation WithRetry(string jti, bool pending = false, string? aim = null) =>
         pending
             ? this with
             {
                 Pending = [.. Pending.Append(jti).TakeLast(MaxRetry)],
+                Aims = aim is null ? Aims : new Dictionary<string, string>(Aims, StringComparer.Ordinal) { [jti] = aim },
             }
             : this with
             {
@@ -97,6 +110,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
     private const string FileName = "activation.json";
     private const string LockName = "activation.lock";
     private const int MaxJtiLength = 64;
+    private const int MaxAimLength = 128;
     private const int UnkeptLength = 43;
     private const int MaxFileLength = 16 * 1024;
     private const int NonceLength = 22;
@@ -198,6 +212,16 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             }
 
             w.WriteEndArray();
+            w.WriteStartObject("aims");
+            foreach (string jti in activation.Pending)
+            {
+                if (activation.Aims.TryGetValue(jti, out string? aim))
+                {
+                    w.WriteString(jti, aim);
+                }
+            }
+
+            w.WriteEndObject();
             w.WriteString("unkept", activation.Unkept);
             if (activation.Offline is OfflineRequest offline)
             {
@@ -290,6 +314,34 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
         return jtis;
     }
 
+    // design §12.6.2 (V1d5a): an object of at most 16 members, each a jti of 1 to 64 characters naming a string of 1 to
+    // 128 characters; null when it is not.
+    private static Dictionary<string, string>? Aims(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Object)
+        {
+            return null;
+        }
+
+        var aims = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (JsonProperty member in value.EnumerateObject())
+        {
+            if (
+                aims.Count >= StoredActivation.MaxRetry
+                || member.Name.Length is 0 or > MaxJtiLength
+                || member.Value.ValueKind != JsonValueKind.String
+                || member.Value.GetString() is not { Length: > 0 and <= MaxAimLength } aim
+            )
+            {
+                return null;
+            }
+
+            aims[member.Name] = aim;
+        }
+
+        return aims;
+    }
+
     // The form Write makes; anything else is damaged. The license is kept as the bytes of its JSON, checked when used.
     private static StoredActivation? Parse(byte[] bytes)
     {
@@ -315,7 +367,8 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
 
             List<string>? retry = Jtis(retryValue);
             List<string>? pending = root.TryGetProperty("pending", out JsonElement pendingValue) ? Jtis(pendingValue) : [];
-            if (retry is null || pending is null)
+            Dictionary<string, string>? aims = root.TryGetProperty("aims", out JsonElement aimsValue) ? Aims(aimsValue) : [];
+            if (retry is null || pending is null || aims is null)
             {
                 return null;
             }
@@ -354,6 +407,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 ? new StoredActivation(id, seq, kind, license, retry)
                 {
                     Pending = pending,
+                    Aims = aims,
                     Unkept = unkept,
                     Offline = offline,
                     DeactivationProof = proof,
