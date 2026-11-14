@@ -36,7 +36,7 @@ internal sealed class Vendor : IAsyncDisposable
 
     /// <summary>Makes a new folder with a root key, a signing key, and a certificate for the uses given.</summary>
     /// <param name="uses">The uses of the certificate, as <c>elm key certify --use</c> takes them.</param>
-    public static Task<Vendor> CreateAsync(params string[] uses) => CreateInAsync(Path.GetTempPath(), uses);
+    public static Task<Vendor> CreateAsync(params string[] uses) => CreateInAsync(ElasticLM.Service.Tests.TestFolders.Root, uses);
 
     /// <summary>
     /// Makes a new folder under <paramref name="parent"/> with a root key, a signing key, and a certificate for the uses

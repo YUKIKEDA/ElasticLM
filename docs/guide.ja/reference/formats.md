@@ -615,7 +615,7 @@ eyJ….eyJ….eyJ…
 
 ### サーバーライセンスのファイル
 
-`elm-server` は、設定 `license` が指定する `.elmlic` ファイルからサーバーライセンスを読む（[elm-server の設定](server-configuration.md#最上位の設定)を参照）。このファイルを書くのは、[`elm server activate`](elm-cli.md#elm-server-activate)、[`elm server refresh`](elm-cli.md#elm-server-refresh)、[`elm server import`](elm-cli.md#elm-server-import) と、サーバー自身によるオンラインでのトークンの更新だ。どれも、まず隣に一時ファイルを書き、それで元のファイルを置き換える。そのため、読む側が書きかけのファイルを見ることはない。
+`elm-server` は、設定 `license` が指定する `.elmlic` ファイルからサーバーライセンスを読む（[elm-server の設定](server-configuration.md#最上位の設定)を参照）。このファイルを書くのは、[`elm server activate`](elm-cli.md#elm-server-activate)、[`elm server refresh`](elm-cli.md#elm-server-refresh)、[`elm server import`](elm-cli.md#elm-server-import) と、サーバー自身によるオンラインでのトークンの更新だ。どれも、まず隣に一時ファイルを書き、それで元のファイルを置き換える。そのため、読む側が書きかけのファイルを見ることはない。一時ファイルは `<license path>.tmp` だ。その名前にファイルなどがすでにあれば、それを消してから新しいファイルを作る。置き換えに失敗したときも、一時ファイルを消す。Linux と macOS では、書いたファイルを読み書きできるのは所有者だけ（モード `0600`）なので、このファイルを書く `elm server` のコマンドは、サーバーのユーザーで実行する。
 
 ### `GET /v1/server/license`
 

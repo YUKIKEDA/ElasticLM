@@ -97,7 +97,7 @@ sidebar_position: 10
 
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
-| `elm_installation_open` | エラー番号 | 製品についてのこのインストールの鍵を開くか、`create` が `1` で鍵がなければ作り、マシンフィンガープリントを読む。0 で埋めた `elm_installation_options` のように `create` が `0` なら、鍵がないと `ELM_INSTALLATION_KEY_UNREADABLE` になる。OS の ID を読めないときは、フィンガープリントの一覧が空になり、フィンガープリントを持つライセンスは `ELM_FINGERPRINT_UNAVAILABLE` で失敗する。 |
+| `elm_installation_open` | エラー番号 | 製品についてのこのインストールの鍵を開くか、`create` が `1` で鍵がなければ作り、マシンフィンガープリントを読む。0 で埋めた `elm_installation_options` のように `create` が `0` なら、鍵がないと `ELM_INSTALLATION_KEY_UNREADABLE` になる。マシンスコープで、ほかのユーザーが読んだり置き換えたりできるフォルダーも、`ELM_INSTALLATION_KEY_UNREADABLE` になる（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)を参照）。OS の ID を読めないときは、フィンガープリントの一覧が空になり、フィンガープリントを持つライセンスは `ELM_FINGERPRINT_UNAVAILABLE` で失敗する。 |
 | `elm_installation_thumbprint` | `const char*`。`NULL` には `NULL` | インストール鍵の[サムプリント](../explanation/devices-and-proofs.md#インストール鍵)。 |
 | `elm_verifier_create` | エラー番号 | ベンダーのルート鍵、失効した鍵 ID、時刻巻き戻し対策から検証器を作る。インストールは、呼び出しの直後に解放してよい。 |
 | `elm_verifier_verify` | エラー番号 | `elm_requirement` に照らしてライセンスファイルを検証し、新しい `elm_license` を返す。65,536 バイトより大きいファイルは `ELM_MALFORMED` になる。ライブラリはファイルの中身を何も保持しない。 |
@@ -145,7 +145,7 @@ size_t elm_license_meta_count(const elm_license* license);
 
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
-| `elm_activation_create` | エラー番号 | SaaS 型のアクティベーションサービスでの、このインストールのアクティベーションのハンドルを作る。インストール鍵があれば読み、保存してあるアクティベーションを読んで、そのトークンの更新を予定する。サービスには接続せず、鍵も作らない。鍵を作るのは、最初の `elm_activation_activate`、`elm_activation_start_trial`、`elm_activation_create_activation_request` だ。鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE` になる。 |
+| `elm_activation_create` | エラー番号 | SaaS 型のアクティベーションサービスでの、このインストールのアクティベーションのハンドルを作る。インストール鍵があれば読み、保存してあるアクティベーションを読んで、そのトークンの更新を予定する。サービスには接続せず、鍵も作らない。鍵を作るのは、最初の `elm_activation_activate`、`elm_activation_start_trial`、`elm_activation_create_activation_request` だ。鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE` になる。マシンスコープで、ほかのユーザーが読んだり置き換えたりできるフォルダーも、`ELM_INSTALLATION_KEY_UNREADABLE` になる（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)を参照）。 |
 | `elm_activation_activate` | エラー番号 | ライセンスキーでオンラインのアクティベーションをし、新しい `elm_license` を返す。レスポンスのライセンスファイルがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` を返し、保存してあるアクティベーションは変わらない。 |
 | `elm_activation_start_trial` | エラー番号 | オンラインでトライアルを始め、新しい `elm_license` を返す。レスポンスのライセンスファイルがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` を返し、保存してあるアクティベーションは変わらない。 |
 | `elm_activation_refresh` | エラー番号 | 保存してあるアクティベーションのトークンを今すぐオンラインで更新し、新しい `elm_license` を返す。`service_url` がない、保存してあるアクティベーションがない、10 秒たってもこのデバイスの別のプロセスがアクティベーションのロックを持っている、16 件のリクエストにレスポンスがない（待機中のオフラインのリクエストは 1 件と数える）、同じアクティベーションの状態のコールバックの中で呼んだ、のどれかなら、リクエストを送らずに `ELM_INVALID_STATE` を返す。トークンの更新の時期がまだ来ていなくても、リクエストを送る。レスポンスのライセンスファイルがこのリクエストへのレスポンスでなければ `ELM_REQUEST_MISMATCH` を返し、保存してあるアクティベーションは変わらない。 |
@@ -181,7 +181,7 @@ int32_t elm_activation_state(const elm_activation* activation);
 
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
-| `elm_client_create` | エラー番号 | オンプレミスのライセンスサーバーのリースのクライアントを作る。`license_key` を設定したときは、SaaS 型のサービスのリースのクライアントになる。インストール鍵を開くか、なければ作り（鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE`）、マシンフィンガープリントを読む。サーバーには接続しない。 |
+| `elm_client_create` | エラー番号 | オンプレミスのライセンスサーバーのリースのクライアントを作る。`license_key` を設定したときは、SaaS 型のサービスのリースのクライアントになる。インストール鍵を開くか、なければ作り（鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE`）、マシンフィンガープリントを読む。サーバーには接続しない。マシンスコープで、ほかのユーザーが読んだり置き換えたりできるフォルダーも、`ELM_INSTALLATION_KEY_UNREADABLE` になる（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)を参照）。 |
 | `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。レスポンスのリースがこのリクエストに対するものでなければ `ELM_REQUEST_MISMATCH` を返し、そのレスポンスのリースを保持も返却もしない。レスポンスが届かなかったか、受け取らなかったときは、関数が戻る前に、サーバーがこのリクエストに発行したリースがあればその返却を頼む。接続できないサーバーでは、そのために 60 秒ほどかかることがある（[レスポンスが届かなかったとき](../explanation/floating-licenses.md#レスポンスが届かなかったとき)を参照）。 |
 | `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。`elm_client_acquire_lease` と同じ場合に `ELM_REQUEST_MISMATCH` を返し、レスポンスが届かなかったか受け取らなかった借用は、同じように返却を頼む。保存できなかった借用も返却を頼む。 |
 | `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが引き取らなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |

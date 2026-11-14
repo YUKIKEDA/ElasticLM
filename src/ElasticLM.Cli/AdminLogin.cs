@@ -135,8 +135,17 @@ internal static class AdminLoginFile
                 throw new CliException($"The login file cannot be written: '{temporary}' exists.", ExitCodes.InvalidInput);
             }
 
-            // design §12.6.2 (V1d2a): elm reads the saved URL without the lock, and on Windows that read refuses the move.
-            FileReplacement.Move(temporary, path, time);
+            try
+            {
+                // design §12.6.2 (V1d2a): elm reads the saved URL without the lock, and on Windows that read refuses the move.
+                FileReplacement.Move(temporary, path, time);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // design §12.6.2 (V1d24): the new file holds the tokens; it does not stay behind.
+                FileReplacement.DeleteQuietly(temporary);
+                throw;
+            }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

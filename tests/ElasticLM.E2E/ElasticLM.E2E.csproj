@@ -14,4 +14,7 @@
     -->
     <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Include="..\ElasticLM.Service.Tests\TestFolders.cs" Link="TestFolders.cs" />
+  </ItemGroup>
 </Project>

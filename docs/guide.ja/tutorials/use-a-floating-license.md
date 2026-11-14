@@ -15,11 +15,11 @@ sidebar_position: 3
 - ダウンロードしたファイルを確かめるための [GitHub CLI](https://cli.github.com/)（`gh`）。このチュートリアルで `gh` を使うのは、この確認のときだけだ。
 - Windows では、Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降。`elm-server` に要る。
 
-このチュートリアル用に、空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。
+このチュートリアル用に、ホームフォルダー（Windows ではユーザーフォルダー。`C:\Users\<you>\elm-tutorial` など）の中に空のフォルダーを作る。そのフォルダーでターミナルを開き、このページのコマンドはすべてそこで打つ。サーバーは自分の秘密鍵をこの中のフォルダーに置く。パスの途中のフォルダーをほかのユーザーが変えられる場所（`/tmp` や、ドライブのルートの直下のフォルダーなど）では、サーバーはデータフォルダーを断る（[サーバーが受け付けるフォルダー](../reference/server-configuration.md#サーバーが受け付けるフォルダー)）。
 
 フォルダーのパスは短くする。絶対パスは、UTF-8 で、Windows と Linux では 84 バイトまで、macOS では 80 バイトまでにする。ASCII 以外の文字は、1 文字で 2〜4 バイトを使う。サーバーはこのフォルダーの中の `server-data` にソケットのファイルを置き、ソケットのファイルのパスには上限がある（[データフォルダー](../reference/server-configuration.md#データフォルダー)）。
 
-Linux と macOS では、このフォルダーにグループやほかのユーザーが書き込めてはならない。サーバーが自分の秘密鍵を、この中のフォルダーに置くからだ。そのフォルダーで `chmod go-w .` と打てば、グループとほかのユーザーは確実に書き込めなくなる。
+Linux と macOS では、このフォルダーにグループやほかのユーザーが書き込めてはならない。そのフォルダーで `chmod go-w .` と打てば、グループとほかのユーザーは確実に書き込めなくなる。
 
 `elm` ツール、`elm-server`、`ElasticLM.Licensing` と `ElasticLM.Client` のパッケージは、GitHub のプレリリースからダウンロードする。[Releases のページ](https://github.com/YUKIKEDA/ElasticLM/releases)を開き、「Pre-release」のラベルが付いたリリースのうち、いちばん新しいものを使う。GitHub が「Latest」のラベルを付けるのはプレリリースでないリリースだけなので、そのラベルを目安にしない。
 
@@ -166,9 +166,11 @@ error: The server license 'server.elmlic' does not exist. Ask the vendor for a s
 
 `installation key` のあとの値がサムプリントだ。43 文字で、`-` と `_` を含むことがある。鍵そのものは `server-data` に残る。`fingerprints` のあとの値は、このマシンのマシンフィンガープリントだ。`--fingerprint` を付けて発行したライセンスはマシンにも紐付くが、このチュートリアルではこの値を使わない。実際の運用では、顧客の管理者がこのサムプリントをベンダーに送り、ベンダーがサーバーライセンスを発行する。
 
-Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めると、サーバーは代わりに `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.` と、それに続くもう 1 文を表示し、やはり終了コード 1 で終わる。チュートリアルのフォルダーで `chmod go-w .` と打ち、同じ `elm-server` コマンドをもう一度打つ。先に `server-data` を消す必要はない。
+Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めると、サーバーは代わりに `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.` と、それに続くもう 1 文を表示し、やはり終了コード 1 で終わる。チュートリアルのフォルダーで `chmod go-w .` と打ち、同じ `elm-server` コマンドをもう一度打つ。先に `server-data` を消す必要はない。行が、チュートリアルのフォルダーではなく、どのユーザーも書き込める `/tmp` のような、その上のフォルダーを示すときは、チュートリアルのフォルダーをホームフォルダーの中に移す。そこでターミナルを開き、その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
 
-サーバーが代わりに `error: The path of the administration socket …` と表示したときは、チュートリアルのフォルダーのパスが長すぎる。フォルダーをパスの短い場所に移し、そこでターミナルを開く。その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
+Windows では、チュートリアルのフォルダーが、Authenticated Users（S-1-5-11）にフォルダーの変更を許すドライブにあるときも、サーバーは同じように止まる。ドライブのルートの直下のフォルダー（`C:\elm` など）の下にあるときも、そのフォルダーが同じ権利を与えるので止まる。行は上のフォルダーを示し、`(S-1-5-11) delete or replace what is in it. Correct the owner or the access of that folder, or use a folder elsewhere; removing this folder does not help.` で終わる。チュートリアルのフォルダーをユーザーフォルダーの中に移し、そこでターミナルを開く。その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
+
+サーバーが代わりに `error: The path of the administration socket …` と表示したときは、チュートリアルのフォルダーのパスが長すぎる。フォルダーを、ホームフォルダーの中のパスの短い場所に移し、そこでターミナルを開く。その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
 
 サーバーライセンスを発行する。機能 `pro` のシートを 2 つ含み、サーバーの鍵に紐付けたライセンスだ。`<server-key>` は、サーバーが表示したサムプリントに置き換える。43 文字すべてを正確に写す。
 

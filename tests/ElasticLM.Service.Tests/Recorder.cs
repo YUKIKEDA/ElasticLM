@@ -31,7 +31,8 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 /// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, and
 /// can answer the next renewal with a body over the client's limit. For the release of an acquisition whose answer was lost
 /// (design §12.7.7), it can lose the answer of the next acquisition, answer it over the limit, hold it until the client
-/// cancels, and make releases by a request's proof ID fail before they are sent.
+/// cancels, and make releases by a request's proof ID fail before they are sent. It can take the server license header out
+/// of the answers to acquisitions and renewals.
 /// </summary>
 internal sealed class Recorder
 {
@@ -140,6 +141,10 @@ internal sealed class Recorder
     /// <summary>Gets or sets a value indicating whether a request that gets a replayed answer is first passed to the server,
     /// whose own answer is then thrown away. Otherwise the server never sees the request.</summary>
     public bool PassReplacedOn { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the <c>ELM-Server-License</c> header is taken out of every answer the
+    /// server gives to an acquisition or a renewal, as a proxy that drops unknown headers does.</summary>
+    public bool DropServerLicense { get; set; }
 
     /// <summary>Gets the number of requests answered with a replayed answer.</summary>
     public int Replayed => Volatile.Read(ref _replayed);
@@ -328,6 +333,11 @@ internal sealed class Recorder
                     recorder.RewriteNextRenewal = null;
                     response.Content = new StringContent(once(text), Encoding.UTF8, "application/json");
                 }
+            }
+
+            if ((acquisition || renewal) && recorder.DropServerLicense)
+            {
+                response.Headers.Remove("ELM-Server-License");
             }
 
             return response;

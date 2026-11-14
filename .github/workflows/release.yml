@@ -253,7 +253,7 @@ jobs:
         if: matrix.container == 'alpine'
         shell: bash
         run: |
-          docker run --rm -v "$GITHUB_WORKSPACE:/src" -v /etc/machine-id:/etc/machine-id:ro -w /src -e HOME=/tmp \
+          docker run --rm -v "$GITHUB_WORKSPACE:/src" -v /etc/machine-id:/etc/machine-id:ro -w /src -e HOME=/root \
             -e DOTNET_CLI_TELEMETRY_OPTOUT=1 -e DOTNET_NOLOGO=1 -e DOTNET_SDK_VERSION -e RID -e SUFFIX -e VERSION -e OWNER="$(id -u):$(id -g)" \
             "$ALPINE_SDK_IMAGE" sh -c '
               status=0

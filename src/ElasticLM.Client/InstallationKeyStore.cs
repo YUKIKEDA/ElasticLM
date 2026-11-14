@@ -39,11 +39,15 @@ public sealed partial class InstallationKeyStore
         }
 
         Scope = scope;
-        Directory = Path.GetFullPath(directory ?? DefaultDirectory(productId, scope));
+
+        // design §10.2 (V1d24): GetFullPath keeps a trailing separator, and GetDirectoryName of "data/" is "data" itself: the
+        // check of the parent would look at the folder again, and on Windows the folder would be made without its access list.
+        Directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory ?? DefaultDirectory(productId, scope)));
     }
 
-    /// <summary>Gets the directory that holds the key.</summary>
-    public string Directory { get; }
+    /// <summary>Gets the directory that holds the key. In the machine scope, once <see cref="TryLoadOrCreate"/> or
+    /// <see cref="TryLoad"/> has checked the folder, it is the folder's path with every symbolic link and junction resolved.</summary>
+    public string Directory { get; private set; }
 
     /// <summary>Gets the scope.</summary>
     public KeyScope Scope { get; }
@@ -58,7 +62,11 @@ public sealed partial class InstallationKeyStore
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
     /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when a key exists but cannot be read (damaged, protected for
-    /// another user, no access), or cannot be created.</param>
+    /// another user, no access), or cannot be created, and when another user could have read or replaced the machine-scope
+    /// folder: on Windows a folder owned by another user or with an access list that names one, or a folder above it that
+    /// another user owns or may delete or change; on Linux and macOS a folder or a folder above it owned by a user other than
+    /// this one and root, a folder that gives group or others access, or a folder above it that they can write, such as
+    /// <c>/tmp</c>.</param>
     /// <returns><see langword="true"/> when a key was read or created.</returns>
     public bool TryLoadOrCreate(out InstallationKey? key, out LicenseError? error)
     {
@@ -74,13 +82,15 @@ public sealed partial class InstallationKeyStore
             CreateDirectory();
 
             // A folder that another user prepared is refused before the key is written into it (design §10.2).
-            if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+            if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
             {
                 key = null;
                 error = Unreadable(unsafeFolder);
                 return false;
             }
 
+            // design §10.2 (V1d24, review K1): what was checked is where the key goes, whatever a link on the way becomes.
+            Directory = checkedFolder;
             var options = new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,
@@ -92,9 +102,22 @@ public sealed partial class InstallationKeyStore
                 options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             }
 
-            using (var stream = new FileStream(KeyPath, options))
+            var stream = new FileStream(KeyPath, options);
+            try
             {
-                stream.Write(stored);
+                using (stream)
+                {
+                    stream.Write(stored);
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // design §12.6.2 (V1d24): a key file this call made but could not fill would be unreadable at every later
+                // start; it does not stay.
+                FileReplacement.DeleteQuietly(KeyPath);
+                key = null;
+                error = new LicenseError(ErrorCode.InstallationKeyUnreadable, "The installation key cannot be created: " + e.Message);
+                return false;
             }
         }
         catch (IOException) when (File.Exists(KeyPath))
@@ -116,6 +139,27 @@ public sealed partial class InstallationKeyStore
         return TryLoad(out key, out error);
     }
 
+    // design §10.2 (V1d24).
+
+    /// <summary>
+    /// Checks an existing machine-scope folder as <see cref="TryLoad"/> does, without reading the key, and from then on uses
+    /// the folder where its links lead. A folder that does not exist yet, and the user scope, pass unchanged.
+    /// </summary>
+    /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when another user could have read or replaced the folder.</param>
+    /// <returns><see langword="true"/> when the folder passes.</returns>
+    internal bool TryCheck(out LicenseError? error)
+    {
+        if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
+        {
+            error = Unreadable(unsafeFolder);
+            return false;
+        }
+
+        Directory = checkedFolder;
+        error = null;
+        return true;
+    }
+
     // design §10.2.
 
     /// <summary>
@@ -123,17 +167,19 @@ public sealed partial class InstallationKeyStore
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
     /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when there is no key or it cannot be read, or when another
-    /// user could have read or replaced the machine-scope folder.</param>
+    /// user could have read or replaced the machine-scope folder (on Linux and macOS, among others, when the folder or a
+    /// folder above it is owned by a user other than this one and root).</param>
     /// <returns><see langword="true"/> when the key was read.</returns>
     public bool TryLoad(out InstallationKey? key, out LicenseError? error)
     {
         key = null;
-        if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+        if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
         {
             error = Unreadable(unsafeFolder);
             return false;
         }
 
+        Directory = checkedFolder;
         byte[] stored;
         try
         {

@@ -615,7 +615,7 @@ A server license that `elm license issue --kind server --feature "pro;seats=5" -
 
 ### The server license file
 
-`elm-server` reads its server license from the `.elmlic` file that its setting `license` names (see [elm-server configuration](server-configuration.md#top-level-settings)). [`elm server activate`](elm-cli.md#elm-server-activate), [`elm server refresh`](elm-cli.md#elm-server-refresh), [`elm server import`](elm-cli.md#elm-server-import), and the server's own online renewal write that file: first to a temporary file beside it, which then replaces it, so that a reader never sees half a file.
+`elm-server` reads its server license from the `.elmlic` file that its setting `license` names (see [elm-server configuration](server-configuration.md#top-level-settings)). [`elm server activate`](elm-cli.md#elm-server-activate), [`elm server refresh`](elm-cli.md#elm-server-refresh), [`elm server import`](elm-cli.md#elm-server-import), and the server's own online renewal write that file: first to a temporary file beside it, which then replaces it, so that a reader never sees half a file. The temporary file is `<license path>.tmp`; whatever is at that name first is removed, a new file is made, and the temporary file is removed again when the replacement fails. On Linux and macOS the written file can be read and written by its owner only (mode `0600`): run the `elm server` commands that write it as the server's user.
 
 ### `GET /v1/server/license`
 

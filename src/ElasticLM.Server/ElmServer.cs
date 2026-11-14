@@ -221,6 +221,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
             throw new ServerStartException(keyError!.Message);
         }
 
+        // design §10.2 (V1d24): the check resolves a link on the way to the data folder, and the server goes on in the folder
+        // it checked; the socket's path is made again there, and its length checked again.
+        if (AdminSocket.PathIn(store.Directory) != adminSocketPath)
+        {
+            adminSocketPath = AdminSocket.PathIn(store.Directory);
+            if (!AdminSocket.TryCreateEndPoint(adminSocketPath, out adminEndPoint, out tooLong))
+            {
+                key!.Dispose();
+                throw new ServerStartException(tooLong);
+            }
+        }
+
         // design §11.4 step 3, §13.7: one guard, its state signed with the installation key, for the license checks and the
         // server's ActivationClient alike.
         System.Security.Cryptography.ECDsa guardKey = key!.CopyForClockGuard();

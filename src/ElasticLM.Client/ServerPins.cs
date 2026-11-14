@@ -50,7 +50,7 @@ internal sealed class ServerPins(string directory, TimeProvider time)
     }
 
     /// <summary>
-    /// Writes the pin of a server: a temporary file renamed over the old one, so a reader never sees half a pin.
+    /// Writes the pin of a server: a new temporary file renamed over the old one, so a reader never sees half a pin.
     /// </summary>
     /// <returns><see langword="false"/> when the file cannot be written.</returns>
     public bool TryWrite(Uri server, string licenseId, string keyId)
@@ -74,13 +74,11 @@ internal sealed class ServerPins(string directory, TimeProvider time)
                 Directory.CreateDirectory(Folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
 
-            File.WriteAllBytes(temporary, JsonSerializer.SerializeToUtf8Bytes(pin, ClientWireContext.Default.PinFile));
-            FileReplacement.Move(temporary, path, time);
+            FileReplacement.Write(temporary, path, JsonSerializer.SerializeToUtf8Bytes(pin, ClientWireContext.Default.PinFile), time);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            TryDelete(temporary);
             return false;
         }
     }
@@ -106,18 +104,6 @@ internal sealed class ServerPins(string directory, TimeProvider time)
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             return false;
-        }
-    }
-
-    private static void TryDelete(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            // Nothing more to do; the file is a leftover temporary file.
         }
     }
 

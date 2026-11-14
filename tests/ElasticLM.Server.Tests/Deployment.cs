@@ -15,7 +15,7 @@ namespace ElasticLM.Server.Tests;
 /// </summary>
 /// <remarks>
 /// A server's data folder holds the socket file of its administration API, whose path has a limit of 103 bytes on macOS and
-/// 107 on Windows and Linux (design §13.7). So the folders are short: <c>{temporary folder}/elm-{8 hex digits}/{2 characters}</c>
+/// 107 on Windows and Linux (design §13.7). So the folders are short: <c>{TestFolders.Root}/elm-{8 hex digits}/{2 characters}</c>
 /// (design §20.7, the V1d2 Grill), and the constructor fails when the temporary folder is too long for that.
 /// </remarks>
 internal sealed class Deployment : IAsyncDisposable
@@ -30,12 +30,12 @@ internal sealed class Deployment : IAsyncDisposable
 
     public Deployment()
     {
-        Directory = Path.Combine(Path.GetTempPath(), "elm-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
+        Directory = Path.Combine(ElasticLM.Service.Tests.TestFolders.Root, "elm-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4)));
         string longest = AdminSocket.PathIn(Path.Combine(Directory, "zz"));
         int bytes = System.Text.Encoding.UTF8.GetByteCount(longest);
         string tooLong =
             $"The socket file of a test server would be '{longest}': {bytes} bytes in UTF-8, and this system allows {AdminSocket.MaxPathBytes}. "
-            + "Run the tests with a shorter temporary folder.";
+            + "Run the tests with a shorter test folder (TestFolders.Root).";
         Assert.True(bytes <= AdminSocket.MaxPathBytes, tooLong);
         System.IO.Directory.CreateDirectory(Directory);
         RootKeyFile = Path.Combine(Directory, "root.pub.pem");
