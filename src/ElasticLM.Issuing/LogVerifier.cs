@@ -48,9 +48,9 @@ public sealed record LogFileKey(string File, string? LicenseId, string KeyId);
 /// The result of <see cref="LogVerifier.Verify"/>.
 /// </summary>
 /// <param name="Issues">The findings, in file and line order.</param>
-/// <param name="Entries">The event lines (not the chain, key, or signature lines), in order.</param>
+/// <param name="EntryCount">The number of event lines (not the chain, key, or signature lines) handed out, signed or not.</param>
 /// <param name="Files">The license and key at the end of each file whose first line verified, in order.</param>
-public sealed record LogReport(IReadOnlyList<LogIssue> Issues, IReadOnlyList<LogEntry> Entries, IReadOnlyList<LogFileKey> Files)
+public sealed record LogReport(IReadOnlyList<LogIssue> Issues, long EntryCount, IReadOnlyList<LogFileKey> Files)
 {
     /// <summary>Gets a value indicating whether there is no error (warnings may remain).</summary>
     public bool Intact => !Issues.Any(i => i.Severity == LogIssueSeverity.Error);
@@ -62,7 +62,8 @@ public sealed record LogReport(IReadOnlyList<LogIssue> Issues, IReadOnlyList<Log
 /// signatures and between files, key changes signed by the old key, and that each file is signed by the key that signed the
 /// end of the file before it. A file signed by another key of the same server license (a server moved to a new machine), or
 /// by another key certified for <c>log</c> (a replaced signing key of the service), is a warning; a key of another server
-/// license, or a change between the two kinds, is an error.
+/// license, or a change between the two kinds, is an error. The files are read a line at a time, and the event lines are
+/// handed to the caller, not kept.
 /// </summary>
 public static class LogVerifier
 {
@@ -81,21 +82,30 @@ public static class LogVerifier
     /// <param name="stream">The expected stream name, such as <c>usage</c>.</param>
     /// <param name="node">The node of <c>elm-service</c> whose log this is, checked against the <c>node</c> of each file's
     /// first line; <see langword="null"/> to check only that the files of a chain name one node.</param>
-    /// <returns>The findings and the event lines.</returns>
-    public static LogReport Verify(IReadOnlyList<string> files, TrustStore trust, string? productId, string stream, string? node = null)
+    /// <param name="onEntry">Receives each event line, in order: a line when a signature covers it, and the lines that no
+    /// signature covers when their file ends. A file whose rest is not read after an error hands out only the lines its
+    /// signatures covered. <see langword="null"/> to count the lines only.</param>
+    /// <returns>The findings, the number of event lines, and the key at the end of each file.</returns>
+    public static LogReport Verify(
+        IReadOnlyList<string> files,
+        TrustStore trust,
+        string? productId,
+        string stream,
+        string? node = null,
+        Action<LogEntry>? onEntry = null
+    )
     {
         ArgumentNullException.ThrowIfNull(files);
         ArgumentNullException.ThrowIfNull(trust);
         ArgumentException.ThrowIfNullOrEmpty(stream);
         var issues = new List<LogIssue>();
-        var entries = new List<LogEntry>();
-        var state = new ChainState { Node = node };
+        var state = new ChainState { Node = node, OnEntry = onEntry };
         for (int i = 0; i < files.Count; i++)
         {
-            VerifyFile(files[i], i == 0 ? null : Path.GetFileName(files[i - 1]), trust, productId, stream, state, issues, entries);
+            VerifyFile(files[i], i == 0 ? null : Path.GetFileName(files[i - 1]), trust, productId, stream, state, issues);
         }
 
-        return new LogReport(issues, entries, state.Files);
+        return new LogReport(issues, state.EntryCount, state.Files);
     }
 
     private static void VerifyFile(
@@ -105,38 +115,30 @@ public static class LogVerifier
         string? productId,
         string stream,
         ChainState state,
-        List<LogIssue> issues,
-        List<LogEntry> entries
+        List<LogIssue> issues
     )
     {
         string name = Path.GetFileName(path);
         void Issue(int line, LogIssueSeverity severity, string message) => issues.Add(new LogIssue(name, line, severity, message));
 
-        List<byte[]> lines;
+        LineReader reader;
         try
         {
-            lines = ReadLines(path, out bool partial);
-            if (partial)
-            {
-                Issue(lines.Count + 1, LogIssueSeverity.Warning, "The file ends in the middle of a line (crash or truncation).");
-            }
+            reader = new LineReader(path);
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Issue(0, LogIssueSeverity.Error, "The file cannot be read: " + e.Message);
             state.Broken = true;
-            return;
-        }
-
-        if (lines.Count == 0)
-        {
-            // An empty file, or one cut inside its first line: a crash while the file was started, or a file emptied by hand.
-            Issue(1, LogIssueSeverity.Error, "The file does not start with chain.start or chain.reset.");
-            state.Broken = true;
+            state.FirstAuth = null;
             return;
         }
 
         LogSigner? key = null;
+
+        // design §18.1 (V1d23): the hash of the file's first signature line, which a chain.reset of the next file names.
+        string? firstAuth = null;
+        bool readToTheEnd = false;
         LogSigner? nextKey = null;
 
         // design §18.1, 0.95: a service's file is compared with the previous file by the key that signs it, known at its
@@ -145,13 +147,35 @@ public static class LogVerifier
         bool firstSignature = true;
         using var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         int covered = 0;
+
+        // design §18.1 (V1d23): the event lines after the last signature wait for the next one only when the caller takes
+        // them; otherwise they are counted.
         var pendingEntries = new List<LogEntry>();
+        long pendingCount = 0;
+        int number = 0;
         try
         {
-            for (int index = 0; index < lines.Count; index++)
+            while (true)
             {
-                int number = index + 1;
-                byte[] bytes = lines[index];
+                byte[]? bytes;
+                try
+                {
+                    bytes = reader.ReadLine();
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    Issue(0, LogIssueSeverity.Error, "The file cannot be read: " + e.Message);
+                    state.Broken = true;
+                    return;
+                }
+
+                if (bytes is null)
+                {
+                    break;
+                }
+
+                int index = number;
+                number++;
                 JsonElement value;
                 string type;
                 try
@@ -180,7 +204,7 @@ public static class LogVerifier
 
                 // The lines this verifier reads further (the chain line, a signature, a key change) hold no text it cannot
                 // read; an event line's other members are its reader's to check.
-                if ((index == 0 || type == LogLineTypes.Auth || type == LogLineTypes.KeyChanged) && !IsReadableText(value))
+                if ((index == 0 || type == LogLineTypes.Auth || type == LogLineTypes.KeyChanged) && !JsonText.IsReadable(value))
                 {
                     Issue(number, LogIssueSeverity.Error, UnreadableText);
                     return;
@@ -217,13 +241,15 @@ public static class LogVerifier
                     }
 
                     firstSignature = false;
-
+                    firstAuth ??= SignedLog.Hash(bytes);
                     foreach (LogEntry entry in pendingEntries)
                     {
-                        entries.Add(entry with { IsSigned = true });
+                        state.OnEntry!(entry with { IsSigned = true });
                     }
 
+                    state.EntryCount += pendingCount;
                     pendingEntries.Clear();
+                    pendingCount = 0;
                     covered = 0;
                     if (nextKey is not null)
                     {
@@ -268,18 +294,44 @@ public static class LogVerifier
                 }
                 else if (index > 0)
                 {
-                    pendingEntries.Add(new LogEntry(name, number, type, value, IsSigned: false));
+                    pendingCount++;
+                    if (state.OnEntry is not null)
+                    {
+                        pendingEntries.Add(new LogEntry(name, number, type, value, IsSigned: false));
+                    }
                 }
             }
 
-            if (pendingEntries.Count > 0 || covered > 0)
+            readToTheEnd = true;
+            if (reader.Partial)
             {
-                Issue(lines.Count, LogIssueSeverity.Warning, $"{covered} line(s) after the last signature are not signed (crash or tampering).");
-                entries.AddRange(pendingEntries);
+                Issue(number + 1, LogIssueSeverity.Warning, "The file ends in the middle of a line (crash or truncation).");
+            }
+
+            if (number == 0)
+            {
+                // An empty file, or one cut inside its first line: a crash while the file was started, or a file emptied by hand.
+                Issue(1, LogIssueSeverity.Error, "The file does not start with chain.start or chain.reset.");
+                state.Broken = true;
+                return;
+            }
+
+            if (pendingCount > 0 || covered > 0)
+            {
+                Issue(number, LogIssueSeverity.Warning, $"{covered} line(s) after the last signature are not signed (crash or tampering).");
+                foreach (LogEntry entry in pendingEntries)
+                {
+                    state.OnEntry!(entry);
+                }
+
+                state.EntryCount += pendingCount;
             }
         }
         finally
         {
+            // Unknown when the file was not read as far as its first signature.
+            state.FirstAuth = firstAuth ?? (readToTheEnd ? string.Empty : null);
+            reader.Dispose();
             if (key is not null)
             {
                 state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId));
@@ -318,23 +370,41 @@ public static class LogVerifier
             return false;
         }
 
+        string? linkFile = null;
+        string? linkAuth = null;
+        if (value.TryGetProperty("prev", out JsonElement link) && link.ValueKind == JsonValueKind.Object)
+        {
+            linkFile = link.TryGetProperty("file", out JsonElement f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
+            linkAuth = link.TryGetProperty("auth", out JsonElement a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
+        }
+
         if (type == LogLineTypes.ChainReset)
         {
             string reason = value.TryGetProperty("reason", out JsonElement r) && r.ValueKind == JsonValueKind.String ? r.GetString()! : "no reason";
             issue(1, LogIssueSeverity.Warning, "The chain was reset: " + reason);
+
+            // design §18.1 (V1d23): a reset names the file before it and the hash of that file's first signature line, so a
+            // file removed before a reset is found missing, and another file renamed to its name is found replaced.
+            string? linkFirst =
+                link.ValueKind == JsonValueKind.Object
+                && link.TryGetProperty("first", out JsonElement first)
+                && first.ValueKind == JsonValueKind.String
+                    ? first.GetString()
+                    : null;
+            if (previousName is not null && linkFile != previousName)
+            {
+                issue(1, LogIssueSeverity.Error, $"The file follows '{linkFile ?? "nothing"}', not '{previousName}': a file is missing.");
+            }
+            else if (previousName is not null && linkFirst is not null && state.FirstAuth is not null && linkFirst != state.FirstAuth)
+            {
+                issue(1, LogIssueSeverity.Error, $"The file follows another file named '{previousName}': that file was replaced or cut.");
+            }
+
             state.Prev = string.Empty;
             state.N = 0;
         }
         else
         {
-            string? linkFile = null;
-            string? linkAuth = null;
-            if (value.TryGetProperty("prev", out JsonElement link) && link.ValueKind == JsonValueKind.Object)
-            {
-                linkFile = link.TryGetProperty("file", out JsonElement f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null;
-                linkAuth = link.TryGetProperty("auth", out JsonElement a) && a.ValueKind == JsonValueKind.String ? a.GetString() : null;
-            }
-
             if (previousName is null)
             {
                 // The first file given: trust its link as the starting point.
@@ -369,9 +439,10 @@ public static class LogVerifier
 
             state.Node = fileNode;
         }
-        else if (state.Node is not null && value.TryGetProperty("certificates", out _))
+        else if (value.TryGetProperty("certificates", out _))
         {
-            issue(1, LogIssueSeverity.Error, $"The file names no node, and the log is of node '{state.Node}'.");
+            // design §18.1 (V1d23): elm-service names its node on the first line of every file, whatever was given.
+            issue(1, LogIssueSeverity.Error, "The file of elm-service names no node on its first line.");
             return false;
         }
 
@@ -580,80 +651,68 @@ public static class LogVerifier
         return true;
     }
 
-    // Whether every member name and every string of a value can be read as text. JsonElement throws
-    // InvalidOperationException from GetString and from a property's Name on a lone surrogate escape ("\ud800") and on bytes
-    // that are not UTF-8 (measured on .NET 10.0.15, Windows); the depth is bounded by the parse (32).
-    private static bool IsReadableText(JsonElement value)
+    // Reads a file a line at a time, each line with its line feed (design §18.1, V1d23). A last line without one is not
+    // returned, and Partial tells it was there.
+    private sealed class LineReader : IDisposable
     {
-        try
+        private readonly FileStream _stream;
+        private readonly byte[] _buffer = new byte[64 * 1024];
+        private readonly MemoryStream _current = new();
+        private int _start;
+        private int _end;
+
+        public LineReader(string path) => _stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+
+        public bool Partial { get; private set; }
+
+        // The next line, or null at the end of the file. The limit is on the line without its line feed, checked on the
+        // whole line when its end is found and on the part read so far otherwise.
+        public byte[]? ReadLine()
         {
-            switch (value.ValueKind)
+            while (true)
             {
-                case JsonValueKind.String:
-                    _ = value.GetString();
-                    return true;
-                case JsonValueKind.Array:
-                    return value.EnumerateArray().All(IsReadableText);
-                case JsonValueKind.Object:
-                    foreach (JsonProperty member in value.EnumerateObject())
+                if (_start == _end)
+                {
+                    _end = _stream.Read(_buffer);
+                    _start = 0;
+                    if (_end == 0)
                     {
-                        _ = member.Name;
-                        if (!IsReadableText(member.Value))
-                        {
-                            return false;
-                        }
+                        Partial = _current.Length > 0;
+                        return null;
+                    }
+                }
+
+                int feed = Array.IndexOf(_buffer, (byte)'\n', _start, _end - _start);
+                if (feed < 0)
+                {
+                    _current.Write(_buffer, _start, _end - _start);
+                    _start = _end;
+                    if (_current.Length > MaxLineLength)
+                    {
+                        throw new InvalidDataException($"A line is longer than {MaxLineLength} bytes.");
                     }
 
-                    return true;
-                default:
-                    return true;
-            }
-        }
-        catch (InvalidOperationException)
-        {
-            return false;
-        }
-    }
-
-    // Splits a file into lines, each with its line feed. A last line without one is reported as partial and left out.
-    private static List<byte[]> ReadLines(string path, out bool partial)
-    {
-        var lines = new List<byte[]>();
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        using var current = new MemoryStream();
-        byte[] buffer = new byte[64 * 1024];
-        int read;
-        while ((read = stream.Read(buffer)) > 0)
-        {
-            int start = 0;
-            for (int i = 0; i < read; i++)
-            {
-                if (buffer[i] != (byte)'\n')
-                {
                     continue;
                 }
 
-                // The limit is on the line without its line feed; a whole line is checked here, a line still being read below.
-                if (current.Length + (i - start) > MaxLineLength)
+                if (_current.Length + (feed - _start) > MaxLineLength)
                 {
                     throw new InvalidDataException($"A line is longer than {MaxLineLength} bytes.");
                 }
 
-                current.Write(buffer, start, i - start + 1);
-                lines.Add(current.ToArray());
-                current.SetLength(0);
-                start = i + 1;
-            }
-
-            current.Write(buffer, start, read - start);
-            if (current.Length > MaxLineLength)
-            {
-                throw new InvalidDataException($"A line is longer than {MaxLineLength} bytes.");
+                _current.Write(_buffer, _start, feed - _start + 1);
+                _start = feed + 1;
+                byte[] line = _current.ToArray();
+                _current.SetLength(0);
+                return line;
             }
         }
 
-        partial = current.Length > 0;
-        return lines;
+        public void Dispose()
+        {
+            _stream.Dispose();
+            _current.Dispose();
+        }
     }
 
     // What may sign a file: a server's identity (its license and key), or the service's keys certified for log.
@@ -721,6 +780,15 @@ public static class LogVerifier
         public string? Node { get; set; }
 
         public List<LogFileKey> Files { get; } = [];
+
+        // Where the event lines go, or null to count them only.
+        public Action<LogEntry>? OnEntry { get; init; }
+
+        public long EntryCount { get; set; }
+
+        // The hash of the first signature line of the file verified last: empty when it has none, null when it was not read
+        // that far.
+        public string? FirstAuth { get; set; }
     }
 
     // A clock fixed at the time a line was written, so a server license is judged as of then.

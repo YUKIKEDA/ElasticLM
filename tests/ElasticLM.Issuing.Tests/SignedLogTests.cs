@@ -58,7 +58,7 @@ public sealed class SignedLogTests : IDisposable
             Append(log, 7);
         }
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.Empty(report.Issues);
         Assert.Equal(7, report.Entries.Count);
         Assert.All(report.Entries, e => Assert.True(e.IsSigned));
@@ -206,7 +206,7 @@ public sealed class SignedLogTests : IDisposable
         }
 
         string file = SignedLog.FindFiles(_dir, "usage").Single();
-        LogReport Report() => service ? Verify2() : Verify();
+        VerifiedLog Report() => service ? Verify2() : Verify();
         Assert.Empty(Report().Issues);
         const string Member = "\"sig\":\"";
         List<string> lines = [.. File.ReadAllLines(file)];
@@ -217,7 +217,7 @@ public sealed class SignedLogTests : IDisposable
         lines[authLine] = lines[authLine][..start] + seal + lines[authLine][end..];
         File.WriteAllText(file, string.Join('\n', lines) + "\n");
 
-        LogReport report = Report();
+        VerifiedLog report = Report();
 
         Assert.False(report.Intact);
         string expected =
@@ -324,7 +324,7 @@ public sealed class SignedLogTests : IDisposable
         string sig = JwsWriter.Sign(other, TokenTypes.Log, forged, LicensingJsonContext.Default.LogPayload);
         File.AppendAllText(file, keyChanged + "{\"type\":\"auth\",\"ts\":0,\"sig\":\"" + sig + "\"}\n");
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.Contains(
             report.Issues,
             i => i.Severity == LogIssueSeverity.Error && i.Message.Contains("not made with the server's key", StringComparison.Ordinal)
@@ -403,7 +403,7 @@ public sealed class SignedLogTests : IDisposable
         string file = SignedLog.FindFiles(_dir, "usage")[0];
         File.AppendAllText(file, "{\"type\":\"lease.acquired\",\"ts\":1,\"i\":2}\n{\"type\":\"lea");
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.True(report.Intact);
         Assert.Equal(2, report.Issues.Count(i => i.Severity == LogIssueSeverity.Warning));
         Assert.Equal([true, true, false], report.Entries.Select(e => e.IsSigned));
@@ -436,9 +436,59 @@ public sealed class SignedLogTests : IDisposable
 
         Assert.Contains("usage-20260930T000000000Z.jsonl", reason, StringComparison.Ordinal);
         string newest = SignedLog.FindFiles(_dir, "usage")[^1];
-        LogReport report = Verify([newest]);
+        VerifiedLog report = Verify([newest]);
         Assert.True(report.Intact);
         Assert.Contains(report.Issues, i => i.Message.StartsWith("The chain was reset", StringComparison.Ordinal));
+        Assert.Contains(
+            "\"prev\":{\"file\":\"usage-20260930T000000000Z.jsonl\",\"first\":\"\"}",
+            File.ReadLines(newest).First(),
+            StringComparison.Ordinal
+        );
+    }
+
+    /// <summary>
+    /// At a start whose previous file has no signature in its last 1 MiB, the chain.reset names that file and the hash of its
+    /// first signature line, read from the file's head; the two files verify intact (design §18.1, V1d23).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log, then 1 MiB and more of unsigned event lines appended to it.
+    ///
+    /// Steps:
+    /// - A minute later, open the log, append, close; read the new file's first line; verify the folder.
+    ///
+    /// Expected:
+    /// - The reason is "no signature was found at the end of the previous file (name)"; the line holds "prev":{"file":(name),
+    ///   "first":(the SHA-256 of the previous file's second line, worked out here)}; the folder is intact, with warnings.
+    /// </remarks>
+    [Fact]
+    public void Open_PreviousWithoutSignatureAtItsEnd_NamesItsFirstSignature()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string previous = SignedLog.FindFiles(_dir, "usage").Single();
+        string unsigned = string.Concat(Enumerable.Repeat("{\"type\":\"lease.acquired\",\"ts\":1}\n", (1024 * 1024 / 32) + 1));
+        File.AppendAllText(previous, unsigned);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        string reason;
+        using (SignedLog log = Open())
+        {
+            reason = log.ResetReason!;
+            Append(log, 1);
+        }
+
+        string name = Path.GetFileName(previous);
+        Assert.Equal($"no signature was found at the end of the previous file {name}", reason);
+        string firstAuth = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadLines(previous).ElementAt(1) + "\n")));
+        Assert.Contains(
+            $"\"prev\":{{\"file\":\"{name}\",\"first\":\"{firstAuth}\"}}",
+            File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First(),
+            StringComparison.Ordinal
+        );
+        Assert.True(Verify().Intact);
     }
 
     /// <summary>
@@ -468,9 +518,9 @@ public sealed class SignedLogTests : IDisposable
 
         using ECDsa otherRoot = KeyFiles.CreateKey();
         IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
-        Assert.False(LogVerifier.Verify(files, TrustStore.Create([KeyFiles.ExportPublic(otherRoot)], []), "acme-cad", "usage").Intact);
-        Assert.False(LogVerifier.Verify(files, _trust, "acme-cam", "usage").Intact);
-        Assert.False(LogVerifier.Verify(files, _trust, "acme-cad", "borrows").Intact);
+        Assert.False(VerifiedLog.Of(files, TrustStore.Create([KeyFiles.ExportPublic(otherRoot)], []), "acme-cad", "usage").Intact);
+        Assert.False(VerifiedLog.Of(files, _trust, "acme-cam", "usage").Intact);
+        Assert.False(VerifiedLog.Of(files, _trust, "acme-cad", "borrows").Intact);
     }
 
     /// <summary>
@@ -494,7 +544,7 @@ public sealed class SignedLogTests : IDisposable
         string file = Path.Combine(_dir, "usage-20261001T000000000Z.jsonl");
         File.WriteAllText(file, content);
 
-        LogReport report = Verify([file]);
+        VerifiedLog report = Verify([file]);
         Assert.False(report.Intact);
         Assert.Contains(report.Issues, i => i.Line == 1 && i.Message.Contains("does not start with chain.start", StringComparison.Ordinal));
         Assert.Empty(report.Files);
@@ -509,8 +559,8 @@ public sealed class SignedLogTests : IDisposable
     /// - A closed log, then an event line of exactly 1 MiB and its line feed appended without a signature.
     ///
     /// Steps:
-    /// - Verify; append 1 MiB of text without a line feed and verify; write a file whose second line is 1 MiB + 1 byte with
-    ///   its line feed and verify.
+    /// - Verify; append 1 MiB of text without a line feed and verify; write a file whose first line is 1 MiB + 1 byte with
+    ///   its line feed and verify (the verifier reads a line at a time, so a line before it would be judged first).
     ///
     /// Expected:
     /// - Intact, the long line an unsigned entry; intact with a warning that the file ends in the middle of a line; an
@@ -530,17 +580,17 @@ public sealed class SignedLogTests : IDisposable
         Assert.Equal(LogVerifier.MaxLineLength, Encoding.UTF8.GetByteCount(line));
         File.AppendAllText(file, line + "\n");
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.True(report.Intact);
         Assert.Contains(report.Entries, e => !e.IsSigned && e.Value.TryGetProperty("x", out _));
 
         File.AppendAllText(file, new string('y', LogVerifier.MaxLineLength));
-        LogReport cut = Verify();
+        VerifiedLog cut = Verify();
         Assert.True(cut.Intact);
         Assert.Contains(cut.Issues, i => i.Message.Contains("middle of a line", StringComparison.Ordinal));
 
         string longer = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl");
-        File.WriteAllText(longer, "{}\n" + new string('z', LogVerifier.MaxLineLength + 1) + "\n");
+        File.WriteAllText(longer, new string('z', LogVerifier.MaxLineLength + 1) + "\n");
         Assert.Contains(
             Verify([longer]).Issues,
             i => i.Severity == LogIssueSeverity.Error && i.Message.StartsWith("The file cannot be read", StringComparison.Ordinal)
@@ -620,7 +670,7 @@ public sealed class SignedLogTests : IDisposable
             Append(log, 1);
         }
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.Equal(intact, report.Intact);
         Assert.Contains(report.Issues, i => i.Line == 1 && i.Message.Contains(message, StringComparison.Ordinal));
         Assert.Equal((licenseId, KeyFiles.KeyId(other)), (report.Files[^1].LicenseId, report.Files[^1].KeyId));
@@ -677,11 +727,209 @@ public sealed class SignedLogTests : IDisposable
         }
 
         Assert.Equal(2, SignedLog.FindFiles(_dir, "usage").Count);
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.True(report.Intact);
         Assert.Contains(report.Issues, i => i.Message.Contains("not signed", StringComparison.Ordinal));
         string failed = Path.GetFileName(SignedLog.FindFiles(_dir, "usage")[0]);
         Assert.Contains(report.Issues, i => i.Message == $"The chain was reset: a write to {failed} failed");
+    }
+
+    /// <summary>
+    /// A signature that fails with an exception that is not an IOException leaves the digest and the count of unsigned lines
+    /// as they were, so the next signature covers the lines before it, and the log stays intact (design §18.1, V1d23).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log signed every line whose key fails once with a CryptographicException, which does not close the file.
+    ///
+    /// Steps:
+    /// - Append one event (signed); make the key fail and append (throws); append again; close; verify.
+    ///
+    /// Expected:
+    /// - The second Append throws CryptographicException; one file; no issue; three events, all signed (before V1d23 the
+    ///   failed signature had reset the digest, and the next signature was reported as covering changed lines).
+    /// </remarks>
+    [Fact]
+    public void Append_SignatureThatFails_IsCoveredByTheNextSignature()
+    {
+        bool fail = false;
+        string Access(Func<ECDsa, string> use) => fail ? throw new CryptographicException("The key cannot be used.") : use(_server);
+        using (
+            SignedLog log = SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                Access,
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                sealEvery: 1
+            )
+        )
+        {
+            Append(log, 1);
+            fail = true;
+            Assert.Throws<CryptographicException>(() => Append(log, 1));
+            fail = false;
+            Append(log, 1);
+        }
+
+        Assert.Single(SignedLog.FindFiles(_dir, "usage"));
+        VerifiedLog report = Verify();
+        Assert.Empty(report.Issues);
+        Assert.Equal([true, true, true], report.Entries.Select(e => e.IsSigned));
+    }
+
+    /// <summary>
+    /// A file that starts with chain.reset names the file before it (prev.file, the newest of the folder), and the verifier,
+    /// given the files before it, finds a removed file as for chain.start; a reset that names no file after another file is
+    /// the same error (design §18.1, V1d23, finding T15-1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service log: a first file; a second file that continues it, whose second signature fails with an IOException;
+    ///   the third file that the next write starts with chain.reset; and a file made by hand whose signed first line is a
+    ///   chain.reset with no prev.
+    ///
+    /// Steps:
+    /// - Read the third file's first line; verify the three files; the first and the third; the third and the hand-made one.
+    ///   Verify the three files while the test holds the second file open for itself alone; cut the second file to its first
+    ///   line, verify the three, and put it back. Remove the hand-made file and the second file, give the first file the
+    ///   second's name, and verify the folder.
+    ///
+    /// Expected:
+    /// - The first line holds "prev":{"file":"(second file)","first":(the SHA-256 of the second file's second line, its first
+    ///   signature, worked out here)}; the three are intact; then "The file follows '(second)', not '(first)': a file is
+    ///   missing." as the only error (before V1d23 the two passed with only the reset's warning); then "The file follows
+    ///   'nothing', not '(third)': a file is missing." as the only error; then only "The file cannot be read: …" on line 0
+    ///   of the second file (the reset is not judged against the first file); then "The file follows another file named
+    ///   '(second)': that file was replaced or cut." as the only error, for the cut file and for the renamed one (with the
+    ///   name alone, the renamed file passed).
+    /// </remarks>
+    [Fact]
+    public void Verify_FileRemovedBeforeAReset_IsFoundMissing()
+    {
+        string certificate = Certificate(_signing, KeyUses.Log);
+        using (SignedLog log = OpenService(certificate, _signing))
+        {
+            Append(log, 1);
+        }
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        bool fail = false;
+        string Access(Func<ECDsa, string> use) => fail ? throw new IOException("The disk is full.") : use(_signing);
+        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access, LogKeyMaterial.Certificates([certificate], "n1"), _time, sealEvery: 1))
+        {
+            Append(log, 1);
+            fail = true;
+            Assert.Throws<IOException>(() => Append(log, 1));
+            fail = false;
+            _time.Advance(TimeSpan.FromSeconds(1));
+            Append(log, 1);
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Equal(3, files.Count);
+        string first = Path.GetFileName(files[0]);
+        string second = Path.GetFileName(files[1]);
+        string third = Path.GetFileName(files[2]);
+        Assert.Contains("\"type\":\"chain.reset\",", File.ReadLines(files[2]).First(), StringComparison.Ordinal);
+        string secondFirstAuth = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadLines(files[1]).ElementAt(1) + "\n")));
+        Assert.Contains(
+            $"\"prev\":{{\"file\":\"{second}\",\"first\":\"{secondFirstAuth}\"}}",
+            File.ReadLines(files[2]).First(),
+            StringComparison.Ordinal
+        );
+        Assert.True(Verify2().Intact);
+
+        LogIssue missing = Assert.Single(
+            VerifiedLog.Of([files[0], files[2]], _trust, null, "usage").Issues,
+            i => i.Severity == LogIssueSeverity.Error
+        );
+        Assert.Equal($"The file follows '{second}', not '{first}': a file is missing.", missing.Message);
+
+        string bare = Path.Combine(_dir, "usage-20991231T000000000Z.jsonl");
+        WriteFirstFile(
+            bare,
+            $$"""{"type":"chain.reset","ts":{{Now.ToUnixTimeSeconds()}},"stream":"usage","reason":"x","node":"n1","certificates":["{{certificate}}"]}"""
+        );
+        LogIssue nothing = Assert.Single(VerifiedLog.Of([files[2], bare], _trust, null, "usage").Issues, i => i.Severity == LogIssueSeverity.Error);
+        Assert.Equal($"The file follows 'nothing', not '{third}': a file is missing.", nothing.Message);
+
+        // A second file that cannot be read is reported as such, and the reset after it is not judged against the first file.
+        using (new FileStream(files[1], FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            LogIssue unreadable = Assert.Single(
+                VerifiedLog.Of([files[0], files[1], files[2]], _trust, null, "usage").Issues,
+                i => i.Severity == LogIssueSeverity.Error
+            );
+            Assert.Equal((second, 0), (unreadable.File, unreadable.Line));
+            Assert.StartsWith("The file cannot be read: ", unreadable.Message, StringComparison.Ordinal);
+        }
+
+        // A second file cut to its first line, before its first signature, no longer matches the reset's prev.first.
+        string whole = File.ReadAllText(files[1]);
+        File.WriteAllText(files[1], whole[..(whole.IndexOf('\n', StringComparison.Ordinal) + 1)]);
+        LogIssue cut = Assert.Single(
+            VerifiedLog.Of([files[0], files[1], files[2]], _trust, null, "usage").Issues,
+            i => i.Severity == LogIssueSeverity.Error
+        );
+        Assert.Equal($"The file follows another file named '{second}': that file was replaced or cut.", cut.Message);
+        File.WriteAllText(files[1], whole);
+
+        // The owner's answer K1: removing the second file and giving the first its name passes the name alone.
+        File.Delete(bare);
+        File.Delete(files[1]);
+        File.Move(files[0], files[1]);
+        LogIssue replaced = Assert.Single(Verify2().Issues, i => i.Severity == LogIssueSeverity.Error);
+        Assert.Equal($"The file follows another file named '{second}': that file was replaced or cut.", replaced.Message);
+    }
+
+    /// <summary>
+    /// The verifier hands each event line to its caller when a signature covers it, and the lines no signature covers when
+    /// their file ends; without a caller it counts the same lines. A file whose rest is not read after an error, or whose
+    /// read fails in the middle, hands out only the lines its signatures covered (design §18.1, V1d23, finding F28).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log of four events signed every two, then an unsigned event line appended.
+    ///
+    /// Steps:
+    /// - Verify with and without a caller; append a line that is not an object and verify both ways; replace that line with
+    ///   one longer than 1 MiB and verify both ways.
+    ///
+    /// Expected:
+    /// - Five lines, the last unsigned, the count 5 both ways with the same issues; then four signed lines and the count 4,
+    ///   with the error on line 10; then four signed lines and the count 4, with the error that the file cannot be read.
+    /// </remarks>
+    [Fact]
+    public void Verify_EventLines_AreHandedOutOrCounted()
+    {
+        using (SignedLog log = Open(sealEvery: 2))
+        {
+            Append(log, 4);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage")[0];
+        string signed = File.ReadAllText(file);
+        File.AppendAllText(file, "{\"type\":\"lease.acquired\",\"ts\":1,\"i\":4}\n");
+        void Check(int count, bool lastSigned, string message)
+        {
+            VerifiedLog handed = Verify();
+            LogReport counted = LogVerifier.Verify([file], _trust, "acme-cad", "usage");
+            Assert.Equal(count, handed.Entries.Count);
+            Assert.Equal(count, counted.EntryCount);
+            Assert.Equal(lastSigned, handed.Entries[^1].IsSigned);
+            Assert.Equal(handed.Issues, counted.Issues);
+            Assert.Contains(handed.Issues, i => i.Message.StartsWith(message, StringComparison.Ordinal));
+        }
+
+        Check(5, lastSigned: false, "1 line(s) after the last signature are not signed");
+        File.AppendAllText(file, "[]\n");
+        Check(4, lastSigned: true, "The line is not a JSON object.");
+        Assert.Contains(Verify().Issues, i => i.Line == 10 && i.Message == "The line is not a JSON object.");
+        File.WriteAllText(file, signed + new string('x', LogVerifier.MaxLineLength + 1) + "\n");
+        Check(4, lastSigned: true, "The file cannot be read: ");
     }
 
     /// <summary>
@@ -726,7 +974,7 @@ public sealed class SignedLogTests : IDisposable
             Append(log, 1);
         }
 
-        LogReport report = Verify();
+        VerifiedLog report = Verify();
         Assert.True(report.Intact);
         Assert.Equal(expected, report.Files[^1].LicenseId);
     }
@@ -814,7 +1062,7 @@ public sealed class SignedLogTests : IDisposable
 
         foreach (string? product in new[] { null, "acme-cad" })
         {
-            LogReport report = LogVerifier.Verify(files, _trust, product, "usage");
+            VerifiedLog report = VerifiedLog.Of(files, _trust, product, "usage");
             Assert.Empty(report.Issues);
             Assert.Equal(5, report.Entries.Count(e => e.IsSigned));
             Assert.All(report.Files, f => Assert.Equal((null, KeyFiles.KeyId(_signing)), (f.LicenseId, f.KeyId)));
@@ -861,7 +1109,7 @@ public sealed class SignedLogTests : IDisposable
                 Append(log, 2);
             }
 
-            LogIssue error = Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
+            LogIssue error = Assert.Single(VerifiedLog.Of(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
             Assert.Equal((LogIssueSeverity.Error, message), (error.Severity, error.Message));
         }
     }
@@ -897,7 +1145,7 @@ public sealed class SignedLogTests : IDisposable
             Append(log, 1);
         }
 
-        LogIssue replaced = Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
+        LogIssue replaced = Assert.Single(VerifiedLog.Of(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage").Issues);
         Assert.Equal(
             (
                 LogIssueSeverity.Warning,
@@ -919,7 +1167,7 @@ public sealed class SignedLogTests : IDisposable
         string serverFile = SignedLog.FindFiles(_dir, "usage").Single();
         Assert.Equal(
             "The line carries a server license, and no product was given to verify it.",
-            Assert.Single(LogVerifier.Verify([serverFile], _trust, null, "usage").Issues).Message
+            Assert.Single(VerifiedLog.Of([serverFile], _trust, null, "usage").Issues).Message
         );
         using (SignedLog log = OpenService(Certificate(_signing, KeyUses.Log), _signing))
         {
@@ -932,25 +1180,28 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
-    /// The certificates of a service log are one to four, none empty.
+    /// The certificates of a service log are one to four, none empty, with a node that is not empty (design §18.1: every
+    /// first line of elm-service names its node).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - None.
     ///
     /// Steps:
-    /// - Make the material with no certificate, five, and an empty one; with four.
+    /// - Make the material with no certificate, five, and an empty one; with an empty node and with no node; with four.
     ///
     /// Expected:
-    /// - ArgumentException three times; the last is made.
+    /// - ArgumentException four times and ArgumentNullException once; the last is made.
     /// </remarks>
     [Fact]
     public void LogKeyMaterial_Certificates_AreChecked()
     {
-        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates([]));
-        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", "b", "c", "d", "e"]));
-        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", string.Empty]));
-        Assert.NotNull(LogKeyMaterial.Certificates(["a", "b", "c", "d"]));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates([], "n1"));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", "b", "c", "d", "e"], "n1"));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a", string.Empty], "n1"));
+        Assert.Throws<ArgumentException>(() => LogKeyMaterial.Certificates(["a"], string.Empty));
+        Assert.Throws<ArgumentNullException>(() => LogKeyMaterial.Certificates(["a"], null!));
+        Assert.NotNull(LogKeyMaterial.Certificates(["a", "b", "c", "d"], "n1"));
     }
 
     /// <summary>
@@ -977,7 +1228,7 @@ public sealed class SignedLogTests : IDisposable
         string b = Certificate(other, KeyUses.Log);
         int signatures = 0;
         string Switching(Func<ECDsa, string> use) => use(signatures++ < 1 ? _signing : other);
-        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Switching, LogKeyMaterial.Certificates([a, b]), _time, sealEvery: 1))
+        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Switching, LogKeyMaterial.Certificates([a, b], "n1"), _time, sealEvery: 1))
         {
             Append(log, 2);
         }
@@ -994,7 +1245,7 @@ public sealed class SignedLogTests : IDisposable
             Append(log, 1);
         }
 
-        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access(other), LogKeyMaterial.Certificates([a, b]), _time))
+        using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access(other), LogKeyMaterial.Certificates([a, b], "n1"), _time))
         {
             Append(log, 1);
         }
@@ -1037,7 +1288,7 @@ public sealed class SignedLogTests : IDisposable
         AppendSigned(file, _signing, $$"""{"type":"key.changed","ts":{{Now.ToUnixTimeSeconds()}},"certificates":["{{certificate}}"]}""");
         Assert.Equal(
             "A log of elm-service changes no key while it runs, and this file has a key change.",
-            Assert.Single(LogVerifier.Verify([file], _trust, null, "usage").Issues).Message
+            Assert.Single(VerifiedLog.Of([file], _trust, null, "usage").Issues).Message
         );
 
         ClearFolder();
@@ -1049,6 +1300,26 @@ public sealed class SignedLogTests : IDisposable
         file = SignedLog.FindFiles(_dir, "usage").Single();
         AppendSigned(file, _server, $$"""{"type":"key.changed","ts":{{Now.ToUnixTimeSeconds()}},"certificates":["{{certificate}}"]}""");
         Assert.Equal("A key change turns a server's log into a log of elm-service.", Assert.Single(Verify([file]).Issues).Message);
+    }
+
+    // Writes a file whose first line is the given JSON, signed as SignedLog signs the first line of a log's first file: a
+    // signature numbered 1 after no earlier one, over that line alone.
+    private void WriteFirstFile(string path, string firstLine)
+    {
+        byte[] line = Encoding.UTF8.GetBytes(firstLine + "\n");
+        var payload = new LogPayload
+        {
+            Ver = 1,
+            Iat = Now.ToUnixTimeSeconds(),
+            Jti = JwsWriter.NewTokenId(),
+            Stream = "usage",
+            N = 1,
+            Prev = string.Empty,
+            Digest = Base64UrlCodec.Encode(SHA256.HashData(line)),
+            Lines = 1,
+        };
+        string signature = JwsWriter.Sign(_signing, TokenTypes.Log, payload, LicensingJsonContext.Default.LogPayload);
+        File.WriteAllText(path, firstLine + "\n" + $$"""{"type":"auth","ts":{{Now.ToUnixTimeSeconds()}},"sig":"{{signature}}"}""" + "\n");
     }
 
     // Appends a line and a signature over it that continues the file's chain, as SignedLog would write them.
@@ -1072,7 +1343,7 @@ public sealed class SignedLogTests : IDisposable
         File.AppendAllText(path, json + "\n" + $$"""{"type":"auth","ts":{{Now.ToUnixTimeSeconds()}},"sig":"{{signature}}"}""" + "\n");
     }
 
-    private LogReport Verify2() => LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage");
+    private VerifiedLog Verify2() => VerifiedLog.Of(SignedLog.FindFiles(_dir, "usage"), _trust, null, "usage");
 
     private void ClearFolder()
     {
@@ -1111,7 +1382,7 @@ public sealed class SignedLogTests : IDisposable
 
         IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
         Assert.Contains(
-            LogVerifier.Verify([files[0], files[2]], _trust, null, "usage").Issues,
+            VerifiedLog.Of([files[0], files[2]], _trust, null, "usage").Issues,
             i => i.Message.Contains("a file is missing", StringComparison.Ordinal)
         );
 
@@ -1180,7 +1451,7 @@ public sealed class SignedLogTests : IDisposable
         }
 
         TrustStore revoked = TrustStore.Create([KeyFiles.ExportPublic(_root)], [KeyFiles.KeyId(_signing)]);
-        Assert.Equal(NoLog, Assert.Single(LogVerifier.Verify(SignedLog.FindFiles(_dir, "usage"), revoked, null, "usage").Issues).Message);
+        Assert.Equal(NoLog, Assert.Single(VerifiedLog.Of(SignedLog.FindFiles(_dir, "usage"), revoked, null, "usage").Issues).Message);
 
         _time.Advance(TimeSpan.FromSeconds(1));
         using (SignedLog log = Open())
@@ -1193,25 +1464,29 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
-    /// A service's files name their node on the signed first line: a chain is of one node, and the node asked for must be
-    /// the files' (decision 0.95).
+    /// A service's files name their node on the signed first line: a chain is of one node, the node asked for must be the
+    /// files', and a first line with certificates and no node is an error whatever was asked (design §18.1, decision 0.95,
+    /// V1d23).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A certificate for log; files written as node a, then as node b, and one with no node.
+    /// - A certificate for log; files written as node a, then as node b; a file made as SignedLog writes a first file, but
+    ///   with no node on its signed first line.
     ///
     /// Steps:
-    /// - Verify a's file as node a; a's file then b's; a's file as node b; the file with no node as node a; a's file alone.
+    /// - Verify a's file as node a; a's file then b's; a's file as node b; a's file alone; the file with no node as node a,
+    ///   alone with no node asked, and after a's file.
     ///
     /// Expected:
-    /// - No issue; "The file is of node 'b', not of node 'a'."; "The file is of node 'a', not of node 'b'."; "The file names no
-    ///   node, and the log is of node 'a'."; no issue.
+    /// - No issue; "The file is of node 'b', not of node 'a'."; "The file is of node 'a', not of node 'b'."; no issue; then
+    ///   "The file of elm-service names no node on its first line." each time, with the missing-file error after a's file
+    ///   (the hand-made file links to nothing).
     /// </remarks>
     [Fact]
     public void ServiceLog_Node_IsChecked()
     {
         string certificate = Certificate(_signing, KeyUses.Log);
-        string Write(string? node)
+        string Write(string node)
         {
             using (SignedLog log = SignedLog.Open(_dir, "usage", "usage", Access(_signing), LogKeyMaterial.Certificates([certificate], node), _time))
             {
@@ -1224,15 +1499,20 @@ public sealed class SignedLogTests : IDisposable
 
         string a = Write("a");
         string b = Write("b");
-        Assert.Empty(LogVerifier.Verify([a], _trust, null, "usage", "a").Issues);
-        Assert.Equal("The file is of node 'b', not of node 'a'.", Assert.Single(LogVerifier.Verify([a, b], _trust, null, "usage").Issues).Message);
-        Assert.Equal("The file is of node 'a', not of node 'b'.", Assert.Single(LogVerifier.Verify([a], _trust, null, "usage", "b").Issues).Message);
-        string none = Write(null);
+        Assert.Empty(VerifiedLog.Of([a], _trust, null, "usage", "a").Issues);
+        Assert.Equal("The file is of node 'b', not of node 'a'.", Assert.Single(VerifiedLog.Of([a, b], _trust, null, "usage").Issues).Message);
+        Assert.Equal("The file is of node 'a', not of node 'b'.", Assert.Single(VerifiedLog.Of([a], _trust, null, "usage", "b").Issues).Message);
+        Assert.Empty(VerifiedLog.Of([a], _trust, null, "usage").Issues);
+
+        string none = Path.Combine(_dir, "usage-20261001T120005000Z.jsonl");
+        WriteFirstFile(none, $$"""{"type":"chain.start","ts":{{Now.ToUnixTimeSeconds()}},"stream":"usage","certificates":["{{certificate}}"]}""");
+        const string NoNode = "The file of elm-service names no node on its first line.";
+        Assert.Equal(NoNode, Assert.Single(VerifiedLog.Of([none], _trust, null, "usage", "a").Issues).Message);
+        Assert.Equal(NoNode, Assert.Single(VerifiedLog.Of([none], _trust, null, "usage").Issues).Message);
         Assert.Equal(
-            "The file names no node, and the log is of node 'a'.",
-            Assert.Single(LogVerifier.Verify([none], _trust, null, "usage", "a").Issues).Message
+            [$"The file follows 'nothing', not '{Path.GetFileName(a)}': a file is missing.", NoNode],
+            VerifiedLog.Of([a, none], _trust, null, "usage").Issues.Select(i => i.Message)
         );
-        Assert.Empty(LogVerifier.Verify([a], _trust, null, "usage").Issues);
     }
 
     /// <summary>
@@ -1334,8 +1614,10 @@ public sealed class SignedLogTests : IDisposable
     /// - A minute later, open the log; read the first line of the new file.
     ///
     /// Expected:
-    /// - ResetReason is exactly "the previous file {name} cannot be read"; the first line is chain.reset with that reason
-    ///   and does not hold the folder's name.
+    /// - ResetReason is exactly "the previous file {name} cannot be read"; the first line is chain.reset with prev.file the
+    ///   previous file's name and no prev.first, the file not being readable, and that reason (design §18.1, V1d23), and does
+    ///   not hold the folder's name. Once the file is free, the two files verify intact: a reset without prev.first is
+    ///   checked by the name alone.
     /// </remarks>
     [Fact]
     public void Open_PreviousFileCannotBeRead_ResetReasonNamesOnlyTheFile()
@@ -1357,11 +1639,12 @@ public sealed class SignedLogTests : IDisposable
         Assert.Equal($"the previous file {Path.GetFileName(previous)} cannot be read", reason);
         string first = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
         Assert.Contains(
-            $"\"type\":\"chain.reset\",\"ts\":{_time.GetUtcNow().ToUnixTimeSeconds()},\"stream\":\"usage\",\"reason\":\"{reason}\"",
+            $"\"type\":\"chain.reset\",\"ts\":{_time.GetUtcNow().ToUnixTimeSeconds()},\"stream\":\"usage\",\"prev\":{{\"file\":\"{Path.GetFileName(previous)}\"}},\"reason\":\"{reason}\"",
             first,
             StringComparison.Ordinal
         );
         Assert.DoesNotContain(Path.GetFileName(_dir), first, StringComparison.Ordinal);
+        Assert.True(Verify().Intact);
     }
 
     /// <summary>
@@ -1771,13 +2054,13 @@ public sealed class SignedLogTests : IDisposable
         );
 
     private SignedLog OpenService(string certificate, ECDsa signer, int sealEvery = 100) =>
-        SignedLog.Open(_dir, "usage", "usage", Access(signer), LogKeyMaterial.Certificates([certificate]), _time, sealEvery);
+        SignedLog.Open(_dir, "usage", "usage", Access(signer), LogKeyMaterial.Certificates([certificate], "n1"), _time, sealEvery);
 
     private string Certificate(ECDsa key, KeyUses uses, DateTimeOffset? notBefore = null) =>
         CertificateIssuer.Issue(_root, key, uses, notBefore ?? Now.AddDays(-1), TimeSpan.FromDays(365), _time);
 
-    private LogReport Verify(IReadOnlyList<string>? files = null) =>
-        LogVerifier.Verify(files ?? SignedLog.FindFiles(_dir, "usage"), _trust, "acme-cad", "usage");
+    private VerifiedLog Verify(IReadOnlyList<string>? files = null) =>
+        VerifiedLog.Of(files ?? SignedLog.FindFiles(_dir, "usage"), _trust, "acme-cad", "usage");
 
     private byte[] LicenseFile(ECDsa server, string licenseId = "lic-srv")
     {

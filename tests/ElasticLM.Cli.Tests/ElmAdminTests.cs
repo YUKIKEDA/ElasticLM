@@ -16,6 +16,64 @@ public sealed class ElmAdminTests
     private Microsoft.Extensions.Time.Testing.FakeTimeProvider _time = new();
 
     /// <summary>
+    /// An answer of the identity provider whose JSON holds text that cannot be read is taken as an answer that is not JSON,
+    /// once, where it is read, so that no later reader of the document meets it (design §8.3, V1d23, Issue #402).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A listener on loopback that answers 200, then 400, with an otherwise valid token answer that holds the value
+    ///   "\ud800" in access_token, the member "\ud800" and 16 x at its end, the value "x" and the byte 0xFF, or the value
+    ///   "\udc00\ud800".
+    ///
+    /// Steps:
+    /// - Send a request through OidcHttp.Send for each body, as a success and as a failure.
+    ///
+    /// Expected:
+    /// - The success: CliException with exit code 1 and "The answer of (URL) is not JSON."; the failure: the status with
+    ///   no body (before V1d23 the readers of the document threw InvalidOperationException).
+    /// </remarks>
+    [Fact]
+    public async Task OidcAnswer_TextThatIsNotUnicode_IsNotJson()
+    {
+        static byte[] Shaped(string shape)
+        {
+            const string Start = "{\"token_type\":\"Bearer\",\"access_token\":";
+            string text = shape switch
+            {
+                "value" => Start + "\"\\ud800\"}",
+                "name" => Start + "\"a\",\"\\ud800xxxxxxxxxxxxxxxx\":1}",
+                "reversed" => Start + "\"\\udc00\\ud800\"}",
+                _ => Start + "\"xÿ\"}",
+            };
+            byte[] bytes = Encoding.UTF8.GetBytes(text);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return at < 0 ? bytes : [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        }
+
+        using HttpClient http = OidcHttp.Create();
+        foreach (string shape in new[] { "value", "name", "not-utf8", "reversed" })
+        {
+            foreach (int status in new[] { 200, 400 })
+            {
+                await using ElasticLM.Client.Tests.RawAnswerServer listener = ElasticLM.Client.Tests.RawAnswerServer.Start(_ =>
+                    ElasticLM.Client.Tests.RawAnswer.Bytes(Shaped(shape), status)
+                );
+                using var request = new HttpRequestMessage(HttpMethod.Get, listener.Url);
+                if (status == 200)
+                {
+                    CliException e = Assert.Throws<CliException>(() => OidcHttp.Send(http, request));
+                    Assert.Equal((1, $"The answer of {listener.Url} is not JSON."), (e.ExitCode, e.Message));
+                }
+                else
+                {
+                    (System.Net.HttpStatusCode answered, JsonDocument? body) = OidcHttp.Send(http, request);
+                    Assert.Equal((System.Net.HttpStatusCode.BadRequest, null), (answered, body));
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// The device flow (RFC 8628 §3.4, §3.5): the service URL and issuer are shown before polling, pending waits the interval,
     /// slow_down adds 5 seconds, a dropped connection doubles the interval, and the tokens are kept in the protected login
     /// file; request then calls the API with them.

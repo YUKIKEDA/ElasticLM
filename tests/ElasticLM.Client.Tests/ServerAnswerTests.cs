@@ -51,6 +51,62 @@ public sealed partial class ServerAnswerTests : IDisposable
     }
 
     /// <summary>
+    /// The readers of a server license answer and of a saved borrow file take text that cannot be read (a lone surrogate
+    /// escape, a pair in the wrong order, bytes that are not UTF-8) as a shape they refuse, without an exception, wherever
+    /// they read it (design §8.3, V1d23, finding F20).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - For each reader, a valid input, and the same input with: a string it reads (the server, the lease, a certificate)
+    ///   or, for the server license answer, which reads no string, the license's text, set to "\ud800"; a member name
+    ///   "\ud800" and 16 x after the members it looks up (JsonElement looks a name up from the last member, and skips a name
+    ///   too short to be the one it looks for); a string of the license
+    ///   or of a certificate holding the byte 0xFF; the value or name made "\udc00\ud800".
+    ///
+    /// Steps:
+    /// - Read each.
+    ///
+    /// Expected:
+    /// - The valid input is read; every other is refused (false) without an exception, except the escape inside the server
+    ///   license answer's license, whose raw text is kept for the license verifier, which refuses it.
+    /// </remarks>
+    [Theory]
+    [InlineData("server-license")]
+    [InlineData("borrow")]
+    [InlineData("hosted-borrow")]
+    public void Reader_TextThatIsNotUnicode_IsRefused(string reader)
+    {
+        bool Read(byte[] input) =>
+            reader switch
+            {
+                "server-license" => LicenseClient.TryReadServerLicense(input, out _, out _),
+                "borrow" => LicenseClient.TryReadBorrowFile(input, out _, out _, out _, out _),
+                _ => LicenseClient.TryReadHostedBorrowFile(input, out _, out _, out _),
+            };
+        string Valid(string value, string tail) =>
+            reader switch
+            {
+                "server-license" => $$"""{"license":{"x":"{{value}}"},"key":{"kty":"EC"}{{tail}}}""",
+                "borrow" => $$"""{"ver":1,"server":"{{value}}","lease":"a.b.c","license":{"x":1},"key":{"kty":"EC"}{{tail}}}""",
+                _ => $$"""{"ver":1,"server":"https://s/","lease":"a.b.c","certificates":["{{value}}"]{{tail}}}""",
+            };
+        byte[] Raw()
+        {
+            string text = Valid("xÿ", string.Empty);
+            byte[] bytes = Bytes(text);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        }
+
+        Assert.True(Read(Bytes(Valid("https://s/", string.Empty))));
+        Assert.Equal(reader == "server-license", Read(Bytes(Valid("\\ud800", string.Empty))));
+        Assert.False(Read(Bytes(Valid("https://s/", ""","\ud800xxxxxxxxxxxxxxxx":1"""))));
+        Assert.False(Read(Raw()));
+        Assert.Equal(reader == "server-license", Read(Bytes(Valid("\\udc00\\ud800", string.Empty))));
+        Assert.False(Read(Bytes(Valid("https://s/", ""","\udc00\ud800xxxxxxxxxxxxxxxx":1"""))));
+    }
+
+    /// <summary>
     /// A nonce from a server, from an answer's body or its <c>ELM-Nonce</c> header alike, is kept only when it is 1 to 128
     /// characters long (design §12.1, V1c11).
     /// </summary>

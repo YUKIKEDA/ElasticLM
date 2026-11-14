@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using System.Text.Unicode;
 using ElasticLM.Client;
 
 namespace ElasticLM.Cli;
@@ -39,7 +40,8 @@ internal sealed class AdminAnswer
     /// <summary>Gets a value indicating whether the body is one JSON value, or empty.</summary>
     public bool IsJson { get; }
 
-    /// <summary>Checks the body of a whole answer: whether it is one JSON value, nested at most 64 levels.</summary>
+    /// <summary>Checks the body of a whole answer: whether it is one JSON value, nested at most 64 levels, whose names and
+    /// strings can all be read as text.</summary>
     /// <param name="whole">The whole answer the HTTP client read.</param>
     /// <returns>The answer, which tells whether its body is JSON.</returns>
     public static AdminAnswer Of(BoundedAnswer.Whole whole)
@@ -54,6 +56,11 @@ internal sealed class AdminAnswer
                 while (reader.Read())
                 {
                     // Each token is checked as it is read; nothing of it is kept.
+                    if ((reader.TokenType is JsonTokenType.PropertyName or JsonTokenType.String) && !IsReadable(ref reader))
+                    {
+                        json = false;
+                        break;
+                    }
                 }
             }
             catch (JsonException)
@@ -255,6 +262,31 @@ internal sealed class AdminAnswer
         {
             int length = reader.CopyString(rented);
             write(writer, rented.AsSpan(0, length));
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(rented);
+        }
+    }
+
+    // design §8.3 (V1d23): a lone surrogate escape, a pair in the wrong order, and bytes that are not UTF-8 pass Read, and
+    // GetString, CopyString, and ValueTextEquals throw InvalidOperationException on them later (measured on .NET 10.0.15,
+    // Windows). So each name and string is unescaped into a pooled buffer, and the text is checked as UTF-8.
+    private static bool IsReadable(ref Utf8JsonReader reader)
+    {
+        if (!reader.ValueIsEscaped)
+        {
+            return Utf8.IsValid(reader.ValueSpan);
+        }
+
+        byte[] rented = ArrayPool<byte>.Shared.Rent(reader.ValueSpan.Length);
+        try
+        {
+            return Utf8.IsValid(rented.AsSpan(0, reader.CopyString(rented)));
+        }
+        catch (InvalidOperationException)
+        {
+            return false;
         }
         finally
         {

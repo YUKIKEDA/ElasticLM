@@ -138,7 +138,7 @@ Two examples:
 
 - A client gets a nonce from `GET /v1/nonce`, or from the `ELM-Nonce` header of an earlier answer.
 - A nonce is an opaque string. It is valid for 300 seconds after the server made it. It may be used by several proofs while it is valid; each proof needs its own `jti`.
-- `elm-server` keeps each used `jti` until its nonce expires. `elm-service` keeps it for 360 seconds after the request, which is longer than any nonce is valid.
+- `elm-server` keeps each used `jti` until 60 seconds after its nonce expires. `elm-service` keeps it for 360 seconds after the request. Both are longer than any nonce is valid.
 - All nodes of `elm-service`, the instances that share one database (see [`node`](service-configuration.md#node)), share one nonce secret (`nonce.secretFile`, see [elm-service configuration](service-configuration.md#nonce)), so any node accepts a nonce that another node made. `elm-server` makes a new secret at each start: nonces from before a restart get `ELM_NONCE_REQUIRED`.
 
 ### Sequence numbers and `retry`
@@ -166,6 +166,7 @@ The license token of an activation and every lease token carry a sequence number
 - A member given twice gets `ELM_MALFORMED`. On `elm-server`, this holds only for the members the route reads: an unknown member given twice is ignored.
 - `null` for an optional member counts as not sent. `null` for a required member gets `ELM_MALFORMED`.
 - An integer is a whole number; a fraction gets `ELM_MALFORMED`. A size in bytes is counted in UTF-8.
+- On `elm-service`, a string or a member name with an unpaired surrogate (such as `\ud800`), at any depth, and bytes that are not valid UTF-8 anywhere in the body get `ELM_MALFORMED`.
 
 ### Machine fingerprints
 

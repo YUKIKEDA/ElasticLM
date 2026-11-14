@@ -20,6 +20,73 @@ public sealed partial class ActivationClientTests
     private const string NoLaterSequence = "The service's refresh has no later sequence number than the activation kept.";
 
     /// <summary>
+    /// An activation answer, or an imported offline answer, whose text cannot be read (a lone surrogate escape, a pair in the
+    /// wrong order, bytes that are not UTF-8) is ELM_MALFORMED and keeps nothing, without an exception (design §8.3, V1d23,
+    /// finding F20).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client behind a relay that replaces the service's genuine answer to the next activation; a second
+    ///   client with a waiting offline activation request.
+    ///
+    /// Steps:
+    /// - Activate, the relay giving the genuine answer with its activationId "\ud800", with a member "\ud800" added at its
+    ///   end, with its activationId "x" and the byte 0xFF, or with its activationId "\udc00\ud800"; import the same answer
+    ///   text in the second client, for each shape a string can carry.
+    ///
+    /// Expected:
+    /// - ELM_MALFORMED "The service's answer is not an issued license.", no activation; the import ELM_MALFORMED "The text
+    ///   is not an answer of the service.", no activation.
+    /// </remarks>
+    [Theory]
+    [InlineData("value")]
+    [InlineData("name")]
+    [InlineData("not-utf8")]
+    [InlineData("reversed")]
+    public async Task Answer_TextThatIsNotUnicode_IsMalformed(string shape)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"maxActivations\":5");
+        var relay = new Relay();
+        await using ActivationClient client = vendor.Client("a", relay);
+        string? changed = null;
+        relay.ReplaceNextBytes(genuine =>
+        {
+            using JsonDocument answer = JsonDocument.Parse(genuine);
+            string id = answer.RootElement.GetProperty("activationId").GetString()!;
+            changed = shape switch
+            {
+                "value" => genuine.Replace(id, "\\ud800", StringComparison.Ordinal),
+                "name" => genuine[..genuine.LastIndexOf('}')] + ",\"\\ud800\":1}",
+                "reversed" => genuine.Replace(id, "\\udc00\\ud800", StringComparison.Ordinal),
+                _ => null,
+            };
+            if (changed is not null)
+            {
+                return Encoding.UTF8.GetBytes(changed);
+            }
+
+            byte[] bytes = Encoding.UTF8.GetBytes(genuine.Replace(id, "x\u00ff", StringComparison.Ordinal));
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        });
+
+        Assert.Equal((ErrorCode.Malformed, "The service's answer is not an issued license."), Code(Failed(await client.ActivateAsync(key, Cancel))));
+        Assert.Null(client.ActivationId);
+
+        if (changed is not null)
+        {
+            await using ActivationClient offline = vendor.Client("b", offline: true);
+            Created(await offline.CreateActivationRequestAsync(key, cancellationToken: Cancel));
+            Assert.Equal(
+                (ErrorCode.Malformed, "The text is not an answer of the service."),
+                Code(Failed(await offline.ImportResponseAsync(changed, Cancel)))
+            );
+            Assert.Null(offline.ActivationId);
+        }
+    }
+
+    /// <summary>
     /// A refresh answered with the service's genuine answer to an earlier refresh is refused and leaves the kept activation
     /// as it was, with the request's jti in the retry list; the next refresh gets the file the service issued for that
     /// request, whose areq is in the list (design §10.4 step 3, §12.6.2; the Issue's case R1).
@@ -539,6 +606,7 @@ public sealed partial class ActivationClientTests
     private sealed class Relay : DelegatingHandler
     {
         private Func<string, string, string>? _replace;
+        private Func<string, byte[]>? _replaceBytes;
         private volatile string? _lastProofId;
         private volatile string? _lastAnswer;
         private volatile bool _dropNext;
@@ -548,6 +616,9 @@ public sealed partial class ActivationClientTests
         public string? LastAnswer => _lastAnswer;
 
         public void ReplaceNext(Func<string, string, string> replace) => Volatile.Write(ref _replace, replace);
+
+        // The next answer becomes the bytes made from the service's answer, which need not be UTF-8.
+        public void ReplaceNextBytes(Func<string, byte[]> replace) => Volatile.Write(ref _replaceBytes, replace);
 
         // The next POST is passed on and its answer kept, and the client gets no answer, as when a connection is cut.
         public void DropNext() => _dropNext = true;
@@ -575,9 +646,17 @@ public sealed partial class ActivationClientTests
             }
 
             Func<string, string, string>? replace = Interlocked.Exchange(ref _replace, null);
+            Func<string, byte[]>? replaceBytes = Interlocked.Exchange(ref _replaceBytes, null);
+            if (replaceBytes is not null)
+            {
+                replace = (b, _) => b;
+            }
+
             var answer = new HttpResponseMessage(replace is null ? response.StatusCode : HttpStatusCode.OK)
             {
-                Content = new StringContent(replace is null ? body : replace(body, jti), Encoding.UTF8),
+                Content = replaceBytes is not null
+                    ? new ByteArrayContent(replaceBytes(body))
+                    : new StringContent(replace is null ? body : replace(body, jti), Encoding.UTF8),
             };
             answer.Content.Headers.ContentType = replace is null ? response.Content.Headers.ContentType : new("application/json");
             if (response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? nonces))

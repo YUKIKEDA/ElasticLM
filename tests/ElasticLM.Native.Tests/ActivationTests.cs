@@ -295,6 +295,59 @@ public sealed class ActivationTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// An imported answer whose text cannot be read (a lone surrogate escape, a pair in the wrong order) is ELM_MALFORMED
+    /// with the message of an answer that is not one, without an exception, and bytes that are not UTF-8 are refused as an
+    /// argument before they are read (design §8.3, §17.5, V1d23, finding F20).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An offline-only activation with a waiting activation request; the service's genuine answer to it.
+    ///
+    /// Steps:
+    /// - Import the answer with its activationId "\ud800", with a member "\ud800" added at its end, with its activationId
+    ///   "\udc00\ud800", and with its activationId "x" and the byte 0xFF; then import the genuine answer.
+    ///
+    /// Expected:
+    /// - ELM_MALFORMED (2) and "The text is not an answer of the service." three times; ELM_INVALID_ARGUMENT (1) and
+    ///   "response is not valid UTF-8."; state 0 until the genuine answer, which gives a license and state 1.
+    /// </remarks>
+    [Fact]
+    public async Task ImportResponse_TextThatIsNotUnicode_IsMalformed()
+    {
+        string key = (await LicenseAsync("\"maxActivations\":3")).Key;
+        nint activation = Create("u", null);
+        Assert.Equal(0, ActivationApi.Request(_api, activation, key, 0, out string request, out _));
+        string answer = await ProcessAsync(request);
+        using (JsonDocument parsed = JsonDocument.Parse(answer))
+        {
+            string id = parsed.RootElement.GetProperty("activationId").GetString()!;
+            foreach (
+                string changed in new[]
+                {
+                    answer.Replace(id, "\\ud800", StringComparison.Ordinal),
+                    answer[..answer.LastIndexOf('}')] + ",\"\\ud800\":1}",
+                    answer.Replace(id, "\\udc00\\ud800", StringComparison.Ordinal),
+                }
+            )
+            {
+                Assert.Equal(2, ActivationApi.Import(_api, activation, Encoding.UTF8.GetBytes(changed), out _));
+                Assert.Equal("The text is not an answer of the service.", NativeApi.LastError);
+            }
+
+            byte[] bytes = Encoding.UTF8.GetBytes(answer.Replace(id, "x\u00ff", StringComparison.Ordinal));
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            Assert.Equal(1, ActivationApi.Import(_api, activation, [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]], out _));
+            Assert.Equal("response is not valid UTF-8.", NativeApi.LastError);
+        }
+
+        Assert.Equal(0, ActivationApi.State(activation));
+        Assert.Equal(0, ActivationApi.Import(_api, activation, Encoding.UTF8.GetBytes(answer), out nint license));
+        Assert.Equal(1, ActivationApi.State(activation));
+        NativeApi.FreeLicense(license);
+        ActivationApi.Destroy(activation);
+    }
+
+    /// <summary>
     /// An answer imported after its token's expiry but inside the grace period gives a license in its grace period.
     /// </summary>
     /// <remarks>

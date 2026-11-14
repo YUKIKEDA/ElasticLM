@@ -773,8 +773,10 @@ public sealed class LicenseClient : IAsyncDisposable
             key = Encoding.UTF8.GetBytes(k.GetRawText());
             return true;
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // JsonElement throws InvalidOperationException from GetString, GetRawText, and TryGetProperty on text it cannot
+            // read: a lone surrogate escape, or bytes that are not UTF-8 (measured on .NET 10.0.15, Windows).
             return false;
         }
     }
@@ -803,8 +805,10 @@ public sealed class LicenseClient : IAsyncDisposable
             certificates = [.. c.EnumerateArray().Select(e => e.GetString()!)];
             return true;
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // JsonElement throws InvalidOperationException from GetString, GetRawText, and TryGetProperty on text it cannot
+            // read: a lone surrogate escape, or bytes that are not UTF-8 (measured on .NET 10.0.15, Windows).
             return false;
         }
     }
@@ -1121,8 +1125,10 @@ public sealed class LicenseClient : IAsyncDisposable
             keyJwk = Encoding.UTF8.GetBytes(key.GetRawText());
             return true;
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // JsonElement throws InvalidOperationException from GetString, GetRawText, and TryGetProperty on text it cannot
+            // read: a lone surrogate escape, or bytes that are not UTF-8 (measured on .NET 10.0.15, Windows).
             return false;
         }
     }

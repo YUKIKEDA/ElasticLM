@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using ElasticLM.Issuing;
 
 namespace ElasticLM.Cli;
 
@@ -62,7 +63,7 @@ internal static class OidcHttp
             JsonDocument? body = null;
             try
             {
-                body = bytes.Length == 0 ? null : JsonDocument.Parse(bytes);
+                body = bytes.Length == 0 ? null : Readable(JsonDocument.Parse(bytes));
             }
             catch (JsonException) when (!response.IsSuccessStatusCode)
             {
@@ -160,6 +161,20 @@ internal static class OidcHttp
                 ? seconds
                 : 300;
         return (access.GetString()!, refresh, now.ToUnixTimeSeconds() + lifetime);
+    }
+
+    // design §8.3 (V1d23): a document is read in many places, inline in the login among them, and JsonElement throws
+    // InvalidOperationException on a name or a string it cannot read; so a document with such text is taken as one that
+    // is not JSON, here, once.
+    private static JsonDocument Readable(JsonDocument document)
+    {
+        if (JsonText.IsReadable(document.RootElement))
+        {
+            return document;
+        }
+
+        document.Dispose();
+        throw new JsonException("The answer holds text that is not valid Unicode.");
     }
 }
 

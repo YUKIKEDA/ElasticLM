@@ -3,6 +3,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ElasticLM.Issuing;
+using ElasticLM.Issuing.Tests;
 using ElasticLM.Licensing;
 using ElasticLM.Server.Tests;
 using Microsoft.Extensions.Logging;
@@ -76,7 +77,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal(HttpStatusCode.Forbidden, (await a.AcquireAsync(key, feature: "nope")).Status);
         await service.StopAsync();
 
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.Empty(report.Issues);
         Assert.All(report.Entries, e => Assert.True(e.IsSigned));
         Assert.Equal(
@@ -161,7 +162,7 @@ public sealed class ServiceUsageLogTests
         await service.WaitForTimersAsync();
         await service.StopAsync();
 
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.True(report.Intact);
         Assert.Equal(lease, Assert.Single(report.Entries, e => e.Type == "lease.expired").Value.GetProperty("lease").GetString());
         Assert.Equal(borrow, Assert.Single(report.Entries, e => e.Type == "borrow.expired").Value.GetProperty("lease").GetString());
@@ -252,7 +253,7 @@ public sealed class ServiceUsageLogTests
         );
         Assert.StartsWith($"elm-service cannot listen on http://127.0.0.1:{port}/: ", refused.Message, StringComparison.Ordinal);
         Assert.Single(Files(test, "n1"));
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.Empty(report.Issues);
         Assert.All(report.Entries, e => Assert.True(e.IsSigned));
         Assert.Equal(["service.started", "service.stopped"], report.Entries.Select(e => e.Type));
@@ -310,7 +311,7 @@ public sealed class ServiceUsageLogTests
         await service.StopAsync();
 
         Assert.Equal(3, Files(test, "n1").Count);
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.True(report.Intact);
         Assert.Contains(
             report.Issues,
@@ -510,7 +511,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal("ELM_LICENSE_SUSPENDED", (await device.AcquireAsync(suspended, feature: "made-up")).Code);
         await service.StopAsync();
 
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.Empty(report.Issues);
         Assert.Equal(
             [
@@ -561,7 +562,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal("ELM_INVALID_ARGUMENT", (await device.AcquireAsync(key, count: 4)).Code);
         await service.StopAsync();
 
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.Empty(report.Issues);
         Assert.Equal([(null, "ELM_FEATURE_NOT_LICENSED", 100L), ("core", "ELM_INVALID_ARGUMENT", 1L)], Denials(report));
     }
@@ -693,8 +694,8 @@ public sealed class ServiceUsageLogTests
         await n1.StopAsync();
         await n2.StopAsync();
 
-        LogReport one = Verify(test, "n1");
-        LogReport two = Verify(test, "n2");
+        VerifiedLog one = Verify(test, "n1");
+        VerifiedLog two = Verify(test, "n2");
         Assert.True(one.Intact && two.Intact);
         Assert.Single(one.Entries.Concat(two.Entries), e => e.Type == "lease.expired");
     }
@@ -815,8 +816,8 @@ public sealed class ServiceUsageLogTests
 
         Assert.All(Files(test, "n1"), f => Assert.Contains("\"node\":\"n1\"", File.ReadLines(f).First(), StringComparison.Ordinal));
         TrustStore trust = TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []);
-        Assert.Empty(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n1").Issues);
-        Assert.False(LogVerifier.Verify(Files(test, "n1"), trust, null, "usage", "n2").Intact);
+        Assert.Empty(VerifiedLog.Of(Files(test, "n1"), trust, null, "usage", "n1").Issues);
+        Assert.False(VerifiedLog.Of(Files(test, "n1"), trust, null, "usage", "n2").Intact);
     }
 
     /// <summary>
@@ -1490,7 +1491,7 @@ public sealed class ServiceUsageLogTests
         Assert.Equal(("ELM_OK", lease), (rows[^1].Result, rows[^1].Target));
         await service.StopAsync();
 
-        LogReport report = Verify(test, "n1");
+        VerifiedLog report = Verify(test, "n1");
         Assert.Empty(report.Issues);
         JsonElement released = Assert.Single(report.Entries, e => e.Type == "lease.released").Value;
         Assert.Equal((lease, "admin"), (released.GetProperty("lease").GetString(), released.GetProperty("by").GetString()));
@@ -1566,11 +1567,11 @@ public sealed class ServiceUsageLogTests
         return text.ToString();
     }
 
-    private static LogReport Verify(TestService test, string node) =>
-        LogVerifier.Verify(Files(test, node), TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []), null, "usage");
+    private static VerifiedLog Verify(TestService test, string node) =>
+        VerifiedLog.Of(Files(test, node), TrustStore.Create([File.ReadAllText(test.FilePath("root.pub.pem"))], []), null, "usage");
 
     // The lease.denied lines as (feat or null, code, count), ordered.
-    private static (string? Feature, string? Code, long Count)[] Denials(LogReport report) =>
+    private static (string? Feature, string? Code, long Count)[] Denials(VerifiedLog report) =>
         [
             .. report
                 .Entries.Where(e => e.Type == "lease.denied")

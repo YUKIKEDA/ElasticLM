@@ -8,7 +8,7 @@ public enum ReplayCheck
     /// <summary>The <c>jti</c> was new and is now recorded.</summary>
     Accepted,
 
-    /// <summary>The <c>jti</c> was already used while its nonce is valid.</summary>
+    /// <summary>The <c>jti</c> was already used, and its record is still kept.</summary>
     Replayed,
 
     /// <summary>The store is full; the request is refused with <c>ELM_SERVER_BUSY</c>.</summary>
@@ -16,8 +16,9 @@ public enum ReplayCheck
 }
 
 /// <summary>
-/// Records the <c>jti</c> of accepted proofs until their nonce expires (design §12.2 rule 5). On premises it lives in memory;
-/// the hosted service keeps it in its database (M4).
+/// Records the <c>jti</c> of accepted proofs until after their nonce expires, by a margin that covers the time between
+/// checking the nonce and recording the <c>jti</c> (design §12.2 rule 5). On premises it lives in memory; the hosted service
+/// keeps it in its database (M4).
 /// </summary>
 public interface IReplayStore
 {
@@ -25,18 +26,23 @@ public interface IReplayStore
     /// Records a <c>jti</c> unless it was already recorded.
     /// </summary>
     /// <param name="jti">The proof's token ID.</param>
-    /// <param name="expiresAt">When the record may be dropped (the nonce's expiry).</param>
+    /// <param name="expiresAt">The nonce's expiry; the record is kept until a margin after it.</param>
     /// <returns>The result.</returns>
     ReplayCheck TryUse(string jti, DateTimeOffset expiresAt);
 }
 
 /// <summary>
-/// An in-memory <see cref="IReplayStore"/> with a capacity (design §13.2: 100,000 records).
+/// An in-memory <see cref="IReplayStore"/> with a capacity (design §13.2: 100,000 records). A record is kept for
+/// <see cref="KeptAfterExpiry"/> after its nonce expires, so that a proof whose nonce was checked just before the expiry
+/// still meets its record (design §12.2).
 /// </summary>
 public sealed class MemoryReplayStore : IReplayStore
 {
     /// <summary>The default capacity.</summary>
     public const int DefaultCapacity = 100_000;
+
+    /// <summary>How long a record is kept after the expiry it was given.</summary>
+    public static readonly TimeSpan KeptAfterExpiry = TimeSpan.FromSeconds(60);
 
     private readonly Dictionary<string, DateTimeOffset> _used = new(StringComparer.Ordinal);
     private readonly TimeProvider _time;
@@ -75,7 +81,7 @@ public sealed class MemoryReplayStore : IReplayStore
         ArgumentException.ThrowIfNullOrEmpty(jti);
         lock (_lock)
         {
-            if (_used.TryGetValue(jti, out DateTimeOffset existing) && existing >= _time.GetUtcNow())
+            if (_used.TryGetValue(jti, out DateTimeOffset existing) && existing + KeptAfterExpiry >= _time.GetUtcNow())
             {
                 return ReplayCheck.Replayed;
             }
@@ -95,7 +101,8 @@ public sealed class MemoryReplayStore : IReplayStore
     }
 
     /// <summary>
-    /// Drops records whose nonce has expired. The server calls it from its sweep timer (design §13.2).
+    /// Drops records whose nonce expired more than <see cref="KeptAfterExpiry"/> ago. The server calls it from its sweep
+    /// timer (design §13.2).
     /// </summary>
     public void Purge()
     {
@@ -108,7 +115,7 @@ public sealed class MemoryReplayStore : IReplayStore
     private void PurgeLocked()
     {
         DateTimeOffset now = _time.GetUtcNow();
-        foreach (string key in _used.Where(e => e.Value < now).Select(e => e.Key).ToList())
+        foreach (string key in _used.Where(e => e.Value + KeptAfterExpiry < now).Select(e => e.Key).ToList())
         {
             _used.Remove(key);
         }

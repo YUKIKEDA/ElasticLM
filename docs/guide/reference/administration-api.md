@@ -130,7 +130,7 @@ A call without the permission gets `403` with `ELM_FORBIDDEN`, and the message n
 
 - The `Content-Type` header of a request is not checked. A body is read as JSON in UTF-8 whatever type is sent, and the body of `POST /v1/admin/offline` as the text of the file.
 - A body is at most 64 KiB, counted by `Content-Length` or by the bytes read. A larger one gets `413` with `ELM_PAYLOAD_TOO_LARGE`.
-- A body must be one JSON object. A body that is not JSON or not an object, a member of the wrong type, nesting deeper than 8, a required member that is missing or `null`, a member given twice, or a string with an unpaired surrogate gets `400` with `ELM_MALFORMED`.
+- A body must be one JSON object. A body that is not JSON or not an object, a member of the wrong type, nesting deeper than 8, a required member that is missing or `null`, a member given twice, a string or a member name with an unpaired surrogate (such as `\ud800`) at any depth, or bytes that are not valid UTF-8 anywhere in the body gets `400` with `ELM_MALFORMED`.
 - A value of the right type outside its range or set gets `400` with `ELM_INVALID_ARGUMENT`. So does an ID in the body that names nothing, such as a `productId` of no product.
 - Unknown members are ignored, so that a newer client works with an older service.
 - Times are written in one form only, UTC to the second: `2027-11-01T00:00:00Z`. Answers use the same form. A time in another form (fractions of a second, `+00:00`) gets `ELM_MALFORMED`.

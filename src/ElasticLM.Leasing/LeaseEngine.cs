@@ -996,7 +996,9 @@ public sealed class LeaseEngine : IDisposable
             BorrowReturnLimit = license.BorrowReturnLimit!.Value;
             CloneStrategy = license.CloneStrategy!.Value;
             _overage = license.OveragePercent!.Value;
-            LicenseLimit = license.ExpiresAt is DateTimeOffset expires ? (expires + license.GracePeriod).ToUnixTimeSeconds() : null;
+
+            // design §12.7.5 step 5: added in seconds; a DateTimeOffset past the year 9999 throws.
+            LicenseLimit = license.ExpiresAt is DateTimeOffset expires ? expires.ToUnixTimeSeconds() + (long)license.GracePeriod.TotalSeconds : null;
             Pools = license.Features.ToDictionary(
                 f => f.Id,
                 f => new FeaturePool(f.Id, f, f.Seats ?? 0, Allowed(f.Seats ?? 0)),

@@ -324,6 +324,80 @@ public sealed class ElmOfflineTests
     }
 
     /// <summary>
+    /// Text that cannot be read, in the header of the request file or in the service's problem answer, and a problem answer
+    /// that is not a JSON object, are reported as such, without an exception (design §8.3, V1d23, Issues #342 and #402).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A request file whose header holds typ elm-actreq+jws and: the value "\ud800" in typ; the member "\ud800" and 16 x
+    ///   after typ (a name is looked up from the last member); the value "x" and the byte 0xFF in typ; the value
+    ///   "\udc00\ud800" in typ.
+    /// - A real request file, and a fake loopback service that answers 400 with a problem body holding the same four shapes
+    ///   in code, and with the body [].
+    ///
+    /// Steps:
+    /// - Process each request file; process the real one against each answer.
+    ///
+    /// Expected:
+    /// - Each file: exit 2, "error: The file '…' is not an offline request (elm-actreq+jws or elm-deact+jws)."; each
+    ///   answer: exit 1, "error: ?:" (before V1d23 each threw InvalidOperationException).
+    /// </remarks>
+    [Fact]
+    public async Task Process_TextThatIsNotUnicode_IsReportedWithoutAnException()
+    {
+        await using var test = new TestService();
+        using var device = TestDevice.Create(test, (await StartedAsync(test)).Service);
+        string request = Write(test, "a.elmreq", device.ActivationFile("ELM-AAAA-AAAA-AAAA-AAAA", TestDevice.Fingerprints()));
+        string answer = test.FilePath("a.elmresp");
+        static byte[] Shaped(string shape, string name, string value)
+        {
+            string text = shape switch
+            {
+                "value" => $$"""{"{{name}}":"\ud800"}""",
+                "name" => $$"""{"{{name}}":"{{value}}","\ud800xxxxxxxxxxxxxxxx":1}""",
+                "reversed" => $$"""{"{{name}}":"\udc00\ud800"}""",
+                _ => $$"""{"{{name}}":"x{{'ÿ'}}"}""",
+            };
+            byte[] bytes = Encoding.UTF8.GetBytes(text);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return at < 0 ? bytes : [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        }
+
+        foreach (string shape in new[] { "value", "name", "not-utf8", "reversed" })
+        {
+            string file = Write(
+                test,
+                shape + ".elmreq",
+                Convert.ToBase64String(Shaped(shape, "typ", "elm-actreq+jws")).TrimEnd('=').Replace('+', '-').Replace('/', '_') + ".e30.c2ln"
+            );
+            Assert.Equal(
+                (2, $"error: The file '{file}' is not an offline request (elm-actreq+jws or elm-deact+jws)."),
+                Trimmed(Run("offline", "process", "--url", "http://127.0.0.1:1/", "--in", file, "--out", answer))
+            );
+        }
+
+        foreach (
+            byte[] body in new[]
+            {
+                Shaped("value", "code", "ELM_X"),
+                Shaped("name", "code", "ELM_X"),
+                Shaped("not-utf8", "code", "ELM_X"),
+                Shaped("reversed", "code", "ELM_X"),
+                "[]"u8.ToArray(),
+            }
+        )
+        {
+            await using RawAnswerServer service = RawAnswerServer.Start(_ => RawAnswer.Bytes(body, 400));
+            (int Code, string Out, string Error) result = await Task.Run(
+                () => Run("offline", "process", "--url", service.Url.ToString(), "--in", request, "--out", answer),
+                TestContext.Current.CancellationToken
+            );
+            Assert.Equal((1, "error: ?:"), Trimmed(result));
+            Assert.False(File.Exists(answer));
+        }
+    }
+
+    /// <summary>
     /// A redirect is not followed (design §12.1): the request file holds the license key, and a 307 would send it on.
     /// </summary>
     /// <remarks>

@@ -20,7 +20,7 @@ ElasticLM decides whether software may run. The threat model and the properties 
 - Only `System.Security.Cryptography`. No hand-written primitives, no cryptography packages (`.cursor/rules/dependencies.mdc`).
 - Algorithms, curves, and parameters are those the design fixes. A token names its algorithm and key ID, and the verifier accepts only the pairs its trust store lists; an algorithm field never selects "none" or a weaker algorithm.
 - Sign and verify the exact bytes that travel. Do not re-serialize a payload to verify it.
-- Compare secrets, MACs, and token IDs with `CryptographicOperations.FixedTimeEquals`, never `==`, `SequenceEqual`, or `string.Equals`.
+- Compare secrets, MACs, and values that stand for a secret (an administrator token, the hash of a license key) with `CryptographicOperations.FixedTimeEquals`, never `==`, `SequenceEqual`, or `string.Equals`. Public identifiers that tokens carry (key IDs, thumbprints, token IDs) are compared with ordinal equality: a timing difference tells only what the token already shows. A lookup by a secret's hash in a database index is not such a comparison. Until V1d23 this line asked `FixedTimeEquals` for token IDs too; the security review's F37 found key IDs, thumbprints, and token IDs compared with `==` in about 30 places, all of public values, and the owner narrowed the line (Issue #342).
 - Identifiers, nonces, and tokens come from `RandomNumberGenerator`. `System.Random` and `Guid.NewGuid` are banned in `src/` (`BannedSymbols.txt`).
 
 ## Untrusted input

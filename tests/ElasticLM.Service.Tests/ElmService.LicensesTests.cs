@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 
@@ -11,6 +12,60 @@ namespace ElasticLM.Service.Tests;
 public sealed class ElmServiceLicensesTests
 {
     private const string Licenses = "v1/admin/licenses";
+
+    /// <summary>
+    /// A request body with text that cannot be read (a lone surrogate escape or a pair in the wrong order, as a value or as a
+    /// member name, and bytes that are not UTF-8) is 400 ELM_MALFORMED, and nothing is created (design §14.5, V1d23, Issue
+    /// #402).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A product with feature core and a standard policy; an owner key. The HTTP layer alone: one engine.
+    ///
+    /// Steps:
+    /// - Create a license whose otherwise valid body has in meta: the value "\ud800"; the name "\ud800"; the name "x" and
+    ///   the byte 0xFF; the name "\udc00\ud800"; and the value "\udc00\ud800". List the licenses.
+    ///
+    /// Expected:
+    /// - Each answer is 400 ELM_MALFORMED "The request body is not a valid license." (before V1d23 the names were 500);
+    ///   the list is empty.
+    /// </remarks>
+    [Fact]
+    public async Task Licenses_CreateWithTextThatIsNotUnicode_IsMalformed()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        HttpClient admin = test.Http(service, owner);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        (string _, string policy) = await ModelAsync(admin, "a", string.Empty, "core");
+        string Body(string meta) => $$$"""{"policyId":"{{{policy}}}","features":[{"code":"core"}],"meta":{{{meta}}}}""";
+        byte[] raw = Encoding.UTF8.GetBytes(Body("{\"xÿ\":\"v\"}"));
+        int at = Array.IndexOf(raw, (byte)0xC3);
+        var notUtf8 = new ByteArrayContent([.. raw[..at], 0xFF, .. raw[(at + 2)..]]);
+        notUtf8.Headers.ContentType = new("application/json");
+
+        foreach (
+            HttpContent content in new HttpContent[]
+            {
+                TestService.Json(Body("""{"k":"\ud800"}""")),
+                TestService.Json(Body("""{"\ud800":"v"}""")),
+                notUtf8,
+                TestService.Json(Body("""{"\udc00\ud800":"v"}""")),
+                TestService.Json(Body("""{"k":"\udc00\ud800"}""")),
+            }
+        )
+        {
+            await TestService.AssertProblemAsync(
+                await admin.PostAsync(Licenses, content, cancel),
+                HttpStatusCode.BadRequest,
+                "ELM_MALFORMED",
+                ElasticLM.Service.Licenses.Malformed
+            );
+        }
+
+        Assert.Empty((await TestService.GetAsync(admin, Licenses)).GetProperty("items").EnumerateArray());
+    }
 
     /// <summary>
     /// A license is created with its key shown once, read and listed without it, and changed in the members sent; the key is

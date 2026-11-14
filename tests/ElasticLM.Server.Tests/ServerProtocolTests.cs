@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
+using ElasticLM.Issuing.Tests;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using ElasticLM.Service.Tests;
@@ -513,7 +514,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         await server.DisposeAsync();
         IReadOnlyList<string> files = SignedLog.FindFiles(data, "usage");
-        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(files, _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         Assert.Equal(wide + "a", Assert.Single(usage.Entries, e => e.Type == "lease.acquired").Value.GetProperty("feat").GetString());
         JsonElement denied = Assert.Single(usage.Entries, e => e.Type == "lease.denied").Value;
@@ -553,7 +554,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         await server.DisposeAsync();
         IReadOnlyList<string> files = SignedLog.FindFiles(data, "usage");
-        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(files, _deployment.Trust, "acme-cad", "usage");
         JsonElement[] denied = [.. usage.Entries.Where(e => e.Type == "lease.denied").Select(e => e.Value)];
         Assert.Equal(2, denied.Length);
         Assert.All(denied, d => Assert.Equal(("ELM_EXPIRED", 1L), (d.GetProperty("code").GetString(), d.GetProperty("count").GetInt64())));
@@ -868,7 +869,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.Equal(1, raw.Server.Engine.LeaseCount);
 
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(data, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(data, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.Single(usage.Entries, e => e.Type == "lease.released");
         JsonElement denied = Assert.Single(usage.Entries, e => e.Type == "lease.denied").Value;
         Assert.Equal(

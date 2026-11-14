@@ -357,6 +357,7 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
                 || !root.TryGetProperty("license", out JsonElement licenseValue)
                 || !root.TryGetProperty("retry", out JsonElement retryValue)
                 || idValue.ValueKind is not (JsonValueKind.String or JsonValueKind.Null)
+                || seqValue.ValueKind != JsonValueKind.Number
                 || !seqValue.TryGetInt64(out long seq)
                 || seq < 0
                 || licenseValue.ValueKind is not (JsonValueKind.Object or JsonValueKind.Null)
@@ -464,7 +465,10 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
     private static bool TryReadNumber(JsonElement parent, string name, out long number)
     {
         number = 0;
-        return parent.TryGetProperty(name, out JsonElement value) && value.TryGetInt64(out number) && number >= 0;
+        return parent.TryGetProperty(name, out JsonElement value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt64(out number)
+            && number >= 0;
     }
 
     // At most 8, each 32 lower-case hexadecimal characters (design §10.3).
