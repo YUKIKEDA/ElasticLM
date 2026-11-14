@@ -1,3 +1,7 @@
+# design §20.5 (V1d7, V1d10a) and §5.3 T29: any job of a run can replace another job's artifact, so a job that uploads one
+# hashes its files before the upload and gives the sha256sum lines as a job output, which the job's own runner sets. A
+# job that downloads the artifact checks the files against those lines and that the folder holds exactly the listed
+# files. The steps named "Hash …" and "Check … against …" carry the same commands as in release.yml.
 name: CI
 
 on:
@@ -30,6 +34,8 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      admin-ui-dist: ${{ steps.sums.outputs.sums }}
     defaults:
       run:
         shell: pwsh
@@ -59,6 +65,22 @@ jobs:
           $files = @(Get-ChildItem dist -Recurse -File)
           "web/admin/dist: $($files.Count) files, $(($files | Measure-Object Length -Sum).Sum) bytes" >> $env:GITHUB_STEP_SUMMARY
 
+      - name: Hash admin-ui-dist
+        id: sums
+        shell: bash
+        working-directory: web/admin/dist
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          names=$(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort)
+          if [ -z "$names" ]; then echo "::error::The folder holds no file."; exit 1; fi
+          if grep -Evq '^[A-Za-z0-9_.+/-]+$' <<<"$names"; then echo "::error::A file name has a character outside A-Z a-z 0-9 _ . + / -."; exit 1; fi
+          if grep -Eq '(^|/)\.' <<<"$names"; then echo "::error::A file or folder name starts with a dot. upload-artifact leaves such files out, so the jobs that take the artifact would find them missing."; exit 1; fi
+          sums=$(printf '%s\n' "$names" | xargs sha256sum -- | sed 's/^\([0-9a-f]\{64\}\) \*/\1  /')
+          printf '%s\n' "$sums"
+          echo "$(($(printf '%s\n' "$sums" | wc -l))) files, $(($(printf '%s\n' "$sums" | wc -c))) bytes of output."
+          printf 'sums<<SUMS_END\n%s\nSUMS_END\n' "$sums" >> "$GITHUB_OUTPUT"
+
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: admin-ui-dist
@@ -87,6 +109,19 @@ jobs:
         with:
           name: admin-ui-dist
           path: web/admin/dist
+
+      - name: Check admin-ui-dist against the spa job's hashes
+        shell: bash
+        working-directory: web/admin/dist
+        env:
+          SUMS: ${{ needs.spa.outputs.admin-ui-dist }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -156,6 +191,19 @@ jobs:
         with:
           name: admin-ui-dist
           path: web/admin/dist
+
+      - name: Check admin-ui-dist against the spa job's hashes
+        shell: bash
+        working-directory: web/admin/dist
+        env:
+          SUMS: ${{ needs.spa.outputs.admin-ui-dist }}
+        run: |
+          set -euo pipefail
+          export LC_ALL=C
+          printf '%s\n' "$SUMS" > "$RUNNER_TEMP/sums"
+          if grep -q '^$' "$RUNNER_TEMP/sums"; then echo "::error::A job that made these files gave no hashes."; exit 1; fi
+          sha256sum --check --strict "$RUNNER_TEMP/sums"
+          diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
       - uses: actions/setup-dotnet@v6
         with:
