@@ -57,7 +57,7 @@ Which key checks the signature:
 
 | Routes | Key |
 | --- | --- |
-| `elm-service`: `POST /v1/activations`, `POST /v1/trials`, `POST /v1/leases`. `elm-server`: `POST /v1/leases`, `POST /v1/leases/reclaim`, and `DELETE /v1/leases/{id}` of a borrow | The `jwk` in the proof. |
+| `elm-service`: `POST /v1/activations`, `POST /v1/trials`, `POST /v1/leases`. `elm-server`: `POST /v1/leases`, `POST /v1/leases/reclaim`, and `DELETE /v1/leases/{id}` of a borrow. Both: `DELETE /v1/leases/requests/{jti}` | The `jwk` in the proof. |
 | `elm-service`: `POST /v1/activations/{id}/refresh`, `POST /v1/activations/{id}/deactivate` | The key the activation was made with. |
 | Both: `POST /v1/leases/{id}/renew`, `DELETE /v1/leases/{id}` of a lease that is not a borrow | The key the lease was acquired or reclaimed with. |
 
@@ -153,6 +153,7 @@ The license token of an activation and every lease token carry a sequence number
 
 - `elm-service` takes a `seq` of 0 or more; a negative one gets `ELM_MALFORMED`. `elm-server` takes any whole number that fits 64 bits.
 - `retry` lists the `jti` of the client's earlier requests that got no answer and, for a lease renewal, of those whose answer the client refused: at most 16 strings, each 1 to 64 characters. A success answer whose body is larger than the 256 KiB that the client reads counts as no answer. A longer list, another length, or a `null` entry gets `ELM_MALFORMED`. Both programs apply the same limits.
+- An acquisition or a borrow (`POST /v1/leases`) has no `retry`: no request after it names the lease. When its answer is lost, or the client does not take it, the client releases what the server issued for it with `DELETE /v1/leases/requests/{jti}`, named by that request's `jti`.
 - A first activation whose answer was lost is sent again with `seq` `0` and the first request's `jti` in `retry`. A trial whose answer was lost is sent again with the first request's `jti` in `retry`. Both get the file they were issued.
 - A stopped activation refuses every refresh and activation with `ELM_CLONE_DETECTED`. It is deactivated only with the `seq` of its last token, or by an administrator. A stopped lease refuses renewal and release until it expires.
 
@@ -206,7 +207,7 @@ The limits and their defaults are in [elm-service configuration](service-configu
 
 ## `elm-service` routes
 
-`elm-service` has nine device routes. Every route can answer `429` with `ELM_RATE_LIMITED` for its source address. Every route with a proof can also answer the codes of the proof check and the rate limits above, `400` with `ELM_MALFORMED` for a body that breaks the rules, `413` with `ELM_PAYLOAD_TOO_LARGE`, and `500` with `ELM_INTERNAL_ERROR`. Each route below lists its other codes, in the order the service checks them.
+`elm-service` has ten device routes. Every route can answer `429` with `ELM_RATE_LIMITED` for its source address. Every route with a proof can also answer the codes of the proof check and the rate limits above, `400` with `ELM_MALFORMED` for a body that breaks the rules, `413` with `ELM_PAYLOAD_TOO_LARGE`, and `500` with `ELM_INTERNAL_ERROR`. Each route below lists its other codes, in the order the service checks them.
 
 The policy settings named below, such as `binding`, `floating`, `fingerprintMatching`, and `cloneStrategy`, are listed in [Policy settings](../explanation/activation.md#policy-settings). A license is found by its license key, in which case and `-` do not matter. A value that is not a license key, and a key that the service does not know, get the same answer: `404` with `ELM_LICENSE_NOT_FOUND`.
 
@@ -505,9 +506,25 @@ Returns a lease, or returns a borrow early. `{id}` is the lease ID. A release is
 | `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
 | `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, and the early returns of the last 30 days of this installation key or one of the borrow's fingerprints have reached the policy's `borrowReturnLimit`, or the license has fewer seats of the feature or a shorter `borrowLimit` than when it was borrowed. |
 
+### `DELETE /v1/leases/requests/{jti}`
+
+Returns the lease that an acquisition or a borrow issued, for a client that did not get the answer or did not take it. `{jti}` is the `jti` of that request's proof; the client does not know the lease ID. A borrow returned this way is an early return. See [When an answer is lost](../explanation/floating-licenses.md#when-an-answer-is-lost).
+
+- Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
+- Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
+- Response headers: `ELM-Nonce`.
+
+The checks, in order: the rate limit for the source address; the form of `{jti}`; the proof and the rules after it (see [The proof](#the-proof)); the lease of that key and request; then the codes below.
+
+| Status | Code | When |
+| --- | --- | --- |
+| `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
+| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, refused as in `DELETE /v1/leases/{id}`. |
+
 ## `elm-server` routes
 
-`elm-server` has six routes for clients. Every route can also answer `403` with `ELM_FORBIDDEN` for an address its IP rules refuse, and `429` with `ELM_RATE_LIMITED`. Every route with a proof can also answer the codes of the proof check (including `503` with `ELM_SERVER_BUSY`), `400` with `ELM_MALFORMED` for a body that breaks the rules, and `413` with `ELM_PAYLOAD_TOO_LARGE`. Each route below lists its other codes, in the order the server checks them.
+`elm-server` has seven routes for clients. Every route can also answer `403` with `ELM_FORBIDDEN` for an address its IP rules refuse, and `429` with `ELM_RATE_LIMITED`. Every route with a proof can also answer the codes of the proof check (including `503` with `ELM_SERVER_BUSY`), `400` with `ELM_MALFORMED` for a body that breaks the rules, and `413` with `ELM_PAYLOAD_TOO_LARGE`. Each route below lists its other codes, in the order the server checks them.
 
 `elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold; the window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
 
@@ -704,3 +721,19 @@ Returns a lease, or returns a borrow early. `{id}` is the lease ID. A release is
 | `401` | `ELM_PROOF_INVALID` | The proof is signed by another key than the lease's. |
 | `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
 | `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, and the early returns of the last 30 days of this installation key or one of the borrow's fingerprints have reached the server license's limit; the server license is another one, or has fewer seats of the feature or a shorter borrow limit than when it was borrowed; or the return cannot be written to the borrow record. |
+
+### `DELETE /v1/leases/requests/{jti}` on `elm-server`
+
+Returns the lease that an acquisition or a borrow issued, for a client that did not get the answer or did not take it, as on `elm-service`. `{jti}` is the `jti` of that request's proof. A borrow that the server restored from its borrow record after a restart is found by the `areq` of its token. A lease that a client reclaimed has no request the server knows, so no `{jti}` finds it. See [When an answer is lost](../explanation/floating-licenses.md#when-an-answer-is-lost).
+
+- Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
+- Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
+- Response headers: `ELM-Nonce`.
+
+The checks, in order: the IP rules and the rate limit for the source address; the form of `{jti}`; the proof (see [The proof](#the-proof)); the lease of that key and request; then the codes below.
+
+| Status | Code | When |
+| --- | --- | --- |
+| `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
+| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, refused as in `DELETE /v1/leases/{id}` on `elm-server`. |

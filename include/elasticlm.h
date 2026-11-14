@@ -322,13 +322,16 @@ ELM_FUNCTION(int32_t, elm_client_create, (const elm_client_options* options, elm
 /*
  * Acquiring, borrowing, releasing, and listing the borrows wait until they end, with no way to cancel them. The longest
  * wait is the sum of: another operation of the same client, the automatic renewal and reclaim included (no bound); and
- * the sends, at most 30 s each: up to 6 to acquire or borrow, up to 5 to release from a server (4 from the hosted
- * service); listing sends nothing. retry_after_seconds may be NULL; otherwise it gets 0, or when to try again after a
+ * the sends, at most 30 s each: up to 14 to acquire or borrow, up to 9 to release from a server (8 from the hosted
+ * service); listing sends nothing. These counts include, before the request, the resend of one release still owed for
+ * an acquisition whose answer did not come or was not taken, and, after an acquisition or a borrow whose answer does not
+ * come or is not taken, the release of the lease the server may have issued for it, which the call sends before it
+ * returns that error; to a server that cannot be reached, a call can so take about 60 s. retry_after_seconds may be NULL; otherwise it gets 0, or when to try again after a
  * refusal (seconds, rounded up), such as ELM_SERVER_RECOVERING after a server starts. On success *out is a new lease;
  * free it with elm_lease_free. count is at least 1; the server refuses more seats than it has. An answer whose lease is
  * not the answer to this request (another feature or count, a borrow where a lease was asked for or the reverse, a
- * longer borrow, or another request) is ELM_REQUEST_MISMATCH: that lease is neither kept nor returned, and ends at its
- * expiry.
+ * longer borrow, or another request) is ELM_REQUEST_MISMATCH: the lease in that answer is neither kept nor returned,
+ * and ends at its expiry; the client asks the server to release the lease, if any, that it issued for this request.
  */
 ELM_FUNCTION(int32_t, elm_client_acquire_lease, (elm_client* client, const char* feature_id, const char* feature_version, int32_t count, elm_lease** out, int64_t* retry_after_seconds))
 
@@ -400,7 +403,8 @@ ELM_FUNCTION(void, elm_lease_free, (elm_lease* lease))
 ELM_FUNCTION(void, elm_lease_list_free, (elm_lease** leases, size_t count))
 
 /* Waits for running callbacks (no time bound) and for an operation of the same client in progress, the automatic
- * renewal included (no bound), then returns the leases that are not borrows within 5 s. Calling it while another
+ * renewal included (no bound), then, within 5 s in all, sends the releases still owed for acquisitions whose answer did
+ * not come or was not taken and returns the leases that are not borrows. Calling it while another
  * thread is inside a function of the same client is undefined behavior. */
 ELM_FUNCTION(void, elm_client_destroy, (elm_client* client))
 

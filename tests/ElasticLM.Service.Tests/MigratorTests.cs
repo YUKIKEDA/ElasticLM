@@ -21,7 +21,7 @@ public sealed class MigratorTests
     ///   journal_mode.
     ///
     /// Expected:
-    /// - Between them the two runs applied versions 1 to 9 once each; the third applied nothing; nine rows; wal.
+    /// - Between them the two runs applied versions 1 to 10 once each; the third applied nothing; ten rows; wal.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -36,11 +36,11 @@ public sealed class MigratorTests
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel),
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel)
         );
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], runs.SelectMany(r => r).Order());
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], runs.SelectMany(r => r).Order());
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(9L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(10L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");
@@ -60,7 +60,7 @@ public sealed class MigratorTests
     ///   transaction; wait for the migrations.
     ///
     /// Expected:
-    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 9.
+    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 10.
     /// </remarks>
     [Fact]
     public async Task Run_WhileAnotherWriterHoldsTheLock_WaitsPastFiveSeconds()
@@ -77,7 +77,7 @@ public sealed class MigratorTests
         Assert.False(run.IsCompleted, run.Exception?.ToString());
         await held.CommitAsync(cancel);
 
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9], await run);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], await run);
     }
 
     /// <summary>Gets each engine with each version a database may stand at before the last.</summary>
@@ -143,7 +143,7 @@ public sealed class MigratorTests
     /// - Run the rest; read the license's columns and the policy's trial_daily_limit; insert two licenses without a key.
     ///
     /// Expected:
-    /// - Versions 4 to 9 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
+    /// - Versions 4 to 10 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
     ///   design §9.3); both inserts succeed.
     /// </remarks>
     [Theory]
@@ -171,7 +171,7 @@ public sealed class MigratorTests
                 + $"{hash}, 3, 100, 50, 60, '[]', '{{}}', 10, 20)"
         );
 
-        Assert.Equal([4, 5, 6, 7, 8, 9], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([4, 5, 6, 7, 8, 9, 10], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal(1_000L, await test.ScalarAsync("SELECT trial_daily_limit FROM policies"));
         Assert.Equal(
             (3L, 100L, 50L, 60L, 10L, 20L, 0L, 1L),

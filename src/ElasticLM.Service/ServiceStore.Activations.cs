@@ -239,6 +239,19 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken) =>
         _db.From(LeaseRow.Table).Where(l => And(Eq(l.Id, id), Gt(l.ExpiresAt, now))).Select(l => l).SingleOrDefaultAsync(cancellationToken);
 
+    // design §12.7.7: found through leases_by_key (migration 0010). Whether the row is still sequence 1 (no renewal since)
+    // and has not expired is judged when it is read again under the license's lock, which a renewal also takes.
+    public override async Task<LeaseRow?> FindLeaseByRequestAsync(string keyId, string requestId, CancellationToken cancellationToken) =>
+        (
+            await _db.From(LeaseRow.Table)
+                .Where(l => And(Eq(l.KeyId, keyId), Eq(l.IssuedBy, requestId)))
+                .Select(l => l)
+                .OrderBy(l => [Asc(l.Id)])
+                .Limit(1)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false)
+        ).FirstOrDefault();
+
     public override async Task<IReadOnlyList<LeaseRow>> ListLeasesAsync(
         Guid licenseId,
         string? after,
