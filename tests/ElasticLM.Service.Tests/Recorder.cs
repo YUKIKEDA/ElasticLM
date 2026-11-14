@@ -28,7 +28,8 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 /// Sits between a client and the network (<c>LicenseClientOptions.WrapHandler</c>), for one client or for several that
 /// share it: records each request, can make the renewals fail as if the network were down, can lose the answer of a
 /// renewal the server handled, can rewrite the answer to an acquisition, keeps the successful lease answers, can
-/// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, and
+/// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, can
+/// answer the next acquisition with an answer it makes from the request, as a server that decides by other rules does, and
 /// can answer the next renewal with a body over the client's limit. For the release of an acquisition whose answer was lost
 /// (design §12.7.7), it can lose the answer of the next acquisition, answer it over the limit, hold it until the client
 /// cancels, and make releases by a request's proof ID fail before they are sent.
@@ -43,6 +44,7 @@ internal sealed class Recorder
     private volatile bool _failRenewals;
     private volatile bool _loseNextRenewalAnswer;
     private KeptAnswer? _acquisitionAnswer;
+    private Func<SentRequest, KeptAnswer>? _acquisitionAnswerOf;
     private KeptAnswer? _renewalAnswer;
     private volatile string _oversizeRenewal = string.Empty;
     private volatile bool _loseNextAcquisitionAnswer;
@@ -150,6 +152,12 @@ internal sealed class Recorder
     /// <summary>Answers the next acquisition or borrow with <paramref name="answer"/>, once.</summary>
     public void ReplayToNextAcquisition(KeptAnswer answer) => Volatile.Write(ref _acquisitionAnswer, answer);
 
+    /// <summary>
+    /// Answers the next acquisition or borrow, once, with the answer <paramref name="answer"/> makes from the request (its
+    /// <c>jti</c> among the rest), without passing the request to the server: a server that decides by other rules.
+    /// </summary>
+    public void AnswerNextAcquisition(Func<SentRequest, KeptAnswer> answer) => Volatile.Write(ref _acquisitionAnswerOf, answer);
+
     /// <summary>Answers the next renewal with <paramref name="answer"/>, once.</summary>
     public void ReplayToNextRenewal(KeptAnswer answer) => Volatile.Write(ref _renewalAnswer, answer);
 
@@ -214,9 +222,10 @@ internal sealed class Recorder
         {
             string path = request.RequestUri!.AbsolutePath;
             string body = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
+            var sent = new SentRequest(request.Method.Method, path, body, ProofIdOf(request));
             lock (recorder._sent)
             {
-                recorder._sent.Add(new SentRequest(request.Method.Method, path, body, ProofIdOf(request)));
+                recorder._sent.Add(sent);
             }
 
             bool renewal = request.Method == HttpMethod.Post && path.EndsWith("/renew", StringComparison.Ordinal);
@@ -285,6 +294,12 @@ internal sealed class Recorder
             if (oversize == OversizeAfter)
             {
                 return Oversized(await base.SendAsync(request, cancellationToken));
+            }
+
+            if (acquisition && Interlocked.Exchange(ref recorder._acquisitionAnswerOf, null) is Func<SentRequest, KeptAnswer> made)
+            {
+                KeptAnswer answer = made(sent);
+                return Replayed(new HttpResponseMessage(answer.Status) { RequestMessage = request }, answer);
             }
 
             KeptAnswer? replay =

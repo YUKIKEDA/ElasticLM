@@ -263,6 +263,104 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A lease never outlives its feature's own expiry, which has no grace (design §12.7.1, V1d18): the engine cuts leases and
+    /// renewals there, refuses with ELM_EXPIRED at its very second, where less than a second would be left, and with
+    /// ELM_FEATURE_EXPIRED after it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - pro (5 seats) expires 15 minutes after the start; the server license either expires 30 days after with 7 days of
+    ///   grace, so the feature's expiry is the earlier bound, or has no expiry and no grace; the window (10 minutes) is over.
+    ///
+    /// Steps:
+    /// - Acquire at minute 10; renew at minute 14; acquire at minute 15 less a second; acquire and renew at minute 15;
+    ///   acquire a second later.
+    ///
+    /// Expected:
+    /// - The first lease ends at minute 15, not 20, and passes the client's check; the renewal ends at 15 too; the
+    ///   acquisition a second before gets a lease of one second; at minute 15 both are ELM_EXPIRED "The feature of the
+    ///   server license has expired."; a second later ELM_FEATURE_EXPIRED.
+    /// </remarks>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void Lease_IsCappedAtTheFeatureExpiry(bool licenseExpires)
+    {
+        DateTimeOffset limit = TestServer.Start.AddMinutes(15);
+        using var server = new TestServer(features: [new FeatureSpec("pro", Seats: 5, ExpiresAt: limit)]);
+        if (!licenseExpires)
+        {
+            server.ReplaceServerLicense(spec => spec with { ExpiresAt = null, GracePeriod = TimeSpan.Zero });
+            Assert.Null(server.Identity.License.ExpiresAt);
+        }
+
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        var expired = new LicenseError(ErrorCode.Expired, "The feature of the server license has expired.");
+
+        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
+        Assert.Equal(limit, granted.ExpiresAt);
+        Assert.IsType<LeaseVerificationResult.Valid>(server.VerifyAsClient(granted.Token, client));
+
+        server.Time.Advance(TimeSpan.FromMinutes(4));
+        var renewed = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
+        Assert.Equal(limit, renewed.ExpiresAt);
+
+        server.Time.Advance(TimeSpan.FromSeconds(59));
+        var last = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
+        Assert.Equal(TimeSpan.FromSeconds(1), Valid(last.Token, client, server).ExpiresAt - server.Time.GetUtcNow());
+
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(expired, Assert.IsType<LeaseOutcome.Refused>(engine.Acquire(client.Request())).Error);
+        Assert.Equal(expired, Assert.IsType<LeaseOutcome.Refused>(engine.Renew(granted.LeaseId, 2, client.KeyId)).Error);
+
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        AssertRefused(ErrorCode.FeatureExpired, engine.Acquire(client.Request()));
+    }
+
+    /// <summary>
+    /// A server license replaced by one whose feature now expires cuts the renewals of a lease taken before at the new
+    /// expiry, and refuses its renewal in that very second with ELM_EXPIRED (design §12.7.1, §13.1, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - pro (5 seats) without an expiry; the window (10 minutes) is over; a lease of pro acquired at minute 10, ending at
+    ///   minute 20.
+    ///
+    /// Steps:
+    /// - Replace the server license with one whose pro expires at minute 15; renew at minute 12; move to minute 15 and
+    ///   renew again.
+    ///
+    /// Expected:
+    /// - The lease acquired before still ends at minute 20; the renewal ends at minute 15 and passes the client's check
+    ///   against the new server license; the renewal at minute 15 is ELM_EXPIRED "The feature of the server license has
+    ///   expired.".
+    /// </remarks>
+    [Fact]
+    public void Renew_AfterTheFeatureExpiryShortened_IsCutAtTheNewExpiry()
+    {
+        using var server = new TestServer(features: [new FeatureSpec("pro", Seats: 5)]);
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request(version: null)));
+        Assert.Equal(TestServer.Start.AddMinutes(20), granted.ExpiresAt);
+        DateTimeOffset limit = TestServer.Start.AddMinutes(15);
+
+        server.ReplaceServerLicense(spec => spec with { Features = [new FeatureSpec("pro", Seats: 5, ExpiresAt: limit)] });
+        engine.ReplaceLicense(server.Identity);
+        server.Time.Advance(TimeSpan.FromMinutes(2));
+        var renewed = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
+        Assert.Equal(limit, renewed.ExpiresAt);
+        Assert.IsType<LeaseVerificationResult.Valid>(server.VerifyAsClient(renewed.Token, client));
+
+        server.Time.Advance(TimeSpan.FromMinutes(3));
+        Assert.Equal(
+            new LicenseError(ErrorCode.Expired, "The feature of the server license has expired."),
+            Assert.IsType<LeaseOutcome.Refused>(engine.Renew(granted.LeaseId, 2, client.KeyId)).Error
+        );
+    }
+
+    /// <summary>
     /// A server license that expires at the last second a time can have, with a grace period, opens an engine whose leases
     /// get their full length: its expiry and grace are added in seconds (design §12.7.5 step 5, V1d23, finding F36).
     /// </summary>
@@ -701,6 +799,48 @@ public sealed class LeaseEngineTests : IDisposable
         Assert.Null(Assert.Single(after.Reclaim([granted.Token], client.KeyId, client.PublicKey)).Error);
         var renewed = Assert.IsType<LeaseOutcome.Granted>(after.Renew(granted.LeaseId, 1, client.KeyId));
         Assert.Equal(_server.Identity.License.TokenId, Valid(renewed.Token, client).ServerLicenseTokenId);
+    }
+
+    /// <summary>
+    /// After a restart with a server license whose feature now expires sooner, a token that ends at the new expiry is
+    /// reclaimed and one that ends a second later is out of bounds (design §12.7.5 step 5, §13.4, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An engine under a server license whose pro does not expire; a lease of pro acquired at minute 10, ending at minute
+    ///   20.
+    ///
+    /// Steps:
+    /// - Replace the server license with one whose pro expires at minute 20 and reclaim the token in a new engine; replace
+    ///   it with one whose pro expires at minute 20 less a second and reclaim it in another new engine.
+    ///
+    /// Expected:
+    /// - The first reclaim succeeds; the second is ELM_LEASE_OUT_OF_BOUNDS "The lease outlives the feature of the server
+    ///   license." without the lease ID, and the engine counts no seat.
+    /// </remarks>
+    [Fact]
+    public void Reclaim_TokenPastAShorterFeatureExpiry_IsOutOfBounds()
+    {
+        using var server = new TestServer(features: [new FeatureSpec("pro", Seats: 5)]);
+        LeaseEngine before = server.OpenEngine();
+        TestClient client = server.Client();
+        var granted = Assert.IsType<LeaseOutcome.Granted>(before.Acquire(client.Request(version: null)));
+        DateTimeOffset end = TestServer.Start.AddMinutes(20);
+        Assert.Equal(end, granted.ExpiresAt);
+
+        server.ReplaceServerLicense(spec => spec with { Features = [new FeatureSpec("pro", Seats: 5, ExpiresAt: end)] });
+        Assert.Equal(
+            new ReclaimResult(granted.LeaseId, null),
+            Assert.Single(server.Engine().Reclaim([granted.Token], client.KeyId, client.PublicKey))
+        );
+
+        server.ReplaceServerLicense(spec => spec with { Features = [new FeatureSpec("pro", Seats: 5, ExpiresAt: end.AddSeconds(-1))] });
+        LeaseEngine after = server.Engine();
+        Assert.Equal(
+            new ReclaimResult(null, new LicenseError(ErrorCode.LeaseOutOfBounds, "The lease outlives the feature of the server license.")),
+            Assert.Single(after.Reclaim([granted.Token], client.KeyId, client.PublicKey))
+        );
+        Assert.Equal(0, after.SeatsInUse("pro"));
     }
 
     /// <summary>
