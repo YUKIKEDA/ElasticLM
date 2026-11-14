@@ -7,8 +7,10 @@ Checks that every action of the workflows is pinned to the commit of its version
 design §20.5 ("アクションの固定の確かめ", V1d22) and §5.3 T25. For every uses: line of the workflow files, and of the
 composite actions they use, the script checks:
 
-1. The line has the form <owner>/<repo>[/<path>]@<40 lowercase hex digits> # vX.Y.Z. A line that holds uses: in
-   another form fails too, so that a line the script cannot read is never passed unchecked.
+1. The line has the form <owner>/<repo>[/<path>]@<40 lowercase hex digits> # vX.Y.Z. The files are read as text,
+   not with a YAML parser, so a line that holds uses: in another form fails, and so does any line that could hide a
+   uses: key: a double-quoted string with a backslash, an explicit key (?), a merge key (<<), and a flow collection
+   where a step or the list of steps starts.
 2. The tag vX.Y.Z of https://github.com/<owner>/<repo> points to that commit (git ls-remote; for an annotated tag, the
    commit it peels to). A commit that only a fork holds is served under the parent's name too, so a check that the
    commit exists would pass it; a check against the tag does not.
@@ -36,8 +38,22 @@ $env:GIT_TERMINAL_PROMPT = '0'
 $env:GCM_INTERACTIVE = 'never'
 [string[]]$gitConfig = @('-c', 'credential.helper=')
 
-$usesPattern = '^\s*(?:-\s+)?uses:\s*(?<quote>[''"]?)(?<target>[^\s#''"]+)\k<quote>\s*(?:#\s*(?<comment>.*?))?\s*$'
-$pinnedPattern = '^(?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?<path>/[A-Za-z0-9_./-]+)?@(?<sha>[0-9a-f]{40})$'
+$usesPattern = '^\s*(?:-\s+)?uses:\s*(?<quote>[''"]?)(?<target>[^\s#''"]+)\k<quote>(?:\s+#\s*(?<comment>.*?))?\s*$'
+# A path segment is never empty, "." or "..": actions/checkout/.@<sha> names the same action as actions/checkout@<sha>.
+$pinnedPattern = '^(?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?<path>(?:/(?!\.\.?(?:/|@))[A-Za-z0-9_.-]+)+)?@(?<sha>[0-9a-f]{40})$'
+# The script reads the files as text, not with a YAML parser. Any line that could hold a uses: key in a form the
+# patterns above do not read is refused: a key in quotes or with a different case ("uses":, 'uses':, Uses:), any
+# double-quoted string with a backslash (an escape such as "u\x73es" can spell a key, in a block or in a flow
+# collection; no line of the workflows has one), an explicit key (? uses), a merge key (<<: *step), and a flow
+# collection where a step or a list of steps starts (- {uses: ...}, steps: [...]).
+$usesKeyPattern = '(?i)\buses[''"]?\s*:'
+$unreadablePatterns = @(
+    '"[^"]*\\[^"]*"',
+    '^\s*(?:-\s+)?\?(?:\s|$)',
+    '<<\s*:',
+    '^\s*-\s+[\[{]',
+    '(?i)\bsteps[''"]?\s*:\s*[\[{]'
+)
 $versionPattern = '^v\d+\.\d+\.\d+$'
 
 $failures = [Collections.Generic.List[string]]::new()
@@ -118,11 +134,21 @@ function Get-ActionDefinition([string]$Repo, [string]$Folder, [string]$Sha) {
         $prefix = $Folder.TrimStart('/')
         foreach ($name in 'action.yml', 'action.yaml') {
             $file = $prefix.Length -gt 0 ? "$prefix/$name" : $name
-            $text = & git -C $clone @gitConfig show "${Sha}:$file" 2>$null
-            if ($LASTEXITCODE -eq 0) {
-                $definitions[$key] = [string[]]@($text)
-                break
+            # The tree came with the fetch, so ls-tree tells a missing file apart from a blob that could not be fetched.
+            $entry = & git -C $clone ls-tree $Sha -- $file 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                throw "git ls-tree of $Repo@$Sha failed with exit code ${LASTEXITCODE}: $($entry -join ' ')"
             }
+            if ([string]::IsNullOrWhiteSpace(($entry -join ''))) {
+                continue
+            }
+            # Standard error stays out of the text: the fetch of the blob on demand may write to it.
+            $text = & git -C $clone @gitConfig show "${Sha}:$file" 2>$null
+            if ($LASTEXITCODE -ne 0) {
+                throw "the file $file is in the tree of $Repo@$Sha, but git show could not read it (exit code $LASTEXITCODE)"
+            }
+            $definitions[$key] = [string[]]@($text)
+            break
         }
     }
     return $definitions[$key]
@@ -202,14 +228,43 @@ function Test-PersistCredentials([string[]]$Lines, [int]$UsesIndex) {
 
 # Checks every uses: line of one file: a workflow, or an action definition at a pinned commit.
 function Test-UsesLines([string]$Where, [string[]]$Lines, [int]$Depth) {
+    $blockIndent = -1
     for ($i = 0; $i -lt $Lines.Count; $i++) {
         $text = $Lines[$i]
         $line = $i + 1
-        if ($text.TrimStart().StartsWith('#') -or $text -notmatch '\buses\s*:') {
+        # The lines of a block scalar (run: |, script text) are text, not keys: they are skipped until a line that is not
+        # indented deeper than the key that opened the block.
+        if ($blockIndent -ge 0) {
+            if ($text.Trim().Length -eq 0 -or (Get-Indent $text) -gt $blockIndent) {
+                continue
+            }
+            $blockIndent = -1
+        }
+        if ($text.TrimStart().StartsWith('#')) {
+            continue
+        }
+        if ($text -match '^[^#]*:\s*[|>][-+0-9]*\s*(#.*)?$') {
+            $blockIndent = Get-Indent $text
+            if ($text -match '^(?<lead>\s*)-\s') {
+                # A list item's keys sit two columns after its dash: "- run: |" opens a block at the dash's indent + 2.
+                $blockIndent = $Matches.lead.Length + 2
+            }
+        }
+        $unreadable = $false
+        foreach ($pattern in $unreadablePatterns) {
+            if ($text -match $pattern) {
+                $unreadable = $true
+            }
+        }
+        if ($unreadable) {
+            Add-Failure $Where $line 'The line holds a double-quoted string with a backslash, an explicit key (?), a merge key (<<), or a flow collection where a step starts, which this check cannot read.'
+            continue
+        }
+        if ($text -notmatch $usesKeyPattern) {
             continue
         }
         $script:usesCount++
-        if ($text -notmatch $usesPattern) {
+        if ($text -cnotmatch $usesPattern) {
             Add-Failure $Where $line 'The line holds uses: in a form this check cannot read; write it as "uses: <owner>/<repo>@<commit SHA> # vX.Y.Z".'
             continue
         }
@@ -250,7 +305,9 @@ function Test-UsesLines([string]$Where, [string[]]$Lines, [int]$Depth) {
             continue
         }
         $pinOk = $true
-        if ($repo -eq 'actions/checkout' -and $folder -eq '' -and -not (Test-PersistCredentials $Lines $i)) {
+        # Any path under actions/checkout counts, and so does a name in another case or with .git: the check is not the
+        # place to learn which of these GitHub resolves to the same action.
+        if ($repo -match '^actions/checkout(?:\.git)?$' -and -not (Test-PersistCredentials $Lines $i)) {
             Add-Failure $Where $line 'actions/checkout does not set persist-credentials: false under with:.'
             $pinOk = $false
         }
@@ -297,7 +354,8 @@ function Test-UsesLines([string]$Where, [string[]]$Lines, [int]$Depth) {
 }
 
 $folderPath = [IO.Path]::GetFullPath($WorkflowPath)
-$files = @(Get-ChildItem -LiteralPath $folderPath -File | Where-Object Extension -In '.yml', '.yaml' | Sort-Object Name)
+# -Force: on Linux a file whose name starts with a dot is hidden, and such a workflow file is checked too.
+$files = @(Get-ChildItem -LiteralPath $folderPath -File -Force | Where-Object Extension -In '.yml', '.yaml' | Sort-Object Name)
 if ($files.Count -eq 0) {
     Write-Output "error: $folderPath holds no workflow file."
     exit 1
