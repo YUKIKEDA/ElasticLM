@@ -1098,4 +1098,60 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         Assert.True(missing.Count == 0, ReferencePages.Message(missing));
     }
+
+    /// <summary>
+    /// A lease request whose client host or user or app holds a C0 control character is 400 ELM_MALFORMED, as on
+    /// elm-service, before anything is counted or logged (design §12.7.1, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license with pro; the server is past its window; an installation key.
+    ///
+    /// Steps:
+    /// - Acquire pro with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; app ending in
+    ///   U+007F (DEL); client.host ending in U+0080 (C1); then with client "h" U+00A0 / "u" and app "1 0~" (U+0020,
+    ///   U+007E, and U+00A0, next to the ranges).
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." five times and no lease; then 201.
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_ControlCharacterInClientOrApp_IsMalformed()
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(10));
+        await using Raw raw = await Raw.StartAsync(_deployment, server);
+        static byte[] Body(string more) => Raw.Json("{\"feature\":\"pro\",\"count\":1" + more + "}");
+
+        foreach (
+            string more in new[]
+            {
+                ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
+                ",\"client\":{\"host\":\"h\",\"user\":\"u\\u001f\"}",
+                ",\"app\":\"1\\u0000\"",
+                ",\"app\":\"1\\u007f\"",
+                ",\"client\":{\"host\":\"h\\u0080\",\"user\":\"u\"}",
+            }
+        )
+        {
+            using HttpResponseMessage refused = await raw.SignedAsync(HttpMethod.Post, "v1/leases", Body(more), includeKey: true);
+            Assert.Equal(HttpStatusCode.BadRequest, refused.StatusCode);
+            using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(TestContext.Current.CancellationToken));
+            Assert.Equal(
+                ("ELM_MALFORMED", "The request body is not a valid lease request."),
+                (problem.RootElement.GetProperty("code").GetString(), problem.RootElement.GetProperty("detail").GetString())
+            );
+        }
+
+        Assert.Equal(0, server.Engine.LeaseCount);
+        using HttpResponseMessage granted = await raw.SignedAsync(
+            HttpMethod.Post,
+            "v1/leases",
+            Body(",\"client\":{\"host\":\"h\\u00a0\",\"user\":\"u\"},\"app\":\"1 0~\""),
+            includeKey: true
+        );
+        Assert.Equal(HttpStatusCode.Created, granted.StatusCode);
+    }
 }

@@ -62,8 +62,16 @@ internal sealed partial class ElmService
 {
     private const string BearerPrefix = "Bearer ";
 
+    /// <summary>The <c>Content-Security-Policy</c> of every administration API answer (design §14.5, V1d26).</summary>
+    internal const string AdminApiPolicy = "frame-ancestors 'none'";
+
+    private const string AuditCheckRunning = "Another check of the audit log is running on this node.";
+
     // design §18.2 (V1d9a review): how long a failed read of a request body waits for Kestrel to cancel the request's token.
     private static readonly TimeSpan AbortWait = TimeSpan.FromSeconds(1);
+
+    // 1 while a check of the audit log's chain runs on this node (design §14.5, V1d26).
+    private int _auditChecking;
 
     /// <summary>
     /// Gets the HTTP status of each error code that the service answers with a status of its own (design §19). A code not in the
@@ -166,10 +174,13 @@ internal sealed partial class ElmService
         PathString path = context.Request.Path;
 
         // design §14.5 (M5c): no answer of the administration API is kept by a cache, the rate limit's 429 included;
-        // cookie-authenticated answers exist since M5b.
+        // cookie-authenticated answers exist since M5b. V1d26: no browser reads one as another type, and no other site frames
+        // one (the OWASP REST Security Cheat Sheet's headers for API answers a browser may read).
         if (path.StartsWithSegments("/v1/admin"))
         {
             context.Response.Headers.CacheControl = "no-store";
+            context.Response.Headers.XContentTypeOptions = "nosniff";
+            context.Response.Headers.ContentSecurityPolicy = AdminApiPolicy;
         }
 
         bool device =
@@ -389,6 +400,12 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.Malformed, "The request body is not a valid API key request.").ConfigureAwait(false);
         }
 
+        // design §14.5 (V1d26): a name with a control character is refused as malformed, before its length.
+        if (Limits.HasControlCharacter(request.Name))
+        {
+            return await RefuseAsync(context, ErrorCode.Malformed, "The request body is not a valid API key request.").ConfigureAwait(false);
+        }
+
         int nameLength = request.Name.EnumerateRunes().Count();
         if (nameLength is < 1 or > ApiKeys.MaxNameLength)
         {
@@ -538,9 +555,24 @@ internal sealed partial class ElmService
         return new AdminOutcome("ELM_OK");
     }
 
+    // design §14.5 (V1d26): one check a node at a time; its time grows with the rows, and audit.read is the viewer's too.
     private async Task<AdminOutcome> VerifyAuditAsync(HttpContext context, Caller caller)
     {
-        AuditCheck check = await Database.VerifyAuditAsync(context.RequestAborted).ConfigureAwait(false);
+        if (Interlocked.Exchange(ref _auditChecking, 1) == 1)
+        {
+            return await RefuseAsync(context, ErrorCode.RateLimited, AuditCheckRunning).ConfigureAwait(false);
+        }
+
+        AuditCheck check;
+        try
+        {
+            check = await Database.VerifyAuditAsync(context.RequestAborted).ConfigureAwait(false);
+        }
+        finally
+        {
+            Volatile.Write(ref _auditChecking, 0);
+        }
+
         var answer = new VerifyAnswer(check.FirstBroken is null, check.Checked, check.FirstBroken);
         await WriteJsonAsync(context, StatusCodes.Status200OK, answer, ServiceJsonContext.Default.VerifyAnswer).ConfigureAwait(false);
         string detail = AuditLog.Detail(w =>

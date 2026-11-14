@@ -856,7 +856,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
     private static bool IsFingerprint(string? value) => value is { Length: 32 } && value.All(char.IsAsciiHexDigitLower);
 
-    private static bool FitsUtf8(string? value, int maxBytes) => value is null || Encoding.UTF8.GetByteCount(value) <= maxBytes;
+    // design §12.7.1 (V1d26): a text of the client within its UTF-8 bytes and without C0 control characters, as elm-service
+    // reads the same members.
+    private static bool IsClientText(string? value, int maxBytes) =>
+        value is null || (Encoding.UTF8.GetByteCount(value) <= maxBytes && !Limits.HasControlCharacter(value));
 
     private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
     {
@@ -1066,9 +1069,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
             || !Limits.IsFeatureId(request.Feature)
             || request.Version is { Length: > MaxVersionLength }
             || (request.Fingerprints is { } fingerprints && (fingerprints.Count > MaxFingerprints || !fingerprints.TrueForAll(IsFingerprint)))
-            || !FitsUtf8(request.Client?.Host, MaxClientNameBytes)
-            || !FitsUtf8(request.Client?.User, MaxClientNameBytes)
-            || !FitsUtf8(request.App, MaxAppBytes)
+            || !IsClientText(request.Client?.Host, MaxClientNameBytes)
+            || !IsClientText(request.Client?.User, MaxClientNameBytes)
+            || !IsClientText(request.App, MaxAppBytes)
             || request.Borrow is < 0 or > MaxBorrowSeconds
         )
         {

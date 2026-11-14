@@ -658,10 +658,11 @@ public sealed class LeaseTests : IDisposable
     ///   as it is, signed with the signing key after one change of areq.
     ///
     /// Steps:
-    /// - Verify with VerifyHosted: unchanged; without areq; with null, a number, an empty text, and 65 characters.
+    /// - Verify with VerifyHosted: unchanged; without areq; with null, a number, an empty text, 65 characters, and a text
+    ///   with '+', outside base64url (V1d26).
     ///
     /// Expected:
-    /// - Valid with the areq written; ELM_MALFORMED "The lease payload is not valid." for the five others.
+    /// - Valid with the areq written; ELM_MALFORMED "The lease payload is not valid." for the six others.
     /// </remarks>
     [Theory]
     [InlineData("valid")]
@@ -670,6 +671,7 @@ public sealed class LeaseTests : IDisposable
     [InlineData("areq-number")]
     [InlineData("areq-empty")]
     [InlineData("areq-long")]
+    [InlineData("areq-plus")]
     public void VerifyHosted_AnsweredProofIdMissingOrMalformed_IsMalformed(string kind)
     {
         string leaseCert = CertificateIssuer.Issue(_root, _signing, KeyUses.Lease, Now.AddDays(-1), TimeSpan.FromDays(30), _time);
@@ -709,6 +711,9 @@ public sealed class LeaseTests : IDisposable
                 break;
             case "areq-long":
                 payload["areq"] = new string('p', 65);
+                break;
+            case "areq-plus":
+                payload["areq"] = "proof+1";
                 break;
             default:
                 break;

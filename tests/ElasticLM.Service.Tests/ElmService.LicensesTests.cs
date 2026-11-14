@@ -717,4 +717,99 @@ public sealed class ElmServiceLicensesTests
 
         return (product, await TestService.PolicyAsync(admin, product, policyMembers));
     }
+
+    /// <summary>
+    /// A text member of the administration API with a control character (C0, DEL, or C1) is refused with ELM_MALFORMED and
+    /// the route's message, and nothing is written, the same on both engines; before V1d26 PostgreSQL answered 500 for U+0000
+    /// in a name and SQLite stored it (design §14.5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with feature core, a policy of it, and a license; each engine.
+    ///
+    /// Steps:
+    /// - Create a product whose name holds U+0000, U+007F, or U+0085 (each in turn); a feature, a policy, a license, and an
+    ///   API key whose name holds U+0000; a license whose meta key or meta value holds U+0000; patch the product's name and
+    ///   the license's name with U+009F, and the license's meta value with U+0001. Then create a product named "a" U+00A0
+    ///   "b~" (next to the ranges).
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED with "The request body is not a valid product.", "... feature.", "... policy.", "... license.", or
+    ///   "... API key request." as the route gives it, for each; one product, feature, policy, and license as before, and
+    ///   the names unchanged; then 201.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task AdminText_ControlCharacter_IsMalformed(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, string.Empty);
+        (string license, _) = await ElmServiceActivationsTests.LicenseAsync(admin, policy);
+        const string Product = "The request body is not a valid product.";
+        const string License = "The request body is not a valid license.";
+        string LicenseBody(string name, string meta) =>
+            "{\"policyId\":\"" + policy + "\",\"name\":\"" + name + "\",\"features\":[{\"code\":\"core\"}],\"meta\":{" + meta + "}}";
+
+        (HttpMethod Method, string Path, string Body, string Message)[] cases =
+        [
+            (HttpMethod.Post, "v1/admin/products", "{\"code\":\"p0\",\"name\":\"a\\u0000b\"}", Product),
+            (HttpMethod.Post, "v1/admin/products", "{\"code\":\"p1\",\"name\":\"a\\u007fb\"}", Product),
+            (HttpMethod.Post, "v1/admin/products", "{\"code\":\"p2\",\"name\":\"a\\u0085b\"}", Product),
+            (
+                HttpMethod.Post,
+                $"v1/admin/products/{product}/features",
+                "{\"code\":\"f2\",\"name\":\"a\\u0000b\"}",
+                "The request body is not a valid feature."
+            ),
+            (
+                HttpMethod.Post,
+                "v1/admin/policies",
+                "{\"productId\":\"" + product + "\",\"name\":\"a\\u0000b\",\"licenseKind\":\"standard\",\"binding\":\"nodeLocked\"}",
+                "The request body is not a valid policy."
+            ),
+            (HttpMethod.Post, "v1/admin/licenses", LicenseBody("a\\u0000b", string.Empty), License),
+            (HttpMethod.Post, "v1/admin/licenses", LicenseBody("n", "\"k\\u0000\":\"v\""), License),
+            (HttpMethod.Post, "v1/admin/licenses", LicenseBody("n", "\"k\":\"a\\u0000b\""), License),
+            (
+                HttpMethod.Post,
+                "v1/admin/api-keys",
+                "{\"name\":\"a\\u0000b\",\"permissions\":[\"license.read\"]}",
+                "The request body is not a valid API key request."
+            ),
+            (HttpMethod.Patch, $"v1/admin/products/{product}", "{\"name\":\"a\\u009fb\"}", Product),
+            (HttpMethod.Patch, $"v1/admin/licenses/{license}", "{\"name\":\"a\\u009fb\"}", License),
+            (HttpMethod.Patch, $"v1/admin/licenses/{license}", "{\"meta\":{\"k\":\"\\u0001\"}}", License),
+        ];
+        foreach ((HttpMethod method, string path, string body, string message) in cases)
+        {
+            using var request = new HttpRequestMessage(method, path) { Content = TestService.Json(body) };
+            await TestService.AssertProblemAsync(await admin.SendAsync(request, cancel), HttpStatusCode.BadRequest, "ELM_MALFORMED", message);
+        }
+
+        Assert.Equal(
+            (1L, 1L, 1L, 1L),
+            (
+                await test.ScalarAsync("SELECT COUNT(*) FROM products"),
+                await test.ScalarAsync("SELECT COUNT(*) FROM features"),
+                await test.ScalarAsync("SELECT COUNT(*) FROM policies"),
+                await test.ScalarAsync("SELECT COUNT(*) FROM licenses")
+            )
+        );
+        Assert.Equal(
+            ("app", "n"),
+            (
+                (await TestService.GetAsync(admin, $"v1/admin/products/{product}")).GetProperty("name").GetString(),
+                (await TestService.GetAsync(admin, $"v1/admin/licenses/{license}")).GetProperty("name").GetString()
+            )
+        );
+        using HttpResponseMessage near = await admin.PostAsync(
+            "v1/admin/products",
+            TestService.Json("{\"code\":\"p3\",\"name\":\"a\\u00a0b~\"}"),
+            cancel
+        );
+        Assert.Equal(HttpStatusCode.Created, near.StatusCode);
+    }
 }

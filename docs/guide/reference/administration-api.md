@@ -131,6 +131,7 @@ A call without the permission gets `403` with `ELM_FORBIDDEN`, and the message n
 - The `Content-Type` header of a request is not checked. A body is read as JSON in UTF-8 whatever type is sent, and the body of `POST /v1/admin/offline` as the text of the file.
 - A body is at most 64 KiB, counted by `Content-Length` or by the bytes read. A larger one gets `413` with `ELM_PAYLOAD_TOO_LARGE`.
 - A body must be one JSON object. A body that is not JSON or not an object, a member of the wrong type, nesting deeper than 8, a required member that is missing or `null`, a member given twice, a string or a member name with an unpaired surrogate (such as `\ud800`) at any depth, or bytes that are not valid UTF-8 anywhere in the body gets `400` with `ELM_MALFORMED`.
+- A text member that the service keeps, the `name` of a product, feature, policy, license, or API key and each key and value of a license's `meta`, gets `400` with `ELM_MALFORMED` when it holds a control character (U+0000 to U+001F, U+007F, and U+0080 to U+009F), before its length is checked.
 - A value of the right type outside its range or set gets `400` with `ELM_INVALID_ARGUMENT`. So does an ID in the body that names nothing, such as a `productId` of no product.
 - Unknown members are ignored, so that a newer client works with an older service.
 - Times are written in one form only, UTC to the second: `2027-11-01T00:00:00Z`. Answers use the same form. A time in another form (fractions of a second, `+00:00`) gets `ELM_MALFORMED`.
@@ -181,13 +182,19 @@ A request whose body cannot be read, because of its form (for example, a bad chu
 
 Every request is first limited per source address (an IPv4 address, or an IPv6 /64) by `rateLimit.perIp`. An authenticated request is then also limited by `rateLimit.perKey`: per API key, or per administrator for an access token or a session. The checks run in this order: the limit per source, authentication, the limit per key, the permission, then the route itself. The settings are in [elm-service configuration](service-configuration.md#ratelimit).
 
-#### Caching
+#### Caching and browser headers
 
-Every answer under `/v1/admin/`, errors included, has `Cache-Control: no-store`.
+Every answer under `/v1/admin/`, errors included, has three headers:
+
+- `Cache-Control: no-store`: no browser or cache keeps a copy of the answer.
+- `X-Content-Type-Options: nosniff`: a browser takes the answer as the type it is given and does not show a JSON answer as a page.
+- `Content-Security-Policy: frame-ancestors 'none'`: a browser shows the answer inside no frame, of this site or another.
+
+The one exception is the empty `500` that the web server sends when a call fails inside the service before its answer started: it has no body, and only the `Date`, `Content-Length`, and `Server` headers.
 
 #### Audit log
 
-Every authenticated call writes one row to the audit log, reads and refusals included, with the action named in each route below. A call that ends without a whole answer writes its row too. A call refused for a missing permission is written with `result` `ELM_FORBIDDEN`. Calls without a valid credential are counted and written as one `auth.failed` row a minute. Rate-limited calls are not written. `GET /v1/admin/oidc` and a successful `GET /v1/admin/me` write no row. The actions and the row fields are in [Logs](logs.md#audit-log).
+Every authenticated call writes one row to the audit log, reads and refusals included, with the action named in each route below. A call that ends without a whole answer writes its row too. A call refused for a missing permission is written with `result` `ELM_FORBIDDEN`. Calls without a valid credential are counted and written as one `auth.failed` row a minute. Rate-limited calls are not written; a check of the audit log refused because another check runs (see [`POST /v1/admin/audit/verify`](#post-v1adminauditverify)) is written, with `result` `ELM_RATE_LIMITED`. `GET /v1/admin/oidc` and a successful `GET /v1/admin/me` write no row. The actions and the row fields are in [Logs](logs.md#audit-log).
 
 ### Health check
 
@@ -556,6 +563,8 @@ Audit action: `audit.list`.
 
 Checks the hash chain of the audit log, from the oldest row it keeps to the newest. What the check finds, and what it cannot find, is in [Logs](logs.md#verifying-the-audit-log).
 
+The check reads every row, so its time grows with the number of rows. Each [node](service-configuration.md#node) runs one check at a time, so one caller with `audit.read` who calls it again and again can keep the node's check busy for others; each refused call is in the audit log.
+
 Permission: `audit.read`.
 
 Answers `200`:
@@ -574,7 +583,7 @@ Answers `200`:
 }
 ```
 
-Errors: only those common to all routes.
+Errors: those common to all routes, and `ELM_RATE_LIMITED` (429) "Another check of the audit log is running on this node." while another check runs on the node that got the call. Its `Retry-After` is `1`, not the time the running check needs, which grows with the rows. Each refused call writes an audit row with `result` `ELM_RATE_LIMITED`.
 
 Audit action: `audit.verify`.
 
@@ -1606,7 +1615,7 @@ Returns one of this node's usage log files as it is.
 
 Permission: `usagelog.read`.
 
-Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began; `Content-Length` is that length. If the transfer fails partway, the service closes the connection without ending the answer, so the client receives fewer bytes than `Content-Length` and reports an error instead of taking the part for the whole file. For example, the first lines of a file:
+Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began; `Content-Length` is that length. `Content-Disposition: attachment; filename="<name>"` makes a browser save the file instead of showing it. If the transfer fails partway, the service closes the connection without ending the answer, so the client receives fewer bytes than `Content-Length` and reports an error instead of taking the part for the whole file. For example, the first lines of a file:
 
 ```text
 {"type":"chain.start","ts":1793532478,"stream":"usage","node":"node-1","certificates":["eyJhbGciOiJFUzI1NiJ9.eyJleGFtcGxlIjp0cnVlfQ.ZmFrZS1zaWduYXR1cmU"]}

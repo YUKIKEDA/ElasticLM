@@ -219,9 +219,15 @@ internal sealed partial record LeaseRow(
     long CreatedAt
 );
 
-/// <summary>An early return of a borrow, counted against a key or a fingerprint for 30 days (design §12.7.4).</summary>
+/// <summary>An early return of a borrow, counted against a key or a fingerprint for 30 days (design §12.7.4), with the returned
+/// lease's ID, empty for the returns recorded before V1d26 (design §12.7.6).</summary>
 [Table("lease_returns", Naming = ColumnNaming.SnakeCase)]
-internal sealed partial record LeaseReturnRow([PrimaryKey] Guid LicenseId, [PrimaryKey, MaxLength(64)] string Counter, long ReturnedAt);
+internal sealed partial record LeaseReturnRow(
+    [PrimaryKey] Guid LicenseId,
+    [PrimaryKey, MaxLength(64)] string Counter,
+    [PrimaryKey] long ReturnedAt,
+    [PrimaryKey, MaxLength(22)] string LeaseId
+);
 
 /// <summary>
 /// The answer to an activation's last offline request, with the request's key ID, nonce, and the SHA-256 of its signing

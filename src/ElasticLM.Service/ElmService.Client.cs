@@ -20,6 +20,7 @@ internal sealed partial class ElmService
     private const string NonceHeader = "ELM-Nonce";
     private const string InstallationActor = "installation";
     private const string NoActivation = "No activation has this ID; activate again.";
+    private const string StoppedAsClone = "The activation was stopped because a clone of the installation was detected.";
     private static readonly TimeSpan ProofSkew = TimeSpan.FromMinutes(1);
     private readonly TrialLimitWarnings _trialLimitWarnings = new();
 
@@ -277,7 +278,7 @@ internal sealed partial class ElmService
         try
         {
             using RequestBody body = RequestBody.Parse(bytes, Activations.Malformed);
-            request = Activations.ReadSequence(body);
+            request = Activations.ReadSequence(body, Activations.Malformed);
         }
         catch (BodyException e)
         {
@@ -354,7 +355,7 @@ internal sealed partial class ElmService
         try
         {
             using RequestBody body = RequestBody.Parse(bytes, Activations.Malformed);
-            request = Activations.ReadSequence(body);
+            request = Activations.ReadSequence(body, Activations.Malformed);
         }
         catch (BodyException e)
         {
@@ -465,20 +466,25 @@ internal sealed partial class ElmService
             return ClientResult.Fail(ErrorCode.TrialNotOffered, NotOffered);
         }
 
-        // design §12.6.1: a trial whose answer was lost is sent again with the first request's jti in retry; the same
-        // installation key gets the file it was issued, as a retried activation does (the design review of M4b1).
-        if (
-            request.Retry.Count > 0
-            && await Database.FindTrialActivationAsync(product.Id, proof.KeyId, context.RequestAborted).ConfigureAwait(false) is ActivationRow issued
-            && issued.Seq == 1
-            && request.Retry.Contains(issued.LastProof, StringComparer.Ordinal)
-        )
-        {
-            return ClientResult.Issued(StatusCodes.Status200OK, issued.Id, issued.LastFile);
-        }
-
         DateTimeOffset now = Time.GetUtcNow();
         long at = now.ToUnixTimeSeconds();
+
+        // design §12.6.1: a trial whose answer was lost is sent again with the first request's jti in retry; the same
+        // installation key gets the file it was issued, as a retried activation does (the design review of M4b1), after the
+        // same checks: the license's state, then a stopped activation (V1d26).
+        if (
+            await Database.FindTrialRetryAsync(product.Id, proof.KeyId, request.Retry, context.RequestAborted).ConfigureAwait(false)
+            is ActivationRow issued
+        )
+        {
+            LicenseRow trial = (await Database.FindLicenseAsync(issued.LicenseId, context.RequestAborted).ConfigureAwait(false))!;
+            return Refusal(trial, at)
+                ?? (
+                    issued.BlockedAt is not null
+                        ? ClientResult.Fail(ErrorCode.CloneDetected, StoppedAsClone)
+                        : ClientResult.Issued(StatusCodes.Status200OK, issued.Id, issued.LastFile)
+                );
+        }
 
         // Round 3 of the M4b Grill: every feature of the product, without a version range or an expiry of its own.
         IReadOnlyList<LicenseFeature> features =
@@ -575,7 +581,7 @@ internal sealed partial class ElmService
         switch (Activations.Judge(activation, seq, retry))
         {
             case SequenceJudgement.Blocked:
-                return ClientResult.Fail(ErrorCode.CloneDetected, "The activation was stopped because a clone of the installation was detected.");
+                return ClientResult.Fail(ErrorCode.CloneDetected, StoppedAsClone);
             case SequenceJudgement.Retry when offlineNonce is null:
                 // The answer to the request that got the last token was lost: the same file again, nothing changes.
                 return ClientResult.Issued(StatusCodes.Status200OK, activation.Id, activation.LastFile);

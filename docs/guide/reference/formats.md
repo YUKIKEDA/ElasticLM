@@ -212,7 +212,7 @@ Payload:
 | `grace` | integer | no | How long after `exp` the token is still valid, in the grace period: a duration. It must be `0` or absent in a `trial` token. The issuers write it only with `exp`, and it has no effect without `exp`. |
 | `refresh` | integer | no | How long before `exp` the client starts to refresh online: a duration. `elm-service` writes the policy's `refreshWindow`; `elm license issue` writes it only with `--refresh-days`. |
 | `seq` | integer | no | The activation's sequence number: `1` in the first file of an activation, and one more in each new file. `elm-service` writes it in every file of an activation; `elm license issue` and the file of an unbound license leave it out. |
-| `areq` | string | no | The ID of the request that this token answers, 1 to 64 characters: the `jti` of the [request proof](#request-proof-elm-proofjws) of an online activation, refresh, or trial, or the `nonce` of an [offline request](#offline-request-elm-actreqjws). `elm-service` writes it in every file of an activation. A request sent again after its answer was lost gets the earlier file, so that file names the earlier request. `elm license issue` and the file of an unbound license leave it out. |
+| `areq` | string | no | The ID of the request that this token answers, 1 to 64 characters of base64url (`A-Z`, `a-z`, `0-9`, `-`, and `_`): the `jti` of the [request proof](#request-proof-elm-proofjws) of an online activation, refresh, or trial, or the `nonce` of an [offline request](#offline-request-elm-actreqjws). `elm-service` writes it in every file of an activation. A request sent again after its answer was lost gets the earlier file, so that file names the earlier request. `elm license issue` and the file of an unbound license leave it out. |
 | `act` | string | no | The activation ID: a UUID, 36 characters with hyphens. `elm-service` writes it in every file of an activation; `elm license issue` and the file of an unbound license leave it out. |
 | `lease` | integer | in a `server` token; optional otherwise | The lease time, in seconds: a duration, and at least 1 in a `server` token. |
 | `borrow` | integer | in a `server` token; optional otherwise | The longest borrow, in seconds: a duration. `0` allows no borrowing. |
@@ -334,7 +334,7 @@ Payload:
 | `srv` | string | yes | The key ID of the issuing server. It must equal `iss`. |
 | `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it holds; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
 | `seq` | integer | yes | The lease's sequence number. The verifier accepts 0 or more; `elm-server` and `elm-service` write 1 in the first token and one more at each renewal, so neither writes 0. |
-| `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters. A renewal sent again after an answer that was lost or refused gets the earlier token again, so that token names the earlier request. The verifier checks only the length. The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
+| `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters of base64url (`A-Z`, `a-z`, `0-9`, `-`, and `_`). A renewal sent again after an answer that was lost or refused gets the earlier token again, so that token names the earlier request. The verifier checks only this form (the length and the characters). The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
 
 Member of `cnf`:
 
@@ -403,7 +403,7 @@ Payload:
 | `prd` | string | for `activate` | The product's `code`: 1 to 64 characters of `a`–`z`, `0`–`9`, and `-`. |
 | `act` | string | for `refresh` | The activation ID, a UUID. |
 | `seq` | integer | for `refresh` | The `seq` of the last license token the device received, 0 or more. The libraries write it in both kinds: `0` in an activation request. |
-| `retry` | array of strings | no | The `jti` of requests that got no answer: at most 16, each 1 to 64 characters. |
+| `retry` | array of strings | no | The `jti` of requests that got no answer: at most 16, each 1 to 64 characters of any kind. |
 | `fp` | array of strings | yes | The device's machine fingerprints: 0 to 8, each 32 lowercase hexadecimal characters. |
 | `jwk` | object | yes | The installation key's public key, with exactly `kty` (`EC`), `crv` (`P-256`), `x`, and `y` (see [Public keys in JSON](#public-keys-in-json)). |
 | `nonce` | string | yes | 128 random bits that the device made, in base64url: 22 characters of `A`–`Z`, `a`–`z`, `0`–`9`, `-`, and `_`. The answer's license token carries it back in `areq`. |
@@ -535,7 +535,7 @@ Payload:
 | `ver` | integer | yes | `1`. |
 | `act` | string | yes | The activation ID, a UUID. |
 | `seq` | integer | yes | The `seq` of the last license token the device received, 0 or more. |
-| `retry` | array of strings | no | The `jti` of requests that got no answer: at most 16, each 1 to 64 characters. |
+| `retry` | array of strings | no | The `jti` of requests that got no answer: at most 16, each 1 to 64 characters of any kind. |
 | `iat` | integer | yes | When the proof was made: a time. The service refuses a proof made more than 5 minutes ahead of its own clock with `ELM_MALFORMED`. |
 
 - The proof has no `jwk`, no `jti`, and no `exp`. The service reads `act` first (`ELM_MALFORMED` when it is not a UUID, `ELM_ACTIVATION_NOT_FOUND` when no activation has that ID), then checks that `kid` is the key ID of the key the activation was made with and that the signature verifies with it (`ELM_PROOF_INVALID` otherwise), and only then reads the other claims.

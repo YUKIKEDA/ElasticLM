@@ -281,4 +281,39 @@ public sealed class SmallPartsTests
 
     private static IReadOnlyList<string> JsonNames(Type type) =>
         [.. type.GetProperties().Select(property => property.GetCustomAttribute<JsonPropertyNameAttribute>()?.Name ?? property.Name)];
+
+    /// <summary>
+    /// A proof ID is 1 to 64 characters of base64url, and a control character is one of U+0000 to U+001F, U+007F, and
+    /// U+0080 to U+009F, as Rune.IsControl has it (design §12.2, §8.6, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Texts written here: the 64 characters of base64url; one of 64 and one of 65 characters; empty; null; one with each of
+    ///   '+', '/', '=', ' ', '.', U+0000, U+001F, U+007F, 'é', and a surrogate pair.
+    ///
+    /// Steps:
+    /// - Ask IsProofId of each; ask HasControlCharacter of texts with U+0000, U+001F, U+0020, U+007E, U+007F, U+0080,
+    ///   U+009F, U+00A0, and 'é'.
+    ///
+    /// Expected:
+    /// - Proof IDs: the alphabet and 64 characters pass; 65, empty, null, and each other character fail. Control: U+0000,
+    ///   U+001F, U+007F, U+0080, and U+009F are; U+0020, U+007E, U+00A0, and 'é' are not.
+    /// </remarks>
+    [Fact]
+    public void Limits_ProofIdAndControlCharacters_HaveTheirForms()
+    {
+        const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        Assert.True(Limits.IsProofId(Alphabet));
+        Assert.True(Limits.IsProofId(new string('a', 64)));
+        Assert.False(Limits.IsProofId(new string('a', 65)));
+        Assert.False(Limits.IsProofId(string.Empty));
+        Assert.False(Limits.IsProofId(null));
+        foreach (string other in new[] { "+", "/", "=", " ", ".", "\u0000", "\u001F", "\u007F", "é", "😀" })
+        {
+            Assert.False(Limits.IsProofId("ab" + other + "cd"), $"U+{(int)other[0]:X4}");
+        }
+
+        string[] texts = ["a\u0000", "\u001Fb", "a b", "a~", "a\u007Fb", "\u0080", "\u009F", "a\u00A0b", "\u00E9"];
+        Assert.Equal([true, true, false, false, true, true, true, false, false], texts.Select(Limits.HasControlCharacter));
+    }
 }

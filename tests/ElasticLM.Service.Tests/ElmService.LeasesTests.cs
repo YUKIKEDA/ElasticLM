@@ -450,6 +450,51 @@ public sealed class ElmServiceLeasesTests
     }
 
     /// <summary>
+    /// Two early returns of one counter in the same second count as two (design §12.7.6, V1d26 for F45): before V1d26 they
+    /// were one row, and a third return passed a limit of 2.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with borrowLimit 86400 and borrowReturnLimit 2; a license with 2 seats of core; devices A,
+    ///   B, and C with the same fingerprint f; the clock does not move; each engine.
+    ///
+    /// Steps:
+    /// - A and B borrow; A returns; B returns; count the rows of lease_returns; C borrows and returns.
+    ///
+    /// Expected:
+    /// - Both returns 204 (B's with one return of f counted); four rows (A's key, B's key, and f twice); C's return 409
+    ///   ELM_RETURN_NOT_ALLOWED, as f has two returns in 30 days.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Borrow_TwoReturnsInOneSecond_CountTwice(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, Cloud + ",\"borrowLimit\":86400,\"borrowReturnLimit\":2");
+        (_, string key) = await LicenseAsync(admin, policy, TwoSeats);
+        using var a = TestDevice.Create(test, service);
+        using var b = TestDevice.Create(test, service);
+        using var c = TestDevice.Create(test, service);
+        string[] prints = TestDevice.Fingerprints();
+
+        string aLease = a.VerifyLease(await a.BorrowAsync(key, 3600, prints)).LeaseId;
+        string bLease = b.VerifyLease(await b.BorrowAsync(key, 3600, prints)).LeaseId;
+        Assert.Equal(HttpStatusCode.NoContent, (await a.ReleaseAsync(aLease)).Status);
+        Assert.Equal(HttpStatusCode.NoContent, (await b.ReleaseAsync(bLease)).Status);
+        Assert.Equal(4L, await test.ScalarAsync("SELECT COUNT(*) FROM lease_returns"));
+
+        string cLease = c.VerifyLease(await c.BorrowAsync(key, 3600, prints)).LeaseId;
+        AssertProblem(
+            await c.ReleaseAsync(cLease),
+            HttpStatusCode.Conflict,
+            "ELM_RETURN_NOT_ALLOWED",
+            "The borrow cannot be returned early now; it ends at its expiry."
+        );
+    }
+
+    /// <summary>
     /// The refusals of acquisition steps 2 to 5 (design §12.7.6), and the refusal of an activation of a cloud-floating
     /// license.
     /// </summary>
@@ -613,6 +658,44 @@ public sealed class ElmServiceLeasesTests
         Assert.True(answer.Status == HttpStatusCode.Created, answer.Text);
         Assert.Equal(count, device.VerifyLease(answer).Seats);
         Assert.Equal(1, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+    }
+
+    /// <summary>
+    /// A lease renewal whose body is not valid is refused with the lease request's message, whichever member is wrong
+    /// (design §12.7.6; Issue #385, fixed in V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy; a license with 2 seats of core; one device holding a lease; SQLite (the body is read before
+    ///   any SQL).
+    ///
+    /// Steps:
+    /// - Renew the lease with {"seq":-1}, {"seq":null}, {}, {"seq":1.5}, {"seq":"1"}, {"seq":1,"retry":[""]}, and
+    ///   {"seq":1,"retry":"a"}.
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." for each; before V1d26 all but 1.5 and "1"
+    ///   named an activation request.
+    /// </remarks>
+    [Theory]
+    [InlineData("{\"seq\":-1}")]
+    [InlineData("{\"seq\":null}")]
+    [InlineData("{}")]
+    [InlineData("{\"seq\":1.5}")]
+    [InlineData("{\"seq\":\"1\"}")]
+    [InlineData("{\"seq\":1,\"retry\":[\"\"]}")]
+    [InlineData("{\"seq\":1,\"retry\":\"a\"}")]
+    public async Task Renew_BodyNotValid_NamesALeaseRequest(string body)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
+        using var device = TestDevice.Create(test, service);
+        string id = device.VerifyLease(await device.AcquireAsync(key)).LeaseId;
+
+        DeviceAnswer answer = await device.PostAsync($"v1/leases/{id}/renew", body, includeKey: false);
+
+        AssertProblem(answer, HttpStatusCode.BadRequest, "ELM_MALFORMED", BadLeaseRequest);
     }
 
     /// <summary>
@@ -921,5 +1004,50 @@ public sealed class ElmServiceLeasesTests
     {
         string product = await ProductAsync(admin, "app", "core");
         return await TestService.PolicyAsync(admin, product, members.Length > 0 ? Cloud + "," + members : Cloud);
+    }
+
+    /// <summary>
+    /// A lease request whose client or app holds a C0 control character is refused before anything is written, the same on
+    /// both engines (design §12.7.1, §12.6.1, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with clientInfoStrategy hostAndUser; a license with 2 seats of core; one device; each
+    ///   engine.
+    ///
+    /// Steps:
+    /// - Acquire core with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; app ending in
+    ///   U+007F (DEL); client.host ending in U+0080 (C1); then with client "h" U+00A0 / "u" and app "1 0~" (U+0020,
+    ///   U+007E, and U+00A0, next to the ranges).
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." five times, with no lease row; then 201.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Acquire_ControlCharacterInClientOrApp_IsMalformed(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, "\"clientInfoStrategy\":\"hostAndUser\""), TwoSeats);
+        using var device = TestDevice.Create(test, service);
+
+        foreach (
+            string more in new[]
+            {
+                ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
+                ",\"client\":{\"host\":\"h\",\"user\":\"u\\u001f\"}",
+                ",\"app\":\"1\\u0000\"",
+                ",\"app\":\"1\\u007f\"",
+                ",\"client\":{\"host\":\"h\\u0080\",\"user\":\"u\"}",
+            }
+        )
+        {
+            AssertProblem(await device.AcquireAsync(key, more: more), HttpStatusCode.BadRequest, "ELM_MALFORMED", BadLeaseRequest);
+        }
+
+        Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+        DeviceAnswer granted = await device.AcquireAsync(key, more: ",\"client\":{\"host\":\"h\\u00a0\",\"user\":\"u\"},\"app\":\"1 0~\"");
+        Assert.True(granted.Status == HttpStatusCode.Created, granted.Text);
     }
 }

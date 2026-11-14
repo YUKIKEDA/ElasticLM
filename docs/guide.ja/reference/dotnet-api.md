@@ -256,7 +256,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `KeyScope` | `KeyScope` | `KeyScope.User` | いいえ | インストール鍵とアクティベーションを保存する場所。 |
 | `DataDirectory` | `string?` | `null` | いいえ | インストール鍵とアクティベーションを置くフォルダー。`null` ならスコープの既定のフォルダー（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)）。 |
 | `SendClientInfo` | `bool` | `false` | いいえ | ホスト名と OS のユーザー名を送るかどうか。サービスがこれを保存するのは、ポリシーの `clientInfoStrategy` が `hostAndUser` のときだけだ。 |
-| `AppVersion` | `string?` | `null` | いいえ | 監査ログのために送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
+| `AppVersion` | `string?` | `null` | いいえ | 監査ログのために送るアプリのバージョン。UTF-8 で最大 64 バイトで、制御文字（U+0000 から U+001F、U+007F、U+0080 から U+009F）を含まない。ライブラリは長さだけを確かめる。制御文字を含むバージョンのリクエストは、サービスが `ELM_MALFORMED` で断る。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | 時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション。`null` なら既定値。 |
 | `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |
@@ -292,7 +292,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 | `KeyScope` | `KeyScope` | `KeyScope.User` | いいえ | インストール鍵とサーバーのピンを保存する場所。 |
 | `DataDirectory` | `string?` | `null` | いいえ | インストール鍵とピンを置くフォルダー。`null` ならスコープの既定のフォルダー（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)）。 |
 | `SendClientInfo` | `bool` | `false` | いいえ | 新しいリースごとに、ホスト名と OS のユーザー名を送るかどうか。オンプレミスでは、サーバーの[アクセスルール](server-configuration.md#アクセスルール)の `host:` と `user:` のエントリーがこれを使う。クライアントが自分で名乗る値なので、サーバーは確かめられない。 |
-| `AppVersion` | `string?` | `null` | いいえ | 新しいリースごとに送るアプリのバージョン。UTF-8 で最大 64 バイト。 |
+| `AppVersion` | `string?` | `null` | いいえ | 新しいリースごとに送るアプリのバージョン。UTF-8 で最大 64 バイトで、制御文字（U+0000 から U+001F、U+007F、U+0080 から U+009F）を含まない。ライブラリは長さだけを確かめる。制御文字を含むバージョンのリースのリクエストは、どちらのサーバーも `ELM_MALFORMED` で断る。 |
 | `ClockGuard` | `IClockGuard?` | `null` | いいえ | サーバーライセンスとリースのための時刻巻き戻し対策。`null` なら、インストール鍵のフォルダーにあるファイル `clock` を使い、インストール鍵で署名する `FileClockGuard` になる。 |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | いいえ | 検証側のオプション（時刻のずれ）。`null` なら既定値。 |
 | `TimeProvider` | `TimeProvider` | `TimeProvider.System` | いいえ | 時計。リクエストにかけられる 30 秒もこの時計で数える。テストで偽の時計を使うと、止まったリクエストは時計を進めるまで終わらない。リクエストの途中で時計を 30 秒より多く進めると、そのリクエストは `ELM_NETWORK_ERROR` で終わる。 |
