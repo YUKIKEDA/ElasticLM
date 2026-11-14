@@ -1,4 +1,6 @@
+using System.Buffers.Text;
 using System.Net;
+using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 using ElasticLM.Server.Tests;
@@ -667,5 +669,95 @@ public sealed class ElmServiceTrialsTests
                 "The request body is not a valid trial request."
             );
         }
+    }
+
+    /// <summary>
+    /// A trial whose app or client holds a C0 control character, or whose proof's jti is not base64url, is refused before
+    /// anything is written, the same on both engines; before V1d26 PostgreSQL answered 500 for U+0000 and SQLite stored it
+    /// (design §12.2, §12.6.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with a trial policy of clientInfoStrategy hostAndUser; each engine.
+    ///
+    /// Steps:
+    /// - New devices ask for a trial with app "a" U+0000 "b"; app ending in U+001F; client.host ending in U+0000; client.user
+    ///   starting with U+0001; a proof whose jti is "x" U+0000 "y"; one whose jti is "x+y"; then one with app "a b" and
+    ///   client "h"/"u" (U+0020, the first character past the range). Count the trials.
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid trial request." four times; 401 ELM_PROOF_INVALID "The request
+    ///   proof payload is not valid." twice; then 201; one trial.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Trial_ControlCharacterOrOtherJti_IsRefused(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(
+            admin,
+            product,
+            "\"licenseKind\":\"trial\",\"gracePeriod\":0,\"clientInfoStrategy\":\"hostAndUser\""
+        );
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{policy}}"}""");
+        const string Malformed = "The request body is not a valid trial request.";
+
+        foreach (
+            string more in new[]
+            {
+                ",\"app\":\"a\\u0000b\"",
+                ",\"app\":\"a\\u001f\"",
+                ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
+                ",\"client\":{\"host\":\"h\",\"user\":\"\\u0001u\"}",
+            }
+        )
+        {
+            using var device = TestDevice.Create(test, service);
+            ElmServiceActivationsTests.AssertProblem(
+                await device.TrialAsync("app", TestDevice.Fingerprints(), more),
+                HttpStatusCode.BadRequest,
+                "ELM_MALFORMED",
+                Malformed
+            );
+        }
+
+        foreach (string jti in new[] { "x\\u0000y", "x+y" })
+        {
+            using var device = TestDevice.Create(test, service);
+            DeviceAnswer answer = await device.PostAsync(
+                "v1/trials",
+                $$"""{"product":"app","fingerprints":["{{TestDevice.Fingerprints()[0]}}"]}""",
+                proof: made => device.Sign(TokenTypes.Proof, WithJti(made, jti))
+            );
+            ElmServiceActivationsTests.AssertProblem(
+                answer,
+                HttpStatusCode.Unauthorized,
+                "ELM_PROOF_INVALID",
+                "The request proof payload is not valid."
+            );
+        }
+
+        using (var device = TestDevice.Create(test, service))
+        {
+            DeviceAnswer granted = await device.TrialAsync(
+                "app",
+                TestDevice.Fingerprints(),
+                ",\"app\":\"a b\",\"client\":{\"host\":\"h\",\"user\":\"u\"}"
+            );
+            Assert.True(granted.Status == HttpStatusCode.Created, granted.Text);
+        }
+
+        Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM trials"));
+    }
+
+    // The payload of a proof with its jti replaced by a JSON string's text (escapes included), to be signed again.
+    private static string WithJti(string proof, string jti)
+    {
+        string payload = Encoding.UTF8.GetString(Base64Url.DecodeFromChars(proof.Split('.')[1]));
+        using JsonDocument parsed = JsonDocument.Parse(payload);
+        string old = parsed.RootElement.GetProperty("jti").GetString()!;
+        return payload.Replace("\"" + old + "\"", "\"" + jti + "\"", StringComparison.Ordinal);
     }
 }

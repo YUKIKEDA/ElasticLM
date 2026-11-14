@@ -191,7 +191,7 @@ internal static class Activations
         return retry;
     }
 
-    // design §12.3, §8.6: {host, user}, each at most 255 bytes in UTF-8.
+    // design §12.3, §8.6: {host, user}, each at most 255 bytes in UTF-8, without C0 control characters (V1d26).
     internal static ClientInfo? Client(RequestBody body, string malformed)
     {
         if (!body.TryGet("client", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
@@ -205,16 +205,19 @@ internal static class Activations
         }
 
         string Part(string name) =>
-            value.TryGetProperty(name, out JsonElement part) && body.Text(part) is string text && Encoding.UTF8.GetByteCount(text) <= MaxClientBytes
+            value.TryGetProperty(name, out JsonElement part)
+            && body.Text(part) is string text
+            && Encoding.UTF8.GetByteCount(text) <= MaxClientBytes
+            && !Limits.HasControlCharacter(text)
                 ? text
                 : throw new BodyException(ErrorCode.Malformed, malformed);
         return new ClientInfo(Part("host"), Part("user"));
     }
 
-    // design §12.3, §8.6: the app's version, at most 64 bytes in UTF-8.
+    // design §12.3, §8.6: the app's version, at most 64 bytes in UTF-8, without C0 control characters (V1d26).
     internal static string? App(RequestBody body, string malformed) =>
         !body.TryGet("app", out JsonElement value) ? null
         : body.Text(value) is not string text ? null
-        : Encoding.UTF8.GetByteCount(text) <= MaxAppBytes ? text
+        : Encoding.UTF8.GetByteCount(text) <= MaxAppBytes && !Limits.HasControlCharacter(text) ? text
         : throw new BodyException(ErrorCode.Malformed, malformed);
 }

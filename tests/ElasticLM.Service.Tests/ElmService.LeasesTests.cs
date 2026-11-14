@@ -1005,4 +1005,46 @@ public sealed class ElmServiceLeasesTests
         string product = await ProductAsync(admin, "app", "core");
         return await TestService.PolicyAsync(admin, product, members.Length > 0 ? Cloud + "," + members : Cloud);
     }
+
+    /// <summary>
+    /// A lease request whose client or app holds a C0 control character is refused before anything is written, the same on
+    /// both engines (design §12.7.1, §12.6.1, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with clientInfoStrategy hostAndUser; a license with 2 seats of core; one device; each
+    ///   engine.
+    ///
+    /// Steps:
+    /// - Acquire core with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; then with client
+    ///   "h"/"u" and app "1 0".
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." three times, with no lease row; then 201.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Acquire_ControlCharacterInClientOrApp_IsMalformed(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, "\"clientInfoStrategy\":\"hostAndUser\""), TwoSeats);
+        using var device = TestDevice.Create(test, service);
+
+        foreach (
+            string more in new[]
+            {
+                ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
+                ",\"client\":{\"host\":\"h\",\"user\":\"u\\u001f\"}",
+                ",\"app\":\"1\\u0000\"",
+            }
+        )
+        {
+            AssertProblem(await device.AcquireAsync(key, more: more), HttpStatusCode.BadRequest, "ELM_MALFORMED", BadLeaseRequest);
+        }
+
+        Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+        DeviceAnswer granted = await device.AcquireAsync(key, more: ",\"client\":{\"host\":\"h\",\"user\":\"u\"},\"app\":\"1 0\"");
+        Assert.True(granted.Status == HttpStatusCode.Created, granted.Text);
+    }
 }

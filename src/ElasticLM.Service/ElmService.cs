@@ -475,6 +475,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
         HostRequestLog.Raise(builder.Logging, HostRequestLog.Category, LogLevel.Warning);
         HostRequestLog.Raise(builder.Logging, SignInHandlerCategory, LogLevel.None);
+        HostRequestLog.Raise(builder.Logging, AccessTokenHandlerCategory, LogLevel.None);
         if (host.LoggerProvider is ILoggerProvider provider)
         {
             // Registered through a factory, so the host's services dispose it as they dispose the console logger.

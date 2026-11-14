@@ -827,4 +827,95 @@ public sealed class ElmServiceOidcTests
     private static string Compact(string payload) => "e30." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload)) + ".c2ln";
 
     private static JsonElement Admin(JsonElement[] admins, string subject) => admins.Single(a => a.GetProperty("subject").GetString() == subject);
+
+    /// <summary>
+    /// A refused access token leaves none of its text in the operational log at any level: the JwtBearer handler's category
+    /// is not written, and the service's reason (ServiceLog.TokenRefused, at Debug) is an IDX code, the service's own
+    /// sentence, or a fixed sentence (design §18.3, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with OIDC whose log is recorded from Trace up; a marker with a CR LF and a false line.
+    ///
+    /// Steps:
+    /// - Call GET /v1/admin/me with tokens that hold the marker: as the kid, signed by another key; as iss; as aud; as typ;
+    ///   as alg; as nbf; as exp; as sub, signed by another key; as sub, with an exp an hour back; as a value that is no JWT;
+    ///   and as the role claim's value of a token whose sub is empty.
+    ///
+    /// Expected:
+    /// - 401 for each; one TokenRefused reason for each call, in order: IDX10503, IDX10205, IDX10214, the service's typ
+    ///   sentence, IDX10511, IDX14101 twice, IDX10511, IDX10230, IDX14100, and the service's sentence for the sub (each read
+    ///   once from a run); no entry of the JwtBearer handler's category; no entry of any category holds the marker. Before
+    ///   V1d26 the reasons of the kid and the iss quoted the marker, and the handler wrote them at Information.
+    /// </remarks>
+    [Fact]
+    public async Task TokenRefused_RequestText_IsNotLogged()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new ElasticLM.Server.Tests.RecordingLoggerProvider();
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await using ElmService service = await ElmService.StartAsync(
+            test.Settings(s => s with { Oidc = idp.Settings() }),
+            new ServiceHostOptions
+            {
+                Time = test.Time,
+                Environment = test.HostOptions().Environment,
+                MinimumLogLevel = Microsoft.Extensions.Logging.LogLevel.Trace,
+                LoggerProvider = log,
+            },
+            cancel
+        );
+        const string Marker = "elm-marker\r\n2026-10-01 fake: line";
+        const string Refused = "An access token was refused: ";
+        using var other = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        string[] tokens =
+        [
+            idp.Token(change: (h, _) => h["kid"] = Marker, key: other),
+            idp.Token(change: (_, p) => p["iss"] = Marker),
+            idp.Token(change: (_, p) => p["aud"] = Marker),
+            idp.Token(change: (h, _) => h["typ"] = Marker),
+            idp.Token(change: (h, _) => h["alg"] = Marker),
+            idp.Token(change: (_, p) => p["nbf"] = Marker),
+            idp.Token(change: (_, p) => p["exp"] = Marker),
+            idp.Token(subject: Marker, key: other),
+            idp.Token(subject: Marker, change: (_, p) => p["exp"] = test.Time.GetUtcNow().AddHours(-1).ToUnixTimeSeconds()),
+            Base64Url.EncodeToString(Encoding.UTF8.GetBytes(Marker)),
+            idp.Token(subject: string.Empty, groups: [Marker]),
+        ];
+
+        var statuses = new List<HttpStatusCode>();
+        foreach (string token in tokens)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(service.Url, "v1/admin/me"));
+            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+            using HttpResponseMessage answer = await test.Http(service).SendAsync(request, cancel);
+            statuses.Add(answer.StatusCode);
+        }
+
+        Assert.Equal(Enumerable.Repeat(HttpStatusCode.Unauthorized, tokens.Length), statuses);
+        string[] reasons =
+        [
+            .. log.Entries.Where(e => e.Message.StartsWith(Refused, StringComparison.Ordinal)).Select(e => e.Message[Refused.Length..]),
+        ];
+        Assert.Equal(
+            [
+                "IDX10503",
+                "IDX10205",
+                "IDX10214",
+                "The token's typ is not at+jwt or JWT.",
+                "IDX10511",
+                "IDX14101",
+                "IDX14101",
+                "IDX10511",
+                "IDX10230",
+                "IDX14100",
+                "sub is missing, given more than once, or not one string of 1 to 255 characters without control characters",
+            ],
+            reasons
+        );
+        Assert.DoesNotContain(log.Entries, e => e.Category == ElmService.AccessTokenHandlerCategory);
+        Assert.Equal("Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler", ElmService.AccessTokenHandlerCategory);
+        Assert.DoesNotContain(log.Entries, e => e.Message.Contains("elm-marker", StringComparison.Ordinal));
+    }
 }

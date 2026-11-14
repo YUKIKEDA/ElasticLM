@@ -1,6 +1,7 @@
 using System.Buffers.Text;
 using System.Security.Claims;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
@@ -33,6 +34,8 @@ internal sealed partial class ElmService
     public const int MaxRoleValues = 100;
 
     private const string OidcScheme = "elm-oidc";
+    private const string TokenTypeRefused = "The token's typ is not at+jwt or JWT.";
+    private const string TokenNotValid = "the access token is not valid";
     private const int MaxIdentifierLength = 255;
     private const int MaxDiscoveryLength = 256 * 1024;
 
@@ -49,6 +52,25 @@ internal sealed partial class ElmService
         SecurityAlgorithms.RsaSsaPssSha256,
         SecurityAlgorithms.EcdsaSha256,
     ];
+
+    /// <summary>
+    /// The category of the JwtBearer handler's own entries. Microsoft.IdentityModel's reasons for a refused access token
+    /// quote the token's kid (IDX10503) and iss (IDX10205), which anyone who reaches the administration API sends, so the
+    /// service never writes them (design §18.3, V1d26).
+    /// </summary>
+    internal static readonly string AccessTokenHandlerCategory = typeof(JwtBearerHandler).FullName!;
+
+    // design §18.3 (V1d26): the reason ServiceLog.TokenRefused writes for a token the library refused: the IDX code of its
+    // message, the service's own sentence for the typ, or a fixed sentence; never the rest of the message, which may quote
+    // the token.
+    internal static string TokenRefusal(Exception? failure) =>
+        failure switch
+        {
+            null => "no token",
+            SecurityTokenInvalidTypeException { Message: TokenTypeRefused } => TokenTypeRefused,
+            _ when IdentityModelCode().Match(failure.Message) is { Success: true } code => code.Value,
+            _ => TokenNotValid,
+        };
 
     // design §14.6: the discovery URL is the issuer without a terminating "/" and the well-known suffix (OpenID Connect
     // Discovery 1.0 §4).
@@ -114,7 +136,7 @@ internal sealed partial class ElmService
                         TypeValidator = (type, _, _) =>
                             type is not null && AccessTokenTypes.Contains(type, StringComparer.OrdinalIgnoreCase)
                                 ? type
-                                : throw new SecurityTokenInvalidTypeException("The token's typ is not at+jwt or JWT."),
+                                : throw new SecurityTokenInvalidTypeException(TokenTypeRefused),
                     };
                 }
             );
@@ -148,7 +170,8 @@ internal sealed partial class ElmService
             }
             else
             {
-                ServiceLog.TokenRefused(_log, result.Failure?.Message ?? "no token");
+                string refusal = TokenRefusal(result.Failure);
+                ServiceLog.TokenRefused(_log, refusal);
             }
 
             return new OidcResult(null);
@@ -364,4 +387,8 @@ internal sealed partial class ElmService
             && uri.Fragment.Length == 0
             && uri.UserInfo.Length == 0;
     }
+
+    // The code that starts a Microsoft.IdentityModel message ("IDX10503: ...").
+    [GeneratedRegex("^IDX[0-9]{5}(?=:)", RegexOptions.CultureInvariant)]
+    private static partial Regex IdentityModelCode();
 }
