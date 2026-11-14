@@ -252,11 +252,11 @@ OS を問わず、[サーバーライセンスのコマンド](#サーバーラ�
 - Linux と macOS で、サーバーのユーザーが所有するフォルダーに対して root で実行すると、終了コード 1 で、`error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '<folder>' is not safe for secrets: it is owned by another user.` で始まる行を出して止まる。
 - Windows で別の管理者として実行すると、終了コード 1 で、`error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '<folder>' is not safe for secrets` で始まる行を出して止まる。フォルダーのアクセス制御リストが、サーバーのユーザーにアクセスを許していて、それはコマンドを実行しているアカウントではないからだ。
 
-どちらの場合も、行はデータフォルダーそのものを示すので、行の終わりはフォルダーを消すか制限するよう求めるが、ここではそうせず、サーバーのユーザーでコマンドを実行する。
+行がデータフォルダーそのものを示すときは、行の終わりは、フォルダーを消すか制限するよう求める。ここではそうせず、サーバーのユーザーでコマンドを実行する。
 
-Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`sudo` は、`elm` を自分の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
+Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`sudo` は、`elm` を、実行した人の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。そのため、`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
 
-Windows では、LocalSystem で動くサーバーは、Administrators グループと SYSTEM だけにアクセスを許すアクセス制御リストを付けてデータフォルダーを作り、所有者もそのどちらかになる。このフォルダーでは、どの管理者も確認を通るので、コマンドは「管理者として実行」で開いたターミナルで実行する。仮想サービスアカウントや LocalService には、誰もサインインしてコマンドを実行できないので、そのどちらかで動くサーバーには、これらのコマンドを使えない。サーバーを LocalSystem か通常のユーザーアカウントで動かし、後者ならそのアカウントでコマンドを実行する。
+Windows では、LocalSystem で動くサーバーは、データフォルダーを作るとき、動いているアカウントである SYSTEM をアクセス制御リストに入れる。そのため、リストにあるのは Administrators グループと SYSTEM だけになる。確認は Administrators グループを通すので、管理者はこのフォルダーでコマンドを実行できる。仮想サービスアカウントや LocalService には、誰もサインインしてコマンドを実行できないので、そのどちらかで動くサーバーには、これらのコマンドを使えない。サーバーを LocalSystem か通常のユーザーアカウントで動かし、後者ならそのアカウントでコマンドを実行する。
 
 `elm server` のコマンドは、同じデータフォルダーにあるソケットのファイル `admin.sock` を通して、サーバーの[ローカルの管理 API](administration-api.md#elm-server-のローカルの管理-api) に接続する（Unix ドメインソケット。同じマシンのプログラムどうしが、ポートの代わりに接続に使うファイルだ）。ほかの経路は使わない。TCP の接続は開かず、アドレスも受け取らず、別のマシンのサーバーは管理できない。`elm` は、`elm-server` と同じリリースのものを使う。Windows では、Windows 10 バージョン 1803 か Windows Server 2019、またはそれ以降が要る。Unix ドメインソケットのないシステムでは、`elm server` のどのコマンドも、`error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` と終了コード 2 で止まる。
 

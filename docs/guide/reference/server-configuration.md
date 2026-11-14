@@ -138,7 +138,7 @@ The server checks its data folder before it uses it, and so do the [server licen
   - Every folder above it, up to the root of the drive, is owned by one of them or by TrustedInstaller, the owner of `C:\`.
   - No folder above it lets anyone else delete, rename, or change the access of what is in it. Letting others create folders in it is allowed, as `C:\` and `C:\ProgramData` do.
 - On Linux and macOS:
-  - The folder is owned by the server's user or by root, and has mode `0700`: no access for group or others.
+  - The folder is owned by the server's user or by root, and gives no access to group or others (such as mode `0700`).
   - Every folder above it, up to `/`, is owned by the server's user or by root, and is not writable by group or others. The sticky bit of `/tmp` does not change this.
 - On macOS, also:
   - No entry of the folder's extended access list (`chmod +a`) lets anyone else in.
@@ -147,7 +147,7 @@ The server checks its data folder before it uses it, and so do the [server licen
   - When the path goes through a symbolic link or a junction, the folder it leads to, and every folder above that one, are checked in the same way. The server then uses the folder the link leads to.
   - The folder is on a local disk. On Windows, a UNC path (`\\server\share\…`) and a network drive are refused, and so is a link that leads to one. On Linux and macOS, .NET tells the kind of the file system: NFS, SMB and CIFS, FUSE file systems (sshfs among them), autofs, aufs, ecryptfs, and 9p (WSL 2's `/mnt/c`) are network ones and are refused. A file system whose kind .NET does not know, such as erofs, bcachefs, or virtiofs, is refused too. ext4, xfs, btrfs, zfs, APFS, and tmpfs pass.
 
-Let the server create its data folder, or create it as the server's user. On Linux and macOS, root can also create it for that user: `sudo mkdir -p -m 0700 /var/lib/elasticlm/<product>`, then `sudo chown <server user> /var/lib/elasticlm/<product>`. On Windows, when one administrator creates the folder for a server that runs as another account (by running the server or an `elm server` license command once), the folder's access list names that administrator, and the server refuses it with `… it gives access to <administrator> (<SID>).`
+Let the server create its data folder, or create it as the server's user. A folder that another account created passes only if it meets the rules above. On Linux and macOS, that means the server's user or root owns it and its mode gives group and others nothing. On Windows, its access list may name only the server's user, the Administrators group, and SYSTEM. The server, and the `elm server` license commands, add the account that runs them to the access list of a folder they create, so a folder that one administrator's run created is refused for a server that runs as another account.
 
 ### Access rules
 
