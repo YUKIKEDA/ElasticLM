@@ -163,54 +163,6 @@ jobs:
       - name: Gate
         run: ./build.ps1 -SkipWeb
 
-  # Temporary (V1d24, Issue #343, review K2 and K9 on PR #447 at f2199e2): the macOS extended access list tests with their
-  # mutants, on Apple silicon and Intel; removed by the next commit.
-  v1d24-probe:
-    name: V1d24 probe (${{ matrix.os }})
-    needs: spa
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, macos-15-intel]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: admin-ui-dist
-          path: web/admin/dist
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - name: Probe
-        shell: bash
-        run: |
-          set +e
-          uname -a; id
-          run() { dotnet test --project tests/ElasticLM.Client.Tests -c Release --no-build -- --filter-class '*InstallationKeyStoreTests' > "$RUNNER_TEMP/$1.log" 2>&1; echo "$1 exit $?"; sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/$1.log" | grep -E '^failed|total:|failed:|succeeded:|skipped:'; }
-          dotnet build tests/ElasticLM.Client.Tests -c Release > /dev/null 2>&1; echo "build $?"
-          run original
-          for m in 'MB1|UnixOwner.cs|private const int AclDeleteChild = 1 << 6;|private const int AclDeleteChild = 1 << 7;' \
-                   'MB2|UnixOwner.cs|tag != AclExtendedAllow|tag < 0' \
-                   'MB3|ProtectedFiles.cs|MacAllowedOther(path, self, anyRight: true)|MacAllowedOther(path, self, anyRight: false)' \
-                   'MB4|UnixOwner.cs|if (!anyRight && Has(path, AclGetFlagNp(flagset, AclEntryOnlyInherit)))|if (anyRight && Has(path, AclGetFlagNp(flagset, AclEntryOnlyInherit)))' \
-                   'MB5|UnixOwner.cs|            1 => true,|            1 => true, -1 => false,' \
-                   'MB6|UnixOwner.cs|                    || Has(path, AclGetPermNp(permset, AclWriteSecurity))|' \
-                   'MB7|UnixOwner.cs|                    || Has(path, AclGetPermNp(permset, AclChangeOwner));|;' \
-                   'MB8|UnixOwner.cs|                    || Has(path, AclGetPermNp(permset, AclDelete))|'; do
-            IFS='|' read -r id file from to <<< "$m"
-            path="src/ElasticLM.Client/$file"
-            cp "$path" "$RUNNER_TEMP/orig.cs"
-            FROM="$from" TO="$to" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/' "$path"
-            if cmp -s "$path" "$RUNNER_TEMP/orig.cs"; then echo "$id not applied"; continue; fi
-            dotnet build tests/ElasticLM.Client.Tests -c Release > "$RUNNER_TEMP/$id-build.log" 2>&1; b=$?; echo "$id build $b"
-            if [ $b -ne 0 ]; then grep -E 'error' "$RUNNER_TEMP/$id-build.log" | head -5; fi
-            run "$id"
-            cp "$RUNNER_TEMP/orig.cs" "$path"
-          done
-          exit 0
-
   aot:
     # design §20.3: each shipped executable and libelasticlm (§17.4) is published with NativeAOT on every OS, with zero
     # warnings.
