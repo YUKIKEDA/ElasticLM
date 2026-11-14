@@ -118,7 +118,7 @@ jobs:
           sha256sum --check --strict "$RUNNER_TEMP/sums"
           diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: false
@@ -216,7 +216,7 @@ jobs:
           sha256sum --check --strict "$RUNNER_TEMP/sums"
           diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
-      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
           dotnet-version: ${{ env.DOTNET_SDK_VERSION }}
           cache: false
