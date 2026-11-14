@@ -34,6 +34,7 @@ ElasticLM の API は、失敗を例外ではなく結果として伝える。
 | 操作 | コード | アプリがすること |
 | --- | --- | --- |
 | アクティベーション、トライアルの開始 | [`ELM_NETWORK_ERROR`](../reference/error-codes.md)、[`ELM_RATE_LIMITED`](../reference/error-codes.md) | あとで再試行する。`RetryAfter` が設定されていれば、少なくともその時間は待つ。 |
+| トライアルの開始 | `RetryAfter` が数秒より長い [`ELM_RATE_LIMITED`](../reference/error-codes.md) | 製品が直近 24 時間のトライアルをすべて出し終えていて、待ち時間は最大 1 日になる。ループで再試行しない。いつ再試行できるかをユーザーに示すか、ライセンスの購入を勧める。 |
 | アクティベーション | [`ELM_LICENSE_NOT_FOUND`](../reference/error-codes.md)、[`ELM_WRONG_PRODUCT`](../reference/error-codes.md)、[`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md)、[`ELM_LICENSE_REVOKED`](../reference/error-codes.md)、[`ELM_EXPIRED`](../reference/error-codes.md) | 別のライセンスキーを入力するか、ベンダーに問い合わせるよう、ユーザーに頼む。 |
 | アクティベーション | [`ELM_ACTIVATION_LIMIT`](../reference/error-codes.md) | 先に別のデバイスでライセンスのアクティベーションを解除するよう、ユーザーに頼む。 |
 | トライアルの開始 | [`ELM_TRIAL_USED`](../reference/error-codes.md) | ライセンスの購入を勧める。 |

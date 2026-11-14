@@ -214,6 +214,7 @@ internal sealed partial class ServiceStore<TDialect>
                             BorrowReturnLimit = policy.BorrowReturnLimit,
                             ClientInfoStrategy = policy.ClientInfoStrategy,
                             TrialDuration = policy.TrialDuration,
+                            TrialDailyLimit = policy.TrialDailyLimit,
                             CreatedAt = policy.CreatedAt,
                             UpdatedAt = policy.UpdatedAt,
                         }
@@ -288,6 +289,7 @@ internal sealed partial class ServiceStore<TDialect>
                             Set(p.BorrowReturnLimit, policy.BorrowReturnLimit),
                             Set(p.ClientInfoStrategy, policy.ClientInfoStrategy),
                             Set(p.TrialDuration, policy.TrialDuration),
+                            Set(p.TrialDailyLimit, policy.TrialDailyLimit),
                             Set(p.UpdatedAt, policy.UpdatedAt),
                         ]
                     )

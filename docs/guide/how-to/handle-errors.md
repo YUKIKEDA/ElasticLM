@@ -34,6 +34,7 @@ The same code can call for different things in different operations: `ELM_LICENS
 | Operation | Code | What the app does |
 | --- | --- | --- |
 | Activate, start a trial | [`ELM_NETWORK_ERROR`](../reference/error-codes.md), [`ELM_RATE_LIMITED`](../reference/error-codes.md) | Try again later; wait at least `RetryAfter` when it is set. |
+| Start a trial | [`ELM_RATE_LIMITED`](../reference/error-codes.md) with a `RetryAfter` longer than a few seconds | The product has given all its trials of the last 24 hours, and the wait can be up to a day. Do not try again in a loop: show the user when to try again, or offer to buy a license. |
 | Activate | [`ELM_LICENSE_NOT_FOUND`](../reference/error-codes.md), [`ELM_WRONG_PRODUCT`](../reference/error-codes.md), [`ELM_LICENSE_SUSPENDED`](../reference/error-codes.md), [`ELM_LICENSE_REVOKED`](../reference/error-codes.md), [`ELM_EXPIRED`](../reference/error-codes.md) | Ask the user for another license key, or to contact the vendor. |
 | Activate | [`ELM_ACTIVATION_LIMIT`](../reference/error-codes.md) | Ask the user to deactivate the license on another device first. |
 | Start a trial | [`ELM_TRIAL_USED`](../reference/error-codes.md) | Offer to buy a license. |

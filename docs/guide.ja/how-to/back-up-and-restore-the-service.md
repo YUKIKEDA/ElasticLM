@@ -45,7 +45,7 @@ elm-service backup --config service.json --out backup.db
 `elm-service backup` は 1 行を表示する。
 
 ```text
-backup: backup.db, schema version 8
+backup: backup.db, schema version 9
 ```
 
 サービスがデータベースに書き込んでいるあいだでも、コピーはある時点のデータベース全体になる。サービスはコピーが終わるのを待たない。数字は、コピーにある最も新しいスキーマのバージョンだ。そのバージョンより古い `elm-service` は、このコピーを使えない。バックアップの時刻を書き留めておく。復元すると、それより後のことはすべて取り消される。何が取り消されたかは、監査ログでわかる。

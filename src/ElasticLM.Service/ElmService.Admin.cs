@@ -738,17 +738,19 @@ internal sealed partial class ElmService
         return new AdminOutcome("ELM_OK", target.ToString("D"), detail, Recorded: true);
     }
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, int? status = null) =>
-        WriteProblemAsync(context, code, message, status ?? StatusOf(code));
+    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, int? status = null, long retryAfter = 1) =>
+        WriteProblemAsync(context, code, message, status ?? StatusOf(code), retryAfter);
 
     private static int StatusOf(ErrorCode code) =>
         ErrorStatuses.TryGetValue(code, out int status) ? status : StatusCodes.Status500InternalServerError;
 
-    private static Task WriteProblemAsync(HttpContext context, ErrorCode code, string message, int status)
+    // design §12.1: ELM_RATE_LIMITED carries Retry-After in seconds; 1 for every rate limit, and the rest of the 24 hours for
+    // a trial at its product's limit (design §12.9, V1d17).
+    private static Task WriteProblemAsync(HttpContext context, ErrorCode code, string message, int status, long retryAfter = 1)
     {
         if (code == ErrorCode.RateLimited)
         {
-            context.Response.Headers.RetryAfter = "1";
+            context.Response.Headers.RetryAfter = retryAfter.ToString(CultureInfo.InvariantCulture);
         }
 
         string wire = ErrorCodes.ToWireName(code);

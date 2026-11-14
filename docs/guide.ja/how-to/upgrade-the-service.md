@@ -31,7 +31,7 @@ elm-service backup --config service.json --out before-upgrade.db
 `elm-service backup` は、次のように、バックアップのファイルとそのスキーマのバージョンを表示する。
 
 ```text
-backup: before-upgrade.db, schema version 8
+backup: before-upgrade.db, schema version 9
 ```
 
 新しいバージョンのままでよいと確かめられるまで、このファイルを取っておく。古いバージョンに戻す手段はこれしかない。どこに置くか、ほかに何を取っておくかは、[サービスをバックアップして復元する](back-up-and-restore-the-service.md)で説明している。
