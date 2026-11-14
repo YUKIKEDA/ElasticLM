@@ -222,7 +222,7 @@ internal sealed partial class ElmService
         try
         {
             using RequestBody body = RequestBody.Parse(bytes, LeaseRequests.Malformed);
-            request = Activations.ReadSequence(body);
+            request = Activations.ReadSequence(body, LeaseRequests.Malformed);
         }
         catch (BodyException e)
         {
@@ -475,7 +475,7 @@ internal sealed partial class ElmService
 
         if (lease.Borrow)
         {
-            await scope.RecordReturnAsync(counters, at, device.Aborted).ConfigureAwait(false);
+            await scope.RecordReturnAsync(counters, lease.Id, at, device.Aborted).ConfigureAwait(false);
         }
 
         return Released with

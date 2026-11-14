@@ -70,29 +70,37 @@ public sealed class ActivationsTests
     }
 
     /// <summary>
-    /// A refresh and a deactivation need seq and may name retries (design §12.6.1).
+    /// A refresh, a deactivation, and a lease renewal need seq and may name retries; a body that is not valid is refused with
+    /// the message of the caller's kind of request (design §12.6.1, §12.7.6, V1d26 for Issue #385).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Bodies built in the test.
+    /// - Bodies built in the test, read with the lease request's message.
     ///
     /// Steps:
-    /// - Read {"seq":3,"retry":["a"]}; {"seq":3}; {"seq":3,"retry":null}; {} and {"seq":null}.
+    /// - Read {"seq":3,"retry":["a"]}; {"seq":3}; {"seq":3,"retry":null}; then {}, {"seq":null}, {"seq":-1}, {"seq":1.5},
+    ///   {"seq":3,"retry":[""]}, and {"seq":3,"retry":"a"}.
     ///
     /// Expected:
-    /// - 3 with ["a"]; 3 with none twice; ELM_MALFORMED twice.
+    /// - 3 with ["a"]; 3 with none twice; ELM_MALFORMED with "The request body is not a valid lease request." for each of the
+    ///   other six.
     /// </remarks>
     [Fact]
-    public void ReadSequence_SeqIsRequired()
+    public void ReadSequence_SeqIsRequired_RefusesWithTheCallersMessage()
     {
-        static SequenceRequest Read(string json) => Activations.ReadSequence(RequestBody.Parse(Encoding.UTF8.GetBytes(json), Activations.Malformed));
+        static SequenceRequest Read(string json) =>
+            Activations.ReadSequence(RequestBody.Parse(Encoding.UTF8.GetBytes(json), LeaseRequests.Malformed), LeaseRequests.Malformed);
 
         SequenceRequest refresh = Read("{\"seq\":3,\"retry\":[\"a\"]}");
         Assert.Equal((3L, "a"), (refresh.Seq, refresh.Retry.Single()));
         Assert.Empty(Read("{\"seq\":3}").Retry);
         Assert.Empty(Read("{\"seq\":3,\"retry\":null}").Retry);
-        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{}")).Code);
-        Assert.Equal(ErrorCode.Malformed, Assert.Throws<BodyException>(() => Read("{\"seq\":null}")).Code);
+        string[] bad = ["{}", "{\"seq\":null}", "{\"seq\":-1}", "{\"seq\":1.5}", "{\"seq\":3,\"retry\":[\"\"]}", "{\"seq\":3,\"retry\":\"a\"}"];
+        foreach (string body in bad)
+        {
+            BodyException refused = Assert.Throws<BodyException>(() => Read(body));
+            Assert.Equal((ErrorCode.Malformed, LeaseRequests.Malformed), (refused.Code, refused.Message));
+        }
     }
 
     /// <summary>

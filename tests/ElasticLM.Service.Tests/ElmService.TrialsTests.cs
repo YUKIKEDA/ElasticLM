@@ -520,4 +520,152 @@ public sealed class ElmServiceTrialsTests
             "No trial has this ID."
         );
     }
+
+    /// <summary>
+    /// A resent trial gets its file only while the trial's license would let a retried activation have it: the license's
+    /// state comes first, then a stopped activation (design §12.6.1 trial step 9, V1d26 for F44).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with a trial policy of 7 days; one device with one trial of app; each engine.
+    ///
+    /// Steps:
+    /// - Resend the trial naming its first request in retry after each change: none; the activation stopped as a clone; the
+    ///   license suspended as well; resumed and the activation no longer stopped; the license's expiry set to the second
+    ///   before now; the expiry back and the license revoked. Count the trial.create rows.
+    ///
+    /// Expected:
+    /// - 200 with the file it was issued; 409 ELM_CLONE_DETECTED "The activation was stopped because a clone of the
+    ///   installation was detected."; 403 ELM_LICENSE_SUSPENDED "The license is suspended." (the state before the stopped
+    ///   activation); 200 with the same file; 403 ELM_EXPIRED "The license has expired."; 403 ELM_LICENSE_REVOKED "The
+    ///   license is revoked."; one trial.create row.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Trial_Resent_IsCheckedAsARetriedActivation(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, string owner) = await ElmServiceActivationsTests.StartAsync(test);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0,\"trialDuration\":604800");
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{policy}}"}""");
+        using var device = TestDevice.Create(test, service);
+        string[] prints = TestDevice.Fingerprints();
+        DeviceAnswer trial = await device.TrialAsync("app", prints);
+        Assert.Equal(HttpStatusCode.Created, trial.Status);
+        string license = device.Verify(trial.File, prints, LicenseKind.Trial).LicenseId;
+        Task<DeviceAnswer> Resend() => device.TrialAsync("app", prints, retry: [trial.Jti]);
+        long now = TestService.Start.ToUnixTimeSeconds();
+
+        DeviceAnswer again = await Resend();
+        Assert.Equal((HttpStatusCode.OK, trial.ActivationId), (again.Status, again.ActivationId));
+        Assert.Equal(trial.File, again.File);
+
+        await test.ExecuteAsync($"UPDATE activations SET blocked_at = {now}");
+        ElmServiceActivationsTests.AssertProblem(
+            await Resend(),
+            HttpStatusCode.Conflict,
+            "ELM_CLONE_DETECTED",
+            "The activation was stopped because a clone of the installation was detected."
+        );
+        (await admin.PostAsync($"v1/admin/licenses/{license}/suspend", null, cancel)).Dispose();
+        ElmServiceActivationsTests.AssertProblem(await Resend(), HttpStatusCode.Forbidden, "ELM_LICENSE_SUSPENDED", "The license is suspended.");
+
+        (await admin.PostAsync($"v1/admin/licenses/{license}/resume", null, cancel)).Dispose();
+        await test.ExecuteAsync("UPDATE activations SET blocked_at = NULL");
+        DeviceAnswer resumed = await Resend();
+        Assert.Equal(HttpStatusCode.OK, resumed.Status);
+        Assert.Equal(trial.File, resumed.File);
+
+        await test.ExecuteAsync($"UPDATE licenses SET expires_at = {now - 1} WHERE name = 'trial'");
+        ElmServiceActivationsTests.AssertProblem(await Resend(), HttpStatusCode.Forbidden, "ELM_EXPIRED", "The license has expired.");
+        await test.ExecuteAsync($"UPDATE licenses SET expires_at = {now + 604_800} WHERE name = 'trial'");
+        (await admin.PostAsync($"v1/admin/licenses/{license}/revoke", null, cancel)).Dispose();
+        ElmServiceActivationsTests.AssertProblem(await Resend(), HttpStatusCode.Forbidden, "ELM_LICENSE_REVOKED", "The license is revoked.");
+
+        Assert.Single(await TestService.AuditRowsAsync(test, service, owner), r => r.GetProperty("action").GetString() == "trial.create");
+    }
+
+    /// <summary>
+    /// A device that sends its fingerprints one at a time gets a trial for each, and each trial's file verifies on that
+    /// device: the threat design §5.4 accepts for a requester who builds the requests (V1d26 for F42). The rejected option,
+    /// a trial token that must name every current fingerprint, would make these files fail.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app; each engine.
+    ///
+    /// Steps:
+    /// - With a trial policy that matches fingerprints with any, then with one that matches with all: a new device whose
+    ///   machine has fingerprints f1 and f2 (as Windows has two) asks for a trial with [f1], then with [f2], with the same
+    ///   installation key; verify each file for the device with f1 and f2.
+    ///
+    /// Expected:
+    /// - 201 four times, with four activations; each file verifies as a trial for the device's key and both fingerprints.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Trial_EachFingerprintAlone_GivesATrialEach(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        var activations = new HashSet<string>();
+        foreach (string matching in new[] { "any", "all" })
+        {
+            string policy = await TestService.PolicyAsync(
+                admin,
+                product,
+                $"\"licenseKind\":\"trial\",\"gracePeriod\":0,\"fingerprintMatching\":\"{matching}\""
+            );
+            await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{policy}}"}""");
+            using var device = TestDevice.Create(test, service);
+            string[] machine = TestDevice.Fingerprints(2);
+            foreach (string print in machine)
+            {
+                DeviceAnswer trial = await device.TrialAsync("app", [print]);
+                Assert.True(trial.Status == HttpStatusCode.Created, trial.Text);
+                Assert.Equal(LicenseKind.Trial, device.Verify(trial.File, machine, LicenseKind.Trial).Kind);
+                activations.Add(trial.ActivationId);
+            }
+        }
+
+        Assert.Equal(4, activations.Count);
+    }
+
+    /// <summary>
+    /// A trial whose retry list is not valid is refused with the trial request's message (design §12.6.1; V1d26 for Issue
+    /// #385, which found the same mix in the lease renewal).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with a trial policy; one device; SQLite (the body is read before any SQL).
+    ///
+    /// Steps:
+    /// - Ask for a trial with retry [""], with 17 entries, and with "a".
+    ///
+    /// Expected:
+    /// - 400 ELM_MALFORMED "The request body is not a valid trial request." for each.
+    /// </remarks>
+    [Fact]
+    public async Task Trial_RetryNotValid_NamesATrialRequest()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, "\"licenseKind\":\"trial\",\"gracePeriod\":0");
+        await TestService.PatchAsync(admin, $"v1/admin/products/{product}", $$"""{"trialPolicyId":"{{policy}}"}""");
+        using var device = TestDevice.Create(test, service);
+
+        foreach (string retry in new[] { "[\"\"]", "[" + string.Join(',', Enumerable.Repeat("\"j\"", 17)) + "]", "\"a\"" })
+        {
+            ElmServiceActivationsTests.AssertProblem(
+                await device.TrialAsync("app", TestDevice.Fingerprints(), $",\"retry\":{retry}"),
+                HttpStatusCode.BadRequest,
+                "ELM_MALFORMED",
+                "The request body is not a valid trial request."
+            );
+        }
+    }
 }

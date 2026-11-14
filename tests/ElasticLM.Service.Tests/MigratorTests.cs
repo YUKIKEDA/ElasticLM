@@ -21,7 +21,7 @@ public sealed class MigratorTests
     ///   journal_mode.
     ///
     /// Expected:
-    /// - Between them the two runs applied versions 1 to 10 once each; the third applied nothing; ten rows; wal.
+    /// - Between them the two runs applied versions 1 to 11 once each; the third applied nothing; eleven rows; wal.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -36,11 +36,11 @@ public sealed class MigratorTests
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel),
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel)
         );
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], runs.SelectMany(r => r).Order());
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], runs.SelectMany(r => r).Order());
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(10L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(11L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");
@@ -60,7 +60,7 @@ public sealed class MigratorTests
     ///   transaction; wait for the migrations.
     ///
     /// Expected:
-    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 10.
+    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 11.
     /// </remarks>
     [Fact]
     public async Task Run_WhileAnotherWriterHoldsTheLock_WaitsPastFiveSeconds()
@@ -77,7 +77,7 @@ public sealed class MigratorTests
         Assert.False(run.IsCompleted, run.Exception?.ToString());
         await held.CommitAsync(cancel);
 
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10], await run);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11], await run);
     }
 
     /// <summary>Gets each engine with each version a database may stand at before the last.</summary>
@@ -143,7 +143,7 @@ public sealed class MigratorTests
     /// - Run the rest; read the license's columns and the policy's trial_daily_limit; insert two licenses without a key.
     ///
     /// Expected:
-    /// - Versions 4 to 10 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
+    /// - Versions 4 to 11 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
     ///   design §9.3); both inserts succeed.
     /// </remarks>
     [Theory]
@@ -171,7 +171,7 @@ public sealed class MigratorTests
                 + $"{hash}, 3, 100, 50, 60, '[]', '{{}}', 10, 20)"
         );
 
-        Assert.Equal([4, 5, 6, 7, 8, 9, 10], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([4, 5, 6, 7, 8, 9, 10, 11], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal(1_000L, await test.ScalarAsync("SELECT trial_daily_limit FROM policies"));
         Assert.Equal(
             (3L, 100L, 50L, 60L, 10L, 20L, 0L, 1L),
@@ -195,6 +195,69 @@ public sealed class MigratorTests
         }
 
         Assert.Equal(3L, await test.ScalarAsync("SELECT COUNT(*) FROM licenses"));
+    }
+
+    /// <summary>
+    /// Version 11 keeps the early returns recorded before it, lets two returns of one counter in the same second be two rows,
+    /// and adds the index of activations by installation key (design §12.6.1, §12.7.6, V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A database on the provider at version 10 with a product, a policy, a license, and one early return of counter
+    ///   key:k at time 100.
+    ///
+    /// Steps:
+    /// - Run the rest; read the return's lease_id; insert returns of key:k at time 100 for leases a and b; insert one for
+    ///   lease a again; look for the index activations_by_key.
+    ///
+    /// Expected:
+    /// - Version 11 applied; the old row has an empty lease_id; the two inserts succeed, three rows; the repeated insert fails
+    ///   on the primary key and leaves three rows; the index is there.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Run_FromVersion10_KeepsTheReturnsAndCountsEachOne(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        await using Database database = Database.Create(test.Provider, test.ConnectionString);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        IReadOnlyList<Migration> migrations = Migrator.Embedded(test.Provider);
+        await Migrator.RunAsync(database, [.. migrations.Take(10)], test.Time, cancel);
+        const string Product = "'0196f3a0-0000-7000-8000-000000000001'";
+        const string Policy = "'0196f3a0-0000-7000-8000-000000000002'";
+        const string License = "'0196f3a0-0000-7000-8000-000000000003'";
+        await test.ExecuteAsync($"INSERT INTO products (id, code, name, created_at) VALUES ({Product}, 'app', 'App', 1)");
+        await test.ExecuteAsync(
+            "INSERT INTO policies (id, product_id, name, license_kind, binding, max_activations, expiration_basis, token_lifetime, "
+                + "refresh_window, grace_period, fingerprint_matching, clone_strategy, floating, lease_duration, borrow_return_limit, "
+                + $"client_info_strategy, trial_duration, created_at, updated_at) VALUES ({Policy}, {Product}, 'p', 'standard', "
+                + "'nodeLocked', 1, 'fromIssue', 3600, 0, 0, 'any', 'deny', 'none', 600, 2, 'none', 86400, 1, 1)"
+        );
+        await test.ExecuteAsync(
+            "INSERT INTO licenses (id, product_id, policy_id, name, features, meta, created_at, updated_at) "
+                + $"VALUES ({License}, {Product}, {Policy}, 'n', '[]', '{{}}', 1, 1)"
+        );
+        await test.ExecuteAsync($"INSERT INTO lease_returns (license_id, counter, returned_at) VALUES ({License}, 'key:k', 100)");
+
+        Assert.Equal([11], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM lease_returns WHERE lease_id = ''"));
+        foreach (string lease in new[] { "a", "b" })
+        {
+            await test.ExecuteAsync(
+                $"INSERT INTO lease_returns (license_id, counter, returned_at, lease_id) VALUES ({License}, 'key:k', 100, '{lease}')"
+            );
+        }
+
+        Assert.Equal(3L, await test.ScalarAsync("SELECT COUNT(*) FROM lease_returns"));
+        await Assert.ThrowsAnyAsync<DbException>(() =>
+            test.ExecuteAsync($"INSERT INTO lease_returns (license_id, counter, returned_at, lease_id) VALUES ({License}, 'key:k', 100, 'a')")
+        );
+        Assert.Equal(3L, await test.ScalarAsync("SELECT COUNT(*) FROM lease_returns"));
+        string index =
+            test.Provider == DatabaseProvider.Sqlite
+                ? "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'activations_by_key'"
+                : "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'activations_by_key'";
+        Assert.Equal(1L, await test.ScalarAsync(index));
     }
 
     /// <summary>

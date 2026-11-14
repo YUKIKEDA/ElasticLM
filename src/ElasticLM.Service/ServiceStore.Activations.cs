@@ -33,13 +33,32 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<ProductRow?> FindProductByCodeAsync(string code, CancellationToken cancellationToken) =>
         _db.From(ProductRow.Table).Where(p => Eq(p.Code, code)).Select(p => p).SingleOrDefaultAsync(cancellationToken);
 
-    public override Task<ActivationRow?> FindTrialActivationAsync(Guid productId, string keyId, CancellationToken cancellationToken) =>
-        _db.From(ActivationRow.Table)
-            .Where(a =>
-                And(Eq(a.KeyId, keyId), In(a.LicenseId, _db.From(TrialRow.Table).Where(t => Eq(t.ProductId, productId)).Select(t => t.LicenseId)))
+    // design §12.6.1 (V1d26): the product's trials among the licenses the key has activated, found through activations_by_key
+    // (migration 0011) and the trials' primary key, then the key's activation of one of them. With the product's trials in the
+    // subquery instead, SQLite 3.54.1 without statistics read every trial of the product and looked the key up in each, and
+    // PostgreSQL 18 read every activation when the index was missing (EXPLAIN QUERY PLAN, EXPLAIN ANALYZE).
+    public override async Task<ActivationRow?> FindTrialActivationAsync(Guid productId, string keyId, CancellationToken cancellationToken)
+    {
+        List<Guid> trials = await _db.From(TrialRow.Table)
+            .Where(t =>
+                And(
+                    Eq(t.ProductId, productId),
+                    In(t.LicenseId, _db.From(ActivationRow.Table).Where(a => Eq(a.KeyId, keyId)).Select(a => a.LicenseId))
+                )
             )
-            .Select(a => a)
-            .FirstOrDefaultAsync(cancellationToken);
+            .Select(t => t.LicenseId)
+            .OrderBy(t => [Asc(t.LicenseId)])
+            .Limit(1)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return trials.Count == 0
+            ? null
+            : await _db.From(ActivationRow.Table)
+                .Where(a => And(Eq(a.LicenseId, trials[0]), Eq(a.KeyId, keyId)))
+                .Select(a => a)
+                .SingleOrDefaultAsync(cancellationToken)
+                .ConfigureAwait(false);
+    }
 
     public override Task<ActivationRow?> FindActivationAsync(Guid id, CancellationToken cancellationToken) =>
         _db.From(ActivationRow.Table).Where(a => Eq(a.Id, id)).Select(a => a).SingleOrDefaultAsync(cancellationToken);
@@ -446,11 +465,12 @@ internal sealed partial class ServiceStore<TDialect>
             return most;
         }
 
-        public override async Task RecordReturnAsync(IEnumerable<string> counters, long at, CancellationToken cancellationToken)
+        // design §12.7.6 (V1d26): one row a return and counter, also for two returns of one counter in the same second. The
+        // lease's row was removed in the same transaction, so its ID is returned once.
+        public override async Task RecordReturnAsync(IEnumerable<string> counters, string leaseId, long at, CancellationToken cancellationToken)
         {
             foreach (string counter in counters.Distinct(StringComparer.Ordinal))
             {
-                // Two returns of one counter in the same second count once; the window is 30 days, so this does not matter.
                 await tx.Insert(LeaseReturnRow.Table)
                     .Values(
                         new LeaseReturnRow.Insert
@@ -458,10 +478,9 @@ internal sealed partial class ServiceStore<TDialect>
                             LicenseId = license.Id,
                             Counter = counter,
                             ReturnedAt = at,
+                            LeaseId = leaseId,
                         }
                     )
-                    .OnConflict(r => [r.LicenseId, r.Counter, r.ReturnedAt])
-                    .DoNothing()
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
             }

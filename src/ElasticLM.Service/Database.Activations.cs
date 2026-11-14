@@ -54,8 +54,8 @@ internal abstract class LicenseScope
     /// <summary>Returns the most early returns of the license since a time among some counters (design §12.7.4).</summary>
     public abstract Task<int> CountReturnsAsync(IEnumerable<string> counters, long since, CancellationToken cancellationToken);
 
-    /// <summary>Records an early return against some counters.</summary>
-    public abstract Task RecordReturnAsync(IEnumerable<string> counters, long at, CancellationToken cancellationToken);
+    /// <summary>Records the early return of a borrow against some counters, once for each return (design §12.7.6, V1d26).</summary>
+    public abstract Task RecordReturnAsync(IEnumerable<string> counters, string leaseId, long at, CancellationToken cancellationToken);
 
     /// <summary>Writes the license's expiry when the first lease fixes it (design §9.3 FromFirstActivation, §12.7.6).</summary>
     public abstract Task SetExpiryAsync(long expiresAt, long at, CancellationToken cancellationToken);
