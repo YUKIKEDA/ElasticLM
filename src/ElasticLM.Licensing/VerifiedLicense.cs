@@ -9,7 +9,30 @@ namespace ElasticLM.Licensing;
 /// <param name="VersionRange">The allowed version range, or <see langword="null"/> for every version.</param>
 /// <param name="Seats">The seat count for server licenses, otherwise <see langword="null"/>.</param>
 /// <param name="ExpiresAt">The feature's own expiry, or <see langword="null"/>.</param>
-public sealed record LicensedFeature(string Id, string? VersionRange, int? Seats, DateTimeOffset? ExpiresAt);
+public sealed record LicensedFeature(string Id, string? VersionRange, int? Seats, DateTimeOffset? ExpiresAt)
+{
+    // design §9.2, §12.7.5 step 7: the same parsing as the verifier's version check.
+
+    /// <summary>
+    /// Returns whether the feature's version range allows a version. The version and the range are read as the license
+    /// verifier reads them.
+    /// </summary>
+    /// <param name="version">The version, <c>major.minor[.patch]</c>.</param>
+    /// <returns><see langword="false"/> when the version is not <c>major.minor[.patch]</c> or is outside the range;
+    /// otherwise <see langword="true"/>, also when the feature has no range.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="version"/> is <see langword="null"/>.</exception>
+    public bool CoversVersion(string version)
+    {
+        ArgumentNullException.ThrowIfNull(version);
+        if (!FeatureVersion.TryParse(version, out FeatureVersion parsed))
+        {
+            return false;
+        }
+
+        // A range that does not parse allows no version; a verified license's range always parses.
+        return VersionRange is null || (FeatureVersionRange.TryParse(VersionRange, out FeatureVersionRange? range) && range!.Contains(parsed));
+    }
+}
 
 // design §11.2.
 
