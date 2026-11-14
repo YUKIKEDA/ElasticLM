@@ -12,7 +12,7 @@ These are questions, not orders. Do not create, edit, close, or retitle Issues o
 - "Is it required?" "Should it be X?"
 - Any yes/no about scope, a milestone, or whether a roadmap row exists.
 
-For such a question, list the options, give a recommendation, and state each option's advantage and disadvantage. Then stop and wait. An option that leaves out a step a rule requires names that rule and the step. In V1c16 the recommended option for R9 said that no first-time reader review would run, without saying that `user-docs.mdc` asks two reviews of a changed page (PR #293).
+For such a question, list the options, give a recommendation, and state each option's advantage and disadvantage. Then stop and wait. An option that leaves out a step a rule requires names that rule and the step. In V1c16 the recommended option for R9 said that no first-time reader review would run, without saying that `user-docs.mdc` asks two reviews of a changed page (PR #293). An option that removes or lowers what a reader gets (a log line, its level, a message) lists everything that reader loses. In V1d4b question 4b-1 named only the status code and the stack trace that the operator would lose; after the review, the level of the `SignInRefused` line and the text of the inner exception went to the owner as new questions (PR #432).
 
 A question at the end of a report is held to the same. In M3c the agent ended a report with "add #28 to the roadmap?" and no recommendation; the owner answered "the recommendation is fine", and the agent had to make the recommendation after the answer (PR #27).
 
