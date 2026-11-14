@@ -23,7 +23,7 @@ sidebar_position: 7
 | --- | --- | --- | --- |
 | `ELM-Proof` | リクエスト | 両方 | リクエストのプルーフ（後述）。ヘッダーのフィールドは 1 つだけにする。フィールドが 2 つあるリクエストは `ELM_PROOF_INVALID` になる。 |
 | `ELM-Nonce` | レスポンス | 両方 | 次のプルーフに使う新しいノンス。`elm-service` は、デバイス向けのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、`POST /v1/offline` のレスポンスと、送信元ごとのレート制限による `429` には付けない。`elm-server` は、`GET /v1/nonce` と 4 つのリースのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、IP のルールによる `403` と、レート制限による `429` には付けない。 |
-| `ELM-Server-License` | レスポンス | `elm-server` | サーバーがいまリースの発行に使っているサーバーライセンスファイルのトークン ID（`jti`）。`POST /v1/leases` と `POST /v1/leases/{id}/renew` の成功のレスポンスに付く。ローカルの管理 API が `licenseToken` として示す値と同じだ（[`GET /admin/v1/status`](administration-api.md#get-adminv1status) を参照）。クライアントがまだ知らないサーバーライセンスを名指していれば、クライアントは `GET /v1/server/license` をもう一度呼ぶ。新しいリースと更新は、クライアントが今使っているサーバーライセンス（最後に取得して確かめたもの。それより前のものは、そのもとで出たリースの返却と再登録のためだけに手元に残す）だけで確かめる。ヘッダーが、古いリースのために手元に残した前のサーバーライセンスを名指していても同じで、その前のサーバーライセンスのもとで出たトークンは `ELM_LEASE_OUT_OF_BOUNDS` で断る。 |
+| `ELM-Server-License` | レスポンス | `elm-server` | サーバーがいまリースの発行に使っているサーバーライセンスファイルのトークン ID（`jti`）。`POST /v1/leases` と `POST /v1/leases/{id}/renew` の成功のレスポンスに付く。ローカルの管理 API が `licenseToken` として示す値と同じだ（[`GET /admin/v1/status`](administration-api.md#get-adminv1status) を参照）。クライアントがまだ知らないサーバーライセンスを名指していれば、クライアントは `GET /v1/server/license` をもう一度呼ぶ。新しいリースと更新は、クライアントが今使っているサーバーライセンス（最後に取得して確かめたもの。手元に残した前のものでは、新しいトークンを確かめない）だけで確かめる。ヘッダーが手元に残した前のサーバーライセンスを名指していても同じで、そのもとで出たトークンは `ELM_LEASE_OUT_OF_BOUNDS` で断る。 |
 | `Retry-After` | レスポンス | 両方 | 待つ秒数。`ELM_RATE_LIMITED` のときは `1` だ。ただし、製品の上限を超えたトライアルでは違う（[`POST /v1/trials`](#post-v1trials) を参照）。`ELM_SERVER_RECOVERING` のときは、リースの再登録の期間の残りを切り上げた値だ。 |
 
 ### プルーフ
