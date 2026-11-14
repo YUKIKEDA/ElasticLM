@@ -182,8 +182,8 @@ int32_t elm_activation_state(const elm_activation* activation);
 | 関数 | 戻り値 | すること |
 | --- | --- | --- |
 | `elm_client_create` | エラー番号 | オンプレミスのライセンスサーバーのリースのクライアントを作る。`license_key` を設定したときは、SaaS 型のサービスのリースのクライアントになる。インストール鍵を開くか、なければ作り（鍵があるのに読めないときは `ELM_INSTALLATION_KEY_UNREADABLE`）、マシンフィンガープリントを読む。サーバーには接続しない。 |
-| `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。レスポンスのリースがこのリクエストに対するものでなければ `ELM_REQUEST_MISMATCH` を返し、そのリースを保持も返却もしない。 |
-| `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。`elm_client_acquire_lease` と同じ場合に `ELM_REQUEST_MISMATCH` を返す。 |
+| `elm_client_acquire_lease` | エラー番号 | 機能のリースを 1 つ以上のシートについて取得し、新しい `elm_lease` を返して、バックグラウンドでリースを更新する。レスポンスのリースがこのリクエストに対するものでなければ `ELM_REQUEST_MISMATCH` を返し、そのレスポンスのリースを保持も返却もしない。レスポンスが届かなかったか、受け取らなかったときは、関数が戻る前に、サーバーがこのリクエストに発行したリースがあればその返却を頼む。接続できないサーバーでは、そのために 60 秒ほどかかることがある（[レスポンスが届かなかったとき](../explanation/floating-licenses.md#レスポンスが届かなかったとき)を参照）。 |
+| `elm_client_borrow_lease` | エラー番号 | 1 秒から 3162240000 秒のあいだリースを借用し、新しい `elm_lease` を返す。借用は更新せず、有効期限を過ぎても `ELM_LEASE_HELD` のままだ。`elm_lease_expires_at` を現在の時刻と比べること。`elm_client_acquire_lease` と同じ場合に `ELM_REQUEST_MISMATCH` を返し、レスポンスが届かなかったか受け取らなかった借用は、同じように返却を頼む。保存できなかった借用も返却を頼む。 |
 | `elm_client_release_lease` | エラー番号 | このクライアントが作ったリースを返す。別のクライアントのリースは `ELM_INVALID_ARGUMENT` になる。借用でないリースは、返却に失敗しても、そのあと `ELM_LEASE_RELEASED` になる。サーバーが引き取らなかった借用は、状態、ファイル、それまでの `elm_lease_last_error` がそのまま残り、コールバックも呼ばれない。すでに `ELM_LEASE_LOST` か `ELM_LEASE_RELEASED` のリースは、もう一度は送らない（`ELM_OK`）。 |
 | `elm_client_get_borrowed_leases` | エラー番号 | 保存してある借用のうち、まだ有効なものを、新しいハンドルの配列で返す。配列は `elm_lease_list_free` で解放する。 |
 | `elm_client_reset_server_pin` | エラー番号 | オンプレミスのサーバーのピンを削除する。`server_url` は `http` か `https` の絶対 URL でなければならず、そうでなければ `ELM_INVALID_ARGUMENT` になる。ピンを削除したときは `*deleted` が `1` になる。ライセンスキーを持つクライアントにはピンがないので、その場合は常に `0` だ。 |
@@ -235,7 +235,7 @@ const char* elm_version(void);
 | `elm_activation_destroy` | `void` | 実行中のコールバックを待ち（時間の上限なし）、次に自動のトークンの更新を止めて最大 5 秒待ち、ハンドルを解放する。アクティベーションはデバイスに保存されたまま残る。 |
 | `elm_lease_free` | `void` | リースを返さずに、リースのハンドルを解放する。 |
 | `elm_lease_list_free` | `void` | `elm_client_get_borrowed_leases` の配列とそのハンドルを、同じ個数を渡して解放する。先に要素を解放したときの動作は未定義だ。 |
-| `elm_client_destroy` | `void` | 実行中のコールバックと進行中の操作を待ち（時間の上限なし）、次に、合わせて 5 秒以内に、レスポンスが届かなかったか受け取らなかった取得についてまだ送れていない返却を送り、借用でないリースを返して、ハンドルを解放する。借用はそのまま残る。 |
+| `elm_client_destroy` | `void` | 実行中のコールバックと進行中の操作を待ち（時間の上限なし）、次に、合わせて 5 秒以内に、レスポンスが届かなかったか受け取らなかった取得と借用について、まだ送れていない返却を送り、借用でないリースを返して、ハンドルを解放する。借用はそのまま残る。 |
 | `elm_string_free` | `void` | ほかの関数が、この関数で解放するよう示している文字列を、消去してから解放する。 |
 
 ```c

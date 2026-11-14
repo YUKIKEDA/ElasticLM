@@ -509,7 +509,7 @@ Returns the lease that an acquisition or a borrow issued, for a client that did 
 
 - Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
 - Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
-- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, or it has expired.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
 - Response headers: `ELM-Nonce`.
 
 The checks, in order: the rate limit for the source address; the form of `{jti}`; the proof and the rules after it (see [The proof](#the-proof)); the lease of that key and request; then the codes below.
@@ -517,7 +517,7 @@ The checks, in order: the rate limit for the source address; the form of `{jti}`
 | Status | Code | When |
 | --- | --- | --- |
 | `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
-| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, refused as in `DELETE /v1/leases/{id}`: the early returns of the last 30 days have reached the policy's `borrowReturnLimit`, or the license has fewer seats of the feature or a shorter `borrowLimit` than when it was borrowed. |
+| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, refused as in `DELETE /v1/leases/{id}`. |
 
 ## `elm-server` routes
 
@@ -725,8 +725,10 @@ Returns the lease that an acquisition or a borrow issued, for a client that did 
 
 - Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
 - Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
-- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, or it has expired.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
 - Response headers: `ELM-Nonce`.
+
+The checks, in order: the IP rules and the rate limit for the source address; the form of `{jti}`; the proof (see [The proof](#the-proof)); the lease of that key and request; then the codes below.
 
 | Status | Code | When |
 | --- | --- | --- |
