@@ -136,7 +136,7 @@ public sealed class ActivationClient : IAsyncDisposable
     private readonly ActivationClientOptions _options;
     private readonly Uri? _service;
     private readonly InstallationKeyStore _keys;
-    private readonly ActivationStore _files;
+
     private readonly IReadOnlyList<string> _fingerprints;
     private readonly ClientInfoBody? _clientInfo;
     private readonly LicenseVerifier _received;
@@ -145,6 +145,9 @@ public sealed class ActivationClient : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _stateLock = new();
     private readonly CancellationTokenSource _stopping = new();
+
+    // design §10.2 (V1d24): made again in the folder the key's check resolved, once the key is read (UseKey).
+    private ActivationStore _files;
     private InstallationKey? _key;
     private ECDsa? _guardKey;
     private IClockGuard? _guard;
@@ -664,6 +667,7 @@ public sealed class ActivationClient : IAsyncDisposable
     private void UseKey(InstallationKey key)
     {
         _key = key;
+        _files = new ActivationStore(_keys.Directory, _time);
 
         // design §11.4 step 3: the guard's state is signed with the installation key (a copy the guard keeps).
         if (_options.ClockGuard is null)

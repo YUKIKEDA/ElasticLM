@@ -45,21 +45,28 @@ internal static class ProtectedFiles
     /// </summary>
     /// <param name="path">The folder.</param>
     /// <param name="scope">The scope; a user-scope folder is protected by the user's profile and is not checked.</param>
+    /// <param name="folder">The folder to use from now on: in the machine scope, when the folder passes, its path with every
+    /// symbolic link and junction resolved, so that a link changed later does not lead elsewhere; otherwise the full path.</param>
     /// <returns><see langword="null"/> when the folder is safe or does not exist yet, otherwise what is wrong and how to fix it.</returns>
-    public static string? CheckDirectory(string path, KeyScope scope)
+    public static string? CheckDirectory(string path, KeyScope scope, out string folder)
     {
+        string full = Path.GetFullPath(path);
+        folder = full;
         if (scope == KeyScope.User || !Directory.Exists(path))
         {
             return null;
         }
 
-        string full = Path.GetFullPath(path);
         Problem? problem;
         try
         {
-            problem = Check(full);
+            (problem, string resolved) = Check(full);
+            if (problem is null)
+            {
+                folder = resolved;
+            }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or ArgumentException)
         {
             problem = new Problem("its access cannot be read: " + e.Message, Above: false);
         }
@@ -75,15 +82,32 @@ internal static class ProtectedFiles
         };
     }
 
-    // design §10.2 (V1d24, review K3 and the owner's K8): the folder as named and, when a symbolic link or a junction leads
-    // elsewhere, the folder it leads to with every folder above that one, as OpenSSH's safe_path checks the real path; and
-    // neither may be on a network location.
-    private static Problem? Check(string full)
+    /// <summary>
+    /// Decides on the kind of drive that a machine-scope folder is on.
+    /// </summary>
+    /// <param name="type">The kind, as <see cref="DriveInfo.DriveType"/> gives it.</param>
+    /// <returns><see langword="null"/> for a kind that may hold the folder, otherwise what is wrong.</returns>
+    internal static string? DriveTypeProblem(DriveType type) =>
+        type switch
+        {
+            DriveType.Network => "it is on a network location; a machine-scope folder must be on a local disk.",
+
+            // design §10.2 (V1d24, review K3): on Linux and macOS DriveInfo answers NoRootDirectory or Unknown instead of an
+            // error when statfs fails, and Unknown for a file system its table does not name; neither is known to be local.
+            DriveType.NoRootDirectory or DriveType.Unknown =>
+                "its access cannot be read: the kind of its file system is not known, so it may be on a network location.",
+            _ => null,
+        };
+
+    // design §10.2 (V1d24, review K1 and K3, the owner's K8): the folder as named and, when a symbolic link or a junction leads
+    // elsewhere, the folder it leads to with every folder above that one, as OpenSSH's safe_path checks the real path; the
+    // folder it leads to may not be on a network location. The caller goes on with the resolved path only.
+    private static (Problem? Problem, string Resolved) Check(string full)
     {
         string resolved = OperatingSystem.IsWindows() ? WindowsPaths.FinalPath(full) : UnixOwner.RealPath(full);
-        if (IsNetwork(full) || IsNetwork(resolved))
+        if (DriveTypeProblem(KindOf(resolved)) is string kind)
         {
-            return new Problem("it is on a network location; a machine-scope folder must be on a local disk.", Above: false);
+            return (new Problem(kind, Above: false), resolved);
         }
 
         Problem? problem = OperatingSystem.IsWindows() ? CheckWindows(full) : CheckUnix(full);
@@ -97,15 +121,18 @@ internal static class ProtectedFiles
             }
         }
 
-        return problem;
+        return (problem, resolved);
     }
 
-    // A UNC path, a mapped network drive (GetDriveType's DRIVE_REMOTE), or on Linux and macOS a file system that .NET names a
-    // network one from statfs (nfs, nfs4, cifs, smb, smb2, smbfs, and others; DriveInfo.Unix in dotnet/runtime release/10.0).
-    private static bool IsNetwork(string path) =>
+    // The kind of drive of a resolved path. On Windows a UNC path (\\server\share\…, which is also where a network drive or a
+    // SUBST onto a network path leads) is a network one, and a drive letter's kind is GetDriveType's; on Linux and macOS it is
+    // the kind .NET gives the file system that statfs names (Interop.MountPoints.FormatInfo.cs, dotnet/runtime release/10.0).
+    private static DriveType KindOf(string resolved) =>
         OperatingSystem.IsWindows()
-            ? path.StartsWith(@"\\", StringComparison.Ordinal) || new DriveInfo(Path.GetPathRoot(path)!).DriveType == DriveType.Network
-            : new DriveInfo(path).DriveType == DriveType.Network;
+            ? resolved.StartsWith(@"\\", StringComparison.Ordinal)
+                ? DriveType.Network
+                : new DriveInfo(Path.GetPathRoot(resolved)!).DriveType
+            : new DriveInfo(resolved).DriveType;
 
     /// <summary>
     /// Creates a folder for secrets if it does not exist.
@@ -272,11 +299,13 @@ internal static class ProtectedFiles
     [SupportedOSPlatform("windows")]
     private static string Named(SecurityIdentifier sid)
     {
+        // Translate throws IdentityNotMappedException for a SID without a name, and a SystemException (that type itself) for a
+        // Win32 error (SecurityIdentifier.Translate's documentation).
         try
         {
             return $"{sid.Translate(typeof(NTAccount)).Value} ({sid.Value})";
         }
-        catch (Exception e) when (e is IdentityNotMappedException or SystemException)
+        catch (Exception e) when (e is IdentityNotMappedException || e.GetType() == typeof(SystemException))
         {
             return sid.Value;
         }

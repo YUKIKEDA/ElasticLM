@@ -41,6 +41,7 @@ internal static unsafe partial class UnixOwner
     private const int AclDeleteChild = 1 << 6;
     private const int AclWriteSecurity = 1 << 12;
     private const int AclChangeOwner = 1 << 13;
+    private const int AclEntryOnlyInherit = 1 << 8;
     private const int IdTypeUid = 0;
 
     /// <summary>Gets the effective user ID of this process.</summary>
@@ -122,7 +123,7 @@ internal static unsafe partial class UnixOwner
     // design §10.2 (V1d24, the owner's K9): macOS keeps an extended access list beside the mode (chmod +a), whose allow entries
     // can let another user delete or rename what is in a folder whatever its mode. <sys/acl.h> of Apple's Libc: ACL_TYPE_EXTENDED
     // 0x100, ACL_FIRST_ENTRY 0, ACL_NEXT_ENTRY -1, ACL_EXTENDED_ALLOW 1, ACL_DELETE 1<<4, ACL_DELETE_CHILD 1<<6,
-    // ACL_WRITE_SECURITY 1<<12, ACL_CHANGE_OWNER 1<<13; <membership.h>: ID_TYPE_UID 0.
+    // ACL_WRITE_SECURITY 1<<12, ACL_CHANGE_OWNER 1<<13, ACL_ENTRY_ONLY_INHERIT 1<<8; <membership.h>: ID_TYPE_UID 0.
 
     /// <summary>
     /// On macOS, finds an allow entry of a folder's extended access list for anyone other than root and the given user.
@@ -156,22 +157,35 @@ internal static unsafe partial class UnixOwner
         {
             for (int entryId = AclFirstEntry; AclGetEntry(acl, entryId, out nint entry) == 0; entryId = AclNextEntry)
             {
-                if (AclGetTagType(entry, out int tag) != 0 || tag != AclExtendedAllow)
-                {
-                    continue;
-                }
-
-                if (AclGetPermset(entry, out nint permset) != 0)
+                if (AclGetTagType(entry, out int tag) != 0)
                 {
                     throw new IOException($"An entry of the access list of '{path}' cannot be read.");
                 }
 
+                if (tag != AclExtendedAllow)
+                {
+                    continue;
+                }
+
+                if (AclGetPermset(entry, out nint permset) != 0 || AclGetFlagsetNp(entry, out nint flagset) != 0)
+                {
+                    throw new IOException($"An entry of the access list of '{path}' cannot be read.");
+                }
+
+                // An entry only inherited by what is made in the folder later does not apply to the folder; above, it is not
+                // counted, as Windows skips an entry that is only inherited. For the folder itself it is counted: what the
+                // program makes in it would take it.
+                if (!anyRight && Has(path, AclGetFlagNp(flagset, AclEntryOnlyInherit)))
+                {
+                    continue;
+                }
+
                 bool counts =
                     anyRight
-                    || AclGetPermNp(permset, AclDelete) == 1
-                    || AclGetPermNp(permset, AclDeleteChild) == 1
-                    || AclGetPermNp(permset, AclWriteSecurity) == 1
-                    || AclGetPermNp(permset, AclChangeOwner) == 1;
+                    || Has(path, AclGetPermNp(permset, AclDelete))
+                    || Has(path, AclGetPermNp(permset, AclDeleteChild))
+                    || Has(path, AclGetPermNp(permset, AclWriteSecurity))
+                    || Has(path, AclGetPermNp(permset, AclChangeOwner));
                 if (!counts)
                 {
                     continue;
@@ -210,6 +224,21 @@ internal static unsafe partial class UnixOwner
             _ = AclFree(acl);
         }
     }
+
+    // acl_get_perm_np and acl_get_flag_np answer 1 for set, 0 for not set, and -1 for an error.
+    private static bool Has(string path, int answer) =>
+        answer switch
+        {
+            1 => true,
+            0 => false,
+            _ => throw new IOException($"An entry of the access list of '{path}' cannot be read."),
+        };
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_flagset_np")]
+    private static partial int AclGetFlagsetNp(nint entry, out nint flagset);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_flag_np")]
+    private static partial int AclGetFlagNp(nint flagset, int flag);
 
     [LibraryImport(LinuxLibc, EntryPoint = "realpath", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
     private static partial nint LinuxRealPath(string path, byte* resolved);

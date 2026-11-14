@@ -44,9 +44,15 @@ internal static unsafe partial class WindowsPaths
         }
 
         string final = new(buffer, 0, (int)length);
-        return final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? @"\\" + final[8..]
+        string resolved =
+            final.StartsWith(@"\\?\UNC\", StringComparison.Ordinal) ? @"\\" + final[8..]
             : final.StartsWith(@"\\?\", StringComparison.Ordinal) ? final[4..]
             : final;
+
+        // A volume without a drive letter answers \\?\Volume{GUID}\…, which is no drive path once its prefix is gone.
+        return Path.IsPathFullyQualified(resolved)
+            ? resolved
+            : throw new IOException($"The folder '{path}' leads to '{final}', which has no drive letter.");
     }
 
     [LibraryImport("kernel32.dll", StringMarshalling = StringMarshalling.Utf16, SetLastError = true)]

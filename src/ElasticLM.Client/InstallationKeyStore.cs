@@ -45,8 +45,9 @@ public sealed partial class InstallationKeyStore
         Directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory ?? DefaultDirectory(productId, scope)));
     }
 
-    /// <summary>Gets the directory that holds the key.</summary>
-    public string Directory { get; }
+    /// <summary>Gets the directory that holds the key. In the machine scope, once <see cref="TryLoadOrCreate"/> or
+    /// <see cref="TryLoad"/> has checked the folder, it is the folder's path with every symbolic link and junction resolved.</summary>
+    public string Directory { get; private set; }
 
     /// <summary>Gets the scope.</summary>
     public KeyScope Scope { get; }
@@ -81,13 +82,15 @@ public sealed partial class InstallationKeyStore
             CreateDirectory();
 
             // A folder that another user prepared is refused before the key is written into it (design §10.2).
-            if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+            if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
             {
                 key = null;
                 error = Unreadable(unsafeFolder);
                 return false;
             }
 
+            // design §10.2 (V1d24, review K1): what was checked is where the key goes, whatever a link on the way becomes.
+            Directory = checkedFolder;
             var options = new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,
@@ -149,12 +152,13 @@ public sealed partial class InstallationKeyStore
     public bool TryLoad(out InstallationKey? key, out LicenseError? error)
     {
         key = null;
-        if (ProtectedFiles.CheckDirectory(Directory, Scope) is string unsafeFolder)
+        if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
         {
             error = Unreadable(unsafeFolder);
             return false;
         }
 
+        Directory = checkedFolder;
         byte[] stored;
         try
         {

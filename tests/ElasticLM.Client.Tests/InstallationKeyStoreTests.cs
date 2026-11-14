@@ -495,7 +495,7 @@ public sealed class InstallationKeyStoreTests : IDisposable
         GiveTo("root", other);
         try
         {
-            Assert.Null(ProtectedFiles.CheckDirectory(folder, KeyScope.Machine));
+            Assert.Null(ProtectedFiles.CheckDirectory(folder, KeyScope.Machine, out _));
         }
         finally
         {
@@ -873,29 +873,42 @@ public sealed class InstallationKeyStoreTests : IDisposable
     }
 
     /// <summary>
-    /// On macOS, an entry of an extended access list (chmod +a) that lets another user or group delete what is in a folder
-    /// two levels above a machine-scope folder is refused, and so is one that lets anyone else into the folder itself; a
-    /// deny entry is not (design §10.2, V1d24, the owner's K9).
+    /// On macOS, an entry of an extended access list (chmod +a) that lets another user or group delete, rename, or change the
+    /// access of what is in a folder two levels above a machine-scope folder is refused, and so is one that lets anyone else
+    /// into the folder itself; a deny entry, an entry that allows only adding or reading, an entry only inherited by what is
+    /// made later, and an entry for this user are not (design §10.2, V1d24, the owner's K9, review K2 and K7).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - macOS. A folder of mode 0700 in a parent of mode 0755 in the test folder (made by this user):
-    ///   above-delete-child: the test folder given "group:staff allow delete_child";
+    /// - macOS. A folder of mode 0700 in a parent of mode 0755 in the test folder (made by this user); then one entry:
+    ///   above-delete, above-delete-child, above-writesecurity, above-chown: the test folder given "group:staff allow"
+    ///   that right;
     ///   above-deny: the test folder given "group:staff deny delete_child";
-    ///   folder-read: the folder given "user:nobody allow read".
+    ///   above-add-file: the test folder given "group:staff allow add_file,add_subdirectory";
+    ///   above-read: the test folder given "group:staff allow list,search";
+    ///   above-only-inherit: the test folder given "group:staff allow delete_child,file_inherit,directory_inherit,only_inherit";
+    ///   folder-read: the folder given "user:nobody allow list";
+    ///   folder-self: the folder given an entry that allows this user to list it.
     ///
     /// Steps:
-    /// - Check the folder as a machine-scope folder. Remove the entries at the end.
+    /// - Check the folder as a machine-scope folder. Remove the entry at the end.
     ///
     /// Expected:
-    /// - above-delete-child: "the folder '{test folder}' above it has an access list that lets group "; folder-read: "its
-    ///   access list gives access to user "; above-deny: no problem.
+    /// - The four above-… rights: "the folder '{test folder}' above it has an access list that lets group "; folder-read:
+    ///   "its access list gives access to user "; the others: no problem.
     /// </remarks>
     /// <param name="kind">The case.</param>
     [Theory]
+    [InlineData("above-delete")]
     [InlineData("above-delete-child")]
+    [InlineData("above-writesecurity")]
+    [InlineData("above-chown")]
     [InlineData("above-deny")]
+    [InlineData("above-add-file")]
+    [InlineData("above-read")]
+    [InlineData("above-only-inherit")]
     [InlineData("folder-read")]
+    [InlineData("folder-self")]
     public void MachineScope_ExtendedAccessList_IsCheckedOnMacOS(string kind)
     {
         Assert.SkipUnless(OperatingSystem.IsMacOS(), "Extended access lists of chmod +a are macOS only.");
@@ -905,35 +918,260 @@ public sealed class InstallationKeyStoreTests : IDisposable
         }
 
         (string _, string folder) = MachineFolders();
-        string target = kind == "folder-read" ? folder : _dir;
+        string target = kind.StartsWith("folder-", StringComparison.Ordinal) ? folder : _dir;
         string entry = kind switch
         {
+            "above-delete" => "group:staff allow delete",
             "above-delete-child" => "group:staff allow delete_child",
+            "above-writesecurity" => "group:staff allow writesecurity",
+            "above-chown" => "group:staff allow chown",
             "above-deny" => "group:staff deny delete_child",
-            _ => "user:nobody allow read",
+            "above-add-file" => "group:staff allow add_file,add_subdirectory",
+            "above-read" => "group:staff allow list,search",
+            "above-only-inherit" => "group:staff allow delete_child,file_inherit,directory_inherit,only_inherit",
+            "folder-read" => "user:nobody allow list",
+            _ => "user:" + Environment.UserName + " allow list",
         };
         Chmod("+a", entry, target);
         try
         {
-            string? problem = ProtectedFiles.CheckDirectory(folder, KeyScope.Machine);
-            if (kind == "above-deny")
+            string? problem = ProtectedFiles.CheckDirectory(folder, KeyScope.Machine, out _);
+            switch (kind)
             {
-                Assert.Null(problem);
-            }
-            else
-            {
-                Assert.Contains(
-                    kind == "folder-read"
-                        ? "its access list gives access to user "
-                        : $"the folder '{_dir}' above it has an access list that lets group ",
-                    problem,
-                    StringComparison.Ordinal
-                );
+                case "above-delete" or "above-delete-child" or "above-writesecurity" or "above-chown":
+                    Assert.Contains($"the folder '{_dir}' above it has an access list that lets group ", problem, StringComparison.Ordinal);
+                    break;
+                case "folder-read":
+                    Assert.Contains("its access list gives access to user ", problem, StringComparison.Ordinal);
+                    break;
+                default:
+                    Assert.Null(problem);
+                    break;
             }
         }
         finally
         {
             Chmod("-a", entry, target);
+        }
+    }
+
+    /// <summary>
+    /// A machine-scope folder reached through two links in a row is checked where it ends, and the key store goes on in that
+    /// folder only: a folder on the way that others may change is not used again, so changing the second link later does not
+    /// move the key (design §10.2, V1d24, review K1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - In the test folder: end/machine, a folder that passes every check; open, a folder that others may change (on Linux
+    ///   and macOS mode 0777, on Windows a rule that lets Authenticated Users modify it); open/second, a link to end/machine;
+    ///   safe/first, a link to open/second. Links are symbolic links on Linux and macOS and junctions on Windows, where the
+    ///   first junction gets an access list of its own that passes. other/machine, a second folder that passes.
+    ///
+    /// Steps:
+    /// - Create a machine-scope key through safe/first. Point open/second at other/machine. Read the key with the same store.
+    ///
+    /// Expected:
+    /// - The key is created; the store's Directory is end/machine; the key file is in end/machine; after the change the same
+    ///   store reads the same key, and other/machine holds no key.
+    /// </remarks>
+    [Fact]
+    public void MachineScope_TwoLinksInARow_UsesTheFolderWhereTheyEnd()
+    {
+        string end = Path.Combine(_dir, "end", "machine");
+        string other = Path.Combine(_dir, "other", "machine");
+        foreach (string made in new[] { end, other })
+        {
+            Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, made).TryLoadOrCreate(out InstallationKey? created, out _));
+            created!.Dispose();
+            File.Delete(Path.Combine(made, "installation.key"));
+        }
+
+        string open = Path.Combine(_dir, "open");
+        string second = Path.Combine(open, "second");
+        string safe = Path.Combine(_dir, "safe");
+        string first = Path.Combine(safe, "first");
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(open);
+            Directory.CreateDirectory(safe);
+        }
+        else
+        {
+            Directory.CreateDirectory(open, (UnixFileMode)0b111_101_101);
+            Directory.CreateDirectory(safe, (UnixFileMode)0b111_101_101);
+        }
+
+        MakeLink(second, end);
+        MakeLink(first, second);
+        if (OperatingSystem.IsWindows())
+        {
+            string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+            Icacls(first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            Grant(
+                open,
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null),
+                System.Security.AccessControl.FileSystemRights.Modify
+            );
+        }
+        else
+        {
+            File.SetUnixFileMode(open, (UnixFileMode)0b111_111_111);
+        }
+
+        try
+        {
+            var store = new InstallationKeyStore("acme-cad", KeyScope.Machine, first);
+            Assert.True(store.TryLoadOrCreate(out InstallationKey? created, out LicenseError? error), error?.Message);
+            using (created)
+            {
+                Assert.Equal(end, store.Directory);
+                Assert.True(File.Exists(Path.Combine(end, "installation.key")));
+                Directory.Delete(second);
+                MakeLink(second, other);
+                Assert.True(store.TryLoad(out InstallationKey? read, out error), error?.Message);
+                using (read)
+                {
+                    Assert.Equal(created!.Thumbprint, read!.Thumbprint);
+                }
+
+                Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            }
+        }
+        finally
+        {
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
+    /// The kind of drive a machine-scope folder is on decides as the design says, on every OS: a network drive is refused,
+    /// and so is a kind that is not known, which .NET answers when statfs fails or names a file system it does not list
+    /// (design §10.2, V1d24, the owner's K8, review K3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Each value of DriveType.
+    ///
+    /// Steps:
+    /// - Decide on it.
+    ///
+    /// Expected:
+    /// - Network: "it is on a network location"; NoRootDirectory and Unknown: "its access cannot be read: the kind of its
+    ///   file system is not known"; Fixed, Ram, Removable, and CDRom: no problem.
+    /// </remarks>
+    /// <param name="type">The kind of drive.</param>
+    [Theory]
+    [InlineData(DriveType.Network)]
+    [InlineData(DriveType.NoRootDirectory)]
+    [InlineData(DriveType.Unknown)]
+    [InlineData(DriveType.Fixed)]
+    [InlineData(DriveType.Ram)]
+    [InlineData(DriveType.Removable)]
+    [InlineData(DriveType.CDRom)]
+    public void DriveTypeProblem_EachKind_IsDecided(DriveType type)
+    {
+        string? problem = ProtectedFiles.DriveTypeProblem(type);
+
+        switch (type)
+        {
+            case DriveType.Network:
+                Assert.StartsWith("it is on a network location", problem, StringComparison.Ordinal);
+                break;
+            case DriveType.NoRootDirectory or DriveType.Unknown:
+                Assert.StartsWith("its access cannot be read: the kind of its file system is not known", problem, StringComparison.Ordinal);
+                break;
+            default:
+                Assert.Null(problem);
+                break;
+        }
+    }
+
+    /// <summary>
+    /// On Windows, a machine-scope folder reached through a local symbolic link that leads to a UNC path, and one on a
+    /// network drive letter, are refused as network locations (design §10.2, V1d24, review K2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows, as an administrator who may open \\localhost\C$, make a symbolic link, and map a drive (as on the GitHub
+    ///   runners); elsewhere the test is skipped and says so, and on GitHub Actions it fails without it.
+    /// - A machine-scope key made in a folder of the test folder:
+    ///   link: a symbolic link (mklink /D) in the test folder to the folder's path under \\localhost\C$;
+    ///   mapped: the first free drive letter from Z down mapped (net use) to \\localhost\C$, and the folder's path on it.
+    ///
+    /// Steps:
+    /// - Read the key through that path. Remove the link or the mapping at the end.
+    ///
+    /// Expected:
+    /// - ELM_INSTALLATION_KEY_UNREADABLE with "it is on a network location".
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    [Theory]
+    [InlineData("link")]
+    [InlineData("mapped")]
+    public void MachineScope_FolderLeadingToTheNetwork_IsRefusedOnWindows(string kind)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "UNC paths and drive letters are Windows only.");
+        string folder = Path.Combine(_dir, "net", "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        string unc = @"\\localhost\" + folder[0] + "$" + folder[2..];
+        string path;
+        string drive = string.Empty;
+        if (kind == "link")
+        {
+            path = Path.Combine(_dir, "to-net");
+            Run("cmd.exe", "/c", "mklink", "/D", path, unc);
+        }
+        else
+        {
+            drive = Enumerable.Range('D', 'Z' - 'D' + 1).Reverse().Select(c => (char)c + ":").First(d => !Directory.Exists(d + @"\"));
+            Run("net", "use", drive, @"\\localhost\" + folder[0] + "$");
+            path = drive + folder[2..];
+        }
+
+        try
+        {
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, path).TryLoad(out _, out LicenseError? error));
+            Assert.Contains("it is on a network location", error!.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            if (kind == "link")
+            {
+                Directory.Delete(path);
+            }
+            else
+            {
+                Run("net", "use", drive, "/delete", "/y");
+            }
+        }
+    }
+
+    // Makes a symbolic link (Linux, macOS) or a junction (Windows) to a folder.
+    private static void MakeLink(string link, string target)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Run("cmd.exe", "/c", "mklink", "/J", link, target);
+        }
+        else
+        {
+            File.CreateSymbolicLink(link, target);
+        }
+    }
+
+    // Runs a command; skips the test where this user may not, except on GitHub Actions.
+    private static void Run(string program, params string[] arguments)
+    {
+        using var process = Process.Start(new ProcessStartInfo(program, arguments) { RedirectStandardError = true, RedirectStandardOutput = true })!;
+        string output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        if (process.ExitCode != 0)
+        {
+            string why = $"{program} {string.Join(' ', arguments.Take(3))} exited with {process.ExitCode}: {output.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This user may not run it. " + why);
         }
     }
 
