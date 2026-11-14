@@ -721,7 +721,7 @@ Returns a lease, or returns a borrow early. `{id}` is the lease ID. A release is
 | --- | --- | --- |
 | `401` | `ELM_PROOF_INVALID` | The proof is signed by another key than the lease's. |
 | `409` | `ELM_CLONE_DETECTED` | The lease is stopped; it ends at its expiry. |
-| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, and the early returns of the last 30 days of this installation key or one of the borrow's fingerprints have reached the server license's limit, or those of the whole server have reached its `sbrl`; the server license is another one, or has fewer seats of the feature or a shorter borrow limit than when it was borrowed; or the return cannot be written to the borrow record. |
+| `409` | `ELM_RETURN_NOT_ALLOWED` | A borrow, and the early returns of the last 30 days of this installation key or one of the borrow's fingerprints have reached the server license's `brl`, or those of the whole server have reached its `sbrl`; the server license is another one, or has fewer seats of the feature or a shorter borrow limit than when it was borrowed; or the return cannot be written to the borrow record. |
 
 ### `DELETE /v1/leases/requests/{jti}` on `elm-server`
 

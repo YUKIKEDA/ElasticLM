@@ -246,7 +246,7 @@ sidebar_position: 6
 | `overage` | 数値または `null` | 購入したシート数を超えて貸し出せるシートの割合（パーセント）。`null` なら超えて貸し出さない。 |
 | `borrowLimit` | 数値または `null` | 借用の最長の期間（秒）。`null` なら借用できない。 |
 | `borrowReturnLimit` | 数値 | 30 日間に借用を早期返却できる回数。 |
-| `serverBorrowReturnLimit` | 数値 | `elm-server` が 30 日間に受け付ける借用の早期返却の回数。すべてのインストールを合わせて数える。サーバーライセンスに書き込む。 |
+| `serverBorrowReturnLimit` | 数値 | `elm-server` が 30 日間に受け付ける借用の早期返却の回数。すべてのインストールを合わせて数える。値はサーバーライセンスに入る。 |
 | `clientInfoStrategy` | 文字列 | `none` か `hostAndUser`。 |
 | `trialDuration` | 数値 | トライアルが続く秒数。 |
 | `trialDailyLimit` | 数値 | 製品がどの 24 時間をとっても出せるトライアルの数。このポリシーが製品のトライアルのポリシーであるあいだだけ使う。 |

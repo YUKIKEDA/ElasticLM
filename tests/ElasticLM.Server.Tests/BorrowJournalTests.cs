@@ -245,7 +245,8 @@ public sealed class BorrowJournalTests : IAsyncDisposable
 
     /// <summary>
     /// A new day's file that cannot be written is removed and the file of the day before stays the newest; the next return
-    /// starts a file that carries every record forward.
+    /// starts a file that continues the chain from it with chain.start and carries every record forward (design §18.1,
+    /// V1d16 review K8).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -256,8 +257,8 @@ public sealed class BorrowJournalTests : IAsyncDisposable
     /// - On the next day, arm it and seal; disarm it, write the return y; load the record again.
     ///
     /// Expected:
-    /// - The seal throws IOException; one file and no unfinished file; then two files, the second starting with chain.reset;
-    ///   the loaded record has the borrow and the returns x and y.
+    /// - The seal throws IOException; one file and no unfinished file; then two files, the second starting with chain.start
+    ///   that names the first; the files verify with no issue; the loaded record has the borrow and the returns x and y.
     /// </remarks>
     [Theory]
     [InlineData(1)]
@@ -281,7 +282,9 @@ public sealed class BorrowJournalTests : IAsyncDisposable
         journal.Returned(Return("y", clock));
         IReadOnlyList<string> files = Files(data);
         Assert.Equal(2, files.Count);
-        Assert.Equal("chain.reset", Type(Lines(files[1])[0]));
+        Assert.Equal("chain.start", Type(Lines(files[1])[0]));
+        Assert.Contains($"\"file\":\"{Path.GetFileName(files[0])}\"", Lines(files[1])[0], StringComparison.Ordinal);
+        Assert.Empty(VerifiedLog.Of(files, _deployment.Trust, "acme-cad", "borrows").Issues);
         BorrowJournal again = Load(data, clock);
         Assert.Single(again.Borrows);
         Assert.Equal(["x", "y"], again.Returns.Select(r => r.LeaseId));

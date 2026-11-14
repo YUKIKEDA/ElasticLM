@@ -16,9 +16,10 @@ namespace ElasticLM.Server;
 /// </summary>
 /// <remarks>
 /// The record's lock is always taken before the log's: a new file carries records forward under the log's lock, so every
-/// call into the log goes through the record's lock first. The file of a new UTC day is started only by <see cref="Seal"/>
-/// (the server's 60-second timer): its carried lines are built outside both locks, and only the records written meanwhile,
-/// the writes, the signatures, and the rename happen under them (design §13.4, V1d16).
+/// call into the log goes through the record's lock first. A new file, on a new UTC day or after
+/// <see cref="DefaultCompactAfter"/> lines, is started only by <see cref="Seal"/> (the server's 60-second timer): its carried
+/// lines are built outside both locks, and only the records written meanwhile, the writes, the signatures, and the rename
+/// happen under them (design §13.4, V1d16).
 /// </remarks>
 internal sealed class BorrowJournal : IBorrowJournal, IDisposable
 {
@@ -41,7 +42,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     private SignedLog? _log;
     private ILogger? _operational;
 
-    // The lines written while the file of a new day is being built, for that file; null otherwise. Under _lock.
+    // The lines written while a new file is being built, for that file; null otherwise. Under _lock.
     private List<LogLine>? _since;
 
     /// <summary>Gets or sets the borrows and returns written one at a time after which a new file starts; tests make it small.</summary>

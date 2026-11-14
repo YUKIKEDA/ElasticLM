@@ -204,14 +204,14 @@ A borrow longer than the limit is refused with `403` and `ELM_BORROW_NOT_ALLOWED
 The app can return a borrow early with `ReleaseLeaseAsync`. The server refuses with `409` and `ELM_RETURN_NOT_ALLOWED`, and the borrow stays valid until its expiry, in these cases:
 
 - The installation key, or any machine fingerprint the borrow was made with, has already made `borrowReturnLimit` early returns in the last 30 days (the server license's `brl`, 2 by default). Counting fingerprints stops a user from resetting the count with a new key alone. The client reports its fingerprints, though, and the server cannot check them, so a new key sent with made-up fingerprints resets the count ([the security model](security-model.md#on-the-licensees-machine)).
-- On `elm-server`: the server has already taken `serverBorrowReturnLimit` early returns in the last 30 days, from all installations together (the server license's `sbrl`, 10,000 by default). A new key with made-up fingerprints does not reset this count, so the record of early returns the server keeps, and copies into each new file, stays bounded. Someone who borrows and returns again and again with new keys can use up the count; early returns are then refused for everyone until enough of the counted ones are 30 days old, and the operational log warns once in 30 days ([the security model](security-model.md#on-the-customers-license-server)).
+- On `elm-server`: the server has already taken `serverBorrowReturnLimit` early returns in the last 30 days, from all installations together (the server license's `sbrl`, 10,000 by default). A new key with made-up fingerprints does not reset this count, so the server's borrow record (below), which keeps the early returns and copies them into each new file, stays bounded. Someone who borrows and returns again and again with new keys can use up the count. Early returns are then refused for everyone until enough of the counted ones are 30 days old, and the server writes a warning to the operational log at the first refusal ([the security model](security-model.md#on-the-customers-license-server)). This limit is `elm-server`'s only: the hosted service counts each license's early returns in its database.
 - The server license changed since the borrow in a way that matters: another license, the feature removed, fewer seats, or a shorter `borrow`. A routine renewal does not count.
 
 The limit exists because a returned borrow's token stays valid until its `exp`; without it, a user could borrow and return again and again and hold many valid tokens for one counted seat.
 
 ### Borrows and restarts
 
-A borrowing client is away and cannot reclaim. So `elm-server` writes every borrow and early return, before it takes effect, to the borrow record (`borrows-<UTC time>.jsonl` in its data folder, signed line by line with the server's key), and restores unexpired borrows from it at start. If the record is broken, the server does not start. `elm-server --set-aside-broken-records` moves the broken record aside and starts without its borrows; the usage log records this as `records.set_aside`.
+A borrowing client is away and cannot reclaim. So `elm-server` writes every borrow and early return, before it takes effect, to the borrow record (`borrows-<UTC time>.jsonl` in its data folder, signed with the server's key), and restores unexpired borrows from it at start. If the record is broken, the server does not start. `elm-server --set-aside-broken-records` moves the broken record aside and starts without its borrows; the usage log records this as `records.set_aside`.
 
 For the borrow record's lines and how to verify it with `elm log verify --stream borrows`, see [Logs](../reference/logs.md).
 
@@ -223,6 +223,7 @@ For the borrow record's lines and how to verify it with `elm log verify --stream
 - TLS is checked with the OS's trust. There is no server license and no pin; the client checks steps 1, 2, and 4 above.
 - The state is in the database, so a restart loses nothing and there is no reclaim. With PostgreSQL, the service can run on several nodes and the count stays exact.
 - A lease ends no later than the license and the feature; no grace period is added. The only borrow limit is the policy's `borrowLimit`.
+- Early returns count against `borrowReturnLimit` only; `serverBorrowReturnLimit` applies to `elm-server`.
 
 ## What the customer's administrator can and cannot do
 

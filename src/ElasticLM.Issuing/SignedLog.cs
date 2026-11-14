@@ -117,6 +117,9 @@ public sealed partial class SignedLog : IDisposable
 
     // The path of the file being started under its unfinished name, until it takes its name.
     private string? _partial;
+
+    // The closed file that the file being started continues, for StartFile's failure; null at a start or a reset.
+    private string? _startedFrom;
     private DateOnly _fileDay;
     private DateOnly _reportedDay;
     private IncrementalHash _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -131,6 +134,13 @@ public sealed partial class SignedLog : IDisposable
     private string _headFile = string.Empty;
     private string _headAuth = string.Empty;
     private string? _failure;
+
+    // The previous file to continue the chain from, after a new file failed while it was started and the previous file had
+    // been closed with its last signature (design §18.1, V1d16); null otherwise.
+    private string? _continueFrom;
+
+    // The chain's link and number when the file being started began, to give back when it fails.
+    private (string Prev, long N) _beforeStart;
     private bool _disposed;
 
     private SignedLog(
@@ -186,14 +196,14 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="time">The time provider.</param>
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
     /// <param name="carry">Called for each new file, under the log's lock, for the lines it carries forward after its signed
-    /// first line; they are signed together. A new UTC day takes them from <see cref="StartNewFile"/> instead.</param>
+    /// first line; they are signed together. A file that <see cref="StartNewFile"/> starts takes them from its caller instead.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason instead of
     /// continuing the newest file (for a record the operator set aside).</param>
     /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
     /// name of each file in the folder whose name has the form of the log's file names but no real date and time; such a
     /// file is not a file of the log.</param>
     /// <param name="rotateOnWrite">Whether a write or a signature on a new UTC day starts the new file; when not, only
-    /// <see cref="StartNewFile"/> does, and the lines until then go to the file of the day before.</param>
+    /// <see cref="StartNewFile"/> does, and the lines until then go to the file being written.</param>
     /// <param name="unfinishedRemoved">Called at the start with the name of each file of the log that was left unfinished
     /// (<c>.partial</c>), which the start removes.</param>
     /// <returns>The open log.</returns>
@@ -525,18 +535,33 @@ public sealed partial class SignedLog : IDisposable
     internal static string Hash(ReadOnlySpan<byte> bytes) => Base64UrlCodec.Encode(SHA256.HashData(bytes));
 
     // Removes the files of a log left unfinished by a stop while they were started: their lines are all in the previous
-    // file, which stayed the newest (design §18.1, V1d16).
+    // file, which stayed the newest (design §18.1, V1d16). Only a name that is this log's file name with ".partial" added
+    // counts, so the log of node "a" leaves the files of node "a-b" in a shared folder. A file that cannot be removed stops
+    // the start, naming it.
     private static void RemoveUnfinished(string directory, string baseName, Action<string>? removed)
     {
+        Regex pattern = FileNamePattern();
         foreach (string path in Directory.EnumerateFiles(directory, baseName + "-*" + Unfinished).Order(StringComparer.Ordinal))
         {
             string name = Path.GetFileName(path);
-            if (!name.StartsWith(baseName + "-", StringComparison.Ordinal) || !name.EndsWith(".jsonl" + Unfinished, StringComparison.Ordinal))
+            if (
+                !name.StartsWith(baseName + "-", StringComparison.Ordinal)
+                || !name.EndsWith(Unfinished, StringComparison.Ordinal)
+                || !pattern.IsMatch(name[(baseName.Length + 1)..^Unfinished.Length])
+            )
             {
                 continue;
             }
 
-            File.Delete(path);
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException($"The unfinished log file {name} cannot be removed: {e.Message}", e);
+            }
+
             removed?.Invoke(name);
         }
     }
@@ -733,12 +758,18 @@ public sealed partial class SignedLog : IDisposable
     {
         // Cleared first, so that a failure of the file started for it is told apart from the failure it names.
         string? failure = _failure;
+        string? continueFrom = _continueFrom;
         _failure = null;
+        _continueFrom = null;
         try
         {
             if (failure is not null)
             {
                 StartFile(previous: null, continueChain: false, forcedReset: failure);
+            }
+            else if (continueFrom is not null)
+            {
+                StartFile(continueFrom, continueChain: false);
             }
 
             write();
@@ -746,9 +777,18 @@ public sealed partial class SignedLog : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             // The exception's message is left out of the next file's chain.reset: it can hold a full path. A file that failed
-            // while it was started is removed (design §18.1, V1d16), so a reset that started it keeps naming the earlier
-            // failure; otherwise the reason names the file, which may be the one removed.
-            _failure = _partial is not null && failure is not null ? failure : $"a write to {_fileName} failed";
+            // while it was started is removed (design §18.1, V1d16). When the file before it was closed whole, the next file
+            // continues the chain from that file; when a reset was starting it, the next reset keeps the earlier reason.
+            if (_partial is not null && _startedFrom is not null && failure is null)
+            {
+                (_prev, _n) = _beforeStart;
+                _continueFrom = _startedFrom;
+            }
+            else
+            {
+                _failure = _partial is not null && failure is not null ? failure : $"a write to {_fileName} failed";
+            }
+
             try
             {
                 _file?.Dispose();
@@ -791,6 +831,8 @@ public sealed partial class SignedLog : IDisposable
     )
     {
         DateTimeOffset now = _time.GetUtcNow();
+        _beforeStart = (_prev, _n);
+        _startedFrom = !continueChain && forcedReset is null ? previous : null;
         (List<(string Path, DateTimeOffset Time)> existing, List<string> notLogFiles) = Scan(_directory, _baseName);
 
         // Reported at a start and once in a UTC day: a write that fails comes here again at each later write, and would
@@ -937,9 +979,11 @@ public sealed partial class SignedLog : IDisposable
             WriteAuth();
         }
 
-        // The signatures flushed the file to the disk; only now does it take its name.
+        // The signatures flushed the file to the disk; only now does it take its name, and the folder is flushed so that the
+        // name survives a crash (design §18.1, V1d16).
         File.Move(_partial!, Path.Combine(_directory, _fileName), overwrite: false);
         _partial = null;
+        FolderFlush.Flush(_directory);
     }
 
     // Removes the unfinished file of a start that failed; the start of the next file names the failure.

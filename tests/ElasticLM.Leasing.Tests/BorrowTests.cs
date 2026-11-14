@@ -304,6 +304,79 @@ public sealed class BorrowTests : IDisposable
     }
 
     /// <summary>
+    /// An early return is counted when it is allowed, before its record is written, so a return of a borrow of another
+    /// feature (another pool's lock) made meanwhile cannot also pass one below the limit; this holds for the server's limit
+    /// and for the key's (design §12.7.4, V1d16 review K3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Features pro and cad of 5 seats; the limits of the case: sbrl 1 with brl 1,000, or sbrl 10,000 with brl 1. One
+    ///   client with a borrow of each feature. A record whose first return waits until it is let go.
+    ///
+    /// Steps:
+    /// - Return the pro borrow on another thread; once its record write has begun, return the cad borrow; let the first go.
+    ///
+    /// Expected:
+    /// - The cad return is ReturnNotAllowed while the first one waits, and the first is Released; one return recorded.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 1_000)]
+    [InlineData(10_000, 1)]
+    public async Task EarlyReturn_TwoFeaturesAtOnce_CountsTheLimitOnce(int serverReturns, int borrowReturns)
+    {
+        using var server = new TestServer(
+            features: [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5), new FeatureSpec("cad", Seats: 5)],
+            borrowReturns: borrowReturns,
+            serverReturns: serverReturns
+        );
+        using var writing = new ManualResetEventSlim();
+        using var go = new ManualResetEventSlim();
+        var journal = new HeldJournal(writing, go);
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient client = server.Client();
+        var pro = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+        var cad = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week) with { FeatureId = "cad" }));
+
+        Task<ReleaseOutcome> first = Task.Run(() => engine.Release(pro.LeaseId, client.KeyId), TestContext.Current.CancellationToken);
+        Assert.True(writing.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken), "The first return did not reach its record.");
+        ReleaseOutcome second = engine.Release(cad.LeaseId, client.KeyId);
+        go.Set();
+
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, second);
+        Assert.Equal(ReleaseOutcome.Released, await first);
+        Assert.Single(journal.Returns);
+    }
+
+    /// <summary>
+    /// An early return whose record cannot be written is refused and not counted, so the next one is allowed (design
+    /// §12.7.4, V1d16 review K3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - sbrl 1, brl 1,000; a record that throws IOException while it is made to; two borrows of one client.
+    ///
+    /// Steps:
+    /// - Make the record fail and return the first borrow; let it work and return the second.
+    ///
+    /// Expected:
+    /// - ReturnNotAllowed, then Released.
+    /// </remarks>
+    [Fact]
+    public void EarlyReturn_RecordNotWritten_IsNotCounted()
+    {
+        using var server = new TestServer(borrowReturns: 1_000, serverReturns: 1);
+        var journal = new FakeJournal();
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient client = server.Client();
+        string[] borrows = [.. Enumerable.Range(0, 2).Select(_ => Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week))).LeaseId)];
+
+        journal.Fail = true;
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(borrows[0], client.KeyId));
+        journal.Fail = false;
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(borrows[1], client.KeyId));
+    }
+
+    /// <summary>
     /// A borrow needs the client's machine fingerprints, because early returns are counted by them.
     /// </summary>
     /// <remarks>
@@ -608,6 +681,30 @@ public sealed class BorrowTests : IDisposable
 
     private static void AssertRefused(ErrorCode code, LeaseOutcome outcome) =>
         Assert.Equal(code, Assert.IsType<LeaseOutcome.Refused>(outcome).Error.Code);
+
+    // A record whose first return signals that it began and waits until it is let go.
+    private sealed class HeldJournal(ManualResetEventSlim writing, ManualResetEventSlim go) : IBorrowJournal
+    {
+        private int _returns;
+
+        public List<BorrowReturn> Returns { get; } = [];
+
+        public void Borrowed(BorrowRecord borrow) { }
+
+        public void Returned(BorrowReturn returned)
+        {
+            if (Interlocked.Increment(ref _returns) == 1)
+            {
+                writing.Set();
+                Assert.True(go.Wait(TimeSpan.FromSeconds(30)), "The first return was never let go.");
+            }
+
+            lock (Returns)
+            {
+                Returns.Add(returned);
+            }
+        }
+    }
 
     private sealed class FakeJournal : IBorrowJournal
     {

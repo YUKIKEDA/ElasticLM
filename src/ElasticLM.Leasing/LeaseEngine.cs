@@ -734,10 +734,9 @@ public sealed class LeaseEngine : IDisposable
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
+                ForgetReturn(record.KeyId, borrow.Fingerprints, now);
                 return ReleaseOutcome.ReturnNotAllowed;
             }
-
-            RecordReturn(record.KeyId, borrow.Fingerprints, now);
         }
 
         Remove(pool, record);
@@ -748,81 +747,118 @@ public sealed class LeaseEngine : IDisposable
     // the license's limits, and the server license has not changed in content since the borrow (the license ID, the feature,
     // its seats, and the borrow limit). Both ways of returning a borrow come here (ReleaseHeld).
     // A feature the new license no longer grants has a pool of 0 seats, so the seat comparison covers it.
-    private bool MayReturnEarly(LeaseRecord record, BorrowRecord borrow, FeaturePool pool, LicenseState state, DateTimeOffset now) =>
-        UnderServerLimit(state.ServerBorrowReturnLimit, now)
-        && LeaseRules.MayReturnEarly(
-            CountReturns(LeaseRules.ReturnCounters(record.KeyId, borrow.Fingerprints), now),
-            state.BorrowReturnLimit,
-            state.Server.License.LicenseId == borrow.LicenseId,
-            pool.Seats,
-            borrow.FeatureSeats,
-            state.BorrowLimit,
-            borrow.FeatureBorrowLimit
-        );
-
-    // design §12.7.4 (V1d16): whether the server's early returns of the last 30 days, of any key and machine, are under its
-    // limit. At the limit the refusal is reported once in 30 days, with the time at which enough counted returns have left the
-    // window for one more: the (count - limit + 1)th oldest, 30 days on.
-    private bool UnderServerLimit(int limit, DateTimeOffset now)
+    // The counts are read and the return is counted in one hold of the table's lock (V1d16, review K3): returns of borrows of
+    // other features, which hold other pools' locks, cannot both pass at one below a limit. ReleaseHeld takes the return back
+    // when the record cannot be written.
+    private bool MayReturnEarly(LeaseRecord record, BorrowRecord borrow, FeaturePool pool, LicenseState state, DateTimeOffset now)
     {
-        DateTimeOffset until;
+        int limit = state.ServerBorrowReturnLimit;
+        string[] counters = [.. LeaseRules.ReturnCounters(record.KeyId, borrow.Fingerprints)];
+        DateTimeOffset? report = null;
+        bool allowed;
         lock (_returnsLock)
         {
-            List<DateTimeOffset> times = _returns.GetValueOrDefault(ServerCounter) ?? [];
-            int count = times.Count(t => now - t < LeaseRules.ReturnWindow);
-            if (count < limit)
+            allowed =
+                UnderServerLimit(limit, now, out report)
+                && LeaseRules.MayReturnEarly(
+                    CountReturns(counters, now),
+                    state.BorrowReturnLimit,
+                    state.Server.License.LicenseId == borrow.LicenseId,
+                    pool.Seats,
+                    borrow.FeatureSeats,
+                    state.BorrowLimit,
+                    borrow.FeatureBorrowLimit
+                );
+            if (allowed)
             {
-                return true;
+                AddReturn(counters, now);
             }
-
-            if (_returnLimitWarned is DateTimeOffset warned && now - warned < LeaseRules.ReturnWindow)
-            {
-                return false;
-            }
-
-            _returnLimitWarned = now;
-
-            // A list sort, not Order(): with Enumerable.Order over DateTimeOffset, elm-server (NativeAOT, win-x64) was 35,328 bytes
-            // larger (13,934,080 against 13,898,752 bytes; V1d16).
-            List<DateTimeOffset> counted = times.FindAll(t => now - t < LeaseRules.ReturnWindow);
-            counted.Sort();
-            until = counted[count - limit] + LeaseRules.ReturnWindow;
         }
 
-        _options.ServerReturnLimitReached?.Invoke(limit, until);
+        if (report is DateTimeOffset until)
+        {
+            _options.ServerReturnLimitReached?.Invoke(limit, until);
+        }
+
+        return allowed;
+    }
+
+    // design §12.7.4 (V1d16): whether the server's early returns of the last 30 days, of any key and machine, are under its
+    // limit; under _returnsLock. At the limit the refusal is reported once in 30 days, with the time at which enough counted
+    // returns have left the window for one more: the (count - limit + 1)th oldest, 30 days on.
+    private bool UnderServerLimit(int limit, DateTimeOffset now, out DateTimeOffset? report)
+    {
+        report = null;
+        List<DateTimeOffset> times = _returns.GetValueOrDefault(ServerCounter) ?? [];
+        int count = times.Count(t => now - t < LeaseRules.ReturnWindow);
+        if (count < limit)
+        {
+            return true;
+        }
+
+        if (_returnLimitWarned is DateTimeOffset warned && now - warned < LeaseRules.ReturnWindow)
+        {
+            return false;
+        }
+
+        _returnLimitWarned = now;
+
+        // A list sort, not Order(): with Enumerable.Order over DateTimeOffset, elm-server (NativeAOT, win-x64) was 35,328 bytes
+        // larger (13,934,080 against 13,898,752 bytes; V1d16).
+        List<DateTimeOffset> counted = times.FindAll(t => now - t < LeaseRules.ReturnWindow);
+        counted.Sort();
+        report = counted[count - limit] + LeaseRules.ReturnWindow;
         return false;
     }
 
-    // The largest count of early returns in the last 30 days among the counters.
+    // The largest count of early returns in the last 30 days among the counters; under _returnsLock.
     private int CountReturns(IEnumerable<string> counters, DateTimeOffset now)
     {
-        lock (_returnsLock)
+        int most = 0;
+        foreach (string counter in counters)
         {
-            int most = 0;
-            foreach (string counter in counters)
+            if (_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
             {
-                if (_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
-                {
-                    most = Math.Max(most, times.Count(t => now - t < LeaseRules.ReturnWindow));
-                }
+                most = Math.Max(most, times.Count(t => now - t < LeaseRules.ReturnWindow));
             }
-
-            return most;
         }
+
+        return most;
     }
 
     private void RecordReturn(string keyId, IReadOnlyList<string> fingerprints, DateTimeOffset at)
     {
         lock (_returnsLock)
         {
+            AddReturn(LeaseRules.ReturnCounters(keyId, fingerprints), at);
+        }
+    }
+
+    // Counts an early return for its counters and the server; under _returnsLock.
+    private void AddReturn(IEnumerable<string> counters, DateTimeOffset at)
+    {
+        foreach (string counter in counters.Append(ServerCounter))
+        {
+            if (!_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
+            {
+                _returns[counter] = times = [];
+            }
+
+            times.Add(at);
+        }
+    }
+
+    // Takes back an early return that MayReturnEarly counted and the record could not write.
+    private void ForgetReturn(string keyId, IReadOnlyList<string> fingerprints, DateTimeOffset at)
+    {
+        lock (_returnsLock)
+        {
             foreach (string counter in LeaseRules.ReturnCounters(keyId, fingerprints).Append(ServerCounter))
             {
-                if (!_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
+                if (_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
                 {
-                    _returns[counter] = times = [];
+                    _ = times.Remove(at);
                 }
-
-                times.Add(at);
             }
         }
     }
