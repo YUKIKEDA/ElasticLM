@@ -781,7 +781,12 @@ public sealed class LeaseEngine : IDisposable
             }
 
             _returnLimitWarned = now;
-            until = times.Where(t => now - t < LeaseRules.ReturnWindow).Order().ElementAt(count - limit) + LeaseRules.ReturnWindow;
+
+            // A list sort, not Order(): with Enumerable.Order over DateTimeOffset, elm-server (NativeAOT, win-x64) was 35,328 bytes
+            // larger (13,934,080 against 13,898,752 bytes; V1d16).
+            List<DateTimeOffset> counted = times.FindAll(t => now - t < LeaseRules.ReturnWindow);
+            counted.Sort();
+            until = counted[count - limit] + LeaseRules.ReturnWindow;
         }
 
         _options.ServerReturnLimitReached?.Invoke(limit, until);

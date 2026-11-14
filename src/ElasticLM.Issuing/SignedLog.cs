@@ -121,6 +121,9 @@ public sealed partial class SignedLog : IDisposable
     private DateOnly _reportedDay;
     private IncrementalHash _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
     private int _pending;
+
+    // The event lines written to the file being written through Append, each signed by itself or with the next ones.
+    private int _appended;
     private long _n;
     private string _prev = string.Empty;
 
@@ -183,14 +186,14 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="time">The time provider.</param>
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
     /// <param name="carry">Called for each new file, under the log's lock, for the lines it carries forward after its signed
-    /// first line; they are signed together. A new UTC day takes them from <see cref="StartNewDay"/> instead.</param>
+    /// first line; they are signed together. A new UTC day takes them from <see cref="StartNewFile"/> instead.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason instead of
     /// continuing the newest file (for a record the operator set aside).</param>
     /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
     /// name of each file in the folder whose name has the form of the log's file names but no real date and time; such a
     /// file is not a file of the log.</param>
     /// <param name="rotateOnWrite">Whether a write or a signature on a new UTC day starts the new file; when not, only
-    /// <see cref="StartNewDay"/> does, and the lines until then go to the file of the day before.</param>
+    /// <see cref="StartNewFile"/> does, and the lines until then go to the file of the day before.</param>
     /// <param name="unfinishedRemoved">Called at the start with the name of each file of the log that was left unfinished
     /// (<c>.partial</c>), which the start removes.</param>
     /// <returns>The open log.</returns>
@@ -332,6 +335,7 @@ public sealed partial class SignedLog : IDisposable
             {
                 RotateIfNewDay();
                 WriteLine(type, writeFields);
+                _appended++;
                 if (_pending >= _sealEvery)
                 {
                     WriteAuth();
@@ -433,6 +437,19 @@ public sealed partial class SignedLog : IDisposable
         }
     }
 
+    /// <summary>Gets the number of event lines written to the file being written by <see cref="Append"/>, each under a
+    /// signature of its own when <c>sealEvery</c> is 1; the lines a new file carries forward are not among them.</summary>
+    public int AppendedLines
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _appended;
+            }
+        }
+    }
+
     /// <summary>Returns whether the UTC day is no longer that of the file being written.</summary>
     /// <returns><see langword="true"/> on a new UTC day.</returns>
     public bool IsNewDay()
@@ -449,7 +466,7 @@ public sealed partial class SignedLog : IDisposable
     /// </summary>
     /// <param name="lines">The lines.</param>
     /// <param name="time">The time provider.</param>
-    /// <returns>The lines, for <see cref="StartNewDay"/>.</returns>
+    /// <returns>The lines, for <see cref="StartNewFile"/>.</returns>
     public static CarriedLines Prepare(IEnumerable<LogLine> lines, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(lines);
@@ -470,25 +487,25 @@ public sealed partial class SignedLog : IDisposable
     }
 
     /// <summary>
-    /// Starts the file of a new UTC day (design §13.4, §18.1, V1d16): signs and closes the file being written, then writes the
-    /// new file under its unfinished name with its first line signed alone, the carried lines and then
-    /// <paramref name="since"/> under one more signature, flushes it, and gives it its name. Nothing happens when the file
-    /// being written is already of this day.
+    /// Starts a new file (design §13.4, §18.1, V1d16): signs and closes the file being written, then writes the new file under
+    /// its unfinished name with its first line signed alone, the carried lines and then <paramref name="since"/> under one
+    /// more signature, flushes it, and gives it its name. When an earlier write had failed, the file that this call starts
+    /// for that failure carries the lines already, and no other file is started.
     /// </summary>
     /// <param name="carried">The lines built by <see cref="Prepare"/>.</param>
     /// <param name="since">The lines written to the file being closed since <paramref name="carried"/> was built.</param>
     /// <exception cref="IOException">The new file cannot be written; the next write starts a new file.</exception>
-    public void StartNewDay(CarriedLines carried, IReadOnlyList<LogLine> since)
+    public void StartNewFile(CarriedLines carried, IReadOnlyList<LogLine> since)
     {
         ArgumentNullException.ThrowIfNull(carried);
         ArgumentNullException.ThrowIfNull(since);
         lock (_lock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
+            bool resetFirst = _failure is not null;
             Guarded(() =>
             {
-                // After a failed write, the file Guarded started is of this day and carries the lines already.
-                if (!IsNewDayLocked())
+                if (resetFirst)
                 {
                     return;
                 }
@@ -842,6 +859,7 @@ public sealed partial class SignedLog : IDisposable
         _headFile = _fileName;
         _headAuth = string.Empty;
         _fileDay = DateOnly.FromDateTime(now.UtcDateTime);
+        _appended = 0;
         _digest.Dispose();
         _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         _pending = 0;

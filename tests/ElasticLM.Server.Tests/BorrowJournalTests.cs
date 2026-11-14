@@ -95,6 +95,89 @@ public sealed class BorrowJournalTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// Within a day, the timer's seal starts a new file once the file being written holds the count of borrows and returns
+    /// written one at a time (1,000 by default), the same way as on a new day; the count starts again in the new file
+    /// (design §13.4, V1d16 Q16-6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record opened at noon UTC, with the count set to 3.
+    ///
+    /// Steps:
+    /// - Write two returns and seal; write a third and seal; write a fourth and seal; verify the files.
+    ///
+    /// Expected:
+    /// - The default count is 1,000. One file after the first seal; two after the second, the new one holding chain.start,
+    ///   auth, the three returns, and auth; still two after the third; no error.
+    /// </remarks>
+    [Fact]
+    public void Seal_AtTheCountOfSignedLines_StartsANewFile()
+    {
+        Assert.Equal(1_000, BorrowJournal.DefaultCompactAfter);
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        BorrowJournal journal = Open(data, clock, NullLog());
+        journal.CompactAfter = 3;
+
+        journal.Returned(Return("x", clock));
+        journal.Returned(Return("y", clock));
+        journal.Seal();
+        Assert.Single(Files(data));
+
+        journal.Returned(Return("z", clock));
+        journal.Seal();
+        IReadOnlyList<string> files = Files(data);
+        Assert.Equal(2, files.Count);
+        Assert.Equal(["chain.start", "auth", "borrow.returned", "borrow.returned", "borrow.returned", "auth"], Lines(files[1]).Select(Type));
+
+        journal.Returned(Return("w", clock));
+        journal.Seal();
+        Assert.Equal(2, Files(data).Count);
+        Assert.DoesNotContain(
+            VerifiedLog.Of(Files(data), _deployment.Trust, "acme-cad", "borrows").Issues,
+            i => i.Severity == LogIssueSeverity.Error
+        );
+    }
+
+    /// <summary>
+    /// After a write that failed, the next seal of a new day starts one file only: the file started for the failure, with
+    /// chain.reset, already carries every record (design §18.1, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record with a borrow and the early return x; a signing step that fails while armed.
+    ///
+    /// Steps:
+    /// - On the next day, arm it and write the return y, which throws; disarm it and seal; load the record again.
+    ///
+    /// Expected:
+    /// - Two files, the second starting with chain.reset; the loaded record has the borrow and the return x (y was refused).
+    /// </remarks>
+    [Fact]
+    public void Seal_NewDayAfterAFailedWrite_StartsOneFile()
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(LastMinute);
+        bool fail = false;
+        BorrowJournal journal = Open(data, clock, NullLog(), failWhen: () => fail);
+        journal.Borrowed(Borrow("a"));
+        journal.Returned(Return("x", clock));
+        clock.Advance(TimeSpan.FromSeconds(70));
+        fail = true;
+        Assert.Throws<IOException>(() => journal.Returned(Return("y", clock)));
+        fail = false;
+
+        journal.Seal();
+
+        IReadOnlyList<string> files = Files(data);
+        Assert.Equal(2, files.Count);
+        Assert.Equal("chain.reset", Type(Lines(files[1])[0]));
+        BorrowJournal again = Load(data, clock);
+        Assert.Single(again.Borrows);
+        Assert.Equal(["x"], again.Returns.Select(r => r.LeaseId));
+    }
+
+    /// <summary>
     /// A stop at any step of a new day's file leaves it under its unfinished name: the next start reads the file of the day
     /// before, which holds every record, removes the unfinished file with a warning in the operational log, and continues the
     /// chain from the file of the day before.

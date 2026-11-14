@@ -26,6 +26,10 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     public const string BorrowStarted = "borrow.started";
     public const string BorrowReturned = "borrow.returned";
 
+    /// <summary>The borrows and returns written one at a time, each with its own signature, after which the next run of the
+    /// timer starts a new file (design §13.4, V1d16).</summary>
+    public const int DefaultCompactAfter = 1_000;
+
     private const int MaxFingerprints = 8;
     private static readonly TimeSpan ReturnWindow = TimeSpan.FromDays(30);
 
@@ -40,7 +44,10 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     // The lines written while the file of a new day is being built, for that file; null otherwise. Under _lock.
     private List<LogLine>? _since;
 
-    /// <summary>Gets or sets a step run after the lines of a new day's file are built and before it is written, for tests.</summary>
+    /// <summary>Gets or sets the borrows and returns written one at a time after which a new file starts; tests make it small.</summary>
+    internal int CompactAfter { get; set; } = DefaultCompactAfter;
+
+    /// <summary>Gets or sets a step run after the lines of a new file are built and before it is written, for tests.</summary>
     internal Action? Built { get; set; }
 
     /// <summary>Gets a value indicating whether the calling thread holds the record's lock, for tests.</summary>
@@ -229,10 +236,10 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     }
 
     /// <summary>
-    /// Starts a new file when the UTC day changed (design §13.4, V1d16): the lines it carries forward are built without the
-    /// record's lock, from the borrows and returns at that moment; the records written meanwhile go to the file of the day
-    /// before and, after the carried lines, to the new file. The server's 60-second timer calls it; requests never start a
-    /// file.
+    /// Starts a new file when the UTC day changed, or when the file being written holds <see cref="CompactAfter"/> borrows and
+    /// returns written one at a time (design §13.4, V1d16): the lines it carries forward are built without the record's lock,
+    /// from the borrows and returns at that moment; the records written meanwhile go to the file being closed and, after the
+    /// carried lines, to the new file. The server's 60-second timer calls it; requests never start a file.
     /// </summary>
     /// <exception cref="IOException">The new file cannot be written; the next borrow or return starts a new file.</exception>
     public void Seal()
@@ -240,7 +247,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         LogLine[] lines;
         lock (_lock)
         {
-            if (_log is null || !_log.IsNewDay())
+            if (_log is null || !(_log.IsNewDay() || _log.AppendedLines >= CompactAfter))
             {
                 _log?.Seal();
                 return;
@@ -257,7 +264,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         {
             try
             {
-                Recorded(() => _log.StartNewDay(carried, _since));
+                Recorded(() => _log.StartNewFile(carried, _since));
             }
             finally
             {
