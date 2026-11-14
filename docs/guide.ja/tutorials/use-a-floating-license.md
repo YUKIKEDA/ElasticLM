@@ -166,7 +166,7 @@ error: The server license 'server.elmlic' does not exist. Ask the vendor for a s
 
 `installation key` のあとの値がサムプリントだ。43 文字で、`-` と `_` を含むことがある。鍵そのものは `server-data` に残る。`fingerprints` のあとの値は、このマシンのマシンフィンガープリントだ。`--fingerprint` を付けて発行したライセンスはマシンにも紐付くが、このチュートリアルではこの値を使わない。実際の運用では、顧客の管理者がこのサムプリントをベンダーに送り、ベンダーがサーバーライセンスを発行する。
 
-Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めると、サーバーは代わりに `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.` と、それに続くもう 1 文を表示し、やはり終了コード 1 で終わる。チュートリアルのフォルダーで `chmod go-w .` と打ち、同じ `elm-server` コマンドをもう一度打つ。先に `server-data` を消す必要はない。
+Linux と macOS では、チュートリアルのフォルダーにグループやほかのユーザーが書き込めると、サーバーは代わりに `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.` と、それに続くもう 1 文を表示し、やはり終了コード 1 で終わる。チュートリアルのフォルダーで `chmod go-w .` と打ち、同じ `elm-server` コマンドをもう一度打つ。先に `server-data` を消す必要はない。行が、チュートリアルのフォルダーではなく、どのユーザーも書き込める `/tmp` のような、その上のフォルダーを示すときは、チュートリアルのフォルダーをホームフォルダーの中に移す。Windows では、チュートリアルのフォルダーが、Authenticated Users（S-1-5-11）にフォルダーの変更を許すドライブにあると、サーバーは同じように、`above it lets S-1-5-11 delete or replace what is in it.` で終わる行を出して止まる。そのときは、チュートリアルのフォルダーをユーザーフォルダーの中に作る。
 
 サーバーが代わりに `error: The path of the administration socket …` と表示したときは、チュートリアルのフォルダーのパスが長すぎる。フォルダーをパスの短い場所に移し、そこでターミナルを開く。その `tools` フォルダーをもう一度 `PATH` に加え、同じ `elm-server` コマンドを打つ。
 
