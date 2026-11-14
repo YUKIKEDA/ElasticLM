@@ -136,7 +136,6 @@ public sealed class ActivationClient : IAsyncDisposable
     private readonly ActivationClientOptions _options;
     private readonly Uri? _service;
     private readonly InstallationKeyStore _keys;
-
     private readonly IReadOnlyList<string> _fingerprints;
     private readonly ClientInfoBody? _clientInfo;
     private readonly LicenseVerifier _received;

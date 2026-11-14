@@ -382,6 +382,78 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A server whose data folder is reached through two links in a row goes on in the folder where they ended at the start:
+    /// its socket is there, and when an activation made while it runs makes its client again, the client keeps its files
+    /// there too, though the second link now leads elsewhere (design §10.2, V1d24, review K1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; end and other, two data folders that pass the check; in a folder of the test,
+    ///   two/second, a link to end, and one/first, a link to two/second. Links are symbolic links on Linux and macOS and
+    ///   junctions on Windows, where the first junction gets an access list of its own that passes. A server with
+    ///   dataDirectory one/first, service.url, and a license issued by hand at end/server.elmlic.
+    ///
+    /// Steps:
+    /// - Start the server; point two/second at other; activate with elm server on end while the server runs.
+    ///
+    /// Expected:
+    /// - The server's data folder is end and its socket end/admin.sock; after the activation autoRefresh is true, and other
+    ///   holds neither a key nor an activation.
+    /// </remarks>
+    [Fact]
+    public async Task DataFolderThroughTwoLinks_LinkChangedWhileRunning_KeepsTheFilesWhereTheLinksEnded()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string end = _deployment.NewFolder();
+        string other = _deployment.NewFolder();
+        string two = _deployment.NextFolderPath();
+        string one = _deployment.NextFolderPath();
+        Directory.CreateDirectory(two);
+        Directory.CreateDirectory(one);
+        string second = Path.Combine(two, "2");
+        string first = Path.Combine(one, "1");
+        MakeLink(second, end);
+        MakeLink(first, second);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+                Run("icacls", first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            }
+
+            string license = Path.Combine(end, "server.elmlic");
+            ServerSettings settings = Settings(test, first) with { ServiceUrl = service.Url, LicensePath = license };
+            File.WriteAllBytes(license, HandLicense(test, Deployment.ServerKeyId(end)));
+            ElmServer server = await StartAsync(test, settings);
+            Assert.Equal(end, server.DataDirectory);
+            Assert.Equal(Path.Combine(end, "admin.sock"), server.AdminSocketPath);
+
+            Directory.Delete(second);
+            MakeLink(second, other);
+            (int code, _, string error) = Run(
+                test,
+                ["server", "activate", key, .. Common(end), "--service", service.Url.ToString(), "--license", license]
+            );
+            Assert.True(code == 0, error);
+            Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
+            Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            Assert.False(File.Exists(Path.Combine(other, "activation.json")));
+        }
+        finally
+        {
+            foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned))
+            {
+                await owned.DisposeAsync();
+            }
+
+            _owned.Clear();
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
     /// When the running server refuses the file that elm server activate wrote, the command prints one line with the code and
     /// the server's reason, and the server keeps its license.
     /// </summary>
@@ -1184,6 +1256,30 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         ElmServer server = await ElmServer.StartAsync(settings, host);
         _owned.Add(server);
         return server;
+    }
+
+    // A symbolic link on Linux and macOS; a junction on Windows, which needs no right of its own.
+    private static void MakeLink(string link, string target)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Run("cmd.exe", "/c", "mklink", "/J", link, target);
+        }
+        else
+        {
+            File.CreateSymbolicLink(link, target);
+        }
+    }
+
+    // Runs a program and fails the test when it does not succeed.
+    private static void Run(string program, params string[] arguments)
+    {
+        using var process = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo(program, arguments) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"{program} {string.Join(' ', arguments.Take(3))} exited with {process.ExitCode}: {output.Trim()}");
     }
 
     private static (int Code, string Out, string Error) Run(

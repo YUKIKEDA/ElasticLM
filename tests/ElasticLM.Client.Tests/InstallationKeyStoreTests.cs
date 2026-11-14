@@ -1149,7 +1149,7 @@ public sealed class InstallationKeyStoreTests : IDisposable
     }
 
     // Makes a symbolic link (Linux, macOS) or a junction (Windows) to a folder.
-    private static void MakeLink(string link, string target)
+    internal static void MakeLink(string link, string target)
     {
         if (OperatingSystem.IsWindows())
         {
@@ -1194,7 +1194,7 @@ public sealed class InstallationKeyStoreTests : IDisposable
     }
 
     // Runs icacls; skips the test where this user may not, except on GitHub Actions.
-    private static void Icacls(params string[] arguments)
+    internal static void Icacls(params string[] arguments)
     {
         using var icacls = Process.Start(new ProcessStartInfo("icacls", arguments) { RedirectStandardError = true, RedirectStandardOutput = true })!;
         string output = icacls.StandardOutput.ReadToEnd() + icacls.StandardError.ReadToEnd();

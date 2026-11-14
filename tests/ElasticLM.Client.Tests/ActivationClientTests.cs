@@ -89,6 +89,82 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// A machine-scope client whose folder is reached through two links in a row, and which has no key when it starts, keeps
+    /// its activation where the links ended when the activation made its key: a later change of the second link does not
+    /// move it (design §10.2, V1d24, review K1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Product app with feature core; a license of 2 activations. end and other, machine-scope folders without a key; in
+    ///   the test's folder, two/2, a link to end, and one/1, a link to two/2 (symbolic links on Linux and macOS, junctions on
+    ///   Windows, where one/1 gets an access list of its own that passes). A machine-scope client of one/1.
+    ///
+    /// Steps:
+    /// - Activate; point two/2 at other; refresh.
+    ///
+    /// Expected:
+    /// - Activated with sequence 1, then 2; the activation file is in end, and other holds neither a key nor an activation.
+    /// </remarks>
+    [Fact]
+    public async Task MachineScope_FolderThroughTwoLinksChangedAfterActivating_RefreshKeepsWhereTheLinksEnded()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync("\"maxActivations\":2");
+        string end = vendor.Folder("end");
+        string other = vendor.Folder("other");
+        foreach (string made in new[] { end, other })
+        {
+            Assert.True(new InstallationKeyStore(Product, KeyScope.Machine, made).TryLoadOrCreate(out InstallationKey? created, out _));
+            created!.Dispose();
+            File.Delete(Path.Combine(made, "installation.key"));
+        }
+
+        string two = vendor.Folder("two");
+        string one = vendor.Folder("one");
+        Directory.CreateDirectory(two);
+        Directory.CreateDirectory(one);
+        string second = Path.Combine(two, "2");
+        string first = Path.Combine(one, "1");
+        InstallationKeyStoreTests.MakeLink(second, end);
+        InstallationKeyStoreTests.MakeLink(first, second);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+                InstallationKeyStoreTests.Icacls(first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            }
+
+            var options = new ActivationClientOptions
+            {
+                ProductId = Product,
+                ServiceUrl = vendor.Service.Url,
+                Trust = TrustStore.Create([File.ReadAllText(vendor.Test.FilePath("root.pub.pem"))], []),
+                KeyScope = KeyScope.Machine,
+                DataDirectory = first,
+                TimeProvider = vendor.Test.Time,
+            };
+            Assert.True(ActivationClient.TryCreate(options, out ActivationClient? client, out LicenseError? error), error?.Message);
+            await using (client)
+            {
+                Assert.Equal(1L, Activated(await client!.ActivateAsync(key, Cancel)).Sequence);
+                Directory.Delete(second);
+                InstallationKeyStoreTests.MakeLink(second, other);
+                Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+            }
+
+            Assert.True(File.Exists(Path.Combine(end, "activation.json")));
+            Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            Assert.False(File.Exists(Path.Combine(other, "activation.json")));
+        }
+        finally
+        {
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
     /// A license key activates the installation; the kept file checks offline; a refresh moves the sequence number; another
     /// activation is refused while one is kept; a deactivation removes the file and keeps the key (design §12.6.2).
     /// </summary>

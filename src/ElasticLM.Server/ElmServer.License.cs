@@ -56,13 +56,15 @@ internal sealed partial class ElmServer
                 return;
             }
 
+            // design §10.2 (V1d24): the data folder is the one the start checked, where links led then; its name in the settings
+            // would follow them again.
             var options = new ActivationClientOptions
             {
                 ProductId = _settings.Product,
                 ServiceUrl = service,
                 Trust = _trust,
                 KeyScope = KeyScope.Machine,
-                DataDirectory = _settings.DataDirectory,
+                DataDirectory = _store.Directory,
                 TimeProvider = Time,
                 ClockGuard = _guard,
                 RequiredKind = LicenseKind.Server,
