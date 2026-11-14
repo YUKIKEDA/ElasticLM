@@ -2079,6 +2079,7 @@ public sealed class SignedLogTests : IDisposable
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         return LicenseIssuer.Issue(_signing, [certificate], spec, _time).File;
     }

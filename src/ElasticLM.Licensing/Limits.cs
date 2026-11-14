@@ -14,6 +14,9 @@ internal static class Limits
     /// <summary>The largest early-return count a server license may allow in 30 days (<c>brl</c>).</summary>
     public const int MaxBorrowReturns = 1_000;
 
+    /// <summary>The largest early-return count a server license may allow its server in 30 days (<c>sbrl</c>).</summary>
+    public const int MaxServerBorrowReturns = 10_000;
+
     public const int MaxTokenLength = 16 * 1024;
     public const int MaxLicenseFileLength = 64 * 1024;
     public const int MaxCertificates = 4;

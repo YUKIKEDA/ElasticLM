@@ -189,6 +189,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <summary>Gets the host's services, for tests that look at what the host registered (the routes, design §20.7).</summary>
     internal IServiceProvider Services => _app.Services;
 
+    /// <summary>Gets the record of borrows and early returns, for tests.</summary>
+    internal BorrowJournal Record => _journal;
+
     private SigningKeyAccess KeyAccess => use => _key.WithPrivateKey(use);
 
     /// <summary>
@@ -313,6 +316,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     Journal = journal,
                     Expired = lease =>
                         usage.Lease(lease.IsBorrow ? "borrow.expired" : "lease.expired", lease, (created?.Server ?? identity!).License.LicenseId),
+                    ServerReturnLimitReached = (limit, until) => ServerLog.ReturnLimitReached(log, limit, until),
                 }
             );
             created = engine;
@@ -924,12 +928,14 @@ internal sealed partial class ElmServer : IAsyncDisposable
         ServerLog.Started(_log, port, _publicUrls, KeyId, Engine.Server.License.LicenseId, (long)startup.TotalMilliseconds, Engine.RecoveryEndsAt);
     }
 
-    // design §13.2: expired leases, proof IDs, and idle rate buckets go every 30 seconds.
+    // design §13.2: expired leases, proof IDs, and idle rate buckets go every 30 seconds, and so do the borrows and early
+    // returns the record no longer carries forward (design §12.7.4, V1d16).
     private void Cleanup()
     {
         try
         {
             Engine.Purge();
+            _journal.Purge();
             _replays.Purge();
             _limiter.Purge();
         }

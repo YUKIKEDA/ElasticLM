@@ -673,14 +673,15 @@ public sealed class ElmServiceActivationsTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A server policy: lease 600 s, borrow up to an hour, overage 10 %, 3 early returns, clone flag; a license with core
-    ///   of 5 seats.
+    /// - A server policy: lease 600 s, borrow up to an hour, overage 10 %, 3 early returns, 7 early returns of the server,
+    ///   clone flag; a license with core of 5 seats.
     ///
     /// Steps:
-    /// - Activate and verify as a server license.
+    /// - Change the policy's serverBorrowReturnLimit to 8; activate and verify as a server license.
     ///
     /// Expected:
-    /// - Kind server, core with 5 seats, lease 600 s, borrow an hour, overage 10, 3 returns, Flag.
+    /// - Kind server, core with 5 seats, lease 600 s, borrow an hour, overage 10, 3 returns, 8 returns of the server (the
+    ///   value the policy was changed to), Flag.
     /// </remarks>
     [Fact]
     public async Task Activate_ServerLicense_CarriesTheLeaseMembers()
@@ -691,15 +692,16 @@ public sealed class ElmServiceActivationsTests
         string policy = await TestService.PolicyAsync(
             admin,
             product,
-            "\"licenseKind\":\"server\",\"leaseDuration\":600,\"borrowLimit\":3600,\"overage\":10,\"borrowReturnLimit\":3,\"cloneStrategy\":\"flag\""
+            "\"licenseKind\":\"server\",\"leaseDuration\":600,\"borrowLimit\":3600,\"overage\":10,\"borrowReturnLimit\":3,\"serverBorrowReturnLimit\":7,\"cloneStrategy\":\"flag\""
         );
+        await TestService.PatchAsync(admin, $"v1/admin/policies/{policy}", """{"serverBorrowReturnLimit":8}""");
         (_, string key) = await LicenseAsync(admin, policy, features: """[{"code":"core","seats":5}]""");
         using var device = TestDevice.Create(test, service);
         string[] prints = TestDevice.Fingerprints();
 
         VerifiedLicense license = device.Verify((await device.ActivateAsync(key, prints)).File, prints, LicenseKind.Server);
         Assert.Equal(
-            (LicenseKind.Server, 5, TimeSpan.FromSeconds(600), TimeSpan.FromHours(1), 10, 3, CloneStrategy.Flag),
+            (LicenseKind.Server, 5, TimeSpan.FromSeconds(600), TimeSpan.FromHours(1), 10, 3, 8, CloneStrategy.Flag),
             (
                 license.Kind,
                 license.Features.Single().Seats!.Value,
@@ -707,6 +709,7 @@ public sealed class ElmServiceActivationsTests
                 license.BorrowLimit!.Value,
                 license.OveragePercent!.Value,
                 license.BorrowReturnLimit!.Value,
+                license.ServerBorrowReturnLimit!.Value,
                 license.CloneStrategy!.Value
             )
         );

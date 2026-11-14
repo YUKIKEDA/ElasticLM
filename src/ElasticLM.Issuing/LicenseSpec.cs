@@ -87,6 +87,10 @@ public sealed record LicenseSpec
     /// licenses, 0 to 1,000.</summary>
     public int? BorrowReturnLimit { get; init; }
 
+    /// <summary>Gets how many borrows the server may take back early in 30 days, whatever the key and the machine (design
+    /// §12.7.4, V1d16); required for server licenses, 1 to 10,000.</summary>
+    public int? ServerBorrowReturnLimit { get; init; }
+
     /// <summary>Gets what the server does with a detected clone (design §10.4); required for server licenses.</summary>
     public CloneStrategy? CloneStrategy { get; init; }
 

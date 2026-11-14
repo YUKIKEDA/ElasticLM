@@ -182,6 +182,7 @@ public static class LicenseIssuer
             Borrow = spec.BorrowLimit is { } borrow ? Seconds(borrow) : null,
             Overage = spec.OveragePercent,
             Brl = spec.BorrowReturnLimit,
+            Sbrl = spec.ServerBorrowReturnLimit,
             Clone = spec.CloneStrategy switch
             {
                 null => null,

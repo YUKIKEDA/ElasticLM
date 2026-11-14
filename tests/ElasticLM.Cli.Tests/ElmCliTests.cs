@@ -67,17 +67,21 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
-    /// A server license states what the server does with a clone (design §8.4.2): deny unless --clone says flag.
+    /// A server license states what the server does with a clone (design §8.4.2): deny unless --clone says flag; and the
+    /// early returns its server takes in 30 days: 10,000 unless --server-borrow-returns says otherwise, from 1 to 10,000
+    /// (V1d16).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Keys and a certificate from the offline flow.
     ///
     /// Steps:
-    /// - Issue a server license (pro, 5 seats) without --clone and with --clone flag; inspect both.
+    /// - Issue a server license (pro, 5 seats) without --clone; with --clone flag, --borrow-returns 5, and
+    ///   --server-borrow-returns 1; with --server-borrow-returns 10000, 0, and 10001; inspect the ones issued.
     ///
     /// Expected:
-    /// - Exit 0; the payloads hold "clone": "deny" and "clone": "flag".
+    /// - Exit 0 three times; the payloads hold "clone": "deny", "brl": 2, "sbrl": 10000, and "clone": "flag", "brl": 5,
+    ///   "sbrl": 1, and "sbrl": 10000. Exit 2 for 0 and 10001, with the message of a license that breaks the token format.
     /// </remarks>
     [Fact]
     public void IssueServer_Clone_DefaultsToDeny()
@@ -91,11 +95,19 @@ public sealed class ElmCliTests : IDisposable
         }
 
         Assert.Equal(0, Run(Server("deny.elmlic")).Code);
-        Assert.Equal(0, Run(Server("flag.elmlic", "--clone", "flag", "--borrow-returns", "5")).Code);
+        Assert.Equal(0, Run(Server("flag.elmlic", "--clone", "flag", "--borrow-returns", "5", "--server-borrow-returns", "1")).Code);
+        Assert.Equal(0, Run(Server("most.elmlic", "--server-borrow-returns", "10000")).Code);
+        foreach (string outside in new[] { "0", "10001" })
+        {
+            AssertInputError(Run(Server($"{outside}.elmlic", "--server-borrow-returns", outside)), "breaks a rule of the token format");
+        }
 
         Assert.Contains("\"clone\": \"deny\"", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
         Assert.Contains("\"brl\": 2", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
         Assert.Contains("\"brl\": 5", Run("license", "inspect", P("flag.elmlic")).Out, StringComparison.Ordinal);
+        Assert.Contains("\"sbrl\": 10000", Run("license", "inspect", P("deny.elmlic")).Out, StringComparison.Ordinal);
+        Assert.Matches("\"sbrl\": 1(?![0-9])", Run("license", "inspect", P("flag.elmlic")).Out);
+        Assert.Contains("\"sbrl\": 10000", Run("license", "inspect", P("most.elmlic")).Out, StringComparison.Ordinal);
         Assert.Contains("\"clone\": \"flag\"", Run("license", "inspect", P("flag.elmlic")).Out, StringComparison.Ordinal);
     }
 
@@ -124,6 +136,7 @@ public sealed class ElmCliTests : IDisposable
         AssertInputError(Run([.. Issue("x.elmlic"), "--lease-minutes", "5"]), "server licenses only");
         AssertInputError(Run([.. Issue("x.elmlic"), "--clone", "flag"]), "server licenses only");
         AssertInputError(Run([.. Issue("x.elmlic"), "--borrow-returns", "3"]), "server licenses only");
+        AssertInputError(Run([.. Issue("x.elmlic"), "--server-borrow-returns", "3"]), "server licenses only");
         AssertInputError(Run([.. Issue("x.elmlic"), "--kind", "server", "--clone", "maybe"]), "deny or flag");
         AssertInputError(
             Run("key", "certify", "--root", P("root.key.pem"), "--public", P("signing.key.pem.pub.pem"), "--use", "everything", "--out", P("c2.jws")),

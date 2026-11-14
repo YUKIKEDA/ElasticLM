@@ -200,6 +200,19 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
+    /// <summary>
+    /// Drops the borrows that have expired and the early returns older than 30 days, which a new file would not carry forward
+    /// (design §12.7.4, V1d16). The server calls it every 30 seconds.
+    /// </summary>
+    public void Purge()
+    {
+        DateTimeOffset now = _time.GetUtcNow();
+        lock (_lock)
+        {
+            Drop(now);
+        }
+    }
+
     /// <summary>Starts a new file when the UTC day changed.</summary>
     public void Seal()
     {
@@ -355,6 +368,13 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
+    // The borrows that have expired and the early returns older than 30 days, which are not carried forward.
+    private void Drop(DateTimeOffset now)
+    {
+        _borrows.RemoveAll(b => b.Expires < now.ToUnixTimeSeconds());
+        _returns.RemoveAll(r => now - r.At >= ReturnWindow);
+    }
+
     // A new file carries forward the borrows that have not expired and the early returns of the last 30 days. It runs under
     // the log's lock, which the callers reach through the record's lock (see the remarks).
     private void CarryForward(SignedLog log)
@@ -362,8 +382,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         DateTimeOffset now = _time.GetUtcNow();
         lock (_lock)
         {
-            _borrows.RemoveAll(b => b.Expires < now.ToUnixTimeSeconds());
-            _returns.RemoveAll(r => now - r.At >= ReturnWindow);
+            Drop(now);
             foreach ((BorrowRecord record, _, _) in _borrows)
             {
                 WriteBorrow(log, record);

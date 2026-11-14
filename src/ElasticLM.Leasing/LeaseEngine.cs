@@ -23,6 +23,10 @@ public sealed class LeaseEngine : IDisposable
     /// <summary>The most proof IDs a renewal may name as earlier attempts (design §8.6).</summary>
     public const int MaxRetryProofIds = 16;
 
+    // The counter of every early return of the server (design §12.7.4, V1d16). The counters of keys and fingerprints start
+    // with "key:" and "fp:", so they never take this name.
+    private const string ServerCounter = "server";
+
     private readonly LeaseSigner _sign;
     private readonly LeaseVerifier _verifier;
     private readonly TimeProvider _time;
@@ -32,11 +36,16 @@ public sealed class LeaseEngine : IDisposable
 
     // design §12.7.7 (V1d5b): the leases an acquisition or a borrow issued, by the key and the jti of that request's proof.
     private readonly ConcurrentDictionary<(string KeyId, string ProofId), LeaseRecord> _byRequest = new();
+
+    // The times of the early returns by counter: each key and fingerprint (LeaseRules.ReturnCounters), and the whole server.
     private readonly Dictionary<string, List<DateTimeOffset>> _returns = new(StringComparer.Ordinal);
     private readonly Lock _returnsLock = new();
     private readonly DateTimeOffset _recoveryEnds;
     private LicenseState _state;
     private volatile bool _recoveryOver;
+
+    // design §12.7.4 (V1d16): when the server last warned that it reached its limit of early returns; under _returnsLock.
+    private DateTimeOffset? _returnLimitWarned;
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LeaseEngine"/> class. The reclaim window (design §13.4) starts now and
@@ -735,12 +744,13 @@ public sealed class LeaseEngine : IDisposable
         return ReleaseOutcome.Released;
     }
 
-    // design §12.7.4: the early returns of the last 30 days of the key and of each fingerprint are under the license's limit,
-    // and the server license has not changed in content since the borrow (the license ID, the feature, its seats, and the
-    // borrow limit).
+    // design §12.7.4: the early returns of the last 30 days of the server (V1d16), of the key, and of each fingerprint are under
+    // the license's limits, and the server license has not changed in content since the borrow (the license ID, the feature,
+    // its seats, and the borrow limit). Both ways of returning a borrow come here (ReleaseHeld).
     // A feature the new license no longer grants has a pool of 0 seats, so the seat comparison covers it.
     private bool MayReturnEarly(LeaseRecord record, BorrowRecord borrow, FeaturePool pool, LicenseState state, DateTimeOffset now) =>
-        LeaseRules.MayReturnEarly(
+        UnderServerLimit(state.ServerBorrowReturnLimit, now)
+        && LeaseRules.MayReturnEarly(
             CountReturns(LeaseRules.ReturnCounters(record.KeyId, borrow.Fingerprints), now),
             state.BorrowReturnLimit,
             state.Server.License.LicenseId == borrow.LicenseId,
@@ -749,6 +759,34 @@ public sealed class LeaseEngine : IDisposable
             state.BorrowLimit,
             borrow.FeatureBorrowLimit
         );
+
+    // design §12.7.4 (V1d16): whether the server's early returns of the last 30 days, of any key and machine, are under its
+    // limit. At the limit the refusal is reported once in 30 days, with the time at which enough counted returns have left the
+    // window for one more: the (count - limit + 1)th oldest, 30 days on.
+    private bool UnderServerLimit(int limit, DateTimeOffset now)
+    {
+        DateTimeOffset until;
+        lock (_returnsLock)
+        {
+            List<DateTimeOffset> times = _returns.GetValueOrDefault(ServerCounter) ?? [];
+            int count = times.Count(t => now - t < LeaseRules.ReturnWindow);
+            if (count < limit)
+            {
+                return true;
+            }
+
+            if (_returnLimitWarned is DateTimeOffset warned && now - warned < LeaseRules.ReturnWindow)
+            {
+                return false;
+            }
+
+            _returnLimitWarned = now;
+            until = times.Where(t => now - t < LeaseRules.ReturnWindow).Order().ElementAt(count - limit) + LeaseRules.ReturnWindow;
+        }
+
+        _options.ServerReturnLimitReached?.Invoke(limit, until);
+        return false;
+    }
 
     // The largest count of early returns in the last 30 days among the counters.
     private int CountReturns(IEnumerable<string> counters, DateTimeOffset now)
@@ -772,7 +810,7 @@ public sealed class LeaseEngine : IDisposable
     {
         lock (_returnsLock)
         {
-            foreach (string counter in LeaseRules.ReturnCounters(keyId, fingerprints))
+            foreach (string counter in LeaseRules.ReturnCounters(keyId, fingerprints).Append(ServerCounter))
             {
                 if (!_returns.TryGetValue(counter, out List<DateTimeOffset>? times))
                 {
@@ -994,6 +1032,7 @@ public sealed class LeaseEngine : IDisposable
             LeaseSeconds = (long)Lease.TotalSeconds;
             BorrowLimit = license.BorrowLimit!.Value;
             BorrowReturnLimit = license.BorrowReturnLimit!.Value;
+            ServerBorrowReturnLimit = license.ServerBorrowReturnLimit!.Value;
             CloneStrategy = license.CloneStrategy!.Value;
             _overage = license.OveragePercent!.Value;
 
@@ -1015,6 +1054,8 @@ public sealed class LeaseEngine : IDisposable
         public TimeSpan BorrowLimit { get; }
 
         public int BorrowReturnLimit { get; }
+
+        public int ServerBorrowReturnLimit { get; }
 
         public CloneStrategy CloneStrategy { get; }
 

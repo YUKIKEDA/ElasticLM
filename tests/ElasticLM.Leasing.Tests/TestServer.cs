@@ -25,7 +25,8 @@ internal sealed class TestServer : IDisposable
         DateTimeOffset? expires = null,
         TimeSpan? grace = null,
         TimeSpan? borrow = null,
-        int borrowReturns = 2
+        int borrowReturns = 2,
+        int serverReturns = 10_000
     )
     {
         Time = new FakeTimeProvider(Start);
@@ -46,6 +47,7 @@ internal sealed class TestServer : IDisposable
             OveragePercent = overage,
             CloneStrategy = clone,
             BorrowReturnLimit = borrowReturns,
+            ServerBorrowReturnLimit = serverReturns,
         };
         Identity = IssueIdentity();
     }

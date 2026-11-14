@@ -66,6 +66,14 @@ internal static partial class ServerLog
     [LoggerMessage(EventId = 34, Level = LogLevel.Error, Message = "The borrow record cannot be written; the borrow or the early return is refused.")]
     public static partial void BorrowRecordFailed(ILogger log, Exception exception);
 
+    // design §12.7.4, §18.3 (V1d16).
+    [LoggerMessage(
+        EventId = 35,
+        Level = LogLevel.Warning,
+        Message = "The server reached its limit of {Limit} early returns in 30 days; early returns are refused at least until {Until:O}."
+    )]
+    public static partial void ReturnLimitReached(ILogger log, int limit, DateTimeOffset until);
+
     [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
     public static partial void AdminAction(ILogger log, string action, string? target, string result);
 
