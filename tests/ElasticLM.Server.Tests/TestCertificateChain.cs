@@ -306,9 +306,13 @@ internal sealed class TestCertificateChain : IDisposable
                     }
                 }
             }
-            catch (OperationCanceledException)
+            catch (Exception e)
+                when (e is OperationCanceledException
+                    || (e is SocketException { SocketErrorCode: SocketError.OperationAborted } && cancellationToken.IsCancellationRequested)
+                )
             {
-                // The test is over.
+                // The test is over. A cancelled wait on the socket may also end with SocketException OperationAborted
+                // (Issue #392).
             }
             finally
             {

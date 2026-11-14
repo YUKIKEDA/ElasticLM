@@ -23,7 +23,7 @@ sidebar_position: 16
 | `rateLimit.clientPerIp` | `20` | 1 つの送信元から、アプリが呼び出すデバイス用のエンドポイントへのリクエスト。アクティベーション、トライアル、ノンス、オフラインのファイル、リースがこれに当たる。リクエストのプルーフを確かめる前に数える。 |
 | `rateLimit.clientPerKey` | `2` | 1 つのインストール鍵、つまりアプリの 1 つのインストールによるデバイスのリクエスト。 |
 
-1 回のアクティベーションやトークンの更新では、デバイスのリクエストが 2 つになる。ノンスのリクエストと、リクエストそのものだ。そのため、既定の `clientPerIp` では、1 つの送信元が 1 秒に 10 台のデバイスをアクティベーションできる。それぞれの値は 1 から 10000 の整数だ。`perKey` は `perIp` 以下にしておく。1 つの送信元からの API キーのリクエストは両方の上限で数えられるので、そうしたキーでは、`perKey` を送信元ごとの上限より大きくしても効かない。
+アプリの 1 回のアクティベーションやトークンの更新では、デバイスのリクエストが 2 つになる。ノンスのリクエストと、リクエストそのものだ。そのため、既定の `clientPerIp` では、1 つの送信元が 1 秒に 10 台のデバイスをアクティベーションできる。`rateLimit` のそれぞれの値は 1 から 10000 の整数だ。`perKey` は `perIp` 以下にしておく。1 つの送信元からの API キーのリクエストは両方の上限で数えられるので、そうしたキーでは、`perKey` を送信元ごとの上限より大きくしても効かない。ただし、ノンスは 300 秒のあいだ使えるので、1 つのノンスを使い続けるスクリプトは、アクティベーションやトライアルの 1 件ごとにリクエストを 1 つ送り、1 秒に 20 件になる。トライアルは製品ごとにも、どの 24 時間をとっても、製品のトライアルのポリシーの `trialDailyLimit` で制限される。これは `rateLimit` の設定ではない（[トライアルを提供する](offer-a-trial.md#製品が-24-時間に出すトライアルの数を決める)）。
 
 ## 上限を設定する
 
@@ -116,7 +116,7 @@ rateLimit.perIp must be between 1 and 10000.
 
 ## 拒否された呼び出し元に返るもの
 
-サービスは、上限を超えたリクエストに、ステータス 429、エラーコード `ELM_RATE_LIMITED`、ヘッダー `Retry-After: 1` で応える。呼び出し元は 1 秒後に再試行してよい。レスポンスは problem 形式で、その `detail` がどの上限かを示す。
+サービスは、これらの上限を超えたリクエストに、ステータス 429、エラーコード `ELM_RATE_LIMITED`、ヘッダー `Retry-After: 1` で応える。呼び出し元は 1 秒後に再試行してよい。レスポンスは problem 形式で、その `detail` がどの上限かを示す。
 
 | `detail` | 上限 |
 | --- | --- |
@@ -124,6 +124,7 @@ rateLimit.perIp must be between 1 and 10000.
 | `Too many requests with this API key.` | `perKey`（API キーの場合） |
 | `Too many requests from this administrator.` | `perKey`（OIDC のアクセストークンか管理画面のセッションの場合） |
 | `Too many requests with this installation key.` | `clientPerKey` |
+| `The product has reached its limit of N trials in 24 hours.` | `rateLimit` の設定ではなく、トライアルのポリシーの `trialDailyLimit`。その `Retry-After` は最大 86,400 秒だ（[トライアルを提供する](offer-a-trial.md#製品が-24-時間に出すトライアルの数を決める)）。 |
 
 `elm admin request` は、このようなレスポンスを標準エラー出力に表示し、終了コード 1 で終わる。
 

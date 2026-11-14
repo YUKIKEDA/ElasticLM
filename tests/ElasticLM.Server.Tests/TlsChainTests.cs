@@ -290,8 +290,10 @@ public sealed class TlsChainTests : IAsyncDisposable
     ///   key, and the intermediate; a recording log provider.
     ///
     /// Steps:
-    /// - Start the server with the files on a port of the test's choice and a data folder of the test; then connect to that
-    ///   port, and read the data folder and the operational log.
+    /// - Start the server with the files on port 0 and a data folder of the test; then connect to the port the host's "Now
+    ///   listening on" entry names, and read the data folder and the operational log. The port is not known before the start
+    ///   (the V1d3b Grill, 3b-3); after the failed start another program could take it, and the connection would then not be
+    ///   refused.
     ///
     /// Expected:
     /// - ServerStartException "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS
@@ -321,18 +323,18 @@ public sealed class TlsChainTests : IAsyncDisposable
         (string certificate, string? key) = pkcs12
             ? (chain.WritePkcs12(_deployment.FilePath("first.pfx"), [chain.Intermediate]), null)
             : chain.WritePem(_deployment.FilePath("first.crt"), _deployment.FilePath("first.key"), chain.Intermediate);
-        int port = FreePort();
         string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data);
         using var log = new RecordingLoggerProvider();
         ServerSettings settings = _deployment.Settings(data) with
         {
-            Listen = new Uri($"https://127.0.0.1:{port}"),
+            Listen = new Uri("https://127.0.0.1:0"),
             TlsCertificate = certificate,
             TlsKey = key,
         };
 
         var refused = await Assert.ThrowsAsync<ServerStartException>(() => ElmServer.StartAsync(settings, HostOptions(log), cancel));
+        int port = log.ListeningPort("https");
 
         Assert.Equal(
             $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the TLS "
@@ -359,9 +361,9 @@ public sealed class TlsChainTests : IAsyncDisposable
     ///   SelfCheckTarget); a recording log provider.
     ///
     /// Steps:
-    /// - Start the server on a port of the test's choice; once the test's listener has accepted the check's connection, send
-    ///   GET /v1/nonce over https and POST /admin/v1/log/seal with the administrator token over admin.sock; then move the fake
-    ///   clock 10 seconds.
+    /// - Start the server on port 0; once the test's listener has accepted the check's connection, read the port from the
+    ///   host's "Now listening on" entry, send GET /v1/nonce over https to it and POST /admin/v1/log/seal with the
+    ///   administrator token over admin.sock; then move the fake clock 10 seconds.
     ///
     /// Expected:
     /// - Both requests fail without an answer. ServerStartException "The check that Windows sends the intermediate CA
@@ -376,7 +378,6 @@ public sealed class TlsChainTests : IAsyncDisposable
         CancellationToken cancel = TestContext.Current.CancellationToken;
         TestCertificateChain chain = NewChain(sentByServer: true);
         (string certificate, string key) = chain.WritePem(_deployment.FilePath("hole.crt"), _deployment.FilePath("hole.key"), chain.Intermediate);
-        int port = FreePort();
         string data = _deployment.NewFolder();
         _deployment.WriteServerLicense(data);
         using var hole = new TcpListener(IPAddress.Loopback, 0);
@@ -385,7 +386,7 @@ public sealed class TlsChainTests : IAsyncDisposable
         using var log = new RecordingLoggerProvider();
         ServerSettings settings = _deployment.Settings(data) with
         {
-            Listen = new Uri($"https://127.0.0.1:{port}"),
+            Listen = new Uri("https://127.0.0.1:0"),
             TlsCertificate = certificate,
             TlsKey = key,
         };
@@ -393,6 +394,7 @@ public sealed class TlsChainTests : IAsyncDisposable
 
         Task<ElmServer> start = ElmServer.StartAsync(settings, options, cancel);
         using TcpClient check = await hole.AcceptTcpClientAsync(cancel);
+        int port = log.ListeningPort("https");
         using var https = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true });
         HttpRequestException nonce = await Assert.ThrowsAsync<HttpRequestException>(() =>
             https.GetAsync(new Uri($"https://127.0.0.1:{port}/v1/nonce"), cancel)
@@ -544,13 +546,6 @@ public sealed class TlsChainTests : IAsyncDisposable
             LoggerProvider = log,
             SelfCheckTarget = selfCheckTarget,
         };
-
-    private static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
-    }
 
     private TestCertificateChain NewChain(bool sentByServer = false)
     {

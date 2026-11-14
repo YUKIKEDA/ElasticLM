@@ -31,7 +31,7 @@ elm-service backup --config service.json --out before-upgrade.db
 `elm-service backup` は、次のように、バックアップのファイルとそのスキーマのバージョンを表示する。
 
 ```text
-backup: before-upgrade.db, schema version 9
+backup: before-upgrade.db, schema version 10
 ```
 
 新しいバージョンのままでよいと確かめられるまで、このファイルを取っておく。古いバージョンに戻す手段はこれしかない。どこに置くか、ほかに何を取っておくかは、[サービスをバックアップして復元する](back-up-and-restore-the-service.md)で説明している。
@@ -51,7 +51,7 @@ elm-service --config service.json
 
 ```text
 info: elm-service[3]
-      Schema versions applied: 10
+      Schema versions applied: 11
 ```
 
 新しいマイグレーションがなければ、ログにこの行は出ない。どちらの場合も、ログは `service.started` の行で終わる。リリースノートに別の指示がない限り、設定ファイルはそのままでよい。
@@ -72,7 +72,7 @@ SQLite で動かせるのは 1 つのノードだけだ。PostgreSQL で複数�
 マイグレーションを元に戻す手段はない。新しいバージョンが、古いバージョンの知らないマイグレーションをデータベースに適用すると、古いバージョンはそのデータベースでは起動しない。終了コード 1 で終わり、次のような行を表示する。
 
 ```text
-The database has schema version 10, which this elm-service does not know; it is older than the database.
+The database has schema version 11, which this elm-service does not know; it is older than the database.
 ```
 
 マイグレーションのないアップグレードなら、データベースは古いバージョンが知っている形のままなので、古いバージョンはこれまでどおりそのデータベースで起動する。マイグレーションのあとで戻すには、サービスを止め、[バックアップを復元する](back-up-and-restore-the-service.md#バックアップを復元する)のとおりに `before-upgrade.db` を復元し、古いバージョンの実行ファイルを `tools` に戻して起動する。そうすると、バックアップの後のことはすべてなくなる。何がなくなるかは[復元で取り消されるもの](back-up-and-restore-the-service.md#復元で取り消されるもの)に挙げている。

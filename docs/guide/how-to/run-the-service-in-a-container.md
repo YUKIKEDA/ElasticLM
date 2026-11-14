@@ -137,7 +137,7 @@ Run `elm-service backup` in a second container on the same volumes, while the se
 docker run --rm -v elm-config:/config:ro -v elm-data:/data elm-service backup --config /config/container.json --out /data/backup-1.db
 ```
 
-It prints `backup: /data/backup-1.db, schema version 9`, or another version number. Two containers may share the SQLite database only through a volume on the same host, as here; a volume on a network file system does not keep SQLite's locks. Copy the backup out of the volume, and keep it apart from the host, as [Back up and restore the service](back-up-and-restore-the-service.md) says:
+It prints `backup: /data/backup-1.db, schema version 10`, or another version number. Two containers may share the SQLite database only through a volume on the same host, as here; a volume on a network file system does not keep SQLite's locks. Copy the backup out of the volume, and keep it apart from the host, as [Back up and restore the service](back-up-and-restore-the-service.md) says:
 
 <!-- steps:run -->
 ```shell

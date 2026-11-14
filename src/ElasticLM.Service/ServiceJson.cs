@@ -385,6 +385,7 @@ internal sealed record PolicyItem(
     [property: JsonPropertyName("borrowReturnLimit")] long BorrowReturnLimit,
     [property: JsonPropertyName("clientInfoStrategy")] string ClientInfoStrategy,
     [property: JsonPropertyName("trialDuration")] long TrialDuration,
+    [property: JsonPropertyName("trialDailyLimit")] long TrialDailyLimit,
     [property: JsonPropertyName("createdAt")] string CreatedAt,
     [property: JsonPropertyName("updatedAt")] string UpdatedAt
 );

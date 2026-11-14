@@ -563,6 +563,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     /// - elm-service with a server policy; a data folder that holds a stopped server's installation key and administrator
     ///   token; a listener of the test on admin.sock in that folder that answers the first request with a given answer, and
     ///   any later one with 404.
+    /// - The 302 points at a closed port: a listener of the test takes a port the system chooses and stops. The command must
+    ///   not follow the redirect; only if it wrongly did, another program that took the port in between would get the
+    ///   request (the V1d3b Grill, 3b-5).
     ///
     /// Steps:
     /// - In that folder: run elm server deactivate-proof against 404 with no body, against 502 with an HTML body, against 200

@@ -154,18 +154,46 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
           try {
-            ./tools/ElasticLM.Measure/run.ps1 -Bin measure/bin -VerifyLicense measure/verify/VerifyLicense -Out run-${{ matrix.run }}.json `
+            ./tools/ElasticLM.Measure/run.ps1 -Bin measure/bin -VerifyLicense measure/verify/VerifyLicense -Out run-${{ matrix.run }}.json -Logs measure-logs `
               -Postgres 'Host=127.0.0.1;Port=5434;Username=postgres;Password=elm-measure;Database=postgres'
           }
           finally {
             docker rm -f elm-measure-postgres | Out-Null
           }
 
+      # design §20.7 (V1d31): a run that stopped early keeps what it measured, and Report fails it on the missing values.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
         with:
           name: measure-run-${{ matrix.run }}
           path: run-${{ matrix.run }}.json
           retention-days: 90
+
+      # Issue #393: run.ps1 keeps the measured processes' whole logs when the run stopped on an error or a lease or
+      # activation request failed; the job log shows only their last lines. The products' logs hold no secret (design §18).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: measure-logs-${{ matrix.run }}
+          path: measure-logs
+          if-no-files-found: ignore
+          retention-days: 90
+
+  report-test:
+    name: Report judgment test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test the report's judgment
+        # design §4.2 and §20.7 (V1d31): runs on a slow disk, with figures of recorded runs.
+        run: ./tools/ElasticLM.Measure/Test-Report.ps1
 
   report:
     name: Report
@@ -187,5 +215,6 @@ jobs:
           path: results
 
       - name: Compare with the targets
-        # design §20.7: every run against every §4.2 target; a missing run fails too.
+        # design §20.7: every run against every §4.2 target, the activation p99 on the runs whose disk flush p99 is at most
+        # 20 ms (V1d31); a missing run or a missing value fails too.
         run: ./tools/ElasticLM.Measure/Report.ps1 -Results results -Expected 3

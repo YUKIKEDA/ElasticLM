@@ -31,6 +31,10 @@
 .PARAMETER Small
     A short trial of the steps on a developer's machine: leases of 15 seconds, 5 keys of 4 leases, 100 activations at 10 a
     second, 20 admin writes. Its figures are not the §4.2 measurement.
+
+.PARAMETER Logs
+    A folder for the whole logs of the measured processes, kept when the run stops on an error or when a lease or
+    activation request of the load failed (design §20.7, Issue #393). Nothing is kept without it.
 #>
 [CmdletBinding()]
 param(
@@ -38,13 +42,16 @@ param(
     [Parameter(Mandatory = $true)][string]$VerifyLicense,
     [Parameter(Mandatory = $true)][string]$Out,
     [string]$Postgres,
-    [switch]$Small
+    [switch]$Small,
+    [string]$Logs
 )
 
 $ErrorActionPreference = 'Stop'
 # The script works in its own folder: the paths it was given are made absolute first.
 $Bin = (Resolve-Path $Bin).Path
 $Out = [IO.Path]::GetFullPath($Out)
+if ($Logs) { $Logs = [IO.Path]::GetFullPath($Logs) }
+$keepLogs = $false
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..' '..')).Path
 # design §20.7 (the V1d2 Grill): the work folder is elm-<8 hex digits> and elm-server's data folder in it has a name of two
 # characters, so that the path of the server's administration socket (admin.sock in the data folder, design §13.7) stays
@@ -238,6 +245,7 @@ try {
             $memory.peakWorkingSetBytes = (Get-Process -Name elm-server | Select-Object -First 1).PeakWorkingSet64
         }
         $results.leases = [ordered]@{ load = (Get-Content $leaseJson -Raw | ConvertFrom-Json); heldAtEnd = $status.leases; memory = $memory }
+        if ($results.leases.load.acquire.failed + $results.leases.load.renew.failed + $results.leases.load.renewAfterBroken.failed -gt 0) { $keepLogs = $true }
     }
     finally {
         if ($IsLinux) { & sudo systemctl stop elm-measure-server.scope | Out-Null } else { Stop-Process -Id $process.Id -ErrorAction SilentlyContinue }
@@ -285,7 +293,9 @@ try {
         $json = Join-Path $work "$label-activations.json"
         $rate = $Small ? '10' : '50'
         Invoke-Load @('activations', '--url', $url, '--license-key-file', $licenseFile, '--count', "$count", '--rate', $rate, '--work', (Join-Path $work "$label-keys"), '--out', $json)
-        Get-Content $json -Raw | ConvertFrom-Json
+        $activations = Get-Content $json -Raw | ConvertFrom-Json
+        if ($activations.activate.failed -gt 0) { $script:keepLogs = $true }
+        $activations
     }
 
     # M4a1: start to listening on a migrated database, 3 times on each engine; the third SQLite start stays for the load.
@@ -334,6 +344,7 @@ catch {
         "--- $($log.Name)"
         Get-Content $log.FullName -Tail 15
     }
+    $keepLogs = $true
     throw
 }
 finally {
@@ -341,6 +352,11 @@ finally {
     foreach ($process in $processes) { if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue } }
     $env:ELM_KEY_PASSPHRASE = $savedPassphrase
     $results | ConvertTo-Json -Depth 8 | Set-Content $Out
+    # Issue #393: the whole logs, after every process has stopped, for finding why a request failed.
+    if ($keepLogs -and $Logs) {
+        New-Item -ItemType Directory -Force $Logs | Out-Null
+        Get-ChildItem $work -Filter '*.log*' -ErrorAction SilentlyContinue | Copy-Item -Destination $Logs
+    }
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }
 "Wrote $Out"

@@ -6,6 +6,7 @@ using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using ElasticLM.Service.Tests;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -779,7 +780,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             await silent.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
         );
         Assert.Equal(ErrorCode.Forbidden, refused.Error.Code);
-        Assert.IsType<LeaseResult.Acquired>(await telling.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Acquired(await telling.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
 
     /// <summary>

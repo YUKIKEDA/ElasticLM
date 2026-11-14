@@ -67,11 +67,13 @@ internal sealed class ProblemServer : IAsyncDisposable
     /// <returns>The server, which the caller disposes.</returns>
     public static ProblemServer Start(bool tls, HttpStatusCode status, string body) => new(tls, status, body);
 
+    // The listener stops only after the loop has ended. Stopped first, it made the loop's next accept throw
+    // InvalidOperationException "Not listening", which the loop does not take as a stop (Issue #392).
     public async ValueTask DisposeAsync()
     {
         await _stopping.CancelAsync();
-        _listener.Stop();
         await _accepting;
+        _listener.Stop();
         _certificate?.Dispose();
         _stopping.Dispose();
     }
@@ -94,9 +96,12 @@ internal sealed class ProblemServer : IAsyncDisposable
                 }
             }
         }
-        catch (Exception e) when (e is OperationCanceledException or SocketException or ObjectDisposedException)
+        catch (Exception e)
+            when (_stopping.IsCancellationRequested
+                && (e is OperationCanceledException || e is SocketException { SocketErrorCode: SocketError.OperationAborted })
+            )
         {
-            // Stopped.
+            // Stopped. A cancelled wait on the socket may also end with SocketException OperationAborted (Issue #392).
         }
     }
 

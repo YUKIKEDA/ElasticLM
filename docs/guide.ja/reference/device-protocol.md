@@ -24,7 +24,7 @@ sidebar_position: 7
 | `ELM-Proof` | リクエスト | 両方 | リクエストのプルーフ（後述）。ヘッダーのフィールドは 1 つだけにする。フィールドが 2 つあるリクエストは `ELM_PROOF_INVALID` になる。 |
 | `ELM-Nonce` | レスポンス | 両方 | 次のプルーフに使う新しいノンス。`elm-service` は、デバイス向けのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、`POST /v1/offline` のレスポンスと、送信元ごとのレート制限による `429` には付けない。`elm-server` は、`GET /v1/nonce` と 4 つのリースのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、IP のルールによる `403` と、レート制限による `429` には付けない。 |
 | `ELM-Server-License` | レスポンス | `elm-server` | サーバーがいまリースの発行に使っているサーバーライセンスファイルのトークン ID（`jti`）。`POST /v1/leases` と `POST /v1/leases/{id}/renew` の成功のレスポンスに付く。ローカルの管理 API が `licenseToken` として示す値と同じだ（[`GET /admin/v1/status`](administration-api.md#get-adminv1status) を参照）。クライアントが持つコピーのトークン ID と違えば、クライアントは `GET /v1/server/license` をもう一度呼ぶ。 |
-| `Retry-After` | レスポンス | 両方 | 待つ秒数。`ELM_RATE_LIMITED` のときは常に `1` だ。`ELM_SERVER_RECOVERING` のときは、リースの再登録の期間の残りを切り上げた値だ。 |
+| `Retry-After` | レスポンス | 両方 | 待つ秒数。`ELM_RATE_LIMITED` のときは `1` だ。ただし、製品の上限を超えたトライアルでは違う（[`POST /v1/trials`](#post-v1trials) を参照）。`ELM_SERVER_RECOVERING` のときは、リースの再登録の期間の残りを切り上げた値だ。 |
 
 ### プルーフ
 
@@ -200,7 +200,8 @@ sidebar_position: 7
 
 - `elm-service` は、デバイス向けのすべてのルートを、何よりも先に送信元のアドレスごとに制限する（`rateLimit.clientPerIp`）。また、プルーフ付きのすべてのリクエストを、プルーフの確認のあと、`jti` を記録する前に、インストール鍵ごとに制限する（`rateLimit.clientPerKey`。[プルーフ](#プルーフ)を参照）。オフラインのファイルは、署名と時刻の確認のあとに、署名した鍵の回数として数える。
 - `elm-server` は、まず IP のルール（`allow` と `deny`）を当てはめる。拒否したアドレスには `403` と `ELM_FORBIDDEN` を返す。次に、すべてのルートを送信元のアドレスごとに制限する（`rateLimit.perIp`）。
-- 制限を超えたリクエストには、`429` と `ELM_RATE_LIMITED` が `Retry-After: 1` 付きで返る。
+- これらの制限を超えたリクエストには、`429` と `ELM_RATE_LIMITED` が `Retry-After: 1` 付きで返る。
+- `elm-service` は、製品ごとのトライアルの数も、どの 24 時間をとっても制限する（製品のトライアルのポリシーの `trialDailyLimit`）。[`POST /v1/trials`](#post-v1trials) を参照。
 
 制限とその既定値は、[elm-service の設定](service-configuration.md#ratelimit)と[elm-server の設定](server-configuration.md#ratelimit)にある。
 
@@ -331,7 +332,8 @@ sidebar_position: 7
 
 - 認証: `jwk` 付きのプルーフ。
 - 成功: 新しいトライアルなら `201`。再試行なら `200`。再試行とは、同じインストール鍵で、アクティベーションがまだ `seq` 1 のままで、`retry` にそのアクティベーションを得たリクエストの `jti` が入っている場合だ。再試行は、発行済みのファイルを受け取る。
-- レスポンスヘッダー: `ELM-Nonce`。
+- レスポンスヘッダー: `ELM-Nonce`。製品の上限で断るときは `Retry-After` も付く。
+- 確かめる順: まず、レスポンスを受け取れなかったトライアルの再試行に、そのファイルを返す。次に、使用済みのフィンガープリントに `ELM_TRIAL_USED` を返す。製品の上限は、その後で確かめる。
 
 | 名前 | 型 | 必須 | 範囲と意味 |
 | --- | --- | --- | --- |
@@ -358,6 +360,7 @@ sidebar_position: 7
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` が空だ。 |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | そのコードの製品がないか、製品にトライアルのポリシーがない。 |
 | `409` | `ELM_TRIAL_USED` | フィンガープリントのどれかで、この製品のトライアルがすでに行われている。 |
+| `429` | `ELM_RATE_LIMITED` | 製品が、トライアルのポリシーの `trialDailyLimit` 件のトライアルを直近 24 時間に出している: "The product has reached its limit of N trials in 24 hours." `Retry-After` は、枠が 1 つ空くまでの秒数で、1 から 86,400 だ。枠が空くのは、そのうち最も古いトライアルを出してから 24 時間たったときだ。上限をその数より小さく下げたあとなら、その差の分のトライアルも 24 時間たったときだ。空くのはその 1 つだけで、次のリクエストが使う。何も書き込まない。 |
 
 ### `POST /v1/offline`
 

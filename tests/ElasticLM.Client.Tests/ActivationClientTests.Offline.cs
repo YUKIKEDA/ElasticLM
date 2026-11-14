@@ -257,9 +257,9 @@ public sealed partial class ActivationClientTests
 
         string answer = await ProcessedAsync(vendor, Created(await a.CreateActivationRequestAsync(key, cancellationToken: Cancel)).File);
         vendor.Test.Time.Advance(TimeSpan.FromHours(25));
-        Assert.True(Assert.IsType<ActivationResult.Activated>(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
-        Assert.True(Assert.IsType<ActivationResult.Activated>(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
-        Assert.False(Assert.IsType<ActivationResult.Activated>(await b.ActivateAsync(key, Cancel)).InGracePeriod);
+        Assert.True(ActivatedResult(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
+        Assert.True(ActivatedResult(await a.ImportResponseAsync(answer, Cancel)).InGracePeriod);
+        Assert.False(ActivatedResult(await b.ActivateAsync(key, Cancel)).InGracePeriod);
     }
 
     /// <summary>

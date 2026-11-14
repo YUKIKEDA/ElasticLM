@@ -137,7 +137,7 @@ elm admin request GET /v1/admin/products/<container-product-id> --url http://127
 docker run --rm -v elm-config:/config:ro -v elm-data:/data elm-service backup --config /config/container.json --out /data/backup-1.db
 ```
 
-`backup: /data/backup-1.db, schema version 9` か、別のバージョン番号の行が表示される。2 つのコンテナが SQLite のデータベースを共有できるのは、このガイドのように同じホストのボリュームを通すときだけだ。ネットワークファイルシステム上のボリュームでは、SQLite のロックが効かない。[サービスをバックアップして復元する](back-up-and-restore-the-service.md)にあるとおり、バックアップをボリュームからコピーして取り出し、ホストとは別の場所に置く。
+`backup: /data/backup-1.db, schema version 10` か、別のバージョン番号の行が表示される。2 つのコンテナが SQLite のデータベースを共有できるのは、このガイドのように同じホストのボリュームを通すときだけだ。ネットワークファイルシステム上のボリュームでは、SQLite のロックが効かない。[サービスをバックアップして復元する](back-up-and-restore-the-service.md)にあるとおり、バックアップをボリュームからコピーして取り出し、ホストとは別の場所に置く。
 
 <!-- steps:run -->
 ```shell
