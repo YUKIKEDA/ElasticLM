@@ -27,7 +27,8 @@ env:
 jobs:
   pins:
     # design §20.5 (V1d22) and §5.3 T25: every action of the three workflows, and of the composite actions they use, is
-    # pinned to the commit of the version tag its comment names, and every checkout sets persist-credentials: false.
+    # pinned to the commit of the version tag its comment names, and every checkout sets persist-credentials: false. The
+    # files are read as YAML by tools/ElasticLM.ActionPins, which the script builds.
     name: Action pins
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -37,6 +38,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
 
       - name: Check the action pins
         shell: pwsh
