@@ -8,5 +8,6 @@
       tool, with a YAML parser instead of the text. Not shipped; NativeAOT is not involved (design §21).
     -->
     <PackageReference Include="YamlDotNet" />
+    <InternalsVisibleTo Include="ElasticLM.ActionPins.Tests" />
   </ItemGroup>
 </Project>

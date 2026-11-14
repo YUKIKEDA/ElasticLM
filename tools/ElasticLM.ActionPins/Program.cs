@@ -1,14 +1,13 @@
 using System.Text;
 using ElasticLM.ActionPins;
 
-// design §20.5 (V1d22): reads workflow files or action definitions as YAML and prints, one per line and tab separated,
-// what eng/ci/Test-ActionPins.ps1 checks. The script holds the rules on the values; this tool only reads.
-//   workflow <file>...   jobs.<id>.steps[*].uses and jobs.<id>.uses
+// design §20.5 (V1d22): reads workflow files or action definitions as YAML, checks the rules that need no network, and
+// prints, one per line and tab separated, what eng/ci/Test-ActionPins.ps1 checks against the actions' repositories.
+//   workflow <file>...   jobs.<id>.steps[*].uses (jobs.<id>.uses is refused)
 //   action <file>...     runs.using, runs.image, and runs.steps[*].uses
 // Lines:
-//   uses <file> <line> <value> <rest of the line after the value> <false|other: with.persist-credentials of the step>
-//   job-uses <file> <line> <value>
-//   runs <file> <using> <image>
+//   pin <file> <line> <owner/repo> <folder or empty> <sha> <version>
+//   runs <file> <using>
 //   error <file> <line> <message>
 if (args.Length < 2 || args[0] is not ("workflow" or "action"))
 {

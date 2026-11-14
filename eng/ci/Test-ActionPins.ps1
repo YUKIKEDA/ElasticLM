@@ -5,21 +5,17 @@ Checks that every action of the workflows is pinned to the commit of its version
 
 .DESCRIPTION
 design §20.5 ("アクションの固定の確かめ", V1d22) and §5.3 T25. The workflow files, and the definitions of the composite
-actions they use, are read as YAML by tools/ElasticLM.ActionPins (YamlDotNet), which also refuses what this check does
-not read (anchors, aliases, tags, merge keys, a uses key outside a step or a job, a watched key in another case, and
-U+0085, U+2028, U+2029, or a lone CR in the file). For every jobs.<id>.steps[*].uses and runs.steps[*].uses, the script
-checks:
+actions they use, are read as YAML by tools/ElasticLM.ActionPins (YamlDotNet). The tool checks everything that needs no
+network and is tested in tests/ElasticLM.ActionPins.Tests: what it does not read (anchors, aliases, tags, merge keys, a
+stray uses key, a watched key in another case, U+0085, U+2028, U+2029, or a lone CR), the form of each uses value
+(<owner>/<repo>[/<path>]@<40 lowercase hex digits> and a comment # vX.Y.Z), persist-credentials: false on every
+actions/checkout, and an action's runs mapping. This script adds what needs the actions' repositories:
 
-1. The value is <owner>/<repo>[/<path>]@<40 lowercase hex digits>, and the rest of its line is a comment # vX.Y.Z.
-   A path segment is never empty, "." or "..". A local action, a docker:// image, and a reusable workflow (also
-   jobs.<id>.uses) are refused.
-2. The tag vX.Y.Z of https://github.com/<owner>/<repo> points to that commit (git ls-remote; for an annotated tag, the
-   commit it peels to). A commit that only a fork holds is served under the parent's name too, so a check that the
+1. The tag vX.Y.Z of https://github.com/<owner>/<repo> points to the pinned commit (git ls-remote; for an annotated tag,
+   the commit it peels to). A commit that only a fork holds is served under the parent's name too, so a check that the
    commit exists would pass it; a check against the tag does not.
-3. The action's action.yml (or action.yaml) at that commit, fetched with git: a composite action has its steps checked
-   the same way, and a docker action must not run a docker:// image without a digest.
-4. Every actions/checkout step has with.persist-credentials equal to the scalar false, so the GITHUB_TOKEN is not left
-   in .git/config.
+2. The action's action.yml (or action.yaml) at that commit, fetched with git, is read by the tool as an action; a
+   composite action has its steps checked the same way, at most 5 deep.
 
 It uses PowerShell 7, the .NET SDK (to build the tool), and git, with no token, and reaches github.com over HTTPS. It
 reports every failure, then exits with 1 if there was any.
@@ -40,11 +36,6 @@ $ErrorActionPreference = 'Stop'
 $env:GIT_TERMINAL_PROMPT = '0'
 $env:GCM_INTERACTIVE = 'never'
 [string[]]$gitConfig = @('-c', 'credential.helper=')
-
-# A path segment is never empty, "." or "..": actions/checkout/.@<sha> names the same action as actions/checkout@<sha>.
-$pinnedPattern = '^(?<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)(?<path>(?:/(?!\.\.?(?:/|@))[A-Za-z0-9_.-]+)+)?@(?<sha>[0-9a-f]{40})$'
-$commentPattern = '^\s+#\s*(?<version>\S+)\s*$'
-$versionPattern = '^v\d+\.\d+\.\d+$'
 
 $failures = [Collections.Generic.List[string]]::new()
 $tagCommits = @{}
@@ -172,13 +163,9 @@ function Test-Records([object[]]$Records, [hashtable]$Names, [int]$Depth) {
             'error' {
                 Add-Failure $where ([int]$record[2]) $record[3]
             }
-            'job-uses' {
+            'pin' {
                 $script:usesCount++
-                Add-Failure $where ([int]$record[2]) "$($record[3]) calls a reusable workflow, which this check does not cover; change design §20.5 and this script first."
-            }
-            'uses' {
-                $script:usesCount++
-                Test-Use $where ([int]$record[2]) $record[3] $record[4] $record[5] $Depth
+                Test-Pin $where ([int]$record[2]) $record[3] $record[4] $record[5] $record[6] $Depth
             }
             'runs' {
             }
@@ -189,58 +176,30 @@ function Test-Records([object[]]$Records, [hashtable]$Names, [int]$Depth) {
     }
 }
 
-function Test-Use([string]$Where, [int]$Line, [string]$Target, [string]$Rest, [string]$Persist, [int]$Depth) {
-    if ($Target.StartsWith('./') -or $Target.StartsWith('docker://')) {
-        Add-Failure $Where $Line "$Target is a local action or a docker:// image, which this check does not cover; change design §20.5 and this script first."
-        return
-    }
-    if ($Target -notmatch $pinnedPattern) {
-        Add-Failure $Where $Line "$Target is not pinned to a full commit SHA (40 lowercase hex digits)."
-        return
-    }
-    $repo = $Matches.repo
-    $folder = $Matches.ContainsKey('path') ? $Matches.path : ''
-    $sha = $Matches.sha
-    if ($folder -match '\.ya?ml$') {
-        Add-Failure $Where $Line "$Target calls a reusable workflow, which this check does not cover; change design §20.5 and this script first."
-        return
-    }
-    if ($Rest -notmatch $commentPattern -or $Matches.version -notmatch $versionPattern) {
-        Add-Failure $Where $Line "$Target has no version comment of the form '# vX.Y.Z' after it on its line."
-        return
-    }
-    $version = ($Rest -replace $commentPattern, '${version}')
+# The tool has checked the form; this compares the pin with its tag and reads the action at the pinned commit.
+function Test-Pin([string]$Where, [int]$Line, [string]$Repo, [string]$Folder, [string]$Sha, [string]$Version, [int]$Depth) {
     try {
-        $tagCommit = Get-TagCommit $repo $version
+        $tagCommit = Get-TagCommit $Repo $Version
     }
     catch {
-        Add-Failure $Where $Line "the tag $version of $repo could not be read: $($_.Exception.Message)"
+        Add-Failure $Where $Line "the tag $Version of $Repo could not be read: $($_.Exception.Message)"
         return
     }
     if ($null -eq $tagCommit) {
-        Add-Failure $Where $Line "$repo has no tag $version."
+        Add-Failure $Where $Line "$Repo has no tag $Version."
         return
     }
-    if ($tagCommit -cne $sha) {
-        Add-Failure $Where $Line "the tag $version of $repo points to $tagCommit, not to $sha."
+    if ($tagCommit -cne $Sha) {
+        Add-Failure $Where $Line "the tag $Version of $Repo points to $tagCommit, not to $Sha."
         return
     }
-    $pinOk = $true
-    # Any path under actions/checkout counts, and so does a name in another case or with .git: the check is not the
-    # place to learn which of these GitHub resolves to the same action.
-    if ($repo -match '^actions/checkout(?:\.git)?$' -and $Persist -cne 'false') {
-        Add-Failure $Where $Line 'actions/checkout does not set with.persist-credentials to false.'
-        $pinOk = $false
-    }
-    $definitionKey = "$repo$folder@$sha"
+    $definitionKey = "$Repo$Folder@$Sha"
     if (-not $checkedDefinitions.Add($definitionKey)) {
-        if ($pinOk) {
-            Write-Output "ok: ${Where}:${Line}: $definitionKey # $version"
-        }
+        Write-Output "ok: ${Where}:${Line}: $definitionKey # $Version"
         return
     }
     try {
-        $definition = Get-ActionDefinition $repo $folder $sha
+        $definition = Get-ActionDefinition $Repo $Folder $Sha
     }
     catch {
         Add-Failure $Where $Line "the action definition of $definitionKey could not be read: $($_.Exception.Message)"
@@ -253,26 +212,14 @@ function Test-Use([string]$Where, [int]$Line, [string]$Target, [string]$Rest, [s
     $records = Read-Yaml 'action' @($definition)
     $runs = @($records | Where-Object { $_[0] -eq 'runs' })
     $using = $runs.Count -eq 1 ? $runs[0][2] : ''
-    $image = $runs.Count -eq 1 ? $runs[0][3] : ''
-    if ($pinOk) {
-        Write-Output "ok: ${Where}:${Line}: $definitionKey # $version (runs.using: $using)"
-    }
-    $definitionName = "$definitionKey/" + (Split-Path -Leaf $definition).Split('-', 3)[2]
-    if ($using -eq 'composite' -and $Depth -ge 5) {
+    Write-Output "ok: ${Where}:${Line}: $definitionKey # $Version (runs.using: $using)"
+    # A composite action may use another; the limit ends a chain that loops through actions that point at each other.
+    if ($Depth -ge 5 -and @($records | Where-Object { $_[0] -eq 'pin' }).Count -gt 0) {
         Add-Failure $Where $Line "$definitionKey nests composite actions more than 5 deep."
         return
     }
-    if ($using -ne 'composite' -and @($records | Where-Object { $_[0] -eq 'uses' }).Count -gt 0) {
-        Add-Failure $Where $Line "$definitionKey has steps with uses, but runs.using is $using, not composite."
-        return
-    }
+    $definitionName = "$definitionKey/" + (Split-Path -Leaf $definition).Split('-', 3)[2]
     Test-Records $records @{ $definition = $definitionName } ($Depth + 1)
-    if ($using -eq 'docker' -and $image.StartsWith('docker://') -and -not $image.Contains('@sha256:')) {
-        Add-Failure $Where $Line "$definitionKey runs the image $image, which is not pinned by digest."
-    }
-    elseif ($using -eq '') {
-        Add-Failure $Where $Line "$definitionKey has no runs.using."
-    }
 }
 
 $folderPath = [IO.Path]::GetFullPath($WorkflowPath)
@@ -280,6 +227,12 @@ $folderPath = [IO.Path]::GetFullPath($WorkflowPath)
 $files = @(Get-ChildItem -LiteralPath $folderPath -File -Force | Where-Object Extension -In '.yml', '.yaml' | Sort-Object Name)
 if ($files.Count -eq 0) {
     Write-Output "error: $folderPath holds no workflow file."
+    exit 1
+}
+# A control character in a path would split the tool's tab-separated lines or end the ::error command early.
+$badNames = @($files | Where-Object { $_.FullName -match '\p{Cc}' })
+if ($badNames.Count -gt 0) {
+    Write-Output "error: $($badNames.Count) workflow file names hold a control character."
     exit 1
 }
 try {
