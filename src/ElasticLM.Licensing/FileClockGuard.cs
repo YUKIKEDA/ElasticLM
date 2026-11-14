@@ -121,7 +121,7 @@ public sealed class FileClockGuard : IClockGuard
 
         if (_installationKey is not null)
         {
-            if (state.Sig is null || !Base64UrlCodec.TryDecode(state.Sig, out byte[] signature) || signature.Length != 64)
+            if (state.Sig is null || !Base64UrlCodec.TryDecode(state.Sig, out byte[] signature))
             {
                 return null;
             }

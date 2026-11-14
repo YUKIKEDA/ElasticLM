@@ -85,7 +85,7 @@ internal static class LogCommands
                         var output = new LogVerifyOutput(
                             report.Intact,
                             files.Length,
-                            report.Entries.Count,
+                            report.EntryCount,
                             [
                                 .. issues.Select(i => new LogIssueOutput(
                                     i.File,
@@ -106,7 +106,7 @@ internal static class LogCommands
                         }
 
                         host.Out.WriteLine(
-                            (report.Intact ? "intact" : "NOT INTACT") + $": {files.Length} file(s), {report.Entries.Count} event line(s)"
+                            (report.Intact ? "intact" : "NOT INTACT") + $": {files.Length} file(s), {report.EntryCount} event line(s)"
                         );
                     }
 

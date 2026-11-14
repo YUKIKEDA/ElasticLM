@@ -77,5 +77,57 @@ public sealed class RequestBodyTests
         Bad(() => body.RequiredText("missing"));
     }
 
+    /// <summary>
+    /// A body with text that cannot be read is ELM_MALFORMED: a member name that is a lone surrogate escape or a pair in the
+    /// wrong order, at any depth, and bytes that are not UTF-8 anywhere, when it is parsed; such a string value when it is
+    /// read (design §14.5, V1d23).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Bodies written in the test.
+    ///
+    /// Steps:
+    /// - Parse bodies with the name "\ud800" at the top and inside an array's object; the name "\udc00\ud800"; the byte
+    ///   0xFF in a name, in a value, and in a value of a member nothing reads. Parse bodies with the value "\ud800" and
+    ///   "\udc00\ud800" and read it as text.
+    ///
+    /// Expected:
+    /// - Each throws BodyException with ELM_MALFORMED and the message given (the parse, or the read of the value).
+    /// </remarks>
+    [Fact]
+    public void Parse_TextThatIsNotUnicode_IsMalformed()
+    {
+        static byte[] NotUtf8(string json)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(json);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        }
+
+        foreach (
+            byte[] utf8 in new[]
+            {
+                Encoding.UTF8.GetBytes("""{"t":"x","\ud800":1}"""),
+                Encoding.UTF8.GetBytes("""{"a":[{"\ud800":1}]}"""),
+                Encoding.UTF8.GetBytes("""{"\udc00\ud800":1}"""),
+                NotUtf8("{\"xÿ\":1}"),
+                NotUtf8("{\"t\":\"xÿ\"}"),
+                NotUtf8("{\"t\":\"x\",\"unread\":[\"xÿ\"]}"),
+            }
+        )
+        {
+            BodyException e = Assert.Throws<BodyException>(() => RequestBody.Parse(utf8, Malformed).Dispose());
+            Assert.Equal((ErrorCode.Malformed, Malformed), (e.Code, e.Message));
+        }
+
+        foreach (string json in new[] { """{"t":"\ud800"}""", """{"t":"\udc00\ud800"}""" })
+        {
+            using RequestBody body = Parse(json);
+            Assert.True(body.TryGet("t", out JsonElement value));
+            BodyException e = Assert.Throws<BodyException>(() => body.Text(value));
+            Assert.Equal((ErrorCode.Malformed, Malformed), (e.Code, e.Message));
+        }
+    }
+
     private static RequestBody Parse(string json) => RequestBody.Parse(Encoding.UTF8.GetBytes(json), Malformed);
 }

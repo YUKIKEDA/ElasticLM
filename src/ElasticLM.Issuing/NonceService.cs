@@ -77,14 +77,16 @@ public sealed class NonceService
             return false;
         }
 
-        long issued = BinaryPrimitives.ReadInt64BigEndian(bytes);
-        long now = _time.GetUtcNow().ToUnixTimeSeconds();
-        if (issued > now || now - issued > (long)Lifetime.TotalSeconds)
+        // design §12.2: the time is compared below the second, so that the nonce stops being accepted at the instant the
+        // replay record of its proofs may be dropped (MemoryReplayStore keeps it up to expiresAt, that instant included).
+        DateTimeOffset issued = DateTimeOffset.FromUnixTimeSeconds(BinaryPrimitives.ReadInt64BigEndian(bytes));
+        DateTimeOffset now = _time.GetUtcNow();
+        if (issued > now || now > issued + Lifetime)
         {
             return false;
         }
 
-        expiresAt = DateTimeOffset.FromUnixTimeSeconds(issued) + Lifetime;
+        expiresAt = issued + Lifetime;
         return true;
     }
 }

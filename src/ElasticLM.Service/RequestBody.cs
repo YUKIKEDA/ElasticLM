@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Unicode;
 using ElasticLM.Licensing;
 
 namespace ElasticLM.Service;
@@ -34,16 +35,25 @@ internal sealed class RequestBody : IDisposable
     /// </summary>
     /// <param name="utf8">The body.</param>
     /// <param name="malformed">The message of every <c>ELM_MALFORMED</c> answer for this body.</param>
-    /// <exception cref="BodyException">The body is not a JSON object within the limits.</exception>
+    /// <exception cref="BodyException">The body is not a JSON object of UTF-8 text within the limits.</exception>
     public static RequestBody Parse(byte[] utf8, string malformed)
     {
+        // design §14.5 (V1d23): a JSON body is UTF-8 (RFC 8259 §8.1). Bytes that are not pass the parse, and a member name
+        // made of them throws InvalidOperationException from JsonProperty.Name later (measured on .NET 10.0.15, Windows).
+        if (!Utf8.IsValid(utf8))
+        {
+            throw new BodyException(ErrorCode.Malformed, malformed);
+        }
+
         JsonDocument document;
         try
         {
             document = JsonDocument.Parse(utf8, Options);
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // A member name that is a lone surrogate escape: the check for a member given twice reads every name and
+            // throws InvalidOperationException, at any depth (measured on .NET 10.0.15, Windows).
             throw new BodyException(ErrorCode.Malformed, malformed);
         }
 

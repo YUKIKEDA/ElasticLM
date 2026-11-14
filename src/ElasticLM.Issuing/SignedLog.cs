@@ -637,11 +637,21 @@ public sealed partial class SignedLog : IDisposable
         }
         else
         {
+            // design §18.1 (V1d23): a reset names the file before it, the newest of the folder, so that the verifier finds
+            // that file missing. It names no signature: none could be read, or the write failed.
+            string? before = existing.Count > 0 ? Path.GetFileName(existing[^1].Path) : null;
             WriteLine(
                 LogLineTypes.ChainReset,
                 w =>
                 {
                     w.WriteString("stream", _stream);
+                    if (before is not null)
+                    {
+                        w.WriteStartObject("prev");
+                        w.WriteString("file", before);
+                        w.WriteEndObject();
+                    }
+
                     w.WriteString("reason", reset);
                     _material.Write(w);
                 }
@@ -691,6 +701,9 @@ public sealed partial class SignedLog : IDisposable
         _pending++;
     }
 
+    // design §18.1 (V1d23): the digest is read without a reset, and the digest and the count of unsigned lines are reset only
+    // after the signature line is on the disk. A signature that fails leaves them as they were, and the next signature line
+    // covers the same lines.
     private void WriteAuth()
     {
         long now = _time.GetUtcNow().ToUnixTimeSeconds();
@@ -702,7 +715,7 @@ public sealed partial class SignedLog : IDisposable
             Stream = _stream,
             N = _n + 1,
             Prev = _prev,
-            Digest = Base64UrlCodec.Encode(_digest.GetHashAndReset()),
+            Digest = Base64UrlCodec.Encode(_digest.GetCurrentHash()),
             Lines = _pending,
         };
         string signature = _key(ecdsa => JwsWriter.Sign(ecdsa, TokenTypes.Log, payload, LicensingJsonContext.Default.LogPayload));
@@ -715,6 +728,7 @@ public sealed partial class SignedLog : IDisposable
         _file.Flush(flushToDisk: true);
         _prev = Hash(line);
         _n++;
+        _ = _digest.GetHashAndReset();
         _pending = 0;
     }
 }

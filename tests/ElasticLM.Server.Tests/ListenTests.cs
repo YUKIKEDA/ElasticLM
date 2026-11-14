@@ -5,6 +5,7 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
+using ElasticLM.Issuing.Tests;
 using ElasticLM.Licensing;
 using Microsoft.Extensions.Logging;
 
@@ -75,8 +76,8 @@ public sealed class ListenTests : IAsyncDisposable
             Assert.Equal(Path.GetFileName(failedUsage), first.RootElement.GetProperty("prev").GetProperty("file").GetString());
         }
 
-        Assert.True(LogVerifier.Verify(usage, _deployment.Trust, "acme-cad", "usage").Intact);
-        Assert.True(LogVerifier.Verify(SignedLog.FindFiles(data, "borrows"), _deployment.Trust, "acme-cad", "borrows").Intact);
+        Assert.True(VerifiedLog.Of(usage, _deployment.Trust, "acme-cad", "usage").Intact);
+        Assert.True(VerifiedLog.Of(SignedLog.FindFiles(data, "borrows"), _deployment.Trust, "acme-cad", "borrows").Intact);
     }
 
     /// <summary>
@@ -215,7 +216,7 @@ public sealed class ListenTests : IAsyncDisposable
         ElmServer after = await _deployment.StartServerAsync(data, s => s with { Listen = Https(port) });
         Assert.Equal(0, Assert.Single(after.Engine.Usage()).Borrowed);
         await after.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(data, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(data, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         Assert.Single(usage.Entries, e => e.Type == "records.set_aside");
     }

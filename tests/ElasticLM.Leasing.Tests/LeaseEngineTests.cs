@@ -263,6 +263,33 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A server license that expires at the last second a time can have, with a grace period, opens an engine whose leases
+    /// get their full length: its expiry and grace are added in seconds (design §12.7.5 step 5, V1d23, finding F36).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server license that expires at 9999-12-31T23:59:59Z with 2 minutes of grace.
+    ///
+    /// Steps:
+    /// - Open the engine (the window of 10 minutes passes); acquire a lease at minute 10 and verify it as the client does.
+    ///
+    /// Expected:
+    /// - The lease ends at minute 20, the 10 minutes of the lease duration, and verifies (before V1d23, adding the grace to the expiry as a
+    ///   DateTimeOffset threw ArgumentOutOfRangeException when the engine was opened).
+    /// </remarks>
+    [Fact]
+    public void Lease_ServerLicenseAtTheLastTime_GetsItsFullLength()
+    {
+        using var server = new TestServer(expires: DateTimeOffset.FromUnixTimeSeconds(253_402_300_799), grace: TimeSpan.FromMinutes(2));
+        LeaseEngine engine = server.OpenEngine();
+        TestClient client = server.Client();
+
+        var granted = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
+        Assert.Equal(TestServer.Start.AddMinutes(20), granted.ExpiresAt);
+        Assert.IsType<LeaseVerificationResult.Valid>(server.VerifyAsClient(granted.Token, client));
+    }
+
+    /// <summary>
     /// Renewal judges the sequence number (design §10.4 step 3): the same number gets the next token; one less gets the last
     /// token again only when the retry names the unanswered request that produced it; anything else is a clone.
     /// </summary>

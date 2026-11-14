@@ -144,8 +144,9 @@ public sealed class LeaseVerifier
             return Fail(ErrorCode.LeaseOutOfBounds, "The lease is longer than the server license allows.");
         }
 
-        // Step 5: not past the server license's expiry and grace.
-        if (license.ExpiresAt is DateTimeOffset expires && payload.Exp > (expires + license.GracePeriod).ToUnixTimeSeconds())
+        // Step 5: not past the server license's expiry and grace, added in seconds as the license verifier does: both are
+        // bounded (design §8.6), and a DateTimeOffset past the year 9999 throws.
+        if (license.ExpiresAt is DateTimeOffset expires && payload.Exp > expires.ToUnixTimeSeconds() + (long)license.GracePeriod.TotalSeconds)
         {
             return Fail(ErrorCode.LeaseOutOfBounds, "The lease outlives the server license.");
         }

@@ -418,7 +418,9 @@ public sealed class ElmCliTests : IDisposable
     ///
     /// Steps:
     /// - license inspect on: not JSON, license not a string, certificates not an array, a null certificate, a token with two
-    ///   segments, a segment that is not base64url. license issue with: a feature without ID, an unknown feature part, seats
+    ///   segments, a segment that is not base64url, a payload whose text cannot be read (the value "\ud800", the member
+    ///   "\ud800", the byte 0xFF, the value "\udc00\ud800"). license issue with: a feature without ID, an unknown feature
+    ///   part, seats
     ///   not a number, an expiry that is not a date (in a feature and in --expires), a feature ID of 65 bytes (the file is
     ///   not written; an ID of 64 bytes is issued, exit 0), metadata without '=', a public key as the
     ///   certificate, --trust with another root. key certify with --days 0 and 732 and a bad --not-before.
@@ -443,6 +445,24 @@ public sealed class ElmCliTests : IDisposable
         Inspect($"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"{token}\",\"certificates\":[null]}}");
         Inspect("{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"aaaa.bbbb\",\"certificates\":[]}");
         Inspect("{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"a*a.bbbb.cccc\",\"certificates\":[]}");
+
+        // design §8.3 (V1d23): a token part whose text cannot be read is refused when it is read, not when it is printed.
+        static string Part(byte[] json) => Convert.ToBase64String(json).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+        byte[] notUtf8 = System.Text.Encoding.UTF8.GetBytes("{\"lic\":\"xÿ\"}");
+        int at = Array.IndexOf(notUtf8, (byte)0xC3);
+        notUtf8 = [.. notUtf8[..at], 0xFF, .. notUtf8[(at + 2)..]];
+        foreach (
+            byte[] payload in new[]
+            {
+                """{"lic":"\ud800"}"""u8.ToArray(),
+                """{"lic":"a","\ud800":1}"""u8.ToArray(),
+                notUtf8,
+                """{"lic":"\udc00\ud800"}"""u8.ToArray(),
+            }
+        )
+        {
+            Inspect($"{{\"format\":\"elasticlm-license\",\"version\":1,\"license\":\"e30.{Part(payload)}.c2ln\",\"certificates\":[]}}");
+        }
 
         string[] WithFeature(string feature)
         {

@@ -777,6 +777,53 @@ public sealed class ElmServiceOidcTests
     private static string Signed(string header, string signature) => Base64Url.EncodeToString(Encoding.UTF8.GetBytes(header)) + ".e30." + signature;
 
     // A compact token around a payload's JSON text, with an empty header object and a placeholder signature.
+    /// <summary>
+    /// A token whose payload or header holds text that cannot be read gives no identity and does not count as signed,
+    /// without an exception (design §8.3, V1d23, Issue #402).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Compact tokens made by the test, with a payload or header of: the value "\ud800"; a member "\ud800" after sub or
+    ///   alg; the value "x" and the byte 0xFF; the value "\udc00\ud800". The same tokens with "alice" and ES256 are read.
+    ///
+    /// Steps:
+    /// - Read sub from each payload; check whether each header is signed.
+    ///
+    /// Expected:
+    /// - "alice" and signed for the valid ones; null and not signed for each of the four (before V1d23 each threw
+    ///   InvalidOperationException).
+    /// </remarks>
+    [Fact]
+    public void TokenReaders_TextThatIsNotUnicode_IsRefused()
+    {
+        static byte[] NotUtf8(string json)
+        {
+            byte[] bytes = Encoding.UTF8.GetBytes(json);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]];
+        }
+
+        static byte[][] Shapes(string name, string value) =>
+            [
+                Encoding.UTF8.GetBytes($$"""{"{{name}}":"\ud800"}"""),
+                Encoding.UTF8.GetBytes($$"""{"{{name}}":"{{value}}","\ud800":1}"""),
+                NotUtf8($$"""{"{{name}}":"x{{'ÿ'}}"}"""),
+                Encoding.UTF8.GetBytes($$"""{"{{name}}":"\udc00\ud800"}"""),
+            ];
+
+        Assert.Equal("alice", ElmService.IdentityOf("e30." + Base64Url.EncodeToString("""{"sub":"alice"}"""u8) + ".c2ln", "sub"));
+        Assert.True(ElmService.IsSigned(Base64Url.EncodeToString("""{"alg":"ES256"}"""u8) + ".e30.c2ln"));
+        foreach (byte[] payload in Shapes("sub", "alice"))
+        {
+            Assert.Null(ElmService.IdentityOf("e30." + Base64Url.EncodeToString(payload) + ".c2ln", "sub"));
+        }
+
+        foreach (byte[] header in Shapes("alg", "ES256"))
+        {
+            Assert.False(ElmService.IsSigned(Base64Url.EncodeToString(header) + ".e30.c2ln"));
+        }
+    }
+
     private static string Compact(string payload) => "e30." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload)) + ".c2ln";
 
     private static JsonElement Admin(JsonElement[] admins, string subject) => admins.Single(a => a.GetProperty("subject").GetString() == subject);

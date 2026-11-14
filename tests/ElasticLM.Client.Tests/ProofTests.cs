@@ -342,6 +342,48 @@ public sealed class ProofTests : IDisposable
     }
 
     /// <summary>
+    /// A nonce is accepted up to its issue time plus 300 seconds, that instant included, and not a tick later, compared below
+    /// the second; so a proof cannot pass a second time after the replay record of its jti has expired (design §12.2, V1d23,
+    /// finding F19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The clock 0.4 seconds past a whole second S; a nonce issued then (it holds S); a proof with it, verified once.
+    ///
+    /// Steps:
+    /// - Check the nonce and verify the same proof again at S + 300 s minus a tick, at S + 300 s, at S + 300 s plus a tick,
+    ///   and at S + 300.5 s.
+    ///
+    /// Expected:
+    /// - The nonce is valid with expiresAt S + 300 s at the first two instants, and the proof is ELM_REPLAYED; at the last
+    ///   two the nonce is not valid and the proof is ELM_NONCE_REQUIRED (before V1d23 it was valid again at S + 300.5 s,
+    ///   the record having expired at S + 300 s).
+    /// </remarks>
+    [Fact]
+    public void Verify_ProofAtTheNonceExpiry_IsNeverValidTwice()
+    {
+        DateTimeOffset second = _time.GetUtcNow();
+        _time.Advance(TimeSpan.FromMilliseconds(400));
+        string nonce = _nonces.Issue();
+        string proof = ProofBuilder.Create(_key, "POST", Target, nonce, Body, includePublicKey: true, _time);
+        Assert.IsType<ProofResult.Valid>(_verifier.Verify(proof, "POST", Target, Body));
+        DateTimeOffset expiry = second.AddSeconds(300);
+
+        ErrorCode At(DateTimeOffset instant, bool nonceValid)
+        {
+            _time.SetUtcNow(instant);
+            Assert.Equal(nonceValid, _nonces.IsValid(nonce, out DateTimeOffset expiresAt));
+            Assert.Equal(nonceValid ? expiry : default, expiresAt);
+            return Assert.IsType<ProofResult.Invalid>(_verifier.Verify(proof, "POST", Target, Body)).Error.Code;
+        }
+
+        Assert.Equal(ErrorCode.Replayed, At(expiry.AddTicks(-1), nonceValid: true));
+        Assert.Equal(ErrorCode.Replayed, At(expiry, nonceValid: true));
+        Assert.Equal(ErrorCode.NonceRequired, At(expiry.AddTicks(1), nonceValid: false));
+        Assert.Equal(ErrorCode.NonceRequired, At(expiry.AddMilliseconds(500), nonceValid: false));
+    }
+
+    /// <summary>
     /// Malformed nonces are refused without an exception.
     /// </summary>
     /// <remarks>

@@ -165,12 +165,16 @@ internal static class OfflineCommands
                 ? typ.GetString()
                 : null;
         }
-        catch (Exception e) when (e is JsonException or FormatException)
+        catch (Exception e) when (e is JsonException or FormatException or InvalidOperationException)
         {
+            // design §8.3 (V1d23): InvalidOperationException is a name or a string that cannot be read as text.
             return null;
         }
     }
 
+    // The code and detail of a problem answer; "?" and nothing for a body that is not a JSON object, or whose text cannot be
+    // read (design §8.3, V1d23). JsonElement throws InvalidOperationException from TryGetProperty on a value that is not an
+    // object, and from TryGetProperty and GetString on text that cannot be read (measured on .NET 10.0.15, Windows).
     private static (string Code, string Detail) Problem(byte[] body)
     {
         try
@@ -181,7 +185,7 @@ internal static class OfflineCommands
             string detail = root.TryGetProperty("detail", out JsonElement d) && d.ValueKind == JsonValueKind.String ? d.GetString()! : string.Empty;
             return (code, detail);
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
             return ("?", string.Empty);
         }

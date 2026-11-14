@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
+using ElasticLM.Issuing.Tests;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
@@ -239,7 +240,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(0, Assert.Single(after.Engine.Usage()).Borrowed);
         Assert.Single(Directory.GetFiles(serverData, "borrows-broken-*.jsonl"));
         await after.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         Assert.Contains(usage.Entries, e => e.Type == "records.set_aside");
     }
@@ -281,7 +282,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.OK, (await admin.GetAsync("Admin/v1/status", cancel)).StatusCode);
 
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         Assert.Single(usage.Entries, e => e.Type == "admin.action");
         Assert.DoesNotContain(usage.Entries, e => e.Type == "admin.denied");
@@ -348,7 +349,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(HttpStatusCode.NotFound, (await admin.GetAsync("v1/server/license", cancel)).StatusCode);
 
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         string[] actions =
         [
@@ -422,7 +423,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
         Assert.Equal(newToken, server.Engine.Server.License.TokenId);
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.Empty(usage.Issues);
     }
 
@@ -720,7 +721,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Null(await client.ReleaseLeaseAsync(borrow, cancel));
 
         await server.DisposeAsync();
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(serverData, "usage"), _deployment.Trust, "acme-cad", "usage");
         LogEntry overage = Assert.Single(usage.Entries, e => e.Type == "overage");
         Assert.Equal((leases[2].Id, 3L), (overage.Value.GetProperty("lease").GetString(), overage.Value.GetProperty("inUse").GetInt64()));
         Assert.Equal(
@@ -776,7 +777,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
         await server.DisposeAsync();
         IReadOnlyList<string> files = SignedLog.FindFiles(serverData, "usage");
-        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(files, _deployment.Trust, "acme-cad", "usage");
         (string? Feature, string? Code, long Count)[] denied =
         [
             .. usage
@@ -860,7 +861,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         }
 
         IReadOnlyList<string> files = SignedLog.FindFiles(serverData, "usage");
-        LogReport usage = LogVerifier.Verify(files, _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(files, _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         JsonElement[] actions = [.. usage.Entries.Where(e => e.Type == "admin.action").Select(e => e.Value)];
         Assert.Equal(ids.Length, actions.Length);
@@ -1523,7 +1524,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     // The admin.action lines of a stopped server's usage log, which must verify, as "action:result".
     private string[] AdminActions(ElmServer server)
     {
-        LogReport usage = LogVerifier.Verify(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
+        VerifiedLog usage = VerifiedLog.Of(SignedLog.FindFiles(server.DataDirectory, "usage"), _deployment.Trust, "acme-cad", "usage");
         Assert.True(usage.Intact);
         return
         [

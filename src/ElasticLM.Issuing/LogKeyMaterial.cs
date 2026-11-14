@@ -40,13 +40,14 @@ public sealed class LogKeyMaterial
     /// the node that writes the log, so that a file of another node cannot be put into its chain (decision 0.95).
     /// </summary>
     /// <param name="certificates">The certificates (<c>elm-cert+jws</c>), one to four.</param>
-    /// <param name="node">The node's name, written as <c>node</c> on the first line of each file, or <see langword="null"/>.</param>
+    /// <param name="node">The node's name, written as <c>node</c> on the first line of each file.</param>
     /// <returns>The material.</returns>
     /// <exception cref="ArgumentException">There are no certificates, more than four, or an empty one; or the node is empty.</exception>
-    public static LogKeyMaterial Certificates(IReadOnlyList<string> certificates, string? node = null)
+    public static LogKeyMaterial Certificates(IReadOnlyList<string> certificates, string node)
     {
         ArgumentNullException.ThrowIfNull(certificates);
-        if (certificates.Count is 0 or > 4 || certificates.Any(string.IsNullOrEmpty) || node is { Length: 0 })
+        ArgumentNullException.ThrowIfNull(node);
+        if (certificates.Count is 0 or > 4 || certificates.Any(string.IsNullOrEmpty) || node.Length == 0)
         {
             throw new ArgumentException("A log needs one to four certificates, none empty, and a node that is not empty.", nameof(certificates));
         }
@@ -58,10 +59,7 @@ public sealed class LogKeyMaterial
     {
         if (_certificates is not null)
         {
-            if (_node is not null)
-            {
-                writer.WriteString("node", _node);
-            }
+            writer.WriteString("node", _node);
 
             writer.WriteStartArray("certificates");
             foreach (string certificate in _certificates)

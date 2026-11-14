@@ -243,6 +243,67 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
         Assert.False(File.Exists(license));
     }
 
+    /// <summary>
+    /// An answer of the administration API whose JSON holds text that cannot be read is taken as an answer that is not JSON,
+    /// once, where the body is checked: elm prints nothing of it and exits with 3, without an exception (design §8.3, §13.7,
+    /// V1d23, Issue #402).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The folder of a stopped server and a listener of the test on admin.sock that answers 200 with an otherwise valid
+    ///   body ({"leases":[]} or {"autoRefresh":false}) that holds the value "\ud800", the member "\ud800" at its end, the
+    ///   value "x" and the byte 0xFF, or the value "\udc00\ud800".
+    ///
+    /// Steps:
+    /// - Run elm server leases --json (it prints the body); run elm server deactivate-proof (it reads autoRefresh from the
+    ///   status first).
+    ///
+    /// Expected:
+    /// - leases: exit 3, no output, "error: The server answered 200 with a body that is not JSON."; deactivate-proof: exit
+    ///   3, "error: The server's administration API answered with a body that is not JSON.", no file (before V1d23 each
+    ///   threw InvalidOperationException, or printed the body).
+    /// </remarks>
+    /// <param name="shape">Where the text that cannot be read is.</param>
+    [Theory]
+    [InlineData("value")]
+    [InlineData("name")]
+    [InlineData("not-utf8")]
+    [InlineData("reversed")]
+    public async Task Commands_AnswerWithTextThatIsNotUnicode_IsNotJson(string shape)
+    {
+        string folder = await StoppedServerFolderAsync();
+        string made = Path.Combine(folder, "made.file");
+        RawAnswer Shaped(string target)
+        {
+            string start = target.EndsWith("/leases", StringComparison.Ordinal) ? """{"leases":[]""" : """{"autoRefresh":false""";
+            string text = shape switch
+            {
+                "value" => start + ""","x":"\ud800"}""",
+                "name" => start + ""","\ud800":1}""",
+                "reversed" => start + ""","x":"\udc00\ud800"}""",
+                _ => start + ",\"x\":\"xÿ\"}",
+            };
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(text);
+            int at = Array.IndexOf(bytes, (byte)0xC3);
+            return RawAnswer.Bytes(at < 0 ? bytes : [.. bytes[..at], 0xFF, .. bytes[(at + 2)..]]);
+        }
+
+        (int Code, string Out, string Error) leases;
+        (int Code, string Out, string Error) proof;
+        await using (RawAnswerServer listener = RawAnswerServer.StartOnSocket(AdminSocket.PathIn(folder), Shaped))
+        {
+            leases = await RunAsync(["server", "leases", "--json", .. Common(folder)]);
+            proof = await RunAsync(["server", "deactivate-proof", .. Common(folder), "--out", made]);
+        }
+
+        Assert.Equal(
+            (3, string.Empty, "error: The server answered 200 with a body that is not JSON."),
+            (leases.Code, leases.Out, leases.Error.Trim())
+        );
+        Assert.Equal((3, "error: The server's administration API answered with a body that is not JSON."), (proof.Code, proof.Error.Trim()));
+        Assert.False(File.Exists(made));
+    }
+
     private static string[] Common(string folder) => ["--product", Product, "--data", folder];
 
     // A data folder in which a server ran with its license and stopped: it holds a key, a license, and a token, and no

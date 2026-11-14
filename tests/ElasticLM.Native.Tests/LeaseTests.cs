@@ -218,6 +218,47 @@ public sealed class LeaseTests : IAsyncLifetime
     }
 
     /// <summary>
+    /// A saved borrow whose file holds a member name that cannot be read as text is not listed, without an error (design
+    /// §8.3, §12.7.4, V1d23, finding F20).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its reclaim window; a client in a folder of the test.
+    ///
+    /// Steps:
+    /// - Borrow pro for an hour; list the borrows; add the member "\ud800" and 16 x at the end of the saved borrow's file
+    ///   (after the members the reader looks up, which it looks up from the last); list the borrows again.
+    ///
+    /// Expected:
+    /// - The first list holds the borrow; the second returns 0 with no borrow (before V1d23 the reader threw, and the call
+    ///   failed with ELM_INTERNAL_ERROR).
+    /// </remarks>
+    [Fact]
+    public async Task Borrowed_FileWithTextThatIsNotUnicode_IsNotListed()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        string folder = _deployment.NewFolder();
+        Assert.True(
+            LeaseApi.Create(_api, LeaseApi.Options(_api, _root, server.PublicUrls[0].AbsoluteUri, folder), out nint client) == 0,
+            NativeApi.LastError
+        );
+
+        Assert.Equal(0, LeaseApi.Borrow(_api, client, "pro", 3600, out nint borrow, out _));
+        Assert.Equal(0, LeaseApi.Borrowed(client, out string[] ids));
+        Assert.Single(ids);
+        string file = Directory
+            .GetFiles(folder, "*.json", SearchOption.AllDirectories)
+            .Single(f => Path.GetFileName(Path.GetDirectoryName(f)) == "borrows");
+        string text = File.ReadAllText(file);
+        File.WriteAllText(file, text[..text.LastIndexOf('}')] + ",\"\\ud800xxxxxxxxxxxxxxxx\":1}");
+
+        Assert.Equal(0, LeaseApi.Borrowed(client, out ids));
+        Assert.Empty(ids);
+        LeaseApi.Destroy(client);
+        LeaseApi.Free(borrow);
+    }
+
+    /// <summary>
     /// A lease of the hosted service: acquired and released with a license key; such a client has no pin.
     /// </summary>
     /// <remarks>

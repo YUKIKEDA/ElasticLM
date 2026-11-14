@@ -65,6 +65,58 @@ public sealed class LeaseTests : IDisposable
     }
 
     /// <summary>
+    /// A lease may end at the server license's expiry plus its grace, and not a second later (design §12.7.5 step 5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The server license of the valid case: it expires in 30 days with a grace of 7 days.
+    ///
+    /// Steps:
+    /// - Issue a 10-minute lease that ends at the expiry plus the grace, and one issued a second later; verify each at its
+    ///   issue time.
+    ///
+    /// Expected:
+    /// - The first is valid; the second is ELM_LEASE_OUT_OF_BOUNDS.
+    /// </remarks>
+    [Fact]
+    public void VerifyOnPremises_LeaseEndAtTheServerLicenseGrace_IsTheBound()
+    {
+        ServerIdentity server = Server();
+        DateTimeOffset bound = Now.AddDays(37);
+
+        _time.SetUtcNow(bound.AddMinutes(-10));
+        Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyOnPremises(LeaseIssuer.Issue(_server, Spec(server), _time), server, Expect()));
+
+        _time.Advance(TimeSpan.FromSeconds(1));
+        var over = Assert.IsType<LeaseVerificationResult.Invalid>(
+            Verifier().VerifyOnPremises(LeaseIssuer.Issue(_server, Spec(server), _time), server, Expect())
+        );
+        Assert.Equal(ErrorCode.LeaseOutOfBounds, over.Error.Code);
+    }
+
+    /// <summary>
+    /// A server license that expires at the last second a time can have, with a grace period, bounds its leases without an
+    /// exception: its expiry and grace are added in seconds (design §12.7.5 step 5, V1d23, finding F36).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The server license of the valid case, but expiring at 9999-12-31T23:59:59Z, with its grace of 7 days.
+    ///
+    /// Steps:
+    /// - Issue a 10-minute lease now and verify it.
+    ///
+    /// Expected:
+    /// - Valid (before V1d23, adding the grace to the expiry as a DateTimeOffset threw ArgumentOutOfRangeException).
+    /// </remarks>
+    [Fact]
+    public void VerifyOnPremises_ServerLicenseAtTheLastTime_IsValid()
+    {
+        ServerIdentity server = Server(DateTimeOffset.FromUnixTimeSeconds(253_402_300_799));
+
+        Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyOnPremises(Lease(server), server, Expect()));
+    }
+
+    /// <summary>
     /// Each step of design §12.7.5, broken alone, rejects the lease.
     /// </summary>
     /// <remarks>
@@ -928,16 +980,21 @@ public sealed class LeaseTests : IDisposable
 
     private LeaseExpectation Expect() => new("acme-cad", ClientKid);
 
-    private ServerIdentity Server()
+    private ServerIdentity Server(DateTimeOffset? expiresAt = null)
     {
         Assert.True(
-            ServerIdentity.TryCreate(VerifiedLicenseOf(LicenseKind.Server), Jwk(_server), out ServerIdentity? server, out LicenseError? error),
+            ServerIdentity.TryCreate(
+                VerifiedLicenseOf(LicenseKind.Server, expiresAt),
+                Jwk(_server),
+                out ServerIdentity? server,
+                out LicenseError? error
+            ),
             error?.Message
         );
         return server!;
     }
 
-    private VerifiedLicense VerifiedLicenseOf(LicenseKind kind)
+    private VerifiedLicense VerifiedLicenseOf(LicenseKind kind, DateTimeOffset? expiresAt = null)
     {
         bool isServer = kind == LicenseKind.Server;
         var spec = new LicenseSpec
@@ -946,7 +1003,7 @@ public sealed class LeaseTests : IDisposable
             ProductId = "acme-cad",
             Kind = kind,
             Features = isServer ? [new FeatureSpec("pro", Seats: 5), new FeatureSpec("basic", Seats: 5)] : [new FeatureSpec("pro")],
-            ExpiresAt = Now.AddDays(30),
+            ExpiresAt = expiresAt ?? Now.AddDays(30),
             GracePeriod = isServer ? TimeSpan.FromDays(7) : TimeSpan.Zero,
             InstallationKeyThumbprint = KeyFiles.KeyId(_server),
             LeaseDuration = isServer ? TimeSpan.FromMinutes(10) : null,

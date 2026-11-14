@@ -1076,8 +1076,8 @@ public sealed class ActivationClient : IAsyncDisposable
             // service returns again (design §10.4 step 3). An activation or a trial takes only those sent for the same license
             // key or trial (the review of PR #418): the whole list still goes in retry, so the service judges clones as before.
             StoredActivation sent = stored;
-            List<string> requests = pending ? [.. sent.Pending.Where(j => sent.Aims.GetValueOrDefault(j) == aim)] : [.. sent.Retry];
-            if (sent.Offline is OfflineRequest waiting && (!pending || OfflineAim(waiting) == aim))
+            List<string> requests = pending ? [.. sent.Pending.Where(j => SameSecret(sent.Aims.GetValueOrDefault(j), aim))] : [.. sent.Retry];
+            if (sent.Offline is OfflineRequest waiting && (!pending || SameSecret(OfflineAim(waiting), aim)))
             {
                 requests.Add(waiting.Nonce);
             }
@@ -1191,7 +1191,7 @@ public sealed class ActivationClient : IAsyncDisposable
             && !renew
             && now < waiting.ExpiresAt
             && waiting.Refresh == refresh
-            && waiting.KeyHash == keyHash
+            && SameSecret(waiting.KeyHash, keyHash)
             && waiting.ActivationId == (refresh ? current.ActivationId : null)
             && waiting.Retry.SequenceEqual(current.ListFor(pending: !refresh), StringComparer.Ordinal)
         )
@@ -1273,6 +1273,11 @@ public sealed class ActivationClient : IAsyncDisposable
     private string Aim(string? licenseKey) => _options.ProductId + " " + (licenseKey is null ? "trial" : KeyHash(licenseKey));
 
     private string? OfflineAim(OfflineRequest request) => request.KeyHash is string hash ? _options.ProductId + " " + hash : null;
+
+    // .cursor/rules/security.mdc: the hash of a license key stands for the key, so a value that holds it is compared in
+    // fixed time. Whether a value is there, and its length, are not secret.
+    private static bool SameSecret(string? a, string? b) =>
+        a is null || b is null ? a == b : CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 
     private static string KeyHash(string licenseKey) =>
         System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(Encoding.UTF8.GetBytes(licenseKey)));
@@ -1458,8 +1463,10 @@ public sealed class ActivationClient : IAsyncDisposable
                 ? (id.GetString()!, Encoding.UTF8.GetBytes(license.GetRawText()))
                 : null;
         }
-        catch (JsonException)
+        catch (Exception e) when (e is JsonException or InvalidOperationException)
         {
+            // JsonElement throws InvalidOperationException from GetString, GetRawText, and TryGetProperty on text it cannot
+            // read: a lone surrogate escape, or bytes that are not UTF-8 (measured on .NET 10.0.15, Windows).
             return null;
         }
     }

@@ -388,10 +388,14 @@ internal static class LicenseCommands
         return new TokenView(ParseSegment(parts[0]), ParseSegment(parts[1]));
     }
 
+    // design §8.3 (V1d23): the parts are printed later with GetRawText and JsonSerializer, which throw
+    // InvalidOperationException on a name or a string that cannot be read as text; such a part is not read.
     private static JsonElement ParseSegment(string segment)
     {
         using JsonDocument document = JsonDocument.Parse(Base64Url.DecodeFromChars(segment), new JsonDocumentOptions { MaxDepth = 8 });
-        return document.RootElement.Clone();
+        return JsonText.IsReadable(document.RootElement)
+            ? document.RootElement.Clone()
+            : throw new FormatException("A token holds text that is not valid Unicode.");
     }
 
     private static string Pretty(JsonElement element) => JsonSerializer.Serialize(element, CliJsonContext.Default.JsonElement);

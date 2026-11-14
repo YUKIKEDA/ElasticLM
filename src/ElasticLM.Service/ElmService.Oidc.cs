@@ -252,7 +252,7 @@ internal sealed partial class ElmService
             string? value = OnlyString(payload.RootElement, claim);
             return IsIdentifier(value) ? value : null;
         }
-        catch (Exception e) when (e is FormatException or JsonException)
+        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
         {
             return null;
         }
@@ -287,7 +287,7 @@ internal sealed partial class ElmService
             using JsonDocument header = JsonDocument.Parse(Base64Url.DecodeFromChars(parts[0]));
             return OnlyString(header.RootElement, "alg") is string alg && SignatureAlgorithms.Contains(alg, StringComparer.Ordinal);
         }
-        catch (Exception e) when (e is FormatException or JsonException)
+        catch (Exception e) when (e is FormatException or JsonException or InvalidOperationException)
         {
             return false;
         }
@@ -295,6 +295,8 @@ internal sealed partial class ElmService
 
     // The value of a member that a JSON object holds exactly once, as a string; null for anything else. JsonDocument lists
     // each copy of a member written twice; Microsoft.IdentityModel.JsonWebTokens 8.19.2 keeps the last (see IdentityOf).
+    // NameEquals and GetString throw InvalidOperationException on a name or a value that is a lone surrogate escape or
+    // not UTF-8 (measured on .NET 10.0.15, Windows); the callers take it as a token that cannot be read.
     private static string? OnlyString(JsonElement element, string name)
     {
         if (element.ValueKind != JsonValueKind.Object)

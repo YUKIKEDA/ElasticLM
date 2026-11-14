@@ -67,7 +67,11 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
 
         string newest = files[^1];
-        LogReport report = LogVerifier.Verify([newest], trust, server.License.ProductId, BaseName);
+
+        // design §18.1 (V1d23): the verifier hands out the event lines of the newest file; they are used only when the file
+        // verified.
+        var entries = new List<LogEntry>();
+        LogReport report = LogVerifier.Verify([newest], trust, server.License.ProductId, BaseName, onEntry: entries.Add);
         string? problems = report.Intact
             ? null
             : string.Join(" ", report.Issues.Where(i => i.Severity == LogIssueSeverity.Error).Select(i => $"line {i.Line}: {i.Message}"));
@@ -107,7 +111,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             return journal;
         }
 
-        foreach (LogEntry entry in report.Entries)
+        foreach (LogEntry entry in entries)
         {
             if (entry.IsSigned || entry.Type != BorrowReturned)
             {

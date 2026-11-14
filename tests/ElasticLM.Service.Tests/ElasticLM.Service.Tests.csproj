@@ -18,5 +18,7 @@
     <Compile Include="..\ElasticLM.Server.Tests\RecordingLoggerProvider.cs" Link="RecordingLoggerProvider.cs" />
     <!-- design §20.7, V1d14: the forms of a token without a signature, shared by the tests of every verifier. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\SignatureForms.cs" Link="SignatureForms.cs" />
+    <!-- design §18.1, V1d23: the event lines of a verified log, collected through the verifier's callback. -->
+    <Compile Include="..\ElasticLM.Issuing.Tests\VerifiedLog.cs" Link="VerifiedLog.cs" />
   </ItemGroup>
 </Project>
