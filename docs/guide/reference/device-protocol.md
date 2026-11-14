@@ -332,9 +332,9 @@ The license's state is not checked: a revoked, suspended, or expired license can
 Starts a trial: the service makes a license of the product's trial policy, the `trial` policy that the product names in `trialPolicyId`, with every feature of the product, and activates it for the installation. See [Trials](../explanation/activation.md#trials).
 
 - Authentication: a proof with `jwk`.
-- Success: `201` for a new trial. `200` for a retry: the same installation key, an activation that is still at `seq` 1, and `retry` holding the `jti` of the request that got it. The retry gets the file it was issued.
+- Success: `201` for a new trial. `200` for a retry: the same installation key, an activation that is still at `seq` 1, and `retry` holding the `jti` of the request that got it. The retry gets the file it was issued, unless the trial's license is suspended, revoked, or expired, or the activation was stopped as a clone: a retry is refused as a retried activation is.
 - Response headers: `ELM-Nonce`. A refusal at the product's limit also has `Retry-After`.
-- Order: a retry of a trial whose answer was lost gets its file first, then a used fingerprint gets `ELM_TRIAL_USED`, and only then does the product's limit apply.
+- Order: a retry of a trial whose answer was lost is answered first (with its file, or with the license's state, then with `ELM_CLONE_DETECTED`), then a used fingerprint gets `ELM_TRIAL_USED`, and only then does the product's limit apply.
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
@@ -359,7 +359,9 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 | Status | Code | When |
 | --- | --- | --- |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` is empty. |
+| `403` | `ELM_LICENSE_SUSPENDED`, `ELM_LICENSE_REVOKED`, `ELM_EXPIRED` | A retry, and the trial's license is suspended, revoked, or expired. |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | No product has the code, or the product has no trial policy. |
+| `409` | `ELM_CLONE_DETECTED` | A retry, and the trial's activation was stopped as a clone. |
 | `409` | `ELM_TRIAL_USED` | One of the fingerprints already had a trial of the product. |
 | `429` | `ELM_RATE_LIMITED` | The product has given its trial policy's `trialDailyLimit` trials in the last 24 hours: "The product has reached its limit of N trials in 24 hours." `Retry-After` is the seconds until one place frees, from 1 to 86,400: when the oldest of them is 24 hours old, or, when the limit was lowered below their number, when enough of them are. Only that place frees, and the next request takes it. Nothing is written. |
 

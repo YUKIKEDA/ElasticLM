@@ -181,13 +181,13 @@ A request whose body cannot be read, because of its form (for example, a bad chu
 
 Every request is first limited per source address (an IPv4 address, or an IPv6 /64) by `rateLimit.perIp`. An authenticated request is then also limited by `rateLimit.perKey`: per API key, or per administrator for an access token or a session. The checks run in this order: the limit per source, authentication, the limit per key, the permission, then the route itself. The settings are in [elm-service configuration](service-configuration.md#ratelimit).
 
-#### Caching
+#### Caching and browser headers
 
-Every answer under `/v1/admin/`, errors included, has `Cache-Control: no-store`.
+Every answer under `/v1/admin/`, errors included, has `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: frame-ancestors 'none'`. A browser then keeps no copy of an answer, does not guess another type than the one given and show a JSON answer as a page, and shows no answer inside a frame of another site.
 
 #### Audit log
 
-Every authenticated call writes one row to the audit log, reads and refusals included, with the action named in each route below. A call that ends without a whole answer writes its row too. A call refused for a missing permission is written with `result` `ELM_FORBIDDEN`. Calls without a valid credential are counted and written as one `auth.failed` row a minute. Rate-limited calls are not written. `GET /v1/admin/oidc` and a successful `GET /v1/admin/me` write no row. The actions and the row fields are in [Logs](logs.md#audit-log).
+Every authenticated call writes one row to the audit log, reads and refusals included, with the action named in each route below. A call that ends without a whole answer writes its row too. A call refused for a missing permission is written with `result` `ELM_FORBIDDEN`. Calls without a valid credential are counted and written as one `auth.failed` row a minute. Rate-limited calls are not written; a check of the audit log refused because another check runs (see [`POST /v1/admin/audit/verify`](#post-v1adminauditverify)) is written, with `result` `ELM_RATE_LIMITED`. `GET /v1/admin/oidc` and a successful `GET /v1/admin/me` write no row. The actions and the row fields are in [Logs](logs.md#audit-log).
 
 ### Health check
 
@@ -556,6 +556,8 @@ Audit action: `audit.list`.
 
 Checks the hash chain of the audit log, from the oldest row it keeps to the newest. What the check finds, and what it cannot find, is in [Logs](logs.md#verifying-the-audit-log).
 
+The check reads every row, so its time grows with the number of rows. Each node runs one check at a time.
+
 Permission: `audit.read`.
 
 Answers `200`:
@@ -574,7 +576,7 @@ Answers `200`:
 }
 ```
 
-Errors: only those common to all routes.
+Errors: those common to all routes, and `ELM_RATE_LIMITED` (429, `Retry-After: 1`) "Another check of the audit log is running on this node." while another check runs on the node that got the call. Call again after it ends.
 
 Audit action: `audit.verify`.
 
@@ -1606,7 +1608,7 @@ Returns one of this node's usage log files as it is.
 
 Permission: `usagelog.read`.
 
-Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began; `Content-Length` is that length. If the transfer fails partway, the service closes the connection without ending the answer, so the client receives fewer bytes than `Content-Length` and reports an error instead of taking the part for the whole file. For example, the first lines of a file:
+Answers `200` with the file's lines (`application/x-ndjson`), up to the length the file had when the download began; `Content-Length` is that length. `Content-Disposition: attachment; filename="<name>"` makes a browser save the file instead of showing it. If the transfer fails partway, the service closes the connection without ending the answer, so the client receives fewer bytes than `Content-Length` and reports an error instead of taking the part for the whole file. For example, the first lines of a file:
 
 ```text
 {"type":"chain.start","ts":1793532478,"stream":"usage","node":"node-1","certificates":["eyJhbGciOiJFUzI1NiJ9.eyJleGFtcGxlIjp0cnVlfQ.ZmFrZS1zaWduYXR1cmU"]}
