@@ -440,7 +440,7 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // design §12.7.5 step 7 (V1d18). The lease token carries no version, so the version asked for is checked against the
-    // server license that verified the lease, with the parser of the license verifier.
+    // server license that verified the lease, with the public check of its feature (the owner's answer to K1 of PR #446).
 
     /// <summary>
     /// Checks the version asked for in an acquisition or a borrow from an on-premises server against the range of the
@@ -453,21 +453,12 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="version">The version asked for, or <see langword="null"/>.</param>
     /// <returns><see langword="null"/> when no version was asked for, the feature has no range, or the version is in it;
     /// otherwise <c>ELM_FEATURE_VERSION_NOT_LICENSED</c>.</returns>
-    internal static LicenseError? VersionOutsideLicense(ServerIdentity? identity, string featureId, string? version)
-    {
-        if (version is null || identity?.License.Features.FirstOrDefault(f => f.Id == featureId)?.VersionRange is not string range)
-        {
-            return null;
-        }
-
-        // A range that does not parse grants no version, as on the server.
-        return
-            FeatureVersion.TryParse(version, out FeatureVersion asked)
-            && FeatureVersionRange.TryParse(range, out FeatureVersionRange? licensed)
-            && licensed!.Contains(asked)
-            ? null
-            : new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the range of the server license.");
-    }
+    internal static LicenseError? VersionOutsideLicense(ServerIdentity? identity, string featureId, string? version) =>
+        version is not null
+        && identity?.License.Features.FirstOrDefault(f => f.Id == featureId) is { VersionRange: not null } feature
+        && !feature.CoversVersion(version)
+            ? new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the range of the server license.")
+            : null;
 
     // design §12.7.5, §10.4 (V1d5). The fields come before the lease ID, the lease ID before the sequence number, and the
     // request's ID last, so that each names the first thing that differs.

@@ -18,9 +18,6 @@
     <InternalsVisibleTo Include="ElasticLM.Issuing" />
     <!-- The lease engine reads feature version ranges and encodes IDs with the same code as the verifier. -->
     <InternalsVisibleTo Include="ElasticLM.Leasing" />
-    <!-- The client checks the version it asked for against the server license's feature range with the verifier's own
-         parser (design §12.7.5 step 7, V1d18); the two packages ship with the same version. -->
-    <InternalsVisibleTo Include="ElasticLM.Client" />
     <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
     <!-- The C ABI tests make licenses with the same test issuer (tests/ElasticLM.Licensing.Tests/TestIssuer.cs). -->
     <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
