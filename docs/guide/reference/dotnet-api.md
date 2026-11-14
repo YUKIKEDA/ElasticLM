@@ -201,8 +201,8 @@ Creates and reads the installation key of a product. `ActivationClient` and `Lic
 
 | Method | Parameters | Returns | What it does |
 | --- | --- | --- | --- |
-| `TryLoadOrCreate` | `out InstallationKey? key`, `out LicenseError? error` | `bool` | Reads the key, or creates it and its folder when there is no key file. Fails with `ELM_INSTALLATION_KEY_UNREADABLE` when a key exists but cannot be read, or cannot be created. The caller disposes the key. |
-| `TryLoad` | `out InstallationKey? key`, `out LicenseError? error` | `bool` | Reads the key. Fails with `ELM_INSTALLATION_KEY_UNREADABLE` when there is no key or it cannot be read. The caller disposes the key. |
+| `TryLoadOrCreate` | `out InstallationKey? key`, `out LicenseError? error` | `bool` | Reads the key, or creates it and its folder when there is no key file. Fails with `ELM_INSTALLATION_KEY_UNREADABLE` when a key exists but cannot be read, or cannot be created, and in the machine scope when another user could read or replace the folder (see [where the key is stored](../explanation/devices-and-proofs.md#where-the-key-is-stored)). The caller disposes the key. |
+| `TryLoad` | `out InstallationKey? key`, `out LicenseError? error` | `bool` | Reads the key. Fails with `ELM_INSTALLATION_KEY_UNREADABLE` when there is no key or it cannot be read, and in the machine scope when another user could read or replace the folder. The caller disposes the key. |
 | `Delete` | none | `void` | Deletes the key file. Nothing happens when there is none. |
 
 | Property | Type | What it is |
