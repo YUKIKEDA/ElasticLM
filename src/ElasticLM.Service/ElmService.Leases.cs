@@ -409,8 +409,13 @@ internal sealed partial class ElmService
                 found.LicenseId,
                 async scope =>
                 {
+                    // design §12.7.7 step 4: read again under the lock that a renewal takes too. A row keeps its key and changes
+                    // issued_by only with seq, so sequence 1 says nobody renewed it since that request.
                     long at = now.ToUnixTimeSeconds();
-                    return scope is null || await scope.FindLeaseAsync(found.Id, at, device.Aborted).ConfigureAwait(false) is not LeaseRow lease
+                    return
+                        scope is null
+                        || await scope.FindLeaseAsync(found.Id, at, device.Aborted).ConfigureAwait(false) is not LeaseRow lease
+                        || lease.Seq != 1
                         ? Released
                         : await ReleaseInScopeAsync(scope, device, lease, policy, product, at).ConfigureAwait(false);
                 },

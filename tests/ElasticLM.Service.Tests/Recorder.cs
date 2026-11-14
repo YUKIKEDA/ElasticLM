@@ -51,6 +51,9 @@ internal sealed class Recorder
     private int _failRequestReleases;
     private int _refuseRequestReleases;
     private HttpStatusCode _refusalStatus;
+    private string? _refusalBody;
+    private int _failNonces;
+    private HttpStatusCode _nonceStatus;
     private int _replayed;
 
     /// <summary>Gets or sets a value indicating whether renewals throw <see cref="HttpRequestException"/> before they are sent.</summary>
@@ -97,10 +100,23 @@ internal sealed class Recorder
     /// </summary>
     /// <param name="status">The status.</param>
     /// <param name="count">How many releases to answer so.</param>
-    public void RefuseRequestReleases(HttpStatusCode status, int count = 1)
+    /// <param name="body">The body, a problem in JSON, or <see langword="null"/> for none.</param>
+    public void RefuseRequestReleases(HttpStatusCode status, int count = 1, string? body = null)
     {
         _refusalStatus = status;
+        _refusalBody = body;
         Volatile.Write(ref _refuseRequestReleases, count);
+    }
+
+    /// <summary>
+    /// Answers the next nonce requests (<c>GET /v1/nonce</c>) with a status and no body, without passing them to the server.
+    /// </summary>
+    /// <param name="status">The status.</param>
+    /// <param name="count">How many nonce requests to answer so.</param>
+    public void FailNonces(HttpStatusCode status, int count = 1)
+    {
+        _nonceStatus = status;
+        Volatile.Write(ref _failNonces, count);
     }
 
     /// <summary>
@@ -225,7 +241,18 @@ internal sealed class Recorder
                 && Interlocked.Decrement(ref recorder._refuseRequestReleases) >= 0
             )
             {
-                return new HttpResponseMessage(recorder._refusalStatus) { RequestMessage = request };
+                var refusal = new HttpResponseMessage(recorder._refusalStatus) { RequestMessage = request };
+                if (recorder._refusalBody is string text)
+                {
+                    refusal.Content = new StringContent(text, Encoding.UTF8, "application/problem+json");
+                }
+
+                return refusal;
+            }
+
+            if (request.Method == HttpMethod.Get && path == "/v1/nonce" && Interlocked.Decrement(ref recorder._failNonces) >= 0)
+            {
+                return new HttpResponseMessage(recorder._nonceStatus) { RequestMessage = request };
             }
 
             if (acquisition && (recorder.LoseNextAcquisitionAnswer || recorder.OversizeNextAcquisition || recorder._holdNextAcquisition is not null))

@@ -136,9 +136,9 @@ internal abstract partial class Database
     public abstract Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken);
 
     /// <summary>
-    /// Returns the lease that an acquisition or a borrow with the proof <paramref name="requestId"/> issued, bound to
-    /// <paramref name="keyId"/>, and not renewed since (sequence 1), or <see langword="null"/>; read outside a transaction,
-    /// to find its license, whose lock the expiry is judged under (design §12.7.7).
+    /// Returns a lease bound to <paramref name="keyId"/> whose last token answers the proof <paramref name="requestId"/>, or
+    /// <see langword="null"/>; read outside a transaction, to find its license, under whose lock the caller reads it again
+    /// and judges whether it is still the unrenewed lease of that request (design §12.7.7).
     /// </summary>
     public abstract Task<LeaseRow?> FindLeaseByRequestAsync(string keyId, string requestId, CancellationToken cancellationToken);
 

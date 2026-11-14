@@ -534,6 +534,68 @@ public sealed class HostedLeaseAnswerTests
         await client.DisposeAsync();
     }
 
+    /// <summary>
+    /// At the service's default rate per installation key (2 requests a second), the client sends one owed release before
+    /// a request, so the request itself is not refused with ELM_RATE_LIMITED; the next owed release goes before the next
+    /// request (design §12.7.7, the owner's answer K1 to the review of PR #440).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with rateLimit.clientPerKey 2; a cloud-floating license with 5 seats of core; a client with its key
+    ///   behind a relay that loses the answers of acquisitions after the service issued the lease and makes the releases
+    ///   by a request's jti fail before they are sent.
+    ///
+    /// Steps:
+    /// - Acquire core twice (J1, J2), one second apart, so that both releases are owed; let the releases through; move the
+    ///   clock one second; acquire core (L); move the clock one second; return L.
+    ///
+    /// Expected:
+    /// - The acquisition sends DELETE /v1/leases/requests/J1, then its POST, and gives L: two requests of the key in that
+    ///   second, both answered.
+    /// - The return sends DELETE /v1/leases/requests/J2, then DELETE /v1/leases/L, and succeeds; no lease is left.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_OwedReleases_AtTheDefaultKeyRate_LeaveTheRequestItsTurn()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        string owner = await test.SetupAsync();
+        ElmService service = await test.StartAsync(s => s with { RateLimitClientPerKey = 2 });
+        HttpClient admin = test.Http(service, owner);
+        (string licenseId, string key) = await LicenseAsync(admin, await PolicyAsync(admin, "deny"), Features);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        var relay = new Recorder { FailRequestReleases = int.MaxValue };
+        LicenseClient client = HostedLeaseClientTests.Client(test, service, key, test.FilePath("client"), wrap: relay.Over);
+        string[] lost = new string[2];
+        for (int i = 0; i < 2; i++)
+        {
+            relay.LoseNextAcquisitionAnswer = true;
+            Assert.Equal(
+                ErrorCode.NetworkError,
+                Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("core", cancellationToken: cancel)).Error.Code
+            );
+            lost[i] = relay.Requests().Last(r => r.Method == "POST").ProofId!;
+            test.Time.Advance(TimeSpan.FromSeconds(1));
+        }
+
+        relay.FailRequestReleases = 0;
+        int before = relay.Requests().Length;
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: cancel));
+        Assert.Equal(
+            ["DELETE /v1/leases/requests/" + lost[0], "POST /v1/leases"],
+            relay.Requests().Skip(before).Where(r => r.Method != "GET").Select(r => r.Method + " " + r.Path)
+        );
+
+        test.Time.Advance(TimeSpan.FromSeconds(1));
+        before = relay.Requests().Length;
+        Assert.Null(await client.ReleaseLeaseAsync(lease, cancel));
+        Assert.Equal(
+            ["DELETE /v1/leases/requests/" + lost[1], $"DELETE /v1/leases/{lease.Id}"],
+            relay.Requests().Skip(before).Where(r => r.Method != "GET").Select(r => r.Method + " " + r.Path)
+        );
+        Assert.Empty((await LeasesAsync(admin, licenseId)).Ids);
+        await client.DisposeAsync();
+    }
+
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];
 

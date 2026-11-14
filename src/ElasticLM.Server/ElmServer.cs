@@ -1258,6 +1258,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     .ConfigureAwait(false);
                 break;
             default:
+                // design §18.1 (V1d5b, the owner's answer K4): counted as elm-service counts every refused release.
+                _usage.Denied(lease?.FeatureId, ErrorCode.CloneDetected);
                 await ProblemAsync(context, ErrorCode.CloneDetected, "The lease was stopped as a clone; it ends at its expiry.")
                     .ConfigureAwait(false);
                 break;

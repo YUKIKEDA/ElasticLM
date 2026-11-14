@@ -278,7 +278,7 @@ public sealed class LicenseClient : IAsyncDisposable
                 return new LeaseResult.Failed(connectError, null);
             }
 
-            await SendOwedReleasesAsync(cancellationToken).ConfigureAwait(false);
+            await SendOwedReleaseAsync(cancellationToken).ConfigureAwait(false);
             var body = new AcquireRequestBody(
                 featureId,
                 version,
@@ -364,17 +364,13 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
-    // Sends the owed releases, oldest first, under the lock, and stops at the first that does not get through, so a server
-    // that cannot be reached is not waited for once per release (design §12.7.7).
-    private async Task SendOwedReleasesAsync(CancellationToken cancellationToken)
+    // Sends the oldest owed release under the lock, before a request of the app or of the renewal timer (design §12.7.7).
+    // One per request: elm-service limits the requests of one installation key per second (2 by default), and more releases
+    // before the request would leave it refused with ELM_RATE_LIMITED. A server that cannot be reached is waited for once.
+    private async Task SendOwedReleaseAsync(CancellationToken cancellationToken)
     {
-        while (_owedReleases.Count > 0)
+        if (_owedReleases.Count > 0 && await SendRequestReleaseAsync(_owedReleases[0], cancellationToken).ConfigureAwait(false))
         {
-            if (!await SendRequestReleaseAsync(_owedReleases[0], cancellationToken).ConfigureAwait(false))
-            {
-                return;
-            }
-
             _owedReleases.RemoveAt(0);
         }
     }
@@ -571,11 +567,17 @@ public sealed class LicenseClient : IAsyncDisposable
             // design §17.2: returning the leases takes at most 5 seconds; leases not returned by then end at their expiry.
             using var timeout = new CancellationTokenSource(DisposeTimeout, _time);
 
-            // design §12.7.7: the owed releases go first, within the same 5 seconds; those that do not get through are dropped.
+            // design §12.7.7: the owed releases go first, all of them, oldest first, within the same 5 seconds, until one does
+            // not get through; that one and the rest are dropped, so the returns below send none again.
             if (_owedReleases.Count > 0 && await EnsureConnectedAsync(timeout.Token).ConfigureAwait(false) is null)
             {
-                await SendOwedReleasesAsync(timeout.Token).ConfigureAwait(false);
+                while (_owedReleases.Count > 0 && await SendRequestReleaseAsync(_owedReleases[0], timeout.Token).ConfigureAwait(false))
+                {
+                    _owedReleases.RemoveAt(0);
+                }
             }
+
+            _owedReleases.Clear();
 
             foreach (Lease lease in _leases.Where(l => !l.IsBorrow).ToArray())
             {
@@ -1227,7 +1229,7 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync().ConfigureAwait(false);
         if (error is null)
         {
-            await SendOwedReleasesAsync(CancellationToken.None).ConfigureAwait(false);
+            await SendOwedReleaseAsync(CancellationToken.None).ConfigureAwait(false);
             Reply reply = await SendSignedAsync(
                     HttpMethod.Post,
                     $"v1/leases/{Uri.EscapeDataString(lease.Id)}/renew",
@@ -1388,7 +1390,7 @@ public sealed class LicenseClient : IAsyncDisposable
         LicenseError? error = await EnsureConnectedAsync(cancellationToken).ConfigureAwait(false);
         if (error is null)
         {
-            await SendOwedReleasesAsync(cancellationToken).ConfigureAwait(false);
+            await SendOwedReleaseAsync(cancellationToken).ConfigureAwait(false);
 
             // A borrow's return carries the key (design §12.7.1): an on-premises server restored from its record may not know it.
             // elm-service checks it against the key the lease keeps.
@@ -1439,7 +1441,8 @@ public sealed class LicenseClient : IAsyncDisposable
                     .ConfigureAwait(false);
                 if (nonceReply.Error is not null)
                 {
-                    return nonceReply;
+                    // Only the status of the request's own answer tells whether a release got through (design §12.7.7).
+                    return nonceReply with { Status = null };
                 }
 
                 _nonce = ReadNonce(nonceReply.Body);

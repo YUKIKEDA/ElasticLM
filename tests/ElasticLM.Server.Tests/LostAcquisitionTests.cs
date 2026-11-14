@@ -163,8 +163,9 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// The client owes at most 16 releases and drops the oldest past that; it sends them oldest first and stops at the first
-    /// that does not get through, so a server it cannot reach costs one wait per request, not one per release.
+    /// The client owes at most 16 releases and drops the oldest past that. Before each request it sends the oldest owed one
+    /// only, so a server it cannot reach costs one wait per request, and a per-key rate limit is not used up; disposing the
+    /// client sends the rest, oldest first.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -172,16 +173,17 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
     ///   acquisition after the server issued the lease and makes every release by a request's jti fail.
     ///
     /// Steps:
-    /// - Acquire pro 17 times (J1 to J17); let the releases through and the answers too; acquire pro.
+    /// - Acquire pro 17 times (J1 to J17); let the releases through and the answers too; acquire pro (L); dispose the client.
     ///
     /// Expected:
     /// - 17 failures with ELM_NETWORK_ERROR and 17 seats held. The first acquisition tried one release (its own); each later
     ///   one tried two (the oldest owed one, then its own): 33 tries.
-    /// - The last acquisition sends DELETE /v1/leases/requests/ for J2 to J17 in that order, then its POST, and gives a lease:
-    ///   2 seats are held, J1's and the new one.
+    /// - The last acquisition sends DELETE /v1/leases/requests/J2, then its POST, and gives a lease: 17 seats are held.
+    /// - Disposing sends DELETE /v1/leases/requests/ for J3 to J17 in that order and returns L: 1 seat is held, J1's, which
+    ///   was dropped from the owed list and ends at its expiry.
     /// </remarks>
     [Fact]
-    public async Task OwedReleases_AreSixteenAtMost_AndStopAtTheFirstFailure()
+    public async Task OwedReleases_AreSixteenAtMost_OnePerRequest_RestOnDispose()
     {
         ElmServer server = await StartOpenServerAsync(s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 20)] });
         var relay = new Recorder { FailRequestReleases = int.MaxValue };
@@ -202,12 +204,103 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
 
         relay.FailRequestReleases = 0;
         int before = Requests(relay).Length;
-        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(["DELETE " + RequestReleases + lost[1], "POST /v1/leases"], Requests(relay).Skip(before).Select(r => r.Method + " " + r.Path));
+        Assert.Equal(17, server.Engine.SeatsInUse("pro"));
+
+        before = Requests(relay).Length;
+        await client.DisposeAsync();
         Assert.Equal(
-            [.. lost.Skip(1).Select(j => "DELETE " + RequestReleases + j), "POST /v1/leases"],
+            [.. lost.Skip(2).Select(j => "DELETE " + RequestReleases + j), $"DELETE /v1/leases/{lease.Id}"],
+            Requests(relay).Skip(before).Select(r => r.Method + " " + r.Path)
+        );
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// Disposing the client sends the owed releases until one does not get through, drops that one and the rest, and then
+    /// returns its leases without sending any owed release again.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 5 seats of pro, past its reclaim window; a client behind a relay that loses the answers of the next
+    ///   acquisitions after the server issued the lease and makes the releases by a request's jti fail before they are sent;
+    ///   the client holds a lease L and owes the releases of J1 and J2.
+    ///
+    /// Steps:
+    /// - Let the releases through except the next one; dispose the client.
+    ///
+    /// Expected:
+    /// - Disposing sends DELETE /v1/leases/requests/J1, which fails, then DELETE /v1/leases/L and nothing else; 2 seats stay
+    ///   held (J1's and J2's leases end at their expiry).
+    /// </remarks>
+    [Fact]
+    public async Task Dispose_OwedReleaseNotThrough_DropsTheRest()
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        ElmServer server = await StartOpenServerAsync(s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5)] });
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        relay.FailRequestReleases = int.MaxValue;
+        string[] lost = new string[2];
+        for (int i = 0; i < 2; i++)
+        {
+            relay.LoseNextAcquisitionAnswer = true;
+            Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+            lost[i] = Requests(relay).Last(r => r.Method == "POST").ProofId!;
+        }
+
+        relay.FailRequestReleases = 1;
+        int before = Requests(relay).Length;
+        await client.DisposeAsync();
+        Assert.Equal(
+            ["DELETE " + RequestReleases + lost[0], $"DELETE /v1/leases/{lease.Id}"],
             Requests(relay).Skip(before).Select(r => r.Method + " " + r.Path)
         );
         Assert.Equal(2, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// Only the status of the release's own answer tells whether it got through: when the release is refused with
+    /// ELM_NONCE_REQUIRED and the nonce request it makes then fails with 404, the release is owed, not dropped.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 2 seats of pro, past its reclaim window; a client behind a relay that loses the answer of the next
+    ///   acquisition after the server issued the lease, answers the release that follows with 401 ELM_NONCE_REQUIRED
+    ///   without passing it on, and answers the nonce request after it with 404.
+    ///
+    /// Steps:
+    /// - Acquire pro and return it, so that the client holds a nonce; arm the relay; acquire pro (J); acquire pro again.
+    ///
+    /// Expected:
+    /// - The client asked for a nonce twice: at its first request, and after ELM_NONCE_REQUIRED.
+    /// - The last acquisition sends DELETE /v1/leases/requests/J before its POST, and 1 seat is held.
+    /// </remarks>
+    [Fact]
+    public async Task Release_NonceRequestFails_IsOwed()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        Lease first = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Null(await client.ReleaseLeaseAsync(first, TestContext.Current.CancellationToken));
+        int start = Requests(relay).Length;
+        relay.LoseNextAcquisitionAnswer = true;
+        relay.RefuseRequestReleases(
+            HttpStatusCode.Unauthorized,
+            body: """{"code":"ELM_NONCE_REQUIRED","detail":"The nonce is missing or expired; get a new one."}"""
+        );
+        relay.FailNonces(HttpStatusCode.NotFound);
+        Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        string jti = Requests(relay).Skip(start).First(r => r.Method == "POST").ProofId!;
+        Assert.Equal(2, relay.Requests().Count(r => r.Method == "GET" && r.Path == "/v1/nonce"));
+
+        int before = Requests(relay).Length;
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(["DELETE " + RequestReleases + jti, "POST /v1/leases"], Requests(relay).Skip(before).Select(r => r.Method + " " + r.Path));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
 
     /// <summary>
