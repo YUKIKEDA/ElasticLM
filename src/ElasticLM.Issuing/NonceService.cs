@@ -77,8 +77,8 @@ public sealed class NonceService
             return false;
         }
 
-        // design §12.2: the time is compared below the second, so that the nonce stops being accepted at the instant the
-        // replay record of its proofs may be dropped (MemoryReplayStore keeps it up to expiresAt, that instant included).
+        // design §12.2: the time is compared below the second, so that the nonce stops being accepted at expiresAt, while
+        // the replay record of its proofs is still kept (MemoryReplayStore keeps it 60 seconds past expiresAt).
         DateTimeOffset issued = DateTimeOffset.FromUnixTimeSeconds(BinaryPrimitives.ReadInt64BigEndian(bytes));
         DateTimeOffset now = _time.GetUtcNow();
         if (issued > now || now > issued + Lifetime)

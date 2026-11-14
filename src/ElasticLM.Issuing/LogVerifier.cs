@@ -130,10 +130,15 @@ public static class LogVerifier
         {
             Issue(0, LogIssueSeverity.Error, "The file cannot be read: " + e.Message);
             state.Broken = true;
+            state.FirstAuth = null;
             return;
         }
 
         LogSigner? key = null;
+
+        // design §18.1 (V1d23): the hash of the file's first signature line, which a chain.reset of the next file names.
+        string? firstAuth = null;
+        bool readToTheEnd = false;
         LogSigner? nextKey = null;
 
         // design §18.1, 0.95: a service's file is compared with the previous file by the key that signs it, known at its
@@ -236,6 +241,7 @@ public static class LogVerifier
                     }
 
                     firstSignature = false;
+                    firstAuth ??= SignedLog.Hash(bytes);
                     foreach (LogEntry entry in pendingEntries)
                     {
                         state.OnEntry!(entry with { IsSigned = true });
@@ -296,6 +302,7 @@ public static class LogVerifier
                 }
             }
 
+            readToTheEnd = true;
             if (reader.Partial)
             {
                 Issue(number + 1, LogIssueSeverity.Warning, "The file ends in the middle of a line (crash or truncation).");
@@ -322,6 +329,8 @@ public static class LogVerifier
         }
         finally
         {
+            // Unknown when the file was not read as far as its first signature.
+            state.FirstAuth = firstAuth ?? (readToTheEnd ? string.Empty : null);
             reader.Dispose();
             if (key is not null)
             {
@@ -374,10 +383,21 @@ public static class LogVerifier
             string reason = value.TryGetProperty("reason", out JsonElement r) && r.ValueKind == JsonValueKind.String ? r.GetString()! : "no reason";
             issue(1, LogIssueSeverity.Warning, "The chain was reset: " + reason);
 
-            // design §18.1 (V1d23): a reset names the file before it, so a file removed before a reset is found missing.
+            // design §18.1 (V1d23): a reset names the file before it and the hash of that file's first signature line, so a
+            // file removed before a reset is found missing, and another file renamed to its name is found replaced.
+            string? linkFirst =
+                link.ValueKind == JsonValueKind.Object
+                && link.TryGetProperty("first", out JsonElement first)
+                && first.ValueKind == JsonValueKind.String
+                    ? first.GetString()
+                    : null;
             if (previousName is not null && linkFile != previousName)
             {
                 issue(1, LogIssueSeverity.Error, $"The file follows '{linkFile ?? "nothing"}', not '{previousName}': a file is missing.");
+            }
+            else if (previousName is not null && linkFirst is not null && state.FirstAuth is not null && linkFirst != state.FirstAuth)
+            {
+                issue(1, LogIssueSeverity.Error, $"The file follows another file named '{previousName}': that file was replaced.");
             }
 
             state.Prev = string.Empty;
@@ -765,6 +785,10 @@ public static class LogVerifier
         public Action<LogEntry>? OnEntry { get; init; }
 
         public long EntryCount { get; set; }
+
+        // The hash of the first signature line of the file verified last: empty when it has none, null when it was not read
+        // that far.
+        public string? FirstAuth { get; set; }
     }
 
     // A clock fixed at the time a line was written, so a server license is judged as of then.

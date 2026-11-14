@@ -75,14 +75,14 @@ The other members depend on the type. For example, a lease granted by `elm-serve
 
 | Type | Where | Members |
 | --- | --- | --- |
-| `chain.start` | First line of a file that continues the chain of the previous file | `stream` (`usage`); `prev`: `file` (the previous file's name) and `auth` (the SHA-256 of its last `auth` line, base64url), left out when there is no previous file; then the key members below. |
-| `chain.reset` | First line of a file whose chain cannot continue: the previous file cannot be read, has no signature in its last 1 MiB, or a write failed | `stream` (`usage`); `prev`: `file` (the name of the newest file of the log before this one), left out when there is none; `reason`; then the key members below. `prev` has no `auth`: the chain does not continue. Signature numbering starts again at 1. |
+| `chain.start` | First line of a file that continues the chain of the previous file | `stream` (`usage`); `prev`: `file` (the previous file's name: the newest file of the log before this one) and `auth` (the SHA-256 of its last `auth` line, base64url), left out when there is no previous file; then the key members below. |
+| `chain.reset` | First line of a file whose chain cannot continue: the previous file cannot be read, has no signature in its last 1 MiB, or a write failed | `stream` (`usage`); `prev`: `file` (the previous file's name, as for `chain.start`) and `first` (the SHA-256 of the previous file's first `auth` line, base64url; empty when its head holds none, and left out when the file cannot be read), all left out when there is no previous file; `reason`; then the key members below. `prev` has no `auth`: the chain does not continue. Signature numbering starts again at 1. The previous file can differ from the file that `reason` names: after a write failed on a new file that could not be created, and after `--set-aside-broken-records`, it is the file before that one. |
 | `key.changed` | `elm-server` only, when the server license changes while it runs | `license` (the new server license file), `key` (the new public key, as a JWK). The next signature is still made with the old key; later ones use the new key. |
 | `auth` | After the first lines of each file, after every 100 lines, every 60 seconds when lines are pending, before a file is closed, and on an administrator's order | `sig`: an `elm-log+jws` token. |
 
 At a start, the program reads the last 1 MiB of the previous file from its end and continues the chain from the first `auth` line it finds. It passes over the lines after that one, whatever they hold: a line cut in the middle, text that is not JSON, or JSON that is not an `auth` line. When it has to start with `chain.reset`, it also writes a warning with the reason to the operational log.
 
-The `reason` of a `chain.reset` names a file by its name, without its folder:
+The `reason` of a `chain.reset` names a file by its name, without its folder. That file is the previous file, except in the two cases above:
 
 | `reason` | When |
 | --- | --- |
@@ -178,9 +178,20 @@ The command checks the key material of each first line against the trust store a
 | 1 | Not intact: at least one error. |
 | 2 | Invalid input, such as a path that is not a file or folder, or no log file found. |
 
-Errors: a file that cannot be read or is empty, a line that is not a JSON object (text that is not JSON, or JSON such as `[]` or `123`) or is longer than 1 MiB, a string that is not valid Unicode in a line's `type`, in a first line, in an `auth` line, or in a `key.changed` line (for example the escape `\ud800` without its pair), a first line that is not `chain.start` or `chain.reset`, a chain line after the first line, another stream, key material that does not verify, a signature that is not by the file's key, a `digest` or line count that does not match, a break in `prev` or `n`, no old-key signature after `key.changed`, a missing or cut file between files (a `chain.reset` names the file before it too, so a file removed before it is found), a file that continues with another key than the previous file's last key under another license, files of a server and of `elm-service` mixed in one chain, and for `elm-service` a file that names another node or no node (a first line without `node` is an error even without `--node`), or a `key.changed` line.
+Errors:
 
-Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle, a server that moved (another key of the same server license), an `elm-service` signing key that was replaced, and a file in a folder whose name has the form of a log file's name but no real date and time, which is not verified.
+- A file that cannot be read, or is empty.
+- A line that is not a JSON object (text that is not JSON, or JSON such as `[]` or `123`), or is longer than 1 MiB.
+- A string that is not valid Unicode in a line's `type`, in a first line, in an `auth` line, or in a `key.changed` line (for example the escape `\ud800` without its pair).
+- A first line that is not `chain.start` or `chain.reset`, or a chain line after the first line.
+- Another stream, key material that does not verify, or a signature that is not by the file's key.
+- A `digest` or line count that does not match, a break in `prev` or `n`, or no old-key signature after `key.changed`.
+- A missing or cut file between files. This includes the file before one that starts with `chain.reset`, whose first line names that file and the hash of its first `auth` line: a file that was removed, or replaced by another file under its name, is found. The message is `The file follows '<name>', not '<previous file>': a file is missing.`, where `<name>` is the file the first line names, or `nothing` when it names none, or `The file follows another file named '<previous file>': that file was replaced.`.
+- A file that continues with another key than the previous file's last key, under another license.
+- Files of a server and of `elm-service` mixed in one chain.
+- For `elm-service`: a file that names another node, a first line without `node` (an error even without `--node`), or a `key.changed` line.
+
+Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle (reported only when the file was read to its end, without an earlier error), a server that moved (another key of the same server license), an `elm-service` signing key that was replaced, and a file in a folder whose name has the form of a log file's name but no real date and time, which is not verified.
 
 Deleting or cutting the newest file, which has no next file, is not detected.
 

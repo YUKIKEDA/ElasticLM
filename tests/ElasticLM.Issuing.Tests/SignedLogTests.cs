@@ -439,6 +439,56 @@ public sealed class SignedLogTests : IDisposable
         VerifiedLog report = Verify([newest]);
         Assert.True(report.Intact);
         Assert.Contains(report.Issues, i => i.Message.StartsWith("The chain was reset", StringComparison.Ordinal));
+        Assert.Contains(
+            "\"prev\":{\"file\":\"usage-20260930T000000000Z.jsonl\",\"first\":\"\"}",
+            File.ReadLines(newest).First(),
+            StringComparison.Ordinal
+        );
+    }
+
+    /// <summary>
+    /// At a start whose previous file has no signature in its last 1 MiB, the chain.reset names that file and the hash of its
+    /// first signature line, read from the file's head; the two files verify intact (design §18.1, V1d23).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log, then 1 MiB and more of unsigned event lines appended to it.
+    ///
+    /// Steps:
+    /// - A minute later, open the log, append, close; read the new file's first line; verify the folder.
+    ///
+    /// Expected:
+    /// - The reason is "no signature was found at the end of the previous file (name)"; the line holds "prev":{"file":(name),
+    ///   "first":(the SHA-256 of the previous file's second line, worked out here)}; the folder is intact, with warnings.
+    /// </remarks>
+    [Fact]
+    public void Open_PreviousWithoutSignatureAtItsEnd_NamesItsFirstSignature()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string previous = SignedLog.FindFiles(_dir, "usage").Single();
+        string unsigned = string.Concat(Enumerable.Repeat("{\"type\":\"lease.acquired\",\"ts\":1}\n", (1024 * 1024 / 32) + 1));
+        File.AppendAllText(previous, unsigned);
+        _time.Advance(TimeSpan.FromMinutes(1));
+        string reason;
+        using (SignedLog log = Open())
+        {
+            reason = log.ResetReason!;
+            Append(log, 1);
+        }
+
+        string name = Path.GetFileName(previous);
+        Assert.Equal($"no signature was found at the end of the previous file {name}", reason);
+        string firstAuth = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadLines(previous).ElementAt(1) + "\n")));
+        Assert.Contains(
+            $"\"prev\":{{\"file\":\"{name}\",\"first\":\"{firstAuth}\"}}",
+            File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First(),
+            StringComparison.Ordinal
+        );
+        Assert.True(Verify().Intact);
     }
 
     /// <summary>
@@ -743,11 +793,14 @@ public sealed class SignedLogTests : IDisposable
     ///
     /// Steps:
     /// - Read the third file's first line; verify the three files; the first and the third; the third and the hand-made one.
+    ///   Remove the hand-made file and the second file, give the first file the second's name, and verify the folder.
     ///
     /// Expected:
-    /// - The first line holds "prev":{"file":"(second file)"}; the three are intact; then "The file follows '(second)', not
-    ///   '(first)': a file is missing." as the only error (before V1d23 the two passed with only the reset's warning); then
-    ///   "The file follows 'nothing', not '(third)': a file is missing." as the only error.
+    /// - The first line holds "prev":{"file":"(second file)","first":(the SHA-256 of the second file's second line, its first
+    ///   signature, worked out here)}; the three are intact; then "The file follows '(second)', not '(first)': a file is
+    ///   missing." as the only error (before V1d23 the two passed with only the reset's warning); then "The file follows
+    ///   'nothing', not '(third)': a file is missing." as the only error; then "The file follows another file named
+    ///   '(second)': that file was replaced." as the only error (with the name alone, the renamed file passed).
     /// </remarks>
     [Fact]
     public void Verify_FileRemovedBeforeAReset_IsFoundMissing()
@@ -777,7 +830,12 @@ public sealed class SignedLogTests : IDisposable
         string second = Path.GetFileName(files[1]);
         string third = Path.GetFileName(files[2]);
         Assert.Contains("\"type\":\"chain.reset\",", File.ReadLines(files[2]).First(), StringComparison.Ordinal);
-        Assert.Contains($"\"prev\":{{\"file\":\"{second}\"}}", File.ReadLines(files[2]).First(), StringComparison.Ordinal);
+        string secondFirstAuth = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(File.ReadLines(files[1]).ElementAt(1) + "\n")));
+        Assert.Contains(
+            $"\"prev\":{{\"file\":\"{second}\",\"first\":\"{secondFirstAuth}\"}}",
+            File.ReadLines(files[2]).First(),
+            StringComparison.Ordinal
+        );
         Assert.True(Verify2().Intact);
 
         LogIssue missing = Assert.Single(
@@ -793,6 +851,13 @@ public sealed class SignedLogTests : IDisposable
         );
         LogIssue nothing = Assert.Single(VerifiedLog.Of([files[2], bare], _trust, null, "usage").Issues, i => i.Severity == LogIssueSeverity.Error);
         Assert.Equal($"The file follows 'nothing', not '{third}': a file is missing.", nothing.Message);
+
+        // The owner's answer K1: removing the second file and giving the first its name passes the name alone.
+        File.Delete(bare);
+        File.Delete(files[1]);
+        File.Move(files[0], files[1]);
+        LogIssue replaced = Assert.Single(Verify2().Issues, i => i.Severity == LogIssueSeverity.Error);
+        Assert.Equal($"The file follows another file named '{second}': that file was replaced.", replaced.Message);
     }
 
     /// <summary>
@@ -1525,7 +1590,9 @@ public sealed class SignedLogTests : IDisposable
     ///
     /// Expected:
     /// - ResetReason is exactly "the previous file {name} cannot be read"; the first line is chain.reset with prev.file the
-    ///   previous file's name and that reason (design §18.1, V1d23), and does not hold the folder's name.
+    ///   previous file's name and no prev.first, the file not being readable, and that reason (design §18.1, V1d23), and does
+    ///   not hold the folder's name. Once the file is free, the two files verify intact: a reset without prev.first is
+    ///   checked by the name alone.
     /// </remarks>
     [Fact]
     public void Open_PreviousFileCannotBeRead_ResetReasonNamesOnlyTheFile()
@@ -1552,6 +1619,7 @@ public sealed class SignedLogTests : IDisposable
             StringComparison.Ordinal
         );
         Assert.DoesNotContain(Path.GetFileName(_dir), first, StringComparison.Ordinal);
+        Assert.True(Verify().Intact);
     }
 
     /// <summary>

@@ -50,6 +50,9 @@ public static class LogLineTypes
 public sealed partial class SignedLog : IDisposable
 {
     private const int TailSearchBytes = 1024 * 1024;
+
+    // The first signature line of a file is its second line, after a first line of at most 1 MiB.
+    private const int HeadSearchBytes = (2 * LogVerifier.MaxLineLength) + 2;
     private const string FileTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
     private readonly string _directory;
@@ -70,6 +73,10 @@ public sealed partial class SignedLog : IDisposable
     private int _pending;
     private long _n;
     private string _prev = string.Empty;
+
+    // The file being written and the hash of its first signature line, empty until that line is written (design §18.1).
+    private string _headFile = string.Empty;
+    private string _headAuth = string.Empty;
     private string? _failure;
     private bool _disposed;
 
@@ -403,6 +410,38 @@ public sealed partial class SignedLog : IDisposable
         return (null, 0, $"no signature was found at the end of the previous file {Path.GetFileName(path)}");
     }
 
+    // The hash of a file's first signature line, read from its head; empty when the head holds none, and null when the file
+    // cannot be read (design §18.1, V1d23).
+    private static string? ReadFirstAuth(string path)
+    {
+        byte[] head;
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            head = new byte[(int)Math.Min(stream.Length, HeadSearchBytes)];
+            stream.ReadExactly(head);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        int start = 0;
+        int end;
+        while ((end = Array.IndexOf(head, (byte)'\n', start)) >= 0)
+        {
+            ReadOnlySpan<byte> line = head.AsSpan(start, end - start + 1);
+            if (TryReadAuth(line, out _))
+            {
+                return Hash(line);
+            }
+
+            start = end + 1;
+        }
+
+        return string.Empty;
+    }
+
     // Reads the payload of an auth line without verifying it: the writer only continues the numbering. A line that is not
     // JSON, not an object, or whose text cannot be read is not a signature. JsonElement throws InvalidOperationException
     // from TryGetProperty on a value that is not an object ("[]"), from GetString on a lone surrogate escape ("\ud800") or
@@ -610,7 +649,18 @@ public sealed partial class SignedLog : IDisposable
             named = NextFileTime(existing[^1].Time, _baseName);
         }
 
+        // design §18.1 (V1d23): a reset names the file before it, the newest of the folder, with the hash of that file's
+        // first signature line, so that the verifier finds the file missing or replaced. The hash is kept in memory for the
+        // file this log wrote, and read from the file's head otherwise; it is left out when that file cannot be read.
+        string? before = reset is not null && existing.Count > 0 ? existing[^1].Path : null;
+        string? beforeFirst =
+            before is null ? null
+            : Path.GetFileName(before) == _headFile ? _headAuth
+            : ReadFirstAuth(before);
+
         _file = CreateFile(named);
+        _headFile = _fileName;
+        _headAuth = string.Empty;
         _fileDay = DateOnly.FromDateTime(now.UtcDateTime);
         _digest.Dispose();
         _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -637,9 +687,6 @@ public sealed partial class SignedLog : IDisposable
         }
         else
         {
-            // design §18.1 (V1d23): a reset names the file before it, the newest of the folder, so that the verifier finds
-            // that file missing. It names no signature: none could be read, or the write failed.
-            string? before = existing.Count > 0 ? Path.GetFileName(existing[^1].Path) : null;
             WriteLine(
                 LogLineTypes.ChainReset,
                 w =>
@@ -648,7 +695,12 @@ public sealed partial class SignedLog : IDisposable
                     if (before is not null)
                     {
                         w.WriteStartObject("prev");
-                        w.WriteString("file", before);
+                        w.WriteString("file", Path.GetFileName(before));
+                        if (beforeFirst is not null)
+                        {
+                            w.WriteString("first", beforeFirst);
+                        }
+
                         w.WriteEndObject();
                     }
 
@@ -727,6 +779,11 @@ public sealed partial class SignedLog : IDisposable
         // design §13.4: a borrow or a return takes effect only after its signature is on the disk.
         _file.Flush(flushToDisk: true);
         _prev = Hash(line);
+        if (_headAuth.Length == 0)
+        {
+            _headAuth = _prev;
+        }
+
         _n++;
         _ = _digest.GetHashAndReset();
         _pending = 0;

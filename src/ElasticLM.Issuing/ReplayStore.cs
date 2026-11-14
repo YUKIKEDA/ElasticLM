@@ -31,12 +31,17 @@ public interface IReplayStore
 }
 
 /// <summary>
-/// An in-memory <see cref="IReplayStore"/> with a capacity (design §13.2: 100,000 records).
+/// An in-memory <see cref="IReplayStore"/> with a capacity (design §13.2: 100,000 records). A record is kept for
+/// <see cref="KeptAfterExpiry"/> after its nonce expires, so that a proof whose nonce was checked just before the expiry
+/// still meets its record (design §12.2).
 /// </summary>
 public sealed class MemoryReplayStore : IReplayStore
 {
     /// <summary>The default capacity.</summary>
     public const int DefaultCapacity = 100_000;
+
+    /// <summary>How long a record is kept after the expiry it was given.</summary>
+    public static readonly TimeSpan KeptAfterExpiry = TimeSpan.FromSeconds(60);
 
     private readonly Dictionary<string, DateTimeOffset> _used = new(StringComparer.Ordinal);
     private readonly TimeProvider _time;
@@ -75,7 +80,7 @@ public sealed class MemoryReplayStore : IReplayStore
         ArgumentException.ThrowIfNullOrEmpty(jti);
         lock (_lock)
         {
-            if (_used.TryGetValue(jti, out DateTimeOffset existing) && existing >= _time.GetUtcNow())
+            if (_used.TryGetValue(jti, out DateTimeOffset existing) && existing + KeptAfterExpiry >= _time.GetUtcNow())
             {
                 return ReplayCheck.Replayed;
             }
@@ -95,7 +100,8 @@ public sealed class MemoryReplayStore : IReplayStore
     }
 
     /// <summary>
-    /// Drops records whose nonce has expired. The server calls it from its sweep timer (design §13.2).
+    /// Drops records whose nonce expired more than <see cref="KeptAfterExpiry"/> ago. The server calls it from its sweep
+    /// timer (design §13.2).
     /// </summary>
     public void Purge()
     {
@@ -108,7 +114,7 @@ public sealed class MemoryReplayStore : IReplayStore
     private void PurgeLocked()
     {
         DateTimeOffset now = _time.GetUtcNow();
-        foreach (string key in _used.Where(e => e.Value < now).Select(e => e.Key).ToList())
+        foreach (string key in _used.Where(e => e.Value + KeptAfterExpiry < now).Select(e => e.Key).ToList())
         {
             _used.Remove(key);
         }
