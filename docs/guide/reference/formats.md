@@ -332,7 +332,7 @@ Payload:
 | `cnf` | object | yes | The installation key that holds the lease: one member, `jkt`, its key ID, which must be the client's own. |
 | `brw` | boolean | yes | `true` for a borrow, `false` for a lease that is renewed. |
 | `srv` | string | yes | The key ID of the issuing server. It must equal `iss`. |
-| `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it holds; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
+| `slic` | string | from `elm-server` | The token ID (`jti`) of the server license the lease was issued under. The client requires it to be the server license it uses now; otherwise it refuses the lease with `ELM_LEASE_OUT_OF_BOUNDS` and fetches the server license again. `elm-service` leaves it out. |
 | `seq` | integer | yes | The lease's sequence number. The verifier accepts 0 or more; `elm-server` and `elm-service` write 1 in the first token and one more at each renewal, so neither writes 0. |
 | `areq` | string | yes | The `jti` of the [request proof](#request-proof-elm-proofjws) that this token answers, 1 to 64 characters. A renewal sent again after an answer that was lost or refused gets the earlier token again, so that token names the earlier request. The verifier checks only the length. The client that sent the request compares the value, and refuses a token that names another request with `ELM_REQUEST_MISMATCH`. |
 
@@ -342,9 +342,9 @@ Member of `cnf`:
 | --- | --- | --- | --- |
 | `jkt` | string | yes | The key ID of the installation key that holds the lease. |
 
-A lease from `elm-server` must also stay inside its server license: `exp` minus `iat` is at most the server license's `lease`, or its `borrow` when `brw` is `true`, and `exp` is no later than the server license's `exp` plus `grace`, nor than the `exp` of the feature `feat` in the server license, which has no grace. A lease that breaks one of these gets `ELM_LEASE_OUT_OF_BOUNDS`.
+A lease from `elm-server` must also stay inside its server license: `exp` minus `iat` is at most the server license's `lease`, or its `borrow` when `brw` is `true`, and `exp` is no later than the server license's `exp` plus `grace`. `exp` is also no later than the `exp` of the server license's feature that the lease's `feat` names, which has no grace. A lease that breaks one of these gets `ELM_LEASE_OUT_OF_BOUNDS`.
 
-A client also compares the lease in an answer with what it asked for. For an acquisition or a borrow: the feature, the seats, whether it is a borrow, for a borrow that it is no longer than the period asked for, and `areq`. For a renewal: the lease ID, the feature, and the seats of the lease it holds, that it is not a borrow, a `seq` greater than the one it holds, and `areq`. A lease that differs gets `ELM_REQUEST_MISMATCH`. From `elm-server`, when the app asked for a version and the server license gives the feature a range, a version outside it gets `ELM_FEATURE_VERSION_NOT_LICENSED`, since the token has no version. [Floating licenses](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) explains the comparison.
+A client also compares the lease in an answer with what it asked for. For an acquisition or a borrow: the feature, the seats, whether it is a borrow, for a borrow that it is no longer than the period asked for, and `areq`. For a renewal: the lease ID, the feature, and the seats of the lease it holds, that it is not a borrow, a `seq` greater than the one it holds, and `areq`. A lease that differs gets `ELM_REQUEST_MISMATCH`. From `elm-server`, when the app asked for a version and the server license gives the feature a range, a version outside it gets `ELM_FEATURE_VERSION_NOT_LICENSED`, since the token has no version. Without a version, the range is not checked. [Floating licenses](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) explains the comparison.
 
 A lease token that `elm-server` returned for `{"feature":"pro","version":"2.1","count":1}`, decoded:
 

@@ -307,7 +307,7 @@ retry later: ELM_NETWORK_ERROR
 
 ## ライセンスサーバーからのリース
 
-フローティングライセンスのクライアントである `LicenseClient` も、同じように失敗を伝える。`AcquireLeaseAsync` と `BorrowLeaseAsync` は `LeaseResult` を返す。`Acquired` か、`LicenseError` と `RetryAfter` を持つ `Failed` のどちらかだ。クライアントは自分では待たない。`ELM_SERVER_RECOVERING` は、サーバーが起動してからリースの期間 1 回分（既定では 10 分）のあいだ送るコードだ。これが返ったら、`RetryAfter` の時間だけ待ってから、もう一度リースを求める。[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](../tutorials/use-a-floating-license.md)のアプリも、そうしている。`ELM_NO_SEATS` は、すべてのシートが使われていることを表す。ユーザーに伝えるか、あとで再試行する。クライアントがすでに持っているリースは、自動で更新される。その更新が失敗したことは、リースの状態と `LastError` でわかる。リースの状態は[フローティングライセンス](../explanation/floating-licenses.md)で説明している。
+フローティングライセンスのクライアントである `LicenseClient` も、同じように失敗を伝える。`AcquireLeaseAsync` と `BorrowLeaseAsync` は `LeaseResult` を返す。`Acquired` か、`LicenseError` と `RetryAfter` を持つ `Failed` のどちらかだ。クライアントは自分では待たない。`ELM_SERVER_RECOVERING` は、サーバーが起動してからリースの期間 1 回分（既定では 10 分）のあいだ送るコードだ。これが返ったら、`RetryAfter` の時間だけ待ってから、もう一度リースを求める。[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](../tutorials/use-a-floating-license.md)のアプリも、そうしている。`ELM_NO_SEATS` は、すべてのシートが使われていることを表す。ユーザーに伝えるか、あとで再試行する。`ELM_FEATURE_EXPIRED` と `ELM_FEATURE_VERSION_NOT_LICENSED` は、ライセンスが、その機能を今は含めていないこと、またはそのバージョンを含めていないことを表す。`ELM_EXPIRED` は、ライセンスが終わったことを表す。もう一度求めても変わらないので、ライセンスの更新が要ることをユーザーに伝える。クライアントがすでに持っているリースは、自動で更新される。その更新が失敗したことは、リースの状態と `LastError` でわかる。リースの状態は[フローティングライセンス](../explanation/floating-licenses.md)で説明している。
 
 ## C では
 
