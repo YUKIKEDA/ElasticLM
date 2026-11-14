@@ -454,6 +454,83 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// The server license commands check the data folder once and then take every file in the folder where its links led:
+    /// a change of the second of two links while elm server deactivate runs does not make it read the kept license or the key
+    /// elsewhere (design §10.2, V1d24, the owner's decision on the final review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; end and other, two data folders that pass the check, other without a key; in a
+    ///   folder of the test, two/2, a link to end, and one/1, a link to two/2 (symbolic links on Linux and macOS, junctions
+    ///   on Windows, where one/1 gets an access list of its own that passes). A server on end made its key, was activated by
+    ///   elm server activate with --data one/1 and --license end/server.elmlic, started and stopped (its administrator token
+    ///   stays); a file at end/admin.sock. The commands' connection to the socket is replaced by one that points two/2 at
+    ///   other and then refuses the connection.
+    ///
+    /// Steps:
+    /// - elm server deactivate with --data one/1 and the same --license.
+    ///
+    /// Expected:
+    /// - The activation exits 0. The deactivation connects once, exits 0 printing "deactivated", and removes the license
+    ///   file; other holds neither a key nor an activation.
+    /// </remarks>
+    [Fact]
+    public async Task Deactivate_SecondLinkChangedDuringTheCommand_UsesTheFolderItChecked()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string end = _deployment.NewFolder();
+        string other = _deployment.NewFolder();
+        string two = _deployment.NextFolderPath();
+        string one = _deployment.NextFolderPath();
+        Directory.CreateDirectory(two);
+        Directory.CreateDirectory(one);
+        string second = Path.Combine(two, "2");
+        string first = Path.Combine(one, "1");
+        MakeLink(second, end);
+        MakeLink(first, second);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+                Run("icacls", first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            }
+
+            string license = Path.Combine(end, "server.elmlic");
+            ServerSettings settings = Settings(test, end) with { ServiceUrl = service.Url };
+            await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+            string[] target = [.. Common(first), "--service", service.Url.ToString(), "--license", license];
+            (int code, _, string error) = Run(test, ["server", "activate", key, .. target]);
+            Assert.True(code == 0, error);
+            ElmServer server = await StartAsync(test, settings);
+            _owned.Remove(server);
+            await server.DisposeAsync();
+            File.WriteAllBytes(Path.Combine(end, "admin.sock"), []);
+
+            int connections = 0;
+            ValueTask<Stream> Swap(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
+            {
+                connections++;
+                Directory.Delete(second);
+                MakeLink(second, other);
+                throw new SocketException((int)SocketError.ConnectionRefused);
+            }
+
+            (code, string output, error) = Run(test, ["server", "deactivate", .. target], Swap);
+            Assert.True(code == 0, error);
+            Assert.Equal((1, "deactivated"), (connections, output.Trim()));
+            Assert.False(File.Exists(license));
+            Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            Assert.False(File.Exists(Path.Combine(other, "activation.json")));
+        }
+        finally
+        {
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
     /// When the running server refuses the file that elm server activate wrote, the command prints one line with the code and
     /// the server's reason, and the server keeps its license.
     /// </summary>

@@ -89,9 +89,10 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
-    /// A machine-scope client whose folder is reached through two links in a row, and which has no key when it starts, keeps
-    /// its activation where the links ended when the activation made its key: a later change of the second link does not
-    /// move it (design §10.2, V1d24, review K1).
+    /// A machine-scope client whose folder is reached through two links in a row, and which has no key when it starts, checks
+    /// the folder when it is created and keeps its key and activation where the links led then: a change of the second link,
+    /// before the activation makes the key or after it, does not move them (design §10.2, V1d24, review K1 and the owner's
+    /// decision on the final review).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -100,13 +101,16 @@ public sealed partial class ActivationClientTests
     ///   Windows, where one/1 gets an access list of its own that passes). A machine-scope client of one/1.
     ///
     /// Steps:
-    /// - Activate; point two/2 at other; refresh.
+    /// - before: point two/2 at other; activate; refresh. after: activate; point two/2 at other; refresh.
     ///
     /// Expected:
-    /// - Activated with sequence 1, then 2; the activation file is in end, and other holds neither a key nor an activation.
+    /// - Activated with sequence 1, then 2; the key and the activation file are in end, and other holds neither.
     /// </remarks>
-    [Fact]
-    public async Task MachineScope_FolderThroughTwoLinksChangedAfterActivating_RefreshKeepsWhereTheLinksEnded()
+    /// <param name="when">Whether the second link changes before the key exists or after the activation.</param>
+    [Theory]
+    [InlineData("before")]
+    [InlineData("after")]
+    public async Task MachineScope_FolderThroughTwoLinksChanged_KeyAndActivationStayWhereTheLinksLed(string when)
     {
         await using Vendor vendor = await Vendor.StartAsync();
         string key = await vendor.LicenseAsync("\"maxActivations\":2");
@@ -147,12 +151,23 @@ public sealed partial class ActivationClientTests
             Assert.True(ActivationClient.TryCreate(options, out ActivationClient? client, out LicenseError? error), error?.Message);
             await using (client)
             {
+                if (when == "before")
+                {
+                    Directory.Delete(second);
+                    InstallationKeyStoreTests.MakeLink(second, other);
+                }
+
                 Assert.Equal(1L, Activated(await client!.ActivateAsync(key, Cancel)).Sequence);
-                Directory.Delete(second);
-                InstallationKeyStoreTests.MakeLink(second, other);
+                if (when == "after")
+                {
+                    Directory.Delete(second);
+                    InstallationKeyStoreTests.MakeLink(second, other);
+                }
+
                 Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
             }
 
+            Assert.True(File.Exists(Path.Combine(end, "installation.key")));
             Assert.True(File.Exists(Path.Combine(end, "activation.json")));
             Assert.False(File.Exists(Path.Combine(other, "installation.key")));
             Assert.False(File.Exists(Path.Combine(other, "activation.json")));

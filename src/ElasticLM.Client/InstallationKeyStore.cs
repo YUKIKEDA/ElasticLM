@@ -139,6 +139,27 @@ public sealed partial class InstallationKeyStore
         return TryLoad(out key, out error);
     }
 
+    // design §10.2 (V1d24).
+
+    /// <summary>
+    /// Checks an existing machine-scope folder as <see cref="TryLoad"/> does, without reading the key, and from then on uses
+    /// the folder where its links lead. A folder that does not exist yet, and the user scope, pass unchanged.
+    /// </summary>
+    /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when another user could have read or replaced the folder.</param>
+    /// <returns><see langword="true"/> when the folder passes.</returns>
+    internal bool TryCheck(out LicenseError? error)
+    {
+        if (ProtectedFiles.CheckDirectory(Directory, Scope, out string checkedFolder) is string unsafeFolder)
+        {
+            error = Unreadable(unsafeFolder);
+            return false;
+        }
+
+        Directory = checkedFolder;
+        error = null;
+        return true;
+    }
+
     // design §10.2.
 
     /// <summary>
