@@ -15,11 +15,11 @@ You need:
 - The [GitHub CLI](https://cli.github.com/), `gh`, to check the files you download; nothing else in this tutorial uses it.
 - On Windows, Windows 10 version 1803 or Windows Server 2019, or later: `elm-server` needs it.
 
-Create an empty folder for this tutorial. Open a terminal in that folder and type every command of this page there.
+Create an empty folder for this tutorial inside your home folder (your user folder on Windows, such as `C:\Users\<you>\elm-tutorial`). Open a terminal in that folder and type every command of this page there. The server keeps its private key in a folder inside it, and refuses that folder when another user could change a folder on its path, such as `/tmp` or a folder directly under the root of a drive ([Which folders the server accepts](../reference/server-configuration.md#which-folders-the-server-accepts)).
 
 Give the folder a short path: its full path may be at most 84 bytes in UTF-8 on Windows and Linux, and 80 on macOS; a character outside ASCII takes 2 to 4 bytes. The server keeps a socket file in `server-data` inside the folder, and the path of a socket file has a limit ([Data folder](../reference/server-configuration.md#data-folder)).
 
-On Linux and macOS, the folder must not be writable by your group or by others, because the server keeps its private key in a folder inside it. `chmod go-w .` in the folder makes sure of that.
+On Linux and macOS, the folder must not be writable by your group or by others. `chmod go-w .` in the folder makes sure of that.
 
 You download the `elm` tool, `elm-server`, and the `ElasticLM.Licensing` and `ElasticLM.Client` packages from a GitHub prerelease. Open the [Releases page](https://github.com/YUKIKEDA/ElasticLM/releases) and take the newest release marked "Pre-release". The release that GitHub marks "Latest" is never a prerelease, so do not go by that mark.
 
@@ -166,9 +166,11 @@ error: The server license 'server.elmlic' does not exist. Ask the vendor for a s
 
 The value after `installation key` is the thumbprint: 43 characters, which may include `-` and `_`. The key itself stays in `server-data`. The values after `fingerprints` are the machine fingerprints of your machine: a license issued with `--fingerprint` would be bound to the machine as well, and this tutorial does not use them. In real use, the customer's administrator sends this thumbprint to the vendor, who issues the server license.
 
-On Linux and macOS, if the tutorial folder is writable by your group or by others, the server instead prints `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.`, followed by one more sentence, and also ends with exit code 1. Type `chmod go-w .` in the tutorial folder, then the same `elm-server` command again. You do not need to delete `server-data` first. If the line names a folder above the tutorial folder instead, such as `/tmp`, which every user can write, move the tutorial folder into your home folder. On Windows, the server stops in the same way when the tutorial folder is on a drive that lets Authenticated Users (S-1-5-11) modify its folders, or directly under the root of a drive (such as `C:\elm`), which gives them that right too. The line names the folder above and ends with `(S-1-5-11) delete or replace what is in it. Correct the owner or the access of that folder, or use a folder elsewhere; removing this folder does not help.` Make the tutorial folder in your user folder instead.
+On Linux and macOS, if the tutorial folder is writable by your group or by others, the server instead prints `error: The folder '…/server-data' is not safe for secrets: its parent folder '…' is writable by group or others.`, followed by one more sentence, and also ends with exit code 1. Type `chmod go-w .` in the tutorial folder, then the same `elm-server` command again. You do not need to delete `server-data` first. If the line names a folder above the tutorial folder instead, such as `/tmp`, which every user can write, move the tutorial folder into your home folder, open a terminal there, add its `tools` folder to your `PATH` again, and type the same `elm-server` command.
 
-If the server prints `error: The path of the administration socket …` instead, the path of the tutorial folder is too long. Move the folder to a shorter path, open a terminal there, add its `tools` folder to your `PATH` again, and type the same `elm-server` command.
+On Windows, the server stops in the same way when the tutorial folder is on a drive that lets Authenticated Users (S-1-5-11) change its folders, or under a folder directly under the root of a drive (such as `C:\elm`), which gives them that right too. The line names the folder above and ends with `(S-1-5-11) delete or replace what is in it. Correct the owner or the access of that folder, or use a folder elsewhere; removing this folder does not help.` Move the tutorial folder into your user folder, open a terminal there, add its `tools` folder to your `PATH` again, and type the same `elm-server` command.
+
+If the server prints `error: The path of the administration socket …` instead, the path of the tutorial folder is too long. Move the folder to a shorter path inside your home folder, open a terminal there, add its `tools` folder to your `PATH` again, and type the same `elm-server` command.
 
 Issue the server license: two seats of the feature `pro`, bound to the server's key. Replace `<server-key>` with the thumbprint that the server printed, all 43 characters exactly:
 
