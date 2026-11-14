@@ -125,7 +125,7 @@ The machine ID is `MachineGuid` in the registry on Windows, `/etc/machine-id` on
 ### What fingerprints are used for
 
 - **Copy detection.** A token bound to a device lists the fingerprints in `fp`. When the app verifies it, the current fingerprints must match by the policy's `fingerprintMatching`: with `any` (the default), one of the token's fingerprints must be among the current ones; with `all`, all must be; with `ignore`, none is checked. Otherwise verification fails with `ELM_FINGERPRINT_MISMATCH`.
-- **One trial per device.** `elm-service` records each trial by product and fingerprint, and refuses a second trial with any of the same fingerprints (`ELM_TRIAL_USED`).
+- **One trial per fingerprint.** `elm-service` records each trial by product and fingerprint, and refuses a second trial with any of the same fingerprints (`ELM_TRIAL_USED`). A device with two fingerprints, as on Windows, can therefore get two trials (see below).
 - **Early borrow returns.** The number of early returns of borrowed leases in 30 days is counted per installation key and per fingerprint, and a return is refused when either count reaches the policy's `borrowReturnLimit`. Counting by key alone would let a device reset the count by making a new key. So a borrow needs at least one fingerprint (see [Floating licenses](floating-licenses.md)).
 
 ### Why a fingerprint is only a hint
@@ -148,7 +148,7 @@ The attacker here is a dishonest licensee: they hold the app, a real license fil
 They can:
 
 - **Read and copy the installation key and the kept files.** DPAPI and file modes keep other users out, not the administrator. A copy on another device works there while the token lasts, if the machine ID also matches or the policy is `ignore`. If both copies go online, the service reports a clone (see [Activation](activation.md)); a copy that stays offline is not detected.
-- **Rewrite the OS machine IDs.** This defeats fingerprint matching on a copied device; with the default `any`, one matching ID is enough. Changing every ID that the fingerprints come from (on Windows both) gives new fingerprints, which allow another trial and restart the count of early borrow returns. The count can be restarted without rewriting too: the client reports its fingerprints, so someone who builds requests with the device protocol can send made-up ones with a new installation key. Such a requester can also get one working trial for each fingerprint the machine has, two on Windows and one on Linux and macOS, by sending the fingerprints one at a time.
+- **Rewrite the OS machine IDs.** This defeats fingerprint matching on a copied device; with the default `any`, one matching ID is enough. Changing every ID that the fingerprints come from (on Windows both) gives new fingerprints, which allow another trial and restart the count of early borrow returns. The count can be restarted without rewriting too: the client reports its fingerprints, so someone who builds requests with the device protocol can send made-up ones with a new installation key. Such a requester can also send the machine's own fingerprints one at a time and get a working trial for each: two on Windows, one on Linux and macOS.
 - **Keep a license file after deactivation.** Deactivation deletes `activation.json` but not the key, so a saved copy of the file works until the token's expiry plus the grace period. The vendor can limit how often this can be repeated with `deactivationLimit`, which sets no limit by default.
 - **Patch the app so that it skips verification.** No client-side check can stop this.
 

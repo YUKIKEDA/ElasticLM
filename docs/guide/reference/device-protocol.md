@@ -152,7 +152,7 @@ The license token of an activation and every lease token carry a sequence number
 | Anything else, a negative `seq` on `elm-server` included | A clone: another copy of the installation went ahead. With `cloneStrategy` `deny` (the policy's, see [Policy settings](../explanation/activation.md#policy-settings), or the server license's on `elm-server`), the answer is `409` with `ELM_CLONE_DETECTED`, and the activation or lease is stopped. With `flag`, the clone is recorded and the request goes on. For an activation or a lease, the new token's `seq` is then one more than the greater of the server's `seq` and the `seq` sent, so a device that is ahead, such as after the service's database was restored from an older backup, still gets a later token; a request for which no greater `seq` exists (a `seq` of 9223372036854775807) gets `400` with `ELM_MALFORMED`. |
 
 - `elm-service` takes a `seq` of 0 or more; a negative one gets `ELM_MALFORMED`. `elm-server` takes any whole number that fits 64 bits.
-- `retry` lists the `jti` of the client's earlier requests that got no answer and, for a lease renewal, of those whose answer the client refused: at most 16 strings, each 1 to 64 characters. A success answer whose body is larger than the 256 KiB that the client reads counts as no answer. A longer list, another length, or a `null` entry gets `ELM_MALFORMED`. Both programs apply the same limits.
+- `retry` lists the `jti` of the client's earlier requests that got no answer and, for a lease renewal, of those whose answer the client refused: at most 16 strings, each 1 to 64 characters of any kind; an entry that names no request of the device matches nothing. A success answer whose body is larger than the 256 KiB that the client reads counts as no answer. A longer list, another length, or a `null` entry gets `ELM_MALFORMED`. Both programs apply the same limits.
 - An acquisition or a borrow (`POST /v1/leases`) has no `retry`: no request after it names the lease. When its answer is lost, or the client does not take it, the client releases what the server issued for it with `DELETE /v1/leases/requests/{jti}`, named by that request's `jti`.
 - A first activation whose answer was lost is sent again with `seq` `0` and the first request's `jti` in `retry`. A trial whose answer was lost is sent again with the first request's `jti` in `retry`. Both get the file they were issued.
 - A stopped activation refuses every refresh and activation with `ELM_CLONE_DETECTED`. It is deactivated only with the `seq` of its last token, or by an administrator. A stopped lease refuses renewal and release until it expires.
@@ -242,8 +242,8 @@ Activates the installation for a license, or activates the same installation key
 | `fingerprints` | array of strings | yes | The machine fingerprints (see [Machine fingerprints](#machine-fingerprints)), 0 to 8. May be empty unless the policy's `fingerprintMatching` is `any` or `all`. |
 | `seq` | integer | no | 0 or more. Left out on a first activation. When the same installation key activates the same license again, the `seq` of its last token, or `0` to send a first activation again (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). Left out on a second activation, it counts as a clone. |
 | `retry` | array of strings | no | The `jti` of earlier requests that got no answer (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
-| `client` | object | no | `{"host": <string>, "user": <string>}`: the host name and OS user name. Both members are required strings of at most 255 bytes, without control characters (U+0000 to U+001F). Kept only when the policy's `clientInfoStrategy` is `hostAndUser`; otherwise ignored. |
-| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F). |
+| `client` | object | no | `{"host": <string>, "user": <string>}`: the host name and OS user name. Both members are required strings of at most 255 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). Kept only when the policy's `clientInfoStrategy` is `hostAndUser`, and otherwise ignored; a control character gets `ELM_MALFORMED` whatever the policy. |
+| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). A control character gets `ELM_MALFORMED`. |
 
 The answer holds the activation ID and the license file, the same JSON as a `.elmlic` file (see [The license file](../explanation/license-files-and-verification.md#the-license-file)). The license token carries the same ID in `act`, and the ID of the request it answers in `areq`: this request's `jti`, or for a request sent again after a lost answer, the earlier request's (see [License token](formats.md#license-token-elm-licensejws)). Tokens and certificates are shortened to `eyJ…` here:
 
@@ -334,7 +334,7 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 - Authentication: a proof with `jwk`.
 - Success: `201` for a new trial. `200` for a retry: the same installation key, an activation that is still at `seq` 1, and `retry` holding the `jti` of the request that got it. The retry gets the file it was issued, unless the trial's license is suspended, revoked, or expired, or the activation was stopped as a clone: a retry is refused as a retried activation is.
 - Response headers: `ELM-Nonce`. A refusal at the product's limit also has `Retry-After`.
-- Order: a retry of a trial whose answer was lost is answered first (with its file, or with the license's state, then with `ELM_CLONE_DETECTED`), then a used fingerprint gets `ELM_TRIAL_USED`, and only then does the product's limit apply.
+- Order: an empty `fingerprints` is refused first, then a product that has no trial. Next, a retry of a trial whose answer was lost gets its file, or is refused for the license's state and then for a clone. Only then does a used fingerprint get `ELM_TRIAL_USED`, and last the product's limit applies.
 
 | Name | Type | Required | Range and meaning |
 | --- | --- | --- | --- |
@@ -342,7 +342,7 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 | `fingerprints` | array of strings | yes | The machine fingerprints (see [Machine fingerprints](#machine-fingerprints)), 0 to 8 as in `POST /v1/activations`, except that an empty list gets `ELM_FINGERPRINT_UNAVAILABLE`: a trial needs at least one. |
 | `retry` | array of strings | no | The `jti` of an earlier trial request that got no answer (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
 | `client` | object | no | As in `POST /v1/activations`. Kept only when the trial policy's `clientInfoStrategy` is `hostAndUser`. |
-| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F). |
+| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). A control character gets `ELM_MALFORMED`. |
 
 ```json
 {
@@ -359,8 +359,8 @@ Starts a trial: the service makes a license of the product's trial policy, the `
 | Status | Code | When |
 | --- | --- | --- |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | `fingerprints` is empty. |
-| `403` | `ELM_LICENSE_SUSPENDED`, `ELM_LICENSE_REVOKED`, `ELM_EXPIRED` | A retry, and the trial's license is suspended, revoked, or expired. |
 | `404` | `ELM_TRIAL_NOT_OFFERED` | No product has the code, or the product has no trial policy. |
+| `403` | `ELM_LICENSE_SUSPENDED`, `ELM_LICENSE_REVOKED`, `ELM_EXPIRED` | A retry, and the trial's license is suspended, revoked, or expired. |
 | `409` | `ELM_CLONE_DETECTED` | A retry, and the trial's activation was stopped as a clone. |
 | `409` | `ELM_TRIAL_USED` | One of the fingerprints already had a trial of the product. |
 | `429` | `ELM_RATE_LIMITED` | The product has given its trial policy's `trialDailyLimit` trials in the last 24 hours: "The product has reached its limit of N trials in 24 hours." `Retry-After` is the seconds until one place frees, from 1 to 86,400: when the oldest of them is 24 hours old, or, when the limit was lowered below their number, when enough of them are. Only that place frees, and the next request takes it. Nothing is written. |
@@ -432,7 +432,7 @@ Lends seats of a feature of a license whose policy's `floating` is `cloud`, or b
 | `borrow` | integer | no | Makes the lease a borrow for this many seconds: 1 to the policy's `borrowLimit`. A value below 0 or above 3,162,240,000 (100 years) gets `ELM_MALFORMED`. |
 | `fingerprints` | array of strings | no | The machine fingerprints (see [Machine fingerprints](#machine-fingerprints)), 0 to 8. A borrow needs at least one. |
 | `client` | object | no | As in `POST /v1/activations`. Kept only when the policy's `clientInfoStrategy` is `hostAndUser`. |
-| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F). |
+| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). A control character gets `ELM_MALFORMED`. |
 
 The lease lasts the policy's `leaseDuration`, or the `borrow` period, cut at the license's and the feature's expiry. The answer holds the lease token and the certificates of the service's signing key, which check it; the token is shortened to `eyJ…` here. The lease token is a compact JWS whose payload is JSON. The claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim, and [What the client checks in every lease](../explanation/floating-licenses.md#what-the-client-checks-in-every-lease) says how a client checks the token.
 
@@ -515,7 +515,7 @@ Returns the lease that an acquisition or a borrow issued, for a client that did 
 
 - Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
 - Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
-- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters of base64url (`A-Z`, `a-z`, `0-9`, `-`, and `_`) (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters of base64url, `A-Z`, `a-z`, `0-9`, `-`, and `_`, which is answered before the proof is checked, no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
 - Response headers: `ELM-Nonce`.
 
 The checks, in order: the rate limit for the source address; the form of `{jti}`; the proof and the rules after it (see [The proof](#the-proof)); the lease of that key and request; then the codes below.
@@ -591,8 +591,8 @@ Lends seats of a feature of the server license, or borrows them when the body ha
 | `count` | integer | yes | The seats to take: 1 to the feature's seats in the server license. A number that does not fit 32 bits gets `ELM_MALFORMED`. |
 | `borrow` | integer | no | Makes the lease a borrow for this many seconds: 1 to the server license's borrow limit, or to `borrow.maxDuration` when that is shorter. A value below 0 or above 3,162,240,000 (100 years) gets `ELM_MALFORMED`. |
 | `fingerprints` | array of strings | no | The machine fingerprints (see [Machine fingerprints](#machine-fingerprints)), 0 to 8. A borrow needs at least one. |
-| `client` | object | no | `{"host": <string>, "user": <string>}`, each optional and at most 255 bytes, without control characters (U+0000 to U+001F). Checked against the `host:` and `user:` entries of `allow` and `deny` (see [Access rules](server-configuration.md#access-rules)). |
-| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F). It is written to the usage log. |
+| `client` | object | no | `{"host": <string>, "user": <string>}`, each optional and at most 255 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F); a control character gets `ELM_MALFORMED`. Checked against the `host:` and `user:` entries of `allow` and `deny` (see [Access rules](server-configuration.md#access-rules)). |
+| `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F); a control character gets `ELM_MALFORMED`. It is written to the usage log. |
 
 `elm-server` does not read `licenseKey` or `product`. The lease lasts the server license's lease period, or the `borrow` period, and ends no later than the server license's expiry plus its grace period. The answer holds the lease token, which the server signed with its installation key, and an empty `certificates`; the token is shortened to `eyJ…` here. The client checks the token with the key from `GET /v1/server/license`. As on `elm-service`, the claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim.
 
@@ -731,7 +731,7 @@ Returns the lease that an acquisition or a borrow issued, for a client that did 
 
 - Authentication: a proof with `jwk`. Only a lease bound to the proof's key is found.
 - Request body: none. A body sent anyway is not read, but the proof's `bdy` must still be its hash.
-- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters of base64url (`A-Z`, `a-z`, `0-9`, `-`, and `_`) (answered before the proof is checked), no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
+- Success: `204`, with no body, also when no lease is found: `{jti}` is not 1 to 64 characters of base64url, `A-Z`, `a-z`, `0-9`, `-`, and `_`, which is answered before the proof is checked, no lease was issued for that request, the lease is bound to another key, it has been renewed since, it has expired, or it was already released (by this route again, by its lease ID, or by an administrator). The route is idempotent.
 - Response headers: `ELM-Nonce`.
 
 The checks, in order: the IP rules and the rate limit for the source address; the form of `{jti}`; the proof (see [The proof](#the-proof)); the lease of that key and request; then the codes below.

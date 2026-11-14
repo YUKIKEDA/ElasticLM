@@ -33,7 +33,7 @@ info: elm-server[2]
 
 サインインが失敗した理由は、代わりに `elm-service` の 2 つの警告 `An admin UI sign-in was refused: <reason>` と `The identity provider cannot be reached for the admin UI's sign-in: <reason>` にある。下で述べる ID プロバイダー自身の答えを除き、理由は、リクエストの文字を含まない。ID プロバイダーが `error` を付けて `/auth/callback` に戻したときの理由は、そのコードが、`login_required` のように OAuth 2.0 か OpenID Connect の仕様が定める、認可のレスポンスのエラーコード（RFC 6749 と OpenID Connect Core の 16 個。大文字と小文字を区別する）なら `the identity provider answered <code>`、それ以外なら `the identity provider answered an error code that is not registered` になる。サービスは、受け取った文字ではなく、自分の一覧にあるコードを書く。ほかの理由は、決まった文か、失敗のメッセージと、そのあとに ` ---> ` で続く内側の例外のメッセージである。たとえば、ID プロバイダーのトークンエンドポイントがサービスを拒否したときの理由は `Message contains error: 'invalid_client', error_description: 'error_description is null', error_uri: 'error_uri is null'.` で、この中のエラーとその説明は、ID プロバイダーが返したものを、そのまま書いたものである。そのため、`/auth/callback` に送られたコードのように、ID プロバイダーが答えの中で引いたリクエストの値も、そこに現れる。`/auth/callback` への戻りの `error_description` と `error_uri`、トークンエンドポイントが JSON で返したエラーの HTTP の状態コードは、どのエントリーにもない。ID プロバイダー自身のログで確かめる。
 
-管理 API の OIDC のアクセストークンは、ASP.NET Core の JwtBearer のハンドラーが確かめる。そのエントリーのカテゴリは `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler` だ。`elm-service` は、このエントリーもどのレベルでも書かない。その理由の文は、管理 API に届く誰もが送れるトークンの `kid` と `iss` を引用するからだ。トークンを拒否した理由は、`elm-service` の `Debug` のエントリー `An access token was refused: <reason>` にある。理由は、ライブラリのメッセージのコード（見つからない鍵なら `IDX10503`、別の発行元なら `IDX10205`、期限を過ぎたトークンなら `IDX10230` など）、サービス自身の文（`The token's typ is not at+jwt or JWT.` など）、`the access token is not valid` のどれかで、トークンの値は含まない。
+管理 API の OIDC のアクセストークンは、ASP.NET Core の JwtBearer のハンドラーが確かめる。そのエントリーのカテゴリは `Microsoft.AspNetCore.Authentication.JwtBearer.JwtBearerHandler` だ。`elm-service` は、このエントリーもどのレベルでも書かない。その理由の文は、管理 API に届く誰もが送れるトークンの `kid` と `iss` を引用するからだ。トークンを拒否した理由は、`elm-service` の `Debug` のエントリー `An access token was refused: <reason>` にある。理由は、ライブラリのメッセージのコード（見つからない鍵なら `IDX10503`、別の発行元なら `IDX10205`、期限を過ぎたトークンなら `IDX10230` など）、サービス自身の文（`The token's typ is not at+jwt or JWT.` など）、`no token`、`the access token is not valid` のどれかで、トークンの値は含まない。そのため、断ったトークンが持っていた `kid` や `iss` は、ログに残らない。自分のトークンが断られた理由を調べるには、トークンのヘッダーとペイロード（base64url の JSON）をデコードし、`kid` を ID プロバイダーの鍵と、`iss` を `oidc.issuer` と比べる。
 
 既定のレベルでは、リクエストのパス、クエリ文字列、ヘッダーを含むエントリーはない。`Debug` では、さらに 2 つのカテゴリがリクエストを引用する。`Microsoft.AspNetCore.Routing.Matching.DfaMatcher` は、`No candidates found for the request path '…'` のように、リクエストごとにパスを書く。`Microsoft.AspNetCore.Server.Kestrel.BadRequests` は、`Invalid request line: '…'` や `Invalid request header: '…'` のように、Kestrel が拒否したリクエストの部分を書く。制御文字は `\x0D` のように書く。
 
@@ -314,7 +314,7 @@ API キーのような秘密は書き込まない。
 | `apikey.list` | `GET /v1/admin/api-keys`。 |
 | `apikey.revoke` | `DELETE /v1/admin/api-keys/{id}`。 |
 | `audit.list` | `GET /v1/admin/audit`。 |
-| `audit.verify` | `POST /v1/admin/audit/verify`。`detail` には `intact`、`checked` が入る。 |
+| `audit.verify` | `POST /v1/admin/audit/verify`。`detail` には `intact`、`checked` が入る。別の確認が動いているために断った呼び出しは、`result` が `ELM_RATE_LIMITED` で、`detail` を持たない。 |
 | `auth.failed` | 直前の 1 分間に失敗した認証（`actorType` は `system`、`actorId` は `auth`、`result` は `ELM_UNAUTHORIZED`）。`detail` には `count` が入る。 |
 | `product.create` | `POST /v1/admin/products`。 |
 | `product.list` | `GET /v1/admin/products`。 |

@@ -131,6 +131,7 @@ A call without the permission gets `403` with `ELM_FORBIDDEN`, and the message n
 - The `Content-Type` header of a request is not checked. A body is read as JSON in UTF-8 whatever type is sent, and the body of `POST /v1/admin/offline` as the text of the file.
 - A body is at most 64 KiB, counted by `Content-Length` or by the bytes read. A larger one gets `413` with `ELM_PAYLOAD_TOO_LARGE`.
 - A body must be one JSON object. A body that is not JSON or not an object, a member of the wrong type, nesting deeper than 8, a required member that is missing or `null`, a member given twice, a string or a member name with an unpaired surrogate (such as `\ud800`) at any depth, or bytes that are not valid UTF-8 anywhere in the body gets `400` with `ELM_MALFORMED`.
+- A text member that the service keeps, the `name` of a product, feature, policy, license, or API key and each key and value of a license's `meta`, gets `400` with `ELM_MALFORMED` when it holds a control character (U+0000 to U+001F, U+007F, and U+0080 to U+009F), before its length is checked.
 - A value of the right type outside its range or set gets `400` with `ELM_INVALID_ARGUMENT`. So does an ID in the body that names nothing, such as a `productId` of no product.
 - Unknown members are ignored, so that a newer client works with an older service.
 - Times are written in one form only, UTC to the second: `2027-11-01T00:00:00Z`. Answers use the same form. A time in another form (fractions of a second, `+00:00`) gets `ELM_MALFORMED`.
@@ -183,7 +184,13 @@ Every request is first limited per source address (an IPv4 address, or an IPv6 /
 
 #### Caching and browser headers
 
-Every answer under `/v1/admin/`, errors included, has `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`, and `Content-Security-Policy: frame-ancestors 'none'`. A browser then keeps no copy of an answer, does not guess another type than the one given and show a JSON answer as a page, and shows no answer inside a frame of another site.
+Every answer under `/v1/admin/`, errors included, has three headers:
+
+- `Cache-Control: no-store`: no browser or cache keeps a copy of the answer.
+- `X-Content-Type-Options: nosniff`: a browser takes the answer as the type it is given and does not show a JSON answer as a page.
+- `Content-Security-Policy: frame-ancestors 'none'`: a browser shows the answer inside no frame, of this site or another.
+
+The one exception is the empty `500` that the web server sends when a call fails inside the service before its answer started: it has no body, and only the `Date`, `Content-Length`, and `Server` headers.
 
 #### Audit log
 
@@ -556,7 +563,7 @@ Audit action: `audit.list`.
 
 Checks the hash chain of the audit log, from the oldest row it keeps to the newest. What the check finds, and what it cannot find, is in [Logs](logs.md#verifying-the-audit-log).
 
-The check reads every row, so its time grows with the number of rows. Each node runs one check at a time.
+The check reads every row, so its time grows with the number of rows. Each [node](service-configuration.md#node) runs one check at a time, so one caller with `audit.read` who calls it again and again can keep the node's check busy for others; each refused call is in the audit log.
 
 Permission: `audit.read`.
 
@@ -576,7 +583,7 @@ Answers `200`:
 }
 ```
 
-Errors: those common to all routes, and `ELM_RATE_LIMITED` (429, `Retry-After: 1`) "Another check of the audit log is running on this node." while another check runs on the node that got the call. Call again after it ends.
+Errors: those common to all routes, and `ELM_RATE_LIMITED` (429) "Another check of the audit log is running on this node." while another check runs on the node that got the call. Its `Retry-After` is `1`, not the time the running check needs, which grows with the rows. Each refused call writes an audit row with `result` `ELM_RATE_LIMITED`.
 
 Audit action: `audit.verify`.
 

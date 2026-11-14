@@ -351,7 +351,7 @@ void elm_string_free(char* text);
 | `scope` | `int32_t` | `ELM_SCOPE_USER` か `ELM_SCOPE_MACHINE`。 |
 | `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `send_client_info` | `int32_t` | `1`: ホスト名とユーザー名を送る。 |
-| `app_version` | `const char*` | `NULL`、またはアプリのバージョン（64 バイトまで）。 |
+| `app_version` | `const char*` | `NULL`、またはアプリのバージョン。64 バイトまでで、制御文字（U+0000 から U+001F、U+007F、U+0080 から U+009F）を含まない。ライブラリは長さだけを確かめ、制御文字を含むバージョンのリクエストは、サーバーが `ELM_MALFORMED` で断る。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
 | `reject_trial_as_standard` | `int32_t` | `0`（既定）: `ELM_KIND_STANDARD` を指定した `elm_activation_check` でトライアルのライセンスも受け付ける。`1`: 受け付けない。 |
 | `on_state` | `elm_state_callback` | `NULL`、または状態のコールバック。 |
@@ -375,7 +375,7 @@ void elm_string_free(char* text);
 | `scope` | `int32_t` | `ELM_SCOPE_USER` か `ELM_SCOPE_MACHINE`。 |
 | `directory` | `const char*` | `NULL` ならスコープの既定のフォルダー。または自分で決めたフォルダー。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
 | `send_client_info` | `int32_t` | `1`: ホスト名とユーザー名を送る。 |
-| `app_version` | `const char*` | `NULL`、またはアプリのバージョン（64 バイトまで）。 |
+| `app_version` | `const char*` | `NULL`、またはアプリのバージョン。64 バイトまでで、制御文字（U+0000 から U+001F、U+007F、U+0080 から U+009F）を含まない。ライブラリは長さだけを確かめ、制御文字を含むバージョンのリクエストは、サーバーが `ELM_MALFORMED` で断る。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
 | `reject_trial_as_standard` | `int32_t` | `0` か `1`。効果はない。クライアントが検証するのはサーバーライセンスとリーストークンだけで、標準の要件で検証することはない。 |
 | `on_lease` | `elm_lease_callback` | `NULL`、またはリースのコールバック。 |
