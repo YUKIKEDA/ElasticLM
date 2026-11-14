@@ -60,12 +60,17 @@ public sealed class LicenseClient : IAsyncDisposable
     // has not got through, oldest first; kept in memory only, under the lock.
     private readonly List<string> _owedReleases = [];
 
-    // Server identities by server license jti: the current one, and older ones that leases issued under them still need.
+    // Server identities by server license jti: the current one, and older ones kept while leases issued under them are held,
+    // so that an answer naming one is not taken as a new server license to fetch (design §13.5). Only the current one
+    // verifies a new token.
     private readonly List<ServerIdentity> _identities = [];
 
     // The server license file and key JSON behind each identity, by server license jti: a borrow is saved with them.
     private readonly Dictionary<string, (byte[] License, byte[] Key)> _identityFiles = new(StringComparer.Ordinal);
     private ServerIdentity? _current;
+
+    // Set by ResetServerPin, which takes no lock: the next connection under the lock forgets every identity kept.
+    private int _forgetIdentities;
     private volatile string? _pinnedKeyId;
     private volatile bool _pinFailed;
     private string? _nonce;
@@ -566,6 +571,9 @@ public sealed class LicenseClient : IAsyncDisposable
         bool deleted = _pins.Delete(serverUrl);
         if (HttpTargetUri.Normalize(serverUrl) == HttpTargetUri.Normalize(_server))
         {
+            // design §13.5 (V1d18): the server licenses kept are forgotten too, so the next one is taken as on a first
+            // connection, also when it is one that was kept before.
+            Volatile.Write(ref _forgetIdentities, 1);
             Volatile.Write(ref _current, null);
         }
 
@@ -1003,6 +1011,17 @@ public sealed class LicenseClient : IAsyncDisposable
         if (_hosted || Volatile.Read(ref _current) is not null)
         {
             return null;
+        }
+
+        if (Interlocked.Exchange(ref _forgetIdentities, 0) == 1)
+        {
+            foreach (ServerIdentity kept in _identities)
+            {
+                kept.Dispose();
+            }
+
+            _identities.Clear();
+            _identityFiles.Clear();
         }
 
         string? seenKeyId = null;

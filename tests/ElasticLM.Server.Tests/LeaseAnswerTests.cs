@@ -351,6 +351,60 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// ResetServerPin forgets the server licenses the client kept, so after a reset the client follows the server as on a
+    /// first connection: back to an earlier server license, and forward again to the newer one without another reset (design
+    /// §13.5, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with server license A, past its reclaim window; a client that leased under A, then under B after the server
+    ///   reloaded B; each lease released.
+    ///
+    /// Steps:
+    /// - The server loads A again; acquire. Reset the client's server pin; acquire and release. The server loads B again;
+    ///   acquire.
+    ///
+    /// Expected:
+    /// - The first acquisition fails with ELM_LEASE_OUT_OF_BOUNDS (the answer names A, which the client kept, while it
+    ///   uses B). The reset deletes the pin; the next acquisition gets a lease under A. After the server goes forward to B,
+    ///   the client gets a lease under B (before the fix it still kept B and checked B's answer with A).
+    /// </remarks>
+    [Fact]
+    public async Task ResetServerPin_ForgetsTheKeptServerLicenses()
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string data = _deployment.NewFolder();
+        string path = _deployment.WriteServerLicense(data);
+        byte[] fileA = File.ReadAllBytes(path);
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(Window);
+        LicenseClient client = Client(server, new Recorder());
+        Lease underA = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.Null(await client.ReleaseLeaseAsync(underA, cancel));
+        _deployment.WriteServerLicense(data);
+        byte[] fileB = File.ReadAllBytes(path);
+        Assert.Null(server.ReloadLicense());
+        Lease underB = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.Null(await client.ReleaseLeaseAsync(underB, cancel));
+
+        File.WriteAllBytes(path, fileA);
+        Assert.Null(server.ReloadLicense());
+        Assert.Equal(
+            ErrorCode.LeaseOutOfBounds,
+            Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("pro", cancellationToken: cancel)).Error.Code
+        );
+        Assert.True(client.ResetServerPin(server.PublicUrls[0]));
+        Lease again = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.Equal(underA.Token.ServerLicenseTokenId, again.Token.ServerLicenseTokenId);
+        Assert.Null(await client.ReleaseLeaseAsync(again, cancel));
+
+        File.WriteAllBytes(path, fileB);
+        Assert.Null(server.ReloadLicense());
+        Lease forward = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        Assert.Equal(underB.Token.ServerLicenseTokenId, forward.Token.ServerLicenseTokenId);
+    }
+
+    /// <summary>
     /// An answer to a renewal that differs from the lease held in one thing is refused with ELM_REQUEST_MISMATCH and the
     /// sentence for that thing: the lease keeps its token, goes to Retrying, and renews at the retry.
     /// </summary>
