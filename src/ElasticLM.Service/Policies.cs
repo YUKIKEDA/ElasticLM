@@ -26,7 +26,8 @@ internal sealed record PolicySettings(
     long? BorrowLimit,
     long BorrowReturnLimit,
     string ClientInfoStrategy,
-    long TrialDuration
+    long TrialDuration,
+    long TrialDailyLimit
 )
 {
     /// <summary>Gets the defaults of design §9.3.</summary>
@@ -49,7 +50,8 @@ internal sealed record PolicySettings(
             null,
             2,
             "none",
-            14 * Policies.Day
+            14 * Policies.Day,
+            1_000
         );
 }
 
@@ -96,6 +98,7 @@ internal static class Policies
         Number("borrowReturnLimit", 0, 1_000, false, p => p.BorrowReturnLimit, (p, v) => p with { BorrowReturnLimit = v!.Value }),
         Choice("clientInfoStrategy", ["none", "hostAndUser"], p => p.ClientInfoStrategy, (p, v) => p with { ClientInfoStrategy = v }),
         Number("trialDuration", Day, 365 * Day, false, p => p.TrialDuration, (p, v) => p with { TrialDuration = v!.Value }),
+        Number("trialDailyLimit", 1, 100_000, false, p => p.TrialDailyLimit, (p, v) => p with { TrialDailyLimit = v!.Value }),
     ];
 
     /// <summary>
@@ -179,7 +182,8 @@ internal static class Policies
             row.BorrowLimit,
             row.BorrowReturnLimit,
             row.ClientInfoStrategy,
-            row.TrialDuration
+            row.TrialDuration,
+            row.TrialDailyLimit
         );
     }
 
@@ -209,6 +213,7 @@ internal static class Policies
             p.BorrowReturnLimit,
             p.ClientInfoStrategy,
             p.TrialDuration,
+            p.TrialDailyLimit,
             createdAt,
             updatedAt
         );

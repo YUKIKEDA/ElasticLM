@@ -29,6 +29,9 @@ public sealed class LeaseEngine : IDisposable
     private readonly LeaseEngineOptions _options;
     private readonly ReaderWriterLockSlim _gate = new(LockRecursionPolicy.NoRecursion);
     private readonly ConcurrentDictionary<string, LeaseRecord> _leases = new(StringComparer.Ordinal);
+
+    // design §12.7.7 (V1d5b): the leases an acquisition or a borrow issued, by the key and the jti of that request's proof.
+    private readonly ConcurrentDictionary<(string KeyId, string ProofId), LeaseRecord> _byRequest = new();
     private readonly Dictionary<string, List<DateTimeOffset>> _returns = new(StringComparer.Ordinal);
     private readonly Lock _returnsLock = new();
     private readonly DateTimeOffset _recoveryEnds;
@@ -64,6 +67,10 @@ public sealed class LeaseEngine : IDisposable
 
     /// <summary>Gets the number of leases the engine holds, including expired ones not yet purged.</summary>
     public int LeaseCount => _leases.Count;
+
+    /// <summary>Gets the number of leases findable by the request that issued them, for tests: one per lease held that a
+    /// request issued, none for a lease once it is gone.</summary>
+    internal int RequestEntries => _byRequest.Count;
 
     /// <summary>Gets the server identity the engine issues under.</summary>
     public ServerIdentity Server => Volatile.Read(ref _state).Server;
@@ -253,6 +260,49 @@ public sealed class LeaseEngine : IDisposable
     }
 
     /// <summary>
+    /// Releases the lease that an acquisition or a borrow issued, named by the <c>jti</c> of that request's proof, for a client
+    /// that did not take the answer (design §12.7.7, V1d5b). Only a lease bound to <paramref name="keyId"/> that has not been
+    /// renewed is found; a borrow is returned early only within the rules of design §12.7.4.
+    /// </summary>
+    /// <param name="proofId">The <c>jti</c> of the acquisition's or the borrow's proof.</param>
+    /// <param name="keyId">The installation key thumbprint from the proof of the release.</param>
+    /// <param name="lease">The lease as it was before the release, or <see langword="null"/> when none was found.</param>
+    /// <returns>What the release did; <see cref="ReleaseOutcome.NotFound"/> when no such lease is held.</returns>
+    public ReleaseOutcome ReleaseRequest(string proofId, string keyId, out LeaseInfo? lease)
+    {
+        ArgumentNullException.ThrowIfNull(proofId);
+        ArgumentNullException.ThrowIfNull(keyId);
+        lease = null;
+        _gate.EnterReadLock();
+        try
+        {
+            LicenseState state = _state;
+            if (!_byRequest.TryGetValue((keyId, proofId), out LeaseRecord? found) || !state.Pools.TryGetValue(found.FeatureId, out FeaturePool? pool))
+            {
+                return ReleaseOutcome.NotFound;
+            }
+
+            lock (pool.Lock)
+            {
+                DateTimeOffset now = _time.GetUtcNow();
+                RemoveExpired(pool, now.ToUnixTimeSeconds());
+
+                // A renewed lease is held by a client that took an answer, so no correct client names it (design §12.7.7).
+                if (!pool.Leases.ContainsKey(found.Id) || found.Sequence != 1)
+                {
+                    return ReleaseOutcome.NotFound;
+                }
+
+                return ReleaseHeld(pool, found, state, now, out lease);
+            }
+        }
+        finally
+        {
+            _gate.ExitReadLock();
+        }
+    }
+
+    /// <summary>
     /// Removes a lease on the administrator's order (design §13.7), whatever its state. A borrow is not removed: it ends only
     /// by the client's early return or at its expiry (design §12.7.4), so the lease returned says <see cref="LeaseInfo.IsBorrow"/>
     /// and the caller refuses the order.
@@ -364,6 +414,9 @@ public sealed class LeaseEngine : IDisposable
                     LastToken = lease.Token,
                     ExpiresAt = lease.ExpiresAt.ToUnixTimeSeconds(),
                     Borrow = borrow,
+
+                    // design §12.7.7: the request that issued a borrow is the one its token answers.
+                    AcquiredBy = lease.AnsweredProofId,
                 };
                 Add(pool, record);
             }
@@ -505,7 +558,7 @@ public sealed class LeaseEngine : IDisposable
                 );
             }
 
-            var record = new LeaseRecord(NewLeaseId(), pool.FeatureId, request.Count, request.KeyId, request.Key);
+            var record = new LeaseRecord(NewLeaseId(), pool.FeatureId, request.Count, request.KeyId, request.Key) { AcquiredBy = request.ProofId };
             LeaseOutcome outcome = IssueNext(record, now, request.ProofId, state, borrow);
             if (outcome is not LeaseOutcome.Granted)
             {
@@ -639,39 +692,47 @@ public sealed class LeaseEngine : IDisposable
                 return ReleaseOutcome.NotFound;
             }
 
-            lease = record.Info();
             if (record.KeyId != keyId)
             {
+                lease = record.Info();
                 return ReleaseOutcome.WrongKey;
             }
 
-            if (record.Stopped)
-            {
-                return ReleaseOutcome.Stopped;
-            }
-
-            if (record.Borrow is BorrowRecord borrow)
-            {
-                if (!MayReturnEarly(record, borrow, pool, state, now))
-                {
-                    return ReleaseOutcome.ReturnNotAllowed;
-                }
-
-                try
-                {
-                    _options.Journal?.Returned(new BorrowReturn(record.Id, record.KeyId, borrow.Fingerprints, now));
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
-                {
-                    return ReleaseOutcome.ReturnNotAllowed;
-                }
-
-                RecordReturn(record.KeyId, borrow.Fingerprints, now);
-            }
-
-            Remove(pool, record);
-            return ReleaseOutcome.Released;
+            return ReleaseHeld(pool, record, state, now, out lease);
         }
+    }
+
+    // The checks of a release once the lease and its key are known, under the pool's lock: a stopped clone stays until it
+    // expires, and a borrow is returned early only within the rules (design §12.7.1, §12.7.4, §12.7.7).
+    private ReleaseOutcome ReleaseHeld(FeaturePool pool, LeaseRecord record, LicenseState state, DateTimeOffset now, out LeaseInfo? lease)
+    {
+        lease = record.Info();
+        if (record.Stopped)
+        {
+            return ReleaseOutcome.Stopped;
+        }
+
+        if (record.Borrow is BorrowRecord borrow)
+        {
+            if (!MayReturnEarly(record, borrow, pool, state, now))
+            {
+                return ReleaseOutcome.ReturnNotAllowed;
+            }
+
+            try
+            {
+                _options.Journal?.Returned(new BorrowReturn(record.Id, record.KeyId, borrow.Fingerprints, now));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                return ReleaseOutcome.ReturnNotAllowed;
+            }
+
+            RecordReturn(record.KeyId, borrow.Fingerprints, now);
+        }
+
+        Remove(pool, record);
+        return ReleaseOutcome.Released;
     }
 
     // design §12.7.4: the early returns of the last 30 days of the key and of each fingerprint are under the license's limit,
@@ -744,6 +805,10 @@ public sealed class LeaseEngine : IDisposable
         pool.Leases.Add(record.Id, record);
         pool.AddUsed(record.Count);
         _leases[record.Id] = record;
+        if (record.AcquiredBy is string proofId)
+        {
+            _byRequest[(record.KeyId, proofId)] = record;
+        }
     }
 
     private void Remove(FeaturePool pool, LeaseRecord record)
@@ -751,6 +816,10 @@ public sealed class LeaseEngine : IDisposable
         pool.Leases.Remove(record.Id);
         pool.AddUsed(-record.Count);
         _leases.TryRemove(new KeyValuePair<string, LeaseRecord>(record.Id, record));
+        if (record.AcquiredBy is string proofId)
+        {
+            _byRequest.TryRemove(new KeyValuePair<(string, string), LeaseRecord>((record.KeyId, proofId), record));
+        }
     }
 
     private long Now() => _time.GetUtcNow().ToUnixTimeSeconds();
@@ -1014,6 +1083,9 @@ public sealed class LeaseEngine : IDisposable
 
         // The jti of the request that produced LastToken; null for a reclaimed or restored lease.
         public string? IssuedBy { get; set; }
+
+        // The jti of the acquisition or the borrow that issued the lease (design §12.7.7); null for a reclaimed lease.
+        public string? AcquiredBy { get; init; }
 
         public long ExpiresAt { get; set; }
 

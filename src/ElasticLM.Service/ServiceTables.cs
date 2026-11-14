@@ -129,6 +129,7 @@ internal sealed partial record PolicyRow(
     long BorrowReturnLimit,
     string ClientInfoStrategy,
     long TrialDuration,
+    long TrialDailyLimit,
     long CreatedAt,
     long UpdatedAt
 );

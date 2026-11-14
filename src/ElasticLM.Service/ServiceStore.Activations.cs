@@ -58,10 +58,11 @@ internal sealed partial class ServiceStore<TDialect>
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
 
-    public override async Task<bool> CreateTrialAsync(
+    public override async Task<TrialWrite> CreateTrialAsync(
         LicenseRow license,
         ActivationRow activation,
         IReadOnlyList<string> fingerprints,
+        long dailyLimit,
         AuditEntry audit,
         DateTimeOffset now,
         CancellationToken cancellationToken
@@ -75,6 +76,48 @@ internal sealed partial class ServiceStore<TDialect>
             await InWriteTransactionAsync(
                     async tx =>
                     {
+                        // design §12.9 (V1d17): a self-assignment locks the product's row on PostgreSQL, so the trials of one
+                        // product are counted and written one at a time; SQLite holds the write lock (design §14.4).
+                        await tx.Update(ProductRow.Table)
+                            .Set(p => [Set(p.Name, p.Name)])
+                            .Where(p => Eq(p.Id, license.ProductId))
+                            .ExecuteAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                        long since = license.CreatedAt - Policies.Day;
+                        long made = await tx.From(TrialRow.Table)
+                            .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
+                            .Select(t => Count())
+                            .SingleAsync(cancellationToken)
+                            .ConfigureAwait(false);
+                        if (made >= dailyLimit)
+                        {
+                            // At the limit nothing is written: a fingerprint that had a trial is still told first (design
+                            // §12.6.1, the order of V1d17's question 17-2). The product's lock keeps a trial with the same
+                            // fingerprint from being written between this read and the answer.
+                            long used = await tx.From(TrialFingerprintRow.Table)
+                                .Where(f => And(Eq(f.ProductId, license.ProductId), In(f.Fingerprint, fingerprints)))
+                                .Select(f => Count())
+                                .SingleAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                            if (used > 0)
+                            {
+                                throw new TrialUsedException();
+                            }
+
+                            // A place frees when the (made − limit + 1)-th oldest trial of the 24 hours leaves them: the oldest
+                            // one when made is the limit, a later one when the limit was lowered below the count. Every trial
+                            // counted is later than since, so the seconds are at least 1.
+                            List<long> freeing = await tx.From(TrialRow.Table)
+                                .Where(t => And(Eq(t.ProductId, license.ProductId), Gt(t.CreatedAt, since)))
+                                .Select(t => t.CreatedAt)
+                                .OrderBy(t => [Asc(t.CreatedAt)])
+                                .Limit(1)
+                                .Offset(checked((int)(made - dailyLimit)))
+                                .ToListAsync(cancellationToken)
+                                .ConfigureAwait(false);
+                            throw new TrialLimitedException(freeing[0] + Policies.Day - license.CreatedAt);
+                        }
+
                         await InsertLicenseAsync(tx, license, cancellationToken).ConfigureAwait(false);
                         await tx.Insert(TrialRow.Table)
                             .Values(
@@ -117,11 +160,15 @@ internal sealed partial class ServiceStore<TDialect>
                     cancellationToken
                 )
                 .ConfigureAwait(false);
-            return true;
+            return new TrialWrite.Created();
         }
         catch (TrialUsedException)
         {
-            return false;
+            return new TrialWrite.Used();
+        }
+        catch (TrialLimitedException e)
+        {
+            return new TrialWrite.Limited(e.RetryAfter);
         }
     }
 
@@ -192,6 +239,19 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<LeaseRow?> FindLeaseAsync(string id, long now, CancellationToken cancellationToken) =>
         _db.From(LeaseRow.Table).Where(l => And(Eq(l.Id, id), Gt(l.ExpiresAt, now))).Select(l => l).SingleOrDefaultAsync(cancellationToken);
 
+    // design §12.7.7: found through leases_by_key (migration 0010). Whether the row is still sequence 1 (no renewal since)
+    // and has not expired is judged when it is read again under the license's lock, which a renewal also takes.
+    public override async Task<LeaseRow?> FindLeaseByRequestAsync(string keyId, string requestId, CancellationToken cancellationToken) =>
+        (
+            await _db.From(LeaseRow.Table)
+                .Where(l => And(Eq(l.KeyId, keyId), Eq(l.IssuedBy, requestId)))
+                .Select(l => l)
+                .OrderBy(l => [Asc(l.Id)])
+                .Limit(1)
+                .ToListAsync(cancellationToken)
+                .ConfigureAwait(false)
+        ).FirstOrDefault();
+
     public override async Task<IReadOnlyList<LeaseRow>> ListLeasesAsync(
         Guid licenseId,
         string? after,
@@ -247,6 +307,12 @@ internal sealed partial class ServiceStore<TDialect>
 
     // Stops a trial's transaction when a fingerprint already had a trial, so everything it wrote rolls back.
     private sealed class TrialUsedException : Exception;
+
+    // Stops a trial's transaction when the product has made its limit of trials in the last 24 hours (design §12.9, V1d17).
+    private sealed class TrialLimitedException(long retryAfter) : Exception
+    {
+        public long RetryAfter { get; } = retryAfter;
+    }
 
     private sealed class Scope(Transaction<TDialect> tx, LicenseRow license, DateTimeOffset now) : LicenseScope
     {

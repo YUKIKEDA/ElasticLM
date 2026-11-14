@@ -4,6 +4,7 @@ using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Service.Tests;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -27,7 +28,8 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     /// <summary>
     /// An answer to an acquisition or a borrow that differs from the request in one thing is refused with
     /// ELM_REQUEST_MISMATCH and the sentence for that thing; an answer that differs in nothing but the request it answers
-    /// is refused too. The client holds no lease afterwards and returns none.
+    /// is refused too. The client holds no lease afterwards and returns none by its ID; it releases what the server issued for
+    /// its own request by that request's jti, which leaves the holder's lease alone (design §12.7.7).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -53,8 +55,9 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     /// Expected:
     /// - The holder's request gives a lease. The second gives Failed with ELM_REQUEST_MISMATCH, the case's message, and no
     ///   retry time; the relay replayed one answer.
-    /// - No borrow file was added, the second client sent no DELETE when disposed, the server's seats are as before, and
-    ///   the holder's lease is still Held.
+    /// - No borrow file was added. The only DELETE the second client sent, before or when disposed, is
+    ///   DELETE /v1/leases/requests/ with the jti of its own request, which the server never saw; the server's seats are as
+    ///   before, and the holder's lease is still Held.
     /// </remarks>
     /// <param name="kind">The case.</param>
     /// <param name="message">The message expected.</param>
@@ -108,7 +111,8 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.Equal(1, relay.Replayed);
         Assert.Equal(borrows, BorrowFiles(folder));
         await second.DisposeAsync();
-        Assert.DoesNotContain(relay.Requests(), r => r.Method == "DELETE");
+        string asked = relay.Requests().Last(r => r.Method == "POST" && r.Path == "/v1/leases").ProofId!;
+        Assert.Equal(["/v1/leases/requests/" + asked], relay.Requests().Where(r => r.Method == "DELETE").Select(r => r.Path));
         Assert.Equal((seats, 0L), (server.Engine.SeatsInUse("pro"), server.Engine.SeatsInUse("cam")));
         Assert.Equal(LeaseState.Held, held.State);
     }
@@ -452,6 +456,10 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     ///   behind a relay that kept the acquisition's answer (sequence 1).
     /// - The server restarted on P. Another copy of the installation reclaims the lease with the token of sequence 1, so
     ///   the server holds the lease at sequence 1, two behind the client.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Move the clock 200 s so the client renews with sequence 3.
@@ -512,8 +520,6 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.DoesNotContain(relay.Requests(), r => r.Path.EndsWith("/reclaim", StringComparison.Ordinal));
         Assert.Equal(1, after.Engine.SeatsInUse("pro"));
     }
-
-    private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];

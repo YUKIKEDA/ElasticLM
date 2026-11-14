@@ -156,7 +156,7 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     [InlineData("{provider}:LogLevel:*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
     [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnost*ics=Trace", false, true, true)]
     [InlineData("{provider}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics*Microsoft.AspNetCore.Hosting.Diagnostics=Trace", false, true, true)]
-    public void RaiseToWarning_EachSetting_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
+    public void Raise_EachSetting_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
     {
         using var provider = new RecordingLoggerProvider();
         Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddProvider(provider)));
@@ -193,7 +193,7 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     [InlineData("Console:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;{console}:LogLevel:Default=Trace", false, false, false)]
     [InlineData("{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;Console:LogLevel:Default=Trace", false, false, false)]
     [InlineData("Console:LogLevel:Default=Trace;{console}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=Error", false, false, true)]
-    public void RaiseToWarning_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
+    public void Raise_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
         Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddConsole()));
 
     // Whether a logger of the web host's category writes Information, Warning, and Error, under settings of the form
@@ -218,7 +218,7 @@ public sealed class HostRequestLogTests : IAsyncDisposable
             logging.AddConfiguration(configuration.GetSection("Logging"));
             logging.SetMinimumLevel(LogLevel.Information);
             addProvider(logging);
-            HostRequestLog.RaiseToWarning(logging);
+            HostRequestLog.Raise(logging, HostRequestLog.Category, LogLevel.Warning);
         });
         using ServiceProvider built = services.BuildServiceProvider();
         ILogger logger = built.GetRequiredService<ILoggerFactory>().CreateLogger(HostRequestLog.Category);

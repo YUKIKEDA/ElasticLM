@@ -367,8 +367,9 @@ public sealed class ElmServiceTests
     ///   provider.
     ///
     /// Steps:
-    /// - Start the service with the two files on a port of the test's choice; then connect to that port, and read the usage
-    ///   log and the operational log.
+    /// - Start the service with the two files on port 0; then connect to the port the host's "Now listening on" entry names,
+    ///   and read the usage log and the operational log. The port is not known before the start (the V1d3b Grill, 3b-3);
+    ///   after the failed start another program could take it, and the connection would then not be refused.
     ///
     /// Expected:
     /// - ServiceStartException "Windows left the intermediate CA certificate {subject} (thumbprint {thumbprint}) of the TLS
@@ -394,19 +395,12 @@ public sealed class ElmServiceTests
         }
 
         (string certificate, string key) = chain.WritePem(test.FilePath("first.crt"), test.FilePath("first.key"), chain.Intermediate);
-        int port;
-        using (var free = new TcpListener(IPAddress.Loopback, 0))
-        {
-            free.Start();
-            port = ((IPEndPoint)free.LocalEndpoint).Port;
-        }
-
         var log = new RecordingLoggerProvider();
         var refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
             ElmService.StartAsync(
                 Logged(test) with
                 {
-                    Listen = new Uri($"https://127.0.0.1:{port}"),
+                    Listen = new Uri("https://127.0.0.1:0"),
                     TlsCertificate = certificate,
                     TlsKey = key,
                 },
@@ -414,6 +408,7 @@ public sealed class ElmServiceTests
                 cancel
             )
         );
+        int port = log.ListeningPort("https");
 
         Assert.Equal(
             $"Windows left the intermediate CA certificate {chain.Intermediate.Subject} (thumbprint {chain.Intermediate.Thumbprint}) of the TLS "
@@ -440,9 +435,9 @@ public sealed class ElmServiceTests
     ///   connections and sends nothing, to which the check is sent (ServiceHostOptions.SelfCheckTarget).
     ///
     /// Steps:
-    /// - Start the service on https and a port of the test's choice; once the test's listener has accepted the check's
-    ///   connection, POST /v1/admin/products (code v1d3a) with the API key; move the fake clock 10 seconds. Then start the
-    ///   service on http with the same database, and GET /v1/admin/products.
+    /// - Start the service on https and port 0; once the test's listener has accepted the check's connection, read the port
+    ///   from the host's "Now listening on" entry and POST /v1/admin/products (code v1d3a) to it with the API key; move the
+    ///   fake clock 10 seconds. Then start the service on http with the same database, and GET /v1/admin/products.
     ///
     /// Expected:
     /// - The POST fails without an answer. ServiceStartException "The check that Windows sends the intermediate CA
@@ -459,13 +454,6 @@ public sealed class ElmServiceTests
         string apiKey = await test.SetupAsync();
         using var chain = new TestCertificateChain(sentByServer: true);
         (string certificate, string key) = chain.WritePem(test.FilePath("hole.crt"), test.FilePath("hole.key"), chain.Intermediate);
-        int port;
-        using (var free = new TcpListener(IPAddress.Loopback, 0))
-        {
-            free.Start();
-            port = ((IPEndPoint)free.LocalEndpoint).Port;
-        }
-
         using var hole = new TcpListener(IPAddress.Loopback, 0);
         hole.Start();
         var holeEndPoint = (IPEndPoint)hole.LocalEndpoint;
@@ -473,7 +461,7 @@ public sealed class ElmServiceTests
         Task<ElmService> start = ElmService.StartAsync(
             Logged(test) with
             {
-                Listen = new Uri($"https://127.0.0.1:{port}"),
+                Listen = new Uri("https://127.0.0.1:0"),
                 TlsCertificate = certificate,
                 TlsKey = key,
             },
@@ -481,6 +469,7 @@ public sealed class ElmServiceTests
             cancel
         );
         using TcpClient check = await hole.AcceptTcpClientAsync(cancel);
+        int port = log.ListeningPort("https");
         using var https = new HttpClient(new HttpClientHandler { ServerCertificateCustomValidationCallback = (_, _, _, _) => true });
         using var create = new HttpRequestMessage(HttpMethod.Post, new Uri($"https://127.0.0.1:{port}/v1/admin/products"))
         {

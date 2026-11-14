@@ -361,6 +361,10 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     /// <remarks>
     /// Preconditions:
     /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test.
+    /// - The closed port: a listener of the test takes a port the system chooses and stops, and the test assumes that nothing
+    ///   listens there afterwards. Another program that took the port in between would get the request instead (the V1d3b
+    ///   Grill, 3b-5): on Windows the port that a bind to port 0 gets moves on across the machine, and in 2,000 binds none
+    ///   came back at once.
     ///
     /// Steps:
     /// - Start the check with the listener's endpoint, accept its connection, and close it. Then stop the listener and run the

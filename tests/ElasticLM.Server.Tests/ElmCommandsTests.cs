@@ -2,6 +2,7 @@ using System.Text.Json;
 using ElasticLM.Cli;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -35,11 +36,9 @@ public sealed class ElmCommandsTests : IAsyncDisposable
     {
         ElmServer server = await _deployment.StartServerAsync();
         _deployment.Time.Advance(TimeSpan.FromMinutes(10));
-        Lease lease = Assert
-            .IsType<LeaseResult.Acquired>(
-                await _deployment.Client(server.PublicUrls[0]).AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
-            )
-            .Lease;
+        Lease lease = Acquired(
+            await _deployment.Client(server.PublicUrls[0]).AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+        );
         string[] target = ["--data", server.DataDirectory];
 
         (int code, string output, _) = Run(["server", "status", .. target]);
@@ -371,10 +370,8 @@ public sealed class ElmCommandsTests : IAsyncDisposable
         ElmServer server = await _deployment.StartServerAsync();
         _deployment.Time.Advance(TimeSpan.FromMinutes(10));
         LicenseClient client = _deployment.Client(server.PublicUrls[0]);
-        Assert.IsType<LeaseResult.Acquired>(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
-        Assert.IsType<LeaseResult.Acquired>(
-            await client.BorrowLeaseAsync("pro", TimeSpan.FromDays(1), cancellationToken: TestContext.Current.CancellationToken)
-        );
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Acquired(await client.BorrowLeaseAsync("pro", TimeSpan.FromDays(1), cancellationToken: TestContext.Current.CancellationToken));
         await server.DisposeAsync();
         string data = server.DataDirectory;
 

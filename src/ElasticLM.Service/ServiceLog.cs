@@ -76,7 +76,9 @@ internal static partial class ServiceLog
     [LoggerMessage(EventId = 15, Level = LogLevel.Information, Message = "A Data Protection key was made: {Count}.")]
     public static partial void DataProtectionKeyMade(ILogger log, int count);
 
-    [LoggerMessage(EventId = 16, Level = LogLevel.Information, Message = "An admin UI sign-in was refused: {Reason}")]
+    // design §18.3 (V1d4b): Warning, so that a log of warnings and errors keeps why each sign-in was refused, which no
+    // entry of the OpenIdConnect handler holds any more.
+    [LoggerMessage(EventId = 16, Level = LogLevel.Warning, Message = "An admin UI sign-in was refused: {Reason}")]
     public static partial void SignInRefused(ILogger log, string reason);
 
     [LoggerMessage(EventId = 17, Level = LogLevel.Warning, Message = "The identity provider cannot be reached for the admin UI's sign-in: {Reason}")]
@@ -102,4 +104,13 @@ internal static partial class ServiceLog
         Message = "The request of an administration call ({Action}) could not be read ({Status}); the connection was closed."
     )]
     public static partial void RequestUnreadable(ILogger log, string action, int status);
+
+    // design §12.9, §18.3 (V1d17): on each node, once a product and 24 hours; the refused trials write no audit row (design
+    // §18.2).
+    [LoggerMessage(
+        EventId = 22,
+        Level = LogLevel.Warning,
+        Message = "The product {Code} ({ProductId}) reached its limit of {Limit} trials in 24 hours; new trials are refused at least until {Until}."
+    )]
+    public static partial void TrialLimitReached(ILogger log, string code, Guid productId, long limit, DateTimeOffset until);
 }

@@ -31,7 +31,7 @@ elm-service backup --config service.json --out before-upgrade.db
 `elm-service backup` prints the backup's file and its schema version, such as:
 
 ```text
-backup: before-upgrade.db, schema version 8
+backup: before-upgrade.db, schema version 10
 ```
 
 Keep this file until you are sure that you stay on the new version: it is the only way back. [Back up and restore the service](back-up-and-restore-the-service.md) says where to keep it and what else to keep.
@@ -51,7 +51,7 @@ If the new version has migrations, the service applies them when it starts, and 
 
 ```text
 info: elm-service[3]
-      Schema versions applied: 9
+      Schema versions applied: 11
 ```
 
 Without new migrations, the log has no such line. Either way it ends with the line `service.started`. The settings file stays as it is, unless the release notes say otherwise.
@@ -72,7 +72,7 @@ SQLite serves one node only. With PostgreSQL and several nodes, move every node 
 There are no migrations back: an older version does not start on a database to which a newer version applied a migration that the older one does not know. It ends with exit code 1 and a line such as:
 
 ```text
-The database has schema version 9, which this elm-service does not know; it is older than the database.
+The database has schema version 11, which this elm-service does not know; it is older than the database.
 ```
 
 An upgrade without migrations leaves the database as the older version knows it, and the older version starts on it as before. To go back after migrations, stop the service, restore `before-upgrade.db` as in [Restore a backup](back-up-and-restore-the-service.md#restore-a-backup), put the old version's executable back into `tools`, and start it. Everything since the backup is then gone: [What a restore takes back](back-up-and-restore-the-service.md#what-a-restore-takes-back) lists it.

@@ -6,12 +6,19 @@ using System.Text.RegularExpressions;
 namespace ElasticLM.E2E;
 
 /// <summary>
-/// The published elm-server as a process: https with its own self-signed certificate on a free loopback port, the local admin
-/// API on the socket file admin.sock in its data folder, and that data folder in the vendor's folder (design §13). The data
+/// The published elm-server as a process: https with its own self-signed certificate on a loopback port, the local admin API
+/// on the socket file admin.sock in its data folder, and that data folder in the vendor's folder (design §13). The data
 /// folder is not made here: the server makes it with an owner-only mode, and refuses a folder that group or other can write.
 /// Its name has at most two characters, so that the socket file's path stays within the system's limit (design §20.7, the
 /// V1d2 Grill).
 /// </summary>
+/// <remarks>
+/// Unless a test gives the port, the first start listens on port 0, and the port is read from the server's
+/// <c>server.started</c> line: a port found free and closed before the start can be taken by another program in between (the
+/// V1d3b Grill, 3b-3). A later start of the same server takes that port again, as a deployed server's listen does, so that
+/// its clients find it; the port is free for a moment between the two starts (3b-4). <see cref="Twin"/> gives a server that
+/// chooses its own port.
+/// </remarks>
 internal sealed partial class ServerProcess : IAsyncDisposable
 {
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(30);
@@ -20,17 +27,18 @@ internal sealed partial class ServerProcess : IAsyncDisposable
     private readonly string _folder;
     private Process? _process;
     private StringBuilder _log = new();
+    private Uri? _url;
 
-    private ServerProcess(string folder, Dictionary<string, string?> environment, Uri url, string dataDirectory)
+    private ServerProcess(string folder, Dictionary<string, string?> environment, Uri? url, string dataDirectory)
     {
         _folder = folder;
         _environment = environment;
-        Url = url;
+        _url = url;
         DataDirectory = dataDirectory;
     }
 
-    /// <summary>Gets the server's address for the clients.</summary>
-    public Uri Url { get; }
+    /// <summary>Gets the server's address for the clients: the port the test gave, or the one the first start read.</summary>
+    public Uri Url => _url ?? throw new InvalidOperationException("The server has not started to listen.");
 
     /// <summary>Gets the server's data folder: its key, its records, and its usage log.</summary>
     public string DataDirectory { get; }
@@ -65,10 +73,11 @@ internal sealed partial class ServerProcess : IAsyncDisposable
     /// <param name="product">The product the server serves.</param>
     /// <param name="license">Where the server's license file is or will be.</param>
     /// <param name="serviceUrl">The service the server refreshes its license with, if any.</param>
-    public static ServerProcess Prepare(Vendor vendor, string name, string product, string license, Uri? serviceUrl = null)
+    /// <param name="port">The port of the server's listen on 127.0.0.1, or 0 for one the system chooses.</param>
+    public static ServerProcess Prepare(Vendor vendor, string name, string product, string license, Uri? serviceUrl = null, int port = 0)
     {
         Assert.True(name.Length <= 2, $"The data folder's name '{name}' is longer than two characters.");
-        var url = new Uri($"https://127.0.0.1:{ServiceProcess.FreePort()}");
+        var url = new Uri($"https://127.0.0.1:{port}");
         string data = vendor.File(name);
         Dictionary<string, string?> environment = new()
         {
@@ -84,17 +93,15 @@ internal sealed partial class ServerProcess : IAsyncDisposable
             environment["ELM_SERVICE_URL"] = serviceUrl.ToString();
         }
 
-        return new ServerProcess(vendor.Folder, environment, url, data);
+        return new ServerProcess(vendor.Folder, environment, port == 0 ? null : url, data);
     }
 
     /// <summary>
-    /// Prepares a second server with the same settings and the same data folder, on another port. Nothing runs yet.
+    /// Prepares a second server with the same settings and the same data folder, on a port the system chooses. Nothing runs
+    /// yet.
     /// </summary>
-    public ServerProcess Twin()
-    {
-        var url = new Uri($"https://127.0.0.1:{ServiceProcess.FreePort()}");
-        return new ServerProcess(_folder, new Dictionary<string, string?>(_environment) { ["ELM_LISTEN"] = url.ToString() }, url, DataDirectory);
-    }
+    public ServerProcess Twin() =>
+        new(_folder, new Dictionary<string, string?>(_environment) { ["ELM_LISTEN"] = "https://127.0.0.1:0/" }, null, DataDirectory);
 
     /// <summary>
     /// Runs the server once without its license: it makes its installation key, names it, and stops. Returns the key's
@@ -158,9 +165,22 @@ internal sealed partial class ServerProcess : IAsyncDisposable
         _process = Binaries.StartLogged(Binaries.Server, [], _folder, _environment, _log);
     }
 
-    /// <summary>Waits until the server that <see cref="Launch"/> started answers.</summary>
+    /// <summary>
+    /// Waits until the server that <see cref="Launch"/> started has written its <c>server.started</c> line, which comes after it
+    /// has started to listen (design §18.1), takes the port from it, and waits until the server answers.
+    /// </summary>
     public async Task WaitUntilItAnswersAsync()
     {
+        Process process = _process ?? throw new InvalidOperationException("The server was not launched.");
+        Match started = Match.Empty;
+        await RealClock.WaitUntilAsync(
+            "elm-server server.started",
+            () => (started = Started().Match(Log)).Success || process.HasExited,
+            StartTimeout
+        );
+        Assert.True(started.Success, $"elm-server ended before it listened: {Log}");
+        _url = new Uri($"https://127.0.0.1:{started.Groups[1].Value}/");
+        _environment["ELM_LISTEN"] = _url.ToString();
         using var handler = new HttpClientHandler
         {
             ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator,
@@ -219,4 +239,8 @@ internal sealed partial class ServerProcess : IAsyncDisposable
 
     [GeneratedRegex("installation key ([A-Za-z0-9_-]{43})")]
     private static partial Regex InstallationKey();
+
+    // The operational log's start line (design §18.1): "server.started: listening on port {port} as …".
+    [GeneratedRegex(@"server\.started: listening on port (\d+) ")]
+    private static partial Regex Started();
 }

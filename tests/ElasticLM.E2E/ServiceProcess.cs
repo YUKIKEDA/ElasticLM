@@ -1,20 +1,22 @@
 using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
-using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Npgsql;
 
 namespace ElasticLM.E2E;
 
 /// <summary>
-/// The published elm-service, set up with <c>elm-service setup</c> and started as a process on a free loopback port, with the
-/// vendor's keys, a new nonce secret, a usage log in the vendor's folder, and SQLite in that folder or a new PostgreSQL
-/// database on the server <see cref="PostgresVariable"/> names (design §20.7).
+/// The published elm-service, set up with <c>elm-service setup</c> and started as a process on a loopback port that the
+/// system chooses, with the vendor's keys, a new nonce secret, a usage log in the vendor's folder, and SQLite in that folder
+/// or a new PostgreSQL database on the server <see cref="PostgresVariable"/> names (design §20.7). The service listens on
+/// port 0, and its address is read from its <c>service.started</c> line: a port found free and closed before the start can be
+/// taken by another program in between (the V1d3b Grill, 3b-3).
 /// </summary>
-internal sealed class ServiceProcess : IAsyncDisposable
+internal sealed partial class ServiceProcess : IAsyncDisposable
 {
     /// <summary>The variable that names a PostgreSQL server for the service (the Linux CI run sets it).</summary>
     public const string PostgresVariable = "ELM_E2E_POSTGRES";
@@ -29,11 +31,11 @@ internal sealed class ServiceProcess : IAsyncDisposable
     private readonly string? _database;
     private readonly Dictionary<string, string?> _environment;
     private readonly string _folder;
+    private Uri? _url;
 
     private ServiceProcess(
         Process process,
         StringBuilder log,
-        Uri url,
         HttpClient admin,
         string? database,
         string usageLog,
@@ -45,7 +47,6 @@ internal sealed class ServiceProcess : IAsyncDisposable
         _environment = environment;
         _folder = folder;
         _log = log;
-        Url = url;
         Admin = admin;
         _database = database;
         UsageLogDirectory = usageLog;
@@ -55,8 +56,8 @@ internal sealed class ServiceProcess : IAsyncDisposable
     public static TheoryData<string> Databases =>
         Environment.GetEnvironmentVariable(PostgresVariable) is { Length: > 0 } ? new("sqlite", "postgres") : new("sqlite");
 
-    /// <summary>Gets the service's address.</summary>
-    public Uri Url { get; }
+    /// <summary>Gets the service's address, which its <c>service.started</c> line gave.</summary>
+    public Uri Url => _url ?? throw new InvalidOperationException("The service has not started to listen.");
 
     /// <summary>Gets a client of the admin API with the key <c>setup</c> printed.</summary>
     public HttpClient Admin { get; }
@@ -84,18 +85,25 @@ internal sealed class ServiceProcess : IAsyncDisposable
     /// <param name="database"><c>sqlite</c> or <c>postgres</c>.</param>
     public static async Task<ServiceProcess> StartAsync(Vendor vendor, string database)
     {
-        (Uri url, Dictionary<string, string?> environment, string key, string? created, string usageLog) = await SetUpAsync(
-            vendor,
-            database,
-            FreePort()
-        );
+        (Dictionary<string, string?> environment, string key, string? created, string usageLog) = await SetUpAsync(vendor, database, 0);
         var log = new StringBuilder();
         Process process = Binaries.StartLogged(Binaries.Service, [], vendor.Folder, environment, log);
-        var admin = new HttpClient { BaseAddress = url };
+        var admin = new HttpClient();
         admin.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", key);
-        var service = new ServiceProcess(process, log, url, admin, created, usageLog, environment, vendor.Folder);
+        var service = new ServiceProcess(process, log, admin, created, usageLog, environment, vendor.Folder);
         try
         {
+            // The line comes after the service has started to listen (design §18.1).
+            Match started = Match.Empty;
+            await RealClock.WaitUntilAsync(
+                "elm-service service.started",
+                () => (started = Started().Match(service.Log)).Success || process.HasExited,
+                StartTimeout
+            );
+            Assert.True(started.Success, $"elm-service ended before it listened: {service.Log}");
+            Uri url = new(started.Groups[1].Value);
+            service._url = url;
+            admin.BaseAddress = url;
             using var probe = new HttpClient { BaseAddress = url };
             await RealClock.WaitUntilAsync("elm-service /health", () => HealthyAsync(probe), StartTimeout);
             return service;
@@ -114,7 +122,7 @@ internal sealed class ServiceProcess : IAsyncDisposable
     /// <param name="port">The port of the service's <c>listen</c>, on 127.0.0.1.</param>
     public static async Task<(int Code, string Out, string Error)> RunToExitAsync(Vendor vendor, int port)
     {
-        (_, Dictionary<string, string?> environment, _, _, _) = await SetUpAsync(vendor, "sqlite", port);
+        (Dictionary<string, string?> environment, _, _, _) = await SetUpAsync(vendor, "sqlite", port);
         return await Binaries.RunAsync(Binaries.Service, [], vendor.Folder, environment);
     }
 
@@ -141,14 +149,6 @@ internal sealed class ServiceProcess : IAsyncDisposable
         }
 
         return Binaries.RunAsync(Binaries.Service, arguments, _folder, environment);
-    }
-
-    /// <summary>Returns a loopback port no one listens on now.</summary>
-    public static int FreePort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     /// <summary>Sends a JSON body to the admin API and returns the answer, failing the test unless it is a success.</summary>
@@ -218,7 +218,7 @@ internal sealed class ServiceProcess : IAsyncDisposable
     }
 
     // The service's settings for the vendor, and the admin key that setup printed, which is a secret.
-    private static async Task<(Uri Url, Dictionary<string, string?> Environment, string Key, string? Database, string UsageLog)> SetUpAsync(
+    private static async Task<(Dictionary<string, string?> Environment, string Key, string? Database, string UsageLog)> SetUpAsync(
         Vendor vendor,
         string database,
         int port
@@ -262,7 +262,7 @@ internal sealed class ServiceProcess : IAsyncDisposable
         (int code, string key, string error) = await Binaries.RunAsync(Binaries.Service, ["setup"], vendor.Folder, environment);
         key = key.Trim();
         Assert.True(code == 0 && key.StartsWith("elm_", StringComparison.Ordinal), $"elm-service setup exited with {code}: {error}");
-        return (url, environment, key, created, usageLog);
+        return (environment, key, created, usageLog);
     }
 
     private static async Task PostgresAsync(string command)
@@ -285,4 +285,8 @@ internal sealed class ServiceProcess : IAsyncDisposable
             return false;
         }
     }
+
+    // The operational log's start line (design §18.1): "service.started: listening on http://127.0.0.1:{port}/, database …".
+    [GeneratedRegex(@"service\.started: listening on (http://\S+/),")]
+    private static partial Regex Started();
 }

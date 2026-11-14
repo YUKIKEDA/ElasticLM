@@ -45,7 +45,7 @@ elm-service backup --config service.json --out backup.db
 `elm-service backup` prints one line:
 
 ```text
-backup: backup.db, schema version 8
+backup: backup.db, schema version 10
 ```
 
 The copy is the whole database at one moment, also while the service writes to it, and the service does not wait for it. The number is the newest schema version in the copy: an `elm-service` older than that version cannot use the copy. Write down the time of the backup: a restore takes back everything after it, and the audit log is where you find what that was.
