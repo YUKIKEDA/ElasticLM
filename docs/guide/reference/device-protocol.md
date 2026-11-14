@@ -455,7 +455,7 @@ The lease lasts the policy's `leaseDuration`, or the `borrow` period, cut at the
 | `403` | `ELM_BORROW_NOT_ALLOWED` | `borrow` is longer than the policy's `borrowLimit`, or the policy has none. |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | A borrow without fingerprints. |
 | `409` | `ELM_NO_SEATS` | The seats held and `count` together are more than the feature's seats with the overage. Stopped leases and borrows are counted. |
-| `403` | `ELM_EXPIRED` | Less than one second of the lease would be left before the license or the feature expires. |
+| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second of the lease would be left. |
 
 ### `POST /v1/leases/{id}/renew`
 
@@ -490,7 +490,7 @@ The new token lasts the policy's current `leaseDuration`, cut as on acquire.
 | `403` | `ELM_FEATURE_NOT_LICENSED`, `ELM_FEATURE_EXPIRED` | The license no longer grants the feature with `seats`, or the feature has expired. |
 | `409` | `ELM_NO_SEATS` | The seats held, this lease included, are more than the license allows now. |
 | `409` | `ELM_CLONE_DETECTED` | A wrong `seq` under `cloneStrategy` `deny`; the lease is stopped until it expires. |
-| `403` | `ELM_EXPIRED` | Less than one second would be left before the license or the feature expires. |
+| `403` | `ELM_EXPIRED` | The feature expires within this second, so less than one second would be left. |
 
 ### `DELETE /v1/leases/{id}`
 

@@ -455,7 +455,7 @@ sidebar_position: 7
 | `403` | `ELM_BORROW_NOT_ALLOWED` | `borrow` がポリシーの `borrowLimit` より長いか、ポリシーに借用の上限がない。 |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | フィンガープリントのない借用。 |
 | `409` | `ELM_NO_SEATS` | 保持されているシートと `count` の合計が、超過分を含めた機能のシート数を超える。止まったリースと借用も数える。 |
-| `403` | `ELM_EXPIRED` | ライセンスか機能の有効期限までに、リースの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限が今の秒のうちに来るので、リースの残りが 1 秒未満になる。 |
 
 ### `POST /v1/leases/{id}/renew`
 
@@ -490,7 +490,7 @@ sidebar_position: 7
 | `403` | `ELM_FEATURE_NOT_LICENSED`、`ELM_FEATURE_EXPIRED` | ライセンスがその機能を `seats` 付きで付与しなくなったか、機能の期限が切れた。 |
 | `409` | `ELM_NO_SEATS` | このリースを含めて保持されているシートが、いまライセンスが許す数を超える。 |
 | `409` | `ELM_CLONE_DETECTED` | `cloneStrategy` が `deny` のときに `seq` が誤っている。リースは期限が切れるまで止まる。 |
-| `403` | `ELM_EXPIRED` | ライセンスか機能の有効期限までの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限が今の秒のうちに来るので、残りが 1 秒未満になる。 |
 
 ### `DELETE /v1/leases/{id}`
 
@@ -616,7 +616,7 @@ sidebar_position: 7
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | フィンガープリントのない借用。 |
 | `503` | `ELM_SERVER_RECOVERING` | 起動のあとのリースの再登録の期間が終わっていない。`Retry-After` がその残りを示す。 |
 | `409` | `ELM_NO_SEATS` | 保持されているシートと `count` の合計が、超過分を含めた機能のシート数を超える。借用では、そこから `borrow.reserve` で残しておくシートを引いた数を超える。 |
-| `403` | `ELM_EXPIRED` | 機能の有効期限がこの 1 秒のうちに来るので、リースの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限が今の秒のうちに来るので、リースの残りが 1 秒未満になる。 |
 | `500` | `ELM_INTERNAL_ERROR` | 借用で、借用の記録を書き込めない。 |
 
 リースの再登録の期間中のリクエストへのレスポンスを、`elm-server` が `Retry-After: 15` を付けて送ったとおりに示す。
@@ -706,7 +706,7 @@ sidebar_position: 7
 | `403` | `ELM_FEATURE_NOT_LICENSED`、`ELM_FEATURE_EXPIRED` | サーバーライセンスがその機能を付与しなくなったか、機能の期限が切れた。 |
 | `409` | `ELM_NO_SEATS` | サーバーライセンスが許すシート数が、保持されている数より少なくなった。 |
 | `409` | `ELM_CLONE_DETECTED` | サーバーライセンスの `clone` が `deny` のときに `seq` が誤っている。リースは期限が切れるまで止まる。 |
-| `403` | `ELM_EXPIRED` | 機能の有効期限がこの 1 秒のうちに来るので、残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限が今の秒のうちに来るので、残りが 1 秒未満になる。 |
 
 ### `elm-server` の `DELETE /v1/leases/{id}`
 
