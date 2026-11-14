@@ -32,28 +32,57 @@ internal static unsafe partial class UnixOwner
     private const int BufferLength = 256;
 
     /// <summary>Gets the effective user ID of this process.</summary>
-    public static uint EffectiveUserId => OperatingSystem.IsMacOS() ? MacGeteuid() : LinuxGeteuid();
+    /// <exception cref="IOException">The C library cannot be called.</exception>
+    public static uint EffectiveUserId
+    {
+        get
+        {
+            try
+            {
+                return OperatingSystem.IsMacOS() ? MacGeteuid() : LinuxGeteuid();
+            }
+            catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+            {
+                throw new IOException("The C library cannot be called to read this process's user: " + e.Message, e);
+            }
+        }
+    }
 
     /// <summary>Reads the user ID of a file's owner, following a symbolic link as <c>stat</c> does.</summary>
     /// <param name="path">The file or folder.</param>
     /// <returns>The owner's user ID.</returns>
-    /// <exception cref="IOException">The owner cannot be read.</exception>
+    /// <exception cref="IOException">The owner cannot be read, also when the C library has no such call.</exception>
     public static uint OwnerOf(string path)
     {
         byte* buffer = stackalloc byte[BufferLength];
         new Span<byte>(buffer, BufferLength).Clear();
-        if (OperatingSystem.IsMacOS())
+        int status;
+        try
         {
-            int status = RuntimeInformation.ProcessArchitecture == Architecture.X64 ? MacStatX64(path, buffer) : MacStat(path, buffer);
-            return status == 0 ? Unsafe.ReadUnaligned<uint>(buffer + MacUidOffset) : throw Failed(path);
+            status = OperatingSystem.IsMacOS()
+                ? (RuntimeInformation.ProcessArchitecture == Architecture.X64 ? MacStatX64(path, buffer) : MacStat(path, buffer))
+                : LinuxStatx(CurrentDirectory, path, 0, StatxUid, buffer);
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            // A C library without statx (glibc before 2.28, musl before 1.2.5) or without the library name.
+            throw new IOException($"The C library cannot be called to read the owner of '{path}': {e.Message}", e);
         }
 
-        return LinuxStatx(CurrentDirectory, path, 0, StatxUid, buffer) == 0 && (Unsafe.ReadUnaligned<uint>(buffer) & StatxUid) != 0
-            ? Unsafe.ReadUnaligned<uint>(buffer + StatxUidOffset)
-            : throw Failed(path);
-    }
+        if (status != 0)
+        {
+            throw new IOException($"The owner of '{path}' cannot be read (error {Marshal.GetLastPInvokeError()}).");
+        }
 
-    private static IOException Failed(string path) => new($"The owner of '{path}' cannot be read (error {Marshal.GetLastPInvokeError()}).");
+        // statx fills only what the file system gives; without STATX_UID in stx_mask the owner is unknown, and errno is
+        // not set.
+        if (!OperatingSystem.IsMacOS() && (Unsafe.ReadUnaligned<uint>(buffer) & StatxUid) == 0)
+        {
+            throw new IOException($"The owner of '{path}' cannot be read: the file system did not give it.");
+        }
+
+        return Unsafe.ReadUnaligned<uint>(buffer + (OperatingSystem.IsMacOS() ? MacUidOffset : StatxUidOffset));
+    }
 
     [LibraryImport(LinuxLibc, EntryPoint = "geteuid")]
     private static partial uint LinuxGeteuid();

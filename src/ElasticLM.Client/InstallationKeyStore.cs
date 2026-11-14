@@ -39,7 +39,10 @@ public sealed partial class InstallationKeyStore
         }
 
         Scope = scope;
-        Directory = Path.GetFullPath(directory ?? DefaultDirectory(productId, scope));
+
+        // design §10.2 (V1d24): GetFullPath keeps a trailing separator, and GetDirectoryName of "data/" is "data" itself: the
+        // check of the parent would look at the folder again, and on Windows the folder would be made without its access list.
+        Directory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(directory ?? DefaultDirectory(productId, scope)));
     }
 
     /// <summary>Gets the directory that holds the key.</summary>
@@ -95,9 +98,22 @@ public sealed partial class InstallationKeyStore
                 options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             }
 
-            using (var stream = new FileStream(KeyPath, options))
+            var stream = new FileStream(KeyPath, options);
+            try
             {
-                stream.Write(stored);
+                using (stream)
+                {
+                    stream.Write(stored);
+                }
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // design §12.6.2 (V1d24): a key file this call made but could not fill would be unreadable at every later
+                // start; it does not stay.
+                FileReplacement.DeleteQuietly(KeyPath);
+                key = null;
+                error = new LicenseError(ErrorCode.InstallationKeyUnreadable, "The installation key cannot be created: " + e.Message);
+                return false;
             }
         }
         catch (IOException) when (File.Exists(KeyPath))

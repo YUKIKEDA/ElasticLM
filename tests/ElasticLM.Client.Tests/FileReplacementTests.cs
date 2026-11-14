@@ -481,6 +481,136 @@ public sealed class FileReplacementTests : IDisposable
         Assert.Equal("inside", File.ReadAllText(Path.Combine(target, "inside.txt")));
     }
 
+    /// <summary>
+    /// When a pin cannot replace the old one, TryWrite returns false and leaves no temporary file (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file in it at the pin's path of https://licenses.example/, so no file can replace it; the clock that
+    ///   moves 1 second each time it is read.
+    ///
+    /// Steps:
+    /// - Write the pin.
+    ///
+    /// Expected:
+    /// - false; servers/ holds no .tmp file; the folder at the pin's path is still there with its file.
+    /// </remarks>
+    [Fact]
+    public void ServerPins_ReplacementFails_LeavesNoTemporaryFile()
+    {
+        var url = new Uri("https://licenses.example/");
+        string servers = Path.Combine(_dir, "servers");
+        string pin = Path.Combine(
+            servers,
+            Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(ElasticLM.Licensing.HttpTargetUri.Normalize(url)))) + ".json"
+        );
+        Directory.CreateDirectory(pin);
+        File.WriteAllText(Path.Combine(pin, "inside.txt"), "inside");
+
+        Assert.False(new ServerPins(_dir, new JumpingTime()).TryWrite(url, "lic-1", "key-1"));
+
+        Assert.Empty(Directory.GetFiles(servers, "*.tmp"));
+        Assert.Equal("inside", File.ReadAllText(Path.Combine(pin, "inside.txt")));
+    }
+
+    /// <summary>
+    /// A file that a writer created but could not fill is deleted: the new file of CreateNew, a secret file, and the
+    /// installation key (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux, not as root, with sudo that lets this user mount without a password, as the CI runners do; on GitHub Actions
+    ///   the test fails without it, elsewhere it is skipped and says so. Other OSes have no tmpfs.
+    /// - A tmpfs of 4 KiB mounted on a new folder and owned by this user; a key folder made in it; then a file of 4096
+    ///   bytes, so no page is left for another file's content:
+    ///   create-new: FileReplacement.CreateNew of 64 bytes at file.tmp;
+    ///   secret: ProtectedFiles.TryCreateSecret of 64 bytes at admin.token.new;
+    ///   key: InstallationKeyStore.TryLoadOrCreate in the key folder (user scope).
+    ///
+    /// Steps:
+    /// - Write. Unmount at the end.
+    ///
+    /// Expected:
+    /// - create-new and secret throw IOException; key fails with ELM_INSTALLATION_KEY_UNREADABLE "The installation key
+    ///   cannot be created: …". In each case no file is left at the path.
+    /// </remarks>
+    /// <param name="writer">The writer.</param>
+    [Theory]
+    [InlineData("create-new")]
+    [InlineData("secret")]
+    [InlineData("key")]
+    public void Writers_DiskFullAfterCreating_DeleteTheNewFile(string writer)
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "tmpfs is Linux only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string disk = Path.Combine(_dir, "disk");
+        Directory.CreateDirectory(disk);
+        string uid = UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Sudo("mount", "-t", "tmpfs", "-o", $"size=4k,uid={uid},mode=0700", "tmpfs", disk);
+        try
+        {
+            string keys = Path.Combine(disk, "keys");
+            Directory.CreateDirectory(keys);
+            File.WriteAllBytes(Path.Combine(disk, "filler"), new byte[4096]);
+            string path = writer switch
+            {
+                "create-new" => Path.Combine(disk, "file.tmp"),
+                "secret" => Path.Combine(disk, "admin.token.new"),
+                _ => Path.Combine(keys, "installation.key"),
+            };
+
+            if (writer == "key")
+            {
+                Assert.False(
+                    new InstallationKeyStore("acme-cad", KeyScope.User, keys).TryLoadOrCreate(out _, out ElasticLM.Licensing.LicenseError? error)
+                );
+                Assert.Equal(ElasticLM.Licensing.ErrorCode.InstallationKeyUnreadable, error!.Code);
+                Assert.StartsWith("The installation key cannot be created: ", error.Message, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Throws<IOException>(() =>
+                {
+                    if (writer == "create-new")
+                    {
+                        FileReplacement.CreateNew(path, new byte[64]);
+                    }
+                    else
+                    {
+                        ProtectedFiles.TryCreateSecret(path, new byte[64], KeyScope.User, "test"u8.ToArray());
+                    }
+                });
+            }
+
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            Sudo("umount", disk);
+        }
+    }
+
+    // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.
+    private static void Sudo(params string[] arguments)
+    {
+        using var sudo = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("sudo", ["-n", .. arguments]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = sudo.StandardError.ReadToEnd();
+        sudo.WaitForExit();
+        if (sudo.ExitCode != 0)
+        {
+            string why = $"sudo -n {arguments[0]} exited with {sudo.ExitCode}: {error.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This machine does not let the test run " + arguments[0] + " as root. " + why);
+        }
+    }
+
     [SupportedOSPlatform("windows")]
     private static SecurityIdentifier Everyone => new(WellKnownSidType.WorldSid, null);
 

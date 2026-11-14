@@ -94,7 +94,7 @@ The local administration API, which the `elm server` commands use, has no port a
 | `product` | `ELM_PRODUCT` | string | none (required) | The product ID of the server license. 1 to 64 characters of lowercase letters, digits, and `-`. It also names the default `dataDirectory`. |
 | `listen` | `ELM_LISTEN` | URL | `https://0.0.0.0:7070` | Where the server listens for clients. An `https` URL without query or fragment. The host is an IP address, `localhost`, `0.0.0.0`, or `[::]`. |
 | `publicUrls` | `ELM_PUBLICURLS` | list of URLs | built from `listen` | The URLs that clients use to reach the server. Each is an `https` URL without query or fragment. See the notes below. |
-| `license` | `ELM_LICENSE` | file path | `server.elmlic` in the folder of the `elm-server` executable | The server license file. With `service.url` set, the server must be able to write this file. See the notes below. |
+| `license` | `ELM_LICENSE` | file path | `server.elmlic` in the folder of the `elm-server` executable | The server license file. With `service.url` set, the server must be able to write this file and to create files in its folder, since it writes a temporary file beside it. See the notes below. |
 | `allow` | `ELM_ALLOW` | list of strings | none | Entries that allow lease requests. See [Access rules](#access-rules). |
 | `deny` | `ELM_DENY` | list of strings | none | Entries that refuse lease requests. See [Access rules](#access-rules). |
 | `dataDirectory` | `ELM_DATADIRECTORY` | folder path | `%ProgramData%\ElasticLM\<product>` on Windows, `/Library/Application Support/ElasticLM/<product>` on macOS, `/var/lib/elasticlm/<product>` on Linux | The server's data folder. Its path has a limit, and it belongs on a local file system. See [Data folder](#data-folder). |
@@ -120,7 +120,7 @@ Notes:
 | `borrows-<UTC time>.jsonl` | The borrow record. See [Logs](logs.md#borrow-record-elm-server). |
 | `usage-<UTC time>.jsonl` | The usage log, unless `log.usage` names another folder. See [Logs](logs.md#usage-log). |
 
-The data folder and `admin.token` are readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Here the server's user is the user who started the server when it created the folder. The server creates the folder that way: on Linux and macOS with mode `0700`, and `admin.token` with mode `0600`; on Windows with an access list of those three, and `admin.token` protected with DPAPI for the machine, not for one user. Only the same users can connect to `admin.sock`. The server does not use an existing folder that other users own, can read, or can change; it stops with a message that says what to fix.
+The data folder and `admin.token` are readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Here the server's user is the user who started the server when it created the folder. The server creates the folder that way: on Linux and macOS with mode `0700`, and `admin.token` with mode `0600`; on Windows with an access list of those three, and `admin.token` protected with DPAPI for the machine, not for one user. Only the same users can connect to `admin.sock`. The server does not use an existing folder that users other than these own, can read, or can change; it stops with a message that says what to fix.
 
 Keep the data folder on a local file system. The file lock on `server.lock` keeps a second server off the folder. On Linux and macOS, that lock holds only where the file system has file locks, and some network file systems have none. On Linux and macOS it does not hold either when the environment variable `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` is `1` or `true` in the server's environment; leave it unset. Where the lock does not hold, two servers started on one folder at almost the same moment can both run, and `elm server deactivate` can then take a running server for a stopped one.
 
@@ -195,7 +195,7 @@ Intermediate CA certificates:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `service.url` | `ELM_SERVICE_URL` | URL | none: the server license is not refreshed on its own | The `elm-service` that refreshes the server license. An `https` URL, or `http` on a loopback address. When set, the server checks at start that it can write the `license` file. |
+| `service.url` | `ELM_SERVICE_URL` | URL | none: the server license is not refreshed on its own | The `elm-service` that refreshes the server license. An `https` URL, or `http` on a loopback address. When set, the server checks at start that it can create a file beside the `license` file. |
 
 ## Example
 

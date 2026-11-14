@@ -375,6 +375,8 @@ public sealed class InstallationKeyStoreTests : IDisposable
     /// - folder: a new folder of mode 0700 in a parent of mode 0755, both made by this user; then, with sudo, the folder
     ///   given to the user nobody.
     /// - parent: the same two folders; then the parent given to nobody.
+    /// - parent-trailing: as parent, with the folder's path given with a separator at its end (`…/machine/`), whose
+    ///   parent must still be the parent folder, not the folder itself.
     ///
     /// Steps:
     /// - Create a machine-scope key in the folder. Give the folders back to this user at the end.
@@ -387,6 +389,7 @@ public sealed class InstallationKeyStoreTests : IDisposable
     [Theory]
     [InlineData("folder")]
     [InlineData("parent")]
+    [InlineData("parent-trailing")]
     public void MachineScope_OwnedByAnotherUser_IsRefusedOnUnix(string given)
     {
         Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix owners are Linux and macOS only.");
@@ -401,7 +404,8 @@ public sealed class InstallationKeyStoreTests : IDisposable
         GiveTo("nobody", other);
         try
         {
-            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out _, out LicenseError? error));
+            string storePath = given == "parent-trailing" ? folder + Path.DirectorySeparatorChar : folder;
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, storePath).TryLoadOrCreate(out _, out LicenseError? error));
             Assert.Equal(ErrorCode.InstallationKeyUnreadable, error!.Code);
             Assert.StartsWith($"The folder '{folder}' is not safe for secrets: ", error.Message, StringComparison.Ordinal);
             Assert.Contains(
@@ -416,6 +420,43 @@ public sealed class InstallationKeyStoreTests : IDisposable
         }
 
         Assert.Empty(Directory.GetFiles(folder));
+    }
+
+    /// <summary>
+    /// A machine-scope folder given with a separator at its end is the folder itself: the store names it without the
+    /// separator, and on Windows the folder is made with its own access list, whose parent is the folder above (design
+    /// §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A path of a new folder inside the test folder, followed by the OS's separator.
+    ///
+    /// Steps:
+    /// - Create a machine-scope key there; read it with a new store of the path without the separator.
+    ///
+    /// Expected:
+    /// - Both succeed with the same thumbprint; the store's Directory has no separator at its end; on Windows the folder's
+    ///   access list is not inherited.
+    /// </remarks>
+    [Fact]
+    public void MachineScope_PathEndingInASeparator_IsTheFolder()
+    {
+        string folder = Path.Combine(_dir, "trailing");
+        var store = new InstallationKeyStore("acme-cad", KeyScope.Machine, folder + Path.DirectorySeparatorChar);
+
+        Assert.True(store.TryLoadOrCreate(out InstallationKey? created, out LicenseError? error), error?.Message);
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out InstallationKey? read, out _));
+        using (created)
+        using (read)
+        {
+            Assert.Equal(created!.Thumbprint, read!.Thumbprint);
+        }
+
+        Assert.Equal(folder, store.Directory);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.True(new DirectoryInfo(folder).GetAccessControl().AreAccessRulesProtected);
+        }
     }
 
     /// <summary>

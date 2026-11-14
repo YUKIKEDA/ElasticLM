@@ -94,7 +94,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | `product` | `ELM_PRODUCT` | 文字列 | なし（必須） | サーバーライセンスの製品 ID。英小文字、数字、`-` からなる 1 から 64 文字。既定の `dataDirectory` の名前にも使う |
 | `listen` | `ELM_LISTEN` | URL | `https://0.0.0.0:7070` | サーバーがクライアントを待ち受ける場所。クエリとフラグメントのない `https` の URL。ホストは IP アドレス、`localhost`、`0.0.0.0`、`[::]` のいずれか |
 | `publicUrls` | `ELM_PUBLICURLS` | URL のリスト | `listen` から作る | クライアントがサーバーに接続するときの URL。どれもクエリとフラグメントのない `https` の URL。表の下の注意を参照 |
-| `license` | `ELM_LICENSE` | ファイルのパス | `elm-server` の実行ファイルと同じフォルダーの `server.elmlic` | サーバーライセンスのファイル。`service.url` を設定したときは、サーバーがこのファイルに書き込めなければならない。表の下の注意を参照 |
+| `license` | `ELM_LICENSE` | ファイルのパス | `elm-server` の実行ファイルと同じフォルダーの `server.elmlic` | サーバーライセンスのファイル。`service.url` を設定したときは、サーバーがこのファイルに書き込めて、そのフォルダーにファイルを作れなければならない。隣に一時ファイルを書くからだ。表の下の注意を参照 |
 | `allow` | `ELM_ALLOW` | 文字列のリスト | なし | リースのリクエストを許可するエントリー。[アクセスルール](#アクセスルール)を参照 |
 | `deny` | `ELM_DENY` | 文字列のリスト | なし | リースのリクエストを拒否するエントリー。[アクセスルール](#アクセスルール)を参照 |
 | `dataDirectory` | `ELM_DATADIRECTORY` | フォルダーのパス | Windows では `%ProgramData%\ElasticLM\<product>`、macOS では `/Library/Application Support/ElasticLM/<product>`、Linux では `/var/lib/elasticlm/<product>` | サーバーのデータフォルダー。パスの長さに上限がある。フォルダーはローカルのファイルシステムに置く。[データフォルダー](#データフォルダー)を参照 |
@@ -120,7 +120,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | `borrows-<UTC time>.jsonl` | 借用の記録。[ログ](logs.md#elm-server-の借用の記録)を参照 |
 | `usage-<UTC time>.jsonl` | 利用ログ。`log.usage` で別のフォルダーを指定したときは、ここには置かない。[ログ](logs.md#利用ログ)を参照 |
 
-データフォルダーと `admin.token` を読めるのは、Linux と macOS ではサーバーのユーザーと root だけ、Windows ではサーバーのユーザー、Administrators グループ、SYSTEM だけだ。ここでいうサーバーのユーザーは、サーバーを起動してフォルダーを作ったユーザーだ。サーバーがフォルダーをそのように作る。Linux と macOS では、フォルダーのモードを `0700`、`admin.token` のモードを `0600` にする。Windows では、フォルダーに、サーバーのユーザー、Administrators グループ、SYSTEM にアクセスを許すアクセス制御リストを付け、`admin.token` は DPAPI で、1 人のユーザーではなくマシンに対して保護する。`admin.sock` に接続できるのも、同じユーザーだけだ。サーバーは、ほかのユーザーが所有しているか読み書きできる既存のフォルダーは使わず、何を直せばよいかを示すメッセージを出して止まる。
+データフォルダーと `admin.token` を読めるのは、Linux と macOS ではサーバーのユーザーと root だけ、Windows ではサーバーのユーザー、Administrators グループ、SYSTEM だけだ。ここでいうサーバーのユーザーは、サーバーを起動してフォルダーを作ったユーザーだ。サーバーがフォルダーをそのように作る。Linux と macOS では、フォルダーのモードを `0700`、`admin.token` のモードを `0600` にする。Windows では、フォルダーに、サーバーのユーザー、Administrators グループ、SYSTEM にアクセスを許すアクセス制御リストを付け、`admin.token` は DPAPI で、1 人のユーザーではなくマシンに対して保護する。`admin.sock` に接続できるのも、同じユーザーだけだ。サーバーは、これらのユーザー以外が所有しているか読み書きできる既存のフォルダーは使わず、何を直せばよいかを示すメッセージを出して止まる。
 
 データフォルダーは、ローカルのファイルシステムに置く。`server.lock` のファイルのロックがあるので、2 つ目のサーバーはそのフォルダーでは起動しない。Linux と macOS では、このロックが効くのは、ファイルのロックがあるファイルシステムだけで、ネットワークファイルシステムの一部にはこれがない。Linux と macOS では、サーバーの環境で、環境変数 `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` が `1` か `true` のときも効かない。この変数は設定しない。ロックが効かない場所では、1 つのフォルダーでほぼ同時に起動した 2 つのサーバーが、どちらも動くことがある。そうなると、`elm server deactivate` が、動いているサーバーを止まっていると判断することがある。
 
@@ -195,7 +195,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `service.url` | `ELM_SERVICE_URL` | URL | なし。サーバーライセンスのトークンの更新を自動では行わない | サーバーライセンスのトークンの更新をする `elm-service`。`https` の URL、またはループバックアドレスの `http` の URL。設定したときは、サーバーは起動時に `license` のファイルに書き込めるかを確かめる |
+| `service.url` | `ELM_SERVICE_URL` | URL | なし。サーバーライセンスのトークンの更新を自動では行わない | サーバーライセンスのトークンの更新をする `elm-service`。`https` の URL、またはループバックアドレスの `http` の URL。設定したときは、サーバーは起動時に、`license` のファイルの隣にファイルを作れるかを確かめる |
 
 ## 例
 

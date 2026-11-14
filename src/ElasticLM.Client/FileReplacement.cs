@@ -133,7 +133,8 @@ internal static class FileReplacement
         }
     }
 
-    /// <summary>Deletes a file, if it can; a file left behind is deleted by the next write before it creates its own.</summary>
+    /// <summary>Deletes a file, if it can. A file it cannot delete stays; when its name is fixed, the next write of the same
+    /// file deletes it before it creates its own.</summary>
     /// <param name="path">The file.</param>
     public static void DeleteQuietly(string path)
     {
@@ -143,7 +144,7 @@ internal static class FileReplacement
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // The next write deletes it first.
+            // It stays; a fixed name is deleted by the next write, and what else stays is V1d24a's (design §12.6.2).
         }
     }
 }

@@ -201,7 +201,7 @@ LicenseVerificationResult result = verifier.Verify(File.ReadAllBytes(args[1]), r
 
 | メソッド | 引数 | 戻り値 | 動作 |
 | --- | --- | --- | --- |
-| `TryLoadOrCreate` | `out InstallationKey? key`、`out LicenseError? error` | `bool` | 鍵を読む。鍵のファイルがなければ、鍵とそのフォルダーを作る。鍵があるのに読めないとき、または作れないときと、マシンスコープでほかのユーザーがフォルダーを読んだり置き換えたりできるとき（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)を参照）は、`ELM_INSTALLATION_KEY_UNREADABLE` で失敗する。鍵は呼び出し側が破棄する。 |
+| `TryLoadOrCreate` | `out InstallationKey? key`、`out LicenseError? error` | `bool` | 鍵を読む。鍵のファイルがなければ、鍵とそのフォルダーを作る。鍵があるのに読めないとき、作れないとき、マシンスコープでほかのユーザーがフォルダーを読んだり置き換えたりできるとき（[鍵の保存場所](../explanation/devices-and-proofs.md#鍵の保存場所)を参照）は、`ELM_INSTALLATION_KEY_UNREADABLE` で失敗する。鍵は呼び出し側が破棄する。 |
 | `TryLoad` | `out InstallationKey? key`、`out LicenseError? error` | `bool` | 鍵を読む。鍵がないか読めないときと、マシンスコープでほかのユーザーがフォルダーを読んだり置き換えたりできるときは、`ELM_INSTALLATION_KEY_UNREADABLE` で失敗する。鍵は呼び出し側が破棄する。 |
 | `Delete` | なし | `void` | 鍵のファイルを消す。ファイルがなければ何もしない。 |
 

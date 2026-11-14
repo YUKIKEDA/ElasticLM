@@ -84,13 +84,14 @@ internal static class ProtectedFiles
     }
 
     /// <summary>
-    /// Writes a new secret file; an existing file is not replaced.
+    /// Writes a new secret file; an existing file is not replaced. A file that this call created but could not fill is deleted.
     /// </summary>
     /// <returns><see langword="false"/> when the file exists already.</returns>
     /// <exception cref="IOException">The file cannot be written (also <see cref="UnauthorizedAccessException"/>).</exception>
     public static bool TryCreateSecret(string path, byte[] secret, KeyScope scope, byte[] purpose)
     {
         byte[] stored = OperatingSystem.IsWindows() ? Dpapi.Protect(secret, scope == KeyScope.Machine, purpose) : [.. secret];
+        bool created = false;
         try
         {
             var options = new FileStreamOptions
@@ -105,8 +106,15 @@ internal static class ProtectedFiles
             }
 
             using var stream = new FileStream(path, options);
+            created = true;
             stream.Write(stored);
             return true;
+        }
+        catch (Exception e) when (created && e is IOException or UnauthorizedAccessException)
+        {
+            // design §12.6.2 (V1d24): a file this call made but could not fill holds part of a secret; it does not stay.
+            FileReplacement.DeleteQuietly(path);
+            throw;
         }
         catch (IOException) when (File.Exists(path))
         {
