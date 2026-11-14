@@ -82,6 +82,7 @@ internal sealed class Deployment : IAsyncDisposable
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         IssuedLicense issued = LicenseIssuer.Issue(_signing, [_certificate], change?.Invoke(spec) ?? spec, Time);
         string path = System.IO.Path.Combine(dataDirectory, "server.elmlic");

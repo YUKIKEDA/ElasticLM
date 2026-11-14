@@ -25,6 +25,7 @@ internal sealed record PolicySettings(
     long? Overage,
     long? BorrowLimit,
     long BorrowReturnLimit,
+    long ServerBorrowReturnLimit,
     string ClientInfoStrategy,
     long TrialDuration,
     long TrialDailyLimit
@@ -49,6 +50,7 @@ internal sealed record PolicySettings(
             null,
             null,
             2,
+            10_000,
             "none",
             14 * Policies.Day,
             1_000
@@ -96,6 +98,7 @@ internal static class Policies
         Number("overage", 0, 1_000, true, p => p.Overage, (p, v) => p with { Overage = v }),
         Number("borrowLimit", 1, HundredYears, true, p => p.BorrowLimit, (p, v) => p with { BorrowLimit = v }),
         Number("borrowReturnLimit", 0, 1_000, false, p => p.BorrowReturnLimit, (p, v) => p with { BorrowReturnLimit = v!.Value }),
+        Number("serverBorrowReturnLimit", 1, 10_000, false, p => p.ServerBorrowReturnLimit, (p, v) => p with { ServerBorrowReturnLimit = v!.Value }),
         Choice("clientInfoStrategy", ["none", "hostAndUser"], p => p.ClientInfoStrategy, (p, v) => p with { ClientInfoStrategy = v }),
         Number("trialDuration", Day, 365 * Day, false, p => p.TrialDuration, (p, v) => p with { TrialDuration = v!.Value }),
         Number("trialDailyLimit", 1, 100_000, false, p => p.TrialDailyLimit, (p, v) => p with { TrialDailyLimit = v!.Value }),
@@ -181,6 +184,7 @@ internal static class Policies
             row.Overage,
             row.BorrowLimit,
             row.BorrowReturnLimit,
+            row.ServerBorrowReturnLimit,
             row.ClientInfoStrategy,
             row.TrialDuration,
             row.TrialDailyLimit
@@ -211,6 +215,7 @@ internal static class Policies
             p.Overage,
             p.BorrowLimit,
             p.BorrowReturnLimit,
+            p.ServerBorrowReturnLimit,
             p.ClientInfoStrategy,
             p.TrialDuration,
             p.TrialDailyLimit,

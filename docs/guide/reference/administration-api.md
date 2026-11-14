@@ -246,6 +246,7 @@ Every member is present, the defaults included. What each setting decides is in 
 | `overage` | number or `null` | Percent of seats that may be lent above the licensed seats; `null` for none. |
 | `borrowLimit` | number or `null` | The longest borrow, in seconds; `null` when borrowing is not allowed. |
 | `borrowReturnLimit` | number | Borrows that may be returned early in 30 days. |
+| `serverBorrowReturnLimit` | number | Early returns of borrows an `elm-server` takes in 30 days, from all installations together; written into its server license. |
 | `clientInfoStrategy` | string | `none` or `hostAndUser`. |
 | `trialDuration` | number | Seconds a trial lasts. |
 | `trialDailyLimit` | number | Trials the product gives in any 24 hours; used only while this is the product's trial policy. |
@@ -820,6 +821,7 @@ Permission: `policy.write`.
 | `overage` | number or `null` | No | Percent: 0 to 1,000. Default `null`: none. |
 | `borrowLimit` | number or `null` | No | Seconds: 1 to 3,162,240,000. Default `null`: no borrowing. |
 | `borrowReturnLimit` | number | No | 0 to 1,000. Default 2. |
+| `serverBorrowReturnLimit` | number | No | 1 to 10,000. Default 10,000. |
 | `clientInfoStrategy` | string | No | `none` (default) or `hostAndUser`. |
 | `trialDuration` | number | No | Seconds: 86,400 to 31,536,000 (365 days). Default 1,209,600 (14 days). |
 | `trialDailyLimit` | number | No | 1 to 100,000. Default 1,000. Used while the product's `trialPolicyId` names this policy, from its next trial request: it counts the product's trials of the last 24 hours, made under any of its policies. A value below that count refuses the next trial at once. |
@@ -871,6 +873,7 @@ The answer:
   "overage": null,
   "borrowLimit": null,
   "borrowReturnLimit": 2,
+  "serverBorrowReturnLimit": 10000,
   "clientInfoStrategy": "none",
   "trialDuration": 1209600,
   "trialDailyLimit": 1000,
@@ -919,6 +922,7 @@ Answers `200` with a page of [policies](#policy). This example is the answer to 
       "overage": null,
       "borrowLimit": null,
       "borrowReturnLimit": 2,
+      "serverBorrowReturnLimit": 10000,
       "clientInfoStrategy": "none",
       "trialDuration": 1209600,
       "trialDailyLimit": 1000,
@@ -959,7 +963,7 @@ Permission: `policy.write`.
 | `duration` | number or `null` | No | As at creation; `null` for no expiry. The new value applies to licenses created after the change and, under `fromFirstActivation`, to a license without an expiry at its next activation or cloud lease. Licenses that already have an expiry keep it. |
 | `overage` | number or `null` | No | As at creation. `null` allows no seats above the licensed seats. |
 | `borrowLimit` | number or `null` | No | As at creation. `null` stops borrowing. |
-| `maxActivations`, `expirationBasis`, `tokenLifetime`, `refreshWindow`, `gracePeriod`, `fingerprintMatching`, `cloneStrategy`, `floating`, `leaseDuration`, `borrowReturnLimit`, `clientInfoStrategy`, `trialDuration`, `trialDailyLimit` | as at creation | No | The ranges of `POST /v1/admin/policies`. `null` is `ELM_MALFORMED`. |
+| `maxActivations`, `expirationBasis`, `tokenLifetime`, `refreshWindow`, `gracePeriod`, `fingerprintMatching`, `cloneStrategy`, `floating`, `leaseDuration`, `borrowReturnLimit`, `serverBorrowReturnLimit`, `clientInfoStrategy`, `trialDuration`, `trialDailyLimit` | as at creation | No | The ranges of `POST /v1/admin/policies`. `null` is `ELM_MALFORMED`. |
 | `productId`, `licenseKind`, `binding` | — | — | Cannot change: sending any of them is `ELM_INVALID_ARGUMENT`. |
 
 The whole policy after the change must fit the rules of `POST /v1/admin/policies`.

@@ -26,6 +26,7 @@ public sealed class PoliciesTests
             { "overage", 0, 1_000, true },
             { "borrowLimit", 1, HundredYears, true },
             { "borrowReturnLimit", 0, 1_000, false },
+            { "serverBorrowReturnLimit", 1, 10_000, false },
             { "trialDuration", Day, 365 * Day, false },
             { "trialDailyLimit", 1, 100_000, false },
         };
@@ -56,7 +57,7 @@ public sealed class PoliciesTests
     /// Expected:
     /// - Each value as §9.3 writes it, worked out here in seconds: standard, nodeLocked, 1 activation, unlimited
     ///   deactivations, fromIssue, perpetual, 30 days, 20 days, 7 days, any, deny, none, 10 minutes, no overage, no borrowing,
-    ///   2 returns, none, 14 days, 1,000 trials in 24 hours; no rule broken.
+    ///   2 returns, 10,000 returns of a server, none, 14 days, 1,000 trials in 24 hours; no rule broken.
     /// </remarks>
     [Fact]
     public void Apply_NothingSent_GivesTheDesignDefaults()
@@ -81,6 +82,7 @@ public sealed class PoliciesTests
                 null,
                 null,
                 2,
+                10_000,
                 "none",
                 1_209_600,
                 1_000

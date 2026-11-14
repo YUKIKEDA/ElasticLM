@@ -1076,6 +1076,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         string certificate = File.ReadAllText(
             test.WriteCertificate("hand.cert", Issuing.KeyUses.License, test.Time.GetUtcNow().AddDays(-1), TimeSpan.FromDays(365))

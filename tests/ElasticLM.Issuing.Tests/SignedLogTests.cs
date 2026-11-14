@@ -492,6 +492,238 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
+    /// A start removes the files of the log left unfinished by a stop and reports each; other files stay, and the chain
+    /// continues from the newest finished file (design §18.1, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log; an unfinished file usage-20990101T000000000Z.jsonl.partial; files usage-x.partial and
+    ///   other-20990101T000000000Z.jsonl.partial.
+    ///
+    /// Steps:
+    /// - A minute later, open the log with a callback for removed files, and close it; list the folder.
+    ///
+    /// Expected:
+    /// - The callback got usage-20990101T000000000Z.jsonl.partial only, which is gone; the other two stay; the new file
+    ///   starts with chain.start that names the first file.
+    /// </remarks>
+    [Fact]
+    public void Open_UnfinishedFile_IsRemovedAndReported()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string finished = Path.GetFileName(SignedLog.FindFiles(_dir, "usage")[0]);
+        File.WriteAllText(Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial"), "{}\n");
+        File.WriteAllText(Path.Combine(_dir, "usage-x.partial"), "{}\n");
+        File.WriteAllText(Path.Combine(_dir, "other-20990101T000000000Z.jsonl.partial"), "{}\n");
+        _time.Advance(TimeSpan.FromMinutes(1));
+        var removed = new List<string>();
+
+        using (
+            SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                Access(_server),
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                unfinishedRemoved: removed.Add
+            )
+        )
+        {
+            // Opened and closed.
+        }
+
+        Assert.Equal(["usage-20990101T000000000Z.jsonl.partial"], removed);
+        Assert.False(File.Exists(Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial")));
+        Assert.True(File.Exists(Path.Combine(_dir, "usage-x.partial")));
+        Assert.True(File.Exists(Path.Combine(_dir, "other-20990101T000000000Z.jsonl.partial")));
+        string line = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
+        Assert.Contains("\"type\":\"chain.start\"", line, StringComparison.Ordinal);
+        Assert.Contains($"\"file\":\"{finished}\"", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// A start removes only its own log's unfinished files: the name without .partial must be the log's file name, so the log
+    /// of node a leaves those of node a-b in a shared folder (design §18.1, V1d16 review K1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Unfinished files usage-a-20990101T000000000Z.jsonl.partial and usage-a-b-20990101T000000000Z.jsonl.partial.
+    ///
+    /// Steps:
+    /// - Open and close the log usage-a.
+    ///
+    /// Expected:
+    /// - The first is removed and reported; the second stays.
+    /// </remarks>
+    [Fact]
+    public void Open_UnfinishedFileOfAnotherNode_Stays()
+    {
+        string own = Path.Combine(_dir, "usage-a-20990101T000000000Z.jsonl.partial");
+        string other = Path.Combine(_dir, "usage-a-b-20990101T000000000Z.jsonl.partial");
+        File.WriteAllText(own, "{}\n");
+        File.WriteAllText(other, "{}\n");
+        var removed = new List<string>();
+
+        OpenAndClose("usage-a", removed.Add);
+
+        Assert.Equal(["usage-a-20990101T000000000Z.jsonl.partial"], removed);
+        Assert.False(File.Exists(own));
+        Assert.True(File.Exists(other));
+    }
+
+    /// <summary>
+    /// An unfinished file that cannot be removed stops the start with an IOException that names it (design §18.1, V1d16
+    /// review K6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An unfinished file usage-20990101T000000000Z.jsonl.partial that cannot be removed: held open without sharing on
+    ///   Windows; in a folder without write permission on Linux and macOS.
+    ///
+    /// Steps:
+    /// - Open the log.
+    ///
+    /// Expected:
+    /// - IOException whose message starts with "The unfinished log file usage-20990101T000000000Z.jsonl.partial cannot be
+    ///   removed: ".
+    /// </remarks>
+    [Fact]
+    public void Open_UnfinishedFileThatCannotBeRemoved_StopsTheStart()
+    {
+        string path = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial");
+        File.WriteAllText(path, "{}\n");
+        FileStream? held = null;
+        if (OperatingSystem.IsWindows())
+        {
+            held = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None);
+        }
+        else
+        {
+            File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+        }
+
+        try
+        {
+            var refused = Assert.Throws<IOException>(() => OpenAndClose("usage", null));
+            Assert.StartsWith(
+                "The unfinished log file usage-20990101T000000000Z.jsonl.partial cannot be removed: ",
+                refused.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally
+        {
+            held?.Dispose();
+            if (!OperatingSystem.IsWindows())
+            {
+                File.SetUnixFileMode(_dir, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+        }
+    }
+
+    /// <summary>
+    /// A new file that fails while it is started, after the file before it was closed with its last signature, is removed,
+    /// and the next file continues the chain from the file before it with chain.start, not chain.reset (design §18.1, V1d16
+    /// review K8).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log signed after every line, with one line; a signing step that fails while armed.
+    ///
+    /// Steps:
+    /// - On the next day, arm it and append (the new file's first signature fails); disarm it and append; close; verify.
+    ///
+    /// Expected:
+    /// - The first append throws IOException; no unfinished file; two files, the second starting with chain.start whose prev
+    ///   names the first; the folder verifies with no issue.
+    /// </remarks>
+    [Fact]
+    public void Append_NewFileFailsWhileStarted_ContinuesTheChain()
+    {
+        bool fail = false;
+        SigningKeyAccess access = use => fail ? throw new IOException("The disk is full.") : use(_server);
+        using (
+            SignedLog log = SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                access,
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                sealEvery: 1
+            )
+        )
+        {
+            Append(log, 1);
+            _time.Advance(TimeSpan.FromDays(1));
+            fail = true;
+            Assert.Throws<IOException>(() => Append(log, 1));
+            fail = false;
+            Append(log, 1);
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Equal(2, files.Count);
+        Assert.Empty(Directory.GetFiles(_dir, "*.partial"));
+        string first = File.ReadLines(files[1]).First();
+        Assert.Contains("\"type\":\"chain.start\"", first, StringComparison.Ordinal);
+        Assert.Contains($"\"file\":\"{Path.GetFileName(files[0])}\"", first, StringComparison.Ordinal);
+        Assert.Empty(Verify().Issues);
+    }
+
+    /// <summary>
+    /// The first signature of a file is its second line, so a chain.reset finds it in the file's first two lines of at most
+    /// 1 MiB each, each with its line feed: 2 MiB and 2 bytes (design §18.1, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log. A later file of two lines of exactly 1 MiB each: a line that is not a signature, and the
+    ///   first file's signature line with a member added to make it 1 MiB; so its end holds no whole signature line.
+    ///
+    /// Steps:
+    /// - A minute later, open the log and close it; read the new file's first line.
+    ///
+    /// Expected:
+    /// - A chain.reset whose prev names the later file and, as first, the SHA-256 of its second line with its line feed.
+    /// </remarks>
+    [Fact]
+    public void Open_PreviousWithItsFirstSignatureAtTheEndOfItsHead_NamesIt()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string auth = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[0]).ElementAt(1);
+        const string Pad = "\"pad\":\"";
+        int at = auth.IndexOf("\"sig\"", StringComparison.Ordinal);
+        string padded = auth[..at] + Pad + new string('p', LogVerifier.MaxLineLength - auth.Length - Pad.Length - 2) + "\"," + auth[at..];
+        Assert.Equal(LogVerifier.MaxLineLength, Encoding.UTF8.GetByteCount(padded));
+        const string Head = "{\"type\":\"lease.acquired\",\"ts\":1,\"x\":\"";
+        string first = Head + new string('x', LogVerifier.MaxLineLength - Head.Length - 2) + "\"}";
+        string later = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl");
+        File.WriteAllText(later, first + "\n" + padded + "\n");
+        _time.Advance(TimeSpan.FromMinutes(1));
+
+        using (SignedLog log = Open())
+        {
+            Assert.NotNull(log.ResetReason);
+        }
+
+        string hash = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(padded + "\n")));
+        string line = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
+        Assert.Contains("\"type\":\"chain.reset\"", line, StringComparison.Ordinal);
+        Assert.Contains($"\"prev\":{{\"file\":\"usage-20990101T000000000Z.jsonl\",\"first\":\"{hash}\"}}", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The server license on the first line is judged as of the time the line was written: a log stays valid after its
     /// license expired, and a license from another vendor's root, the wrong product, or the wrong stream is an error.
     /// </summary>
@@ -2040,6 +2272,21 @@ public sealed class SignedLogTests : IDisposable
 
     private static SigningKeyAccess Access(ECDsa key) => use => use(key);
 
+    // Opens the log of a base name in the folder and closes it.
+    private void OpenAndClose(string baseName, Action<string>? removed)
+    {
+        using SignedLog log = SignedLog.Open(
+            _dir,
+            baseName,
+            "usage",
+            Access(_server),
+            LicenseFile(_server),
+            KeyFiles.ExportPublicJwk(_server),
+            _time,
+            unfinishedRemoved: removed
+        );
+    }
+
     private SignedLog Open(int sealEvery = 100, Action<string>? notALogFile = null) =>
         SignedLog.Open(
             _dir,
@@ -2079,6 +2326,7 @@ public sealed class SignedLogTests : IDisposable
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         return LicenseIssuer.Issue(_signing, [certificate], spec, _time).File;
     }

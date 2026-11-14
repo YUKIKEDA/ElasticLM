@@ -33,6 +33,45 @@ public static class LogLineTypes
 }
 
 /// <summary>
+/// An event line to write: its type and a function that writes its other members.
+/// </summary>
+/// <param name="Type">The event type.</param>
+/// <param name="WriteFields">Writes the members after <c>type</c> and <c>ts</c>.</param>
+public readonly record struct LogLine(string Type, Action<Utf8JsonWriter> WriteFields);
+
+/// <summary>
+/// Event lines made ready for the start of a new file (design §13.4, §18.1, V1d16): their bytes, their number, and the
+/// SHA-256 over them so far, built without the log's lock.
+/// </summary>
+public sealed class CarriedLines : IDisposable
+{
+    private IncrementalHash? _digest;
+
+    internal CarriedLines(byte[] bytes, int count, IncrementalHash digest)
+    {
+        Bytes = bytes;
+        Count = count;
+        _digest = digest;
+    }
+
+    /// <summary>Gets the number of lines.</summary>
+    public int Count { get; }
+
+    internal byte[] Bytes { get; }
+
+    /// <summary>Releases the hash unless a file took it.</summary>
+    public void Dispose() => _digest?.Dispose();
+
+    // The hash goes to the file that writes the lines; it is released with that file's.
+    internal IncrementalHash TakeDigest()
+    {
+        IncrementalHash digest = _digest ?? throw new InvalidOperationException("The lines were written already.");
+        _digest = null;
+        return digest;
+    }
+}
+
+/// <summary>
 /// An append-only log in JSON Lines, closed every so often by a signed line (design §8.4.6, §18.1). Files rotate each UTC day
 /// and at each start; each file starts with a line that carries what verifies its signatures (<see cref="LogKeyMaterial"/>:
 /// the server license and the server's public key, or the certificates of <c>elm-service</c>'s signing key) and, when it
@@ -44,6 +83,9 @@ public static class LogLineTypes
 /// included. Each signature is flushed to the disk before the call that wrote it returns. A write that fails closes the
 /// file; the next call starts a new file with <c>chain.reset</c> that names the failure, so a half-written line is not
 /// taken for tampering. A new file's name never sorts before the newest file of the log, even when the clock went back.
+/// A new file is written under its name with <c>.partial</c> added until its first line is signed and the lines it
+/// carries forward are signed and on the disk; then it takes its name, so a stop in the middle leaves the previous file
+/// the newest (design §18.1, V1d16).
 /// A file whose name has the form of a log file's name but no real date and time (month 13) is not a file of the log: it is
 /// not read, and it does not decide the next name. The class is safe to call from several threads.
 /// </remarks>
@@ -51,9 +93,12 @@ public sealed partial class SignedLog : IDisposable
 {
     private const int TailSearchBytes = 1024 * 1024;
 
-    // The first signature line of a file comes after its first line and, in a borrow record (signed after every line), the
-    // first record carried forward: at most two lines of 1 MiB each before it (design §18.1).
-    private const int HeadSearchBytes = (3 * LogVerifier.MaxLineLength) + 3;
+    // The first signature line of a file is its second line: the first line is signed alone, before any line carried
+    // forward (design §18.1, V1d16). So it is found in two lines of at most 1 MiB, each with its line feed.
+    private const int HeadSearchBytes = (2 * LogVerifier.MaxLineLength) + 2;
+
+    // The suffix of a new file until its first lines are on the disk (design §18.1, V1d16).
+    private const string Unfinished = ".partial";
     private const string FileTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
     private readonly string _directory;
@@ -62,16 +107,26 @@ public sealed partial class SignedLog : IDisposable
     private readonly TimeProvider _time;
     private readonly int _sealEvery;
     private readonly Lock _lock = new();
-    private readonly Action<SignedLog>? _fileStarted;
+    private readonly Func<IReadOnlyList<LogLine>>? _carry;
+    private readonly bool _rotateOnWrite;
     private readonly Action<string>? _notALogFile;
     private SigningKeyAccess _key;
     private LogKeyMaterial _material;
     private FileStream? _file;
     private string _fileName = string.Empty;
+
+    // The path of the file being started under its unfinished name, until it takes its name.
+    private string? _partial;
+
+    // The closed file that the file being started continues, for StartFile's failure; null at a start or a reset.
+    private string? _startedFrom;
     private DateOnly _fileDay;
     private DateOnly _reportedDay;
     private IncrementalHash _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
     private int _pending;
+
+    // The event lines written to the file being written through Append, each signed by itself or with the next ones.
+    private int _appended;
     private long _n;
     private string _prev = string.Empty;
 
@@ -79,6 +134,13 @@ public sealed partial class SignedLog : IDisposable
     private string _headFile = string.Empty;
     private string _headAuth = string.Empty;
     private string? _failure;
+
+    // The previous file to continue the chain from, after a new file failed while it was started and the previous file had
+    // been closed with its last signature (design §18.1, V1d16); null otherwise.
+    private string? _continueFrom;
+
+    // The chain's link and number when the file being started began, to give back when it fails.
+    private (string Prev, long N) _beforeStart;
     private bool _disposed;
 
     private SignedLog(
@@ -89,7 +151,8 @@ public sealed partial class SignedLog : IDisposable
         LogKeyMaterial material,
         TimeProvider time,
         int sealEvery,
-        Action<SignedLog>? fileStarted,
+        Func<IReadOnlyList<LogLine>>? carry,
+        bool rotateOnWrite,
         Action<string>? notALogFile
     )
     {
@@ -100,7 +163,8 @@ public sealed partial class SignedLog : IDisposable
         _material = material;
         _time = time;
         _sealEvery = sealEvery;
-        _fileStarted = fileStarted;
+        _carry = carry;
+        _rotateOnWrite = rotateOnWrite;
         _notALogFile = notALogFile;
     }
 
@@ -131,13 +195,17 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="keyJwk">The server's public key as a JWK, written beside it.</param>
     /// <param name="time">The time provider.</param>
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
-    /// <param name="fileStarted">Called after the first line of each new file, under the log's lock, so a caller can carry
-    /// records forward into it.</param>
+    /// <param name="carry">Called for each new file, under the log's lock, for the lines it carries forward after its signed
+    /// first line; they are signed together. A file that <see cref="StartNewFile"/> starts takes them from its caller instead.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason instead of
     /// continuing the newest file (for a record the operator set aside).</param>
     /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
     /// name of each file in the folder whose name has the form of the log's file names but no real date and time; such a
     /// file is not a file of the log.</param>
+    /// <param name="rotateOnWrite">Whether a write or a signature on a new UTC day starts the new file; when not, only
+    /// <see cref="StartNewFile"/> does, and the lines until then go to the file being written.</param>
+    /// <param name="unfinishedRemoved">Called at the start with the name of each file of the log that was left unfinished
+    /// (<c>.partial</c>), which the start removes.</param>
     /// <returns>The open log.</returns>
     /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
     /// file can have (<c>99991231T235959999Z</c>).</exception>
@@ -150,9 +218,11 @@ public sealed partial class SignedLog : IDisposable
         byte[] keyJwk,
         TimeProvider time,
         int sealEvery = 100,
-        Action<SignedLog>? fileStarted = null,
+        Func<IReadOnlyList<LogLine>>? carry = null,
         string? resetReason = null,
-        Action<string>? notALogFile = null
+        Action<string>? notALogFile = null,
+        bool rotateOnWrite = true,
+        Action<string>? unfinishedRemoved = null
     ) =>
         Open(
             directory,
@@ -162,14 +232,16 @@ public sealed partial class SignedLog : IDisposable
             LogKeyMaterial.ServerLicense(licenseFile, keyJwk),
             time,
             sealEvery,
-            fileStarted,
+            carry,
             resetReason,
-            notALogFile
+            notALogFile,
+            rotateOnWrite,
+            unfinishedRemoved
         );
 
     /// <summary>
     /// Opens a log signed with a key that <paramref name="material"/> lets a reader verify, as
-    /// <see cref="Open(string, string, string, SigningKeyAccess, byte[], byte[], TimeProvider, int, Action{SignedLog}?, string?, Action{string}?)"/>
+    /// <see cref="Open(string, string, string, SigningKeyAccess, byte[], byte[], TimeProvider, int, Func{IReadOnlyList{LogLine}}?, string?, Action{string}?, bool, Action{string}?)"/>
     /// does.
     /// </summary>
     /// <param name="directory">The folder of the files.</param>
@@ -179,10 +251,12 @@ public sealed partial class SignedLog : IDisposable
     /// <param name="material">What verifies the key, written to the first line of each file.</param>
     /// <param name="time">The time provider.</param>
     /// <param name="sealEvery">The number of lines after which a signature is written; 1 signs every line.</param>
-    /// <param name="fileStarted">Called after the first line of each new file, under the log's lock.</param>
+    /// <param name="carry">Called for each new file, under the log's lock, for the lines it carries forward.</param>
     /// <param name="resetReason">When not <see langword="null"/>, the new file starts a new chain with this reason.</param>
     /// <param name="notALogFile">Called at the start and at the first new file of each UTC day, under the log's lock, with the
     /// name of each file in the folder whose name has the form of the log's file names but no real date and time.</param>
+    /// <param name="rotateOnWrite">Whether a write or a signature on a new UTC day starts the new file.</param>
+    /// <param name="unfinishedRemoved">Called at the start with the name of each unfinished file it removes.</param>
     /// <returns>The open log.</returns>
     /// <exception cref="IOException">The folder or the new file cannot be written, or the newest file has the last name a
     /// file can have.</exception>
@@ -194,9 +268,11 @@ public sealed partial class SignedLog : IDisposable
         LogKeyMaterial material,
         TimeProvider time,
         int sealEvery = 100,
-        Action<SignedLog>? fileStarted = null,
+        Func<IReadOnlyList<LogLine>>? carry = null,
         string? resetReason = null,
-        Action<string>? notALogFile = null
+        Action<string>? notALogFile = null,
+        bool rotateOnWrite = true,
+        Action<string>? unfinishedRemoved = null
     )
     {
         ArgumentException.ThrowIfNullOrEmpty(directory);
@@ -207,7 +283,8 @@ public sealed partial class SignedLog : IDisposable
         ArgumentNullException.ThrowIfNull(time);
         ArgumentOutOfRangeException.ThrowIfLessThan(sealEvery, 1);
         Directory.CreateDirectory(directory);
-        var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, fileStarted, notALogFile);
+        RemoveUnfinished(directory, baseName, unfinishedRemoved);
+        var log = new SignedLog(directory, baseName, stream, key, material, time, sealEvery, carry, rotateOnWrite, notALogFile);
         lock (log._lock)
         {
             try
@@ -268,6 +345,7 @@ public sealed partial class SignedLog : IDisposable
             {
                 RotateIfNewDay();
                 WriteLine(type, writeFields);
+                _appended++;
                 if (_pending >= _sealEvery)
                 {
                     WriteAuth();
@@ -369,7 +447,140 @@ public sealed partial class SignedLog : IDisposable
         }
     }
 
+    /// <summary>Gets the number of event lines written to the file being written by <see cref="Append"/>, each under a
+    /// signature of its own when <c>sealEvery</c> is 1; the lines a new file carries forward are not among them.</summary>
+    public int AppendedLines
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _appended;
+            }
+        }
+    }
+
+    /// <summary>Returns whether the UTC day is no longer that of the file being written.</summary>
+    /// <returns><see langword="true"/> on a new UTC day.</returns>
+    public bool IsNewDay()
+    {
+        lock (_lock)
+        {
+            return !_disposed && IsNewDayLocked();
+        }
+    }
+
+    /// <summary>
+    /// Builds event lines for the start of a new file, with the time now, and their SHA-256, without any lock (design §13.4,
+    /// V1d16).
+    /// </summary>
+    /// <param name="lines">The lines.</param>
+    /// <param name="time">The time provider.</param>
+    /// <returns>The lines, for <see cref="StartNewFile"/>.</returns>
+    public static CarriedLines Prepare(IEnumerable<LogLine> lines, TimeProvider time)
+    {
+        ArgumentNullException.ThrowIfNull(lines);
+        ArgumentNullException.ThrowIfNull(time);
+        long now = time.GetUtcNow().ToUnixTimeSeconds();
+        using var buffer = new MemoryStream();
+        var digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        int count = 0;
+        foreach (LogLine line in lines)
+        {
+            byte[] bytes = Line(line.Type, now, line.WriteFields);
+            buffer.Write(bytes);
+            digest.AppendData(bytes);
+            count++;
+        }
+
+        return new CarriedLines(buffer.ToArray(), count, digest);
+    }
+
+    /// <summary>
+    /// Starts a new file (design §13.4, §18.1, V1d16): signs and closes the file being written, then writes the new file under
+    /// its unfinished name with its first line signed alone, the carried lines and then <paramref name="since"/> under one
+    /// more signature, flushes it, and gives it its name. When an earlier write had failed, the file that this call starts
+    /// for that failure carries the lines already, and no other file is started.
+    /// </summary>
+    /// <param name="carried">The lines built by <see cref="Prepare"/>.</param>
+    /// <param name="since">The lines written to the file being closed since <paramref name="carried"/> was built.</param>
+    /// <exception cref="IOException">The new file cannot be written; the next write starts a new file.</exception>
+    public void StartNewFile(CarriedLines carried, IReadOnlyList<LogLine> since)
+    {
+        ArgumentNullException.ThrowIfNull(carried);
+        ArgumentNullException.ThrowIfNull(since);
+        lock (_lock)
+        {
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            bool resetFirst = _failure is not null;
+            Guarded(() =>
+            {
+                if (resetFirst)
+                {
+                    return;
+                }
+
+                if (_pending > 0)
+                {
+                    WriteAuth();
+                }
+
+                _file!.Flush(flushToDisk: true);
+                _file.Dispose();
+                StartFile(Path.Combine(_directory, _fileName), continueChain: false, prepared: carried, since: since);
+            });
+        }
+    }
+
     internal static string Hash(ReadOnlySpan<byte> bytes) => Base64UrlCodec.Encode(SHA256.HashData(bytes));
+
+    // Removes the files of a log left unfinished by a stop while they were started: their lines are all in the previous
+    // file, which stayed the newest (design §18.1, V1d16). Only a name that is this log's file name with ".partial" added
+    // counts, so the log of node "a" leaves the files of node "a-b" in a shared folder. A file that cannot be removed stops
+    // the start, naming it.
+    private static void RemoveUnfinished(string directory, string baseName, Action<string>? removed)
+    {
+        Regex pattern = FileNamePattern();
+        foreach (string path in Directory.EnumerateFiles(directory, baseName + "-*" + Unfinished).Order(StringComparer.Ordinal))
+        {
+            string name = Path.GetFileName(path);
+            if (
+                !name.StartsWith(baseName + "-", StringComparison.Ordinal)
+                || !name.EndsWith(Unfinished, StringComparison.Ordinal)
+                || !pattern.IsMatch(name[(baseName.Length + 1)..^Unfinished.Length])
+            )
+            {
+                continue;
+            }
+
+            try
+            {
+                File.Delete(path);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                throw new IOException($"The unfinished log file {name} cannot be removed: {e.Message}", e);
+            }
+
+            removed?.Invoke(name);
+        }
+    }
+
+    private static byte[] Line(string type, long ts, Action<Utf8JsonWriter> writeFields)
+    {
+        using var buffer = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(buffer))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("type", type);
+            writer.WriteNumber("ts", ts);
+            writeFields(writer);
+            writer.WriteEndObject();
+        }
+
+        buffer.WriteByte((byte)'\n');
+        return buffer.ToArray();
+    }
 
     // The last signature of a file, read from its end: (the hash of the line, its n), or a reason it has none.
     private static (string? Hash, long N, string? Problem) ReadLastAuth(string path)
@@ -545,22 +756,39 @@ public sealed partial class SignedLog : IDisposable
     // written so far stay as they are, and the verifier reports them as unsigned (a warning), not as changed.
     private void Guarded(Action write)
     {
+        // Cleared first, so that a failure of the file started for it is told apart from the failure it names.
+        string? failure = _failure;
+        string? continueFrom = _continueFrom;
+        _failure = null;
+        _continueFrom = null;
         try
         {
-            // Cleared first: the new file's first lines (records carried forward) are written through here as well.
-            string? failure = _failure;
-            _failure = null;
             if (failure is not null)
             {
                 StartFile(previous: null, continueChain: false, forcedReset: failure);
+            }
+            else if (continueFrom is not null)
+            {
+                StartFile(continueFrom, continueChain: false);
             }
 
             write();
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // The exception's message is left out of the next file's chain.reset: it can hold a full path.
-            _failure = $"a write to {_fileName} failed";
+            // The exception's message is left out of the next file's chain.reset: it can hold a full path. A file that failed
+            // while it was started is removed (design §18.1, V1d16). When the file before it was closed whole, the next file
+            // continues the chain from that file; when a reset was starting it, the next reset keeps the earlier reason.
+            if (_partial is not null && _startedFrom is not null && failure is null)
+            {
+                (_prev, _n) = _beforeStart;
+                _continueFrom = _startedFrom;
+            }
+            else
+            {
+                _failure = _partial is not null && failure is not null ? failure : $"a write to {_fileName} failed";
+            }
+
             try
             {
                 _file?.Dispose();
@@ -571,13 +799,14 @@ public sealed partial class SignedLog : IDisposable
             }
 
             _file = null;
+            RemovePartial();
             throw new IOException($"The log {_fileName} cannot be written: {e.Message}", e);
         }
     }
 
     private void RotateIfNewDay()
     {
-        if (DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime) == _fileDay)
+        if (!_rotateOnWrite || !IsNewDayLocked())
         {
             return;
         }
@@ -593,9 +822,17 @@ public sealed partial class SignedLog : IDisposable
     }
 
     // Opens a new file and writes its first line: chain.start linked to the previous file's last signature, or chain.reset.
-    private void StartFile(string? previous, bool continueChain, string? forcedReset = null)
+    private void StartFile(
+        string? previous,
+        bool continueChain,
+        string? forcedReset = null,
+        CarriedLines? prepared = null,
+        IReadOnlyList<LogLine>? since = null
+    )
     {
         DateTimeOffset now = _time.GetUtcNow();
+        _beforeStart = (_prev, _n);
+        _startedFrom = !continueChain && forcedReset is null ? previous : null;
         (List<(string Path, DateTimeOffset Time)> existing, List<string> notLogFiles) = Scan(_directory, _baseName);
 
         // Reported at a start and once in a UTC day: a write that fails comes here again at each later write, and would
@@ -664,6 +901,7 @@ public sealed partial class SignedLog : IDisposable
         _headFile = _fileName;
         _headAuth = string.Empty;
         _fileDay = DateOnly.FromDateTime(now.UtcDateTime);
+        _appended = 0;
         _digest.Dispose();
         _digest = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         _pending = 0;
@@ -712,8 +950,60 @@ public sealed partial class SignedLog : IDisposable
             );
         }
 
-        _fileStarted?.Invoke(this);
+        // design §18.1 (V1d16): the first line is signed alone, so the first signature is always the second line, and the
+        // lines carried forward come after it under one signature.
         WriteAuth();
+        CarriedLines? built = prepared is null && _carry is not null ? Prepare(_carry(), _time) : null;
+        try
+        {
+            if ((prepared ?? built) is { Count: > 0 } carried)
+            {
+                _file!.Write(carried.Bytes);
+                _digest.Dispose();
+                _digest = carried.TakeDigest();
+                _pending = carried.Count;
+            }
+        }
+        finally
+        {
+            built?.Dispose();
+        }
+
+        foreach (LogLine line in since ?? [])
+        {
+            WriteLine(line.Type, line.WriteFields);
+        }
+
+        if (_pending > 0)
+        {
+            WriteAuth();
+        }
+
+        // The signatures flushed the file to the disk; only now does it take its name, and the folder is flushed so that the
+        // name survives a crash (design §18.1, V1d16).
+        File.Move(_partial!, Path.Combine(_directory, _fileName), overwrite: false);
+        _partial = null;
+        FolderFlush.Flush(_directory);
+    }
+
+    // Removes the unfinished file of a start that failed; the start of the next file names the failure.
+    private void RemovePartial()
+    {
+        if (_partial is null)
+        {
+            return;
+        }
+
+        try
+        {
+            File.Delete(_partial);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // The next start of the log removes it.
+        }
+
+        _partial = null;
     }
 
     private FileStream CreateFile(DateTimeOffset first)
@@ -723,33 +1013,36 @@ public sealed partial class SignedLog : IDisposable
         {
             string stamp = time.UtcDateTime.ToString(FileTimeFormat, CultureInfo.InvariantCulture);
             _fileName = $"{_baseName}-{stamp}.jsonl";
-            try
+            string path = Path.Combine(_directory, _fileName);
+            if (!File.Exists(path))
             {
-                return new FileStream(Path.Combine(_directory, _fileName), FileMode.CreateNew, FileAccess.Write, FileShare.Read);
+                try
+                {
+                    // FileShare.Delete lets the file be renamed while this handle writes it: without it, File.Move of the open
+                    // file failed on Windows 11 (.NET 10.0, BorrowJournalTests); Linux and macOS rename an open file anyway.
+                    var file = new FileStream(path + Unfinished, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete);
+                    _partial = path + Unfinished;
+                    return file;
+                }
+                catch (IOException) when (attempt < 1000 && File.Exists(path + Unfinished))
+                {
+                    // Two files in one millisecond: take the next one.
+                }
             }
-            catch (IOException) when (attempt < 1000 && File.Exists(Path.Combine(_directory, _fileName)))
+            else if (attempt >= 1000)
             {
-                // Two files in one millisecond: take the next one.
+                throw new IOException($"No new file name was found after {_fileName}.");
             }
 
             time = NextFileTime(time, _baseName);
         }
     }
 
+    private bool IsNewDayLocked() => DateOnly.FromDateTime(_time.GetUtcNow().UtcDateTime) != _fileDay;
+
     private void WriteLine(string type, Action<Utf8JsonWriter> writeFields)
     {
-        using var buffer = new MemoryStream();
-        using (var writer = new Utf8JsonWriter(buffer))
-        {
-            writer.WriteStartObject();
-            writer.WriteString("type", type);
-            writer.WriteNumber("ts", _time.GetUtcNow().ToUnixTimeSeconds());
-            writeFields(writer);
-            writer.WriteEndObject();
-        }
-
-        buffer.WriteByte((byte)'\n');
-        byte[] line = buffer.ToArray();
+        byte[] line = Line(type, _time.GetUtcNow().ToUnixTimeSeconds(), writeFields);
         _file!.Write(line);
         _digest.AppendData(line);
         _pending++;

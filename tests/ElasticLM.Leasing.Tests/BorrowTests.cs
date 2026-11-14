@@ -201,6 +201,221 @@ public sealed class BorrowTests : IDisposable
     }
 
     /// <summary>
+    /// The server takes at most sbrl early returns in 30 days from all keys and machines together, by lease ID and by the
+    /// request's proof ID alike; a refused borrow keeps its seat and is not recorded, and a return counts again once the
+    /// oldest counted one is 30 days old (design §12.7.4, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - sbrl 2, brl 1,000, borrows of 40 days, a license that expires in 90 days; an engine with a record of borrows; four
+    ///   clients, each with its own key and machine, each with a borrow.
+    ///
+    /// Steps:
+    /// - At t0 return the first borrow by its lease ID; an hour later the second by its request's proof ID; an hour later
+    ///   the third by its lease ID and the fourth by its request's proof ID.
+    /// - At t0 + 30 days - 1 s return the third by its lease ID; at t0 + 30 days return it again; then return the fourth by
+    ///   its lease ID.
+    ///
+    /// Expected:
+    /// - Released, Released, ReturnNotAllowed twice with 2 seats still in use and 2 returns recorded.
+    /// - ReturnNotAllowed (both returns are still in the window); Released (the first left it), with 3 returns recorded;
+    ///   ReturnNotAllowed (the second and the third are in the window).
+    /// </remarks>
+    [Fact]
+    public void EarlyReturn_ServerLimit_CountsEveryKeyAndBothWays()
+    {
+        using var server = new TestServer(
+            expires: TestServer.Start.AddDays(90),
+            borrow: TimeSpan.FromDays(40),
+            borrowReturns: 1_000,
+            serverReturns: 2
+        );
+        var journal = new ReleaseRequestTests.Journal();
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient[] clients = [.. Enumerable.Range(0, 4).Select(_ => server.Client())];
+        LeaseRequest[] requests = [.. clients.Select(c => c.Borrow(TimeSpan.FromDays(40)))];
+        string[] leases = [.. requests.Select(r => Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(r)).LeaseId)];
+
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(leases[0], clients[0].KeyId));
+        server.Time.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(ReleaseOutcome.Released, engine.ReleaseRequest(requests[1].ProofId, clients[1].KeyId, out _));
+        server.Time.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[2], clients[2].KeyId));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.ReleaseRequest(requests[3].ProofId, clients[3].KeyId, out _));
+        Assert.Equal((2, 2), (engine.SeatsInUse("pro"), journal.Returns.Count));
+
+        server.Time.Advance(TimeSpan.FromDays(30) - TimeSpan.FromHours(2) - TimeSpan.FromSeconds(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[2], clients[2].KeyId));
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(leases[2], clients[2].KeyId));
+        Assert.Equal(3, journal.Returns.Count);
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[3], clients[3].KeyId));
+    }
+
+    /// <summary>
+    /// A refusal at the server's limit is reported once in 30 days, with the limit and the time from which one more early
+    /// return fits: the (count - limit + 1)th oldest counted return, 30 days on (design §12.7.4, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - sbrl 1, brl 1,000, borrows of 40 days, a license that expires in 90 days; four clients with a borrow each.
+    ///
+    /// Steps:
+    /// - At t0 return the first borrow; at t0 + 1 h and t0 + 2 h try the second; at t0 + 30 days return the second; at
+    ///   t0 + 30 days + 1 h - 1 s and at t0 + 30 days + 1 h try the third.
+    ///
+    /// Expected:
+    /// - One report (1, t0 + 30 days) at t0 + 1 h and none at t0 + 2 h; the return at t0 + 30 days is released; no report at
+    ///   t0 + 30 days + 1 h - 1 s (29 days, 23 hours, 59 minutes, and 59 seconds after the first); a second report
+    ///   (1, t0 + 60 days) at t0 + 30 days + 1 h.
+    /// </remarks>
+    [Fact]
+    public void EarlyReturn_ServerLimit_IsReportedOnceIn30Days()
+    {
+        using var server = new TestServer(
+            expires: TestServer.Start.AddDays(90),
+            borrow: TimeSpan.FromDays(40),
+            borrowReturns: 1_000,
+            serverReturns: 1
+        );
+        var reports = new List<(int Limit, DateTimeOffset Until)>();
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { ServerReturnLimitReached = (limit, until) => reports.Add((limit, until)) });
+        TestClient[] clients = [.. Enumerable.Range(0, 3).Select(_ => server.Client())];
+        string[] leases = [.. clients.Select(c => Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(c.Borrow(TimeSpan.FromDays(40)))).LeaseId)];
+        DateTimeOffset t0 = server.Time.GetUtcNow();
+
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(leases[0], clients[0].KeyId));
+        server.Time.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[1], clients[1].KeyId));
+        Assert.Equal([(1, t0 + TimeSpan.FromDays(30))], reports);
+        server.Time.Advance(TimeSpan.FromHours(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[1], clients[1].KeyId));
+        Assert.Single(reports);
+
+        server.Time.Advance(TimeSpan.FromDays(30) - TimeSpan.FromHours(2));
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(leases[1], clients[1].KeyId));
+        server.Time.Advance(TimeSpan.FromHours(1) - TimeSpan.FromSeconds(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[2], clients[2].KeyId));
+        Assert.Single(reports);
+        server.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(leases[2], clients[2].KeyId));
+        Assert.Equal([(1, t0 + TimeSpan.FromDays(30)), (1, t0 + TimeSpan.FromDays(60))], reports);
+    }
+
+    /// <summary>
+    /// The early returns restored from the record count toward the server's limit after a restart; with more counted returns
+    /// than the limit (a record from a license with a higher limit), the report names the time at which enough of them have
+    /// left the window for one more (design §12.7.4, §13.4, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - sbrl 2, brl 1,000; an engine restored with three early returns of other keys and machines, 3 hours, 2 hours, and a
+    ///   minute before t.
+    ///
+    /// Steps:
+    /// - Borrow with a new client and return the borrow early.
+    ///
+    /// Expected:
+    /// - ReturnNotAllowed, the borrow keeps its seat, and the report is (2, t - 2 h + 30 days): the second oldest return.
+    /// </remarks>
+    [Fact]
+    public void EarlyReturn_ServerLimit_CountsRestoredReturns()
+    {
+        using var server = new TestServer(borrowReturns: 1_000, serverReturns: 2);
+        var reports = new List<(int Limit, DateTimeOffset Until)>();
+        LeaseEngine engine = server.Engine(new LeaseEngineOptions { ServerReturnLimitReached = (limit, until) => reports.Add((limit, until)) });
+        DateTimeOffset now = server.Time.GetUtcNow();
+        engine.Restore(
+            [],
+            [
+                new BorrowReturn("lease-c", "key-c", ["cc00000000000000000000000000000c"], now - TimeSpan.FromMinutes(1)),
+                new BorrowReturn("lease-a", "key-a", ["aa00000000000000000000000000000a"], now - TimeSpan.FromHours(3)),
+                new BorrowReturn("lease-b", "key-b", ["bb00000000000000000000000000000b"], now - TimeSpan.FromHours(2)),
+            ]
+        );
+        server.Time.Advance(TimeSpan.FromMinutes(10));
+        TestClient client = server.Client();
+        var borrow = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(borrow.LeaseId, client.KeyId));
+        Assert.Equal(1, engine.SeatsInUse("pro"));
+        Assert.Equal([(2, now - TimeSpan.FromHours(2) + TimeSpan.FromDays(30))], reports);
+    }
+
+    /// <summary>
+    /// An early return is counted when it is allowed, before its record is written, so a return of a borrow of another
+    /// feature (another pool's lock) made meanwhile cannot also pass one below the limit; this holds for the server's limit
+    /// and for the key's (design §12.7.4, V1d16 review K3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Features pro and cad of 5 seats; the limits of the case: sbrl 1 with brl 1,000, or sbrl 10,000 with brl 1. One
+    ///   client with a borrow of each feature. A record whose first return waits until it is let go.
+    ///
+    /// Steps:
+    /// - Return the pro borrow on another thread; once its record write has begun, return the cad borrow; let the first go.
+    ///
+    /// Expected:
+    /// - The cad return is ReturnNotAllowed while the first one waits, and the first is Released; one return recorded.
+    /// </remarks>
+    [Theory]
+    [InlineData(1, 1_000)]
+    [InlineData(10_000, 1)]
+    public async Task EarlyReturn_TwoFeaturesAtOnce_CountsTheLimitOnce(int serverReturns, int borrowReturns)
+    {
+        using var server = new TestServer(
+            features: [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 5), new FeatureSpec("cad", Seats: 5)],
+            borrowReturns: borrowReturns,
+            serverReturns: serverReturns
+        );
+        using var writing = new ManualResetEventSlim();
+        using var go = new ManualResetEventSlim();
+        var journal = new HeldJournal(writing, go);
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient client = server.Client();
+        var pro = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week)));
+        var cad = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week) with { FeatureId = "cad" }));
+
+        Task<ReleaseOutcome> first = Task.Run(() => engine.Release(pro.LeaseId, client.KeyId), TestContext.Current.CancellationToken);
+        Assert.True(writing.Wait(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken), "The first return did not reach its record.");
+        ReleaseOutcome second = engine.Release(cad.LeaseId, client.KeyId);
+        go.Set();
+
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, second);
+        Assert.Equal(ReleaseOutcome.Released, await first);
+        Assert.Single(journal.Returns);
+    }
+
+    /// <summary>
+    /// An early return whose record cannot be written is refused and not counted, so the next one is allowed (design
+    /// §12.7.4, V1d16 review K3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - sbrl 1, brl 1,000; a record that throws IOException while it is made to; two borrows of one client.
+    ///
+    /// Steps:
+    /// - Make the record fail and return the first borrow; let it work and return the second.
+    ///
+    /// Expected:
+    /// - ReturnNotAllowed, then Released.
+    /// </remarks>
+    [Fact]
+    public void EarlyReturn_RecordNotWritten_IsNotCounted()
+    {
+        using var server = new TestServer(borrowReturns: 1_000, serverReturns: 1);
+        var journal = new FakeJournal();
+        LeaseEngine engine = server.OpenEngine(new LeaseEngineOptions { Journal = journal });
+        TestClient client = server.Client();
+        string[] borrows = [.. Enumerable.Range(0, 2).Select(_ => Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Borrow(Week))).LeaseId)];
+
+        journal.Fail = true;
+        Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(borrows[0], client.KeyId));
+        journal.Fail = false;
+        Assert.Equal(ReleaseOutcome.Released, engine.Release(borrows[1], client.KeyId));
+    }
+
+    /// <summary>
     /// A borrow needs the client's machine fingerprints, because early returns are counted by them.
     /// </summary>
     /// <remarks>
@@ -505,6 +720,30 @@ public sealed class BorrowTests : IDisposable
 
     private static void AssertRefused(ErrorCode code, LeaseOutcome outcome) =>
         Assert.Equal(code, Assert.IsType<LeaseOutcome.Refused>(outcome).Error.Code);
+
+    // A record whose first return signals that it began and waits until it is let go.
+    private sealed class HeldJournal(ManualResetEventSlim writing, ManualResetEventSlim go) : IBorrowJournal
+    {
+        private int _returns;
+
+        public List<BorrowReturn> Returns { get; } = [];
+
+        public void Borrowed(BorrowRecord borrow) { }
+
+        public void Returned(BorrowReturn returned)
+        {
+            if (Interlocked.Increment(ref _returns) == 1)
+            {
+                writing.Set();
+                Assert.True(go.Wait(TimeSpan.FromSeconds(30)), "The first return was never let go.");
+            }
+
+            lock (Returns)
+            {
+                Returns.Add(returned);
+            }
+        }
+    }
 
     private sealed class FakeJournal : IBorrowJournal
     {

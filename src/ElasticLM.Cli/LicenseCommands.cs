@@ -64,6 +64,11 @@ internal static class LicenseCommands
         {
             Description = "Server licenses: early returns of borrows one installation may make in 30 days. Default: 2.",
         };
+        var serverBorrowReturnsOption = new Option<int?>("--server-borrow-returns")
+        {
+            Description =
+                "Server licenses: early returns of borrows the server takes in 30 days, from any installation (1 to 10000). Default: 10000.",
+        };
         var cloneOption = new Option<string?>("--clone") { Description = "Server licenses: deny or flag a detected clone. Default: deny." };
         var metaOption = new Option<string[]>("--meta") { Description = "Vendor metadata key=value. Repeat for several." };
         var outOption = new Option<string>("--out") { Description = "The license file to write.", Required = true }.AsPath();
@@ -96,6 +101,7 @@ internal static class LicenseCommands
             overageOption,
             cloneOption,
             borrowReturnsOption,
+            serverBorrowReturnsOption,
             metaOption,
             outOption,
             issueTrustOption,
@@ -119,11 +125,12 @@ internal static class LicenseCommands
                             || parse.GetValue(overageOption) is not null
                             || parse.GetValue(cloneOption) is not null
                             || parse.GetValue(borrowReturnsOption) is not null
+                            || parse.GetValue(serverBorrowReturnsOption) is not null
                         )
                     )
                     {
                         throw new CliException(
-                            "--lease-minutes, --borrow-days, --overage, --clone, and --borrow-returns apply to server licenses only."
+                            "--lease-minutes, --borrow-days, --overage, --clone, --borrow-returns, and --server-borrow-returns apply to server licenses only."
                         );
                     }
 
@@ -146,6 +153,7 @@ internal static class LicenseCommands
                         BorrowLimit = isServer ? TimeSpan.FromDays(parse.GetValue(borrowOption) ?? 0) : null,
                         OveragePercent = isServer ? parse.GetValue(overageOption) ?? 0 : null,
                         BorrowReturnLimit = isServer ? parse.GetValue(borrowReturnsOption) ?? 2 : null,
+                        ServerBorrowReturnLimit = isServer ? parse.GetValue(serverBorrowReturnsOption) ?? 10_000 : null,
                         CloneStrategy = isServer ? ParseClone(parse.GetValue(cloneOption) ?? "deny") : null,
                         Metadata = parse.GetValue(metaOption) is { Length: > 0 } meta
                             ? new Dictionary<string, string>(meta.Select(CliParse.Meta), StringComparer.Ordinal)

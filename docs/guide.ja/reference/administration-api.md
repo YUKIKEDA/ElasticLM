@@ -246,6 +246,7 @@ sidebar_position: 6
 | `overage` | 数値または `null` | 購入したシート数を超えて貸し出せるシートの割合（パーセント）。`null` なら超えて貸し出さない。 |
 | `borrowLimit` | 数値または `null` | 借用の最長の期間（秒）。`null` なら借用できない。 |
 | `borrowReturnLimit` | 数値 | 30 日間に借用を早期返却できる回数。 |
+| `serverBorrowReturnLimit` | 数値 | `elm-server` が 30 日間に受け付ける借用の早期返却の回数。すべてのインストールを合わせて数える。値はサーバーライセンスに入る。 |
 | `clientInfoStrategy` | 文字列 | `none` か `hostAndUser`。 |
 | `trialDuration` | 数値 | トライアルが続く秒数。 |
 | `trialDailyLimit` | 数値 | 製品がどの 24 時間をとっても出せるトライアルの数。このポリシーが製品のトライアルのポリシーであるあいだだけ使う。 |
@@ -820,6 +821,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `overage` | 数値または `null` | いいえ | パーセント。0 から 1,000。既定は `null` で、超えて貸し出さない。 |
 | `borrowLimit` | 数値または `null` | いいえ | 秒数。1 から 3,162,240,000。既定は `null` で、借用できない。 |
 | `borrowReturnLimit` | 数値 | いいえ | 0 から 1,000。既定は 2。 |
+| `serverBorrowReturnLimit` | 数値 | いいえ | 1 から 10,000。既定は 10,000。 |
 | `clientInfoStrategy` | 文字列 | いいえ | `none`（既定）か `hostAndUser`。 |
 | `trialDuration` | 数値 | いいえ | 秒数。86,400 から 31,536,000（365 日）。既定は 1,209,600（14 日）。 |
 | `trialDailyLimit` | 数値 | いいえ | 1 から 100,000。既定は 1,000。製品の `trialPolicyId` がこのポリシーを指定しているあいだ、次のトライアルのリクエストから使う。数えるのは、製品のどのポリシーで作ったかを問わず、直近 24 時間に作ったトライアルだ。その数より小さい値にすると、次のトライアルはすぐに断られる。 |
@@ -871,6 +873,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
   "overage": null,
   "borrowLimit": null,
   "borrowReturnLimit": 2,
+  "serverBorrowReturnLimit": 10000,
   "clientInfoStrategy": "none",
   "trialDuration": 1209600,
   "trialDailyLimit": 1000,
@@ -919,6 +922,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
       "overage": null,
       "borrowLimit": null,
       "borrowReturnLimit": 2,
+      "serverBorrowReturnLimit": 10000,
       "clientInfoStrategy": "none",
       "trialDuration": 1209600,
       "trialDailyLimit": 1000,
@@ -959,7 +963,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `duration` | 数値または `null` | いいえ | 作成時と同じ。`null` なら有効期限はない。新しい値は、変更後に作るライセンスと、`fromFirstActivation` で有効期限のないライセンスの次のアクティベーションやクラウドのリースに適用する。すでに有効期限のあるライセンスは、その有効期限のままだ。 |
 | `overage` | 数値または `null` | いいえ | 作成時と同じ。`null` にすると、購入したシート数を超えるシートを貸し出さない。 |
 | `borrowLimit` | 数値または `null` | いいえ | 作成時と同じ。`null` にすると借用できなくなる。 |
-| `maxActivations`、`expirationBasis`、`tokenLifetime`、`refreshWindow`、`gracePeriod`、`fingerprintMatching`、`cloneStrategy`、`floating`、`leaseDuration`、`borrowReturnLimit`、`clientInfoStrategy`、`trialDuration`、`trialDailyLimit` | 作成時と同じ | いいえ | `POST /v1/admin/policies` の範囲。`null` は `ELM_MALFORMED`。 |
+| `maxActivations`、`expirationBasis`、`tokenLifetime`、`refreshWindow`、`gracePeriod`、`fingerprintMatching`、`cloneStrategy`、`floating`、`leaseDuration`、`borrowReturnLimit`、`serverBorrowReturnLimit`、`clientInfoStrategy`、`trialDuration`、`trialDailyLimit` | 作成時と同じ | いいえ | `POST /v1/admin/policies` の範囲。`null` は `ELM_MALFORMED`。 |
 | `productId`、`licenseKind`、`binding` | — | — | 変更できない。どれかを送ると `ELM_INVALID_ARGUMENT`。 |
 
 変更後のポリシー全体が、`POST /v1/admin/policies` のルールに合っていなければならない。

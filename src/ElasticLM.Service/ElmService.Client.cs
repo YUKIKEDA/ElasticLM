@@ -800,6 +800,7 @@ internal sealed partial class ElmService
             BorrowLimit = server ? TimeSpan.FromSeconds(policy.BorrowLimit ?? 0) : null,
             OveragePercent = server ? (int)(policy.Overage ?? 0) : null,
             BorrowReturnLimit = server ? (int)policy.BorrowReturnLimit : null,
+            ServerBorrowReturnLimit = server ? (int)policy.ServerBorrowReturnLimit : null,
             CloneStrategy = server ? (policy.CloneStrategy == "flag" ? CloneStrategy.Flag : CloneStrategy.Deny) : null,
             Metadata = Licenses.LoadMeta(license.Meta),
             AnsweredRequestId = requestId,

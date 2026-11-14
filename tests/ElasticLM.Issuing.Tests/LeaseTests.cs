@@ -1021,6 +1021,7 @@ public sealed class LeaseTests : IDisposable
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         string cert = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);
         byte[] file = LicenseIssuer.Issue(_signing, [cert], spec, _time).File;
@@ -1076,6 +1077,7 @@ public sealed class LeaseTests : IDisposable
             OveragePercent = isServer ? 0 : null,
             CloneStrategy = isServer ? CloneStrategy.Flag : null,
             BorrowReturnLimit = isServer ? 2 : null,
+            ServerBorrowReturnLimit = isServer ? 10_000 : null,
         };
         spec = isServer ? spec with { Features = [new FeatureSpec("pro", Seats: 5, ExpiresAt: featureExpiresAt)] } : spec;
         string cert = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);

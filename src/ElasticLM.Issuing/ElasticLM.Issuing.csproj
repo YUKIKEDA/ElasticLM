@@ -2,6 +2,8 @@
   <PropertyGroup>
     <!-- Internal to ElasticLM's tools and servers; apps never reference the signing side (design §6.2). -->
     <IsPackable>false</IsPackable>
+    <!-- design §18.1 (V1d16): FolderFlush calls libc through LibraryImport, whose generated code is unsafe. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Licensing\ElasticLM.Licensing.csproj" />

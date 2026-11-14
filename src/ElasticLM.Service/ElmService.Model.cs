@@ -561,6 +561,7 @@ internal sealed partial class ElmService
             p.Overage,
             p.BorrowLimit,
             p.BorrowReturnLimit,
+            p.ServerBorrowReturnLimit,
             p.ClientInfoStrategy,
             p.TrialDuration,
             p.TrialDailyLimit,
