@@ -166,7 +166,7 @@ internal sealed partial class ElmService
         long period = request.Borrow ?? policy.LeaseDuration;
         if (LeaseRules.Expiry(at, period, LeaseLimit(license, feature)) is not long expires)
         {
-            return ClientResult.Fail(ErrorCode.Expired, "The license has expired.");
+            return ClientResult.Fail(ErrorCode.Expired, FeatureEndsNow);
         }
 
         ClientInfo? client = policy.ClientInfoStrategy == "hostAndUser" ? request.Client : null;
@@ -325,7 +325,7 @@ internal sealed partial class ElmService
 
         if (LeaseRules.Expiry(at, policy.LeaseDuration, LeaseLimit(license, feature)) is not long expires)
         {
-            return ClientResult.Fail(ErrorCode.Expired, "The license has expired.");
+            return ClientResult.Fail(ErrorCode.Expired, FeatureEndsNow);
         }
 
         LeaseRow next = lease with { Seq = sequence, IssuedBy = device.RequestId, ExpiresAt = expires };
@@ -666,6 +666,11 @@ internal sealed partial class ElmService
             version,
             at
         );
+
+    // design §12.7.1, §12.7.6 step 9 (V1d18): Refusal turns a license away at its expiry at the same time, and CheckFeature
+    // a feature after its expiry, so a cut that leaves less than a second comes only from the feature's expiry, in its very
+    // second.
+    private const string FeatureEndsNow = "The feature of the license has expired.";
 
     // M4d1's design review: a lease ends no later than the license and the feature, with no grace period added.
     private static long? LeaseLimit(LicenseRow license, LicenseFeature feature) =>

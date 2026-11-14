@@ -2135,7 +2135,7 @@ M4d1（0.93）で、§12.7.1〜§12.7.4 を `elm-service` に出す。プロト�
 6. `count` は 1 以上で機能の `seats` 以下（`Overage` の分は含めない。外れれば `400` と `ELM_INVALID_ARGUMENT`）。借り出しは 1 秒以上（`ELM_INVALID_ARGUMENT`）、ポリシーの `BorrowLimit` 以下（なければ 0。`403` と `ELM_BORROW_NOT_ALLOWED`）、指紋が要る（`400` と `ELM_FINGERPRINT_UNAVAILABLE`）。
 7. 期限の来ていないリースの席の和で、空きを判定する（`409` と `ELM_NO_SEATS`）。和には止めたリースと借り出しも入る。残す席は 0（`borrow.reserve` はオンプレミスの設定）。
 8. `fromFirstActivation` で期限がまだなく、`duration` があれば、ライセンスの期限を「今 + `duration`」に書く（§12.6.1 の有効化の 13 と同じ）。
-9. リースの期限を「今 + 期間」とし（期間はポリシーの `LeaseDuration` か借り出しの秒数）、ライセンスの期限と機能の期限の早いほうで切る（`GracePeriod` は足さない）。1 秒未満しか残らなければ `403` と `ELM_EXPIRED`。
+9. リースの期限を「今 + 期間」とし（期間はポリシーの `LeaseDuration` か借り出しの秒数）、ライセンスの期限と機能の期限の早いほうで切る（`GracePeriod` は足さない）。1 秒未満しか残らなければ `403` と `ELM_EXPIRED`（「The feature of the license has expired.」）。ライセンスの期限に達した要求は、同じ時刻で 4 の状態の確かめが断り、機能の期限を過ぎた要求は 5 が断るので、1 秒未満になるのは、今がちょうど機能の期限の秒のときだけである（V1d18。`elm-server` の §12.7.1 と同じく、機能の文にした。それより前の文は「The license has expired.」だった）。
 10. トークン（`seq` 1）を出して確かめ、リースの行を書いて返す。クライアントの情報はポリシーの `ClientInfoStrategy` に従って残す。
 
 更新の検査の順:

@@ -14,7 +14,8 @@ public sealed record LicensedFeature(string Id, string? VersionRange, int? Seats
     // design §9.2, §12.7.5 step 7: the same parsing as the verifier's version check.
 
     /// <summary>
-    /// Returns whether the feature's version range allows a version, as the license verifier decides it.
+    /// Returns whether the feature's version range allows a version. The version and the range are read as the license
+    /// verifier reads them.
     /// </summary>
     /// <param name="version">The version, <c>major.minor[.patch]</c>.</param>
     /// <returns><see langword="false"/> when the version is not <c>major.minor[.patch]</c> or is outside the range;

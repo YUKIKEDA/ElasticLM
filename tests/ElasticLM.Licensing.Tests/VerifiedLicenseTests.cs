@@ -6,8 +6,8 @@ namespace ElasticLM.Licensing.Tests;
 public sealed class VerifiedLicenseTests
 {
     /// <summary>
-    /// <see cref="LicensedFeature.CoversVersion"/> answers as the verifier's version check: inside the range at both of its
-    /// ends, outside it past them, every version without a range, and never a version that is not major.minor[.patch].
+    /// <see cref="LicensedFeature.CoversVersion"/> reads versions and ranges as the verifier does: inside the range at both of
+    /// its ends, outside it past them, every version without a range, and never a version that is not major.minor[.patch].
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -17,8 +17,9 @@ public sealed class VerifiedLicenseTests
     /// - Ask each feature about the version of the case.
     ///
     /// Expected:
-    /// - With the range: 2.0, 2.5, and 2.999.999 are covered; 1.999.999, 3.0, and 3.0.1 are not; "two", "2", "", and
-    ///   "2.0.0.0" are not.
+    /// - With the range: 2.0, 2.5, 2.999.999, and "02.0" (a leading zero is read as 2.0) are covered; 1.999.999, 3.0, and
+    ///   3.0.1 are not; "two", "2", "", "2.0.0.0", " 2.0", "2.0 ", "2.0-beta", and "1234567890.0" (a part of 10 digits)
+    ///   are not.
     /// - Without a range: 3.0 and 0.0 are covered; "two" and "" are not.
     /// </remarks>
     /// <param name="range">The feature's range, or <see langword="null"/>.</param>
@@ -35,6 +36,11 @@ public sealed class VerifiedLicenseTests
     [InlineData(">=2.0 <3.0", "2", false)]
     [InlineData(">=2.0 <3.0", "", false)]
     [InlineData(">=2.0 <3.0", "2.0.0.0", false)]
+    [InlineData(">=2.0 <3.0", "02.0", true)]
+    [InlineData(">=2.0 <3.0", " 2.0", false)]
+    [InlineData(">=2.0 <3.0", "2.0 ", false)]
+    [InlineData(">=2.0 <3.0", "2.0-beta", false)]
+    [InlineData(">=2.0 <3.0", "1234567890.0", false)]
     [InlineData(null, "3.0", true)]
     [InlineData(null, "0.0", true)]
     [InlineData(null, "two", false)]

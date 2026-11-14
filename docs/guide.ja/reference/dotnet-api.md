@@ -43,7 +43,7 @@ sidebar_position: 9
 | `LeaseExpectation` | レコード | リースが対象としていなければならないもの。`ProductId` と `InstallationKeyThumbprint`。 |
 | `LeaseVerificationResult` | 抽象レコード | リースの確認の結果。`Valid` の場合は `VerifiedLease`（`Lease`）を、`Invalid` の場合は `LicenseError`（`Error`）を持つ。 |
 | `LeaseVerifier` | クラス | オンプレミスのサーバーか `elm-service` から受け取ったリーストークンを確かめる。[後述](#leaseverifier)。 |
-| `LicensedFeature` | レコード | 検証したライセンスの機能。`Id`、`VersionRange`（すべてのバージョンなら `null`）、`Seats`（サーバーライセンスだけ）、`ExpiresAt`（機能自体の有効期限、または `null`）。`CoversVersion(string version)` は、`VersionRange` がそのバージョンを許すかを、検証と同じ判断で返す。`major.minor[.patch]` の形でないバージョンには `false` を、`VersionRange` が `null` ならそれ以外のバージョンに `true` を返す。`null` には `ArgumentNullException` を投げる。 |
+| `LicensedFeature` | レコード | 検証したライセンスの機能。`Id`、`VersionRange`（すべてのバージョンなら `null`）、`Seats`（サーバーライセンスだけ）、`ExpiresAt`（機能自体の有効期限、または `null`）。`CoversVersion(string version)` は、`VersionRange` がそのバージョンを許すかを返す。バージョンと範囲は、検証と同じように読む。`major.minor[.patch]` の形でないバージョンには `false` を返し（検証では引数の誤りになる）、`VersionRange` が `null` ならそれ以外のバージョンに `true` を返す。`null` には `ArgumentNullException` を投げる。 |
 | `LicenseError` | レコード | 確認に失敗した理由。`Code`、`Message`、`WireName`。 |
 | `LicenseKind` | 列挙型 | ライセンスの種類。`Standard`、`Trial`、`Server` のいずれか。 |
 | `LicenseRequirement` | レコード構造体 | アプリがライセンスに求めること。`ProductId`、`Kind`、`FeatureId`（`null` なら機能を確かめない）、`FeatureVersion`（`major.minor[.patch]`。`null` ならバージョンを確かめない）、`Installation`（デバイスに紐付かないライセンスだけを使うアプリでは `null`）。オプションで無効にしない限り、`Standard` はトライアルも受け入れる。 |
