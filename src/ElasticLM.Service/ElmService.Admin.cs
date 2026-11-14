@@ -400,6 +400,12 @@ internal sealed partial class ElmService
             return await RefuseAsync(context, ErrorCode.Malformed, "The request body is not a valid API key request.").ConfigureAwait(false);
         }
 
+        // design §14.5 (V1d26): a name with a control character is refused as malformed, before its length.
+        if (Limits.HasControlCharacter(request.Name))
+        {
+            return await RefuseAsync(context, ErrorCode.Malformed, "The request body is not a valid API key request.").ConfigureAwait(false);
+        }
+
         int nameLength = request.Name.EnumerateRunes().Count();
         if (nameLength is < 1 or > ApiKeys.MaxNameLength)
         {

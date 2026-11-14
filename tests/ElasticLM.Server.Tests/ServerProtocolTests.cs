@@ -1108,11 +1108,12 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// - A server license with pro; the server is past its window; an installation key.
     ///
     /// Steps:
-    /// - Acquire pro with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; then with client
-    ///   "h"/"u" and app "1 0" (U+0020, the first character past the range).
+    /// - Acquire pro with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; app ending in
+    ///   U+007F (DEL); client.host ending in U+0080 (C1); then with client "h" U+00A0 / "u" and app "1 0~" (U+0020,
+    ///   U+007E, and U+00A0, next to the ranges).
     ///
     /// Expected:
-    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." three times and no lease; then 201.
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." five times and no lease; then 201.
     /// </remarks>
     [Fact]
     public async Task Acquire_ControlCharacterInClientOrApp_IsMalformed()
@@ -1130,6 +1131,8 @@ public sealed class ServerProtocolTests : IAsyncDisposable
                 ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
                 ",\"client\":{\"host\":\"h\",\"user\":\"u\\u001f\"}",
                 ",\"app\":\"1\\u0000\"",
+                ",\"app\":\"1\\u007f\"",
+                ",\"client\":{\"host\":\"h\\u0080\",\"user\":\"u\"}",
             }
         )
         {
@@ -1146,7 +1149,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         using HttpResponseMessage granted = await raw.SignedAsync(
             HttpMethod.Post,
             "v1/leases",
-            Body(",\"client\":{\"host\":\"h\",\"user\":\"u\"},\"app\":\"1 0\""),
+            Body(",\"client\":{\"host\":\"h\\u00a0\",\"user\":\"u\"},\"app\":\"1 0~\""),
             includeKey: true
         );
         Assert.Equal(HttpStatusCode.Created, granted.StatusCode);

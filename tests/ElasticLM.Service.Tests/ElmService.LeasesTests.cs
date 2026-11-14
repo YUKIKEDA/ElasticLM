@@ -1016,11 +1016,12 @@ public sealed class ElmServiceLeasesTests
     ///   engine.
     ///
     /// Steps:
-    /// - Acquire core with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; then with client
-    ///   "h"/"u" and app "1 0".
+    /// - Acquire core with client.host ending in U+0000; client.user ending in U+001F; app "1" U+0000; app ending in
+    ///   U+007F (DEL); client.host ending in U+0080 (C1); then with client "h" U+00A0 / "u" and app "1 0~" (U+0020,
+    ///   U+007E, and U+00A0, next to the ranges).
     ///
     /// Expected:
-    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." three times, with no lease row; then 201.
+    /// - 400 ELM_MALFORMED "The request body is not a valid lease request." five times, with no lease row; then 201.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -1037,6 +1038,8 @@ public sealed class ElmServiceLeasesTests
                 ",\"client\":{\"host\":\"h\\u0000\",\"user\":\"u\"}",
                 ",\"client\":{\"host\":\"h\",\"user\":\"u\\u001f\"}",
                 ",\"app\":\"1\\u0000\"",
+                ",\"app\":\"1\\u007f\"",
+                ",\"client\":{\"host\":\"h\\u0080\",\"user\":\"u\"}",
             }
         )
         {
@@ -1044,7 +1047,7 @@ public sealed class ElmServiceLeasesTests
         }
 
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
-        DeviceAnswer granted = await device.AcquireAsync(key, more: ",\"client\":{\"host\":\"h\",\"user\":\"u\"},\"app\":\"1 0\"");
+        DeviceAnswer granted = await device.AcquireAsync(key, more: ",\"client\":{\"host\":\"h\\u00a0\",\"user\":\"u\"},\"app\":\"1 0~\"");
         Assert.True(granted.Status == HttpStatusCode.Created, granted.Text);
     }
 }

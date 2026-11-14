@@ -473,10 +473,8 @@ internal sealed partial class ElmService
         // installation key gets the file it was issued, as a retried activation does (the design review of M4b1), after the
         // same checks: the license's state, then a stopped activation (V1d26).
         if (
-            request.Retry.Count > 0
-            && await Database.FindTrialActivationAsync(product.Id, proof.KeyId, context.RequestAborted).ConfigureAwait(false) is ActivationRow issued
-            && issued.Seq == 1
-            && request.Retry.Contains(issued.LastProof, StringComparer.Ordinal)
+            await Database.FindTrialRetryAsync(product.Id, proof.KeyId, request.Retry, context.RequestAborted).ConfigureAwait(false)
+            is ActivationRow issued
         )
         {
             LicenseRow trial = (await Database.FindLicenseAsync(issued.LicenseId, context.RequestAborted).ConfigureAwait(false))!;

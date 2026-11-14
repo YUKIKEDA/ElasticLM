@@ -33,31 +33,43 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<ProductRow?> FindProductByCodeAsync(string code, CancellationToken cancellationToken) =>
         _db.From(ProductRow.Table).Where(p => Eq(p.Code, code)).Select(p => p).SingleOrDefaultAsync(cancellationToken);
 
-    // design §12.6.1 (V1d26): the product's trials among the licenses the key has activated, found through activations_by_key
-    // (migration 0011) and the trials' primary key, then the key's activation of one of them. With the product's trials in the
-    // subquery instead, SQLite 3.54.1 without statistics read every trial of the product and looked the key up in each, and
-    // PostgreSQL 18 read every activation when the index was missing (EXPLAIN QUERY PLAN, EXPLAIN ANALYZE).
-    public override async Task<ActivationRow?> FindTrialActivationAsync(Guid productId, string keyId, CancellationToken cancellationToken)
+    // design §12.6.1 (V1d26): the key's activations still at sequence 1 whose file a request named in retry answered, found
+    // through activations_by_key (migration 0011), then the one of a trial of the product. A key can hold two trials of a
+    // product (a trial record removed by an administrator, or one fingerprint a trial), so the retry, not the product, picks
+    // it. As one query with the product's trials in a subquery, SQLite 3.54.1 without statistics read every trial of the
+    // product and looked the key up in each, and PostgreSQL 18 read every activation without the index (EXPLAIN QUERY PLAN,
+    // EXPLAIN ANALYZE).
+    public override async Task<ActivationRow?> FindTrialRetryAsync(
+        Guid productId,
+        string keyId,
+        IReadOnlyCollection<string> retry,
+        CancellationToken cancellationToken
+    )
     {
-        List<Guid> trials = await _db.From(TrialRow.Table)
-            .Where(t =>
-                And(
-                    Eq(t.ProductId, productId),
-                    In(t.LicenseId, _db.From(ActivationRow.Table).Where(a => Eq(a.KeyId, keyId)).Select(a => a.LicenseId))
-                )
-            )
-            .Select(t => t.LicenseId)
-            .OrderBy(t => [Asc(t.LicenseId)])
-            .Limit(1)
+        ArgumentNullException.ThrowIfNull(retry);
+        if (retry.Count == 0)
+        {
+            return null;
+        }
+
+        string[] named = [.. retry];
+        List<ActivationRow> answered = await _db.From(ActivationRow.Table)
+            .Where(a => And(Eq(a.KeyId, keyId), Eq(a.Seq, 1L), In(a.LastProof, named)))
+            .Select(a => a)
             .ToListAsync(cancellationToken)
             .ConfigureAwait(false);
-        return trials.Count == 0
-            ? null
-            : await _db.From(ActivationRow.Table)
-                .Where(a => And(Eq(a.LicenseId, trials[0]), Eq(a.KeyId, keyId)))
-                .Select(a => a)
-                .SingleOrDefaultAsync(cancellationToken)
-                .ConfigureAwait(false);
+        if (answered.Count == 0)
+        {
+            return null;
+        }
+
+        Guid[] licenses = [.. answered.Select(a => a.LicenseId)];
+        List<Guid> trials = await _db.From(TrialRow.Table)
+            .Where(t => And(Eq(t.ProductId, productId), In(t.LicenseId, licenses)))
+            .Select(t => t.LicenseId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return answered.FirstOrDefault(a => trials.Contains(a.LicenseId));
     }
 
     public override Task<ActivationRow?> FindActivationAsync(Guid id, CancellationToken cancellationToken) =>

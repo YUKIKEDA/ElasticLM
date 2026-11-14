@@ -82,13 +82,26 @@ internal static class Limits
     /// </summary>
     public static bool IsProofId(string? id) => id is { Length: > 0 and <= MaxProofIdLength } && !id.AsSpan().ContainsAnyExcept(ProofIdCharacters);
 
-    // design §12.6.1, §12.7.1 (V1d26): the servers refuse a request's client host, user, and app version with one, so none
-    // is stored (PostgreSQL refuses U+0000 in text) or reaches the logs and the admin UI.
+    // design §12.6.1, §12.7.1, §14.5 (V1d26): the servers refuse a request's client host, user, and app version with one,
+    // and elm-service the text members of the administration API, so none is stored (PostgreSQL refuses U+0000 in text) or
+    // reaches the logs and the admin UI. The range is Rune.IsControl's, as the other checks of the code base use.
 
     /// <summary>
-    /// Returns whether a text holds a C0 control character (U+0000 to U+001F).
+    /// Returns whether a text holds a control character: U+0000 to U+001F, U+007F, or U+0080 to U+009F.
     /// </summary>
-    public static bool HasControlCharacter(string text) => text.AsSpan().ContainsAnyInRange('\u0000', '\u001F');
+    public static bool HasControlCharacter(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        foreach (Rune rune in text.EnumerateRunes())
+        {
+            if (Rune.IsControl(rune))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     // design §8.4.2 (V1d5a).
 

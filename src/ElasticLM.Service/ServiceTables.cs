@@ -225,8 +225,8 @@ internal sealed partial record LeaseRow(
 internal sealed partial record LeaseReturnRow(
     [PrimaryKey] Guid LicenseId,
     [PrimaryKey, MaxLength(64)] string Counter,
-    long ReturnedAt,
-    [MaxLength(22)] string LeaseId
+    [PrimaryKey] long ReturnedAt,
+    [PrimaryKey, MaxLength(22)] string LeaseId
 );
 
 /// <summary>

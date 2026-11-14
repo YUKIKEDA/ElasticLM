@@ -103,8 +103,14 @@ internal abstract partial class Database
     /// <summary>Returns the product with a code (the tokens' <c>prd</c>), or <see langword="null"/>.</summary>
     public abstract Task<ProductRow?> FindProductByCodeAsync(string code, CancellationToken cancellationToken);
 
-    /// <summary>Returns an installation key's activation of a trial of a product, or <see langword="null"/>.</summary>
-    public abstract Task<ActivationRow?> FindTrialActivationAsync(Guid productId, string keyId, CancellationToken cancellationToken);
+    /// <summary>Returns an installation key's activation of a trial of a product that is still at sequence 1 and whose file
+    /// answered a request named in <paramref name="retry"/>, or <see langword="null"/>.</summary>
+    public abstract Task<ActivationRow?> FindTrialRetryAsync(
+        Guid productId,
+        string keyId,
+        IReadOnlyCollection<string> retry,
+        CancellationToken cancellationToken
+    );
 
     /// <summary>Returns an activation, or <see langword="null"/>; read outside a transaction, to find its license.</summary>
     public abstract Task<ActivationRow?> FindActivationAsync(Guid id, CancellationToken cancellationToken);
