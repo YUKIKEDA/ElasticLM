@@ -58,7 +58,10 @@ public sealed partial class InstallationKeyStore
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
     /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when a key exists but cannot be read (damaged, protected for
-    /// another user, no access), or cannot be created.</param>
+    /// another user, no access), or cannot be created, and when another user could have read or replaced the machine-scope
+    /// folder: on Windows a folder or parent owned by another user or an access list that names one, on Linux and macOS a
+    /// folder or parent owned by a user other than this one and root, a folder that gives group or others access, or a parent
+    /// they can write.</param>
     /// <returns><see langword="true"/> when a key was read or created.</returns>
     public bool TryLoadOrCreate(out InstallationKey? key, out LicenseError? error)
     {
@@ -123,7 +126,8 @@ public sealed partial class InstallationKeyStore
     /// </summary>
     /// <param name="key">The key, which the caller disposes; <see langword="null"/> on failure.</param>
     /// <param name="error"><c>ELM_INSTALLATION_KEY_UNREADABLE</c> when there is no key or it cannot be read, or when another
-    /// user could have read or replaced the machine-scope folder.</param>
+    /// user could have read or replaced the machine-scope folder (on Linux and macOS, among others, when the folder or its
+    /// parent is owned by a user other than this one and root).</param>
     /// <returns><see langword="true"/> when the key was read.</returns>
     public bool TryLoad(out InstallationKey? key, out LicenseError? error)
     {

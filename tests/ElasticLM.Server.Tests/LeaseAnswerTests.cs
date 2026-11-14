@@ -524,6 +524,81 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];
 
+    /// <summary>
+    /// Answers without the server license header make the client fetch the server license again each time, and it keeps
+    /// one copy of a license it has already (design §13.5, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 10 seats of pro, past its reclaim window, behind a relay that takes the ELM-Server-License header out
+    ///   of every lease answer.
+    ///
+    /// Steps:
+    /// - Acquire 10 leases of pro with one client and keep them all, so each lease names the server license.
+    ///
+    /// Expected:
+    /// - Every acquisition gives a lease; the client keeps one server license and the files of one (before V1d24 it kept 10
+    ///   licenses: one for each answer, which names no license and makes the client fetch it again).
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_AnswersWithoutTheServerLicenseHeader_KeepOneCopyOfTheLicense()
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        ElmServer server = await StartOpenServerAsync(s => s with { Features = [new FeatureSpec("pro", Seats: 10)] });
+        var relay = new Recorder { DropServerLicense = true };
+        LicenseClient client = Client(server, relay);
+
+        for (int i = 0; i < 10; i++)
+        {
+            Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+        }
+
+        Assert.Equal((1, 1), client.ServerLicenseCopies);
+    }
+
+    /// <summary>
+    /// When the server license changes more often than the client keeps copies, the client lets go of the oldest copy that no
+    /// lease names, and of the files it kept for it (design §13.5, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 5 seats of pro and 3 of cam, past its reclaim window, and a client.
+    ///
+    /// Steps:
+    /// - 10 times: acquire a lease of pro and release it; then, except after the last, write a new server license of this
+    ///   server and reload it, so the next answer names a license the client does not have.
+    ///
+    /// Expected:
+    /// - Each reload answers 200; the client keeps 8 server licenses, the limit, and the files of the same 8 (before V1d24
+    ///   it kept the files of all 10).
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_TenServerLicenses_KeepsEightAndTheirFilesOnly()
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data, TwoFeatures);
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(Window);
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        using HttpClient admin = Deployment.AdminHttp(server);
+
+        for (int i = 0; i < 10; i++)
+        {
+            Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+            Assert.Null(await client.ReleaseLeaseAsync(lease, cancel));
+            if (i < 9)
+            {
+                _deployment.WriteServerLicense(data, TwoFeatures);
+                using HttpResponseMessage reloaded = await admin.PostAsync("admin/v1/license/reload", null, cancel);
+                Assert.Equal(HttpStatusCode.OK, reloaded.StatusCode);
+            }
+        }
+
+        Assert.Equal((8, 8), client.ServerLicenseCopies);
+    }
+
     private static LicenseSpec TwoFeatures(LicenseSpec spec) =>
         spec with
         {

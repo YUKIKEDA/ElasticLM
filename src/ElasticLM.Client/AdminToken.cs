@@ -52,7 +52,7 @@ internal static class AdminToken
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
             {
                 // The new file holds a token that no server takes; it does not stay behind.
-                DeleteQuietly(fresh);
+                FileReplacement.DeleteQuietly(fresh);
                 throw;
             }
 
@@ -65,18 +65,6 @@ internal static class AdminToken
         finally
         {
             CryptographicOperations.ZeroMemory(secret);
-        }
-    }
-
-    private static void DeleteQuietly(string path)
-    {
-        try
-        {
-            File.Delete(path);
-        }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-        {
-            // The next start deletes it before it writes its own.
         }
     }
 

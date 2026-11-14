@@ -16,7 +16,8 @@ namespace ElasticLM.Client;
 /// DPAPI; a machine-scope folder also gets an access list of Administrators, SYSTEM, and the creating user only, because
 /// DPAPI's machine scope can be opened by every local user and <c>ProgramData</c> is readable by every local user. A
 /// machine-scope folder that exists already is used only when <see cref="CheckDirectory"/> finds that no other user could
-/// have read or replaced it: any user can create a folder under <c>ProgramData</c> before the program first runs.
+/// have read or replaced it: any user can create a folder under <c>ProgramData</c> before the program first runs, and on
+/// Linux and macOS another user can create a folder of mode 0700 wherever they may write.
 /// </remarks>
 internal static class ProtectedFiles
 {
@@ -25,8 +26,9 @@ internal static class ProtectedFiles
     /// <summary>
     /// Checks that a machine-scope folder can be read and changed only by Administrators, SYSTEM, and the user running this
     /// program. On Windows the folder's owner and its parent's owner must be one of them, the folder must not
-    /// inherit its access list, and every rule that allows access must name one of them. On Linux and macOS the folder must
-    /// give no access to group or others, and its parent must not be writable by them.
+    /// inherit its access list, and every rule that allows access must name one of them. On Linux and macOS the folder's
+    /// owner and its parent's owner must be the user running this program or root, the folder must give no access to group
+    /// or others, and its parent must not be writable by them.
     /// </summary>
     /// <param name="path">The folder.</param>
     /// <param name="scope">The scope; a user-scope folder is protected by the user's profile and is not checked.</param>
@@ -188,6 +190,7 @@ internal static class ProtectedFiles
     [UnsupportedOSPlatform("windows")]
     private static string? CheckUnix(string path)
     {
+        const uint Root = 0;
         const UnixFileMode Others =
             UnixFileMode.GroupRead
             | UnixFileMode.GroupWrite
@@ -195,14 +198,33 @@ internal static class ProtectedFiles
             | UnixFileMode.OtherRead
             | UnixFileMode.OtherWrite
             | UnixFileMode.OtherExecute;
+
+        // design §10.2 (V1d24): the owner of the folder could change its mode and replace what is in it, and the owner of the
+        // parent could replace the folder; only this user and root are trusted with either.
+        uint self = UnixOwner.EffectiveUserId;
+        uint owner = UnixOwner.OwnerOf(path);
+        if (owner != self && owner != Root)
+        {
+            return "it is owned by another user.";
+        }
+
         if ((File.GetUnixFileMode(path) & Others) != 0)
         {
             return "it gives access to group or others (it must be mode 0700).";
         }
 
-        if (Path.GetDirectoryName(path) is string parent && (File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+        if (Path.GetDirectoryName(path) is string parent)
         {
-            return $"its parent folder '{parent}' is writable by group or others.";
+            uint parentOwner = UnixOwner.OwnerOf(parent);
+            if (parentOwner != self && parentOwner != Root)
+            {
+                return $"its parent folder '{parent}' is owned by another user.";
+            }
+
+            if ((File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+            {
+                return $"its parent folder '{parent}' is writable by group or others.";
+            }
         }
 
         return null;

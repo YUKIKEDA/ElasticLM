@@ -1,3 +1,5 @@
+using System.Diagnostics;
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using ElasticLM.Licensing;
 
@@ -359,6 +361,129 @@ public sealed class InstallationKeyStoreTests : IDisposable
 
         Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out _, out LicenseError? error));
         Assert.Contains("writable by group or others", error!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// On Linux and macOS, a machine-scope folder that another user owns is refused even with mode 0700, and so is a folder
+    /// whose parent another user owns: the folder's owner could read and replace what is in it, and the parent's owner could
+    /// replace the folder (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS, not as root, with sudo that lets this user run chown without a password, as the CI runners do; on
+    ///   GitHub Actions the test fails without it, elsewhere it is skipped and says so. Windows checks owners in its own tests.
+    /// - folder: a new folder of mode 0700 in a parent of mode 0755, both made by this user; then, with sudo, the folder
+    ///   given to the user nobody.
+    /// - parent: the same two folders; then the parent given to nobody.
+    ///
+    /// Steps:
+    /// - Create a machine-scope key in the folder. Give the folders back to this user at the end.
+    ///
+    /// Expected:
+    /// - Refused with ELM_INSTALLATION_KEY_UNREADABLE and the folder's path: folder, "it is owned by another user."; parent,
+    ///   "its parent folder '…' is owned by another user." with the parent's path. No key file is in the folder.
+    /// </remarks>
+    /// <param name="given">The folder given to nobody.</param>
+    [Theory]
+    [InlineData("folder")]
+    [InlineData("parent")]
+    public void MachineScope_OwnedByAnotherUser_IsRefusedOnUnix(string given)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix owners are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        (string parent, string folder) = MachineFolders();
+        string other = given == "folder" ? folder : parent;
+        GiveTo("nobody", other);
+        try
+        {
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out _, out LicenseError? error));
+            Assert.Equal(ErrorCode.InstallationKeyUnreadable, error!.Code);
+            Assert.StartsWith($"The folder '{folder}' is not safe for secrets: ", error.Message, StringComparison.Ordinal);
+            Assert.Contains(
+                given == "folder" ? "it is owned by another user." : $"its parent folder '{parent}' is owned by another user.",
+                error.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally
+        {
+            GiveTo(UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), other);
+        }
+
+        Assert.Empty(Directory.GetFiles(folder));
+    }
+
+    /// <summary>
+    /// On Linux and macOS, a machine-scope folder or parent that root owns passes the owner check: root is trusted (design
+    /// §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - As the test before, with sudo: a folder of mode 0700 in a parent of mode 0755; then the folder, or the parent, given
+    ///   to root.
+    ///
+    /// Steps:
+    /// - Check the folder as a machine-scope folder. Give the folders back to this user at the end.
+    ///
+    /// Expected:
+    /// - No problem is found.
+    /// </remarks>
+    /// <param name="given">The folder given to root.</param>
+    [Theory]
+    [InlineData("folder")]
+    [InlineData("parent")]
+    public void MachineScope_OwnedByRoot_PassesOnUnix(string given)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix owners are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        (string parent, string folder) = MachineFolders();
+        string other = given == "folder" ? folder : parent;
+        GiveTo("root", other);
+        try
+        {
+            Assert.Null(ProtectedFiles.CheckDirectory(folder, KeyScope.Machine));
+        }
+        finally
+        {
+            GiveTo(UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), other);
+        }
+    }
+
+    // A folder of mode 0700 in a parent of mode 0755, both made by this user.
+    [UnsupportedOSPlatform("windows")]
+    private (string Parent, string Folder) MachineFolders()
+    {
+        string parent = Path.Combine(_dir, "vendor");
+        Directory.CreateDirectory(parent, (UnixFileMode)0b111_101_101);
+        string folder = Path.Combine(parent, "machine");
+        Directory.CreateDirectory(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        return (parent, folder);
+    }
+
+    // Gives a folder to a user with sudo chown; skips the test where this user may not, except on GitHub Actions.
+    private static void GiveTo(string user, string path)
+    {
+        using var sudo = Process.Start(
+            new ProcessStartInfo("sudo", ["-n", "chown", user, path]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = sudo.StandardError.ReadToEnd();
+        sudo.WaitForExit();
+        if (sudo.ExitCode != 0)
+        {
+            string why = $"sudo -n chown exited with {sudo.ExitCode}: {error.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This machine does not let the test run chown as root. " + why);
+        }
     }
 
     /// <summary>

@@ -71,6 +71,23 @@ public sealed class LicenseClient : IAsyncDisposable
     private string? _nonce;
     private volatile bool _disposed;
 
+    /// <summary>Gets the number of server licenses the client keeps, and of the files it keeps for them, read under the lock.</summary>
+    internal (int Licenses, int Files) ServerLicenseCopies
+    {
+        get
+        {
+            _gate.Wait();
+            try
+            {
+                return (_identities.Count, _identityFiles.Count);
+            }
+            finally
+            {
+                _gate.Release();
+            }
+        }
+    }
+
     private LicenseClient(LicenseClientOptions options, InstallationKeyStore store, InstallationKey key, IReadOnlyList<string> fingerprints)
     {
         _options = options;
@@ -600,8 +617,8 @@ public sealed class LicenseClient : IAsyncDisposable
     }
 
     // A borrow is saved as {"ver": 1, "server", "lease", "license", "key"} in borrows/<lease ID>.json next to the installation
-    // key, or with "certificates" instead of "license" and "key" from elm-service (design §12.7.6), written to a temporary
-    // file and moved into place. The folder holds at most MaxBorrowFiles borrows.
+    // key, or with "certificates" instead of "license" and "key" from elm-service (design §12.7.6), written to a new temporary
+    // file (design §12.6.2, V1d24) and moved into place. The folder holds at most MaxBorrowFiles borrows.
     private LicenseError? SaveBorrow(Lease lease)
     {
         (byte[] License, byte[] Key) files = default;
@@ -621,8 +638,8 @@ public sealed class LicenseClient : IAsyncDisposable
                 return new LicenseError(ErrorCode.InternalError, $"{MaxBorrowFiles} borrows are saved already; return or let some expire first.");
             }
 
-            using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
-            using (var writer = new Utf8JsonWriter(stream))
+            using var buffer = new MemoryStream();
+            using (var writer = new Utf8JsonWriter(buffer))
             {
                 writer.WriteStartObject();
                 writer.WriteNumber("ver", 1);
@@ -649,8 +666,18 @@ public sealed class LicenseClient : IAsyncDisposable
                 writer.WriteEndObject();
             }
 
-            // The lease ID is new, so no reader holds a file at this path (design §12.6.2).
-            File.Move(temporary, path, overwrite: true);
+            FileReplacement.CreateNew(temporary, buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+            try
+            {
+                // The lease ID is new, so no reader holds a file at this path (design §12.6.2).
+                File.Move(temporary, path, overwrite: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                FileReplacement.DeleteQuietly(temporary);
+                throw;
+            }
+
             return null;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -1048,8 +1075,7 @@ public sealed class LicenseClient : IAsyncDisposable
             return pinError;
         }
 
-        _identityFiles[identity!.License.TokenId] = (licenseFile, keyJwk);
-        AddIdentity(identity!);
+        AddIdentity(identity!, licenseFile, keyJwk);
         return null;
     }
 
@@ -1086,9 +1112,21 @@ public sealed class LicenseClient : IAsyncDisposable
             : new LicenseError(ErrorCode.InternalError, "The server pin cannot be saved next to the installation key.");
     }
 
-    private void AddIdentity(ServerIdentity identity)
+    // design §13.5 (V1d24): an answer without the server license header, or with one the client does not know, makes it
+    // fetch the license again; a license it has already is not kept twice, and a copy that is let go takes its files along.
+    private void AddIdentity(ServerIdentity identity, byte[] licenseFile, byte[] keyJwk)
     {
-        _identities.Add(identity);
+        if (_identities.Find(i => i.License.TokenId == identity.License.TokenId) is ServerIdentity known)
+        {
+            identity.Dispose();
+            identity = known;
+        }
+        else
+        {
+            _identities.Add(identity);
+            _identityFiles[identity.License.TokenId] = (licenseFile, keyJwk);
+        }
+
         _pinnedKeyId = identity.KeyId;
         _pinFailed = false;
         Volatile.Write(ref _current, identity);
@@ -1098,6 +1136,7 @@ public sealed class LicenseClient : IAsyncDisposable
             if (unused is not null)
             {
                 _identities.Remove(unused);
+                _identityFiles.Remove(unused.License.TokenId);
                 unused.Dispose();
             }
         }
