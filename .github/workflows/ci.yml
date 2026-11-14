@@ -163,49 +163,6 @@ jobs:
       - name: Gate
         run: ./build.ps1 -SkipWeb
 
-  # Temporary (V1d24, Issue #343, review K2 on PR #447 at f2199e2): the mutants of the macOS rights that the first run did
-  # not build (MB6 to MB8), on Apple silicon and Intel; removed by the next commit.
-  v1d24-probe:
-    name: V1d24 probe (${{ matrix.os }})
-    needs: spa
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-latest, macos-15-intel]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: admin-ui-dist
-          path: web/admin/dist
-      - uses: actions/setup-dotnet@v6
-        with:
-          global-json-file: global.json
-      - name: Probe
-        shell: bash
-        run: |
-          set +e
-          uname -a; id
-          run() { dotnet test --project tests/ElasticLM.Client.Tests -c Release --no-build -- --filter-class '*InstallationKeyStoreTests' > "$RUNNER_TEMP/$1.log" 2>&1; echo "$1 exit $?"; sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/$1.log" | grep -E '^failed|total:|failed:|succeeded:|skipped:'; }
-          dotnet build tests/ElasticLM.Client.Tests -c Release > /dev/null 2>&1; echo "build $?"
-          run original
-          for m in 'MB6~UnixOwner.cs~AclGetPermNp(permset, AclWriteSecurity)~AclGetPermNp(permset, AclWriteSecurity) & 0' \
-                   'MB7~UnixOwner.cs~AclGetPermNp(permset, AclChangeOwner)~AclGetPermNp(permset, AclChangeOwner) & 0' \
-                   'MB8~UnixOwner.cs~AclGetPermNp(permset, AclDelete))~AclGetPermNp(permset, AclDelete) & 0)'; do
-            IFS='~' read -r id file from to <<< "$m"
-            path="src/ElasticLM.Client/$file"
-            cp "$path" "$RUNNER_TEMP/orig.cs"
-            FROM="$from" TO="$to" perl -0pi -e 's/\Q$ENV{FROM}\E/$ENV{TO}/' "$path"
-            if cmp -s "$path" "$RUNNER_TEMP/orig.cs"; then echo "$id not applied"; continue; fi
-            dotnet build tests/ElasticLM.Client.Tests -c Release > "$RUNNER_TEMP/$id-build.log" 2>&1; b=$?; echo "$id build $b"
-            if [ $b -ne 0 ]; then grep -E 'error' "$RUNNER_TEMP/$id-build.log" | head -5; cp "$RUNNER_TEMP/orig.cs" "$path"; dotnet build tests/ElasticLM.Client.Tests -c Release > /dev/null 2>&1; continue; fi
-            run "$id"
-            cp "$RUNNER_TEMP/orig.cs" "$path"
-          done
-          exit 0
-
   aot:
     # design §20.3: each shipped executable and libelasticlm (§17.4) is published with NativeAOT on every OS, with zero
     # warnings.
