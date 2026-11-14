@@ -10,7 +10,10 @@ namespace ElasticLM.Client.Tests;
 /// </summary>
 public sealed class InstallationKeyStoreTests : IDisposable
 {
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "elm-key-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
+    private readonly string _dir = Path.Combine(
+        ElasticLM.Service.Tests.TestFolders.Root,
+        "elm-key-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6))
+    );
 
     public void Dispose()
     {
@@ -497,6 +500,217 @@ public sealed class InstallationKeyStoreTests : IDisposable
         finally
         {
             GiveTo(UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), other);
+        }
+    }
+
+    /// <summary>
+    /// On Linux and macOS, every folder above a machine-scope folder, up to the root, must be owned by this user or root and
+    /// not writable by group or others: a folder two levels up that another user owns or that group or others can write is
+    /// refused, and so is a folder under /tmp, which every user can write (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS, not as root. A folder of mode 0700 in a parent of mode 0755 in the test folder (made by this user):
+    ///   owned-above: the test folder, two levels up, given to nobody with sudo (as the owner tests; skipped without it,
+    ///   failed on GitHub Actions);
+    ///   group-writable-above: the test folder given mode 0775;
+    ///   tmp: the same two folders made in /tmp instead of the test folder.
+    ///
+    /// Steps:
+    /// - Create a machine-scope key in the folder. Give the test folder back at the end, or remove the folders in /tmp.
+    ///
+    /// Expected:
+    /// - Refused with ELM_INSTALLATION_KEY_UNREADABLE: owned-above, "the folder '{test folder}' above it is owned by another
+    ///   user."; group-writable-above, "the folder '{test folder}' above it is writable by group or others."; tmp, "the
+    ///   folder '/tmp' above it is writable by group or others.".
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    [Theory]
+    [InlineData("owned-above")]
+    [InlineData("group-writable-above")]
+    [InlineData("tmp")]
+    public void MachineScope_FolderAboveTheParentNotSafe_IsRefusedOnUnix(string kind)
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Unix owners and modes are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string top = kind == "tmp" ? Path.Combine("/tmp", "elm-key-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6))) : _dir;
+        string parent = Path.Combine(top, "vendor");
+        Directory.CreateDirectory(parent, (UnixFileMode)0b111_101_101);
+        File.SetUnixFileMode(top, (UnixFileMode)0b111_101_101);
+        string folder = Path.Combine(parent, "machine");
+        Directory.CreateDirectory(folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+        if (kind == "owned-above")
+        {
+            GiveTo("nobody", top);
+        }
+        else if (kind == "group-writable-above")
+        {
+            File.SetUnixFileMode(top, (UnixFileMode)0b111_111_101);
+        }
+
+        try
+        {
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out _, out LicenseError? error));
+            Assert.Equal(ErrorCode.InstallationKeyUnreadable, error!.Code);
+            Assert.Contains(
+                kind switch
+                {
+                    "owned-above" => $"the folder '{top}' above it is owned by another user.",
+                    "group-writable-above" => $"the folder '{top}' above it is writable by group or others.",
+                    _ => "the folder '/tmp' above it is writable by group or others.",
+                },
+                error.Message,
+                StringComparison.Ordinal
+            );
+        }
+        finally
+        {
+            if (kind == "owned-above")
+            {
+                GiveTo(UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), top);
+            }
+            else if (kind == "tmp")
+            {
+                Directory.Delete(top, recursive: true);
+            }
+        }
+    }
+
+    /// <summary>
+    /// The default machine-scope folder passes the check, with every folder above it as the OS ships them: on Windows
+    /// <c>C:\ProgramData\ElasticLM\{product}</c>, on Linux <c>/var/lib/elasticlm/{product}</c>, on macOS
+    /// <c>/Library/Application Support/ElasticLM/{product}</c> (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A product ID of this test run only. On Windows the test makes the folder itself (every user may create in
+    ///   ProgramData). On Linux and macOS sudo makes the folder (with its parents, as root, mode 0755) and gives it to this
+    ///   user with mode 0700, as an installer would for the service's user; skipped without sudo, failed on GitHub Actions.
+    ///
+    /// Steps:
+    /// - Create a machine-scope key in the default folder; read it with a new store. Remove the product's folder at the end.
+    ///
+    /// Expected:
+    /// - Both succeed with the same thumbprint.
+    /// </remarks>
+    [Fact]
+    public void MachineScope_DefaultFolder_Passes()
+    {
+        string product = "elm-v1d24-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
+        var store = new InstallationKeyStore(product, KeyScope.Machine);
+        if (!OperatingSystem.IsWindows())
+        {
+            Sudo("mkdir", "-p", store.Directory);
+            Sudo("chown", UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture), store.Directory);
+            Sudo("chmod", "700", store.Directory);
+        }
+
+        try
+        {
+            Assert.True(store.TryLoadOrCreate(out InstallationKey? created, out LicenseError? error), error?.Message);
+            Assert.True(new InstallationKeyStore(product, KeyScope.Machine).TryLoad(out InstallationKey? read, out error), error?.Message);
+            using (created)
+            using (read)
+            {
+                Assert.Equal(created!.Thumbprint, read!.Thumbprint);
+            }
+        }
+        finally
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                Directory.Delete(store.Directory, recursive: true);
+            }
+            else
+            {
+                Sudo("rm", "-rf", store.Directory);
+            }
+        }
+    }
+
+    /// <summary>
+    /// On Windows, a folder two levels above a machine-scope folder that lets Authenticated Users modify it is refused, and
+    /// one that lets them only create folders in it passes (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A machine-scope key made in a folder of a parent of a top folder in the test folder; then the top folder
+    ///   given a rule for Authenticated Users (S-1-5-11) on itself only:
+    ///   modify: Modify, which holds Delete;
+    ///   create-only: CreateDirectories and ReadAndExecute.
+    ///
+    /// Steps:
+    /// - Read the key with a new store.
+    ///
+    /// Expected:
+    /// - modify: ELM_INSTALLATION_KEY_UNREADABLE with "the folder '{top}' above it lets S-1-5-11 delete or replace what is in
+    ///   it."; create-only: the key is read.
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    [Theory]
+    [InlineData("modify")]
+    [InlineData("create-only")]
+    public void MachineScope_FolderAboveGivesOthersRights_IsCheckedOnWindows(string kind)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Access lists are Windows only.");
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string top = Path.Combine(_dir, "top");
+        string folder = Path.Combine(top, "vendor", "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        var info = new DirectoryInfo(top);
+        System.Security.AccessControl.FileSystemRights rights =
+            kind == "modify"
+                ? System.Security.AccessControl.FileSystemRights.Modify
+                : System.Security.AccessControl.FileSystemRights.CreateDirectories | System.Security.AccessControl.FileSystemRights.ReadAndExecute;
+        System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
+        security.AddAccessRule(
+            new System.Security.AccessControl.FileSystemAccessRule(
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null),
+                rights,
+                System.Security.AccessControl.InheritanceFlags.None,
+                System.Security.AccessControl.PropagationFlags.None,
+                System.Security.AccessControl.AccessControlType.Allow
+            )
+        );
+        info.SetAccessControl(security);
+
+        bool read = new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out InstallationKey? key, out LicenseError? error);
+        key?.Dispose();
+
+        if (kind == "modify")
+        {
+            Assert.False(read);
+            Assert.Contains($"the folder '{top}' above it lets S-1-5-11 delete or replace what is in it.", error!.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            Assert.True(read, error?.Message);
+        }
+    }
+
+    // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.
+    private static void Sudo(params string[] arguments)
+    {
+        using var sudo = Process.Start(
+            new ProcessStartInfo("sudo", ["-n", .. arguments]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = sudo.StandardError.ReadToEnd();
+        sudo.WaitForExit();
+        if (sudo.ExitCode != 0)
+        {
+            string why = $"sudo -n {arguments[0]} exited with {sudo.ExitCode}: {error.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This machine does not let the test run " + arguments[0] + " as root. " + why);
         }
     }
 

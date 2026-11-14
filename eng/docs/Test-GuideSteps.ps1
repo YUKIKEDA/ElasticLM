@@ -1409,7 +1409,20 @@ function Invoke-Page([string]$path) {
     $containersLeft = @()
 
     $suffix = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6))
-    $work = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-$suffix"
+    # design §10.2 (V1d24): a machine-scope folder is refused when a folder above it lets other users replace what is in it.
+    # On Linux and macOS /tmp does (every user can write it), so the work folder goes under .elm-test in the home folder, of
+    # mode 0755. On Windows a temporary folder can let other accounts modify it, so it goes under elm-test in the local
+    # application data.
+    if ($IsWindows) {
+        $tempRoot = Join-Path $env:LOCALAPPDATA 'elm-test'
+        New-Item -ItemType Directory -Force $tempRoot | Out-Null
+    }
+    else {
+        $tempRoot = Join-Path $HOME '.elm-test'
+        New-Item -ItemType Directory -Force $tempRoot | Out-Null
+        [IO.File]::SetUnixFileMode($tempRoot, [IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute')
+    }
+    $work = Join-Path ($tempRoot) "elm-steps-$suffix"
     # design §20.7 (the V1d2 Grill): the pages give elm-server the data folder server-data in the work folder, and the
     # server's administration socket, admin.sock in that folder, has a path limit of 103 bytes on macOS and 107 on Windows
     # and Linux (design §13.7). A temporary folder too long for it would stop the server with a line the pages do not show.

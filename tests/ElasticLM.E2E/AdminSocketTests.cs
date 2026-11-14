@@ -274,8 +274,9 @@ public sealed partial class AdminSocketTests
     /// - Linux or macOS, with sudo that lets this user run python3 as the user nobody without a password, as the CI runners
     ///   do; on GitHub Actions the test fails without it, elsewhere it is skipped and says so. Windows has a test of its
     ///   own, Server_AnotherWindowsUser_CanNeitherConnectNorListenInTheDataFolder.
-    /// - The vendor's folder under /tmp, which every user can enter (the temporary folder of macOS is the user's own), and
-    ///   the published elm-server running there with a server license; its data folder has mode 0700.
+    /// - The vendor's folder under a folder that sudo makes in /opt for this user, with mode 0755, so every user can enter it
+    ///   and the server's check of the folders above its data folder passes (/tmp, which every user can write, is refused;
+    ///   design §10.2, V1d24); the published elm-server running there with a server license; its data folder has mode 0700.
     /// - A python3 script that connects to a socket file, or binds one, and exits with 13 for PermissionError.
     ///
     /// Steps:
@@ -304,7 +305,7 @@ public sealed partial class AdminSocketTests
         static Task<(int Code, string Out, string Error)> AsNobody(string folder, string action, string path) =>
             Binaries.RunAsync("sudo", ["-n", "-u", "nobody", "python3", "-c", Script, action, path], folder);
 
-        (int probe, _, string probeError) = await AsNobody("/tmp", "list", "/tmp");
+        (int probe, _, string probeError) = await AsNobody("/", "list", "/");
         if (probe != 0)
         {
             string why = "sudo -n -u nobody python3 exited with " + probe + ": " + probeError.Trim();
@@ -312,16 +313,39 @@ public sealed partial class AdminSocketTests
             Assert.Skip("This machine does not let the test run python3 as another user. " + why);
         }
 
-        await using Vendor vendor = await Vendor.CreateInAsync("/tmp", "license", "lease");
+        string shared = "/opt/elm-e2e-" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4));
+        (int made, _, string madeError) = await Binaries.RunAsync(
+            "sudo",
+            ["-n", "sh", "-c", "mkdir -p /opt && mkdir -m 755 " + shared + " && chown " + Environment.UserName + " " + shared],
+            "/"
+        );
+        Assert.True(made == 0, "sudo could not make the shared folder: " + madeError.Trim());
+        try
+        {
+            await NobodyCannotReachTheServerAsync(shared, Script);
+        }
+        finally
+        {
+            await Binaries.RunAsync("sudo", ["-n", "rm", "-rf", shared], "/");
+        }
+    }
+
+    // The body of the test before, in the folder that sudo made.
+    private static async Task NobodyCannotReachTheServerAsync(string shared, string script)
+    {
+        Task<(int Code, string Out, string Error)> AsNobody(string folder, string action, string path) =>
+            Binaries.RunAsync("sudo", ["-n", "-u", "nobody", "python3", "-c", script, action, path], folder);
+
+        await using Vendor vendor = await Vendor.CreateInAsync(shared, "license", "lease");
         string license = vendor.File("server.elmlic");
         await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license);
         await server.IssueLicenseAsync(vendor, license);
         await server.StartAsync();
 
-        (int own, _, string ownError) = await Binaries.RunAsync("python3", ["-c", Script, "connect", server.AdminSocketPath], vendor.Folder);
-        (int listed, _, string listError) = await AsNobody("/tmp", "list", vendor.Folder);
-        (int connected, _, string connectError) = await AsNobody("/tmp", "connect", server.AdminSocketPath);
-        (int bound, _, string bindError) = await AsNobody("/tmp", "bind", Path.Combine(server.DataDirectory, "o.sock"));
+        (int own, _, string ownError) = await Binaries.RunAsync("python3", ["-c", script, "connect", server.AdminSocketPath], vendor.Folder);
+        (int listed, _, string listError) = await AsNobody("/", "list", vendor.Folder);
+        (int connected, _, string connectError) = await AsNobody("/", "connect", server.AdminSocketPath);
+        (int bound, _, string bindError) = await AsNobody("/", "bind", Path.Combine(server.DataDirectory, "o.sock"));
 
         Assert.True(own == 0, $"This user's connection exited with {own}: {ownError}");
         Assert.True(listed == 0, $"nobody could not list the vendor's folder (exit {listed}): {listError}");

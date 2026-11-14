@@ -21,14 +21,22 @@ namespace ElasticLM.Client;
 /// </remarks>
 internal static class ProtectedFiles
 {
+    // NT SERVICE\TrustedInstaller, the owner of C:\ on Windows 11.
+    private const string TrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
+
+    // DELETE, FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER, and GENERIC_ALL: what lets a holder rename, delete, or re-own a
+    // folder or what is in it. Creating in a folder is not among them.
+    private const int ReplaceRights = 0x10000 | 0x40 | 0x40000 | 0x80000 | 0x10000000;
+
     // design §10.2.
 
     /// <summary>
     /// Checks that a machine-scope folder can be read and changed only by Administrators, SYSTEM, and the user running this
-    /// program. On Windows the folder's owner and its parent's owner must be one of them, the folder must not
-    /// inherit its access list, and every rule that allows access must name one of them. On Linux and macOS the folder's
-    /// owner and its parent's owner must be the user running this program or root, the folder must give no access to group
-    /// or others, and its parent must not be writable by them.
+    /// program. On Windows the folder's owner must be one of them, the folder must not inherit its access list, and every
+    /// rule that allows access must name one of them; every folder above it must be owned by one of them or by
+    /// TrustedInstaller, and must let no one else delete, rename, or change the access to what is in it. On Linux and macOS
+    /// the folder must be owned by the user running this program or root and give no access to group or others; every
+    /// folder above it up to the root must be owned by that user or root and must not be writable by group or others.
     /// </summary>
     /// <param name="path">The folder.</param>
     /// <param name="scope">The scope; a user-scope folder is protected by the user's profile and is not checked.</param>
@@ -181,15 +189,34 @@ internal static class ProtectedFiles
             }
         }
 
-        if (
-            Path.GetDirectoryName(path) is string parent
-            && (
-                new DirectoryInfo(parent).GetAccessControl().GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier parentOwner
-                || !allowed.Contains(parentOwner)
-            )
-        )
+        // design §10.2 (V1d24): every folder above may be owned by TrustedInstaller too (C:\ is), and may let others create in
+        // it, as C:\ and ProgramData do; a rule that lets anyone else delete, rename, or change a folder above would let them
+        // put another folder in this one's place. Windows renames a folder only with DELETE on it or FILE_DELETE_CHILD on its
+        // parent (measured on Windows 11 build 26300, docs/rows/V1d24.md).
+        SecurityIdentifier[] trustedAbove = [.. allowed, new SecurityIdentifier(TrustedInstaller)];
+        for (string? above = Path.GetDirectoryName(path); above is not null; above = Path.GetDirectoryName(above))
         {
-            return $"its parent folder '{parent}' is owned by another user.";
+            string where = Path.GetDirectoryName(path) == above ? $"its parent folder '{above}'" : $"the folder '{above}' above it";
+            DirectorySecurity aboveSecurity = new DirectoryInfo(above).GetAccessControl();
+            if (aboveSecurity.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier aboveOwner || !trustedAbove.Contains(aboveOwner))
+            {
+                return $"{where} is owned by another user.";
+            }
+
+            foreach (
+                FileSystemAccessRule rule in aboveSecurity.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier))
+            )
+            {
+                if (
+                    rule.AccessControlType == AccessControlType.Allow
+                    && !rule.PropagationFlags.HasFlag(PropagationFlags.InheritOnly)
+                    && ((int)rule.FileSystemRights & ReplaceRights) != 0
+                    && !trustedAbove.Contains((SecurityIdentifier)rule.IdentityReference)
+                )
+                {
+                    return $"{where} lets {rule.IdentityReference.Value} delete or replace what is in it.";
+                }
+            }
         }
 
         return null;
@@ -221,17 +248,20 @@ internal static class ProtectedFiles
             return "it gives access to group or others (it must be mode 0700).";
         }
 
-        if (Path.GetDirectoryName(path) is string parent)
+        // design §10.2 (V1d24): every folder up to / as OpenSSH's safe_path checks them; who may write to one of them may
+        // rename what is in it. The sticky bit is not an exception, so a folder under /tmp is refused.
+        for (string? above = Path.GetDirectoryName(path); above is not null; above = Path.GetDirectoryName(above))
         {
-            uint parentOwner = UnixOwner.OwnerOf(parent);
-            if (parentOwner != self && parentOwner != Root)
+            string where = Path.GetDirectoryName(path) == above ? $"its parent folder '{above}'" : $"the folder '{above}' above it";
+            uint aboveOwner = UnixOwner.OwnerOf(above);
+            if (aboveOwner != self && aboveOwner != Root)
             {
-                return $"its parent folder '{parent}' is owned by another user.";
+                return $"{where} is owned by another user.";
             }
 
-            if ((File.GetUnixFileMode(parent) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
+            if ((File.GetUnixFileMode(above) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
             {
-                return $"its parent folder '{parent}' is writable by group or others.";
+                return $"{where} is writable by group or others.";
             }
         }
 
