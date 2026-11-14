@@ -180,6 +180,46 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// A machine-scope client is not created on a folder that others may change, though the folder holds no key yet: the
+    /// folder is checked before anything in it is read (design §10.2, V1d24, the owner's decision on the final review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A machine-scope folder without a key, opened to others (on Windows it inherits from its parent again; on Linux and
+    ///   macOS mode 0755).
+    ///
+    /// Steps:
+    /// - Create a machine-scope client of it.
+    ///
+    /// Expected:
+    /// - It fails with ELM_INSTALLATION_KEY_UNREADABLE and a message that says the folder is not safe for secrets; no client.
+    /// </remarks>
+    [Fact]
+    public async Task TryCreate_MachineScopeFolderWithoutAKeyOpenToOthers_Fails()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string folder = vendor.Folder("open");
+        Assert.True(new InstallationKeyStore(Product, KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        File.Delete(Path.Combine(folder, "installation.key"));
+        InstallationKeyStoreTests.OpenToOthers(folder);
+        var options = new ActivationClientOptions
+        {
+            ProductId = Product,
+            ServiceUrl = vendor.Service.Url,
+            Trust = TrustStore.Create([File.ReadAllText(vendor.Test.FilePath("root.pub.pem"))], []),
+            KeyScope = KeyScope.Machine,
+            DataDirectory = folder,
+            TimeProvider = vendor.Test.Time,
+        };
+
+        Assert.False(ActivationClient.TryCreate(options, out ActivationClient? client, out LicenseError? error));
+        Assert.Null(client);
+        Assert.Equal(ErrorCode.InstallationKeyUnreadable, error!.Code);
+        Assert.Contains("is not safe for secrets", error.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// A license key activates the installation; the kept file checks offline; a refresh moves the sequence number; another
     /// activation is refused while one is kept; a deactivation removes the file and keeps the key (design §12.6.2).
     /// </summary>

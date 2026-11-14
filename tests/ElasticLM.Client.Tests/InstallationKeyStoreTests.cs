@@ -1279,6 +1279,14 @@ public sealed class InstallationKeyStoreTests : IDisposable
         string folder = Path.Combine(_dir, "opened");
         Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
         created!.Dispose();
+        OpenToOthers(folder);
+        Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out _, out LicenseError? error));
+        Assert.Contains("is not safe for secrets", error!.Message, StringComparison.Ordinal);
+    }
+
+    // Opens a folder to other users: on Windows it inherits again from its parent; on Linux and macOS it gets mode 0755.
+    internal static void OpenToOthers(string folder)
+    {
         if (OperatingSystem.IsWindows())
         {
             var info = new DirectoryInfo(folder);
@@ -1298,8 +1306,5 @@ public sealed class InstallationKeyStoreTests : IDisposable
                 | UnixFileMode.OtherExecute;
             File.SetUnixFileMode(folder, Mode0755);
         }
-
-        Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out _, out LicenseError? error));
-        Assert.Contains("is not safe for secrets", error!.Message, StringComparison.Ordinal);
     }
 }

@@ -507,10 +507,12 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             await server.DisposeAsync();
             File.WriteAllBytes(Path.Combine(end, "admin.sock"), []);
 
+            Assert.Null(ProtectedFiles.CheckDirectory(end, KeyScope.Machine, out string resolvedEnd));
             int connections = 0;
             ValueTask<Stream> Swap(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
             {
                 connections++;
+                Assert.Equal(Path.Combine(resolvedEnd, "admin.sock"), endPoint.ToString());
                 Directory.Delete(second);
                 MakeLink(second, other);
                 throw new SocketException((int)SocketError.ConnectionRefused);
@@ -527,6 +529,68 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         {
             Directory.Delete(first);
             Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
+    /// A server license command on a data folder that others may change stops before it reads anything there: it does not
+    /// connect to the socket, though a stopped server's administrator token and a socket file are there (design §10.2,
+    /// V1d24, the owner's decision on the final review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a data folder where a server with a license issued by hand started and stopped,
+    ///   with a file at admin.sock, then opened to others (on Windows it inherits from its parent again; on Linux and macOS
+    ///   mode 0755). The commands' connection to the socket is counted and refused.
+    ///
+    /// Steps:
+    /// - elm server deactivate on that folder.
+    ///
+    /// Expected:
+    /// - Exit code 1; standard error starts "error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '"; no connection.
+    /// </remarks>
+    [Fact]
+    public async Task Deactivate_DataFolderOpenToOthers_StopsBeforeConnecting()
+    {
+        (TestService test, ElmService service, _) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string folder = _deployment.NewFolder();
+        string license = Path.Combine(folder, "server.elmlic");
+        File.WriteAllBytes(license, HandLicense(test, Deployment.ServerKeyId(folder)));
+        ElmServer server = await StartAsync(test, Settings(test, folder));
+        _owned.Remove(server);
+        await server.DisposeAsync();
+        File.WriteAllBytes(Path.Combine(folder, "admin.sock"), []);
+        OpenToOthers(folder);
+        int connections = 0;
+        ValueTask<Stream> Refuse(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
+        {
+            connections++;
+            throw new SocketException((int)SocketError.ConnectionRefused);
+        }
+
+        (int code, _, string error) = Run(
+            test,
+            ["server", "deactivate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
+            Refuse
+        );
+        Assert.Equal(1, code);
+        Assert.StartsWith("error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '", error, StringComparison.Ordinal);
+        Assert.Equal(0, connections);
+    }
+
+    // Opens a folder to other users: on Windows it inherits again from its parent; on Linux and macOS it gets mode 0755.
+    private static void OpenToOthers(string folder)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var info = new DirectoryInfo(folder);
+            System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
+            security.SetAccessRuleProtection(isProtected: false, preserveInheritance: true);
+            info.SetAccessControl(security);
+        }
+        else
+        {
+            File.SetUnixFileMode(folder, (UnixFileMode)0b111_101_101);
         }
     }
 
