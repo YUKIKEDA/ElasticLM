@@ -274,7 +274,7 @@ public sealed partial class AdminSocketTests
     /// - Linux or macOS, with sudo that lets this user run python3 as the user nobody without a password, as the CI runners
     ///   do; on GitHub Actions the test fails without it, elsewhere it is skipped and says so. Windows has a test of its
     ///   own, Server_AnotherWindowsUser_CanNeitherConnectNorListenInTheDataFolder.
-    /// - The vendor's folder under a folder that sudo makes in /opt for this user, with mode 0755, so every user can enter it
+    /// - The vendor's folder under a folder that sudo makes for this user, with mode 0755, in /var/lib (Linux) or /opt (macOS), so every user can enter it
     ///   and the server's check of the folders above its data folder passes (/tmp, which every user can write, is refused;
     ///   design §10.2, V1d24); the published elm-server running there with a server license; its data folder has mode 0700.
     /// - A python3 script that connects to a socket file, or binds one, and exits with 13 for PermissionError.
@@ -313,18 +313,21 @@ public sealed partial class AdminSocketTests
             Assert.Skip("This machine does not let the test run python3 as another user. " + why);
         }
 
-        string shared = "/opt/elm-e2e-" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4));
-        bool optExisted = Directory.Exists("/opt");
-
-        // The runner's /opt has a default access list that makes new folders group-writable (V1d24, PR #447); the shared
-        // folder drops every access list, so the folders the test makes in it follow the umask alone.
+        // The Ubuntu runner's /opt has mode 0777 and a default access list that gives everyone rwx (getfacl on the runner,
+        // V1d24, PR #447), so a server's folder under it is refused; /var/lib there is root's, of mode 0755. macOS has no
+        // /var/lib, and its /opt passes. The shared folder also drops any access list it took from its parent.
+        string above = OperatingSystem.IsMacOS() ? "/opt" : "/var/lib";
+        string shared = above + "/elm-e2e-" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4));
+        bool aboveExisted = Directory.Exists(above);
         (int made, _, string madeError) = await Binaries.RunAsync(
             "sudo",
             [
                 "-n",
                 "sh",
                 "-c",
-                "mkdir -p /opt && mkdir -m 755 "
+                "mkdir -p "
+                    + above
+                    + " && mkdir -m 755 "
                     + shared
                     + " && { ! command -v setfacl >/dev/null || setfacl -b -k "
                     + shared
@@ -343,9 +346,9 @@ public sealed partial class AdminSocketTests
         finally
         {
             await Binaries.RunAsync("sudo", ["-n", "rm", "-rf", shared], "/");
-            if (!optExisted)
+            if (!aboveExisted)
             {
-                await Binaries.RunAsync("sudo", ["-n", "rmdir", "/opt"], "/");
+                await Binaries.RunAsync("sudo", ["-n", "rmdir", above], "/");
             }
         }
     }
