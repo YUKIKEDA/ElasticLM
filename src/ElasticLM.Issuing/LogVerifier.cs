@@ -397,7 +397,7 @@ public static class LogVerifier
             }
             else if (previousName is not null && linkFirst is not null && state.FirstAuth is not null && linkFirst != state.FirstAuth)
             {
-                issue(1, LogIssueSeverity.Error, $"The file follows another file named '{previousName}': that file was replaced.");
+                issue(1, LogIssueSeverity.Error, $"The file follows another file named '{previousName}': that file was replaced or cut.");
             }
 
             state.Prev = string.Empty;

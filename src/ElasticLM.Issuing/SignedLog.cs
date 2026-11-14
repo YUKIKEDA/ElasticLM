@@ -51,8 +51,9 @@ public sealed partial class SignedLog : IDisposable
 {
     private const int TailSearchBytes = 1024 * 1024;
 
-    // The first signature line of a file is its second line, after a first line of at most 1 MiB.
-    private const int HeadSearchBytes = (2 * LogVerifier.MaxLineLength) + 2;
+    // The first signature line of a file comes after its first line and, in a borrow record (signed after every line), the
+    // first record carried forward: at most two lines of 1 MiB each before it (design §18.1).
+    private const int HeadSearchBytes = (3 * LogVerifier.MaxLineLength) + 3;
     private const string FileTimeFormat = "yyyyMMdd'T'HHmmssfff'Z'";
 
     private readonly string _directory;
@@ -651,11 +652,12 @@ public sealed partial class SignedLog : IDisposable
 
         // design §18.1 (V1d23): a reset names the file before it, the newest of the folder, with the hash of that file's
         // first signature line, so that the verifier finds the file missing or replaced. The hash is kept in memory for the
-        // file this log wrote, and read from the file's head otherwise; it is left out when that file cannot be read.
+        // file this log wrote once that line reached the disk; otherwise it is read from the file's head (a line written whose
+        // flush failed may be there), and it is left out when that file cannot be read.
         string? before = reset is not null && existing.Count > 0 ? existing[^1].Path : null;
         string? beforeFirst =
             before is null ? null
-            : Path.GetFileName(before) == _headFile ? _headAuth
+            : Path.GetFileName(before) == _headFile && _headAuth.Length > 0 ? _headAuth
             : ReadFirstAuth(before);
 
         _file = CreateFile(named);

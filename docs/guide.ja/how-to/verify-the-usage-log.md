@@ -74,7 +74,7 @@ error: usage-20260115T093000000Z.jsonl:2: The lines before the signature were ch
 NOT INTACT: 1 file(s), 0 event line(s)
 ```
 
-ほかのエラーには、たとえば、2 つのファイルのあいだのファイルの欠落、別のサーバーの鍵が署名したファイル、検証に通らないサーバーライセンスがある。ファイルの欠落は `The file follows '<name>', not '<previous file>': a file is missing.` と表示する。`<name>` は、そのファイルの最初の行が前のファイルとして名指すファイル（名指していなければ `nothing`）で、`<previous file>` は、その前に渡したファイルだ。名前は合っていても、前のファイルがその名前の別のファイルに置き換えられていれば、`The file follows another file named '<previous file>': that file was replaced.` と表示する。警告では検証は失敗しないが、何を調べればよいかがわかる。最後の署名のあとの行（クラッシュや書き換えで残ることがある）と、`chain.reset` で始め直したチェーン（その理由が付く）だ。すべてのエラーと警告は[利用ログの検証](../reference/logs.md#利用ログの検証)に挙げている。終了コード 2 は、コマンドを実行できなかったことを示す。たとえば、パスがファイルでもフォルダーでもないときだ。
+ほかのエラーには、たとえば、2 つのファイルのあいだのファイルの欠落、別のサーバーの鍵が署名したファイル、検証に通らないサーバーライセンスがある。ファイルの欠落は `The file follows '<name>', not '<previous file>': a file is missing.` と表示する。`<name>` は、そのファイルの最初の行が前のファイルとして名指すファイル（名指していなければ `nothing`）で、`<previous file>` は、その前に渡したファイルだ。名前は合っていても、前のファイルがその名前の別のファイルに置き換えられていれば、`The file follows another file named '<previous file>': that file was replaced or cut.` と表示する。警告では検証は失敗しないが、何を調べればよいかがわかる。最後の署名のあとの行（クラッシュや書き換えで残ることがある）と、`chain.reset` で始め直したチェーン（その理由が付く）だ。すべてのエラーと警告は[利用ログの検証](../reference/logs.md#利用ログの検証)に挙げている。終了コード 2 は、コマンドを実行できなかったことを示す。たとえば、パスがファイルでもフォルダーでもないときだ。
 
 ## 書き終えたファイルのコピーを取っておく
 

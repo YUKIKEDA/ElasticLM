@@ -186,14 +186,14 @@ Errors:
 - A first line that is not `chain.start` or `chain.reset`, or a chain line after the first line.
 - Another stream, key material that does not verify, or a signature that is not by the file's key.
 - A `digest` or line count that does not match, a break in `prev` or `n`, or no old-key signature after `key.changed`.
-- A missing or cut file between files. This includes the file before one that starts with `chain.reset`, whose first line names that file and the hash of its first `auth` line: a file that was removed, or replaced by another file under its name, is found. The message is `The file follows '<name>', not '<previous file>': a file is missing.`, where `<name>` is the file the first line names, or `nothing` when it names none, or `The file follows another file named '<previous file>': that file was replaced.`.
+- A missing or cut file between files. Before a file that starts with `chain.reset`, whose first line names the previous file and the hash of its first `auth` line, this covers a previous file that was deleted, or another file renamed to its name. The message is `The file follows '<name>', not '<previous file>': a file is missing.`, where `<name>` is the file the first line names, or `nothing` when it names none, or `The file follows another file named '<previous file>': that file was replaced or cut.`.
 - A file that continues with another key than the previous file's last key, under another license.
 - Files of a server and of `elm-service` mixed in one chain.
 - For `elm-service`: a file that names another node, a first line without `node` (an error even without `--node`), or a `key.changed` line.
 
 Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle (reported only when the file was read to its end, without an earlier error), a server that moved (another key of the same server license), an `elm-service` signing key that was replaced, and a file in a folder whose name has the form of a log file's name but no real date and time, which is not verified.
 
-Deleting or cutting the newest file, which has no next file, is not detected.
+Deleting or cutting the newest file, which has no next file, is not detected. Nor is cutting the file before a `chain.reset` at one of its signatures: a `chain.reset` does not name the previous file's last signature. When the `chain.reset` could not read the previous file (its `prev` has no `first`), another file renamed to that file's name is not detected either.
 
 ## Borrow record (elm-server)
 

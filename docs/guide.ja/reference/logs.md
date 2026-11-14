@@ -186,14 +186,14 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 - `chain.start` でも `chain.reset` でもない最初の行、最初の行より後にあるチェーンの行。
 - 別のストリーム、検証に通らない鍵の情報、ファイルの鍵によらない署名。
 - 一致しない `digest` や行数、`prev` や `n` の途切れ、`key.changed` のあとに古い鍵の署名がないこと。
-- ファイルとファイルのあいだで欠けたファイルや途中で切られたファイル。`chain.reset` で始まるファイルの直前のファイルも含む（`chain.reset` の行も、前のファイルの名前と、その最初の `auth` 行のハッシュを持つため）。消されたファイルも、その名前に変えた別のファイルに置き換えられたファイルも見つかる。メッセージは `The file follows '<name>', not '<previous file>': a file is missing.`（`<name>` は最初の行が名指すファイル。名指していなければ `nothing`）か、`The file follows another file named '<previous file>': that file was replaced.` である。
+- ファイルとファイルのあいだで欠けたファイルや途中で切られたファイル。`chain.reset` で始まるファイルの直前では、消された前のファイルと、前のファイルの名前に変えた別のファイルが、これに当たる（`chain.reset` の行は、前のファイルの名前と、その最初の `auth` 行のハッシュを持つため）。メッセージは `The file follows '<name>', not '<previous file>': a file is missing.`（`<name>` は最初の行が名指すファイル。名指していなければ `nothing`）か、`The file follows another file named '<previous file>': that file was replaced or cut.` である。
 - 別のライセンスのもとで、前のファイルの最後の鍵とは違う鍵で続くファイル。
 - 1 つのチェーンに混ざったサーバーのファイルと `elm-service` のファイル。
 - `elm-service` では、別のノードを名乗るファイル、`node` のない最初の行（`--node` を指定しなくてもエラー）、`key.changed` の行。
 
 警告になるのは次のものだ。理由を添えた `chain.reset`、最後の署名より後の行、途中で切れた最後の行（ファイルを最後まで読み、それより前にエラーがなかったときだけ出る）、移動したサーバー（同じサーバーライセンスの別の鍵）、置き換えられた `elm-service` の署名鍵、フォルダーの中にあって、名前がログのファイルの形でも実在する日時を表していないファイル（検証しない）。
 
-次のファイルがない最新のファイルを削除したり途中で切ったりしても、検出されない。
+次のファイルがない最新のファイルを削除したり途中で切ったりしても、検出されない。`chain.reset` の直前のファイルを、その署名のどれかの位置で切っても、検出されない（`chain.reset` の行は、前のファイルの最後の署名を名指さないため）。`chain.reset` が前のファイルを読めなかったとき（`prev` に `first` がないとき）は、別のファイルをそのファイルの名前に変えても、検出されない。
 
 ## elm-server の借用の記録
 

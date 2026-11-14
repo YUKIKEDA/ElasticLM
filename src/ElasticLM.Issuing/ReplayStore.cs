@@ -8,7 +8,7 @@ public enum ReplayCheck
     /// <summary>The <c>jti</c> was new and is now recorded.</summary>
     Accepted,
 
-    /// <summary>The <c>jti</c> was already used while its nonce is valid.</summary>
+    /// <summary>The <c>jti</c> was already used, and its record is still kept.</summary>
     Replayed,
 
     /// <summary>The store is full; the request is refused with <c>ELM_SERVER_BUSY</c>.</summary>
@@ -16,8 +16,9 @@ public enum ReplayCheck
 }
 
 /// <summary>
-/// Records the <c>jti</c> of accepted proofs until their nonce expires (design §12.2 rule 5). On premises it lives in memory;
-/// the hosted service keeps it in its database (M4).
+/// Records the <c>jti</c> of accepted proofs until after their nonce expires, by a margin that covers the time between
+/// checking the nonce and recording the <c>jti</c> (design §12.2 rule 5). On premises it lives in memory; the hosted service
+/// keeps it in its database (M4).
 /// </summary>
 public interface IReplayStore
 {
@@ -25,7 +26,7 @@ public interface IReplayStore
     /// Records a <c>jti</c> unless it was already recorded.
     /// </summary>
     /// <param name="jti">The proof's token ID.</param>
-    /// <param name="expiresAt">When the record may be dropped (the nonce's expiry).</param>
+    /// <param name="expiresAt">The nonce's expiry; the record is kept until a margin after it.</param>
     /// <returns>The result.</returns>
     ReplayCheck TryUse(string jti, DateTimeOffset expiresAt);
 }

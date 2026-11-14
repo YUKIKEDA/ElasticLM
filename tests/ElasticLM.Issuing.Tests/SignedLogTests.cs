@@ -793,14 +793,18 @@ public sealed class SignedLogTests : IDisposable
     ///
     /// Steps:
     /// - Read the third file's first line; verify the three files; the first and the third; the third and the hand-made one.
-    ///   Remove the hand-made file and the second file, give the first file the second's name, and verify the folder.
+    ///   Verify the three files while the test holds the second file open for itself alone; cut the second file to its first
+    ///   line, verify the three, and put it back. Remove the hand-made file and the second file, give the first file the
+    ///   second's name, and verify the folder.
     ///
     /// Expected:
     /// - The first line holds "prev":{"file":"(second file)","first":(the SHA-256 of the second file's second line, its first
     ///   signature, worked out here)}; the three are intact; then "The file follows '(second)', not '(first)': a file is
     ///   missing." as the only error (before V1d23 the two passed with only the reset's warning); then "The file follows
-    ///   'nothing', not '(third)': a file is missing." as the only error; then "The file follows another file named
-    ///   '(second)': that file was replaced." as the only error (with the name alone, the renamed file passed).
+    ///   'nothing', not '(third)': a file is missing." as the only error; then only "The file cannot be read: …" on line 0
+    ///   of the second file (the reset is not judged against the first file); then "The file follows another file named
+    ///   '(second)': that file was replaced or cut." as the only error, for the cut file and for the renamed one (with the
+    ///   name alone, the renamed file passed).
     /// </remarks>
     [Fact]
     public void Verify_FileRemovedBeforeAReset_IsFoundMissing()
@@ -852,12 +856,33 @@ public sealed class SignedLogTests : IDisposable
         LogIssue nothing = Assert.Single(VerifiedLog.Of([files[2], bare], _trust, null, "usage").Issues, i => i.Severity == LogIssueSeverity.Error);
         Assert.Equal($"The file follows 'nothing', not '{third}': a file is missing.", nothing.Message);
 
+        // A second file that cannot be read is reported as such, and the reset after it is not judged against the first file.
+        using (new FileStream(files[1], FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+        {
+            LogIssue unreadable = Assert.Single(
+                VerifiedLog.Of([files[0], files[1], files[2]], _trust, null, "usage").Issues,
+                i => i.Severity == LogIssueSeverity.Error
+            );
+            Assert.Equal((second, 0), (unreadable.File, unreadable.Line));
+            Assert.StartsWith("The file cannot be read: ", unreadable.Message, StringComparison.Ordinal);
+        }
+
+        // A second file cut to its first line, before its first signature, no longer matches the reset's prev.first.
+        string whole = File.ReadAllText(files[1]);
+        File.WriteAllText(files[1], whole[..(whole.IndexOf('\n', StringComparison.Ordinal) + 1)]);
+        LogIssue cut = Assert.Single(
+            VerifiedLog.Of([files[0], files[1], files[2]], _trust, null, "usage").Issues,
+            i => i.Severity == LogIssueSeverity.Error
+        );
+        Assert.Equal($"The file follows another file named '{second}': that file was replaced or cut.", cut.Message);
+        File.WriteAllText(files[1], whole);
+
         // The owner's answer K1: removing the second file and giving the first its name passes the name alone.
         File.Delete(bare);
         File.Delete(files[1]);
         File.Move(files[0], files[1]);
         LogIssue replaced = Assert.Single(Verify2().Issues, i => i.Severity == LogIssueSeverity.Error);
-        Assert.Equal($"The file follows another file named '{second}': that file was replaced.", replaced.Message);
+        Assert.Equal($"The file follows another file named '{second}': that file was replaced or cut.", replaced.Message);
     }
 
     /// <summary>
