@@ -9,9 +9,10 @@ using ElasticLM.Licensing;
 namespace ElasticLM.Service.Tests;
 
 /// <summary>
-/// The answer to a device request: its status, body, the jti of the proof it carried, and the fresh nonce it returned.
+/// The answer to a device request: its status, body, the jti of the proof it carried, the fresh nonce it returned, and its
+/// Retry-After header as sent.
 /// </summary>
-internal sealed record DeviceAnswer(HttpStatusCode Status, string Text, string Jti, string? Nonce)
+internal sealed record DeviceAnswer(HttpStatusCode Status, string Text, string Jti, string? Nonce, string? RetryAfter = null)
 {
     /// <summary>Gets the body as JSON.</summary>
     public JsonElement Json => JsonDocument.Parse(Text).RootElement.Clone();
@@ -125,7 +126,8 @@ internal sealed class TestDevice : IDisposable
         using HttpResponseMessage response = await _http.SendAsync(request, TestContext.Current.CancellationToken);
         string text = await response.Content.ReadAsStringAsync(TestContext.Current.CancellationToken);
         string? fresh = response.Headers.TryGetValues("ELM-Nonce", out IEnumerable<string>? values) ? values.Single() : null;
-        return new DeviceAnswer(response.StatusCode, text, JtiOf(made), fresh);
+        string? wait = response.Headers.TryGetValues("Retry-After", out IEnumerable<string>? waits) ? waits.Single() : null;
+        return new DeviceAnswer(response.StatusCode, text, JtiOf(made), fresh, wait);
     }
 
     public Task<DeviceAnswer> ActivateAsync(

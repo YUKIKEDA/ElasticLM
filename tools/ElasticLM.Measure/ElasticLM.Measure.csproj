@@ -8,5 +8,6 @@
       published elm-server and elm-service that run.ps1 starts.
     -->
     <ProjectReference Include="..\..\src\ElasticLM.Client\ElasticLM.Client.csproj" />
+    <InternalsVisibleTo Include="ElasticLM.Measure.Tests" />
   </ItemGroup>
 </Project>

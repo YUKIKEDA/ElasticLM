@@ -267,7 +267,7 @@ elm admin request POST /v1/admin/policies --body trial-policy.json --url http://
 `elm` prints the policy with every setting, the defaults included:
 
 ```text
-{"id":"01960000-0000-7000-8000-000000000201","productId":"01960000-0000-7000-8000-000000000101","name":"Trial","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
+{"id":"01960000-0000-7000-8000-000000000201","productId":"01960000-0000-7000-8000-000000000101","name":"Trial","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
 ```
 
 Its `id` is `<trial-policy-id>` below. The product offers a trial only once it names a trial policy, so set the product's `trialPolicyId`:
@@ -427,7 +427,7 @@ The first `dotnet run` builds the app, which takes some seconds with no output. 
 trial: pro
 ```
 
-The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial.
+The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial. [The security model](../explanation/security-model.md#on-the-licensees-machine) says how far this holds.
 
 Now activate with the license key, in the same data folder. Replace `<license-key>` with the key from the license's answer:
 

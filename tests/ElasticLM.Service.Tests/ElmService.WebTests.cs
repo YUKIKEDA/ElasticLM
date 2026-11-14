@@ -6,8 +6,11 @@ using System.Text.Json;
 using ElasticLM.Server.Tests;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Time.Testing;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace ElasticLM.Service.Tests;
 
@@ -568,6 +571,253 @@ public sealed class ElmServiceWebTests
         }
 
         Assert.Equal(0L, await test.ScalarAsync("SELECT COUNT(*) FROM admin_sessions"));
+    }
+
+    /// <summary>
+    /// A return to the callback with an error in its query, or with a rewritten correlation cookie, leaves none of the
+    /// request's text in the operational log: the OpenIdConnect handler's category is not written, and the service's reason
+    /// for the refusal, a warning, is a registered error code or a fixed sentence (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in whose log is recorded from the level of the case on: Information, the default, and
+    ///   Trace, the lowest.
+    ///
+    /// Steps:
+    /// - For each query, start a sign-in at /auth/login and come back to the callback with that query and the state the
+    ///   login gave. Each query has an error_description "elm-marker-description" and an error_uri
+    ///   "https://idp.example/elm-marker-uri", each of the two followed by CR LF and "fail: elm-forged-line". The errors:
+    ///   the 16 codes of RFC 6749 §4.1.2.1 and OpenID Connect Core 1.0 §3.1.2.6 (access_denied among them); Server_Error,
+    ///   LOGIN_REQUIRED, "login_required " with a space after it, invalid_grant (a code of the token endpoint), and
+    ///   "elm-marker-error" followed by the same CR LF and line; an empty error followed by a second error
+    ///   "elm-marker-second" with CR LF; and the name Error in capitals with "elm-marker-case" and CR LF.
+    /// - Start one more sign-in, rewrite the value of its correlation cookie to "elm-marker-cookie-" and 1,000 letters, and
+    ///   finish it at the provider.
+    ///
+    /// Expected:
+    /// - The 400 page for each.
+    /// - The service's refusal reason, at the level Warning: "the identity provider answered" and the code for each of the
+    ///   16 codes; the fixed sentence for an error code that is not registered for each other query; "Correlation failed."
+    ///   for the cookie.
+    /// - No entry of any category holds "elm-marker" or "elm-forged-line", and no entry has the category
+    ///   Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler.
+    /// </remarks>
+    [Theory]
+    [InlineData(LogLevel.Information)]
+    [InlineData(LogLevel.Trace)]
+    public async Task Callback_ErrorOrCorrelationCookie_LeavesNoRequestTextInTheLog(LogLevel level)
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new RecordingLoggerProvider();
+        ServiceHostOptions host = test.HostOptions(log: log);
+        await using ElmService service = await ElmService.StartAsync(
+            test.Settings(s => s with { Oidc = idp.Settings(), Web = FakeIdp.WebSettings(Kek) }),
+            new ServiceHostOptions
+            {
+                Time = host.Time,
+                Environment = host.Environment,
+                MinimumLogLevel = level,
+                LoggerProvider = log,
+            },
+            TestContext.Current.CancellationToken
+        );
+        const string Forged = "\r\nfail: elm-forged-line";
+        const string Unregistered = "the identity provider answered an error code that is not registered";
+        string details =
+            "&error_description="
+            + Uri.EscapeDataString("elm-marker-description" + Forged)
+            + "&error_uri="
+            + Uri.EscapeDataString("https://idp.example/elm-marker-uri" + Forged);
+
+        // RFC 6749 §4.1.2.1 and OpenID Connect Core 1.0 §3.1.2.6.
+        string[] registered =
+        [
+            "invalid_request",
+            "unauthorized_client",
+            "access_denied",
+            "unsupported_response_type",
+            "invalid_scope",
+            "server_error",
+            "temporarily_unavailable",
+            "interaction_required",
+            "login_required",
+            "account_selection_required",
+            "consent_required",
+            "invalid_request_uri",
+            "invalid_request_object",
+            "request_not_supported",
+            "request_uri_not_supported",
+            "registration_not_supported",
+        ];
+        var cases = new List<(string Query, string Reason)>();
+        cases.AddRange(registered.Select(code => ("error=" + code + details, "the identity provider answered " + code)));
+        cases.AddRange(
+            new[] { "Server_Error", "LOGIN_REQUIRED", "login_required ", "invalid_grant", "elm-marker-error" + Forged }.Select(error =>
+                ("error=" + Uri.EscapeDataString(error) + details, Unregistered)
+            )
+        );
+        cases.Add(("error=&error=" + Uri.EscapeDataString("elm-marker-second" + Forged) + details, Unregistered));
+        cases.Add(("Error=" + Uri.EscapeDataString("elm-marker-case" + Forged) + details, Unregistered));
+        foreach ((string query, string reason) in cases)
+        {
+            using var browser = new WebBrowser();
+            using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+            Dictionary<string, string> authorize = Query(login.Headers.Location!);
+            var callback = new Uri(authorize["redirect_uri"] + "?" + query + "&state=" + Uri.EscapeDataString(authorize["state"]));
+            await AssertPageAsync(await browser.SendAsync(HttpMethod.Get, callback), HttpStatusCode.BadRequest, SignInFailed);
+            Assert.Equal("An admin UI sign-in was refused: " + reason, LastRefusal(log));
+        }
+
+        using (var browser = new WebBrowser())
+        {
+            using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+            Dictionary<string, string> jar = browser.Cookies(service.Url);
+            string correlation = jar.Keys.Single(k => k.StartsWith("__Host-elm-correlation.", StringComparison.Ordinal));
+            jar[correlation] = "elm-marker-cookie-" + new string('c', 1_000);
+            using HttpResponseMessage back = await browser.FollowAsync(login);
+            await AssertPageAsync(await browser.FollowAsync(back), HttpStatusCode.BadRequest, SignInFailed);
+            Assert.Equal("An admin UI sign-in was refused: Correlation failed.", LastRefusal(log));
+        }
+
+        IReadOnlyList<(string Category, LogLevel Level, string Message)> entries = log.Entries;
+        Assert.Equal(cases.Count + 1, entries.Count(e => e.Message.StartsWith("An admin UI sign-in was refused: ", StringComparison.Ordinal)));
+        Assert.DoesNotContain(entries, e => e.Message.Contains("elm-marker", StringComparison.Ordinal));
+        Assert.DoesNotContain(entries, e => e.Message.Contains("elm-forged-line", StringComparison.Ordinal));
+        Assert.DoesNotContain(entries, e => e.Category == "Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler");
+    }
+
+    /// <summary>
+    /// The reason of a failure that is not an error in the callback's query holds the messages of its inner exceptions, and
+    /// the reason of such an error holds only its code (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Requests to the callback with the query "state=s" and with the query "error=server_error&amp;state=s".
+    ///
+    /// Steps:
+    /// - Make the reason for: an exception "outer" with an inner exception "middle" that has an inner exception "inner",
+    ///   with the first query; an OpenIdConnectProtocolException "outer" with an inner exception "inner", with the first
+    ///   query; the same exception whose error is server_error, with the second query; no exception.
+    ///
+    /// Expected:
+    /// - "outer ---> middle ---> inner"; "outer ---> inner"; "the identity provider answered server_error"; "the sign-in
+    ///   failed".
+    /// </remarks>
+    [Fact]
+    public void RefusalReason_InnerExceptions_AreJoinedUnlessTheQueryHasAnError()
+    {
+        var plain = new DefaultHttpContext();
+        plain.Request.QueryString = new QueryString("?state=s");
+        var error = new DefaultHttpContext();
+        error.Request.QueryString = new QueryString("?error=server_error&state=s");
+        var protocol = new OpenIdConnectProtocolException("outer", new InvalidOperationException("inner"));
+        protocol.Data["error"] = "server_error";
+
+        Assert.Equal(
+            "outer ---> middle ---> inner",
+            ElmService.RefusalReason(new InvalidOperationException("outer", new IOException("middle", new TimeoutException("inner"))), plain.Request)
+        );
+        Assert.Equal("outer ---> inner", ElmService.RefusalReason(protocol, plain.Request));
+        Assert.Equal("the identity provider answered server_error", ElmService.RefusalReason(protocol, error.Request));
+        Assert.Equal("the sign-in failed", ElmService.RefusalReason(null, plain.Request));
+    }
+
+    /// <summary>
+    /// A provider out of reach at the login and a token endpoint that refuses the connection at the callback give the 503
+    /// page, and each warning that the identity provider cannot be reached holds the messages of the inner exceptions
+    /// (design §15.3, §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in whose log is recorded from Information up.
+    ///
+    /// Steps:
+    /// - GET /auth/login while the provider answers 503, so that its discovery document cannot be read.
+    /// - Start a sign-in and let the provider answer with a code; stop the provider; come back to the callback.
+    ///
+    /// Expected:
+    /// - The 503 page both times; two warnings "The identity provider cannot be reached for the admin UI's sign-in: …"
+    ///   whose reasons hold " ---> ", the mark between an exception's message and its inner exception's (the document that
+    ///   cannot be read, the socket's refusal).
+    /// </remarks>
+    [Fact]
+    public async Task SignIn_ProviderOutOfReach_LogsTheInnerReasons()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await StartAsync(test, idp, log: log);
+
+        const string Unreachable = "The identity provider cannot be reached.\n";
+        idp.Available = false;
+        using (var first = new WebBrowser())
+        {
+            await AssertPageAsync(
+                await first.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login")),
+                HttpStatusCode.ServiceUnavailable,
+                Unreachable
+            );
+        }
+
+        idp.Available = true;
+        using var browser = new WebBrowser();
+        using HttpResponseMessage login = await browser.SendAsync(HttpMethod.Get, new Uri(service.Url, "auth/login"));
+        using HttpResponseMessage back = await browser.FollowAsync(login);
+        await idp.DisposeAsync();
+        await AssertPageAsync(await browser.FollowAsync(back), HttpStatusCode.ServiceUnavailable, Unreachable);
+
+        (string Category, LogLevel Level, string Message)[] warnings =
+        [
+            .. log.Entries.Where(e =>
+                e.Message.StartsWith("The identity provider cannot be reached for the admin UI's sign-in: ", StringComparison.Ordinal)
+            ),
+        ];
+        Assert.Equal(2, warnings.Length);
+        Assert.All(
+            warnings,
+            w =>
+            {
+                Assert.Equal(LogLevel.Warning, w.Level);
+                Assert.Contains(" ---> ", w.Message, StringComparison.Ordinal);
+            }
+        );
+
+        // The message of the discovery's failure (IDX20803) holds its inner exception with the type's name after " ---> ";
+        // the service's own joining puts the inner message (IDX20804) right after it.
+        Assert.Contains(" ---> IDX20804: ", warnings[0].Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// An error that the token endpoint answers, which is the provider's text and not the request's, stays in the reason of
+    /// the refusal (design §18.3, V1d4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service with the web sign-in whose client secret the provider does not take, its log recorded from Information
+    ///   up.
+    ///
+    /// Steps:
+    /// - Sign in: the provider's token endpoint answers 401 with the error invalid_client.
+    ///
+    /// Expected:
+    /// - The 400 page, and the reason "Message contains error: 'invalid_client', error_description: 'error_description is
+    ///   null', error_uri: 'error_uri is null'.".
+    /// </remarks>
+    [Fact]
+    public async Task Callback_TokenEndpointRefusesTheClient_KeepsItsAnswerInTheReason()
+    {
+        await using TestService test = new();
+        await using FakeIdp idp = await FakeIdp.StartAsync(test.Time);
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await StartAsync(test, idp, s => s with { Web = s.Web! with { ClientSecret = "another-secret-test-only" } }, log: log);
+
+        await AssertPageAsync(await TrySignInAsync(service), HttpStatusCode.BadRequest, SignInFailed);
+        Assert.Equal(
+            "An admin UI sign-in was refused: Message contains error: 'invalid_client', error_description: 'error_description is null', "
+                + "error_uri: 'error_uri is null'.",
+            LastRefusal(log)
+        );
     }
 
     /// <summary>
@@ -1443,6 +1693,16 @@ public sealed class ElmServiceWebTests
         }
 
         return (status, type, body);
+    }
+
+    // The last refusal's message, which the service writes as a warning (design §18.3, V1d4b).
+    private static string LastRefusal(RecordingLoggerProvider log)
+    {
+        (string _, LogLevel level, string message) = log.Entries.Last(e =>
+            e.Message.StartsWith("An admin UI sign-in was refused:", StringComparison.Ordinal)
+        );
+        Assert.Equal(LogLevel.Warning, level);
+        return message;
     }
 
     private static async Task AssertPageAsync(HttpResponseMessage answer, HttpStatusCode status, string text)

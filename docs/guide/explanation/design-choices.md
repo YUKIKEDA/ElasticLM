@@ -88,7 +88,7 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 **Rejected.** A secret shared by every client, used for an HMAC over the request: one customer could take it out of the app and sign requests for anyone. HTTP Message Signatures (RFC 9421): building its signature base (structured fields, RFC 8941) correctly with the base class library alone is much harder, and the proxy interoperability it offers is not a requirement.
 
-**Cost.** The installation key is the device's identity. A device administrator who copies the key and the state files to another machine copies the identity; ElasticLM notices only when both copies talk to a server (see the next sections).
+**Cost.** The installation key is the device's identity. A device administrator (or, with the default user scope, the device's user) who copies the key and the state files to another machine copies the identity; ElasticLM notices only when both copies talk to a server (see the next sections).
 
 ## Machine IDs are hints, not identities
 
@@ -148,7 +148,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 - The server license expires (by default after 30 days) and is refreshed from `elm-service`. Each refresh checks the server's `seq`, so a copied server is found.
 - The client accepts the server's TLS certificate when the operating system trusts it, or when its key matches the key the server license names. The server's administrator decides which, not the app developer, who cannot know.
 
-**Reason.** A server whose key has been taken can sign leases only inside the server license's bounds, and a copied server is found at its next refresh.
+**Reason.** A server whose key has been taken can sign leases only inside the server license's bounds, and a copied server is found at its next refresh. The bounds hold for each lease, not for their number: with the key, leases can be signed for more seats than the server license grants, until the vendor stops renewing the server license and its expiry plus grace period pass ([the security model](security-model.md#on-the-customers-license-server)).
 
 **Rejected.** A long-lived server license, which would let a taken key or a copied server be used for good.
 
@@ -211,7 +211,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 | Signed, not encrypted | License contents are readable. | Keep private data out of `meta`. |
 | Certificates judged at `iat` | A leaked signing key can backdate tokens. | Keep the revoked key list in the trust store current, and ship app updates when a key leaks. |
 | Short-lived tokens | Revocation waits for the token's end; tokens without an expiry cannot be revoked. | Choose `tokenLifetime` and `gracePeriod` for how fast revocation must work; avoid tokens without an expiry. |
-| Installation key as identity | A copy made by a device administrator is the same device. | Use `deny` where copying matters; know that offline-only copies are not found. |
+| Installation key as identity | A copy made by a device administrator (or, with the default user scope, the device's user) is the same device. | Use `deny` where copying matters; know that offline-only copies are not found. |
 | Leases in memory on `elm-server` | New users can wait up to one lease length after a restart. | Run the server under a service manager; pick `leaseDuration` with both waits in mind. |
 | Server license with an expiry | A server that cannot refresh stops lending. | Let the server refresh online, or carry refresh files in time. |
 | No Authenticode or Developer ID signature in v1 | The operating system cannot name the publisher. | Check downloads against `SHA256SUMS` and their attestations. |

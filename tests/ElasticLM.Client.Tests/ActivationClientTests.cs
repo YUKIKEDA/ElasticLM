@@ -426,11 +426,12 @@ public sealed partial class ActivationClientTests
     ///
     /// Steps:
     /// - With a client that does not take trials as standard: start a trial; start another; lose the answer of the license
-    ///   key's activation; activate it again; check as Standard.
+    ///   key's activation; refresh the trial, which keeps the lost request's aim (V1d5a); activate it again; check as
+    ///   Standard.
     ///
     /// Expected:
-    /// - Activated trial; Failed ELM_INVALID_STATE; the network error with the state still Active; Activated with the
-    ///   license's ID; Valid with that ID.
+    /// - Activated trial; Failed ELM_INVALID_STATE; the network error with the state still Active; the refreshed trial;
+    ///   Activated with the license's ID; Valid with that ID.
     /// </remarks>
     [Fact]
     public async Task Trial_ThenPurchase_ReplacesTheTrial()
@@ -446,6 +447,7 @@ public sealed partial class ActivationClientTests
         lose.Armed = true;
         Assert.Equal(ErrorCode.NetworkError, Failed(await client.ActivateAsync(key, Cancel)).Code);
         Assert.Equal(ActivationState.Active, client.State);
+        Assert.Equal(LicenseKind.Trial, Activated(await client.RefreshAsync(Cancel)).Kind);
         Assert.Equal(licenseId, Activated(await client.ActivateAsync(key, Cancel)).LicenseId);
         Assert.Equal(licenseId, Assert.IsType<LicenseVerificationResult.Valid>(client.Check("core", null)).License.LicenseId);
     }

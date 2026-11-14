@@ -267,7 +267,7 @@ elm admin request POST /v1/admin/policies --body trial-policy.json --url http://
 `elm` は、既定の値を含むすべての設定とともにポリシーを表示する。
 
 ```text
-{"id":"01960000-0000-7000-8000-000000000201","productId":"01960000-0000-7000-8000-000000000101","name":"Trial","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
+{"id":"01960000-0000-7000-8000-000000000201","productId":"01960000-0000-7000-8000-000000000101","name":"Trial","licenseKind":"trial","binding":"nodeLocked","maxActivations":1,"deactivationLimit":null,"expirationBasis":"fromIssue","duration":null,"tokenLifetime":2592000,"refreshWindow":1728000,"gracePeriod":0,"fingerprintMatching":"any","cloneStrategy":"deny","floating":"none","leaseDuration":600,"overage":null,"borrowLimit":null,"borrowReturnLimit":2,"clientInfoStrategy":"none","trialDuration":1209600,"trialDailyLimit":1000,"createdAt":"2026-01-15T09:30:00Z","updatedAt":"2026-01-15T09:30:00Z"}
 ```
 
 `id` が、下の `<trial-policy-id>` だ。製品は、トライアルのポリシーを指定しているときだけトライアルを提供するので、製品の `trialPolicyId` を設定する。
@@ -427,7 +427,7 @@ dotnet run --project app -- http://127.0.0.1:8080 root.pub.pem client-data
 trial: pro
 ```
 
-2 行目はトライアルの終わりで、今から 14 日後の UTC の日時だ。たとえば `expires: 2026-01-29 09:30:00Z` のようになる。サービスは、1 つの製品のトライアルを各マシンに 1 回だけ与える。そのために、トライアルと一緒にマシンフィンガープリントを記録する。
+2 行目はトライアルの終わりで、今から 14 日後の UTC の日時だ。たとえば `expires: 2026-01-29 09:30:00Z` のようになる。サービスは、1 つの製品のトライアルを各マシンに 1 回だけ与える。そのために、トライアルと一緒にマシンフィンガープリントを記録する。これがどこまで守られるかは[セキュリティモデル](../explanation/security-model.md#ライセンシーのマシン上)にある。
 
 次に、同じデータフォルダーで、ライセンスキーを使ってアクティベーションする。`<license-key>` は、ライセンスのレスポンスにあったキーに置き換える。
 

@@ -563,6 +563,7 @@ internal sealed partial class ElmService
             p.BorrowReturnLimit,
             p.ClientInfoStrategy,
             p.TrialDuration,
+            p.TrialDailyLimit,
             AdminApi.Time(p.CreatedAt),
             AdminApi.Time(p.UpdatedAt)
         );

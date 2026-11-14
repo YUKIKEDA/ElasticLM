@@ -1,4 +1,5 @@
 using System.Buffers.Text;
+using System.Collections.Frozen;
 using System.Data.Common;
 using System.Net;
 using System.Security.Claims;
@@ -40,6 +41,38 @@ internal sealed partial class ElmService
     private const string CallbackPath = "/auth/callback";
     private const string LogoutPath = "/auth/logout";
     private const int SessionValueLength = 43;
+
+    // design §18.3 (V1d4b): the reason written for an error in the callback's query when its code is not one of these.
+    private const string UnregisteredError = "the identity provider answered an error code that is not registered";
+
+    /// <summary>
+    /// The category of the OpenIdConnect handler's own entries. They quote the text of a request to the callback path (the
+    /// query's error, error_description, and error_uri, and the value of a correlation cookie), so the service never writes
+    /// them (design §18.3, V1d4b).
+    /// </summary>
+    internal static readonly string SignInHandlerCategory = typeof(OpenIdConnectHandler).FullName!;
+
+    // design §18.3 (V1d4b): the error codes of an authorization response that the reason names, those of RFC 6749 §4.1.2.1
+    // and of OpenID Connect Core 1.0 §3.1.2.6. access_denied is not here: the handler gives it to OnAccessDenied, whose
+    // reason names it.
+    private static readonly FrozenSet<string> RegisteredErrors = FrozenSet.Create(
+        StringComparer.Ordinal,
+        "invalid_request",
+        "unauthorized_client",
+        "unsupported_response_type",
+        "invalid_scope",
+        "server_error",
+        "temporarily_unavailable",
+        "interaction_required",
+        "login_required",
+        "account_selection_required",
+        "consent_required",
+        "invalid_request_uri",
+        "invalid_request_object",
+        "request_not_supported",
+        "request_uri_not_supported",
+        "registration_not_supported"
+    );
 
     private static readonly TimeSpan SignInTimeout = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan LastSeenInterval = TimeSpan.FromSeconds(60);
@@ -212,7 +245,8 @@ internal sealed partial class ElmService
         }
         catch (Exception e) when (IsUnreachable(e, context))
         {
-            ServiceLog.SignInUnavailable(_log, e.Message);
+            string reason = WithInnerMessages(e);
+            ServiceLog.SignInUnavailable(_log, reason);
             await PageAsync(context, StatusCodes.Status503ServiceUnavailable, "The identity provider cannot be reached.").ConfigureAwait(false);
         }
     }
@@ -395,14 +429,52 @@ internal sealed partial class ElmService
         Exception? failure = context.Failure;
         if (failure is not null && IsUnreachable(failure, http))
         {
-            ServiceLog.SignInUnavailable(_log, failure.Message);
+            string unreachable = WithInnerMessages(failure);
+            ServiceLog.SignInUnavailable(_log, unreachable);
             await PageAsync(http, StatusCodes.Status503ServiceUnavailable, "The identity provider cannot be reached.").ConfigureAwait(false);
             return;
         }
 
         CountDenial();
-        ServiceLog.SignInRefused(_log, failure?.Message ?? "the sign-in failed");
+        string reason = RefusalReason(failure, http.Request);
+        ServiceLog.SignInRefused(_log, reason);
         await PageAsync(http, StatusCodes.Status400BadRequest, "The sign-in failed. Start it again.").ConfigureAwait(false);
+    }
+
+    // design §18.3 (V1d4b): an error in the callback's query reaches here as the handler's OpenIdConnectProtocolException,
+    // whose message quotes the query's error, error_description, and error_uri; the handler checks the correlation before
+    // it reads the error, and does not redeem the code after one (OpenIdConnectHandler.cs of dotnet/aspnetcore v10.0.14,
+    // 723-746). Its reason is the code, if the code is a registered one, or a fixed sentence, never the request's text.
+    // Any other failure (the token endpoint's answer, a check of the ID token, the correlation) keeps its message, with the
+    // messages of its inner exceptions. The callback answers GET only (RefuseWebPath), so the handler reads the response
+    // from the query. A query with the name error at all counts, with an empty value or in another case: the handler's
+    // message takes the first value that is not null and compares names with their case (OpenIdConnectMessage.cs of
+    // Microsoft.IdentityModel 8.19.2), while Request.Query ignores the case, so a narrower test could read a query
+    // otherwise than the handler and let its message through.
+    internal static string RefusalReason(Exception? failure, HttpRequest request)
+    {
+        if (failure is OpenIdConnectProtocolException && request.Query.ContainsKey("error"))
+        {
+            return failure.Data["error"] is string code && RegisteredErrors.TryGetValue(code, out string? registered)
+                ? "the identity provider answered " + registered
+                : UnregisteredError;
+        }
+
+        return failure is null ? "the sign-in failed" : WithInnerMessages(failure);
+    }
+
+    // design §18.3 (V1d4b): a failure's message and those of its inner exceptions, as Exception.ToString joins them, without
+    // the stack. They hold no text of the request: Microsoft.IdentityModel hides personal data, and the back channel's
+    // messages tell what the identity provider's side did.
+    internal static string WithInnerMessages(Exception failure)
+    {
+        var reason = new StringBuilder(failure.Message);
+        for (Exception? inner = failure.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            _ = reason.Append(" ---> ").Append(inner.Message);
+        }
+
+        return reason.ToString();
     }
 
     private async Task OnAccessDeniedAsync(AccessDeniedContext context)

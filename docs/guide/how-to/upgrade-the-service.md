@@ -31,7 +31,7 @@ elm-service backup --config service.json --out before-upgrade.db
 `elm-service backup` prints the backup's file and its schema version, such as:
 
 ```text
-backup: before-upgrade.db, schema version 8
+backup: before-upgrade.db, schema version 9
 ```
 
 Keep this file until you are sure that you stay on the new version: it is the only way back. [Back up and restore the service](back-up-and-restore-the-service.md) says where to keep it and what else to keep.
