@@ -74,6 +74,14 @@ internal static partial class ServerLog
     )]
     public static partial void ReturnLimitReached(ILogger log, int limit, DateTimeOffset until);
 
+    // design §13.4, §18.1 (V1d16).
+    [LoggerMessage(
+        EventId = 36,
+        Level = LogLevel.Warning,
+        Message = "The borrow record file {File} was left unfinished by a stop while it was started; it was removed, and the record was read from the file before it."
+    )]
+    public static partial void UnfinishedRecordRemoved(ILogger log, string file);
+
     [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
     public static partial void AdminAction(ILogger log, string action, string? target, string result);
 

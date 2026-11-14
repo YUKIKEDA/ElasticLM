@@ -492,6 +492,107 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
+    /// A start removes the files of the log left unfinished by a stop and reports each; other files stay, and the chain
+    /// continues from the newest finished file (design §18.1, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log; an unfinished file usage-20990101T000000000Z.jsonl.partial; files usage-x.partial and
+    ///   other-20990101T000000000Z.jsonl.partial.
+    ///
+    /// Steps:
+    /// - A minute later, open the log with a callback for removed files, and close it; list the folder.
+    ///
+    /// Expected:
+    /// - The callback got usage-20990101T000000000Z.jsonl.partial only, which is gone; the other two stay; the new file
+    ///   starts with chain.start that names the first file.
+    /// </remarks>
+    [Fact]
+    public void Open_UnfinishedFile_IsRemovedAndReported()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string finished = Path.GetFileName(SignedLog.FindFiles(_dir, "usage")[0]);
+        File.WriteAllText(Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial"), "{}\n");
+        File.WriteAllText(Path.Combine(_dir, "usage-x.partial"), "{}\n");
+        File.WriteAllText(Path.Combine(_dir, "other-20990101T000000000Z.jsonl.partial"), "{}\n");
+        _time.Advance(TimeSpan.FromMinutes(1));
+        var removed = new List<string>();
+
+        using (
+            SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                Access(_server),
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                unfinishedRemoved: removed.Add
+            )
+        )
+        {
+            // Opened and closed.
+        }
+
+        Assert.Equal(["usage-20990101T000000000Z.jsonl.partial"], removed);
+        Assert.False(File.Exists(Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial")));
+        Assert.True(File.Exists(Path.Combine(_dir, "usage-x.partial")));
+        Assert.True(File.Exists(Path.Combine(_dir, "other-20990101T000000000Z.jsonl.partial")));
+        string line = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
+        Assert.Contains("\"type\":\"chain.start\"", line, StringComparison.Ordinal);
+        Assert.Contains($"\"file\":\"{finished}\"", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// The first signature of a file is its second line, so a chain.reset finds it in the file's first two lines of at most
+    /// 1 MiB each, each with its line feed: 2 MiB and 2 bytes (design §18.1, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log. A later file of two lines of exactly 1 MiB each: a line that is not a signature, and the
+    ///   first file's signature line with a member added to make it 1 MiB; so its end holds no whole signature line.
+    ///
+    /// Steps:
+    /// - A minute later, open the log and close it; read the new file's first line.
+    ///
+    /// Expected:
+    /// - A chain.reset whose prev names the later file and, as first, the SHA-256 of its second line with its line feed.
+    /// </remarks>
+    [Fact]
+    public void Open_PreviousWithItsFirstSignatureAtTheEndOfItsHead_NamesIt()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string auth = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[0]).ElementAt(1);
+        const string Pad = "\"pad\":\"";
+        int at = auth.IndexOf("\"sig\"", StringComparison.Ordinal);
+        string padded = auth[..at] + Pad + new string('p', LogVerifier.MaxLineLength - auth.Length - Pad.Length - 2) + "\"," + auth[at..];
+        Assert.Equal(LogVerifier.MaxLineLength, Encoding.UTF8.GetByteCount(padded));
+        const string Head = "{\"type\":\"lease.acquired\",\"ts\":1,\"x\":\"";
+        string first = Head + new string('x', LogVerifier.MaxLineLength - Head.Length - 2) + "\"}";
+        string later = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl");
+        File.WriteAllText(later, first + "\n" + padded + "\n");
+        _time.Advance(TimeSpan.FromMinutes(1));
+
+        using (SignedLog log = Open())
+        {
+            Assert.NotNull(log.ResetReason);
+        }
+
+        string hash = Base64UrlCodec.Encode(SHA256.HashData(Encoding.UTF8.GetBytes(padded + "\n")));
+        string line = File.ReadLines(SignedLog.FindFiles(_dir, "usage")[^1]).First();
+        Assert.Contains("\"type\":\"chain.reset\"", line, StringComparison.Ordinal);
+        Assert.Contains($"\"prev\":{{\"file\":\"usage-20990101T000000000Z.jsonl\",\"first\":\"{hash}\"}}", line, StringComparison.Ordinal);
+    }
+
+    /// <summary>
     /// The server license on the first line is judged as of the time the line was written: a log stays valid after its
     /// license expired, and a license from another vendor's root, the wrong product, or the wrong stream is an error.
     /// </summary>

@@ -16,7 +16,9 @@ namespace ElasticLM.Server;
 /// </summary>
 /// <remarks>
 /// The record's lock is always taken before the log's: a new file carries records forward under the log's lock, so every
-/// call into the log goes through the record's lock first.
+/// call into the log goes through the record's lock first. The file of a new UTC day is started only by <see cref="Seal"/>
+/// (the server's 60-second timer): its carried lines are built outside both locks, and only the records written meanwhile,
+/// the writes, the signatures, and the rename happen under them (design §13.4, V1d16).
 /// </remarks>
 internal sealed class BorrowJournal : IBorrowJournal, IDisposable
 {
@@ -34,6 +36,15 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     private readonly List<BorrowReturn> _returns = [];
     private SignedLog? _log;
     private ILogger? _operational;
+
+    // The lines written while the file of a new day is being built, for that file; null otherwise. Under _lock.
+    private List<LogLine>? _since;
+
+    /// <summary>Gets or sets a step run after the lines of a new day's file are built and before it is written, for tests.</summary>
+    internal Action? Built { get; set; }
+
+    /// <summary>Gets a value indicating whether the calling thread holds the record's lock, for tests.</summary>
+    internal bool IsLockHeld => _lock.IsHeldByCurrentThread;
 
     private BorrowJournal(string directory, TimeProvider time)
     {
@@ -144,7 +155,9 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
                 sealEvery: 1,
                 CarryForward,
                 reset,
-                name => ServerLog.NotALogFile(operational, name, "borrow record")
+                name => ServerLog.NotALogFile(operational, name, "borrow record"),
+                rotateOnWrite: false,
+                name => ServerLog.UnfinishedRecordRemoved(operational, name)
             );
         }
     }
@@ -155,8 +168,9 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         (string leaseId, long expires) = ReadToken(borrow.Token);
         lock (_lock)
         {
-            Recorded(() => WriteBorrow(_log!, borrow));
+            Recorded(() => _log!.Append(BorrowStarted, BorrowFields(borrow)));
             _borrows.Add((borrow, leaseId, expires));
+            _since?.Add(new LogLine(BorrowStarted, BorrowFields(borrow)));
         }
     }
 
@@ -165,9 +179,10 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         ArgumentNullException.ThrowIfNull(returned);
         lock (_lock)
         {
-            Recorded(() => WriteReturn(_log!, returned));
+            Recorded(() => _log!.Append(BorrowReturned, ReturnFields(returned)));
             _borrows.RemoveAll(b => b.LeaseId == returned.LeaseId);
             _returns.Add(returned);
+            _since?.Add(new LogLine(BorrowReturned, ReturnFields(returned)));
         }
     }
 
@@ -213,12 +228,41 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
-    /// <summary>Starts a new file when the UTC day changed.</summary>
+    /// <summary>
+    /// Starts a new file when the UTC day changed (design §13.4, V1d16): the lines it carries forward are built without the
+    /// record's lock, from the borrows and returns at that moment; the records written meanwhile go to the file of the day
+    /// before and, after the carried lines, to the new file. The server's 60-second timer calls it; requests never start a
+    /// file.
+    /// </summary>
+    /// <exception cref="IOException">The new file cannot be written; the next borrow or return starts a new file.</exception>
     public void Seal()
     {
+        LogLine[] lines;
         lock (_lock)
         {
-            _log?.Seal();
+            if (_log is null || !_log.IsNewDay())
+            {
+                _log?.Seal();
+                return;
+            }
+
+            Drop(_time.GetUtcNow());
+            lines = [.. Lines()];
+            _since = [];
+        }
+
+        using CarriedLines carried = SignedLog.Prepare(lines, _time);
+        Built?.Invoke();
+        lock (_lock)
+        {
+            try
+            {
+                Recorded(() => _log.StartNewDay(carried, _since));
+            }
+            finally
+            {
+                _since = null;
+            }
         }
     }
 
@@ -282,30 +326,24 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             ? [.. fp.EnumerateArray().Select(f => f.GetString()!)]
             : [];
 
-    private static void WriteBorrow(SignedLog log, BorrowRecord borrow) =>
-        log.Append(
-            BorrowStarted,
-            w =>
-            {
-                w.WriteString("lease", borrow.Token);
-                w.WriteString("lic", borrow.LicenseId);
-                w.WriteNumber("seats", borrow.FeatureSeats);
-                w.WriteNumber("borrow", (long)borrow.FeatureBorrowLimit.TotalSeconds);
-                WriteFingerprints(w, borrow.Fingerprints);
-            }
-        );
+    private static Action<Utf8JsonWriter> BorrowFields(BorrowRecord borrow) =>
+        w =>
+        {
+            w.WriteString("lease", borrow.Token);
+            w.WriteString("lic", borrow.LicenseId);
+            w.WriteNumber("seats", borrow.FeatureSeats);
+            w.WriteNumber("borrow", (long)borrow.FeatureBorrowLimit.TotalSeconds);
+            WriteFingerprints(w, borrow.Fingerprints);
+        };
 
-    private static void WriteReturn(SignedLog log, BorrowReturn returned) =>
-        log.Append(
-            BorrowReturned,
-            w =>
-            {
-                w.WriteString("id", returned.LeaseId);
-                w.WriteString("key", returned.KeyId);
-                WriteFingerprints(w, returned.Fingerprints);
-                w.WriteNumber("at", returned.At.ToUnixTimeSeconds());
-            }
-        );
+    private static Action<Utf8JsonWriter> ReturnFields(BorrowReturn returned) =>
+        w =>
+        {
+            w.WriteString("id", returned.LeaseId);
+            w.WriteString("key", returned.KeyId);
+            WriteFingerprints(w, returned.Fingerprints);
+            w.WriteNumber("at", returned.At.ToUnixTimeSeconds());
+        };
 
     // One recorded line; lines of another shape are skipped (the verifier has checked the signatures over them). A line with
     // a string or a member name that is not text (a lone surrogate escape, bytes that are not UTF-8) is of another shape:
@@ -375,23 +413,22 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         _returns.RemoveAll(r => now - r.At >= ReturnWindow);
     }
 
-    // A new file carries forward the borrows that have not expired and the early returns of the last 30 days. It runs under
-    // the log's lock, which the callers reach through the record's lock (see the remarks).
-    private void CarryForward(SignedLog log)
+    // A new file carries forward the borrows that have not expired and the early returns of the last 30 days: at a start,
+    // and after a failed write. It runs under the log's lock, which the callers reach through the record's lock (see the
+    // remarks).
+    private IReadOnlyList<LogLine> CarryForward()
     {
         DateTimeOffset now = _time.GetUtcNow();
         lock (_lock)
         {
             Drop(now);
-            foreach ((BorrowRecord record, _, _) in _borrows)
-            {
-                WriteBorrow(log, record);
-            }
-
-            foreach (BorrowReturn returned in _returns)
-            {
-                WriteReturn(log, returned);
-            }
+            return [.. Lines()];
         }
     }
+
+    // The lines of the borrows and returns held now; under _lock.
+    private IEnumerable<LogLine> Lines() =>
+        _borrows
+            .Select(b => new LogLine(BorrowStarted, BorrowFields(b.Record)))
+            .Concat(_returns.Select(r => new LogLine(BorrowReturned, ReturnFields(r))));
 }
