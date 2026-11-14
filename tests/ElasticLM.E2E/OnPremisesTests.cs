@@ -1,6 +1,7 @@
 using System.Globalization;
 using ElasticLM.Client;
 using ElasticLM.Licensing;
+using static ElasticLM.E2E.Results;
 
 namespace ElasticLM.E2E;
 
@@ -21,6 +22,10 @@ public sealed class OnPremisesTests
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license issued by elm (pro, 3 seats, 15-second leases, borrows of
     ///   a day) bound to the key the server made on its first run.
+    /// - The server starts on a port the system chooses and starts again on the same port, where its client finds it. The
+    ///   port is free for a moment between the kill and the second start: another program could take it then, and that start
+    ///   would fail. The window stays (the V1d3b Grill, 3b-4). On Windows the port that a bind to port 0 gets moves on
+    ///   across the machine, and in 2,000 binds none came back at once; no count of runs was measured for this test.
     ///
     /// Steps:
     /// - Start the server. Acquire pro, waiting each Retry-After while the server answers ELM_SERVER_RECOVERING. Wait for the
@@ -93,14 +98,12 @@ public sealed class OnPremisesTests
         Assert.True(code == 0, listError);
         Assert.Contains(lease.Id, leases, StringComparison.Ordinal);
 
-        Lease second = Assert.IsType<LeaseResult.Acquired>(await client.AcquireLeaseAsync("pro", cancellationToken: Cancel)).Lease;
+        Lease second = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: Cancel));
         (code, _, string releaseError) = await server.ElmServerAsync(vendor, "release", second.Id);
         Assert.True(code == 0, releaseError);
         Assert.DoesNotContain(second.Id, (await server.ElmServerAsync(vendor, "leases")).Out, StringComparison.Ordinal);
 
-        Lease borrowed = Assert
-            .IsType<LeaseResult.Acquired>(await client.BorrowLeaseAsync("pro", TimeSpan.FromHours(1), cancellationToken: Cancel))
-            .Lease;
+        Lease borrowed = Acquired(await client.BorrowLeaseAsync("pro", TimeSpan.FromHours(1), cancellationToken: Cancel));
         Assert.True(borrowed.IsBorrow);
         Assert.Contains(client.GetBorrowedLeases(), l => l.Id == borrowed.Id);
         Assert.Null(await client.ReleaseLeaseAsync(borrowed, Cancel));

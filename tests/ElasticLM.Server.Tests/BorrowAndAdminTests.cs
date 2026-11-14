@@ -8,6 +8,7 @@ using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Logging;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -101,6 +102,10 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// Preconditions:
     /// - A license with 2 seats and 1 early return in 30 days; a client that borrows 1 seat, returns it early, and borrows 1
     ///   seat again; the server restarted on the same port.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Read the status of the new server; a new client reads its borrows and returns the borrow early.
@@ -141,6 +146,10 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A client with a lease and a borrow; the server restarted on the same port.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Advance 200 s so the lease renews (and is reclaimed).
@@ -174,6 +183,10 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A client that borrowed 2 seats; the server restarted on the same port.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - A new client reads its borrows and returns the borrow early.
@@ -1379,8 +1392,6 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(30, actions.Length);
         Assert.All(actions, a => Assert.Equal("status:ELM_NETWORK_ERROR", a));
     }
-
-    private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     // A token of three parts whose payload is the given JSON text; it is not signed, and the record's reader does not verify.
     private static string Token(string payloadJson) => $"a.{System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payloadJson))}.c";

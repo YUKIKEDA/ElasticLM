@@ -4,6 +4,7 @@ using ElasticLM.Issuing;
 using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Service.Tests;
+using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
 
@@ -452,6 +453,10 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     ///   behind a relay that kept the acquisition's answer (sequence 1).
     /// - The server restarted on P. Another copy of the installation reclaims the lease with the token of sequence 1, so
     ///   the server holds the lease at sequence 1, two behind the client.
+    /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
+    ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
+    ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
+    ///   runs and 600 CI runs.
     ///
     /// Steps:
     /// - Move the clock 200 s so the client renews with sequence 3.
@@ -512,8 +517,6 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.DoesNotContain(relay.Requests(), r => r.Path.EndsWith("/reclaim", StringComparison.Ordinal));
         Assert.Equal(1, after.Engine.SeatsInUse("pro"));
     }
-
-    private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];

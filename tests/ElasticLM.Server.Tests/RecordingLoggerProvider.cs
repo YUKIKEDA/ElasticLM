@@ -24,6 +24,23 @@ internal sealed class RecordingLoggerProvider : ILoggerProvider
         }
     }
 
+    /// <summary>
+    /// Gets the port of the host's one "Now listening on" entry for the scheme on 127.0.0.1: for a listen on port 0, the port
+    /// the system chose. The entry is written when the host has started to listen, before the program's own checks after
+    /// that. The entry of a socket file ("http://unix:…") is not one of them.
+    /// </summary>
+    /// <param name="scheme"><c>https</c> or <c>http</c>.</param>
+    /// <returns>The port.</returns>
+    public int ListeningPort(string scheme)
+    {
+        const string Listening = "Now listening on: ";
+        (_, _, string message) = Assert.Single(
+            Entries,
+            e => e.Category == "Microsoft.Hosting.Lifetime" && e.Message.StartsWith($"{Listening}{scheme}://127.0.0.1:", StringComparison.Ordinal)
+        );
+        return new Uri(message[Listening.Length..]).Port;
+    }
+
     public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
 
     public void Dispose() => Disposed = true;

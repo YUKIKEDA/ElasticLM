@@ -18,8 +18,8 @@ public sealed class ListenTests
     /// <remarks>
     /// Preconditions:
     /// - The published elm-server for acme-cad with a server license issued by elm, bound to the key the server made on its
-    ///   first run; a TcpListener of the test started on 127.0.0.1 at the server's listen port right after the port was
-    ///   chosen, before that first run.
+    ///   first run; a TcpListener of the test started on 127.0.0.1 at a port the OS picked, which the server is given as
+    ///   listen, before that first run.
     ///
     /// Steps:
     /// - Run the server to its end.
@@ -33,12 +33,13 @@ public sealed class ListenTests
     {
         await using Vendor vendor = await Vendor.CreateAsync("license", "lease");
         string license = vendor.File("server.elmlic");
-        await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license);
 
-        // Held right after Prepare found the port free, not after the license is issued: another process can take the port
-        // only in the short time between the two. The run without a license below ends before the server listens.
-        using var holder = new TcpListener(IPAddress.Loopback, server.Url.Port);
+        // The test holds a port the system chose and gives it to the server, so no other program can take it between the
+        // two (Issue #399). The run without a license below ends before the server listens.
+        using var holder = new TcpListener(IPAddress.Loopback, 0);
         holder.Start();
+        int port = ((IPEndPoint)holder.LocalEndpoint).Port;
+        await using ServerProcess server = ServerProcess.Prepare(vendor, "s", "acme-cad", license, port: port);
         string serverKey = await server.InstallationKeyAsync();
         string expires = DateTimeOffset.UtcNow.AddDays(30).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
         await vendor.ElmOkAsync(
@@ -70,7 +71,7 @@ public sealed class ListenTests
 
         Assert.Equal(1, code);
         Assert.Contains("Hosting failed to start", output, StringComparison.Ordinal);
-        Assert.StartsWith($"error: elm-server cannot listen on https://127.0.0.1:{server.Url.Port}/ and ", LastLine(error), StringComparison.Ordinal);
+        Assert.StartsWith($"error: elm-server cannot listen on https://127.0.0.1:{port}/ and ", LastLine(error), StringComparison.Ordinal);
     }
 
     /// <summary>
