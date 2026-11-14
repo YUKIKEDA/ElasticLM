@@ -331,7 +331,7 @@ public sealed class InstallationKeyStoreTests : IDisposable
         );
         info.SetAccessControl(security);
         Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, extra).TryLoadOrCreate(out _, out LicenseError? opened));
-        Assert.Contains("gives access to S-1-5-32-545", opened!.Message, StringComparison.Ordinal);
+        Assert.Contains("(S-1-5-32-545).", opened!.Message, StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -603,6 +603,8 @@ public sealed class InstallationKeyStoreTests : IDisposable
     {
         string product = "elm-v1d24-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
         var store = new InstallationKeyStore(product, KeyScope.Machine);
+        string vendorFolder = Path.GetDirectoryName(store.Directory)!;
+        bool vendorFolderExisted = Directory.Exists(vendorFolder);
         if (!OperatingSystem.IsWindows())
         {
             Sudo("mkdir", "-p", store.Directory);
@@ -622,38 +624,56 @@ public sealed class InstallationKeyStoreTests : IDisposable
         }
         finally
         {
+            // The test removes what it made: the product's folder, and the ElasticLM folder above it when it was not there.
             if (OperatingSystem.IsWindows())
             {
                 Directory.Delete(store.Directory, recursive: true);
+                if (!vendorFolderExisted)
+                {
+                    Directory.Delete(vendorFolder);
+                }
             }
             else
             {
                 Sudo("rm", "-rf", store.Directory);
+                if (!vendorFolderExisted)
+                {
+                    Sudo("rmdir", vendorFolder);
+                }
             }
         }
     }
 
     /// <summary>
-    /// On Windows, a folder two levels above a machine-scope folder that lets Authenticated Users modify it is refused, and
-    /// one that lets them only create folders in it passes (design §10.2, V1d24).
+    /// On Windows, a folder two levels above a machine-scope folder that lets Authenticated Users delete, rename, or change
+    /// the access of what is in it is refused, with a message that sends the reader to that folder; one that lets them only
+    /// create folders in it passes (design §10.2, V1d24).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Windows. A machine-scope key made in a folder of a parent of a top folder in the test folder; then the top folder
     ///   given a rule for Authenticated Users (S-1-5-11) on itself only:
     ///   modify: Modify, which holds Delete;
+    ///   delete-child: DeleteSubdirectoriesAndFiles only;
+    ///   change-permissions: ChangePermissions (WRITE_DAC) only;
+    ///   take-ownership: TakeOwnership (WRITE_OWNER) only;
+    ///   generic-all: the raw right GENERIC_ALL (0x10000000) only;
     ///   create-only: CreateDirectories and ReadAndExecute.
     ///
     /// Steps:
     /// - Read the key with a new store.
     ///
     /// Expected:
-    /// - modify: ELM_INSTALLATION_KEY_UNREADABLE with "the folder '{top}' above it lets S-1-5-11 delete or replace what is in
-    ///   it."; create-only: the key is read.
+    /// - Every case but create-only: ELM_INSTALLATION_KEY_UNREADABLE with "the folder '{top}' above it lets", "(S-1-5-11)
+    ///   delete or replace what is in it.", and "Correct the owner or the access of that folder"; create-only: the key is read.
     /// </remarks>
     /// <param name="kind">The case.</param>
     [Theory]
     [InlineData("modify")]
+    [InlineData("delete-child")]
+    [InlineData("change-permissions")]
+    [InlineData("take-ownership")]
+    [InlineData("generic-all")]
     [InlineData("create-only")]
     public void MachineScope_FolderAboveGivesOthersRights_IsCheckedOnWindows(string kind)
     {
@@ -667,15 +687,265 @@ public sealed class InstallationKeyStoreTests : IDisposable
         string folder = Path.Combine(top, "vendor", "machine");
         Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
         created!.Dispose();
-        var info = new DirectoryInfo(top);
-        System.Security.AccessControl.FileSystemRights rights =
-            kind == "modify"
-                ? System.Security.AccessControl.FileSystemRights.Modify
-                : System.Security.AccessControl.FileSystemRights.CreateDirectories | System.Security.AccessControl.FileSystemRights.ReadAndExecute;
+        System.Security.AccessControl.FileSystemRights rights = kind switch
+        {
+            "modify" => System.Security.AccessControl.FileSystemRights.Modify,
+            "delete-child" => System.Security.AccessControl.FileSystemRights.DeleteSubdirectoriesAndFiles,
+            "change-permissions" => System.Security.AccessControl.FileSystemRights.ChangePermissions,
+            "take-ownership" => System.Security.AccessControl.FileSystemRights.TakeOwnership,
+            _ => System.Security.AccessControl.FileSystemRights.CreateDirectories | System.Security.AccessControl.FileSystemRights.ReadAndExecute,
+        };
+        if (kind == "generic-all")
+        {
+            // .NET refuses GENERIC_ALL in a FileSystemAccessRule; icacls writes it (GA).
+            Icacls(top, "/grant", "*S-1-5-11:(GA)");
+        }
+        else
+        {
+            Grant(
+                top,
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null),
+                rights
+            );
+        }
+
+        bool read = new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out InstallationKey? key, out LicenseError? error);
+        key?.Dispose();
+
+        if (kind == "create-only")
+        {
+            Assert.True(read, error?.Message);
+        }
+        else
+        {
+            Assert.False(read);
+            Assert.Contains($"the folder '{top}' above it lets ", error!.Message, StringComparison.Ordinal);
+            Assert.Contains("(S-1-5-11) delete or replace what is in it.", error.Message, StringComparison.Ordinal);
+            Assert.EndsWith(
+                "Correct the owner or the access of that folder, or use a folder elsewhere; removing this folder does not help.",
+                error.Message,
+                StringComparison.Ordinal
+            );
+        }
+    }
+
+    /// <summary>
+    /// On Windows, a folder two levels above a machine-scope folder that another account owns is refused (design §10.2,
+    /// V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows, as an administrator who may set another owner (icacls /setowner, as on the GitHub runners); elsewhere the
+    ///   test is skipped and says so, and on GitHub Actions it fails without it.
+    /// - A machine-scope key made in a folder of a parent of a top folder in the test folder; then the top folder given to
+    ///   LOCAL SERVICE (S-1-5-19).
+    ///
+    /// Steps:
+    /// - Read the key with a new store. Give the top folder back to this user at the end.
+    ///
+    /// Expected:
+    /// - ELM_INSTALLATION_KEY_UNREADABLE with "the folder '{top}' above it is owned by another user.".
+    /// </remarks>
+    [Fact]
+    public void MachineScope_FolderAboveOwnedByAnotherAccount_IsRefusedOnWindows()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Access lists are Windows only.");
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string top = Path.Combine(_dir, "top");
+        string folder = Path.Combine(top, "vendor", "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        Icacls(top, "/setowner", "*S-1-5-19");
+        try
+        {
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out _, out LicenseError? error));
+            Assert.Contains($"the folder '{top}' above it is owned by another user.", error!.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            Icacls(top, "/setowner", "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value);
+        }
+    }
+
+    /// <summary>
+    /// A machine-scope folder reached through a junction (Windows) or a symbolic link (Linux and macOS) is checked where it
+    /// leads too: a folder above the real folder that others may replace is refused, though every folder on the way to the
+    /// link passes (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A machine-scope key made in open/vendor/machine in the test folder; then open given, on Windows, a rule that lets
+    ///   Authenticated Users modify it, and on Linux and macOS mode 0777.
+    /// - safe/machine: a link to that folder (a junction made with mklink /J on Windows, a symbolic link elsewhere), in a
+    ///   folder safe that passes every check; on Windows the junction is given the real folder's access list, so that the
+    ///   junction's own access list passes.
+    ///
+    /// Steps:
+    /// - Read the key through safe/machine with a new store.
+    ///
+    /// Expected:
+    /// - ELM_INSTALLATION_KEY_UNREADABLE with "it leads to '{real folder}'" and "the folder '{open}' above it".
+    /// </remarks>
+    [Fact]
+    public void MachineScope_LinkToAFolderUnderAnOpenFolder_IsRefused()
+    {
+        string open = Path.Combine(_dir, "open");
+        string real = Path.Combine(open, "vendor", "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, real).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        string safe = Path.Combine(_dir, "safe");
+        string link = Path.Combine(safe, "machine");
+        if (OperatingSystem.IsWindows())
+        {
+            Directory.CreateDirectory(safe);
+            using (var mklink = Process.Start(new ProcessStartInfo("cmd.exe", ["/c", "mklink", "/J", link, real]) { RedirectStandardOutput = true })!)
+            {
+                mklink.WaitForExit();
+                Assert.Equal(0, mklink.ExitCode);
+            }
+
+            string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+            Icacls(link, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            Grant(
+                open,
+                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null),
+                System.Security.AccessControl.FileSystemRights.Modify
+            );
+        }
+        else
+        {
+            Directory.CreateDirectory(safe, (UnixFileMode)0b111_101_101);
+            File.CreateSymbolicLink(link, real);
+            File.SetUnixFileMode(open, (UnixFileMode)0b111_111_111);
+        }
+
+        try
+        {
+            Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, link).TryLoad(out _, out LicenseError? error));
+            Assert.Contains($"it leads to '{real}'", error!.Message, StringComparison.Ordinal);
+            Assert.Contains($"the folder '{open}' above it", error.Message, StringComparison.Ordinal);
+        }
+        finally
+        {
+            // The recursive delete of the test folder does not remove a junction with an access list of its own.
+            Directory.Delete(link);
+        }
+    }
+
+    /// <summary>
+    /// On Windows, a machine-scope folder named by a UNC path is refused as a network location (design §10.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows, as an administrator who may open the drive's administrative share (\\localhost\C$, as on the GitHub
+    ///   runners); elsewhere the test is skipped and says so, and on GitHub Actions it fails without it.
+    /// - A machine-scope key made in a folder of the test folder.
+    ///
+    /// Steps:
+    /// - Read the key through \\localhost\{drive}$\{the rest of the folder's path}.
+    ///
+    /// Expected:
+    /// - ELM_INSTALLATION_KEY_UNREADABLE with "it is on a network location".
+    /// </remarks>
+    [Fact]
+    public void MachineScope_FolderOnANetworkPath_IsRefusedOnWindows()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "UNC paths are Windows only.");
+        string folder = Path.Combine(_dir, "unc", "machine");
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        string unc = @"\\localhost\" + folder[0] + "$" + folder[2..];
+        if (!Directory.Exists(unc))
+        {
+            Assert.False(
+                Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true",
+                "On GitHub Actions this test must run: " + unc + " cannot be opened."
+            );
+            Assert.Skip("This user cannot open the administrative share " + unc + ".");
+        }
+
+        Assert.False(new InstallationKeyStore("acme-cad", KeyScope.Machine, unc).TryLoad(out _, out LicenseError? error));
+        Assert.Contains("it is on a network location", error!.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// On macOS, an entry of an extended access list (chmod +a) that lets another user or group delete what is in a folder
+    /// two levels above a machine-scope folder is refused, and so is one that lets anyone else into the folder itself; a
+    /// deny entry is not (design §10.2, V1d24, the owner's K9).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - macOS. A folder of mode 0700 in a parent of mode 0755 in the test folder (made by this user):
+    ///   above-delete-child: the test folder given "group:staff allow delete_child";
+    ///   above-deny: the test folder given "group:staff deny delete_child";
+    ///   folder-read: the folder given "user:nobody allow read".
+    ///
+    /// Steps:
+    /// - Check the folder as a machine-scope folder. Remove the entries at the end.
+    ///
+    /// Expected:
+    /// - above-delete-child: "the folder '{test folder}' above it has an access list that lets group "; folder-read: "its
+    ///   access list gives access to user "; above-deny: no problem.
+    /// </remarks>
+    /// <param name="kind">The case.</param>
+    [Theory]
+    [InlineData("above-delete-child")]
+    [InlineData("above-deny")]
+    [InlineData("folder-read")]
+    public void MachineScope_ExtendedAccessList_IsCheckedOnMacOS(string kind)
+    {
+        Assert.SkipUnless(OperatingSystem.IsMacOS(), "Extended access lists of chmod +a are macOS only.");
+        if (!OperatingSystem.IsMacOS())
+        {
+            return;
+        }
+
+        (string _, string folder) = MachineFolders();
+        string target = kind == "folder-read" ? folder : _dir;
+        string entry = kind switch
+        {
+            "above-delete-child" => "group:staff allow delete_child",
+            "above-deny" => "group:staff deny delete_child",
+            _ => "user:nobody allow read",
+        };
+        Chmod("+a", entry, target);
+        try
+        {
+            string? problem = ProtectedFiles.CheckDirectory(folder, KeyScope.Machine);
+            if (kind == "above-deny")
+            {
+                Assert.Null(problem);
+            }
+            else
+            {
+                Assert.Contains(
+                    kind == "folder-read"
+                        ? "its access list gives access to user "
+                        : $"the folder '{_dir}' above it has an access list that lets group ",
+                    problem,
+                    StringComparison.Ordinal
+                );
+            }
+        }
+        finally
+        {
+            Chmod("-a", entry, target);
+        }
+    }
+
+    // Adds a rule on a folder itself only.
+    [SupportedOSPlatform("windows")]
+    private static void Grant(string path, System.Security.Principal.SecurityIdentifier who, System.Security.AccessControl.FileSystemRights rights)
+    {
+        var info = new DirectoryInfo(path);
         System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
         security.AddAccessRule(
             new System.Security.AccessControl.FileSystemAccessRule(
-                new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.AuthenticatedUserSid, null),
+                who,
                 rights,
                 System.Security.AccessControl.InheritanceFlags.None,
                 System.Security.AccessControl.PropagationFlags.None,
@@ -683,19 +953,29 @@ public sealed class InstallationKeyStoreTests : IDisposable
             )
         );
         info.SetAccessControl(security);
+    }
 
-        bool read = new InstallationKeyStore("acme-cad", KeyScope.Machine, folder).TryLoad(out InstallationKey? key, out LicenseError? error);
-        key?.Dispose();
+    // Runs icacls; skips the test where this user may not, except on GitHub Actions.
+    private static void Icacls(params string[] arguments)
+    {
+        using var icacls = Process.Start(new ProcessStartInfo("icacls", arguments) { RedirectStandardError = true, RedirectStandardOutput = true })!;
+        string output = icacls.StandardOutput.ReadToEnd() + icacls.StandardError.ReadToEnd();
+        icacls.WaitForExit();
+        if (icacls.ExitCode != 0)
+        {
+            string why = $"icacls {arguments[1]} exited with {icacls.ExitCode}: {output.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This user may not run icacls so. " + why);
+        }
+    }
 
-        if (kind == "modify")
-        {
-            Assert.False(read);
-            Assert.Contains($"the folder '{top}' above it lets S-1-5-11 delete or replace what is in it.", error!.Message, StringComparison.Ordinal);
-        }
-        else
-        {
-            Assert.True(read, error?.Message);
-        }
+    // Runs chmod +a or -a on macOS and fails the test when it does not succeed.
+    private static void Chmod(string operation, string entry, string path)
+    {
+        using var chmod = Process.Start(new ProcessStartInfo("chmod", [operation, entry, path]) { RedirectStandardError = true })!;
+        string error = chmod.StandardError.ReadToEnd();
+        chmod.WaitForExit();
+        Assert.True(chmod.ExitCode == 0, $"chmod {operation} exited with {chmod.ExitCode}: {error.Trim()}");
     }
 
     // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.

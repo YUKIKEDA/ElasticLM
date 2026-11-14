@@ -24,9 +24,11 @@ internal static class ProtectedFiles
     // NT SERVICE\TrustedInstaller, the owner of C:\ on Windows 11.
     private const string TrustedInstaller = "S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464";
 
-    // DELETE, FILE_DELETE_CHILD, WRITE_DAC, WRITE_OWNER, and GENERIC_ALL: what lets a holder rename, delete, or re-own a
-    // folder or what is in it. Creating in a folder is not among them.
-    private const int ReplaceRights = 0x10000 | 0x40 | 0x40000 | 0x80000 | 0x10000000;
+    // DELETE, FILE_DELETE_CHILD, WRITE_DAC, and WRITE_OWNER: what lets a holder rename, delete, or re-own a folder or what is
+    // in it. Creating in a folder is not among them. A generic right (GENERIC_ALL) is kept only in an entry that is only
+    // inherited, which the check skips: Windows stores it as the rights it stands for in an entry of the folder itself
+    // (icacls /grant (GA) on Windows 11 build 26300 wrote FullControl, 0x1F01FF; docs/rows/V1d24.md).
+    private const int ReplaceRights = 0x10000 | 0x40 | 0x40000 | 0x80000;
 
     // design §10.2.
 
@@ -36,7 +38,10 @@ internal static class ProtectedFiles
     /// rule that allows access must name one of them; every folder above it must be owned by one of them or by
     /// TrustedInstaller, and must let no one else delete, rename, or change the access to what is in it. On Linux and macOS
     /// the folder must be owned by the user running this program or root and give no access to group or others; every
-    /// folder above it up to the root must be owned by that user or root and must not be writable by group or others.
+    /// folder above it up to the root must be owned by that user or root and must not be writable by group or others; on
+    /// macOS no entry of an extended access list may let anyone else into the folder, or delete or change what is in a
+    /// folder above it. When a symbolic link or a junction leads elsewhere, the folder it leads to is checked in the same way.
+    /// A folder on a network location is refused.
     /// </summary>
     /// <param name="path">The folder.</param>
     /// <param name="scope">The scope; a user-scope folder is protected by the user's profile and is not checked.</param>
@@ -49,20 +54,58 @@ internal static class ProtectedFiles
         }
 
         string full = Path.GetFullPath(path);
-        string? problem;
+        Problem? problem;
         try
         {
-            problem = OperatingSystem.IsWindows() ? CheckWindows(full) : CheckUnix(full);
+            problem = Check(full);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException)
         {
-            problem = "its access cannot be read: " + e.Message;
+            problem = new Problem("its access cannot be read: " + e.Message, Above: false);
         }
 
-        return problem is null
-            ? null
-            : $"The folder '{full}' is not safe for secrets: {problem} Another user may have created it; remove it or restrict it, then start again.";
+        // design §10.2 (V1d24, review K6): removing the folder loses its installation key and does not mend a folder above it.
+        return problem switch
+        {
+            null => null,
+            { Above: true } =>
+                $"The folder '{full}' is not safe for secrets: {problem.Text} Correct the owner or the access of that folder, or use a folder elsewhere; removing this folder does not help.",
+            _ =>
+                $"The folder '{full}' is not safe for secrets: {problem.Text} Another user may have created it; remove it or restrict it, then start again.",
+        };
     }
+
+    // design §10.2 (V1d24, review K3 and the owner's K8): the folder as named and, when a symbolic link or a junction leads
+    // elsewhere, the folder it leads to with every folder above that one, as OpenSSH's safe_path checks the real path; and
+    // neither may be on a network location.
+    private static Problem? Check(string full)
+    {
+        string resolved = OperatingSystem.IsWindows() ? WindowsPaths.FinalPath(full) : UnixOwner.RealPath(full);
+        if (IsNetwork(full) || IsNetwork(resolved))
+        {
+            return new Problem("it is on a network location; a machine-scope folder must be on a local disk.", Above: false);
+        }
+
+        Problem? problem = OperatingSystem.IsWindows() ? CheckWindows(full) : CheckUnix(full);
+        StringComparison comparison = OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (problem is null && !string.Equals(resolved, full, comparison))
+        {
+            problem = OperatingSystem.IsWindows() ? CheckWindows(resolved) : CheckUnix(resolved);
+            if (problem is not null)
+            {
+                problem = problem with { Text = $"it leads to '{resolved}', and {problem.Text}" };
+            }
+        }
+
+        return problem;
+    }
+
+    // A UNC path, a mapped network drive (GetDriveType's DRIVE_REMOTE), or on Linux and macOS a file system that .NET names a
+    // network one from statfs (nfs, nfs4, cifs, smb, smb2, smbfs, and others; DriveInfo.Unix in dotnet/runtime release/10.0).
+    private static bool IsNetwork(string path) =>
+        OperatingSystem.IsWindows()
+            ? path.StartsWith(@"\\", StringComparison.Ordinal) || new DriveInfo(Path.GetPathRoot(path)!).DriveType == DriveType.Network
+            : new DriveInfo(path).DriveType == DriveType.Network;
 
     /// <summary>
     /// Creates a folder for secrets if it does not exist.
@@ -161,7 +204,7 @@ internal static class ProtectedFiles
     }
 
     [SupportedOSPlatform("windows")]
-    private static string? CheckWindows(string path)
+    private static Problem? CheckWindows(string path)
     {
         using WindowsIdentity current = WindowsIdentity.GetCurrent();
         SecurityIdentifier[] allowed =
@@ -173,19 +216,19 @@ internal static class ProtectedFiles
         DirectorySecurity security = new DirectoryInfo(path).GetAccessControl();
         if (security.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier owner || !allowed.Contains(owner))
         {
-            return "it is owned by another user.";
+            return new Problem("it is owned by another user.", Above: false);
         }
 
         if (!security.AreAccessRulesProtected)
         {
-            return "it inherits access from its parent folder.";
+            return new Problem("it inherits access from its parent folder.", Above: false);
         }
 
         foreach (FileSystemAccessRule rule in security.GetAccessRules(includeExplicit: true, includeInherited: true, typeof(SecurityIdentifier)))
         {
             if (rule.AccessControlType == AccessControlType.Allow && !allowed.Contains((SecurityIdentifier)rule.IdentityReference))
             {
-                return $"it gives access to {rule.IdentityReference.Value}.";
+                return new Problem($"it gives access to {Named((SecurityIdentifier)rule.IdentityReference)}.", Above: false);
             }
         }
 
@@ -200,7 +243,7 @@ internal static class ProtectedFiles
             DirectorySecurity aboveSecurity = new DirectoryInfo(above).GetAccessControl();
             if (aboveSecurity.GetOwner(typeof(SecurityIdentifier)) is not SecurityIdentifier aboveOwner || !trustedAbove.Contains(aboveOwner))
             {
-                return $"{where} is owned by another user.";
+                return new Problem($"{where} is owned by another user.", Above: true);
             }
 
             foreach (
@@ -214,7 +257,10 @@ internal static class ProtectedFiles
                     && !trustedAbove.Contains((SecurityIdentifier)rule.IdentityReference)
                 )
                 {
-                    return $"{where} lets {rule.IdentityReference.Value} delete or replace what is in it.";
+                    return new Problem(
+                        $"{where} lets {Named((SecurityIdentifier)rule.IdentityReference)} delete or replace what is in it.",
+                        Above: true
+                    );
                 }
             }
         }
@@ -222,8 +268,22 @@ internal static class ProtectedFiles
         return null;
     }
 
+    // An account's name beside its SID, as "NT AUTHORITY\Authenticated Users (S-1-5-11)"; the SID alone when it has no name.
+    [SupportedOSPlatform("windows")]
+    private static string Named(SecurityIdentifier sid)
+    {
+        try
+        {
+            return $"{sid.Translate(typeof(NTAccount)).Value} ({sid.Value})";
+        }
+        catch (Exception e) when (e is IdentityNotMappedException or SystemException)
+        {
+            return sid.Value;
+        }
+    }
+
     [UnsupportedOSPlatform("windows")]
-    private static string? CheckUnix(string path)
+    private static Problem? CheckUnix(string path)
     {
         const uint Root = 0;
         const UnixFileMode Others =
@@ -240,12 +300,17 @@ internal static class ProtectedFiles
         uint owner = UnixOwner.OwnerOf(path);
         if (owner != self && owner != Root)
         {
-            return "it is owned by another user.";
+            return new Problem("it is owned by another user.", Above: false);
         }
 
         if ((File.GetUnixFileMode(path) & Others) != 0)
         {
-            return "it gives access to group or others (it must be mode 0700).";
+            return new Problem("it gives access to group or others (it must be mode 0700).", Above: false);
+        }
+
+        if (OperatingSystem.IsMacOS() && UnixOwner.MacAllowedOther(path, self, anyRight: true) is string other)
+        {
+            return new Problem($"its access list gives access to {other}.", Above: false);
         }
 
         // design §10.2 (V1d24): every folder up to / as OpenSSH's safe_path checks them; who may write to one of them may
@@ -256,17 +321,25 @@ internal static class ProtectedFiles
             uint aboveOwner = UnixOwner.OwnerOf(above);
             if (aboveOwner != self && aboveOwner != Root)
             {
-                return $"{where} is owned by another user.";
+                return new Problem($"{where} is owned by another user.", Above: true);
             }
 
             if ((File.GetUnixFileMode(above) & (UnixFileMode.GroupWrite | UnixFileMode.OtherWrite)) != 0)
             {
-                return $"{where} is writable by group or others.";
+                return new Problem($"{where} is writable by group or others.", Above: true);
+            }
+
+            if (OperatingSystem.IsMacOS() && UnixOwner.MacAllowedOther(above, self, anyRight: false) is string replacer)
+            {
+                return new Problem($"{where} has an access list that lets {replacer} delete or replace what is in it.", Above: true);
             }
         }
 
         return null;
     }
+
+    // What is wrong, and whether it is a folder above the one checked, which the reader mends there and not by removing this one.
+    private sealed record Problem(string Text, bool Above);
 
     [SupportedOSPlatform("windows")]
     private static DirectorySecurity OwnerOnly()

@@ -314,9 +314,25 @@ public sealed partial class AdminSocketTests
         }
 
         string shared = "/opt/elm-e2e-" + Convert.ToHexStringLower(System.Security.Cryptography.RandomNumberGenerator.GetBytes(4));
+        bool optExisted = Directory.Exists("/opt");
+
+        // The runner's /opt has a default access list that makes new folders group-writable (V1d24, PR #447); the shared
+        // folder drops every access list, so the folders the test makes in it follow the umask alone.
         (int made, _, string madeError) = await Binaries.RunAsync(
             "sudo",
-            ["-n", "sh", "-c", "mkdir -p /opt && mkdir -m 755 " + shared + " && chown " + Environment.UserName + " " + shared],
+            [
+                "-n",
+                "sh",
+                "-c",
+                "mkdir -p /opt && mkdir -m 755 "
+                    + shared
+                    + " && { ! command -v setfacl >/dev/null || setfacl -b -k "
+                    + shared
+                    + "; } && chown "
+                    + Environment.UserName
+                    + " "
+                    + shared,
+            ],
             "/"
         );
         Assert.True(made == 0, "sudo could not make the shared folder: " + madeError.Trim());
@@ -327,6 +343,10 @@ public sealed partial class AdminSocketTests
         finally
         {
             await Binaries.RunAsync("sudo", ["-n", "rm", "-rf", shared], "/");
+            if (!optExisted)
+            {
+                await Binaries.RunAsync("sudo", ["-n", "rmdir", "/opt"], "/");
+            }
         }
     }
 

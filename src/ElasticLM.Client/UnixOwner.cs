@@ -30,6 +30,18 @@ internal static unsafe partial class UnixOwner
     private const int MacUidOffset = 16;
 
     private const int BufferLength = 256;
+    private const int RealPathLength = 4096;
+
+    private const int NoEntry = 2; // ENOENT: acl_get_file's answer for a file without an extended access list.
+    private const int AclTypeExtended = 0x100;
+    private const int AclFirstEntry = 0;
+    private const int AclNextEntry = -1;
+    private const int AclExtendedAllow = 1;
+    private const int AclDelete = 1 << 4;
+    private const int AclDeleteChild = 1 << 6;
+    private const int AclWriteSecurity = 1 << 12;
+    private const int AclChangeOwner = 1 << 13;
+    private const int IdTypeUid = 0;
 
     /// <summary>Gets the effective user ID of this process.</summary>
     /// <exception cref="IOException">The C library cannot be called.</exception>
@@ -83,6 +95,151 @@ internal static unsafe partial class UnixOwner
 
         return Unsafe.ReadUnaligned<uint>(buffer + (OperatingSystem.IsMacOS() ? MacUidOffset : StatxUidOffset));
     }
+
+    /// <summary>Reads the path of a folder with every symbolic link on the way resolved, as <c>realpath</c> gives it.</summary>
+    /// <param name="path">The folder, as a full path.</param>
+    /// <returns>The resolved path.</returns>
+    /// <exception cref="IOException">The path cannot be resolved.</exception>
+    public static string RealPath(string path)
+    {
+        // PATH_MAX is 4096 on Linux and 1024 on macOS; the larger fits both.
+        byte* buffer = stackalloc byte[RealPathLength];
+        nint result;
+        try
+        {
+            result = OperatingSystem.IsMacOS() ? MacRealPath(path, buffer) : LinuxRealPath(path, buffer);
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            throw new IOException($"The C library cannot be called to resolve '{path}': {e.Message}", e);
+        }
+
+        return result != 0
+            ? Marshal.PtrToStringUTF8((nint)buffer)!
+            : throw new IOException($"Where '{path}' leads cannot be read (error {Marshal.GetLastPInvokeError()}).");
+    }
+
+    // design §10.2 (V1d24, the owner's K9): macOS keeps an extended access list beside the mode (chmod +a), whose allow entries
+    // can let another user delete or rename what is in a folder whatever its mode. <sys/acl.h> of Apple's Libc: ACL_TYPE_EXTENDED
+    // 0x100, ACL_FIRST_ENTRY 0, ACL_NEXT_ENTRY -1, ACL_EXTENDED_ALLOW 1, ACL_DELETE 1<<4, ACL_DELETE_CHILD 1<<6,
+    // ACL_WRITE_SECURITY 1<<12, ACL_CHANGE_OWNER 1<<13; <membership.h>: ID_TYPE_UID 0.
+
+    /// <summary>
+    /// On macOS, finds an allow entry of a folder's extended access list for anyone other than root and the given user.
+    /// </summary>
+    /// <param name="path">The folder.</param>
+    /// <param name="self">The user ID of this process.</param>
+    /// <param name="anyRight"><see langword="true"/> to count an entry that allows anything; <see langword="false"/> to count
+    /// only an entry that allows deleting the folder or what is in it, changing its access list, or changing its owner.</param>
+    /// <returns>Whom the entry names (<c>user 501</c>, <c>group 20</c>), or <see langword="null"/> when there is none.</returns>
+    /// <exception cref="IOException">The access list cannot be read.</exception>
+    [SupportedOSPlatform("macos")]
+    public static string? MacAllowedOther(string path, uint self, bool anyRight)
+    {
+        nint acl;
+        try
+        {
+            acl = AclGetFile(path, AclTypeExtended);
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            throw new IOException($"The C library cannot be called to read the access list of '{path}': {e.Message}", e);
+        }
+
+        if (acl == 0)
+        {
+            int error = Marshal.GetLastPInvokeError();
+            return error == NoEntry ? null : throw new IOException($"The access list of '{path}' cannot be read (error {error}).");
+        }
+
+        try
+        {
+            for (int entryId = AclFirstEntry; AclGetEntry(acl, entryId, out nint entry) == 0; entryId = AclNextEntry)
+            {
+                if (AclGetTagType(entry, out int tag) != 0 || tag != AclExtendedAllow)
+                {
+                    continue;
+                }
+
+                if (AclGetPermset(entry, out nint permset) != 0)
+                {
+                    throw new IOException($"An entry of the access list of '{path}' cannot be read.");
+                }
+
+                bool counts =
+                    anyRight
+                    || AclGetPermNp(permset, AclDelete) == 1
+                    || AclGetPermNp(permset, AclDeleteChild) == 1
+                    || AclGetPermNp(permset, AclWriteSecurity) == 1
+                    || AclGetPermNp(permset, AclChangeOwner) == 1;
+                if (!counts)
+                {
+                    continue;
+                }
+
+                nint qualifier = AclGetQualifier(entry);
+                if (qualifier == 0)
+                {
+                    return "an entry without a user or group";
+                }
+
+                try
+                {
+                    if (MbrUuidToId((byte*)qualifier, out uint id, out int idType) != 0)
+                    {
+                        return "a user or group that cannot be named";
+                    }
+
+                    if (idType == IdTypeUid && (id == self || id == 0))
+                    {
+                        continue;
+                    }
+
+                    return (idType == IdTypeUid ? "user " : "group ") + id.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                }
+                finally
+                {
+                    _ = AclFree(qualifier);
+                }
+            }
+
+            return null;
+        }
+        finally
+        {
+            _ = AclFree(acl);
+        }
+    }
+
+    [LibraryImport(LinuxLibc, EntryPoint = "realpath", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial nint LinuxRealPath(string path, byte* resolved);
+
+    [LibraryImport(MacLibc, EntryPoint = "realpath", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial nint MacRealPath(string path, byte* resolved);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_file", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial nint AclGetFile(string path, int type);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_entry")]
+    private static partial int AclGetEntry(nint acl, int entryId, out nint entry);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_tag_type")]
+    private static partial int AclGetTagType(nint entry, out int tag);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_permset")]
+    private static partial int AclGetPermset(nint entry, out nint permset);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_perm_np")]
+    private static partial int AclGetPermNp(nint permset, int perm);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_get_qualifier")]
+    private static partial nint AclGetQualifier(nint entry);
+
+    [LibraryImport(MacLibc, EntryPoint = "acl_free")]
+    private static partial int AclFree(nint value);
+
+    [LibraryImport(MacLibc, EntryPoint = "mbr_uuid_to_id")]
+    private static partial int MbrUuidToId(byte* uuid, out uint id, out int idType);
 
     [LibraryImport(LinuxLibc, EntryPoint = "geteuid")]
     private static partial uint LinuxGeteuid();
