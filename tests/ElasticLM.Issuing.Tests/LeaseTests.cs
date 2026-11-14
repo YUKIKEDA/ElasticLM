@@ -95,6 +95,71 @@ public sealed class LeaseTests : IDisposable
     }
 
     /// <summary>
+    /// A lease may end at the server license's feature's own expiry, without grace, and not a second later; a borrow too
+    /// (design §12.7.5 step 5, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The server license of the valid case (expires in 30 days with a grace of 7 days), whose feature pro expires in 10
+    ///   days, so the feature's expiry is the earlier bound.
+    ///
+    /// Steps:
+    /// - Issue a 10-minute lease that ends at the feature's expiry, and one issued a second later; verify each at its issue
+    ///   time. Do the same with a 7-day borrow.
+    ///
+    /// Expected:
+    /// - The leases that end at the feature's expiry are valid; the ones a second later are ELM_LEASE_OUT_OF_BOUNDS "The
+    ///   lease outlives the feature of the server license.".
+    /// </remarks>
+    [Fact]
+    public void VerifyOnPremises_LeaseEndAtTheFeatureExpiry_IsTheBound()
+    {
+        DateTimeOffset bound = Now.AddDays(10);
+        ServerIdentity server = Server(featureExpiresAt: bound);
+        var outlives = new LicenseError(ErrorCode.LeaseOutOfBounds, "The lease outlives the feature of the server license.");
+
+        // The borrow first: a fake clock cannot go back.
+        foreach (TimeSpan length in new[] { TimeSpan.FromDays(7), TimeSpan.FromMinutes(10) })
+        {
+            LeaseSpec spec = Spec(server) with { IsBorrow = length > TimeSpan.FromMinutes(10), Duration = length };
+
+            _time.SetUtcNow(bound - length);
+            Assert.IsType<LeaseVerificationResult.Valid>(Verifier().VerifyOnPremises(LeaseIssuer.Issue(_server, spec, _time), server, Expect()));
+
+            _time.Advance(TimeSpan.FromSeconds(1));
+            Assert.Equal(outlives, Invalid(Verifier().VerifyOnPremises(LeaseIssuer.Issue(_server, spec, _time), server, Expect())));
+        }
+    }
+
+    /// <summary>
+    /// A lease that outlives both the server license with its grace and the feature fails on the server license first: the
+    /// two checks of design §12.7.5 step 5 come in that order (V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The server license of the valid case (expires in 30 days with a grace of 7 days), whose feature pro expires in 37
+    ///   days, at the same second as the server license's grace.
+    ///
+    /// Steps:
+    /// - Issue a 10-minute lease that ends a second after both; verify it.
+    ///
+    /// Expected:
+    /// - ELM_LEASE_OUT_OF_BOUNDS "The lease outlives the server license.".
+    /// </remarks>
+    [Fact]
+    public void VerifyOnPremises_LeaseOutlivingLicenseAndFeature_FailsOnTheLicense()
+    {
+        DateTimeOffset bound = Now.AddDays(37);
+        ServerIdentity server = Server(featureExpiresAt: bound);
+
+        _time.SetUtcNow(bound.AddMinutes(-10).AddSeconds(1));
+        Assert.Equal(
+            new LicenseError(ErrorCode.LeaseOutOfBounds, "The lease outlives the server license."),
+            Invalid(Verifier().VerifyOnPremises(LeaseIssuer.Issue(_server, Spec(server), _time), server, Expect()))
+        );
+    }
+
+    /// <summary>
     /// A server license that expires at the last second a time can have, with a grace period, bounds its leases without an
     /// exception: its expiry and grace are added in seconds (design §12.7.5 step 5, V1d23, finding F36).
     /// </summary>
@@ -981,11 +1046,11 @@ public sealed class LeaseTests : IDisposable
 
     private LeaseExpectation Expect() => new("acme-cad", ClientKid);
 
-    private ServerIdentity Server(DateTimeOffset? expiresAt = null)
+    private ServerIdentity Server(DateTimeOffset? expiresAt = null, DateTimeOffset? featureExpiresAt = null)
     {
         Assert.True(
             ServerIdentity.TryCreate(
-                VerifiedLicenseOf(LicenseKind.Server, expiresAt),
+                VerifiedLicenseOf(LicenseKind.Server, expiresAt, featureExpiresAt),
                 Jwk(_server),
                 out ServerIdentity? server,
                 out LicenseError? error
@@ -995,7 +1060,7 @@ public sealed class LeaseTests : IDisposable
         return server!;
     }
 
-    private VerifiedLicense VerifiedLicenseOf(LicenseKind kind, DateTimeOffset? expiresAt = null)
+    private VerifiedLicense VerifiedLicenseOf(LicenseKind kind, DateTimeOffset? expiresAt = null, DateTimeOffset? featureExpiresAt = null)
     {
         bool isServer = kind == LicenseKind.Server;
         var spec = new LicenseSpec
@@ -1014,7 +1079,7 @@ public sealed class LeaseTests : IDisposable
             BorrowReturnLimit = isServer ? 2 : null,
             ServerBorrowReturnLimit = isServer ? 10_000 : null,
         };
-        spec = isServer ? spec with { Features = [new FeatureSpec("pro", Seats: 5)] } : spec;
+        spec = isServer ? spec with { Features = [new FeatureSpec("pro", Seats: 5, ExpiresAt: featureExpiresAt)] } : spec;
         string cert = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);
         IssuedLicense issued = LicenseIssuer.Issue(_signing, [cert], spec, _time);
         var verifier = new LicenseVerifier(TrustStore.Create([KeyFiles.ExportPublic(_root)], []), _time, StatelessClockGuard.Instance);

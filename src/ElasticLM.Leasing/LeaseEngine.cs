@@ -568,7 +568,7 @@ public sealed class LeaseEngine : IDisposable
             }
 
             var record = new LeaseRecord(NewLeaseId(), pool.FeatureId, request.Count, request.KeyId, request.Key) { AcquiredBy = request.ProofId };
-            LeaseOutcome outcome = IssueNext(record, now, request.ProofId, state, borrow);
+            LeaseOutcome outcome = IssueNext(record, pool, now, request.ProofId, state, borrow);
             if (outcome is not LeaseOutcome.Granted)
             {
                 return outcome;
@@ -665,7 +665,7 @@ public sealed class LeaseEngine : IDisposable
             switch (LeaseRules.Judge(sequence, record.Sequence, record.IssuedBy, retryOf))
             {
                 case LeaseSequence.Current:
-                    return IssueNext(record, now, proofId, state, borrow: null);
+                    return IssueNext(record, pool, now, proofId, state, borrow: null);
                 case LeaseSequence.Retry:
                     // The client did not receive the last answer and retries; give it the same token again.
                     return new LeaseOutcome.Granted(record.LastToken, record.Id, DateTimeOffset.FromUnixTimeSeconds(record.ExpiresAt), false);
@@ -679,7 +679,7 @@ public sealed class LeaseEngine : IDisposable
             }
 
             // design §10.4 (V1d5): the next token is later than the request's too, so the copy that asked takes it.
-            LeaseOutcome flagged = IssueNext(record, now, proofId, state, borrow: null, flaggedRequest: sequence);
+            LeaseOutcome flagged = IssueNext(record, pool, now, proofId, state, borrow: null, flaggedRequest: sequence);
             return flagged is LeaseOutcome.Granted granted ? granted with { CloneFlagged = true } : flagged;
         }
     }
@@ -903,10 +903,11 @@ public sealed class LeaseEngine : IDisposable
 
     private long Now() => _time.GetUtcNow().ToUnixTimeSeconds();
 
-    // Issues the record's next token: sequence + 1, and an expiry that does not pass the server license's exp + grace, so the
-    // client's check of design §12.7.5 step 5 holds.
+    // Issues the record's next token: sequence + 1, and an expiry that passes neither the server license's exp + grace nor the
+    // feature's exp (design §12.7.1, V1d18), so the client's check of design §12.7.5 step 5 holds.
     private LeaseOutcome IssueNext(
         LeaseRecord record,
+        FeaturePool pool,
         DateTimeOffset now,
         string proofId,
         LicenseState state,
@@ -922,9 +923,12 @@ public sealed class LeaseEngine : IDisposable
 
         long nowSeconds = now.ToUnixTimeSeconds();
         long period = borrow is TimeSpan b ? (long)b.TotalSeconds : state.LeaseSeconds;
-        if (LeaseRules.Expiry(nowSeconds, period, state.LicenseLimit) is not long expires)
+
+        // Callers refuse at the server license's exp + grace first, at the same time, so only the feature's exp leaves less
+        // than a second: at its very second, which the feature check lets through (design §12.7.1).
+        if (LeaseRules.Expiry(nowSeconds, period, pool.Limit) is not long expires)
         {
-            return Refuse(ErrorCode.Expired, "The server license has expired.");
+            return Refuse(ErrorCode.Expired, "The feature of the server license has expired.");
         }
 
         var spec = new LeaseSpec
@@ -1081,7 +1085,7 @@ public sealed class LeaseEngine : IDisposable
             LicenseLimit = license.ExpiresAt is DateTimeOffset expires ? expires.ToUnixTimeSeconds() + (long)license.GracePeriod.TotalSeconds : null;
             Pools = license.Features.ToDictionary(
                 f => f.Id,
-                f => new FeaturePool(f.Id, f, f.Seats ?? 0, Allowed(f.Seats ?? 0)),
+                f => new FeaturePool(f.Id, f, f.Seats ?? 0, Allowed(f.Seats ?? 0), LimitOf(f)),
                 StringComparer.Ordinal
             );
         }
@@ -1112,7 +1116,7 @@ public sealed class LeaseEngine : IDisposable
         {
             if (!Pools.TryGetValue(featureId, out FeaturePool? pool))
             {
-                Pools[featureId] = pool = new FeaturePool(featureId, null, 0, 0);
+                Pools[featureId] = pool = new FeaturePool(featureId, null, 0, 0, LicenseLimit);
             }
 
             return pool;
@@ -1120,10 +1124,21 @@ public sealed class LeaseEngine : IDisposable
 
         // design §9.3: floor(seats × (100 + overage) / 100). Seats and overage are bounded (int, 1,000 %), so long cannot overflow.
         private long Allowed(int seats) => LeaseRules.Allowed(seats, _overage);
+
+        // design §12.7.1 (V1d18): a lease of the feature ends no later than the earlier of the server license's exp + grace
+        // and the feature's own exp, without grace.
+        private long? LimitOf(LicensedFeature feature) =>
+            (LicenseLimit, feature.ExpiresAt?.ToUnixTimeSeconds()) switch
+            {
+                (long license, long own) => Math.Min(license, own),
+                (long license, null) => license,
+                (null, long own) => own,
+                _ => null,
+            };
     }
 
     // Leases changes only under Lock. Used is also read without the lock (EndRecoveryIfFull), so it is updated atomically.
-    private sealed class FeaturePool(string featureId, LicensedFeature? feature, int seats, long allowed)
+    private sealed class FeaturePool(string featureId, LicensedFeature? feature, int seats, long allowed, long? limit)
     {
         private long _used;
 
@@ -1141,6 +1156,9 @@ public sealed class LeaseEngine : IDisposable
         public int Seats { get; } = seats;
 
         public long Allowed { get; } = allowed;
+
+        // The latest expiry of the feature's tokens (design §12.7.1), or null when neither the license nor the feature expires.
+        public long? Limit { get; } = limit;
 
         public void AddUsed(long seats) => Interlocked.Add(ref _used, seats);
     }

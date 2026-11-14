@@ -151,6 +151,12 @@ public sealed class LeaseVerifier
             return Fail(ErrorCode.LeaseOutOfBounds, "The lease outlives the server license.");
         }
 
+        // Step 5 also: not past the feature's own expiry, without grace, as a license file's feature (design §11.2 step 12).
+        if (feature.ExpiresAt is DateTimeOffset featureExpires && payload.Exp > featureExpires.ToUnixTimeSeconds())
+        {
+            return Fail(ErrorCode.LeaseOutOfBounds, "The lease outlives the feature of the server license.");
+        }
+
         return CheckTime(payload, leaseToken);
     }
 

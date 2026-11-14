@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <!--
+      design §20.5 (V1d22): eng/ci/Test-ActionPins.ps1 reads the workflows and the composite actions they use through this
+      tool, with a YAML parser instead of the text. Not shipped; NativeAOT is not involved (design §21).
+    -->
+    <PackageReference Include="YamlDotNet" />
+    <InternalsVisibleTo Include="ElasticLM.ActionPins.Tests" />
+  </ItemGroup>
+</Project>

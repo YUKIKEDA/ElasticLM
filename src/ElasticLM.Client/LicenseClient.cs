@@ -60,12 +60,17 @@ public sealed class LicenseClient : IAsyncDisposable
     // has not got through, oldest first; kept in memory only, under the lock.
     private readonly List<string> _owedReleases = [];
 
-    // Server identities by server license jti: the current one, and older ones that leases issued under them still need.
+    // Server identities by server license jti: the current one, and older ones kept while leases issued under them are held,
+    // so that an answer naming one is not taken as a new server license to fetch (design §13.5). Only the current one
+    // verifies a new token.
     private readonly List<ServerIdentity> _identities = [];
 
     // The server license file and key JSON behind each identity, by server license jti: a borrow is saved with them.
     private readonly Dictionary<string, (byte[] License, byte[] Key)> _identityFiles = new(StringComparer.Ordinal);
     private ServerIdentity? _current;
+
+    // Set by ResetServerPin, which takes no lock: the next connection under the lock forgets every identity kept.
+    private int _forgetIdentities;
     private volatile string? _pinnedKeyId;
     private volatile bool _pinFailed;
     private string? _nonce;
@@ -177,7 +182,9 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests; a canceled request ends as
     /// <c>ELM_NETWORK_ERROR</c>.</param>
     /// <returns>The lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease that is
-    /// not the answer to this request, which the client neither keeps nor returns by its ID.</returns>
+    /// not the answer to this request, which the client neither keeps nor returns by its ID; from an on-premises server,
+    /// <c>ELM_FEATURE_VERSION_NOT_LICENSED</c> when <paramref name="version"/> is outside the feature's range in the server
+    /// license, even if the server lent a lease, which the client then releases.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1.</exception>
     /// <exception cref="ObjectDisposedException">The client was disposed.</exception>
@@ -203,7 +210,9 @@ public sealed class LicenseClient : IAsyncDisposable
     /// <param name="count">The number of seats, at least 1.</param>
     /// <param name="cancellationToken">Cancels the wait for the client's lock and the requests.</param>
     /// <returns>The borrowed lease, or why there is none: <c>ELM_REQUEST_MISMATCH</c> when the server's answer carries a lease
-    /// that is not the answer to this request, which the client neither keeps nor returns by its ID.</returns>
+    /// that is not the answer to this request, which the client neither keeps nor returns by its ID; from an on-premises
+    /// server, <c>ELM_FEATURE_VERSION_NOT_LICENSED</c> when <paramref name="version"/> is outside the feature's range in the
+    /// server license, even if the server lent a borrow, which the client then releases.</returns>
     /// <exception cref="ArgumentException">The feature ID is empty.</exception>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="count"/> is less than 1, or the period is shorter
     /// than one second.</exception>
@@ -309,14 +318,19 @@ public sealed class LicenseClient : IAsyncDisposable
                 return new LeaseResult.Failed(reply.Error, reply.RetryAfter);
             }
 
-            (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
+            (LeaseVerificationResult result, IReadOnlyList<string> certificates, ServerIdentity? identity) = await ReadLeaseAsync(reply)
+                .ConfigureAwait(false);
             switch (result)
             {
                 case LeaseVerificationResult.Valid valid
-                    when AcquireMismatch(valid.Lease, featureId, count, borrow, reply.ProofId) is LicenseError mismatch:
+                    when (
+                        AcquireMismatch(valid.Lease, featureId, count, borrow, reply.ProofId) ?? VersionOutsideLicense(identity, featureId, version)
+                    )
+                        is LicenseError mismatch:
                     // design §12.7.5 (V1d5): the lease is not kept, not saved, and not returned by its ID. It may be another
                     // holder's lease, which a return would end; it ends at its own expiry. What the server issued for this
                     // request, if anything, is released by the request's proof ID (§12.7.7), which that lease does not answer.
+                    // A version outside the server license's range (V1d18) is refused the same way.
                     await ReleaseUntakenAsync(reply.ProofId, cancellationToken).ConfigureAwait(false);
                     return new LeaseResult.Failed(mismatch, null);
                 case LeaseVerificationResult.Valid valid:
@@ -430,6 +444,27 @@ public sealed class LicenseClient : IAsyncDisposable
         return token.AnsweredProofId != proofId ? Mismatch("The server's lease answers another request.") : null;
     }
 
+    // design §12.7.5 step 7 (V1d18). The lease token carries no version, so the version asked for is checked against the
+    // server license that verified the lease, with the public check of its feature (the owner's answer to K1 of PR #446).
+
+    /// <summary>
+    /// Checks the version asked for in an acquisition or a borrow from an on-premises server against the range of the
+    /// feature in the server license that verified the lease. A version that is not <c>major.minor[.patch]</c> is outside
+    /// any range.
+    /// </summary>
+    /// <param name="identity">The server whose license verified the lease, or <see langword="null"/> for a lease from
+    /// <c>elm-service</c>, which checks the version itself.</param>
+    /// <param name="featureId">The feature asked for.</param>
+    /// <param name="version">The version asked for, or <see langword="null"/>.</param>
+    /// <returns><see langword="null"/> when no version was asked for, the feature has no range, or the version is in it;
+    /// otherwise <c>ELM_FEATURE_VERSION_NOT_LICENSED</c>.</returns>
+    internal static LicenseError? VersionOutsideLicense(ServerIdentity? identity, string featureId, string? version) =>
+        version is not null
+        && identity?.License.Features.FirstOrDefault(f => f.Id == featureId) is { VersionRange: not null } feature
+        && !feature.CoversVersion(version)
+            ? new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the range of the server license.")
+            : null;
+
     // design §12.7.5, §10.4 (V1d5). The fields come before the lease ID, the lease ID before the sequence number, and the
     // request's ID last, so that each names the first thing that differs.
 
@@ -536,6 +571,9 @@ public sealed class LicenseClient : IAsyncDisposable
         bool deleted = _pins.Delete(serverUrl);
         if (HttpTargetUri.Normalize(serverUrl) == HttpTargetUri.Normalize(_server))
         {
+            // design §13.5 (V1d18): the server licenses kept are forgotten too, so the next one is taken as on a first
+            // connection, also when it is one that was kept before.
+            Volatile.Write(ref _forgetIdentities, 1);
             Volatile.Write(ref _current, null);
         }
 
@@ -975,6 +1013,17 @@ public sealed class LicenseClient : IAsyncDisposable
             return null;
         }
 
+        if (Interlocked.Exchange(ref _forgetIdentities, 0) == 1)
+        {
+            foreach (ServerIdentity kept in _identities)
+            {
+                kept.Dispose();
+            }
+
+            _identities.Clear();
+            _identityFiles.Clear();
+        }
+
         string? seenKeyId = null;
         bool osValidated = false;
         SocketsHttpHandler handler = BoundedAnswer.CreateHandler();
@@ -1133,10 +1182,11 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
-    // Reads a lease answer and verifies the token with the identity of the server license the answer names (design §13.5,
-    // the ELM-Server-License header); a new server license is fetched and checked first. From elm-service, the token is
+    // Reads a lease answer and verifies the token with the server license in use; when the answer names a server license
+    // the client does not know (design §13.5, the ELM-Server-License header), that one is fetched and checked first. From elm-service, the token is
     // verified with the certificates of the answer (design §12.7.5 steps 1, 2, and 6), which are returned with the result.
-    private async Task<(LeaseVerificationResult Result, IReadOnlyList<string> Certificates)> ReadLeaseAsync(Reply reply)
+    // The identity that verified an on-premises token is returned too, for the version check of an acquisition (step 7).
+    private async Task<(LeaseVerificationResult Result, IReadOnlyList<string> Certificates, ServerIdentity? Identity)> ReadLeaseAsync(Reply reply)
     {
         LeaseAnswerBody? answer = null;
         try
@@ -1154,27 +1204,34 @@ public sealed class LicenseClient : IAsyncDisposable
             || (_hosted && (answer.Certificates is null || answer.Certificates.Exists(c => c is null || c.Length > MaxCertificateLength)))
         )
         {
-            return (new LeaseVerificationResult.Invalid(new LicenseError(ErrorCode.Malformed, "The server's lease answer is not valid.")), []);
+            return (new LeaseVerificationResult.Invalid(new LicenseError(ErrorCode.Malformed, "The server's lease answer is not valid.")), [], null);
         }
 
         if (_hosted)
         {
-            return (_leaseVerifier.VerifyHosted(answer.Lease, answer.Certificates!, expectation), answer.Certificates!);
+            return (_leaseVerifier.VerifyHosted(answer.Lease, answer.Certificates!, expectation), answer.Certificates!, null);
         }
 
-        ServerIdentity? identity = _identities.Find(i => i.License.TokenId == reply.ServerLicenseTokenId);
-        if (identity is null)
+        // design §13.5 (V1d18, the owner's answer to K4 of PR #446): an acquisition or a renewal is verified with the server
+        // license in use only. An earlier server license kept for the leases tied to it never verifies a new token, so an
+        // answer that names one is checked against the current license and fails at slic; only a license the client does
+        // not know yet is fetched.
+        ServerIdentity? identity = Volatile.Read(ref _current);
+        if (
+            identity is null
+            || (identity.License.TokenId != reply.ServerLicenseTokenId && !_identities.Exists(i => i.License.TokenId == reply.ServerLicenseTokenId))
+        )
         {
             Volatile.Write(ref _current, null);
             if (await EnsureConnectedAsync().ConfigureAwait(false) is LicenseError error)
             {
-                return (new LeaseVerificationResult.Invalid(error), []);
+                return (new LeaseVerificationResult.Invalid(error), [], null);
             }
 
             identity = _current!;
         }
 
-        return (_leaseVerifier.VerifyOnPremises(answer.Lease, identity, expectation), []);
+        return (_leaseVerifier.VerifyOnPremises(answer.Lease, identity, expectation), [], identity);
     }
 
     private void ScheduleRenewal(Lease lease, VerifiedLease token)
@@ -1255,7 +1312,7 @@ public sealed class LicenseClient : IAsyncDisposable
 
             if (error is null)
             {
-                (LeaseVerificationResult result, IReadOnlyList<string> certificates) = await ReadLeaseAsync(reply).ConfigureAwait(false);
+                (LeaseVerificationResult result, IReadOnlyList<string> certificates, _) = await ReadLeaseAsync(reply).ConfigureAwait(false);
                 switch (result)
                 {
                     case LeaseVerificationResult.Valid valid when RenewalMismatch(valid.Lease, lease, reply.ProofId) is LicenseError mismatch:
