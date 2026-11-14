@@ -300,7 +300,7 @@ Lists the leases and borrows the server holds. It takes only the [server adminis
 elm server reload (--data <folder> | --product <id>) [options]
 ```
 
-Makes the running server read its license file again. It takes only the [server administration options](#server-administration-options).
+Makes the running server read its license file again. It takes only the [server administration options](#server-administration-options). When the file is an earlier server license than the one the server used, apps that already met the newer one refuse the server's new leases until they reset their server pin or are restarted (see [What a new file cannot take back](../how-to/renew-a-server-license.md#what-a-new-file-cannot-take-back)).
 
 ### elm server seal
 
