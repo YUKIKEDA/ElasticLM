@@ -1410,7 +1410,7 @@ public static class ErrorCodes
 | `CloneStrategy` | `Deny`, `Flag` の列挙（§9.3 の `CloneStrategy`）。`VerifiedLicense.CloneStrategy` はサーバーライセンスの `clone` で、それ以外は `null`（M3b で足した） |
 | `InstallationIdentity` | インストール鍵の拇印と、現在のマシン指紋の組。指紋は `MachineFingerprint.Compute`（§10.3）で作り、インストール鍵は `ElasticLM.Client` が §10.2 で持つ。オフラインだけの運用で端末に紐づけないときは `null` |
 | `VerifiedLicense` | 署名の検証と §11.2 の判定に通ったライセンストークンのクレーム（§8.4.2）を、型つきで持つ。検証を経ずには作れない |
-| `LicensedFeature` | `VerifiedLicense.Features` の要素。機能 ID、版の範囲、席数、機能の期限 |
+| `LicensedFeature` | `VerifiedLicense.Features` の要素。機能 ID、版の範囲、席数、機能の期限。`CoversVersion(string version)` は、版が範囲に入るかを検証と同じ読み方で答え、`major.minor[.patch]` の形でない版には `false` を返す（V1d18。§12.7.5 の手順 7） |
 | `LicenseError` | §19 のエラーコードと、人が読む一文の組。一文は鍵やトークンの全体を含まない |
 | `LicenseVerifierOptions` | 検証器ごとの設定。検証器は作るときに写しを取り、`ClockSkew` が範囲外なら `ArgumentOutOfRangeException` を投げる |
 
@@ -2042,6 +2042,7 @@ public sealed class Lease { public bool IsBorrow { get; } }
    また、`exp` が、手順 1 のサーバーライセンスの、手順 3 で見つけた機能（`feat`）の `exp` を超えない（猶予は足さない。その機能が `exp` を持つときだけ。V1d18、Issue #337 の問 18-1・18-2）。外れれば `ELM_LEASE_OUT_OF_BOUNDS`（「The lease outlives the feature of the server license.」。問 18-3）。決めたことの記録は [rows/V1d18.md](./rows/V1d18.md)。サーバーライセンスの `exp + grace` を先に確かめ（「The lease outlives the server license.」）、両方を超えるリースはそちらの文になる。等しい `exp` は通る。リーストークンは機能の版も期限も持たない（§8.4.3。`ver` はトークンの形の版）ので、確かめるのはサーバーライセンスの機能の期限である。ライセンスファイルの機能の期限（§11.2 の手順 12）と同じく猶予を足さないのは、機能の期限がその機能を使える最後の時刻だからである。この手順は、受け取ったリースにも、保存した借り出しを読むとき（手順 9）にも、`elm-server` の回収（§13.4）にも当てはまる。そのため、次のことが起きる。
    - 回収: 機能の期限を短くしたサーバーライセンスに入れ替えたあと、新しい期限を超えるリースの回収は `ELM_LEASE_OUT_OF_BOUNDS` になり、クライアントはそのリースを `Lost` にする（§12.7.3）。
    - 借り出しの記録（§13.4）: 戻すのは期限の切れていない借り出しだけである。V1d18 からの借り出しは機能の期限を超えないので、機能の期限を過ぎた借り出しは、期限切れとして読み飛ばす。
+   - 読み直し（§13.1）: 機能の期限を短くしたサーバーライセンスを読み直しても、すでに出したリースと借り出しは、それぞれの `exp` まで残る（途中で取り消さない）。そのあとの更新は、新しい期限で切る（§12.7.1）。
    - 移行: V1d18 より前の `elm-server` が出したトークンは、機能の期限を超えることがあり、この手順で断られる。まだリリースしていないので、移行は設けない。
 6. 時計の守り（§11.4）と、`iat` が未来でないこと（§11.2 の手順 6）。
 
@@ -2058,9 +2059,9 @@ public sealed class Lease { public bool IsBorrow { get; } }
    4. 借り出しでは、`exp - iat` が頼んだ秒数以下である（「The server's borrow is longer than the period asked for.」）。サーバーは借り出しをライセンスと機能の期限で短くする（§12.7.1、§12.7.6）ので、等しいことは求めない。
    5. `areq` が、この要求の証明の `jti` と同じである（「The server's lease answers another request.」）。
 
-   オンプレミスでは、1〜5 を通ったあと、版を確かめる（V1d18、Issue #337 の問 18-4。`LicenseClient.VersionOutsideLicense`）。アプリが版を渡し（`AcquireLeaseAsync` と `BorrowLeaseAsync` の `version`）、手順 1 のサーバーライセンスのその機能が `ver` を持つとき、版がその範囲になければ、`ELM_REQUEST_MISMATCH` ではなく `ELM_FEATURE_VERSION_NOT_LICENSED`（「The feature version is outside the range of the server license.」）とする。正しいサーバーは、範囲の外の版を同じコードで断り、リースを出さない（§13.4 の検査の順）。範囲を読み、版を比べるのは、ライセンスファイルの検証（§11.2 の手順 12）と同じコード（`ElasticLM.Licensing` の `FeatureVersion` と `FeatureVersionRange`）で、`major.minor[.patch]` の形でない版も範囲の外とする（正しいサーバーは、そういう版を `ELM_INVALID_ARGUMENT` で断る）。版を渡さないとき、機能が `ver` を持たないとき、SaaS 型（上の段落）は確かめない。`ElasticLM.Client` はこの 2 つの内部の型を、`ElasticLM.Licensing` の `InternalsVisibleTo` で使う（公開の API は増やさない）。リーストークンは版を持たないので、手順 1〜6 ではなく、要求に照らすこの段で確かめる。更新は版を送らないので、確かめない。
+   オンプレミスでは、1〜5 を通ったあと、版を確かめる（V1d18、Issue #337 の問 18-4。`LicenseClient.VersionOutsideLicense`）。アプリが版を渡し（`AcquireLeaseAsync` と `BorrowLeaseAsync` の `version`）、手順 1 のサーバーライセンスのその機能が `ver` を持つとき、版がその範囲になければ、`ELM_REQUEST_MISMATCH` ではなく `ELM_FEATURE_VERSION_NOT_LICENSED`（「The feature version is outside the range of the server license.」）とする。正しいサーバーは、範囲の外の版を同じコードで断り、リースを出さない（§13.4 の検査の順）。比べるのは、公開の `LicensedFeature.CoversVersion(string version)` で、ライセンスファイルの検証（§11.2 の手順 12）と同じ読み方（`ElasticLM.Licensing` の内部の `FeatureVersion` と `FeatureVersionRange`）をする。`major.minor[.patch]` の形でない版は `false`（範囲の外）とする（正しいサーバーは、そういう版を `ELM_INVALID_ARGUMENT` で断る）。版を渡さないとき、機能が `ver` を持たないとき、SaaS 型のとき（上の段落）は確かめない。公開のメソッドにしたのは、持ち主の決定（PR #446 の独立レビューの K1 のあと、Issue #337）による。別々に配る 2 つのパッケージを内部の型でつなぐ（`InternalsVisibleTo`）と、`ElasticLM.Client` の依存は下限だけなので、`ElasticLM.Licensing` だけを上げた組み合わせで実行時の例外になりうるためである（[rows/V1d18.md](./rows/V1d18.md)）。リーストークンは版を持たないので、手順 1〜6 ではなく、要求に照らすこの段で確かめる。更新は版を送らないので、確かめない。
 
-   1〜5 か版で外れたら、クライアントはリースを持たず、借り出しを保存せず、更新を始めず、答えが運んだリースの返却（`DELETE /v1/leases/{id}`）も送らない。答えが運んだリースは、ほかの持ち手のものでありうるので、自分の期限で終わる（V1d5 の問 5-4）。代わりに、この要求の証明の `jti` を名指す返却を送る（§12.7.7。V1d5b）。サーバーがこの要求でリースを出していれば、そのリースだけが消える。答えが運んだリースは、この `jti` で出したものでないので消えない。
+   1〜5 か版で外れたら、クライアントはリースを持たず、借り出しを保存せず、更新を始めず、答えが運んだリースの返却（`DELETE /v1/leases/{id}`）も送らない。答えが運んだリースは、ほかの持ち手のものでありうるので、自分の期限で終わる（V1d5 の問 5-4）。代わりに、この要求の証明の `jti` を名指す返却を送る（§12.7.7。V1d5b）。サーバーがこの要求でリースを出していれば、そのリースだけが消える。1〜5 で外れたとき、答えが運んだリースは、この `jti` で出したものでないので消えない。版で外れたときは、答えのリースがこの要求で出たものなので、この返却で消える。
 8. 更新の答え（`LicenseClient.RenewalMismatch`）:
    1. `brw` が `false` である（「The server's renewal is a borrow.」）。
    2. `feat` が、持っているリースの機能と同じである（「The server's renewal is for another feature than the lease held.」）。
@@ -4277,7 +4278,7 @@ M3c で作った形:
 | 7 | `ELM_WRONG_PRODUCT` | 製品が違う（`elm-service` では、有効化のキーが要求の `product` の製品のものでない、M4b2） | 400 |
 | 8 | `ELM_WRONG_INSTALLATION` | インストール鍵が違う | —（再読み込みは 409、下を見よ） |
 | 9 | `ELM_FINGERPRINT_MISMATCH` | マシン指紋が合わない | —（再読み込みは 409、下を見よ） |
-| 10 | `ELM_EXPIRED` | 期限と猶予期間を過ぎた（サーバー側ではサーバーライセンスの期限切れ。リースの期限をライセンスと機能の期限で切ると 1 秒未満しか残らないときも、§12.7.1、§12.7.6） | 403 |
+| 10 | `ELM_EXPIRED` | 期限と猶予期間を過ぎた（サーバー側ではサーバーライセンスの期限切れ。機能の有効期限のちょうどの秒に、リースの期限を切ると 1 秒未満しか残らない要求にも返す。§12.7.1、§12.7.6） | 403 |
 | 11 | `ELM_FEATURE_NOT_LICENSED` | 機能がない | 403 |
 | 12 | `ELM_FEATURE_VERSION_NOT_LICENSED` | 機能の版が範囲外。クライアントは、オンプレミスの取得と借り出しの答えでも返す（頼んだ版がサーバーライセンスの機能の範囲にないとき。§12.7.5 の手順 7、V1d18） | 403 |
 | 13 | `ELM_FEATURE_EXPIRED` | 機能の期限切れ | 403 |
