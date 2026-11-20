@@ -42,7 +42,8 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
     /// - until-close does not run on Windows. There, a Unix domain socket now and then does not tell its reader that the
     ///   other side closed: with plain sockets and no HTTP, the Receive after all 64 MiB had been read and the writer had
     ///   closed did not return, in 14 of 800 runs (10 of the 400 with a blocking Receive), and in none of 200 over TCP
-    ///   (Windows 11 build 26300, Issue #438). elm then waits for the end of the body until its 30 seconds are over, which this test took for a hang.
+    ///   (Windows 11 build 26300, SDK 10.0.403, Debug; design §13.7, Issue #438). elm then waits for the end of the body
+    ///   until its 30 seconds are over, which this test took for a hang.
     ///
     /// Steps:
     /// - Run elm server leases --json, and elm server deactivate-proof, against an answer of 67,108,864 bytes; then
