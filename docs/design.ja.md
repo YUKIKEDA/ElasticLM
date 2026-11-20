@@ -4634,7 +4634,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 - §5.3 の T25 の名指しのアクションから `docker/login-action` を外す（使わないため）。
 - `docs/conventions.md` に `eng/container/` を書く。
 
-測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。
+測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。ただし `Size` が展開後の大きさなのは従来のイメージの置き場所だけで、containerd の置き場所では、圧縮したままの中身の大きさの和である（moby docker-v29.4.2 の `daemon/containerd/image_inspect.go` の `size`:「the total size of the image's packed resources」。Issue #462 の PR の実行 44744591416 で、amd64 は層の和 18,395,800 バイトに対して 18,401,376 バイト、従来の置き場所の arm64 は 16,604,863 バイトに対して 40,208,723 バイト）。そこで `Test-Image.ps1` のまとめの行は、置き場所の種類を添えて `Size` を出す。展開後の大きさは、従来の置き場所のランナー（arm64）の値で読む。
 
 ### 20.7 V1 の行（0.112）
 

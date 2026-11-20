@@ -185,7 +185,10 @@ try {
 
     $size = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Size}}' $tag }).Trim()
     $compressed = ($manifest.layers | Measure-Object -Property size -Sum).Sum
-    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes uncompressed ($store); ran as UID 1654, /health 200, stopped with 0."
+    # Size is the uncompressed size only in the classic image store. In the containerd image store it is "the total size of
+    # the image's packed resources" (moby docker-v29.4.2, daemon/containerd/image_inspect.go, size), so the line names the
+    # store.
+    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes as the Size of docker image inspect ($store); ran as UID 1654, /health 200, stopped with 0."
 }
 finally {
     & docker rm -f $container 2>&1 | Out-Null
