@@ -33,13 +33,44 @@ internal sealed partial class ServiceStore<TDialect>
     public override Task<ProductRow?> FindProductByCodeAsync(string code, CancellationToken cancellationToken) =>
         _db.From(ProductRow.Table).Where(p => Eq(p.Code, code)).Select(p => p).SingleOrDefaultAsync(cancellationToken);
 
-    public override Task<ActivationRow?> FindTrialActivationAsync(Guid productId, string keyId, CancellationToken cancellationToken) =>
-        _db.From(ActivationRow.Table)
-            .Where(a =>
-                And(Eq(a.KeyId, keyId), In(a.LicenseId, _db.From(TrialRow.Table).Where(t => Eq(t.ProductId, productId)).Select(t => t.LicenseId)))
-            )
+    // design §12.6.1 (V1d26): the key's activations still at sequence 1 whose file a request named in retry answered, found
+    // through activations_by_key (migration 0011), then the one of a trial of the product. A key can hold two trials of a
+    // product (a trial record removed by an administrator, or one fingerprint a trial), so the retry, not the product, picks
+    // it. As one query with the product's trials in a subquery, SQLite 3.54.1 without statistics read every trial of the
+    // product and looked the key up in each, and PostgreSQL 18 read every activation without the index (EXPLAIN QUERY PLAN,
+    // EXPLAIN ANALYZE).
+    public override async Task<ActivationRow?> FindTrialRetryAsync(
+        Guid productId,
+        string keyId,
+        IReadOnlyCollection<string> retry,
+        CancellationToken cancellationToken
+    )
+    {
+        ArgumentNullException.ThrowIfNull(retry);
+        if (retry.Count == 0)
+        {
+            return null;
+        }
+
+        string[] named = [.. retry];
+        List<ActivationRow> answered = await _db.From(ActivationRow.Table)
+            .Where(a => And(Eq(a.KeyId, keyId), Eq(a.Seq, 1L), In(a.LastProof, named)))
             .Select(a => a)
-            .FirstOrDefaultAsync(cancellationToken);
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        if (answered.Count == 0)
+        {
+            return null;
+        }
+
+        Guid[] licenses = [.. answered.Select(a => a.LicenseId)];
+        List<Guid> trials = await _db.From(TrialRow.Table)
+            .Where(t => And(Eq(t.ProductId, productId), In(t.LicenseId, licenses)))
+            .Select(t => t.LicenseId)
+            .ToListAsync(cancellationToken)
+            .ConfigureAwait(false);
+        return answered.FirstOrDefault(a => trials.Contains(a.LicenseId));
+    }
 
     public override Task<ActivationRow?> FindActivationAsync(Guid id, CancellationToken cancellationToken) =>
         _db.From(ActivationRow.Table).Where(a => Eq(a.Id, id)).Select(a => a).SingleOrDefaultAsync(cancellationToken);
@@ -446,11 +477,12 @@ internal sealed partial class ServiceStore<TDialect>
             return most;
         }
 
-        public override async Task RecordReturnAsync(IEnumerable<string> counters, long at, CancellationToken cancellationToken)
+        // design §12.7.6 (V1d26): one row a return and counter, also for two returns of one counter in the same second. The
+        // lease's row was removed in the same transaction, so its ID is returned once.
+        public override async Task RecordReturnAsync(IEnumerable<string> counters, string leaseId, long at, CancellationToken cancellationToken)
         {
             foreach (string counter in counters.Distinct(StringComparer.Ordinal))
             {
-                // Two returns of one counter in the same second count once; the window is 30 days, so this does not matter.
                 await tx.Insert(LeaseReturnRow.Table)
                     .Values(
                         new LeaseReturnRow.Insert
@@ -458,10 +490,9 @@ internal sealed partial class ServiceStore<TDialect>
                             LicenseId = license.Id,
                             Counter = counter,
                             ReturnedAt = at,
+                            LeaseId = leaseId,
                         }
                     )
-                    .OnConflict(r => [r.LicenseId, r.Counter, r.ReturnedAt])
-                    .DoNothing()
                     .ExecuteAsync(cancellationToken)
                     .ConfigureAwait(false);
             }

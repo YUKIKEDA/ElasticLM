@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 
 namespace ElasticLM.Licensing;
@@ -68,11 +69,39 @@ internal static class Limits
     /// <summary>The most characters a proof's <c>jti</c> has.</summary>
     public const int MaxProofIdLength = 64;
 
+    // design §12.2 (V1d26): the characters of base64url (RFC 4648 §5) only, which ElasticLM.Client sends; a database may not
+    // store others (PostgreSQL refuses U+0000 in text), and a proof ID goes into tokens, records, and logs.
+    private static readonly SearchValues<char> ProofIdCharacters = SearchValues.Create(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    );
+
     /// <summary>
-    /// Returns whether a proof's <c>jti</c> has its form: 1 to 64 characters. A server accepts no other in a proof, so a
-    /// lease token that names the proof it answers holds no other.
+    /// Returns whether a proof's <c>jti</c> has its form: 1 to 64 characters of base64url (<c>A-Z</c>, <c>a-z</c>,
+    /// <c>0-9</c>, <c>-</c>, and <c>_</c>). A server accepts no other in a proof, so a lease token that names the proof it
+    /// answers holds no other.
     /// </summary>
-    public static bool IsProofId(string? id) => id is { Length: > 0 and <= MaxProofIdLength };
+    public static bool IsProofId(string? id) => id is { Length: > 0 and <= MaxProofIdLength } && !id.AsSpan().ContainsAnyExcept(ProofIdCharacters);
+
+    // design §12.6.1, §12.7.1, §14.5 (V1d26): the servers refuse a request's client host, user, and app version with one,
+    // and elm-service the text members of the administration API, so none is stored (PostgreSQL refuses U+0000 in text) or
+    // reaches the logs and the admin UI. The range is Rune.IsControl's, as the other checks of the code base use.
+
+    /// <summary>
+    /// Returns whether a text holds a control character: U+0000 to U+001F, U+007F, or U+0080 to U+009F.
+    /// </summary>
+    public static bool HasControlCharacter(string text)
+    {
+        ArgumentNullException.ThrowIfNull(text);
+        foreach (Rune rune in text.EnumerateRunes())
+        {
+            if (Rune.IsControl(rune))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
 
     // design §8.4.2 (V1d5a).
 

@@ -307,7 +307,7 @@ internal sealed partial class ElmService
             }
 
             return activation.BlockedAt is not null
-                ? ClientResult.Fail(ErrorCode.CloneDetected, "The activation was stopped because a clone of the installation was detected.")
+                ? ClientResult.Fail(ErrorCode.CloneDetected, StoppedAsClone)
                 : ClientResult.Stored(row.ActivationId, row.Response);
         }
 

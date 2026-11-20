@@ -256,7 +256,7 @@ The settings, `ActivationClientOptions` (each property has an `init` accessor, s
 | `KeyScope` | `KeyScope` | `KeyScope.User` | No | Where the installation key and the activation are kept. |
 | `DataDirectory` | `string?` | `null` | No | The folder of the installation key and the activation, or `null` for the default folder of the scope ([Where the key is stored](../explanation/devices-and-proofs.md#where-the-key-is-stored)). |
 | `SendClientInfo` | `bool` | `false` | No | Whether the host name and the OS user name are sent. The service keeps them only when the policy's `clientInfoStrategy` is `hostAndUser`. |
-| `AppVersion` | `string?` | `null` | No | The app's version, sent for the audit log; at most 64 bytes in UTF-8. |
+| `AppVersion` | `string?` | `null` | No | The app's version, sent for the audit log; at most 64 bytes in UTF-8, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). The library checks only the length; the service refuses a request whose version holds a control character with `ELM_MALFORMED`. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options, or `null` for their defaults. |
 | `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |
@@ -292,7 +292,7 @@ The settings, `LicenseClientOptions` (each property has an `init` accessor, so i
 | `KeyScope` | `KeyScope` | `KeyScope.User` | No | Where the installation key and the server pins are kept. |
 | `DataDirectory` | `string?` | `null` | No | The folder of the installation key and the pins, or `null` for the default folder of the scope ([Where the key is stored](../explanation/devices-and-proofs.md#where-the-key-is-stored)). |
 | `SendClientInfo` | `bool` | `false` | No | Whether the host name and the OS user name are sent with each new lease. On premises, `host:` and `user:` entries of the server's [access rules](server-configuration.md#access-rules) use them; the client states them itself and the server cannot check them. |
-| `AppVersion` | `string?` | `null` | No | The app version sent with each new lease; at most 64 bytes in UTF-8. |
+| `AppVersion` | `string?` | `null` | No | The app version sent with each new lease; at most 64 bytes in UTF-8, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). The library checks only the length; both servers refuse a lease request whose version holds a control character with `ELM_MALFORMED`. |
 | `ClockGuard` | `IClockGuard?` | `null` | No | The clock guard for the server license and the leases, or `null` for a `FileClockGuard` in the file `clock` in the installation key's folder, signed with the installation key. |
 | `VerifierOptions` | `LicenseVerifierOptions?` | `null` | No | The verifier's options (the clock skew), or `null` for their defaults. |
 | `TimeProvider` | `TimeProvider` | `TimeProvider.System` | No | The clock. It also counts the 30 seconds a request may take: with a fake clock in tests, a request that stalls never ends until the clock moves, and a move of more than 30 seconds while a request is on its way ends it as `ELM_NETWORK_ERROR`. |

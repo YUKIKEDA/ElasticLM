@@ -614,10 +614,11 @@ internal sealed partial class ElmService
             .Select(f => f.Code)
             .ToHashSet(StringComparer.Ordinal);
 
+    // design §14.5 (V1d26): a name with a control character is refused as malformed, before its length.
     private static string CheckLicenseName(string name) =>
-        name.EnumerateRunes().Count() is >= 1 and <= Licenses.MaxNameLength
-            ? name
-            : throw new BodyException(ErrorCode.InvalidArgument, "name must be 1 to 256 characters.");
+        Limits.HasControlCharacter(name) ? throw new BodyException(ErrorCode.Malformed, Licenses.Malformed)
+        : name.EnumerateRunes().Count() is >= 1 and <= Licenses.MaxNameLength ? name
+        : throw new BodyException(ErrorCode.InvalidArgument, "name must be 1 to 256 characters.");
 
     private static LicenseItem ToItem(LicenseRow l, long now) =>
         new(

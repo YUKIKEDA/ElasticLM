@@ -53,7 +53,7 @@ internal sealed partial class ElmService
             async body =>
             {
                 string code = CheckCode(body.RequiredText("code"));
-                string name = CheckName(body.RequiredText("name"));
+                string name = CheckName(body.RequiredText("name"), ProductMalformed);
                 DateTimeOffset now = Time.GetUtcNow();
                 var product = new ProductRow(Guid.CreateVersion7(now), code, name, null, now.ToUnixTimeSeconds());
                 string detail = AuditLog.Detail(w =>
@@ -118,7 +118,7 @@ internal sealed partial class ElmService
                 {
                     RefuseFixed(body, ProductFixed);
                     string? name = body.TryGet("name", out JsonElement nameValue)
-                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, ProductMalformed))
+                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, ProductMalformed), ProductMalformed)
                         : null;
                     bool setTrial = body.TryGet("trialPolicyId", out JsonElement trialValue);
                     Guid? trial = setTrial ? await TrialPolicyAsync(context, found, body.Text(trialValue)).ConfigureAwait(false) : null;
@@ -182,7 +182,7 @@ internal sealed partial class ElmService
                 async body =>
                 {
                     string code = CheckCode(body.RequiredText("code"));
-                    string name = CheckName(body.RequiredText("name"));
+                    string name = CheckName(body.RequiredText("name"), FeatureMalformed);
                     DateTimeOffset now = Time.GetUtcNow();
                     var feature = new FeatureRow(Guid.CreateVersion7(now), product.Id, code, name, now.ToUnixTimeSeconds());
                     string detail = AuditLog.Detail(w =>
@@ -249,7 +249,7 @@ internal sealed partial class ElmService
                 {
                     RefuseFixed(body, FeatureFixed);
                     string? name = body.TryGet("name", out JsonElement nameValue)
-                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, FeatureMalformed))
+                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, FeatureMalformed), FeatureMalformed)
                         : null;
                     string detail = string.Empty;
                     FeatureRow? changed = await Database
@@ -303,7 +303,7 @@ internal sealed partial class ElmService
                     && await Database.FindProductAsync(productId, context.RequestAborted).ConfigureAwait(false) is ProductRow found
                         ? found
                         : throw new BodyException(ErrorCode.InvalidArgument, "productId must name a product.");
-                string name = CheckName(body.RequiredText("name"));
+                string name = CheckName(body.RequiredText("name"), PolicyMember.Malformed);
                 PolicySettings settings = Policies.Apply(body, PolicySettings.Defaults);
                 if (Policies.Problem(settings) is string problem)
                 {
@@ -383,7 +383,10 @@ internal sealed partial class ElmService
                 {
                     RefuseFixed(body, Policies.Fixed);
                     string? name = body.TryGet("name", out JsonElement nameValue)
-                        ? CheckName(body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, PolicyMember.Malformed))
+                        ? CheckName(
+                            body.Text(nameValue) ?? throw new BodyException(ErrorCode.Malformed, PolicyMember.Malformed),
+                            PolicyMember.Malformed
+                        )
                         : null;
                     DateTimeOffset now = Time.GetUtcNow();
 
@@ -532,8 +535,11 @@ internal sealed partial class ElmService
 
     private static string CheckCode(string code) => CodePattern().IsMatch(code) ? code : throw new BodyException(ErrorCode.InvalidArgument, CodeRule);
 
-    private static string CheckName(string name) =>
-        name.EnumerateRunes().Count() is >= 1 and <= MaxNameLength ? name : throw new BodyException(ErrorCode.InvalidArgument, NameRule);
+    // design §14.5 (V1d26): a name with a control character is refused as malformed, before its length.
+    private static string CheckName(string name, string malformed) =>
+        Limits.HasControlCharacter(name) ? throw new BodyException(ErrorCode.Malformed, malformed)
+        : name.EnumerateRunes().Count() is >= 1 and <= MaxNameLength ? name
+        : throw new BodyException(ErrorCode.InvalidArgument, NameRule);
 
     private static ProductItem ToItem(ProductRow p) =>
         new(p.Id.ToString("D"), p.Code, p.Name, p.TrialPolicyId?.ToString("D"), AdminApi.Time(p.CreatedAt));

@@ -278,6 +278,82 @@ public sealed class AuditLogTests
         Assert.Equal(new AuditCheck(3, null), await database.VerifyAuditAsync(cancel));
     }
 
+    /// <summary>
+    /// A node runs one check of the audit chain at a time: a call that comes while one runs is refused with 429
+    /// ELM_RATE_LIMITED and audited, and once the check has ended, here with an exception, the next call runs (design §14.5,
+    /// V1d26).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service after setup on PostgreSQL. The check reads audit_log, so it waits while another connection holds that
+    ///   table's ACCESS EXCLUSIVE lock. The flag under test is the service's own and the same on both engines; SQLite lets the
+    ///   check read beside any writer (WAL), so nothing holds a check there.
+    ///
+    /// Steps:
+    /// - Lock audit_log; send check A and wait until its read waits on the lock; send check B and read its status and
+    ///   headers; cancel A on the client and wait until its read is gone; send check C and wait until its read waits on the
+    ///   lock; end the lock; read C and B; count the audit rows of audit.verify by result.
+    ///
+    /// Expected:
+    /// - B is 429 with Retry-After 1 while A waits, and its body ELM_RATE_LIMITED "Another check of the audit log is running
+    ///   on this node."; C runs (it waits on the lock rather than being refused) and is 200 and intact; rows ELM_RATE_LIMITED
+    ///   for B, ELM_NETWORK_ERROR for A, and ELM_OK for C.
+    /// </remarks>
+    [Fact]
+    public async Task Verify_WhileAnotherRuns_IsRefusedUntilItEnds()
+    {
+        await using TestService test = TestService.Open("postgres");
+        string key = await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+        HttpClient admin = test.Http(service, key);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await using var holder = new Npgsql.NpgsqlConnection(test.ConnectionString);
+        await holder.OpenAsync(cancel);
+
+        // The reads that the lock of this test holds back; tests on other schemas of the server do not count.
+        string waitingReads =
+            "SELECT COUNT(*) FROM pg_stat_activity WHERE query LIKE 'SELECT%' AND query LIKE '%audit_log%' "
+            + $"AND {holder.ProcessID} = ANY(pg_blocking_pids(pid))";
+        await using Npgsql.NpgsqlTransaction held = await holder.BeginTransactionAsync(cancel);
+        await using (var lockTable = new Npgsql.NpgsqlCommand("LOCK TABLE audit_log IN ACCESS EXCLUSIVE MODE", holder, held))
+        {
+            await lockTable.ExecuteNonQueryAsync(cancel);
+        }
+
+        using var stopA = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        Task<HttpResponseMessage> a = admin.PostAsync("v1/admin/audit/verify", null, stopA.Token);
+        await TestService.WaitForAsync(async () => await test.ScalarAsync(waitingReads) == 1);
+
+        using var requestB = new HttpRequestMessage(HttpMethod.Post, "v1/admin/audit/verify");
+        using HttpResponseMessage b = await admin.SendAsync(requestB, HttpCompletionOption.ResponseHeadersRead, cancel);
+        Assert.Equal((HttpStatusCode.TooManyRequests, "1", false), (b.StatusCode, b.Headers.RetryAfter?.ToString(), a.IsCompleted));
+
+        await stopA.CancelAsync();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => a);
+        await TestService.WaitForAsync(async () => await test.ScalarAsync(waitingReads) == 0);
+        Task<(bool Intact, long? FirstBroken)> c = VerifyAsync(admin);
+        await TestService.WaitForAsync(async () => await test.ScalarAsync(waitingReads) == 1);
+        await held.RollbackAsync(cancel);
+
+        Assert.Equal((true, (long?)null), await c);
+        await TestService.AssertProblemAsync(
+            b,
+            HttpStatusCode.TooManyRequests,
+            "ELM_RATE_LIMITED",
+            "Another check of the audit log is running on this node."
+        );
+        string Count(string result) => $"SELECT COUNT(*) FROM audit_log WHERE action = 'audit.verify' AND result = '{result}'";
+        await TestService.WaitForAsync(async () => await test.ScalarAsync(Count("ELM_OK")) == 1);
+        Assert.Equal(
+            (1L, 1L, 1L),
+            (
+                await test.ScalarAsync(Count("ELM_RATE_LIMITED")),
+                await test.ScalarAsync(Count("ELM_NETWORK_ERROR")),
+                await test.ScalarAsync(Count("ELM_OK"))
+            )
+        );
+    }
+
     private static async Task<(bool Intact, long? FirstBroken)> VerifyAsync(HttpClient admin)
     {
         using HttpResponseMessage response = await admin.PostAsync("v1/admin/audit/verify", null, TestContext.Current.CancellationToken);

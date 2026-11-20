@@ -70,15 +70,18 @@ internal static class Activations
         return new ActivationRequest(key, product, fingerprints, seq, Retry(body, Malformed), Client(body, Malformed), App(body, Malformed));
     }
 
-    /// <summary>Reads the body of a refresh or a deactivation (design §12.6.1): <c>seq</c> and the optional <c>retry</c>.</summary>
+    /// <summary>Reads the body of a refresh, a deactivation (design §12.6.1), or a lease renewal (design §12.7.6): <c>seq</c>
+    /// and the optional <c>retry</c>.</summary>
+    /// <param name="body">The body.</param>
+    /// <param name="malformed">The message of the request's kind, for a body that is not valid.</param>
     /// <exception cref="BodyException">The body is not valid (<c>ELM_MALFORMED</c>).</exception>
-    public static SequenceRequest ReadSequence(RequestBody body)
+    public static SequenceRequest ReadSequence(RequestBody body, string malformed)
     {
         ArgumentNullException.ThrowIfNull(body);
         long seq = body.TryGet("seq", out JsonElement value)
-            ? Sequence(body, value, Malformed) ?? throw new BodyException(ErrorCode.Malformed, Malformed)
-            : throw new BodyException(ErrorCode.Malformed, Malformed);
-        return new SequenceRequest(seq, Retry(body, Malformed));
+            ? Sequence(body, value, malformed) ?? throw new BodyException(ErrorCode.Malformed, malformed)
+            : throw new BodyException(ErrorCode.Malformed, malformed);
+        return new SequenceRequest(seq, Retry(body, malformed));
     }
 
     /// <summary>Reads the body of a trial.</summary>
@@ -90,7 +93,7 @@ internal static class Activations
         return new TrialRequest(
             product,
             Fingerprints(body, "fingerprints", TrialMalformed),
-            Retry(body, Malformed),
+            Retry(body, TrialMalformed),
             Client(body, TrialMalformed),
             App(body, TrialMalformed)
         );
@@ -188,7 +191,7 @@ internal static class Activations
         return retry;
     }
 
-    // design §12.3, §8.6: {host, user}, each at most 255 bytes in UTF-8.
+    // design §12.3, §8.6: {host, user}, each at most 255 bytes in UTF-8, without C0 control characters (V1d26).
     internal static ClientInfo? Client(RequestBody body, string malformed)
     {
         if (!body.TryGet("client", out JsonElement value) || value.ValueKind == JsonValueKind.Null)
@@ -202,16 +205,19 @@ internal static class Activations
         }
 
         string Part(string name) =>
-            value.TryGetProperty(name, out JsonElement part) && body.Text(part) is string text && Encoding.UTF8.GetByteCount(text) <= MaxClientBytes
+            value.TryGetProperty(name, out JsonElement part)
+            && body.Text(part) is string text
+            && Encoding.UTF8.GetByteCount(text) <= MaxClientBytes
+            && !Limits.HasControlCharacter(text)
                 ? text
                 : throw new BodyException(ErrorCode.Malformed, malformed);
         return new ClientInfo(Part("host"), Part("user"));
     }
 
-    // design §12.3, §8.6: the app's version, at most 64 bytes in UTF-8.
+    // design §12.3, §8.6: the app's version, at most 64 bytes in UTF-8, without C0 control characters (V1d26).
     internal static string? App(RequestBody body, string malformed) =>
         !body.TryGet("app", out JsonElement value) ? null
         : body.Text(value) is not string text ? null
-        : Encoding.UTF8.GetByteCount(text) <= MaxAppBytes ? text
+        : Encoding.UTF8.GetByteCount(text) <= MaxAppBytes && !Limits.HasControlCharacter(text) ? text
         : throw new BodyException(ErrorCode.Malformed, malformed);
 }

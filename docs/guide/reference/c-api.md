@@ -351,7 +351,7 @@ Passed to `elm_activation_create`.
 | `scope` | `int32_t` | `ELM_SCOPE_USER` or `ELM_SCOPE_MACHINE`. |
 | `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `send_client_info` | `int32_t` | `1`: send the host and user names. |
-| `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes. |
+| `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). The library checks only the length; a server refuses a request whose version holds a control character with `ELM_MALFORMED`. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |
 | `reject_trial_as_standard` | `int32_t` | `0` (default): `elm_activation_check` with `ELM_KIND_STANDARD` also accepts a trial license. `1`: it does not. |
 | `on_state` | `elm_state_callback` | `NULL`, or the state callback. |
@@ -375,7 +375,7 @@ Passed to `elm_client_create`.
 | `scope` | `int32_t` | `ELM_SCOPE_USER` or `ELM_SCOPE_MACHINE`. |
 | `directory` | `const char*` | `NULL` for the default folder of the scope, or your own folder. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
 | `send_client_info` | `int32_t` | `1`: send the host and user names. |
-| `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes. |
+| `app_version` | `const char*` | `NULL`, or the app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F). The library checks only the length; a server refuses a request whose version holds a control character with `ELM_MALFORMED`. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |
 | `reject_trial_as_standard` | `int32_t` | `0` or `1`. It has no effect: a client verifies only server licenses and lease tokens, never a standard requirement. |
 | `on_lease` | `elm_lease_callback` | `NULL`, or the lease callback. |

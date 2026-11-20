@@ -333,7 +333,8 @@ public sealed class ServiceUsageLogTests
     ///   reader; list on the second service; read the audit log.
     ///
     /// Expected:
-    /// - 204; node n1 with one file whose size is the file's; its content is the file's, ending with a signature line; 404
+    /// - 204; node n1 with one file whose size is the file's; its content is the file's, ending with a signature line, as
+    ///   application/x-ndjson with Content-Disposition attachment and the file's name (design §14.5, V1d26); 404
     ///   ELM_NOT_FOUND "No usage log file of this node has this name." three times; the first file with next its name, the
     ///   second with no next, 400 ELM_INVALID_ARGUMENT; 403 ELM_FORBIDDEN; 409 ELM_CONFLICT "This node
     ///   writes no usage log; set usageLog.directory."; audit rows usagelog.seal, usagelog.list, and usagelog.get with the
@@ -360,8 +361,13 @@ public sealed class ServiceUsageLogTests
             (list.GetProperty("node").GetString(), name, item.GetProperty("size").GetInt64())
         );
         File.Copy(path, Path.Combine(test.FilePath("usage"), "usage-n2-20261001T000000000Z.jsonl"));
-        string content = await admin.GetStringAsync($"v1/admin/usage-log/files/{name}", cancel);
+        using HttpResponseMessage download = await admin.GetAsync($"v1/admin/usage-log/files/{name}", cancel);
+        string content = await download.Content.ReadAsStringAsync(cancel);
         Assert.Equal(Text(test, "n1"), content);
+        Assert.Equal(
+            ("application/x-ndjson", $"attachment; filename=\"{name}\""),
+            (download.Content.Headers.ContentType!.ToString(), download.Content.Headers.ContentDisposition!.ToString())
+        );
         Assert.StartsWith("{\"type\":\"auth\"", content.TrimEnd('\n').Split('\n')[^1], StringComparison.Ordinal);
         foreach (string other in new[] { "usage-n1-20261002T000000000Z.jsonl", "usage-n2-20261001T000000000Z.jsonl", "..%5Celm.db" })
         {
