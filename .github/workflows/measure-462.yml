@@ -1,0 +1,45 @@
+# Temporary (Issue #462, .cursor/rules/open-ends.mdc): what docker load prints for a tar of buildx's docker exporter, as
+# CONTRIBUTING.md's "Build the container image" makes it, on the runner's Docker. Removed before the PR is ready.
+name: Measure 462
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-462.yml
+
+permissions: {}
+
+jobs:
+  docker-load:
+    name: docker load of a docker exporter tar (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - name: Build with the docker exporter, load, and inspect
+        shell: bash
+        run: |
+          set +e
+          docker version --format 'Docker: {{.Server.Version}} (API {{.Server.APIVersion}})'
+          docker info --format 'Driver: {{.Driver}}; DriverStatus: {{json .DriverStatus}}'
+          docker buildx version
+          mkdir context && cd context
+          echo hello > file
+          printf 'FROM scratch\nCOPY file /file\n' > Dockerfile
+          docker buildx create --name measure-462 --driver docker-container --use
+          echo "buildx create: $?"
+          docker buildx build --platform "linux/$(dpkg --print-architecture)" --provenance=false --sbom=false \
+            --output "type=docker,name=elm-service,dest=../image.tar,rewrite-timestamp=true" .
+          echo "buildx build: $?"
+          cd ..
+          tar -tf image.tar
+          echo "index.json: $(tar -xOf image.tar index.json)"
+          echo "manifest.json: $(tar -xOf image.tar manifest.json)"
+          docker load --input image.tar
+          echo "docker load: $?"
+          docker image inspect --format 'elm-service: {{.Id}} {{.RepoTags}}' elm-service
+          echo "docker image inspect: $?"
+          exit 0
