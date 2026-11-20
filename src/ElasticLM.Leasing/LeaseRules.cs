@@ -185,16 +185,19 @@ public static class LeaseRules
     }
 
     /// <summary>
-    /// Returns a token's expiry: now plus the period, cut at the license's limit (its <c>exp + grace</c>), so the client's
-    /// check of design §12.7.5 step 5 holds; <see langword="null"/> when less than a second would be left.
+    /// Returns a token's expiry: now plus the period, cut at the limit, the earlier of the license's and the feature's end
+    /// (design §12.7.1, §12.7.6 step 9), so the client's check of design §12.7.5 step 5 holds; <see langword="null"/> when
+    /// less than a second would be left.
     /// </summary>
     /// <param name="nowSeconds">The time now, in seconds since 1970.</param>
     /// <param name="periodSeconds">The lease or borrow period.</param>
-    /// <param name="licenseLimit">The license's <c>exp + grace</c>, or <see langword="null"/> without an expiry.</param>
+    /// <param name="limit">The latest expiry, or <see langword="null"/> when neither the license nor the feature expires:
+    /// on premises the earlier of the server license's <c>exp + grace</c> and the feature's <c>exp</c>, in the cloud the
+    /// earlier of the license's and the feature's expiry.</param>
     /// <returns>The expiry, or <see langword="null"/>.</returns>
-    public static long? Expiry(long nowSeconds, long periodSeconds, long? licenseLimit)
+    public static long? Expiry(long nowSeconds, long periodSeconds, long? limit)
     {
-        long expires = licenseLimit is long limit ? Math.Min(nowSeconds + periodSeconds, limit) : nowSeconds + periodSeconds;
+        long expires = limit is long latest ? Math.Min(nowSeconds + periodSeconds, latest) : nowSeconds + periodSeconds;
         return expires - nowSeconds < 1 ? null : expires;
     }
 }

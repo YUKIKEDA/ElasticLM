@@ -25,10 +25,33 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
 
 jobs:
+  pins:
+    # design §20.5 (V1d22) and §5.3 T25: every action of the three workflows, and of the composite actions they use, is
+    # pinned to the commit of the version tag its comment names, and every checkout sets persist-credentials: false. The
+    # files are read as YAML by tools/ElasticLM.ActionPins, which the script builds.
+    name: Action pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: global.json
+
+      - name: Check the action pins
+        shell: pwsh
+        run: ./eng/ci/Test-ActionPins.ps1
+
   spa:
     # design §15.2 (decisions 0.96 and 0.100, T21): the admin UI is built once, here, with no secret and no id-token; the
-    # .NET jobs take its dist from this run and run no Node.js tool. The actions of this job, and the download that takes
-    # its output, are pinned by commit, since what it builds goes into the shipped executable.
+    # .NET jobs take its dist from this run and run no Node.js tool. Its output goes into the shipped executable; like
+    # every action of this workflow, the actions of this job and the download that takes its output are pinned by commit
+    # (design §20.5, V1d22).
     name: Admin UI (web/admin)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -41,7 +64,9 @@ jobs:
         shell: pwsh
         working-directory: web/admin
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -102,7 +127,9 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The admin UI of this run's SPA job (design §15.2); build.ps1 -SkipWeb and the publish embed it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -123,11 +150,11 @@ jobs:
           sha256sum --check --strict "$RUNNER_TEMP/sums"
           diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj', '.config/dotnet-tools.json') }}
@@ -184,7 +211,9 @@ jobs:
       run:
         shell: pwsh
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
       # The admin UI of this run's SPA job (design §15.2); build.ps1 -SkipWeb and the publish embed it.
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
@@ -205,11 +234,11 @@ jobs:
           sha256sum --check --strict "$RUNNER_TEMP/sums"
           diff <(cut -c67- "$RUNNER_TEMP/sums" | sort) <(find . -mindepth 1 ! -type d | sed 's|^\./||' | sort) || { echo "::error::The folder does not hold exactly the hashed files (< is missing, > is not among them)."; exit 1; }
 
-      - uses: actions/setup-dotnet@v6
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
         with:
           global-json-file: global.json
 
-      - uses: actions/cache@v6
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.nuget/packages
           key: nuget-aot-${{ runner.os }}-${{ hashFiles('Directory.Packages.props', '**/*.csproj', '.config/dotnet-tools.json') }}
