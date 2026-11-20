@@ -40,6 +40,8 @@ A Python script on Windows that opens a file in text mode writes CRLF line ends.
 
 A script under `eng/` that counts or checks ahead what it will parse later calls the same reading function as the parse, not a second pattern. A second pattern can accept less than the parse, and the script then falls back to other behavior without an error. In V1c13 the step runner counted the How-to pages that name each Tutorial with its own regular expression, which did not allow the spaces and quotes that `Read-Plan` accepts; on a mismatch the runner went back to running the Tutorial again for each page. The correctness review found it, and the count now uses `Get-Page` and `Read-Marker` (PR #269, C1).
 
+A check over a structured format (a workflow's YAML, JSON, XML) reads the file with a parser, not as lines of text. A reader of lines sees another document than the tool that runs the file, and each rule added to it leaves the next shape open. In V1d22 the first check of action pins read `uses:` lines as text. The independent review (P1) passed real `uses` values through quoted and explicit keys and flow mappings; the read after its fixes (B1 to B3) passed them again through a block scalar after `-   `, the line breaks U+2028 and U+0085 that YamlDotNet takes and a line reader does not, and a multi-line single-quoted scalar. The owner had the check read the workflows with YamlDotNet (PR #445).
+
 ## Data access (AuraORM)
 
 - A string primary key column has `[MaxLength(n)]`. Without it the generator makes no `Table` for the record and reports nothing. In M4d1 `LeaseReturnRow` had no table until its `Counter` key had a length (PR #83).

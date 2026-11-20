@@ -122,7 +122,7 @@ flowchart TD
 9. **製品。** `prd` が要件の製品 ID と違えば `ELM_WRONG_PRODUCT` になる。
 10. **マシン。** トークンに `cnf` があれば、要件のインストール識別情報が同じ鍵のサムプリントを持っていなければならない。違えば `ELM_WRONG_INSTALLATION` になる。次に、`fpm` が `ignore` でなければ、`fp` をマシンのフィンガープリントと比べる。マシンからフィンガープリントが 1 つも得られなければ `ELM_FINGERPRINT_UNAVAILABLE`、`fpm` の示す比べ方で一致しなければ `ELM_FINGERPRINT_MISMATCH` になる。
 11. **有効期限。** `exp` がなければ通る。`exp` から `exp + grace` までは、猶予期間中として通る。`exp + grace` を過ぎていれば `ELM_EXPIRED` になる。
-12. **機能。** 要件が機能を指定している場合、その機能が `feat` になければ `ELM_FEATURE_NOT_LICENSED`、バージョンが範囲外なら `ELM_FEATURE_VERSION_NOT_LICENSED`、機能自身の `exp` を過ぎていれば `ELM_FEATURE_EXPIRED` になる。
+12. **機能。** 要件が機能を指定している場合、その機能が `feat` になければ `ELM_FEATURE_NOT_LICENSED`、バージョンが範囲外なら `ELM_FEATURE_VERSION_NOT_LICENSED`、機能自体の `exp` を過ぎていれば `ELM_FEATURE_EXPIRED` になる。
 
 この順序で押さえておきたい点は 2 つある。1 つ目は、署名を確かめ終わるまで（手順 1〜4）、ペイロードの値を一切使わないこと。2 つ目は、手順 7 の時刻巻き戻し対策が、手順 1〜6 を通ったトークンをすべて記録することだ。その後の製品や有効期限の手順で失敗するトークンも記録する。`iat` にはベンダーの署名が付いているので、記録しても安全だ。
 

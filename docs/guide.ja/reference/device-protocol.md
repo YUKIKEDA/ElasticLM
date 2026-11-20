@@ -23,7 +23,7 @@ sidebar_position: 7
 | --- | --- | --- | --- |
 | `ELM-Proof` | リクエスト | 両方 | リクエストのプルーフ（後述）。ヘッダーのフィールドは 1 つだけにする。フィールドが 2 つあるリクエストは `ELM_PROOF_INVALID` になる。 |
 | `ELM-Nonce` | レスポンス | 両方 | 次のプルーフに使う新しいノンス。`elm-service` は、デバイス向けのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、`POST /v1/offline` のレスポンスと、送信元ごとのレート制限による `429` には付けない。`elm-server` は、`GET /v1/nonce` と 4 つのリースのルートのすべてのレスポンスに、エラーも含めて付ける。ただし、IP のルールによる `403` と、レート制限による `429` には付けない。 |
-| `ELM-Server-License` | レスポンス | `elm-server` | サーバーがいまリースの発行に使っているサーバーライセンスファイルのトークン ID（`jti`）。`POST /v1/leases` と `POST /v1/leases/{id}/renew` の成功のレスポンスに付く。ローカルの管理 API が `licenseToken` として示す値と同じだ（[`GET /admin/v1/status`](administration-api.md#get-adminv1status) を参照）。クライアントが持つコピーのトークン ID と違えば、クライアントは `GET /v1/server/license` をもう一度呼ぶ。 |
+| `ELM-Server-License` | レスポンス | `elm-server` | サーバーがいまリースの発行に使っているサーバーライセンスファイルのトークン ID（`jti`）。`POST /v1/leases` と `POST /v1/leases/{id}/renew` の成功のレスポンスに付く。ローカルの管理 API が `licenseToken` として示す値と同じだ（[`GET /admin/v1/status`](administration-api.md#get-adminv1status) を参照）。クライアントがまだ知らないサーバーライセンスを名指していれば、クライアントは `GET /v1/server/license` をもう一度呼ぶ。新しいリースと更新は、クライアントが今使っているサーバーライセンス（最後に取得して確かめたもの。手元に残した前のものでは、新しいトークンを確かめない）だけで確かめる。ヘッダーが手元に残した前のサーバーライセンスを名指していても同じで、そのもとで出たトークンは `ELM_LEASE_OUT_OF_BOUNDS` で断る。 |
 | `Retry-After` | レスポンス | 両方 | 待つ秒数。`ELM_RATE_LIMITED` のときは `1` だ。ただし、製品の上限を超えたトライアルでは違う（[`POST /v1/trials`](#post-v1trials) を参照）。`ELM_SERVER_RECOVERING` のときは、リースの再登録の期間の残りを切り上げた値だ。 |
 
 ### プルーフ
@@ -455,7 +455,7 @@ sidebar_position: 7
 | `403` | `ELM_BORROW_NOT_ALLOWED` | `borrow` がポリシーの `borrowLimit` より長いか、ポリシーに借用の上限がない。 |
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | フィンガープリントのない借用。 |
 | `409` | `ELM_NO_SEATS` | 保持されているシートと `count` の合計が、超過分を含めた機能のシート数を超える。止まったリースと借用も数える。 |
-| `403` | `ELM_EXPIRED` | ライセンスか機能の有効期限までに、リースの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限ちょうどの秒に届いたリクエストなので、リースの残りが 1 秒未満になる。 |
 
 ### `POST /v1/leases/{id}/renew`
 
@@ -490,7 +490,7 @@ sidebar_position: 7
 | `403` | `ELM_FEATURE_NOT_LICENSED`、`ELM_FEATURE_EXPIRED` | ライセンスがその機能を `seats` 付きで付与しなくなったか、機能の期限が切れた。 |
 | `409` | `ELM_NO_SEATS` | このリースを含めて保持されているシートが、いまライセンスが許す数を超える。 |
 | `409` | `ELM_CLONE_DETECTED` | `cloneStrategy` が `deny` のときに `seq` が誤っている。リースは期限が切れるまで止まる。 |
-| `403` | `ELM_EXPIRED` | ライセンスか機能の有効期限までの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限ちょうどの秒に届いたリクエストなので、残りが 1 秒未満になる。 |
 
 ### `DELETE /v1/leases/{id}`
 
@@ -592,7 +592,7 @@ sidebar_position: 7
 | `client` | オブジェクト | いいえ | `{"host": <string>, "user": <string>}`。どちらも任意で、255 バイト以下。`allow` と `deny` の `host:` と `user:` のエントリーと照らし合わせる（[アクセスルール](server-configuration.md#アクセスルール)を参照）。 |
 | `app` | 文字列 | いいえ | アプリのバージョン。64 バイト以下。利用ログに書き込む。 |
 
-`elm-server` は `licenseKey` も `product` も読まない。リースの期間は、サーバーライセンスのリースの期間、または `borrow` の期間で、遅くともサーバーライセンスの有効期限に猶予期間を足した時点で終わる。レスポンスには、サーバーがインストール鍵で署名したリーストークンと、空の `certificates` が入る。ここでは、トークンを `eyJ…` に縮めている。クライアントは、`GET /v1/server/license` から得た鍵でトークンを確かめる。`elm-service` と同じく、クライアントが必要とするクレームは、`POST /v1/leases/{id}/renew` と `DELETE /v1/leases/{id}` が指定するリース ID の `lse`、次のリースの更新で送るシーケンス番号の `seq`、リースが終わる時刻の `exp` だ。すべてのクレームは[トークンとファイルの形式](formats.md#リーストークン-elm-leasejws)にある。
+`elm-server` は `licenseKey` も `product` も読まない。リースの期間は、サーバーライセンスのリースの期間、または `borrow` の期間で、サーバーライセンスの有効期限に猶予期間を足した時点と、サーバーライセンスにある機能自体の有効期限（猶予期間はない）の、早いほうで終わる。レスポンスには、サーバーがインストール鍵で署名したリーストークンと、空の `certificates` が入る。ここでは、トークンを `eyJ…` に縮めている。クライアントは、`GET /v1/server/license` から得た鍵でトークンを確かめる。`elm-service` と同じく、クライアントが必要とするクレームは、`POST /v1/leases/{id}/renew` と `DELETE /v1/leases/{id}` が指定するリース ID の `lse`、次のリースの更新で送るシーケンス番号の `seq`、リースが終わる時刻の `exp` だ。すべてのクレームは[トークンとファイルの形式](formats.md#リーストークン-elm-leasejws)にある。
 
 ```json
 {
@@ -616,7 +616,7 @@ sidebar_position: 7
 | `400` | `ELM_FINGERPRINT_UNAVAILABLE` | フィンガープリントのない借用。 |
 | `503` | `ELM_SERVER_RECOVERING` | 起動のあとのリースの再登録の期間が終わっていない。`Retry-After` がその残りを示す。 |
 | `409` | `ELM_NO_SEATS` | 保持されているシートと `count` の合計が、超過分を含めた機能のシート数を超える。借用では、そこから `borrow.reserve` で残しておくシートを引いた数を超える。 |
-| `403` | `ELM_EXPIRED` | サーバーライセンスの有効期限に猶予期間を足した時点までに、リースの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限ちょうどの秒に届いたリクエストなので、リースの残りが 1 秒未満になる。 |
 | `500` | `ELM_INTERNAL_ERROR` | 借用で、借用の記録を書き込めない。 |
 
 リースの再登録の期間中のリクエストへのレスポンスを、`elm-server` が `Retry-After: 15` を付けて送ったとおりに示す。
@@ -663,7 +663,7 @@ sidebar_position: 7
 | `ELM_OK` | リースをふたたび保持した。または、同じ `seq` ですでに保持していた。または、サーバーライセンスの `clone` が `flag` で、クローンを記録した。 |
 | `ELM_MALFORMED` | トークンを読めない。 |
 | `ELM_BAD_SIGNATURE` | トークンがこのサーバーの鍵で署名されていない。 |
-| `ELM_LEASE_OUT_OF_BOUNDS` | トークンが現在のサーバーライセンスの範囲内にない。ライセンス ID が違う、ライセンスにない機能やシート数を持つ、期間が長すぎる、サーバーライセンスの有効期限と猶予期間を過ぎても続く、のいずれかだ。 |
+| `ELM_LEASE_OUT_OF_BOUNDS` | トークンが現在のサーバーライセンスの範囲内にない。ライセンス ID が違う、ライセンスにない機能やシート数を持つ、期間が長すぎる、サーバーライセンスの有効期限と猶予期間を過ぎても続く、機能自体の有効期限を過ぎても続く、のいずれかだ。 |
 | `ELM_WRONG_PRODUCT` | 別の製品のトークンだ。 |
 | `ELM_WRONG_INSTALLATION` | トークンが、プルーフとは別のインストール鍵に紐付いている。 |
 | `ELM_CLOCK_TAMPERED` | トークンの発行時刻が、サーバーの時計より 5 分を超えて先だ。 |
@@ -706,7 +706,7 @@ sidebar_position: 7
 | `403` | `ELM_FEATURE_NOT_LICENSED`、`ELM_FEATURE_EXPIRED` | サーバーライセンスがその機能を付与しなくなったか、機能の期限が切れた。 |
 | `409` | `ELM_NO_SEATS` | サーバーライセンスが許すシート数が、保持されている数より少なくなった。 |
 | `409` | `ELM_CLONE_DETECTED` | サーバーライセンスの `clone` が `deny` のときに `seq` が誤っている。リースは期限が切れるまで止まる。 |
-| `403` | `ELM_EXPIRED` | サーバーライセンスの有効期限に猶予期間を足した時点までの残りが 1 秒未満になる。 |
+| `403` | `ELM_EXPIRED` | 機能の有効期限ちょうどの秒に届いたリクエストなので、残りが 1 秒未満になる。 |
 
 ### `elm-server` の `DELETE /v1/leases/{id}`
 

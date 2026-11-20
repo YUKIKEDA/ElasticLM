@@ -15,6 +15,8 @@ Such a conflict keeps both sides. Where two PRs added at the same place (the end
 
 After a conflict in code, every test of the projects the merge touched runs on the merged tree before the push, as for `Limits.cs` in PR #382. The merged tree is built even when git reports no conflict. In PR #390 a new test of the branch did not set the required member `LeaseSpec.AnsweredProofId`, which V1d5 had added on `main`; git reported no conflict, and the build failed with CS9035. After a failed build, `dotnet test --no-build` runs the earlier binaries, so its result is not used.
 
+After the merge, and before the push, read the records of the rows the merge brought in (`docs/rows/<ID>.md`, their rows in `docs/roadmap.md`), above all what they say about properties the code now has and findings outside their row. A property of another row can break a test of the branch that the merge left untouched. In PR #418 the merge brought in V1d6's 30-second limit on a wait of the fake clock (PR #400), which `docs/rows/V1d6.md` already stated, and a test of the branch that moved the clock in small steps failed on it.
+
 When asked about such an operation, answer with the current `HEAD` SHA, the target SHA, what would disappear, and the exact command. Then wait.
 
 - Finished work goes to a PR in the same turn, without waiting for an ask: commit on the Issue's branch, push it, and open the PR (`.cursor/rules/workflow.mdc`). The owner reviews on the PR; uncommitted changes on this machine cannot be reviewed. Do not stop at "may I commit?".

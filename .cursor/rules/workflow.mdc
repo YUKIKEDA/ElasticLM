@@ -25,6 +25,10 @@ Rows that touch different projects run at the same time, at most four, each with
 
 An agent per row may write the code and the tests in the row's worktree, and may draft the row's design text and its user documentation (the owner's answer to question P-1, 2026-11-13). An agent other than the one that wrote a draft reviews it independently. The session that holds the rows checks each draft against the owner's decisions, runs the reviews, opens the PRs, and keeps the roadmap. It puts every design choice that a review surfaces to the owner: question 5-6 of PR #382, questions 8-5 and 8-6 of PR #391, and question 7-6 of PR #388 came from such reviews. Every PR still changes `docs/roadmap.md`, the design tables, and the end of `docs/design-decisions.md`; the conflict that the second merge brings is solved as `.cursor/rules/git.mdc` says. Until 2026-11-13 the roadmap allowed one row at a time, and thirty rows without a dependency on each other stood in one line (Issue #372).
 
+The facts a Grill measured go to the row's agent with the way they were measured (which runs, which period, how they were counted), and the row's record in `docs/rows/` writes both. In V1d3b the Grill's count over 600 CI runs and its 40 failures in 3,000 tries reached the implementer as figures alone, and the record could not say where they came from until the independent review (T6) asked (PR #439).
+
+A row that adds a schema migration (`src/ElasticLM.Service/Migrations/`) takes the number after the highest one on `origin/main` and in every open PR, read when the PR is opened. When two open PRs add one, the later PR's body names the order of their merges. Two migration files with one number and different names do not conflict in git. PR #431 and PR #440 both added `0009`; the independent review of PR #440 (K9) found it, and PR #440 was renumbered `0010` after PR #431 merged.
+
 The owner's decision to add a row goes to a small PR of its own as soon as it is made, and that PR goes to the owner for merging. PR #396 stayed open while later answers (R-6, R-7, Issues #399 and #406) were added to it, and its body and tables were written again each time.
 
 ## Issue templates and labels
@@ -73,7 +77,7 @@ Creating the Issue and using its number are separate commands. A chain such as `
 
 ## Stacked PRs
 
-A second Issue that builds on an open PR gets its own branch and PR based on the first. A stacked PR is merged only after its base has merged. When the base merges, retarget the next PR to `main` first, then delete the merged branch.
+A second Issue that builds on an open PR gets its own branch and PR based on the first, from its creation: `gh pr create --base <first PR's branch>`. PR #430 was opened against `main` on top of PR #428's branch, so its diff held PR #428's commits too, until the independent review (M8) had the base changed. A stacked PR is merged only after its base has merged. When the base merges, retarget the next PR to `main` first, then delete the merged branch.
 
 ## Retrospective
 

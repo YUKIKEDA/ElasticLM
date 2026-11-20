@@ -219,6 +219,46 @@ public sealed class HostedLeaseClientTests
     }
 
     /// <summary>
+    /// In the SaaS mode the service, not the client, applies the feature's expiry and version range (design §12.7.5, V1d18
+    /// question 18-5): it cuts a borrow at the feature's expiry, which the client takes, and refuses a version outside the
+    /// range with its own problem answer.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy with borrowLimit 86400; a license that expires 86400 seconds on, whose core (2 seats,
+    ///   &gt;=2.0 &lt;3.0) expires 3600 seconds on; a client with its key.
+    ///
+    /// Steps:
+    /// - Borrow core 2.5 for 7200 seconds; acquire core 3.0.
+    ///
+    /// Expected:
+    /// - The borrow is taken and ends 3600 seconds on, at the feature's expiry.
+    /// - The acquisition fails with the service's ELM_FEATURE_VERSION_NOT_LICENSED "The feature version is outside the
+    ///   licensed range.", not the on-premises client's sentence.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_FeatureExpiryAndVersion_AreTheServices()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        (_, string key) = await LicenseAsync(
+            admin,
+            await CloudPolicyAsync(admin, "\"borrowLimit\":86400"),
+            $$"""[{"code":"core","seats":2,"ver":">=2.0 <3.0","expiresAt":"{{Iso(3600)}}"}]""",
+            $",\"expiresAt\":\"{Iso(86_400)}\""
+        );
+        LicenseClient client = Client(test, service, key, test.FilePath("client"));
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        Lease borrow = Acquired(await client.BorrowLeaseAsync("core", TimeSpan.FromHours(2), "2.5", cancellationToken: cancel));
+        Assert.Equal((true, Time(3600)), (borrow.IsBorrow, borrow.ExpiresAt));
+
+        var refused = Assert.IsType<LeaseResult.Failed>(await client.AcquireLeaseAsync("core", "3.0", cancellationToken: cancel));
+        Assert.Equal(new LicenseError(ErrorCode.FeatureVersionNotLicensed, "The feature version is outside the licensed range."), refused.Error);
+        await client.DisposeAsync();
+    }
+
+    /// <summary>
     /// A lease is used only when the client's trust store certifies the service's signing key (design §12.7.5 step 1, T1);
     /// a service whose TLS certificate the OS does not trust is not reached, since a client with a license key keeps no pin.
     /// </summary>

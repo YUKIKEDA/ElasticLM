@@ -535,6 +535,49 @@ public sealed class ElmServiceLeasesTests
     }
 
     /// <summary>
+    /// In the very second of a feature's expiry, less than a second of a lease would be left, so an acquisition and a renewal
+    /// are refused with ELM_EXPIRED and the feature's sentence, as on elm-server; a second later the acquisition is
+    /// ELM_FEATURE_EXPIRED (design §12.7.1, §12.7.6 step 9, V1d18).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy (lease 600 seconds); a license whose core (2 seats) expires 100 seconds on, and a license
+    ///   with core without an expiry; one device.
+    ///
+    /// Steps:
+    /// - Acquire from the second license (lease L). At second 99, set its core to expire at second 100. At second 100,
+    ///   acquire from the first license and renew L. At second 101, acquire from the first license.
+    ///
+    /// Expected:
+    /// - 403 ELM_EXPIRED "The feature of the license has expired." for the acquisition and the renewal at second 100; 403
+    ///   ELM_FEATURE_EXPIRED "The feature has expired." at second 101.
+    /// </remarks>
+    [Fact]
+    public async Task Lease_InTheSecondOfTheFeatureExpiry_IsExpired()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string policy = await CloudPolicyAsync(admin, string.Empty);
+        (_, string expiring) = await LicenseAsync(admin, policy, $$"""[{"code":"core","seats":2,"expiresAt":"{{Iso(100)}}"}]""");
+        (string plainId, string plain) = await LicenseAsync(admin, policy, TwoSeats);
+        using var device = TestDevice.Create(test, service);
+        VerifiedLease lease = device.VerifyLease(await device.AcquireAsync(plain));
+
+        test.Time.SetUtcNow(Time(99));
+        await TestService.PatchAsync(
+            admin,
+            $"v1/admin/licenses/{plainId}",
+            $$"""{"features":[{"code":"core","seats":2,"expiresAt":"{{Iso(100)}}"}]}"""
+        );
+        test.Time.SetUtcNow(Time(100));
+        AssertProblem(await device.AcquireAsync(expiring), HttpStatusCode.Forbidden, "ELM_EXPIRED", "The feature of the license has expired.");
+        AssertProblem(await device.RenewAsync(lease.LeaseId, 1), HttpStatusCode.Forbidden, "ELM_EXPIRED", "The feature of the license has expired.");
+
+        test.Time.Advance(TimeSpan.FromSeconds(1));
+        AssertProblem(await device.AcquireAsync(expiring), HttpStatusCode.Forbidden, "ELM_FEATURE_EXPIRED", "The feature has expired.");
+    }
+
+    /// <summary>
     /// A seat count below 1 or above the feature's seats is refused and makes no lease, also when the count is outside
     /// 32 bits; a count outside 64 bits is refused as malformed (ELM_MALFORMED) (design §12.7.1, §12.7.6).
     /// </summary>
