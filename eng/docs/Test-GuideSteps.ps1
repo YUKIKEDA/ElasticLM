@@ -241,7 +241,9 @@ $imagePath = $Image ? (Resolve-Path $Image).Path : $null
 . (Join-Path $repoRoot 'eng/container/ImageLayout.ps1')
 $prebuiltNames = @('elm', 'elm-server', 'elm-service', 'packages', 'libelasticlm', 'image')
 # The program that a page's container lines start with, the name that steps:prebuilt name=image gives the image, and the
-# platform of the image it loads (design §20.7, V1c4d2, Q9, reviews R8 and R9).
+# platform of the image it loads (design §20.7, V1c4d2, Q9, reviews R8 and R9). The platform is the one the classic image
+# store loads; the containerd image store loads the whole image index of -Image, and docker run then takes the host's
+# platform from it (Issue #462).
 $containerProgram = 'docker'
 $imageName = 'elm-service:latest'
 $imageArch = 'amd64'

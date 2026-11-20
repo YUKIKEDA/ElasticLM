@@ -10,9 +10,10 @@
       manifest.json, so the layout gets a manifest.json that names one platform's config and layers (PR #170).
     - The containerd image store (Docker 29.4.2 on the ubuntu-26.04 runners) reads a tar that holds oci-layout as an OCI
       layout and does not read manifest.json (containerd 2.2.3, core/images/archive/importer.go, ImportIndex). It names an
-      image only from the annotation io.containerd.image.name of a descriptor in index.json (client/import.go), and
-      docker load then prints "Loaded image ID:" for an image without one (moby docker-v29.4.2,
-      daemon/containerd/image_exporter.go, LoadImage). So the descriptor in index.json gets that annotation (Issue #462).
+      image from the annotation io.containerd.image.name of a descriptor in index.json, or else from
+      org.opencontainers.image.ref.name (client/import.go, imageName), and docker load prints "Loaded image ID:" for an
+      image with neither (moby docker-v29.4.2, daemon/containerd/image_exporter.go, LoadImage). So the descriptor in
+      index.json gets the first annotation, which takes the full name (Issue #462).
 #>
 
 # The JSON of a file in the layout.
@@ -26,7 +27,7 @@ function Get-LayoutBlob([string]$layout, [string]$digest) {
 
 # The path of a blob relative to the layout, as docker's manifest.json names it, after the same check.
 function Get-LayoutPath([string]$digest) {
-    if ($digest -cnotmatch '^sha256:[0-9a-f]{64}$') { throw "The layout names a blob by $digest, which is not a SHA-256 digest." }
+    if ($digest -cnotmatch '\Asha256:[0-9a-f]{64}\z') { throw "The layout names a blob by $digest, which is not a SHA-256 digest." }
     'blobs/' + $digest.Replace(':', '/')
 }
 
@@ -55,7 +56,7 @@ function Get-PlatformManifest([string]$layout, [string]$Arch) {
 # store, and the annotation io.containerd.image.name on the descriptor in index.json for the containerd image store, which
 # takes the full name (docker.io/library/<name>:<tag>).
 function New-DockerArchive([string]$layout, [object]$manifest, [string]$Tag, [string]$OutFile) {
-    if ($Tag -cnotmatch '^[a-z0-9]+(?:[._-][a-z0-9]+)*:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$') { throw "$Tag is not a name of one part with a tag." }
+    if ($Tag -cnotmatch '\A[a-z0-9]+(?:[._-][a-z0-9]+)*:[A-Za-z0-9_][A-Za-z0-9._-]{0,127}\z') { throw "$Tag is not a name of one part with a tag." }
     $indexPath = Join-Path $layout 'index.json'
     $index = Read-LayoutJson $indexPath
     if (@($index.manifests).Count -ne 1) { throw 'The layout does not name exactly one image.' }

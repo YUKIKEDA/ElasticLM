@@ -109,7 +109,9 @@ try {
     # store of this Docker (New-DockerArchive). docker info reports the containerd image store as the driver type
     # io.containerd.snapshotter.v1 (https://docs.docker.com/engine/storage/containerd/).
     $info = (Invoke-Native 'docker info' { docker info --format '{{json .}}' }) -join "`n" | ConvertFrom-Json
-    $containerd = @($info.DriverStatus | Where-Object { $_[0] -eq 'driver-type' -and $_[1] -eq 'io.containerd.snapshotter.v1' }).Count -gt 0
+    # Without the list of pairs, the store is not known, and the check below would compare with the wrong digest.
+    if ($info.DriverStatus -isnot [array]) { throw 'docker info gave no DriverStatus, so the image store is not known.' }
+    $containerd = @($info.DriverStatus | Where-Object { $_ -is [array] -and $_.Count -eq 2 -and $_[0] -eq 'driver-type' -and $_[1] -eq 'io.containerd.snapshotter.v1' }).Count -gt 0
     $store = $containerd ? 'containerd image store' : 'classic image store'
     "Docker: $((Invoke-Native 'docker version' { docker version --format '{{.Server.Version}} (API {{.Server.APIVersion}})' }) -join ''), $store ($($info.Driver))"
     $dockerArchive = Join-Path $work 'docker-archive.tar'
