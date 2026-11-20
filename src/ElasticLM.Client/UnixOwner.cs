@@ -36,6 +36,7 @@ internal static unsafe partial class UnixOwner
     private const int AclTypeExtended = 0x100;
     private const int AclFirstEntry = 0;
     private const int AclNextEntry = -1;
+    private const int AclLastEntry = -2;
     private const int AclExtendedAllow = 1;
     private const int AclDelete = 1 << 4;
     private const int AclDeleteChild = 1 << 6;
@@ -155,8 +156,13 @@ internal static unsafe partial class UnixOwner
 
         try
         {
+            // acl_get_entry answers -1 with EINVAL both after the last entry and for an error (Apple's Libc, posix1e/acl_entry.c),
+            // so the end of the loop alone does not show that every entry was read. The last entry is asked for by its own
+            // name afterwards: it must be the last one this loop read, or none when the loop read none.
+            nint lastRead = 0;
             for (int entryId = AclFirstEntry; AclGetEntry(acl, entryId, out nint entry) == 0; entryId = AclNextEntry)
             {
+                lastRead = entry;
                 if (AclGetTagType(entry, out int tag) != 0)
                 {
                     throw new IOException($"An entry of the access list of '{path}' cannot be read.");
@@ -217,7 +223,8 @@ internal static unsafe partial class UnixOwner
                 }
             }
 
-            return null;
+            nint last = AclGetEntry(acl, AclLastEntry, out nint lastEntry) == 0 ? lastEntry : 0;
+            return last == lastRead ? null : throw new IOException($"The access list of '{path}' cannot be read to its end.");
         }
         finally
         {
