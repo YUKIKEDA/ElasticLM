@@ -36,9 +36,13 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - The data folder of a stopped server, with its administrator token, and a listener of the test on admin.sock in it.
-    /// - The answer has status 200 and a JSON body followed by spaces, with a Content-Length (declared) or ended by closing
-    ///   the connection (until-close). For leases the body is {"leases":[]}; for deactivate-proof, which asks for the
-    ///   status first, it is {"autoRefresh":false}.
+    /// - The answer has status 200 and a JSON body followed by spaces, with a Content-Length (declared), in chunks with a
+    ///   last chunk (chunked, as elm-server answers), or ended by closing the connection (until-close). For leases the
+    ///   body is {"leases":[]}; for deactivate-proof, which asks for the status first, it is {"autoRefresh":false}.
+    /// - until-close does not run on Windows. There, a Unix domain socket now and then does not tell its reader that the
+    ///   other side closed: with plain sockets and no HTTP, the Receive after all 64 MiB had been read and the writer had
+    ///   closed did not return, in 14 of 800 runs (10 of the 400 with a blocking Receive), and in none of 200 over TCP
+    ///   (Windows 11 build 26300, Issue #438). elm then waits for the end of the body until its 30 seconds are over, which this test took for a hang.
     ///
     /// Steps:
     /// - Run elm server leases --json, and elm server deactivate-proof, against an answer of 67,108,864 bytes; then
@@ -54,15 +58,30 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
     /// <param name="shape">How the answer delimits its body.</param>
     [Theory]
     [InlineData("declared")]
+    [InlineData("chunked")]
     [InlineData("until-close")]
     public async Task Commands_AnswerAtTheLimitAndOneByteOver_IsReadThenMalformed(string shape)
     {
+        Assert.SkipWhen(
+            shape == "until-close" && OperatingSystem.IsWindows(),
+            "On Windows a Unix domain socket now and then does not report that the other side closed (Issue #438)."
+        );
         string folder = await StoppedServerFolderAsync();
         string made = Path.Combine(folder, "made.file");
         RawAnswer Shaped(string target, long length)
         {
             string body = target.EndsWith("/leases", StringComparison.Ordinal) ? """{"leases":[]}""" : """{"autoRefresh":false}""";
-            return shape == "declared" ? RawAnswer.Whole(body, length) : RawAnswer.UntilClose(body, length);
+            return shape switch
+            {
+                "declared" => RawAnswer.Whole(body, length),
+                "chunked" => new RawAnswer
+                {
+                    Chunked = true,
+                    Start = body,
+                    Length = length,
+                },
+                _ => RawAnswer.UntilClose(body, length),
+            };
         }
 
         (int Code, string Out, string Error) leases;
