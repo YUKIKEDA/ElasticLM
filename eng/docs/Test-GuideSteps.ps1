@@ -72,8 +72,9 @@
                     the quarantine attribute of a browser download, as tar leaves them. A cl or cc line needs this
                     marker before it.
       image         With -Docker only. Loads the elm-service image of -Image, an OCI layout tar of one or both
-                    platforms: its linux/amd64 manifest gets a docker manifest.json that names it elm-service, as
-                    eng/container/Test-Image.ps1 does (eng/container/ImageLayout.ps1), and docker load reads it. The page's
+                    platforms: the layout gets the name elm-service for docker's two image stores, a docker manifest.json
+                    of its linux/amd64 manifest and an annotation in its index.json, as eng/container/Test-Image.ps1
+                    does (eng/container/ImageLayout.ps1), and docker load reads it. The page's
                     docker lines then name the image elm-service, as a reader names the image they pull or build (design
                     §20.7, V1c4d2, reviews R3, R8, and R9). The image is not removed at the end; when elm-service named
                     another image before, the run prints that the name now names this one.
@@ -989,9 +990,10 @@ function Test-Container([string]$type, [string]$objectName) {
     return $result.ExitCode -eq 0
 }
 
-# Loads the image of -Image, an OCI layout tar, for steps:prebuilt name=image: its linux/amd64 manifest gets a docker
-# manifest.json named elm-service, as eng/container/Test-Image.ps1 does, and docker load reads it (design §20.7, V1c4d2,
-# reviews R8 and R9). The converted copy is removed at the end.
+# Loads the image of -Image, an OCI layout tar, for steps:prebuilt name=image: the layout gets the name elm-service for
+# docker's two image stores (a docker manifest.json of its linux/amd64 manifest, and an annotation in its index.json), as
+# eng/container/Test-Image.ps1 does, and docker load reads it (design §20.7, V1c4d2, reviews R8 and R9; Issue #462). The
+# converted copy is removed at the end.
 function Import-Image([string]$at) {
     $folder = Join-Path ([IO.Path]::GetTempPath()) "elm-steps-image-$([Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(6)))"
     try {
@@ -999,9 +1001,9 @@ function Import-Image([string]$at) {
         New-Item -ItemType Directory $layout | Out-Null
         & (Find-Program 'tar') -xf $imagePath -C $layout
         if ($LASTEXITCODE -ne 0) { throw "$($at): tar could not read -Image." }
-        $platform = Get-PlatformManifest $layout $imageArch
+        $manifest = Get-PlatformManifest $layout $imageArch
         $archive = Join-Path $folder 'docker-archive.tar'
-        New-DockerArchive $layout $platform.Manifest $imageName $archive
+        New-DockerArchive $layout $manifest $imageName $archive
         # The name is the one the pages use, so a developer's own image of that name gets moved; the run says so.
         if (Test-Container 'image' $imageName) { "$($at): $imageName existed and now names the image of -Image." }
         $result = Invoke-Container @('load', '--input', $archive)
