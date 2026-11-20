@@ -395,10 +395,11 @@ public sealed class BorrowTests : IDisposable
     /// - sbrl 1, brl 1,000; a record that throws IOException while it is made to; two borrows of one client.
     ///
     /// Steps:
-    /// - Make the record fail and return the first borrow; let it work and return the second.
+    /// - Make the record fail with IOException and return the first borrow; make it fail with InvalidOperationException
+    ///   and return it again; let it work and return the second.
     ///
     /// Expected:
-    /// - ReturnNotAllowed, then Released.
+    /// - ReturnNotAllowed; InvalidOperationException (review L2: counted by neither); then Released.
     /// </remarks>
     [Fact]
     public void EarlyReturn_RecordNotWritten_IsNotCounted()
@@ -411,6 +412,8 @@ public sealed class BorrowTests : IDisposable
 
         journal.Fail = true;
         Assert.Equal(ReleaseOutcome.ReturnNotAllowed, engine.Release(borrows[0], client.KeyId));
+        journal.Other = true;
+        Assert.Throws<InvalidOperationException>(() => engine.Release(borrows[0], client.KeyId));
         journal.Fail = false;
         Assert.Equal(ReleaseOutcome.Released, engine.Release(borrows[1], client.KeyId));
     }
@@ -753,6 +756,8 @@ public sealed class BorrowTests : IDisposable
 
         public bool Fail { get; set; }
 
+        public bool Other { get; set; }
+
         public void Borrowed(BorrowRecord borrow)
         {
             ThrowIfFailing();
@@ -769,7 +774,7 @@ public sealed class BorrowTests : IDisposable
         {
             if (Fail)
             {
-                throw new IOException("The disk is full.");
+                throw Other ? new InvalidOperationException("The record is in a state it cannot write in.") : new IOException("The disk is full.");
             }
         }
     }

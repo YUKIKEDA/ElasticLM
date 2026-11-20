@@ -135,6 +135,9 @@ public sealed partial class SignedLog : IDisposable
     private string _headAuth = string.Empty;
     private string? _failure;
 
+    // The file that took its name whole while its folder could not be flushed; the next file continues the chain from it.
+    private string? _whole;
+
     // The previous file to continue the chain from, after a new file failed while it was started and the previous file had
     // been closed with its last signature (design §18.1, V1d16); null otherwise.
     private string? _continueFrom;
@@ -167,6 +170,9 @@ public sealed partial class SignedLog : IDisposable
         _rotateOnWrite = rotateOnWrite;
         _notALogFile = notALogFile;
     }
+
+    /// <summary>Gets or sets the rename that gives a new file its name; tests replace it to fail the folder's flush.</summary>
+    internal DurableMove Rename { get; set; } = DurableRename.Move;
 
     /// <summary>Gets the name of the file being written.</summary>
     public string FileName
@@ -293,9 +299,11 @@ public sealed partial class SignedLog : IDisposable
             }
             catch
             {
-                // The log is not returned, so nothing else would release its file and its hash.
+                // The log is not returned, so nothing else would release its file and its hash, or remove a file it left
+                // unfinished.
                 log._file?.Dispose();
                 log._digest.Dispose();
+                log.RemovePartial();
                 throw;
             }
         }
@@ -512,7 +520,7 @@ public sealed partial class SignedLog : IDisposable
         lock (_lock)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
-            bool resetFirst = _failure is not null;
+            bool resetFirst = _failure is not null || _continueFrom is not null;
             Guarded(() =>
             {
                 if (resetFirst)
@@ -761,6 +769,7 @@ public sealed partial class SignedLog : IDisposable
         string? continueFrom = _continueFrom;
         _failure = null;
         _continueFrom = null;
+        bool done = false;
         try
         {
             if (failure is not null)
@@ -773,13 +782,23 @@ public sealed partial class SignedLog : IDisposable
             }
 
             write();
+            done = true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
+            done = true;
+
             // The exception's message is left out of the next file's chain.reset: it can hold a full path. A file that failed
             // while it was started is removed (design §18.1, V1d16). When the file before it was closed whole, the next file
-            // continues the chain from that file; when a reset was starting it, the next reset keeps the earlier reason.
-            if (_partial is not null && _startedFrom is not null && failure is null)
+            // continues the chain from that file; when a reset was starting it, the next reset keeps the earlier reason;
+            // otherwise the reason names the file, which may be the one removed. A file that took its name whole while its
+            // folder could not be flushed is the one the next file continues.
+            if (_whole is not null)
+            {
+                _continueFrom = _whole;
+                _whole = null;
+            }
+            else if (_partial is not null && _startedFrom is not null && failure is null)
             {
                 (_prev, _n) = _beforeStart;
                 _continueFrom = _startedFrom;
@@ -801,6 +820,18 @@ public sealed partial class SignedLog : IDisposable
             _file = null;
             RemovePartial();
             throw new IOException($"The log {_fileName} cannot be written: {e.Message}", e);
+        }
+        finally
+        {
+            // Any other exception that leaves a file half started: the file is closed and removed, and the next write starts
+            // a new file.
+            if (!done && _partial is not null)
+            {
+                _failure = failure ?? $"a write to {_fileName} failed";
+                _file?.Dispose();
+                _file = null;
+                RemovePartial();
+            }
         }
     }
 
@@ -979,11 +1010,17 @@ public sealed partial class SignedLog : IDisposable
             WriteAuth();
         }
 
-        // The signatures flushed the file to the disk; only now does it take its name, and the folder is flushed so that the
-        // name survives a crash (design §18.1, V1d16).
-        File.Move(_partial!, Path.Combine(_directory, _fileName), overwrite: false);
+        // The signatures flushed the file to the disk; only now does it take its name, in a way that puts the name on the disk
+        // too (design §18.1, V1d16). When the name cannot be flushed, the file is whole under its name, so the write is
+        // refused and the next file continues the chain from it.
+        string path = Path.Combine(_directory, _fileName);
+        bool flushed = Rename(_partial!, path, out string? flushProblem);
         _partial = null;
-        FolderFlush.Flush(_directory);
+        if (!flushed)
+        {
+            _whole = path;
+            throw new IOException(flushProblem);
+        }
     }
 
     // Removes the unfinished file of a start that failed; the start of the next file names the failure.

@@ -728,14 +728,23 @@ public sealed class LeaseEngine : IDisposable
                 return ReleaseOutcome.ReturnNotAllowed;
             }
 
+            // MayReturnEarly counted the return; whatever stops the record from taking it, the count gives it back.
+            bool recorded = false;
             try
             {
                 _options.Journal?.Returned(new BorrowReturn(record.Id, record.KeyId, borrow.Fingerprints, now));
+                recorded = true;
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
-                ForgetReturn(record.KeyId, borrow.Fingerprints, now);
                 return ReleaseOutcome.ReturnNotAllowed;
+            }
+            finally
+            {
+                if (!recorded)
+                {
+                    ForgetReturn(record.KeyId, borrow.Fingerprints, now);
+                }
             }
         }
 

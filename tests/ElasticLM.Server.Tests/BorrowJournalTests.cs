@@ -254,16 +254,18 @@ public sealed class BorrowJournalTests : IAsyncDisposable
     ///   signature after it is armed: the new file's signature of its first line, or the one over its carried lines.
     ///
     /// Steps:
-    /// - On the next day, arm it and seal; disarm it, write the return y; load the record again.
+    /// - On the next day, arm it and seal; disarm it, in one case seal again a day later (review L4), write the return y; load the
+    ///   record again.
     ///
     /// Expected:
     /// - The seal throws IOException; one file and no unfinished file; then two files, the second starting with chain.start
     ///   that names the first; the files verify with no issue; the loaded record has the borrow and the returns x and y.
     /// </remarks>
     [Theory]
-    [InlineData(1)]
-    [InlineData(2)]
-    public void Seal_NewDayThatCannotBeWritten_LeavesTheDayBeforeNewest(int failing)
+    [InlineData(1, false)]
+    [InlineData(2, false)]
+    [InlineData(1, true)]
+    public void Seal_NewDayThatCannotBeWritten_LeavesTheDayBeforeNewest(int failing, bool sealAgain)
     {
         string data = NewServerFolder();
         var clock = new FakeTimeProvider(LastMinute);
@@ -279,6 +281,15 @@ public sealed class BorrowJournalTests : IAsyncDisposable
         Assert.Empty(Directory.GetFiles(data, "*.partial"));
 
         signatures = -1;
+        if (sealAgain)
+        {
+            // A day later with nothing written since: the seal starts the one file that continues the chain and carries the
+            // records, and no second one.
+            clock.Advance(TimeSpan.FromDays(1));
+            journal.Seal();
+            Assert.Equal(2, Files(data).Count);
+        }
+
         journal.Returned(Return("y", clock));
         IReadOnlyList<string> files = Files(data);
         Assert.Equal(2, files.Count);

@@ -596,6 +596,10 @@ public sealed class SignedLogTests : IDisposable
     [Fact]
     public void Open_UnfinishedFileThatCannotBeRemoved_StopsTheStart()
     {
+        Assert.SkipWhen(
+            !OperatingSystem.IsWindows() && Environment.IsPrivilegedProcess,
+            "Root removes a file from a folder without write permission."
+        );
         string path = Path.Combine(_dir, "usage-20990101T000000000Z.jsonl.partial");
         File.WriteAllText(path, "{}\n");
         FileStream? held = null;
@@ -676,6 +680,106 @@ public sealed class SignedLogTests : IDisposable
         Assert.Contains("\"type\":\"chain.start\"", first, StringComparison.Ordinal);
         Assert.Contains($"\"file\":\"{Path.GetFileName(files[0])}\"", first, StringComparison.Ordinal);
         Assert.Empty(Verify().Issues);
+    }
+
+    /// <summary>
+    /// A new file that took its name while its folder could not be flushed is whole: the write is refused, and the next file
+    /// continues the chain from that file with chain.start (design §18.1, V1d16, the owner's answer b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log signed after every line, with one line; a rename that renames and then reports the folder not flushed, while
+    ///   armed.
+    ///
+    /// Steps:
+    /// - On the next day, arm it and append; disarm it and append; close; verify.
+    ///
+    /// Expected:
+    /// - The first append throws IOException whose message ends with the reported problem; three files and no unfinished
+    ///   file; the second and the third start with chain.start, each naming the file before it; no issue.
+    /// </remarks>
+    [Fact]
+    public void Append_FolderNotFlushedAfterTheRename_ContinuesFromTheNewFile()
+    {
+        bool fail = false;
+        using (SignedLog log = Open(sealEvery: 1))
+        {
+            log.Rename = (string from, string to, out string? problem) =>
+            {
+                bool moved = DurableRename.Move(from, to, out problem);
+                if (fail)
+                {
+                    problem = "The folder of the log cannot be flushed (errno 5).";
+                    return false;
+                }
+
+                return moved;
+            };
+            Append(log, 1);
+            _time.Advance(TimeSpan.FromDays(1));
+            fail = true;
+            var refused = Assert.Throws<IOException>(() => Append(log, 1));
+            Assert.EndsWith("The folder of the log cannot be flushed (errno 5).", refused.Message, StringComparison.Ordinal);
+            fail = false;
+            Append(log, 1);
+        }
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(_dir, "usage");
+        Assert.Equal(3, files.Count);
+        Assert.Empty(Directory.GetFiles(_dir, "*.partial"));
+        foreach (int i in new[] { 1, 2 })
+        {
+            string first = File.ReadLines(files[i]).First();
+            Assert.Contains("\"type\":\"chain.start\"", first, StringComparison.Ordinal);
+            Assert.Contains($"\"file\":\"{Path.GetFileName(files[i - 1])}\"", first, StringComparison.Ordinal);
+        }
+
+        Assert.Empty(Verify().Issues);
+    }
+
+    /// <summary>
+    /// An exception of another kind while a new file is started (here from the lines it carries forward) leaves no
+    /// unfinished file, and the next write starts a new file (design §18.1, V1d16 review L3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log signed after every line whose carried lines throw InvalidOperationException while armed; one line.
+    ///
+    /// Steps:
+    /// - On the next day, arm it and append; disarm it and append; close; verify.
+    ///
+    /// Expected:
+    /// - InvalidOperationException; no unfinished file; then two files, and no error.
+    /// </remarks>
+    [Fact]
+    public void Append_OtherExceptionWhileANewFileStarts_RemovesTheUnfinishedFile()
+    {
+        bool fail = false;
+        using (
+            SignedLog log = SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                Access(_server),
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                sealEvery: 1,
+                carry: () => fail ? throw new InvalidOperationException("The lines cannot be made.") : []
+            )
+        )
+        {
+            Append(log, 1);
+            _time.Advance(TimeSpan.FromDays(1));
+            fail = true;
+            Assert.Throws<InvalidOperationException>(() => Append(log, 1));
+            Assert.Empty(Directory.GetFiles(_dir, "*.partial"));
+            fail = false;
+            Append(log, 1);
+        }
+
+        Assert.Equal(2, SignedLog.FindFiles(_dir, "usage").Count);
+        Assert.DoesNotContain(Verify().Issues, i => i.Severity == LogIssueSeverity.Error);
     }
 
     /// <summary>
