@@ -4607,6 +4607,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
   - tar の index のダイジェストが `needs.image.outputs.digest` と同じ。
   - 各プラットフォームのマニフェストで、先頭の層がベースの同じプラットフォームのマニフェストの層とダイジェストまで同じで、残りの層の中身が `app/`、`app/elm-service`、`app/LICENSE`、`data/` だけ（ベースを 1 バイトも変えず、ほかに何も足していない）。`app/elm-service` と `app/LICENSE` の SHA-256 が、同じ実行の圧縮ファイルの中のものと同じ。
   - 自分のアーキテクチャのマニフェストが指す config と層から docker の `manifest.json` を書き、同じ blob を `docker load` で読み込み、読み込んだイメージの ID（従来のイメージの置き場所では config のダイジェスト）が、tar のそのプラットフォームのマニフェストの config と同じ。ランナーの Docker の版を記録する。F2 の試しで、Docker 28.0.4 の従来の置き場所は OCI layout を `docker load --platform` で読めなかった（docker の `manifest.json` を探す）。この形は、手元の `wslc load` でも確かめた。
+  - containerd のイメージの置き場所（Docker Engine 29.0 から、新しく入れた Docker の既定。https://docs.docker.com/engine/storage/containerd/ ）は、同じ tar を別の読み方で読む（Issue #462）。`oci-layout` のある tar は OCI layout として読み、`manifest.json` は読まない（containerd 2.2.3 の `core/images/archive/importer.go` の `ImportIndex`）。名前は、`index.json` の記述子の注釈 `io.containerd.image.name` から付き、それがなければ `org.opencontainers.image.ref.name` から付く（同 `client/import.go` の `imageName`）。どちらもないイメージには `docker load` が `Loaded image ID:` と出す（moby docker-v29.4.2 の `daemon/containerd/image_exporter.go` の `LoadImage`）。そこで、`manifest.json` に加えて、`index.json` の記述子に、完全な名前を取る前者の注釈（`docker.io/library/<名前>:<タグ>`）を書く。blob は変えない。`manifest.json` と注釈の両方を持つこの形の tar も、手元の `wslc load`（wslc 3.0.5）で確かめた: 実行 44740855601 の `image-oci` の tar から作った tar を `elm-service-i462:amd64` の名前で読み込み、ID は amd64 の config のダイジェストだった（`manifest.json` から読む、従来の置き場所と同じ読み方）。どちらの置き場所かは `docker info` の `DriverStatus` の `driver-type` が `io.containerd.snapshotter.v1` かどうかで読み、containerd の置き場所では、読み込んだイメージの ID が `index.json` の指す index のダイジェスト（ビルドのジョブが出したダイジェスト）と同じことを確かめる。置き場所の種類も、Docker の版と並べて記録する。ubuntu-latest が ubuntu-26.04（Docker 29.4.2）になった 2026-11-20 に、amd64 のジョブが名前のないイメージで落ちて分かった。arm64 のランナー（ubuntu-24.04-arm、Docker 28.0.4）は従来の置き場所のままである。
   - その回のために作った鍵、証明書、ルート鍵、ノンスの秘密、パスフレーズを、設定ファイル（`signing.passphraseFile` を含む）と秘密のファイルとして、UID 1654 が読めるようにマウントし、`/data` に名前つきのボリュームをつなぎ、`ELM_PUBLICURLS`（その回の `https://` の URL）を渡して、`setup` が通り、起動して `/health` に 200 で答える。起動のログに、ASP.NET Core の待ち受けの上書きの知らせがない。
   - 動いているプロセスの UID が 1654。
   - `docker stop` で、既定の猶予のうちに終了コード 0 で止まる（PID 1 で SIGTERM を受ける）。
@@ -4642,7 +4643,7 @@ F2 の Grill（Issue #157、Q1〜Q12）、その脅威の設計のレビュー�
 - §5.3 の T25 の名指しのアクションから `docker/login-action` を外す（使わないため）。
 - `docs/conventions.md` に `eng/container/` を書く。
 
-測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。
+測るもの: イメージの大きさを §4.2 の「F2 の実測」に書く。圧縮後は OCI layout の各プラットフォームのマニフェストの層の `size` の和（GHCR に置かれる大きさ）、展開後は `docker image inspect` の `Size`。ただし `Size` が展開後の大きさなのは従来のイメージの置き場所だけで、containerd の置き場所では、圧縮したままの中身の大きさの和である（moby docker-v29.4.2 の `daemon/containerd/image_inspect.go` の `size`:「the total size of the image's packed resources」。Issue #462 の PR の実行 44744591416 で、amd64 は層の和 18,395,800 バイトに対して 18,401,376 バイト、従来の置き場所の arm64 は 16,604,863 バイトに対して 40,208,723 バイト）。そこで `Test-Image.ps1` のまとめの行は、置き場所の種類を添えて `Size` を出す。展開後の大きさは、従来の置き場所のランナー（arm64）の値で読む。
 
 ### 20.7 V1 の行（0.112）
 
@@ -5455,7 +5456,7 @@ V1c4 の Grill（Issue #248、Q1〜Q8）で次を決めた。持ち主の決定�
     - 起動し直しの数（R5、持ち主の決定 A）: How-to の頁は `steps:background` を複数持てる。それぞれ前のものを止めて置き換え、同時に動くのは 1 つのまま。上の「V1c4b の Grill」の Q1 の「1 つだけ」を改める。
     - `publicUrls` と `node.name`（R6）: `container.json` に書く。`setup` と `backup` も `ServiceSettings.Load` を通り、イメージの `ELM_LISTEN`（`0.0.0.0:8080`）はループバックでないので、`publicUrls` がないと終了コード 2 になるため。3 つの `docker run` が同じ設定を読む。
     - シェルを通さない形（R7）: 手順を流す仕組みは行をシェルに渡さないので、`$PWD`、`$(…)`、行の継続、`<`、`|` を使わない。秘密のファイルと設定は、`docker create`（補助コンテナー、`--network none`）、`docker cp`、そのコンテナーでの `chown 1654` と `chmod 0400` の順で `elm-config` に入れる。SQL は `steps:file` で `.sql` を書き、`docker cp` で入れて `psql -f` で流す。二重引用符の中の `'` は使わない。
-    - イメージの読み込み（R8）: `-Image` の OCI layout の tar（2 つのアーキテクチャー）は、amd64 の manifest から docker の `manifest.json` を書いてから `docker load` する（Docker 28 の classic image store は OCI layout を読まない、PR #170）。変換は `eng/container/Test-Image.ps1` と共通の関数にする。
+    - イメージの読み込み（R8）: `-Image` の OCI layout の tar（2 つのアーキテクチャー）は、amd64 の manifest から docker の `manifest.json` を書いてから `docker load` する（Docker 28 の classic image store は OCI layout を読まない、PR #170）。変換は `eng/container/Test-Image.ps1` と共通の関数にする。containerd のイメージの置き場所のために、その関数は `index.json` の記述子に名前の注釈も書く（§20.6、Issue #462）。
     - イメージの名前（R9、持ち主の決定 A）: 頁の行は決まった名前 `elm-service` を使う。読み手は本文の手順で digest を指定して pull し、`docker tag` でその名前を付ける。正式版の前は `CONTRIBUTING.md` の手順でその名前で作る。CI では `steps:prebuilt name=image` がその名前を付ける。
     - 新しいジョブ（R10、持ち主の決定 A）: `needs: [version, build, pack, image]`。setup-dotnet（`DOTNET_SDK_VERSION`）、`archives-linux-x64` の `.tar.gz` の展開、`packages` の `.nupkg`、`-Page` で 2 頁だけ（`-ElmServer` と `-Library` は渡さない）。権限は `contents: read` だけで、何もアップロードしない（T22、T27）。`checksums` の `needs` に入れ、頁が落ちたら下書きを作らない。`timeout-minutes` は実装で測って決め、PR に書く。
     - パスフレーズ（R11、持ち主の決定 A）: 試しでは値を書かない `-e ELM_SIGNING_PASSPHRASE` のままにし、値が `docker inspect` に見えることを頁に書いて、本番では `signing.passphraseFile` を勧める。

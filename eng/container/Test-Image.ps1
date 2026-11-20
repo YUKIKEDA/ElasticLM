@@ -7,8 +7,9 @@
     - In this architecture's manifest, the first layers are the base image's layers of the same platform, digest for
       digest, and the layers after them hold only app/, app/elm-service, app/LICENSE, and data/. The elm-service and
       LICENSE in them have the SHA-256 of the same run's release archive.
-    - docker load reads this architecture through a docker manifest.json written for its manifest (Docker 28's classic image
-      store does not read an OCI layout), and the image it loads has the config of the manifest.
+    - docker load reads the layout with the name the script gives it for both image stores (ImageLayout.ps1). In the classic
+      image store, the image it loads has the config of this architecture's manifest; in the containerd image store, it is
+      the image index of -ExpectedDigest.
     - With keys, certificates, a root key, a nonce secret, and a passphrase made for this run and mounted as a settings file
       and secret files readable by UID 1654, a named volume on /data, and ELM_PUBLICURLS: setup prints a key; the service
       starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID 1654; docker stop ends
@@ -70,9 +71,7 @@ try {
     if ($outer.manifests[0].mediaType -ne 'application/vnd.oci.image.index.v1+json') { throw 'The layout does not name an image index of both platforms.' }
 
     # This architecture's manifest and the base's manifest of the same platform.
-    $platform = Get-PlatformManifest $layout $Arch
-    $descriptor = @($platform.Descriptor)
-    $manifest = $platform.Manifest
+    $manifest = Get-PlatformManifest $layout $Arch
     $from = (Select-String -Path (Join-Path $root 'eng/container/Dockerfile') -Pattern '^FROM\s+(\S+)$').Matches[0].Groups[1].Value
     $repository = $from.Split('@')[0].Split(':')[0]
     $baseIndex = (Invoke-Native 'imagetools inspect' { docker buildx imagetools inspect --raw $from }) -join "`n" | ConvertFrom-Json
@@ -106,17 +105,24 @@ try {
         }
     }
 
-    # Load this platform and check that the loaded image is the manifest's. Docker 28's classic image store does not read an
-    # OCI layout (it looks for docker's manifest.json), so the layout gets a manifest.json that names this platform's config
-    # and layers: the same blobs, nothing rebuilt (New-DockerArchive).
-    "Docker: $((Invoke-Native 'docker version' { docker version --format '{{.Server.Version}} (API {{.Server.APIVersion}})' }) -join '')"
+    # Load the layout and check that the loaded image is the layout's: the same blobs, nothing rebuilt, named for the image
+    # store of this Docker (New-DockerArchive). docker info reports the containerd image store as the driver type
+    # io.containerd.snapshotter.v1 (https://docs.docker.com/engine/storage/containerd/).
+    $info = (Invoke-Native 'docker info' { docker info --format '{{json .}}' }) -join "`n" | ConvertFrom-Json
+    # Without the list of pairs, the store is not known, and the check below would compare with the wrong digest.
+    if ($info.DriverStatus -isnot [array]) { throw 'docker info gave no DriverStatus, so the image store is not known.' }
+    $containerd = @($info.DriverStatus | Where-Object { $_ -is [array] -and $_.Count -eq 2 -and $_[0] -eq 'driver-type' -and $_[1] -eq 'io.containerd.snapshotter.v1' }).Count -gt 0
+    $store = $containerd ? 'containerd image store' : 'classic image store'
+    "Docker: $((Invoke-Native 'docker version' { docker version --format '{{.Server.Version}} (API {{.Server.APIVersion}})' }) -join ''), $store ($($info.Driver))"
     $dockerArchive = Join-Path $work 'docker-archive.tar'
     New-DockerArchive $layout $manifest $tag $dockerArchive
     Invoke-Native 'docker load' { docker load --input $dockerArchive } | Out-Host
     $id = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Id}}' $tag }).Trim()
-    # The classic image store names an image by its config digest; the containerd image store by its manifest's digest.
-    if (@($manifest.config.digest, $descriptor[0].digest) -notcontains $id) {
-        $failures.Add("The loaded image $id is neither the config $($manifest.config.digest) nor the manifest of linux/$Arch.")
+    # The classic image store loads this platform from manifest.json and gives the image its config digest as the ID; the
+    # containerd image store loads what index.json names, the image index, and gives the image that digest.
+    $expectedId = $containerd ? $digest : $manifest.config.digest
+    if ($id -ne $expectedId) {
+        $failures.Add("The loaded image is $id, not $expectedId, the $($containerd ? 'image index' : "config of linux/$Arch") of the layout.")
     }
     "Loaded linux/$Arch as $tag ($id)."
 
@@ -181,7 +187,10 @@ try {
 
     $size = (Invoke-Native 'docker image inspect' { docker image inspect --format '{{.Size}}' $tag }).Trim()
     $compressed = ($manifest.layers | Measure-Object -Property size -Sum).Sum
-    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes uncompressed; ran as UID 1654, /health 200, stopped with 0."
+    # Size is the uncompressed size only in the classic image store. In the containerd image store it is "the total size of
+    # the image's packed resources" (moby docker-v29.4.2, daemon/containerd/image_inspect.go, size), so the line names the
+    # store.
+    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes as the Size of docker image inspect ($store); ran as UID 1654, /health 200, stopped with 0."
 }
 finally {
     & docker rm -f $container 2>&1 | Out-Null
