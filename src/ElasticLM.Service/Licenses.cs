@@ -208,6 +208,13 @@ internal static class Licenses
         foreach (JsonProperty entry in value.EnumerateObject())
         {
             string text = body.Text(entry.Value) ?? throw new BodyException(ErrorCode.Malformed, Malformed);
+
+            // design §14.5 (V1d26): no control character in a key or a value, as in the other text members.
+            if (Limits.HasControlCharacter(entry.Name) || Limits.HasControlCharacter(text))
+            {
+                throw new BodyException(ErrorCode.Malformed, Malformed);
+            }
+
             meta[entry.Name] = text;
         }
 

@@ -113,6 +113,10 @@ internal sealed partial class ElmService
                 context.Response.StatusCode = StatusCodes.Status200OK;
                 context.Response.ContentType = "application/x-ndjson";
 
+                // design §14.5 (V1d26): a browser saves the file and does not show it. The name holds only letters, digits,
+                // '-', and '.' (the node name and the time), so it needs no escape inside the quotes.
+                context.Response.Headers.ContentDisposition = $"attachment; filename=\"{file}\"";
+
                 // The length is fixed, so the answer names it: a transfer that stops short of it is an error for every
                 // caller, also for one whose answer ends when the connection closes.
                 context.Response.ContentLength = size;

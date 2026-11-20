@@ -117,7 +117,8 @@ public sealed partial class ElmServiceAdminUiTests
 
     /// <summary>
     /// GET /v1/admin/me gives the caller's administrator and this request's permissions, writes no audit row for its success,
-    /// and writes the refusal of an unmapped token as admin.me (design §14.5, M5c); every administration answer is no-store.
+    /// and writes the refusal of an unmapped token as admin.me (design §14.5, M5c); every administration answer is no-store,
+    /// nosniff, and framed by no site (V1d26).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -125,13 +126,15 @@ public sealed partial class ElmServiceAdminUiTests
     ///
     /// Steps:
     /// - GET /v1/admin/me with the owner key, with a token of carol in elm-viewers, and with a token of dave of no mapped
-    ///   group; GET it without credentials; read the audit log; then, on a service that allows one request a second from a
-    ///   source, GET it twice.
+    ///   group; GET it without credentials; GET /v1/admin/no-such-route with the owner key; read the audit log; then, on a
+    ///   service that allows one request a second from a source, GET it twice.
     ///
     /// Expected:
     /// - 200 for the owner with role owner and every permission in the design's order; 200 for carol with role viewer and the
-    ///   read permissions other than admin.read and session.read; 403 for dave; 401 without credentials; every answer with
-    ///   Cache-Control no-store; no admin.me row with ELM_OK, one with ELM_FORBIDDEN; the second request 429, also no-store.
+    ///   read permissions other than admin.read and session.read; 403 for dave; 401 without credentials; 404 for the route;
+    ///   every answer with Cache-Control no-store, X-Content-Type-Options nosniff, and Content-Security-Policy
+    ///   frame-ancestors 'none'; no admin.me row with ELM_OK, one with ELM_FORBIDDEN; the second request 429, with the same
+    ///   three headers.
     /// </remarks>
     [Fact]
     public async Task Me_AnswersTheCaller()
@@ -143,7 +146,7 @@ public sealed partial class ElmServiceAdminUiTests
         CancellationToken cancel = TestContext.Current.CancellationToken;
 
         using HttpResponseMessage mine = await test.Http(service, owner).GetAsync("v1/admin/me", cancel);
-        Assert.Equal("no-store", mine.Headers.CacheControl!.ToString());
+        AssertApiHeaders(mine);
         using (JsonDocument me = JsonDocument.Parse(await mine.Content.ReadAsStringAsync(cancel)))
         {
             Assert.Equal(("owner", "owner-1"), (me.RootElement.GetProperty("role").GetString(), me.RootElement.GetProperty("subject").GetString()));
@@ -164,7 +167,9 @@ public sealed partial class ElmServiceAdminUiTests
         Assert.Equal(HttpStatusCode.Forbidden, dave.StatusCode);
         using HttpResponseMessage none = await test.Http(service).GetAsync("v1/admin/me", cancel);
         Assert.Equal(HttpStatusCode.Unauthorized, none.StatusCode);
-        Assert.All(new[] { viewer, dave, none }, a => Assert.Equal("no-store", a.Headers.CacheControl!.ToString()));
+        using HttpResponseMessage nowhere = await test.Http(service, owner).GetAsync("v1/admin/no-such-route", cancel);
+        Assert.Equal(HttpStatusCode.NotFound, nowhere.StatusCode);
+        Assert.All(new[] { viewer, dave, none, nowhere }, AssertApiHeaders);
 
         JsonElement[] rows =
         [
@@ -172,13 +177,21 @@ public sealed partial class ElmServiceAdminUiTests
         ];
         Assert.Equal(["ELM_FORBIDDEN"], rows.Select(r => r.GetProperty("result").GetString()));
 
-        // The per-source limit answers before authentication; its 429 is no-store as well.
+        // The per-source limit answers before authentication; its 429 has the headers as well.
         ElmService limited = await test.StartAsync(s => s with { Oidc = idp.Settings(), RateLimitPerIp = 1 });
         HttpClient http = test.Http(limited, owner);
         using HttpResponseMessage first = await http.GetAsync("v1/admin/me", cancel);
         using HttpResponseMessage second = await http.GetAsync("v1/admin/me", cancel);
         Assert.Equal(HttpStatusCode.TooManyRequests, second.StatusCode);
-        Assert.Equal("no-store", second.Headers.CacheControl!.ToString());
+        AssertApiHeaders(second);
+    }
+
+    // design §14.5 (M5c, V1d26): the three headers of every administration API answer, written out here.
+    internal static void AssertApiHeaders(HttpResponseMessage answer)
+    {
+        Assert.Equal("no-store", answer.Headers.CacheControl!.ToString());
+        Assert.Equal("nosniff", answer.Headers.GetValues("X-Content-Type-Options").Single());
+        Assert.Equal("frame-ancestors 'none'", answer.Headers.GetValues("Content-Security-Policy").Single());
     }
 
     private static Task<ElmService> StartAsync(TestService test, FakeIdp idp) =>
