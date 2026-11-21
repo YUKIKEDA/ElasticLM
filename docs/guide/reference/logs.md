@@ -247,7 +247,7 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 | `id` | The lease ID of the returned borrow. |
 | `key` | The thumbprint of the client's installation key that borrowed it. |
 | `at` | The time of the return, or of the stop, in Unix seconds. |
-| `until` | The latest time at which a lease issued so far under an earlier license or by an earlier run can be valid, in Unix seconds. The reclaim window after the next start lasts until then, unless every feature's seats are taken again earlier. |
+| `until` | The latest time at which a lease issued so far under an earlier license or by an earlier run can be valid, in Unix seconds. The reclaim window after the next start lasts at least until then, unless every feature's seats are taken again earlier. |
 
 For example, an early return (fake values):
 
