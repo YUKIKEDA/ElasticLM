@@ -114,7 +114,8 @@ internal sealed partial class ElmServer
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            Failed("write", ErrorCode.InternalError, "The server license cannot be written: " + e.Message);
+            // design §13.7 (V1d25): the cause goes with its exception, as the borrow record's failures do (events 34 and 37).
+            Failed("write", ErrorCode.InternalError, "The server license cannot be written: " + e.Message, e);
             return;
         }
 
@@ -173,7 +174,7 @@ internal sealed partial class ElmServer
         }
     }
 
-    private void Failed(string stage, ErrorCode code, string reason)
+    private void Failed(string stage, ErrorCode code, string reason, Exception? exception = null)
     {
         string wire = ErrorCodes.ToWireName(code);
         _usage.Write(
@@ -184,6 +185,6 @@ internal sealed partial class ElmServer
                 w.WriteString("code", wire);
             }
         );
-        ServerLog.LicenseRefreshFailed(_log, wire, reason);
+        ServerLog.LicenseRefreshFailed(_log, wire, reason, exception);
     }
 }

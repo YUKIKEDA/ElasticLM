@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -326,6 +327,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     MaxBorrow = settings.BorrowMaxDuration,
                     BorrowReserve = settings.BorrowReserve,
                     Journal = journal,
+                    PreviousLease = journal.PreviousLease,
                     Expired = lease =>
                         usage.Lease(lease.IsBorrow ? "borrow.expired" : "lease.expired", lease, (created?.Server ?? identity!).License.LicenseId),
                     ServerReturnLimitReached = (limit, until) => ServerLog.ReturnLimitReached(log, limit, until),
@@ -510,8 +512,12 @@ internal sealed partial class ElmServer : IAsyncDisposable
             {
                 _journal.ChangeKey(file!, _keyJwk, KeyAccess);
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
+                // design §13.1 (V1d25, Issue #403): the cause goes to the operational log on both paths that reload, the
+                // administrator's and the automatic refresh's, also when a stop closed the record while a refresh reloads; the
+                // answer keeps it too, since only admin.sock gets it.
+                ServerLog.KeyChangeNotRecorded(_log, e);
                 identity!.Dispose();
                 return new LicenseError(ErrorCode.InternalError, "The borrow record cannot record the new license: " + e.Message);
             }
@@ -877,8 +883,23 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private static bool IsClientText(string? value, int maxBytes) =>
         value is null || (Encoding.UTF8.GetByteCount(value) <= maxBytes && !Limits.HasControlCharacter(value));
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
+    // The route a request reached, as its method and pattern without the values of the path (design §18.3): "POST
+    // /v1/leases/{id}/renew".
+    private static string RouteOf(HttpContext context) =>
+        context.GetEndpoint() is RouteEndpoint endpoint ? $"{context.Request.Method} {endpoint.RoutePattern.RawText}" : context.Request.Method;
+
+    // design §12.1 (V1d25): every ELM_PROOF_INVALID answer has one sentence, whatever check failed; the check that failed is
+    // written to the operational log here, where the sentence is replaced, so no path answers the one without the other.
+    private Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
     {
+        if (code == ErrorCode.ProofInvalid)
+        {
+            string route = RouteOf(context);
+            ServerLog.ProofRefused(_log, route, message);
+
+            message = ProofVerifier.Refusal;
+        }
+
         int statusCode = status ?? StatusOf(code);
         string wire = ErrorCodes.ToWireName(code);
         if (retryAfter is TimeSpan wait)
@@ -1344,7 +1365,24 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private async Task<(byte[] Body, ProofResult.Valid Proof)?> ReadAuthenticatedAsync(HttpContext context, Func<string, ECParameters?>? knownKey)
     {
         context.Response.Headers[NonceHeader] = _nonces.Issue();
-        byte[]? body = await ReadBodyAsync(context).ConfigureAwait(false);
+        byte[]? body;
+        try
+        {
+            body = await ReadBodyAsync(context).ConfigureAwait(false);
+        }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException e)
+            when (e.StatusCode is StatusCodes.Status400BadRequest or StatusCodes.Status408RequestTimeout)
+        {
+            // design §18.3 (V1d25, Issue #413): Kestrel could not read the body the caller sent (a bad chunk, a body too slow).
+            // That is the caller's doing, so it ends with one line and a closed connection, not with Kestrel's error entry and
+            // its stack.
+            string route = RouteOf(context);
+            ServerLog.DeviceRequestUnreadable(_log, route, e.StatusCode);
+
+            context.Abort();
+            return null;
+        }
+
         if (body is null)
         {
             await ProblemAsync(context, ErrorCode.PayloadTooLarge, "The request body is larger than 64 KiB.").ConfigureAwait(false);

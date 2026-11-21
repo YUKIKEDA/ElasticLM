@@ -49,7 +49,7 @@ public sealed class LeaseEngine : IDisposable
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LeaseEngine"/> class. The reclaim window (design §13.4) starts now and
-    /// lasts the server license's lease duration.
+    /// lasts the longer of the server license's lease duration and <see cref="LeaseEngineOptions.PreviousLease"/>.
     /// </summary>
     /// <param name="server">The server's own verified server license and public key.</param>
     /// <param name="sign">Signs lease tokens with the server's installation key.</param>
@@ -68,7 +68,10 @@ public sealed class LeaseEngine : IDisposable
         _verifier = verifier;
         _time = time;
         _state = new LicenseState(server);
-        _recoveryEnds = time.GetUtcNow() + _state.Lease;
+
+        // design §13.4 (V1d25): leases issued under the license used before the stop live as long as its lease.
+        TimeSpan window = _options.PreviousLease is TimeSpan previous && previous > _state.Lease ? previous : _state.Lease;
+        _recoveryEnds = time.GetUtcNow() + window;
     }
 
     /// <summary>Gets the end of the reclaim window, unless every seat was reclaimed earlier.</summary>
@@ -589,7 +592,9 @@ public sealed class LeaseEngine : IDisposable
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
                 {
-                    return Refuse(ErrorCode.InternalError, "The borrow cannot be recorded: " + e.Message);
+                    // design §12.1, §13.4 (V1d25): the cause, with a path in it, is in the operational log (event 34), not in
+                    // the answer.
+                    return Refuse(ErrorCode.InternalError, "The borrow cannot be recorded.");
                 }
 
                 record.Borrow = borrowed;

@@ -70,6 +70,12 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     public string? SetAside { get; private set; }
 
     /// <summary>
+    /// Gets the lease duration of the server license that signed the end of the newest file, the license the server used
+    /// before it stopped (design §13.4, V1d25); <see langword="null"/> when there is no file or it was set aside.
+    /// </summary>
+    public TimeSpan? PreviousLease { get; private set; }
+
+    /// <summary>
     /// Reads the newest file of the record and verifies it, and that its last key is this server's key or a key of the same
     /// server license (design §13.4). A broken record stops the start, unless the operator asked to set it aside
     /// (<c>--set-aside-broken-records</c>): the file is renamed and the server starts without its borrows. Early returns after
@@ -130,6 +136,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             return journal;
         }
 
+        journal.PreviousLease = report.Files[^1].Lease;
         foreach (LogEntry entry in entries)
         {
             if (entry.IsSigned || entry.Type != BorrowReturned)
@@ -195,14 +202,15 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     }
 
     // Writes a borrow or a return. The engine refuses the request when the write throws, and the next file's chain.reset
-    // names only the file, so the cause is kept here, in the operational log.
+    // names only the file, so the cause is kept here, in the operational log; a record closed by the stop too, since the
+    // answer no longer carries the cause (design §13.4, V1d25).
     private void Recorded(Action write)
     {
         try
         {
             write();
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
         {
             if (_operational is not null)
             {

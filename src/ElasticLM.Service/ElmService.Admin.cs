@@ -11,6 +11,9 @@ using ElasticLM.Licensing;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Service;
 
@@ -770,8 +773,38 @@ internal sealed partial class ElmService
         return new AdminOutcome("ELM_OK", target.ToString("D"), detail, Recorded: true);
     }
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, int? status = null, long retryAfter = 1) =>
-        WriteProblemAsync(context, code, message, status ?? StatusOf(code), retryAfter);
+    // design §12.1 (V1d25): every ELM_PROOF_INVALID answer to a caller who is not authenticated has one sentence, whatever
+    // check failed; the check that failed is written to the operational log here, where the sentence is replaced, so no path
+    // answers the one without the other. Only an authenticated administrator, the service's own operator, gets the reason
+    // (POST /v1/admin/offline, question 25-1a). The service's logger is the host's logger of the category elm-service, which
+    // this reaches through the request's services.
+    private static Task ProblemAsync(
+        HttpContext context,
+        ErrorCode code,
+        string message,
+        int? status = null,
+        long retryAfter = 1,
+        bool administrator = false
+    )
+    {
+        if (code == ErrorCode.ProofInvalid)
+        {
+            ILogger log = context.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger(LogCategory);
+            string route = RouteOf(context);
+            ServiceLog.ProofRefused(log, route, message);
+            if (!administrator)
+            {
+                message = ProofVerifier.Refusal;
+            }
+        }
+
+        return WriteProblemAsync(context, code, message, status ?? StatusOf(code), retryAfter);
+    }
+
+    // The route a request reached, as its method and pattern without the values of the path (design §18.3): "POST
+    // /v1/activations/{id}/refresh".
+    private static string RouteOf(HttpContext context) =>
+        context.GetEndpoint() is RouteEndpoint endpoint ? $"{context.Request.Method} {endpoint.RoutePattern.RawText}" : context.Request.Method;
 
     private static int StatusOf(ErrorCode code) =>
         ErrorStatuses.TryGetValue(code, out int status) ? status : StatusCodes.Status500InternalServerError;

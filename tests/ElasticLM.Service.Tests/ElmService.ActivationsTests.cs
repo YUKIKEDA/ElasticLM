@@ -1,7 +1,10 @@
 using System.Net;
 using System.Text.Json;
+using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
+using ElasticLM.Server.Tests;
+using Microsoft.Extensions.Logging;
 
 namespace ElasticLM.Service.Tests;
 
@@ -465,15 +468,18 @@ public sealed class ElmServiceActivationsTests
     ///   refresh an unknown activation and one whose ID is not a UUID.
     ///
     /// Expected:
-    /// - 401 ELM_PROOF_INVALID, ELM_PROOF_INVALID, ELM_PROOF_INVALID, ELM_NONCE_REQUIRED twice, then 201 and 401 ELM_REPLAYED;
-    ///   401 ELM_PROOF_INVALID "The proof is not made with the activation's installation key." twice; 404
+    /// - 401 ELM_PROOF_INVALID three times, ELM_NONCE_REQUIRED twice, then 201 and 401 ELM_REPLAYED; 401 ELM_PROOF_INVALID
+    ///   twice. Each ELM_PROOF_INVALID has the detail "The request proof is not valid.", and the operational log's line
+    ///   names the check: missing, another method or URI, another body, and "The proof is not made with the activation's
+    ///   installation key." for the refresh and the deactivation (design §12.1, V1d25); 404
     ///   ELM_ACTIVATION_NOT_FOUND twice; every answer with an ELM-Nonce header.
     /// </remarks>
     [Fact]
     public async Task Proof_EachRule_IsEnforced()
     {
         await using TestService test = TestService.Open("sqlite");
-        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
         string product = await ProductAsync(admin, "app", "core");
         string policy = await TestService.PolicyAsync(admin, product, "\"maxActivations\":5");
         (_, string key) = await LicenseAsync(admin, policy);
@@ -482,11 +488,18 @@ public sealed class ElmServiceActivationsTests
         string[] prints = TestDevice.Fingerprints();
         string body = $$"""{"licenseKey":"{{key}}","product":"app","fingerprints":["{{prints[0]}}"]}""";
         var answers = new List<DeviceAnswer>();
-        async Task Expect(Task<DeviceAnswer> send, HttpStatusCode status, string code, string detail)
+        async Task Expect(Task<DeviceAnswer> send, HttpStatusCode status, string code, string detail, string route = "POST /v1/activations")
         {
             DeviceAnswer answer = await send;
             answers.Add(answer);
-            AssertProblem(answer, status, code, detail);
+            if (code == "ELM_PROOF_INVALID")
+            {
+                AssertProofRefused(answer, status, log, route, detail);
+            }
+            else
+            {
+                AssertProblem(answer, status, code, detail);
+            }
         }
 
         const string Missing = "The request proof is missing or not a valid elm-proof+jws.";
@@ -526,13 +539,15 @@ public sealed class ElmServiceActivationsTests
             a.PostAsync($"v1/activations/{id}/refresh", "{\"seq\":1}", signer: b.Key),
             HttpStatusCode.Unauthorized,
             "ELM_PROOF_INVALID",
-            Other
+            Other,
+            "POST /v1/activations/{id}/refresh"
         );
         await Expect(
             a.PostAsync($"v1/activations/{id}/deactivate", "{\"seq\":1}", signer: b.Key),
             HttpStatusCode.Unauthorized,
             "ELM_PROOF_INVALID",
-            Other
+            Other,
+            "POST /v1/activations/{id}/deactivate"
         );
         const string None = "No activation has this ID; activate again.";
         await Expect(a.RefreshAsync(Guid.CreateVersion7().ToString("D"), 1), HttpStatusCode.NotFound, "ELM_ACTIVATION_NOT_FOUND", None);
@@ -560,7 +575,8 @@ public sealed class ElmServiceActivationsTests
     /// - Send the request with the changed proof, then with a good proof.
     ///
     /// Expected:
-    /// - 401 ELM_PROOF_INVALID: "The request proof signature does not verify." for the four signatures, "The request proof
+    /// - 401 ELM_PROOF_INVALID with the detail "The request proof is not valid." (design §12.1, V1d25); the operational log's
+    ///   line names the check: "The request proof signature does not verify." for the four signatures, "The request proof
     ///   is missing or not a valid elm-proof+jws." for the two algs.
     /// - The good request succeeds (201 for the activation, 200 for the refresh) and one activation is stored, so the
     ///   refused request stored nothing and moved no sequence number.
@@ -570,7 +586,8 @@ public sealed class ElmServiceActivationsTests
     public async Task Proof_WithoutAValidSignature_IsRefused(string keyFrom, string form)
     {
         await using TestService test = TestService.Open("sqlite");
-        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
         string product = await ProductAsync(admin, "app", "core");
         (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
         string keyFolder = test.FilePath("device");
@@ -591,10 +608,24 @@ public sealed class ElmServiceActivationsTests
 
         DeviceAnswer refused = await device.PostAsync(path, body, embedded, proof: p => SignatureForms.Change(p, form, device.Key.Sign));
 
-        string detail = SignatureForms.ChangesAlgorithm(form)
+        string reason = SignatureForms.ChangesAlgorithm(form)
             ? "The request proof is missing or not a valid elm-proof+jws."
             : "The request proof signature does not verify.";
-        AssertProblem(refused, HttpStatusCode.Unauthorized, "ELM_PROOF_INVALID", detail);
+        if (keyFrom == "known")
+        {
+            AssertProblem(refused, HttpStatusCode.Unauthorized, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
+        }
+        else
+        {
+            AssertProofRefused(
+                refused,
+                HttpStatusCode.Unauthorized,
+                log,
+                embedded ? "POST /v1/activations" : "POST /v1/activations/{id}/refresh",
+                reason
+            );
+        }
+
         DeviceAnswer accepted = await device.PostAsync(path, body, embedded);
         Assert.True(accepted.Status == (embedded ? HttpStatusCode.Created : HttpStatusCode.OK), accepted.Text);
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM activations"));
@@ -902,10 +933,21 @@ public sealed class ElmServiceActivationsTests
         Assert.Equal((code, detail), (answer.Code, answer.Json.GetProperty("detail").GetString()));
     }
 
-    internal static async Task<(ElmService Service, HttpClient Admin, string Owner)> StartAsync(TestService test)
+    // design §12.1 (V1d25): a refused proof answers one sentence, and the last line of the operational log for a refused
+    // proof names the route and the check that failed.
+    internal static void AssertProofRefused(DeviceAnswer answer, HttpStatusCode status, RecordingLoggerProvider log, string route, string reason)
+    {
+        AssertProblem(answer, status, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
+        (string category, LogLevel level, string message) = log.Entries.Last(e =>
+            e.Message.StartsWith("A request proof was refused", StringComparison.Ordinal)
+        );
+        Assert.Equal(("elm-service", LogLevel.Information, $"A request proof was refused ({route}): {reason}"), (category, level, message));
+    }
+
+    internal static async Task<(ElmService Service, HttpClient Admin, string Owner)> StartAsync(TestService test, RecordingLoggerProvider? log = null)
     {
         string owner = await test.SetupAsync();
-        ElmService service = await test.StartAsync();
+        ElmService service = await test.StartAsync(log: log);
         return (service, test.Http(service, owner), owner);
     }
 
