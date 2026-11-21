@@ -166,7 +166,7 @@ sequenceDiagram
     participant S as elm-server
     participant N as New client
     Note over S: restarts with no leases in memory
-    Note over S: recovery window starts (one lease time; see below)
+    Note over S: recovery window starts (one lease time, see below)
     C->>S: POST /v1/leases/{id}/renew (seq, proof)
     S-->>C: 404 ELM_UNKNOWN_LEASE
     Note over C: lease state Reclaiming
