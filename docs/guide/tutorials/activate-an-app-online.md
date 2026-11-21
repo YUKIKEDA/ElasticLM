@@ -429,7 +429,7 @@ trial: pro
 
 The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial. [The security model](../explanation/security-model.md#on-the-licensees-machine) says how far this holds.
 
-The app takes the license key on its command line only to keep this tutorial short. A real app takes it from a field on a screen, or from a prompt that does not show what the customer types: a command line stays in the shell's history, and on Linux and macOS other users of the machine can read it in the list of processes.
+The app takes the license key on its command line only to keep this tutorial short. A real app takes it from a field on a screen, or from a prompt that does not show what the customer types: a command line stays in the shell's history, and other users of the machine can read it in the list of processes ([The license key of a server license](../reference/elm-cli.md#the-license-key-of-a-server-license) says where).
 
 Now activate with the license key, in the same data folder. Replace `<license-key>` with the key from the license's answer:
 

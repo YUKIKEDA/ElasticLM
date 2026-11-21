@@ -97,7 +97,7 @@ elm-server --config server.json
 
 ## サーバーをアクティベーションする
 
-ライセンスキーでサーバーをアクティベーションする。`elm server activate` は、キーを環境変数 `ELM_LICENSE_KEY` から読み、コマンドラインからは読まない。コマンドラインに書くと、キーがシェルの履歴に残るからだ。ライセンスのレスポンスからキーをコピーし、1 つ目のターミナルで変数に読み込む。こうすると、キーがもう一度表示されることはない。PowerShell 7.1 以降では `$env:ELM_LICENSE_KEY = Read-Host -MaskInput` と打ち、キーを貼り付けて Enter を押す。PowerShell は 1 文字ごとにアスタリスクを表示する。Bash か zsh では `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY` と打ち、キーを貼り付けて Enter を押す。何も表示されない。自分でキーを打つときは、変数を設定しなくてもよい。そのときは `elm` がキーを尋ね、入力した文字は表示しない。スクリプトや CI では、CI のサービスの秘密の置き場から変数を設定する。
+ライセンスキーでサーバーをアクティベーションする。`elm server activate` は、キーを環境変数 `ELM_LICENSE_KEY` から読み、コマンドラインからは読まない。コマンドラインに書くと、キーがシェルの履歴に残るからだ。自分でサーバーをアクティベーションするときは、変数を設定しない。`elm` がキーを尋ね、入力した文字は表示しないので、そこにキーを貼り付ける。CI では、CI サービスのシークレットから変数を設定する。このガイドでは、下の手順がどの読み手にも同じになるように、キーを変数に読み込む。ライセンスのレスポンスからキーをコピーし、1 つ目のターミナルで、PowerShell 7.1 以降では `$env:ELM_LICENSE_KEY = Read-Host -MaskInput` と打ち、キーを貼り付けて Enter を押す。PowerShell は 1 文字ごとにアスタリスクを表示する。Bash か zsh では `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY` と打ち、キーを貼り付けて Enter を押す。何も表示されない。
 
 アクティベーションと更新をする `elm server` のコマンドは `server.json` を読まない。そのため、下のどのコマンドにも製品、データフォルダー、ルート公開鍵を指定し、ライセンスファイルを書くコマンドには、そのパスも指定する。
 
@@ -250,11 +250,11 @@ The server reloaded the license.
 
 サービスに一度も接続しないサーバーも、ファイルでアクティベーションする。このとき `server.json` には `service` を書かない。上と同じように、サーバーを一度起動して鍵を作らせる。そのあと、`elm server activate-request` が、`elm server activate` と同じように `ELM_LICENSE_KEY` のライセンスキーでリクエストを書く。
 
-リクエストファイルはライセンスキーを含むので、`elm` は、所有者だけが読めるように書く。ベンダーには、ほかの人が読めない方法で送る。ベンダーが `elm offline process` でそれに応え、`elm server import` がレスポンスを読んでライセンスファイルを書く。サーバーは、そのあとで起動する。以降は、上と同じようにオフラインで更新する。
+リクエストファイルはライセンスキーを含む。Linux と macOS では、`elm` はこのファイルを所有者だけが読めるように書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐので、ほかの人が読めないフォルダーに置く。ベンダーには、ほかの人が読めない方法で送る。ベンダーが `elm offline process` でそれに応え、`elm server import` がレスポンスを読んでライセンスファイルを書く。サーバーは、そのあとで起動する。以降は、上と同じようにオフラインで更新する。
 
 ライセンスを別のサーバーに移すには、まずサーバーを止め、そのアクティベーションの枠を空ける。オンラインでは `elm server deactivate` で空ける。オフラインでは、`elm server deactivate-proof` がアクティベーションを削除してアクティベーション解除のプルーフを書き、ベンダーがそれを `elm offline process` で処理する。サービスがそれを受け取ったら、`elm server forget-proof` で、サーバーはもう一度アクティベーションできるようになる。`server-data` を削除するだけで済ませてはならない。サービスはそのアクティベーションを数え続け、`maxActivations` が 1 では、そのライセンスでほかのサーバーをアクティベーションできなくなる。これらのコマンドのすべてのオプションは、[サーバーライセンスのコマンド](../reference/elm-cli.md#サーバーライセンスのコマンド)に挙げている。
 
-試し終えたら、3 つ目のターミナルで Ctrl+C を押してサーバーを止め、2 つ目のターミナルで Ctrl+C を押してサービスを止める。ライセンスキーは、1 つ目のターミナルを閉じるか消すまで、その `ELM_LICENSE_KEY` に残る。消すには、PowerShell では `Remove-Item Env:ELM_LICENSE_KEY`、Bash か zsh では `unset ELM_LICENSE_KEY` と打つ。
+試し終えたら、3 つ目のターミナルで Ctrl+C を押してサーバーを止め、2 つ目のターミナルで Ctrl+C を押してサービスを止める。ライセンスキーは、1 つ目のターミナルを閉じるか、変数を消すまで、その `ELM_LICENSE_KEY` に残る。消すには、PowerShell では `Remove-Item Env:ELM_LICENSE_KEY`、Bash か zsh では `unset ELM_LICENSE_KEY` と打つ。
 
 ## 関連するページ
 

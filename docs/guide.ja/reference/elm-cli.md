@@ -256,7 +256,7 @@ OS を問わず、[サーバーライセンスのコマンド](#サーバーラ�
 
 行がデータフォルダーそのものを示すときは、行の終わりは、フォルダーを消すか制限するよう求める。ここではそうせず、サーバーのユーザーでコマンドを実行する。
 
-Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`ELM_LICENSE_KEY` もコマンドに届かないので、ライセンスキーは、`elm server activate` か `elm server activate-request` に尋ねられたときに打つ。`sudo -u <server user> ELM_LICENSE_KEY=<key> …` や `env` で渡さない。キーがコマンドラインに載るからだ。sudoers の設定が変数を残すことを許していれば、`sudo --preserve-env=ELM_LICENSE_KEY -u <server user> …` で渡せる（sudo(8)、sudoers(5)）。これは試していない。`sudo` は、`elm` を、実行した人の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。そのため、`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
+Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`ELM_LICENSE_KEY` もコマンドに届かないので、ライセンスキーは、`elm server activate` か `elm server activate-request` に尋ねられたときに打つ。`sudo -u <server user> ELM_LICENSE_KEY=<key> …` や `env` で渡さない。キーがコマンドラインに載るからだ。sudoers の設定が変数を残すことを許していれば、`sudo --preserve-env=ELM_LICENSE_KEY -u <server user> …` で渡せる（sudo(8)、sudoers(5)）。`sudo` は、`elm` を、実行した人の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。そのため、`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
 
 Windows では、LocalSystem で動くサーバーは、データフォルダーを作るとき、動いているアカウントである SYSTEM をアクセス制御リストに入れる。そのため、リストにあるのは Administrators グループと SYSTEM だけになる。確認は Administrators グループを通すので、管理者はこのフォルダーでコマンドを実行できる。仮想サービスアカウントや LocalService には、誰もサインインしてコマンドを実行できないので、そのどちらかで動くサーバーには、これらのコマンドを使えない。サーバーを LocalSystem か通常のユーザーアカウントで動かし、後者ならそのアカウントでコマンドを実行する。
 
@@ -373,15 +373,15 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 
 ### サーバーライセンスのライセンスキー
 
-`elm server activate` と `elm server activate-request` には、サーバーライセンスのライセンスキーが要る。どちらも、キーをコマンドラインでは受け取らない。コマンドラインはシェルの履歴に残り、Linux と macOS では、同じマシンのほかのユーザーがプロセスの一覧で読めるからだ。
+`elm server activate` と `elm server activate-request` には、サーバーライセンスのライセンスキーが要る。どちらも、キーをコマンドラインでは受け取らない。コマンドラインはシェルの履歴に残り、同じマシンのほかのユーザーがプロセスの一覧で読めるからだ。Linux では、既定で、`/proc` がどのプロセスのコマンドラインもすべてのユーザーに見せる（proc(5)）。macOS では、`ps -A` がほかのユーザーのプロセスを引数とともに表示する（ps(1)）。
 
-- キーは、環境変数 `ELM_LICENSE_KEY` から読む。値はそのまま使う。前後の空白も除かず、キーでない値は `elm-service` が `ELM_LICENSE_NOT_FOUND` で断る。
+- キーは、環境変数 `ELM_LICENSE_KEY` から読む。値はそのまま使い、前後の空白も除かない。キーでない値は `ELM_LICENSE_NOT_FOUND` で断られる。`elm server activate` では、`elm-service` がすぐに断る。`elm server activate-request` では、ベンダーがリクエストファイルを処理したときに断られる。
 - 変数が設定されていないか空で、入力が対話的なときは、`elm` は標準エラー出力に `License key: ` と書き、キーをターミナルから読む。入力した文字は表示しない。空のキーでは、`error: The license key must not be empty.` を書き、終了コード 2 で止まる。
 - 変数が設定されていないか空で、入力がリダイレクトされているときは、`error: Set the license key in the environment variable ELM_LICENSE_KEY; input is not interactive.` を書き、終了コード 2 で止まる。
 - キーを読むのは、コマンド自身の確認がすべて通ったあとだ。確認するのは、データフォルダー、`--service`（`elm server activate`）、`--out` とサーバーの状態（`elm server activate-request`）、サーバーのインストール鍵である。そのどれかで止まるときは、キーを尋ねない。
 - コマンドが知らない語（引数や `--key` で渡したライセンスキーなど）があると、`error: An argument is not recognized; elm server <command> takes the license key from ELM_LICENSE_KEY, or asks for it.` を書き（`<command>` は `activate` か `activate-request`）、何も読まず、何も送らずに、終了コード 2 で止まる。この行は語をくり返さないので、そこに打ったキーがエラー出力に出ることはない。
 
-自分でキーを打つときは、変数を設定せず、`elm` に尋ねられたときにキーを打つか貼り付ける。こうすると、キーは `elm` のメモリーにだけある。実行中の `elm` の環境は、OS がそのプロセスのメモリーを読むことを許すプログラム（Linux では、同じユーザーと root のもの）から読める。また、シェルで設定した変数は、そのシェルからあとで起動するどのプログラムにも渡る。変数は、スクリプトと CI のためのものだ。CI では、CI のサービスの秘密の置き場から設定し、スクリプトに書いた値からは設定しない。キーを表示せず、履歴にも残さずに手で変数を設定するには、PowerShell 7.1 以降では `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`（1 文字ごとにアスタリスクを表示する）、Bash か zsh では `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`（何も表示しない）と打ち、キーを貼り付ける。使い終えたら消す。PowerShell では `Remove-Item Env:ELM_LICENSE_KEY`、Bash か zsh では `unset ELM_LICENSE_KEY` と打つ。`ELM_LICENSE_KEY=<key> elm …` や `env ELM_LICENSE_KEY=<key> elm …` とは書かない。キーがまたコマンドラインに載るからだ。
+自分でキーを打つときは、変数を設定せず、`elm` に尋ねられたときにキーを打つか貼り付ける。こうすると、キーは `elm` のメモリーにだけある。実行中の `elm` の環境は、OS がそのプロセスのメモリーを読むことを許すプログラム（Linux では、同じユーザーと root のもの）から読める。また、シェルで設定した変数は、そのシェルからあとで起動するどのプログラムにも渡る。変数は、スクリプトと CI のためのものだ。CI では、CI サービスのシークレットから変数を設定し、スクリプトに書いた値からは設定しない。キーを表示せず、履歴にも残さずに手で変数を設定するには、PowerShell 7.1 以降では `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`（1 文字ごとにアスタリスクを表示する）、Bash か zsh では `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`（何も表示しない）と打ち、キーを貼り付ける。使い終えたら消す。PowerShell では `Remove-Item Env:ELM_LICENSE_KEY`、Bash か zsh では `unset ELM_LICENSE_KEY` と打つ。`ELM_LICENSE_KEY=<key> elm …` や `env ELM_LICENSE_KEY=<key> elm …` とは書かない。キーがまたコマンドラインに載るからだ。
 
 ### elm server activate
 
@@ -428,7 +428,7 @@ elm server deactivate --product <id> --service <url> [options]
 elm server activate-request --product <id> --out <file> [options]
 ```
 
-`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。ライセンスキーは `ELM_LICENSE_KEY` から読むか、尋ねる（[サーバーライセンスのライセンスキー](#サーバーライセンスのライセンスキー)）。リクエストファイルはライセンスキーを含むので、`elm` は、所有者だけが読めるように書く。Linux と macOS ではモード `0600` で、Windows ではフォルダーのアクセス規則で書く。`--force` では、秘密鍵のファイルと同じく、古いファイルに書き込まず、新しいファイルで置き換える（[パスフレーズ](#パスフレーズ)）。ほかの人が読める場所にコピーしない。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
+`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。ライセンスキーは `ELM_LICENSE_KEY` から読むか、尋ねる（[サーバーライセンスのライセンスキー](#サーバーライセンスのライセンスキー)）。リクエストファイルはライセンスキーを含む。Linux と macOS では、`elm` はこのファイルをモード `0600` で書き、所有者だけが読める。Windows では、秘密鍵のファイルと同じく、ファイルは置いたフォルダーのアクセス権を引き継ぐ（[パスフレーズ](#パスフレーズ)）。そのため、ほかの人が読めないフォルダーに置く。`--force` のときは、前のファイルに書き込まずに、新しいファイルで置き換える。ほかの人が読める場所にコピーしない。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
