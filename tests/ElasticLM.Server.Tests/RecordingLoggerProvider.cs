@@ -8,6 +8,7 @@ namespace ElasticLM.Server.Tests;
 internal sealed class RecordingLoggerProvider : ILoggerProvider
 {
     private readonly List<(string Category, LogLevel Level, string Message)> _entries = [];
+    private readonly List<(string Message, Exception? Exception)> _exceptions = [];
 
     /// <summary>Gets a value indicating whether the host disposed the provider.</summary>
     public bool Disposed { get; private set; }
@@ -41,6 +42,22 @@ internal sealed class RecordingLoggerProvider : ILoggerProvider
         return new Uri(message[Listening.Length..]).Port;
     }
 
+    /// <summary>Returns the exception of the one entry with the message, or <see langword="null"/> when it has none.</summary>
+    /// <param name="message">The message.</param>
+    /// <returns>The exception.</returns>
+    public Exception? ExceptionOf(string message) => Assert.Single(ExceptionsOf(message));
+
+    /// <summary>Returns the exceptions of the entries with the message, in order; <see langword="null"/> for one without.</summary>
+    /// <param name="message">The message.</param>
+    /// <returns>The exceptions.</returns>
+    public IReadOnlyList<Exception?> ExceptionsOf(string message)
+    {
+        lock (_entries)
+        {
+            return [.. _exceptions.Where(e => e.Message == message).Select(e => e.Exception)];
+        }
+    }
+
     public ILogger CreateLogger(string categoryName) => new Logger(this, categoryName);
 
     public void Dispose() => Disposed = true;
@@ -56,7 +73,9 @@ internal sealed class RecordingLoggerProvider : ILoggerProvider
         {
             lock (owner._entries)
             {
-                owner._entries.Add((category, logLevel, formatter(state, exception)));
+                string message = formatter(state, exception);
+                owner._entries.Add((category, logLevel, message));
+                owner._exceptions.Add((message, exception));
             }
         }
     }

@@ -116,11 +116,13 @@ internal sealed class Deployment : IAsyncDisposable
             RateLimitPerIp = 1_000,
         };
 
-    /// <summary>Starts a server with a license in a new data folder, or in the given one.</summary>
+    /// <summary>Starts a server with a license in a new data folder, or in the given one; with a provider, its operational log
+    /// goes there too, from Information up.</summary>
     public async Task<ElmServer> StartServerAsync(
         string? dataDirectory = null,
         Func<ServerSettings, ServerSettings>? change = null,
-        bool setAside = false
+        bool setAside = false,
+        ILoggerProvider? log = null
     )
     {
         dataDirectory ??= NewFolder();
@@ -130,18 +132,19 @@ internal sealed class Deployment : IAsyncDisposable
         }
 
         ServerSettings settings = Settings(dataDirectory);
-        ElmServer server = await ElmServer.StartAsync(change?.Invoke(settings) ?? settings, HostOptions(setAside: setAside));
+        ElmServer server = await ElmServer.StartAsync(change?.Invoke(settings) ?? settings, HostOptions(setAside: setAside, log: log));
         _owned.Add(server);
         return server;
     }
 
-    public ServerHostOptions HostOptions(Func<string, string?>? environment = null, bool setAside = false) =>
+    public ServerHostOptions HostOptions(Func<string, string?>? environment = null, bool setAside = false, ILoggerProvider? log = null) =>
         new()
         {
             Time = Time,
             Environment = environment ?? (_ => null),
-            MinimumLogLevel = LogLevel.Warning,
+            MinimumLogLevel = log is null ? LogLevel.Warning : LogLevel.Information,
             SetAsideBrokenRecords = setAside,
+            LoggerProvider = log,
         };
 
     /// <summary>An HTTP client of a server's administration API, on its socket file: with the given token, with none, or with

@@ -1507,7 +1507,7 @@ Errors:
 | Status | Code | When |
 | --- | --- | --- |
 | 400 | `ELM_MALFORMED` | The body is not a request file or a deactivation proof, a claim is not valid, or the request is issued more than 5 minutes ahead of the service's clock. |
-| 400 | `ELM_PROOF_INVALID` | The file's signature does not verify, or the file is not signed with the installation key of the activation it names. |
+| 400 | `ELM_PROOF_INVALID` | The file's signature does not verify, or the file is not signed with the installation key of the activation it names. The `detail` says which of these it is. |
 | 400 | `ELM_REQUEST_EXPIRED` | The request is older than its 7 days. |
 | 400 | `ELM_WRONG_PRODUCT` | The license key is for another product. |
 | 400 | `ELM_FINGERPRINT_UNAVAILABLE` | The policy compares fingerprints and the request has none. |

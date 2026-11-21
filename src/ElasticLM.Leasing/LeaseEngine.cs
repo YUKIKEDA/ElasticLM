@@ -49,7 +49,7 @@ public sealed class LeaseEngine : IDisposable
 
     /// <summary>
     /// Initializes a new instance of the <see cref="LeaseEngine"/> class. The reclaim window (design §13.4) starts now and
-    /// lasts the server license's lease duration.
+    /// lasts the server license's lease duration, or until <see cref="LeaseEngineOptions.EarlierLeasesUntil"/> when that is later.
     /// </summary>
     /// <param name="server">The server's own verified server license and public key.</param>
     /// <param name="sign">Signs lease tokens with the server's installation key.</param>
@@ -68,7 +68,10 @@ public sealed class LeaseEngine : IDisposable
         _verifier = verifier;
         _time = time;
         _state = new LicenseState(server);
-        _recoveryEnds = time.GetUtcNow() + _state.Lease;
+
+        // design §13.4 (V1d25): leases that earlier runs issued may live until the time the borrow record gives.
+        DateTimeOffset ends = time.GetUtcNow() + _state.Lease;
+        _recoveryEnds = _options.EarlierLeasesUntil is DateTimeOffset earlier && earlier > ends ? earlier : ends;
     }
 
     /// <summary>Gets the end of the reclaim window, unless every seat was reclaimed earlier.</summary>
@@ -458,12 +461,16 @@ public sealed class LeaseEngine : IDisposable
     /// refused (<c>ELM_NO_SEATS</c>) until enough leases expire.
     /// </summary>
     /// <param name="server">The new server identity.</param>
-    public void ReplaceLicense(ServerIdentity server)
+    /// <param name="beforeSwitch">Runs while no request is served, before the new license takes effect, with the lease
+    /// duration of the license in use: the server records there until when the leases issued under it can live (design §13.4,
+    /// V1d25). When it throws, the license in use stays.</param>
+    public void ReplaceLicense(ServerIdentity server, Action<TimeSpan>? beforeSwitch = null)
     {
         ArgumentNullException.ThrowIfNull(server);
         _gate.EnterWriteLock();
         try
         {
+            beforeSwitch?.Invoke(_state.Lease);
             var state = new LicenseState(server);
             foreach (LeaseRecord record in _leases.Values)
             {
@@ -589,7 +596,9 @@ public sealed class LeaseEngine : IDisposable
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
                 {
-                    return Refuse(ErrorCode.InternalError, "The borrow cannot be recorded: " + e.Message);
+                    // design §12.1, §13.4 (V1d25): the cause, with a path in it, is in the operational log (event 34), not in
+                    // the answer.
+                    return Refuse(ErrorCode.InternalError, "The borrow cannot be recorded.");
                 }
 
                 record.Borrow = borrowed;

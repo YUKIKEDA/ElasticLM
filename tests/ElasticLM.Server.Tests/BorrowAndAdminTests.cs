@@ -1422,23 +1422,24 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A server that ran and stopped; [] or an object whose type is a lone surrogate escape appended to its newest borrow
-    ///   record as its third line (after the chain line and its signature).
+    ///   record as its fifth line (after the chain line, its signature, the stop's server.stopped line, and its signature).
     ///
     /// Steps:
     /// - Start; start with the set-aside option.
     ///
     /// Expected:
-    /// - ServerStartException that names --set-aside-broken-records and line 3 with "The line is not a JSON object." or "The
+    /// - ServerStartException that names --set-aside-broken-records and line 5 with "The line is not a JSON object." or "The
     ///   line holds a string that is not valid Unicode."; then a running server and a borrows-broken file.
     /// </remarks>
     [Theory]
-    [InlineData("[]", "line 3: The line is not a JSON object.")]
-    [InlineData("{\"type\":\"\\ud800\"}", "line 3: The line holds a string that is not valid Unicode.")]
+    [InlineData("[]", "line 5: The line is not a JSON object.")]
+    [InlineData("{\"type\":\"\\ud800\"}", "line 5: The line holds a string that is not valid Unicode.")]
     public async Task BorrowRecord_EndsWithALineTheVerifierRefuses_IsABrokenRecord(string line, string problem)
     {
         string serverData = _deployment.NewFolder();
         await (await StartOpenServerAsync(serverData)).DisposeAsync();
         string record = SignedLog.FindFiles(serverData, "borrows")[^1];
+        Assert.Equal(4, File.ReadAllLines(record).Length);
         File.AppendAllText(record, line + "\n");
 
         var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
@@ -1568,7 +1569,8 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     ///   the first borrow early; acquire a lease. Read the operational log.
     ///
     /// Expected:
-    /// - The second borrow fails with ELM_INTERNAL_ERROR and the early return with ELM_RETURN_NOT_ALLOWED; one seat stays
+    /// - The second borrow fails with ELM_INTERNAL_ERROR and the message "The borrow cannot be recorded." alone, without the
+    ///   exception's text (design §12.1, V1d25), and the early return with ELM_RETURN_NOT_ALLOWED; one seat stays
     ///   borrowed. The lease is acquired. The operational log has the errors "The usage log cannot be written." and "The
     ///   borrow record cannot be written; the borrow or the early return is refused."
     /// </remarks>
@@ -1590,7 +1592,7 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         await Deployment.WaitUntilAsync(() => log.Entries.Any(e => e.Message == "The usage log cannot be written."));
 
         var second = Assert.IsType<LeaseResult.Failed>(await client.BorrowLeaseAsync("pro", Day, cancellationToken: cancel));
-        Assert.Equal(ErrorCode.InternalError, second.Error.Code);
+        Assert.Equal((ErrorCode.InternalError, "The borrow cannot be recorded."), (second.Error.Code, second.Error.Message));
         Assert.Equal(ErrorCode.ReturnNotAllowed, (await client.ReleaseLeaseAsync(borrowed, cancel))?.Code);
         Assert.Equal(1, Assert.Single(server.Engine.Usage()).Borrowed);
         Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
@@ -1600,6 +1602,297 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
             log.Entries,
             e => e.Level == LogLevel.Error && e.Message == "The borrow record cannot be written; the borrow or the early return is refused."
         );
+    }
+
+    /// <summary>
+    /// A reload whose key.changed the borrow record cannot write keeps the old license, answers as before, and writes the
+    /// cause with its exception to the operational log (design §13.1, V1d25, Issue #403).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server past its reclaim window whose operational log the test records; a file
+    ///   borrows-99991231T235959999Z.jsonl put into its data folder; the clock moved a day, so the 60-second timer fails to
+    ///   start the borrow record's new file, and every later write of the record starts a new file first, which fails.
+    /// - A new license file for the same key with 3 seats, written over the server's file.
+    ///
+    /// Steps:
+    /// - POST /admin/v1/license/reload.
+    ///
+    /// Expected:
+    /// - 409 ELM_INTERNAL_ERROR with a detail that starts "The borrow record cannot record the new license: " (admin.sock's
+    ///   answer keeps the exception's text). The server keeps the license it started on.
+    /// - The log has one Error entry "The borrow record cannot record the new server license; the old license stays." with
+    ///   an IOException.
+    /// </remarks>
+    [Fact]
+    public async Task Reload_KeyChangeTheRecordCannotWrite_LogsTheCause()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        string started = server.Engine.Server.License.TokenId;
+        _deployment.Time.Advance(Window);
+        File.WriteAllText(Path.Combine(serverData, "borrows-99991231T235959999Z.jsonl"), "{}\n");
+        _deployment.Time.Advance(Day);
+        await Deployment.WaitUntilAsync(() =>
+            log.Entries.Any(e =>
+                e.Message == "The usage log cannot be written." || e.Message.StartsWith("The cleanup failed", StringComparison.Ordinal)
+            )
+        );
+        _deployment.WriteServerLicense(serverData, s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 3)] });
+        using HttpClient admin = Deployment.AdminHttp(server);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+
+        using HttpResponseMessage refused = await admin.PostAsync("admin/v1/license/reload", null, cancel);
+
+        Assert.Equal(HttpStatusCode.Conflict, refused.StatusCode);
+        using JsonDocument problem = JsonDocument.Parse(await refused.Content.ReadAsStringAsync(cancel));
+        Assert.Equal("ELM_INTERNAL_ERROR", problem.RootElement.GetProperty("code").GetString());
+        Assert.StartsWith(
+            "The borrow record cannot record the new license: ",
+            problem.RootElement.GetProperty("detail").GetString(),
+            StringComparison.Ordinal
+        );
+        Assert.Equal(started, server.Engine.Server.License.TokenId);
+        const string Line = "The borrow record cannot record the new server license; the old license stays.";
+        Assert.Single(log.Entries, e => e.Level == LogLevel.Error && e.Message == Line);
+        Assert.IsAssignableFrom<IOException>(log.ExceptionOf(Line));
+    }
+
+    /// <summary>
+    /// A reload that reaches the borrow record after the stop closed it, as an automatic refresh can while the server stops,
+    /// keeps the old license and writes the cause to the operational log (design §13.1, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server whose operational log the test records; its borrow record disposed, as the stop disposes it; a new
+    ///   license file for the same key with 3 seats.
+    ///
+    /// Steps:
+    /// - Reload the license.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR with a message that starts "The borrow record cannot record the new license: "; the old license
+    ///   stays. One Error entry "The borrow record cannot record the new server license; the old license stays." with an
+    ///   ObjectDisposedException.
+    /// </remarks>
+    [Fact]
+    public async Task Reload_RecordClosedByTheStop_LogsTheCause()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        string started = server.Engine.Server.License.TokenId;
+        server.Record.Dispose();
+        _deployment.WriteServerLicense(serverData, s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 3)] });
+
+        LicenseError? error = server.ReloadLicense();
+
+        Assert.Equal(ErrorCode.InternalError, error?.Code);
+        Assert.StartsWith("The borrow record cannot record the new license: ", error!.Message, StringComparison.Ordinal);
+        Assert.Equal(started, server.Engine.Server.License.TokenId);
+        Assert.IsType<ObjectDisposedException>(log.ExceptionOf("The borrow record cannot record the new server license; the old license stays."));
+    }
+
+    /// <summary>
+    /// A borrow and an early return that reach the borrow record after the stop closed it are refused, and the cause goes to
+    /// the operational log, since the answer no longer carries it (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server past its reclaim window whose operational log the test records, with one borrow of two days; then
+    ///   its borrow record disposed, as the stop disposes it.
+    ///
+    /// Steps:
+    /// - Borrow again; return the first borrow early.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR "The borrow cannot be recorded." and ELM_RETURN_NOT_ALLOWED. The log has two Error entries "The
+    ///   borrow record cannot be written; the borrow or the early return is refused.", each with an ObjectDisposedException.
+    /// </remarks>
+    [Fact]
+    public async Task Borrow_RecordClosedByTheStop_IsRefusedAndLogged()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        _deployment.Time.Advance(Window);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        Lease borrowed = Acquired(await client.BorrowLeaseAsync("pro", TimeSpan.FromDays(2), cancellationToken: cancel));
+        server.Record.Dispose();
+
+        var second = Assert.IsType<LeaseResult.Failed>(await client.BorrowLeaseAsync("pro", Day, cancellationToken: cancel));
+        Assert.Equal((ErrorCode.InternalError, "The borrow cannot be recorded."), (second.Error.Code, second.Error.Message));
+        Assert.Equal(ErrorCode.ReturnNotAllowed, (await client.ReleaseLeaseAsync(borrowed, cancel))?.Code);
+
+        const string Line = "The borrow record cannot be written; the borrow or the early return is refused.";
+        Assert.Equal(2, log.Entries.Count(e => e.Level == LogLevel.Error && e.Message == Line));
+        Assert.All(log.ExceptionsOf(Line), e => Assert.IsType<ObjectDisposedException>(e));
+    }
+
+    /// <summary>
+    /// After a restart, the reclaim window lasts the longer of the current server license's lease and the lease of the
+    /// license that signed the end of the newest borrow record file, the one used before the stop; with no such record, or
+    /// a record set aside, the current one's (design §13.4, V1d25, F35).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder; per case, a run and a stop with a license of the first lease, then the server's file written with a
+    ///   license of the second lease. "reloaded": the first run starts on a lease of 10 minutes and reloads one of the first
+    ///   lease before its stop. "first": no earlier run. "set-aside": the newest borrow record file gets a line that is not
+    ///   JSON after the stop, and the second start sets it aside.
+    ///
+    /// Steps:
+    /// - Start the server; read the end of its reclaim window; move the clock to one second before it, then to it.
+    ///
+    /// Expected:
+    /// - The window ends the expected minutes after the start: 30 for 30 then 10, 30 for 10 then 30, 10 for 10 then 10, 30 for
+    ///   "reloaded" (10, then 30 reloaded, then 10), 10 for "first", 10 for "set-aside" (30, then 10). The server recovers
+    ///   one second before the end and no longer at it.
+    /// </remarks>
+    [Theory]
+    [InlineData("restart", 30, 10, 30)]
+    [InlineData("restart", 10, 30, 30)]
+    [InlineData("restart", 10, 10, 10)]
+    [InlineData("reloaded", 30, 10, 30)]
+    [InlineData("first", 0, 10, 10)]
+    [InlineData("set-aside", 30, 10, 10)]
+    public async Task Restart_ReclaimWindow_LastsTheLongerOfTheCurrentAndThePreviousLease(string shape, int before, int now, int expected)
+    {
+        string serverData = _deployment.NewFolder();
+        if (shape != "first")
+        {
+            _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(shape == "reloaded" ? 10 : before) });
+            ElmServer first = await _deployment.StartServerAsync(serverData);
+            if (shape == "reloaded")
+            {
+                _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(before) });
+                Assert.Null(first.ReloadLicense());
+            }
+
+            await first.DisposeAsync();
+            if (shape == "set-aside")
+            {
+                File.AppendAllText(SignedLog.FindFiles(serverData, BorrowJournal.BaseName)[^1], "not json\n");
+            }
+        }
+
+        _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(now) });
+        DateTimeOffset start = _deployment.Time.GetUtcNow();
+        ElmServer server = await _deployment.StartServerAsync(serverData, setAside: shape == "set-aside");
+
+        Assert.Equal(start + TimeSpan.FromMinutes(expected), server.Engine.RecoveryEndsAt);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(expected) - TimeSpan.FromSeconds(1));
+        Assert.True(server.Engine.IsRecovering());
+        _deployment.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.False(server.Engine.IsRecovering());
+    }
+
+    /// <summary>
+    /// The reclaim window covers the leases that earlier licenses and earlier runs issued, through the borrow record's
+    /// leases.until and the stop's server.stopped line: after a reload to a shorter lease while the server runs, over two
+    /// restarts in a row, after a first start that failed, and after a kill right after a lease; a long graceful stop shrinks
+    /// the wait to the current lease (design §13.4, V1d25 questions 25-4a and 25-4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder whose server starts at T0 with a license of a 30-minute lease. Per case:
+    ///   - "reload": at T0 + 1 min a license of a 10-minute lease is reloaded; the server stops at T0 + 2 min.
+    ///   - "twice": the server stops at T0; a license of a 10-minute lease is written; the server starts and stops at T0 + 1 min.
+    ///   - "failed": the server stops at T0; a license of a 10-minute lease is written; at T0 + 1 min a start fails because its
+    ///     port is taken.
+    ///   - "long": the server stops at T0; two days pass; a license of a 10-minute lease is written.
+    ///   - "kill": at T0 + 30 min a lease is acquired; the server is ended without its stop line (its borrow record disposed
+    ///     first, as a killed process leaves it); two hours pass; a license of a 10-minute lease is written.
+    ///
+    /// Steps:
+    /// - One minute later, start the server with a license of a 10-minute lease; read the end of its reclaim window; move the
+    ///   clock to one second before it, then to it.
+    ///
+    /// Expected:
+    /// - The window ends at: T0 + 31 min for "reload" (the reload time and the earlier 30 minutes); T0 + 30 min for "twice"
+    ///   and "failed" (the first stop and 30 minutes, carried by the newer files); the start + 10 min for "long" (the stop and
+    ///   30 minutes have passed); the start + 30 min for "kill" (no stop line, so the leases of the 30-minute license may have
+    ///   been issued up to this start). The server recovers one second before the end and no longer at it.
+    /// </remarks>
+    [Theory]
+    [InlineData("reload")]
+    [InlineData("twice")]
+    [InlineData("failed")]
+    [InlineData("long")]
+    [InlineData("kill")]
+    public async Task Restart_ReclaimWindow_CoversEarlierLicensesAndRuns(string shape)
+    {
+        TimeSpan minute = TimeSpan.FromMinutes(1);
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(30) });
+        DateTimeOffset t0 = _deployment.Time.GetUtcNow();
+        ElmServer first = await _deployment.StartServerAsync(serverData);
+        void Shorter() => _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(10) });
+        DateTimeOffset expectedEnd;
+        switch (shape)
+        {
+            case "reload":
+                _deployment.Time.Advance(minute);
+                Shorter();
+                Assert.Null(first.ReloadLicense());
+                _deployment.Time.Advance(minute);
+                await first.DisposeAsync();
+                expectedEnd = t0 + TimeSpan.FromMinutes(31);
+                break;
+            case "twice":
+                await first.DisposeAsync();
+                Shorter();
+                _deployment.Time.Advance(minute);
+                await (await _deployment.StartServerAsync(serverData)).DisposeAsync();
+                expectedEnd = t0 + TimeSpan.FromMinutes(30);
+                break;
+            case "failed":
+                await first.DisposeAsync();
+                Shorter();
+                _deployment.Time.Advance(minute);
+                using (var taken = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0))
+                {
+                    taken.Start();
+                    int port = ((IPEndPoint)taken.LocalEndpoint).Port;
+                    await Assert.ThrowsAsync<ServerStartException>(() =>
+                        _deployment.StartServerAsync(serverData, s => s with { Listen = new Uri($"https://127.0.0.1:{port}") })
+                    );
+                }
+
+                expectedEnd = t0 + TimeSpan.FromMinutes(30);
+                break;
+            case "long":
+                await first.DisposeAsync();
+                _deployment.Time.Advance(TimeSpan.FromDays(2));
+                Shorter();
+                expectedEnd = _deployment.Time.GetUtcNow() + minute + TimeSpan.FromMinutes(10);
+                break;
+            default:
+                _deployment.Time.Advance(TimeSpan.FromMinutes(30));
+                Acquired(
+                    await _deployment.Client(first.PublicUrls[0]).AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+                );
+                first.Record.Dispose();
+                await first.DisposeAsync();
+                _deployment.Time.Advance(TimeSpan.FromHours(2));
+                Shorter();
+                expectedEnd = _deployment.Time.GetUtcNow() + minute + TimeSpan.FromMinutes(30);
+                break;
+        }
+
+        _deployment.Time.Advance(minute);
+        ElmServer server = await _deployment.StartServerAsync(serverData);
+
+        Assert.Equal(expectedEnd, server.Engine.RecoveryEndsAt);
+        _deployment.Time.Advance(expectedEnd - _deployment.Time.GetUtcNow() - TimeSpan.FromSeconds(1));
+        Assert.True(server.Engine.IsRecovering());
+        _deployment.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.False(server.Engine.IsRecovering());
     }
 
     /// <summary>

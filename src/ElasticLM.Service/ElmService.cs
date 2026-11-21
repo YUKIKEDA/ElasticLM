@@ -45,6 +45,9 @@ internal sealed class ServiceHostOptions
 /// </summary>
 internal sealed partial class ElmService : IAsyncDisposable
 {
+    // The category of the service's own operational log lines (design §18.3).
+    private const string LogCategory = "elm-service";
+
     private static readonly TimeSpan PurgeInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ProofPurgeInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DenialInterval = TimeSpan.FromMinutes(1);
@@ -198,7 +201,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             var hooks = new WebHooks();
             WebApplication app = Build(settings, tls, host, database, hooks, out Func<IPEndPoint> listening);
             disposables.Add(app);
-            ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger("elm-service");
+            ILogger log = app.Services.GetRequiredService<ILoggerFactory>().CreateLogger(LogCategory);
 
             // design §18.1, 0.95: this node's usage log, signed with the signing key, whose certificates verify it.
             if (settings.UsageLogDirectory is string usageDirectory)

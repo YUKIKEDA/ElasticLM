@@ -15,6 +15,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
+using Microsoft.AspNetCore.Routing;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -68,6 +69,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private static readonly TimeSpan CleanupInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan SealInterval = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan SyncInterval = TimeSpan.FromHours(1);
+
+    // design §18.3 (V1d25): how long a failed read of a request body waits for Kestrel to cancel the request.
+    private static readonly TimeSpan AbortWait = TimeSpan.FromSeconds(1);
 
     // design §13.7 (V1d2): the mark of a connection that came in on the listener this server bound to admin.sock. Only the
     // connection middleware of that listener puts it into a connection's items, so a listener added through configuration
@@ -326,6 +330,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                     MaxBorrow = settings.BorrowMaxDuration,
                     BorrowReserve = settings.BorrowReserve,
                     Journal = journal,
+                    EarlierLeasesUntil = journal.EarlierLeasesUntil,
                     Expired = lease =>
                         usage.Lease(lease.IsBorrow ? "borrow.expired" : "lease.expired", lease, (created?.Server ?? identity!).License.LicenseId),
                     ServerReturnLimitReached = (limit, until) => ServerLog.ReturnLimitReached(log, limit, until),
@@ -446,6 +451,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
             _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
             ServerLog.Stopped(_log, leases);
             _usage.Dispose();
+
+            // design §13.4 (V1d25): no request is served any more, so the next start counts this run's leases from now.
+            _journal.Stopped();
             _journal.Dispose();
         }
         finally
@@ -508,17 +516,32 @@ internal sealed partial class ElmServer : IAsyncDisposable
         {
             try
             {
-                _journal.ChangeKey(file!, _keyJwk, KeyAccess);
+                // design §13.4 (V1d25): while no request is served, the borrow record first says until when the leases of the
+                // license in use can live, then takes the key change, and the usage log follows; only then does the new license
+                // take effect. A start after this covers those leases whatever license it runs with.
+                Engine.ReplaceLicense(
+                    identity!,
+                    lease =>
+                    {
+                        _journal.LeasesIssuedUntil(Time.GetUtcNow() + lease);
+                        _journal.ChangeKey(file!, _keyJwk, KeyAccess);
+
+                        // A usage log that cannot record it says so in the operational log and starts its next file with the
+                        // new license.
+                        _usage.ChangeKey(file!, _keyJwk, KeyAccess);
+                    }
+                );
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
             {
+                // design §13.1 (V1d25, Issue #403): the cause goes to the operational log on both paths that reload, the
+                // administrator's and the automatic refresh's, also when a stop closed the record while a refresh reloads; the
+                // answer keeps it too, since only admin.sock gets it.
+                ServerLog.KeyChangeNotRecorded(_log, e);
                 identity!.Dispose();
                 return new LicenseError(ErrorCode.InternalError, "The borrow record cannot record the new license: " + e.Message);
             }
 
-            // A usage log that cannot record it says so in the operational log and starts its next file with the new license.
-            _usage.ChangeKey(file!, _keyJwk, KeyAccess);
-            Engine.ReplaceLicense(identity!);
             _identities.Add(identity!);
             Volatile.Write(ref _licenseFile, file!);
         }
@@ -834,7 +857,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private static int StatusOf(ErrorCode code) =>
         ErrorStatuses.TryGetValue(code, out int status) ? status : StatusCodes.Status500InternalServerError;
 
-    private static async Task<byte[]?> ReadBodyAsync(HttpContext context)
+    private async Task<byte[]?> ReadBodyAsync(HttpContext context)
     {
         if (context.Request.ContentLength > MaxBodyLength)
         {
@@ -844,17 +867,40 @@ internal sealed partial class ElmServer : IAsyncDisposable
         using var buffer = new MemoryStream();
         byte[] chunk = new byte[8192];
         int read;
-        while ((read = await context.Request.Body.ReadAsync(chunk, context.RequestAborted).ConfigureAwait(false)) > 0)
+        try
         {
-            if (buffer.Length + read > MaxBodyLength)
+            while ((read = await context.Request.Body.ReadAsync(chunk, context.RequestAborted).ConfigureAwait(false)) > 0)
             {
-                return null;
-            }
+                if (buffer.Length + read > MaxBodyLength)
+                {
+                    return null;
+                }
 
-            buffer.Write(chunk, 0, read);
+                buffer.Write(chunk, 0, read);
+            }
+        }
+        catch (IOException) when (!context.RequestAborted.IsCancellationRequested)
+        {
+            // design §18.3 (V1d25, question 25-5a): a caller who resets the connection in the middle of the body makes this read
+            // fail before Kestrel has canceled the request's token, which it schedules on the thread pool after it closes the
+            // connection. Thrown before that, the exception reached Kestrel as the application's and wrote Kestrel[13] at Error
+            // in 5 runs of 20. The read waits for the token for a short while, as elm-service's does; a body of the wrong shape
+            // on an open connection waits the whole while. The rate limit per source bounds the reads that wait.
+            await WaitForAbortAsync(context).ConfigureAwait(false);
+            throw;
         }
 
         return buffer.ToArray();
+    }
+
+    // design §18.3 (V1d25): waits until the request's token is canceled, at most AbortWait on the server's clock.
+    private async Task WaitForAbortAsync(HttpContext context)
+    {
+        try
+        {
+            await Task.Delay(AbortWait, Time, context.RequestAborted).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested) { }
     }
 
     private static T? Parse<T>(byte[] body, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> type)
@@ -877,8 +923,23 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private static bool IsClientText(string? value, int maxBytes) =>
         value is null || (Encoding.UTF8.GetByteCount(value) <= maxBytes && !Limits.HasControlCharacter(value));
 
-    private static Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
+    // The route a request reached, as its method and pattern without the values of the path (design §18.3): "POST
+    // /v1/leases/{id}/renew".
+    private static string RouteOf(HttpContext context) =>
+        context.GetEndpoint() is RouteEndpoint endpoint ? $"{context.Request.Method} {endpoint.RoutePattern.RawText}" : context.Request.Method;
+
+    // design §12.1 (V1d25): every ELM_PROOF_INVALID answer has one sentence, whatever check failed; the check that failed is
+    // written to the operational log here, where the sentence is replaced, so no path answers the one without the other.
+    private Task ProblemAsync(HttpContext context, ErrorCode code, string message, TimeSpan? retryAfter = null, int? status = null)
     {
+        if (code == ErrorCode.ProofInvalid)
+        {
+            string route = RouteOf(context);
+            ServerLog.ProofRefused(_log, route, message);
+
+            message = ProofVerifier.Refusal;
+        }
+
         int statusCode = status ?? StatusOf(code);
         string wire = ErrorCodes.ToWireName(code);
         if (retryAfter is TimeSpan wait)
@@ -1344,7 +1405,24 @@ internal sealed partial class ElmServer : IAsyncDisposable
     private async Task<(byte[] Body, ProofResult.Valid Proof)?> ReadAuthenticatedAsync(HttpContext context, Func<string, ECParameters?>? knownKey)
     {
         context.Response.Headers[NonceHeader] = _nonces.Issue();
-        byte[]? body = await ReadBodyAsync(context).ConfigureAwait(false);
+        byte[]? body;
+        try
+        {
+            body = await ReadBodyAsync(context).ConfigureAwait(false);
+        }
+        catch (Microsoft.AspNetCore.Http.BadHttpRequestException e)
+            when (e.StatusCode is StatusCodes.Status400BadRequest or StatusCodes.Status408RequestTimeout)
+        {
+            // design §18.3 (V1d25, Issue #413): Kestrel could not read the body the caller sent (a bad chunk, a body too slow).
+            // That is the caller's doing, so it ends with one line and a closed connection, not with Kestrel's error entry and
+            // its stack.
+            string route = RouteOf(context);
+            ServerLog.DeviceRequestUnreadable(_log, route, e.StatusCode);
+
+            context.Abort();
+            return null;
+        }
+
         if (body is null)
         {
             await ProblemAsync(context, ErrorCode.PayloadTooLarge, "The request body is larger than 64 KiB.").ConfigureAwait(false);

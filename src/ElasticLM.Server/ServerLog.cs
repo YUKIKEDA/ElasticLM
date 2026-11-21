@@ -43,6 +43,19 @@ internal static partial class ServerLog
     [LoggerMessage(EventId = 21, Level = LogLevel.Warning, Message = "clone.flagged: lease {LeaseId}, key {KeyId}")]
     public static partial void CloneFlagged(ILogger log, string? leaseId, string keyId);
 
+    // design §12.1 (V1d25): the check a request proof failed, which the answer no longer names.
+    [LoggerMessage(EventId = 22, Level = LogLevel.Information, Message = "A request proof was refused ({Route}): {Reason}")]
+    public static partial void ProofRefused(ILogger log, string route, string reason);
+
+    // design §18.3 (V1d25, Issue #413): the caller's request body could not be read; one line, without the request and
+    // without a stack.
+    [LoggerMessage(
+        EventId = 23,
+        Level = LogLevel.Information,
+        Message = "A device request ({Route}) could not be read ({Status}); the connection was closed."
+    )]
+    public static partial void DeviceRequestUnreadable(ILogger log, string route, int status);
+
     [LoggerMessage(EventId = 30, Level = LogLevel.Error, Message = "The usage log cannot be written.")]
     public static partial void UsageLogFailed(ILogger log, Exception exception);
 
@@ -82,6 +95,10 @@ internal static partial class ServerLog
     )]
     public static partial void UnfinishedRecordRemoved(ILogger log, string file);
 
+    // design §13.1 (V1d25, Issue #403).
+    [LoggerMessage(EventId = 37, Level = LogLevel.Error, Message = "The borrow record cannot record the new server license; the old license stays.")]
+    public static partial void KeyChangeNotRecorded(ILogger log, Exception exception);
+
     [LoggerMessage(EventId = 40, Level = LogLevel.Information, Message = "admin.action: {Action} {Target} -> {Result}")]
     public static partial void AdminAction(ILogger log, string action, string? target, string result);
 
@@ -89,5 +106,5 @@ internal static partial class ServerLog
     public static partial void Reloaded(ILogger log, string licenseId, string tokenId);
 
     [LoggerMessage(EventId = 42, Level = LogLevel.Warning, Message = "license.refresh_failed: {Code} {Reason}")]
-    public static partial void LicenseRefreshFailed(ILogger log, string code, string reason);
+    public static partial void LicenseRefreshFailed(ILogger log, string code, string reason, Exception? exception);
 }

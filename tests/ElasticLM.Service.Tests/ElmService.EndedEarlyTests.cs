@@ -259,6 +259,49 @@ public sealed class ElmServiceEndedEarlyTests
     }
 
     /// <summary>
+    /// A device request whose body Kestrel cannot read, a bad chunk or a body that comes too slowly, ends with one line of
+    /// the service's own and a closed connection, without an error entry, on the device API and on POST /v1/offline (design
+    /// §18.3, V1d25, Issue #413).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A service whose operational log the test records from Information up. Kestrel's least body rate is its default,
+    ///   240 bytes a second after 5 seconds, counted on the real clock.
+    ///
+    /// Steps:
+    /// - On a socket of its own, POST the route: "chunk" with Transfer-Encoding: chunked and the chunk size "zz"; "slow" with
+    ///   Content-Length 100 and 9 bytes of the body. Read until the service has closed the connection, for at most 30
+    ///   seconds, moving the service's clock a second every 50 ms, since the failed read waits up to a second on that clock
+    ///   for Kestrel to cancel the request.
+    ///
+    /// Expected:
+    /// - No byte of an answer. The log has one line "A device request (POST {route}) could not be read ({status}); the
+    ///   connection was closed." and no entry at Error or above.
+    /// </remarks>
+    [Theory]
+    [InlineData("/v1/activations", "chunk", 400)]
+    [InlineData("/v1/activations", "slow", 408)]
+    [InlineData("/v1/offline", "chunk", 400)]
+    [InlineData("/v1/offline", "slow", 408)]
+    public async Task DeviceBody_Unreadable_ClosesWithOneLine(string route, string shape, int status)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        using var log = new RecordingLoggerProvider();
+        ElmService service = await test.StartAsync(log: log);
+        string request =
+            $"POST {route} HTTP/1.1\r\nHost: {service.Url.Authority}\r\nContent-Type: application/json\r\n"
+            + (shape == "chunk" ? "Transfer-Encoding: chunked\r\n\r\nzz\r\n" : "Content-Length: 100\r\n\r\n{\"product\"");
+
+        using Socket caller = await ElmServiceAdminTests.SendAsync(service, request);
+        Assert.Equal(0, await ReadToCloseAsync(caller, TimeSpan.FromSeconds(30), test.Time));
+
+        string line = $"A device request (POST {route}) could not be read ({status}); the connection was closed.";
+        await TestService.WaitForAsync(() => Task.FromResult(log.Entries.Any(e => e.Message == line)));
+        AssertOneLine(log, line);
+    }
+
+    /// <summary>
     /// A caller who resets or ends the connection in the middle of the request body is audited with ELM_NETWORK_ERROR every
     /// time, whether the read of the body fails before Kestrel cancels the request's token or after (design §18.2, V1d9a
     /// review).

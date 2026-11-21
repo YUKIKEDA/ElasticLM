@@ -85,6 +85,8 @@ The checks, in order:
 
 `elm-server` has no per-key rate limit. It checks that a proof is signed by the lease's key after the body is read, with the route's own checks.
 
+Every `ELM_PROOF_INVALID` answer has the same `detail`, `The request proof is not valid.`, whichever check failed, here or in a route's own checks. The same holds for the `400` answers of `POST /v1/offline`; only `POST /v1/admin/offline`, which an administrator of `elm-service` calls, gives the reason in its `detail`. `elm-server` and `elm-service` write the check that failed to their operational log at the `Information` level, the default, as `A request proof was refused (<route>): <reason>` (see [Logs](logs.md#operational-log)); a level above `Information` leaves it out. To find out why the proofs of an app are refused, for example because `htu` does not match a `publicUrls` entry, read that line: in the log of `elm-server`, which the customer's administrator keeps, or in the log of `elm-service`, which the vendor keeps. An app developer whose app's proofs `elm-service` refuses asks the vendor, who runs the service, for that line.
+
 A client without a nonce, such as at its first request, gets one from `GET /v1/nonce` (see [Nonces](#nonces)). A refusal of the proof check carries a new nonce in `ELM-Nonce`, as every answer named in [Headers](#headers) does.
 
 `elm-service` records the `jti` in its database after the per-key rate limit and before it parses the body: a request refused after that point still uses up its `jti`. `elm-server` records the `jti` in memory.
@@ -529,7 +531,7 @@ The checks, in order: the rate limit for the source address; the form of `{jti}`
 
 `elm-server` has seven routes for clients. Every route can also answer `403` with `ELM_FORBIDDEN` for an address its IP rules refuse, and `429` with `ELM_RATE_LIMITED`. Every route with a proof can also answer the codes of the proof check (including `503` with `ELM_SERVER_BUSY`), `400` with `ELM_MALFORMED` for a body that breaks the rules, and `413` with `ELM_PAYLOAD_TOO_LARGE`. Each route below lists its other codes, in the order the server checks them.
 
-`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold; the window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
+`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold. When leases that an earlier run issued, under this or an earlier server license, can live longer, the window lasts until they have ended, as the server's borrow record gives it. The window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
 
 ### `GET /v1/nonce` on `elm-server`
 
