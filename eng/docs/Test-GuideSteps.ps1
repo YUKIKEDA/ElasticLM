@@ -144,9 +144,10 @@
     which this script's own environment never holds. elm and dotnet get the environment as it is, and elm lines also
     ELM_API_KEY and ELM_LICENSE_KEY once a block captured them with env. On Windows, dotnet lines also get the Visual
     Studio Installer folder at the front of PATH when it exists, as eng/release/Publish-Rid.ps1 sets it, since a NativeAOT
-    publish runs the Visual Studio environment scripts, which call vswhere.exe by name (design §20.7, V1c4e). docker lines run -ContainerCli with no
-    ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE, so that a page's -e ELM_SIGNING_PASSPHRASE without
-    a value hands it to the container as the reader's terminal does (design §20.7, V1c4d2, Q9).
+    publish runs the Visual Studio environment scripts, which call vswhere.exe by name (design §20.7, V1c4e). docker lines
+    run -ContainerCli with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE, so that a page's -e
+    ELM_SIGNING_PASSPHRASE without a value hands it to the container as the reader's terminal does (design §20.7, V1c4d2,
+    Q9).
 
     The lines of the container pages (design §20.7, V1c4d2, Q9 and reviews R1, R2, R4, R7, R13, and R16):
       docker        A line that runs -ContainerCli (docker by default) with the rest of the line as its arguments; with
@@ -911,10 +912,10 @@ function Find-Program([string]$program) {
 
 # A process in the work folder. elm-server gets no ELM_ variable: it reads ELM_<KEY> before its settings file.
 # elm-service likewise, except that the background elm-service gets the run's passphrase for its signing key. An elm line
-# gets the values captured with env; no other program gets them, and this script's own environment never holds them. cl,
-# xattr, and a program the page built get no ELM_ variable either, so that the run's passphrase stays with elm (design
-# §20.7, V1c3c, review R10); cl and the built program get the MSVC environment on Windows. A docker line runs -ContainerCli
-# with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE (design §20.7, V1c4d2, Q9).
+# gets the values captured with env; no other program gets them, and this script's own environment never holds them.
+# cl, cc, xattr, and a program the page built get no ELM_ variable either, so that the run's passphrase stays with elm
+# (design §20.7, V1c3c, review R10); cl and the built program get the MSVC environment on Windows. A docker line runs
+# -ContainerCli with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE (design §20.7, V1c4d2, Q9).
 function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [string]$folder, [hashtable]$secrets, [switch]$Background, [switch]$Own) {
     $file = switch -CaseSensitive ($kind) {
         'elm' { $elmPath }

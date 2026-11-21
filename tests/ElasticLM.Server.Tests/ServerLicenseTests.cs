@@ -18,6 +18,9 @@ namespace ElasticLM.Server.Tests;
 public sealed class ServerLicenseTests : IAsyncDisposable
 {
     private const string Product = "acme-cad";
+
+    // The well-known SID of Everyone.
+    private const string Everyone = "S-1-1-0";
     private const string NotFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
     private readonly Deployment _deployment = new();
     private readonly List<IAsyncDisposable> _owned = [];
@@ -561,6 +564,193 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         };
         Assert.Equal((expected.Item1, string.Empty, expected.Item2 + Environment.NewLine), (code, output, error));
         Assert.Empty(prompts);
+    }
+
+    /// <summary>
+    /// The key from ELM_LICENSE_KEY goes to the service as it is, white space and control characters included, and a value
+    /// the service does not know is refused there without being repeated (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy and a license key of it; a stopped server's data folder.
+    ///
+    /// Steps:
+    /// - Run elm server activate with ELM_LICENSE_KEY set to the case's value: the key with a space before it, with a space
+    ///   after it, with a carriage return after it, and the key followed by 10,000 letters A.
+    ///
+    /// Expected:
+    /// - Exit 1, nothing on the output, and exactly "error: ELM_LICENSE_NOT_FOUND: No license has this key." on the error
+    ///   output, which holds neither the key nor the value; the service holds no activation; no license file.
+    /// </remarks>
+    /// <param name="shape">The case's value.</param>
+    [Theory]
+    [InlineData("space before")]
+    [InlineData("space after")]
+    [InlineData("carriage return after")]
+    [InlineData("very long")]
+    public async Task LicenseKey_ValueTheServiceDoesNotKnow_IsRefusedThereWithoutRepeatingIt(string shape)
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "activated.elmlic");
+        string value = shape switch
+        {
+            "space before" => " " + key,
+            "space after" => key + " ",
+            "carriage return after" => key + "\r",
+            _ => key + new string('A', 10_000),
+        };
+
+        (int code, string output, string error) = Run(test, KeyCommand("activate", folder, service, license, string.Empty), licenseKey: value);
+
+        Assert.Equal((1, string.Empty, "error: ELM_LICENSE_NOT_FOUND: No license has this key." + Environment.NewLine), (code, output, error));
+        Assert.DoesNotContain(key, error, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
+        Assert.False(File.Exists(license));
+    }
+
+    /// <summary>
+    /// A syntax error other than an unknown word, such as a missing required option, does not repeat a key typed on the
+    /// command line either (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy and a license key of it; a stopped server's data folder.
+    ///
+    /// Steps:
+    /// - Run elm server activate with the key as an argument and without --service; run elm server activate-request with
+    ///   the key as an argument and without --out.
+    ///
+    /// Expected:
+    /// - Exit 2, nothing on the output, and exactly "error: Option '&lt;option&gt;' is required." and "Run 'elm --help' for
+    ///   usage." on the error output, which does not hold the key; the service holds no activation.
+    /// </remarks>
+    /// <param name="command">The command: activate or activate-request.</param>
+    [Theory]
+    [InlineData("activate")]
+    [InlineData("activate-request")]
+    public async Task LicenseKey_OtherSyntaxError_DoesNotRepeatTheKey(string command)
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string[] args =
+            command == "activate"
+                ? ["server", "activate", key, .. Common(folder), "--license", Path.Combine(folder, "activated.elmlic")]
+                : ["server", "activate-request", key, .. Common(folder)];
+        string missing = command == "activate" ? "--service" : "--out";
+
+        (int code, string output, string error) = Run(test, args, licenseKey: key);
+
+        string expected = $"error: Option '{missing}' is required.{Environment.NewLine}Run 'elm --help' for usage.{Environment.NewLine}";
+        Assert.Equal((2, string.Empty, expected), (code, output, error));
+        Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
+    }
+
+    /// <summary>
+    /// The activation request file, which holds the license key, is written as a secret: readable by its owner only on Linux
+    /// and macOS, also over a file that was readable by others, and without the explicit access rules of a file it replaces
+    /// on Windows (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy and a license key of it in ELM_LICENSE_KEY; a stopped server's data folder.
+    ///
+    /// Steps:
+    /// - new: elm server activate-request to a path with no file (Linux and macOS only; on Windows a new file takes the rules
+    ///   of its folder). force: put a file with mode 0644 (on Windows, with an explicit rule that lets Everyone read it) at
+    ///   the path, and run elm server activate-request --force.
+    ///
+    /// Expected:
+    /// - Exit 0; on Linux and macOS the file's mode is 0600; on Windows the file has no explicit rule for Everyone.
+    /// </remarks>
+    /// <param name="write">new, or force over a file.</param>
+    [Theory]
+    [InlineData("new")]
+    [InlineData("force")]
+    public async Task ActivationRequest_HoldsTheKey_IsWrittenAsASecret(string write)
+    {
+        if (write == "new" && OperatingSystem.IsWindows())
+        {
+            Assert.Skip("On Windows a new file takes the access rules of its folder; the force case covers the replacement.");
+            return;
+        }
+
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string request = Path.Combine(folder, "a.elmreq");
+        const UnixFileMode Wide = UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.GroupRead | UnixFileMode.OtherRead;
+        if (write == "force")
+        {
+            File.WriteAllText(request, "old");
+            if (OperatingSystem.IsWindows())
+            {
+                LetEveryoneRead(request);
+                Assert.Contains(Everyone, ExplicitRuleSids(request));
+            }
+            else
+            {
+                File.SetUnixFileMode(request, Wide);
+                Assert.Equal(Wide, File.GetUnixFileMode(request));
+            }
+        }
+
+        string[] force = write == "force" ? ["--force"] : [];
+        (int code, _, string error) = Run(
+            test,
+            [.. KeyCommand("activate-request", folder, service, string.Empty, request), .. force],
+            licenseKey: key
+        );
+
+        Assert.True(code == 0, error);
+        if (OperatingSystem.IsWindows())
+        {
+            Assert.DoesNotContain(Everyone, ExplicitRuleSids(request));
+        }
+        else
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(request));
+        }
+    }
+
+    // Adds an explicit rule to a file that lets Everyone read it (Windows only).
+    private static void LetEveryoneRead(string file)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        var info = new FileInfo(file);
+        System.Security.AccessControl.FileSecurity security = info.GetAccessControl();
+        security.AddAccessRule(
+            new System.Security.AccessControl.FileSystemAccessRule(
+                new System.Security.Principal.SecurityIdentifier(Everyone),
+                System.Security.AccessControl.FileSystemRights.Read,
+                System.Security.AccessControl.AccessControlType.Allow
+            )
+        );
+        info.SetAccessControl(security);
+    }
+
+    // The SIDs of the rules set on a file itself, not inherited from its folder (Windows only).
+    private static List<string> ExplicitRuleSids(string file)
+    {
+        var sids = new List<string>();
+        if (!OperatingSystem.IsWindows())
+        {
+            return sids;
+        }
+
+        foreach (
+            System.Security.AccessControl.FileSystemAccessRule rule in new FileInfo(file)
+                .GetAccessControl()
+                .GetAccessRules(includeExplicit: true, includeInherited: false, typeof(System.Security.Principal.SecurityIdentifier))
+        )
+        {
+            sids.Add(rule.IdentityReference.Value);
+        }
+
+        return sids;
     }
 
     // The command line of activate or activate-request in a folder, without the license key.

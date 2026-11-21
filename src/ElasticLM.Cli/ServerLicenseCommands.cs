@@ -69,7 +69,7 @@ internal static class ServerLicenseCommands
                         parse,
                         folder,
                         url,
-                        client => activate ? client.ActivateAsync(LicenseKeys.Read(host)) : client.RefreshAsync(),
+                        client => activate ? client.ActivateAsync(ServerLicenseKeyInput.Read(host)) : client.RefreshAsync(),
                         parse.GetValue(license)!
                     );
                 }
@@ -266,7 +266,10 @@ internal static class ServerLicenseCommands
                         client =>
                         {
                             OfflineRequestResult result = activate
-                                ? client.CreateActivationRequestAsync(LicenseKeys.Read(host), parse.GetValue(renew)).GetAwaiter().GetResult()
+                                ? client
+                                    .CreateActivationRequestAsync(ServerLicenseKeyInput.Read(host), parse.GetValue(renew))
+                                    .GetAwaiter()
+                                    .GetResult()
                                 : client.CreateRefreshRequestAsync(parse.GetValue(renew)).GetAwaiter().GetResult();
                             if (result is OfflineRequestResult.Failed failed)
                             {
@@ -282,7 +285,8 @@ internal static class ServerLicenseCommands
                         return code;
                     }
 
-                    CliFiles.Write(parse.GetValue(output)!, created!.File, parse.GetValue(force), secret: false);
+                    // design §13.7 (V1d19): an activation request holds the license key in clear; a refresh request holds none.
+                    CliFiles.Write(parse.GetValue(output)!, created!.File, parse.GetValue(force), secret: activate);
                     host.Out.WriteLine($"request: {parse.GetValue(output)}");
                     if (created.Replaced)
                     {
@@ -540,7 +544,7 @@ internal static class ServerLicenseCommands
         if (parse.UnmatchedTokens.Count > 0)
         {
             throw new CliException(
-                $"An argument is not recognized; elm server {name} takes the license key from {LicenseKeys.EnvironmentVariable}, or asks for it."
+                $"An argument is not recognized; elm server {name} takes the license key from {ServerLicenseKeyInput.EnvironmentVariable}, or asks for it."
             );
         }
     }

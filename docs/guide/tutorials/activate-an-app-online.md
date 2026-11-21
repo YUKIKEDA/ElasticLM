@@ -192,7 +192,7 @@ elm_FAKEapiKEY000000000000000000000000000000000
 API key 01960000-0000-7000-8000-000000000001 (elm_FAKE…) for https://idp.example tutorial, owner permissions, expires 2026-04-15T09:30:00Z.
 ```
 
-`elm admin request` reads the API key from the environment variable `ELM_API_KEY`. Copy the key from the first line, and read it into the variable in this terminal, so that it is not shown again and does not stay in the shell's history. In PowerShell, type `$env:ELM_API_KEY = Read-Host -MaskInput`, paste the key, and press Enter. In Bash or zsh, type `read -rs ELM_API_KEY; export ELM_API_KEY`, paste the key, and press Enter. Nothing is shown while you paste.
+`elm admin request` reads the API key from the environment variable `ELM_API_KEY`. Copy the key from the first line, and read it into the variable in this terminal, so that it is not shown again and does not stay in the shell's history. In PowerShell, type `$env:ELM_API_KEY = Read-Host -MaskInput`, paste the key, and press Enter. In Bash or zsh, type `read -rs ELM_API_KEY; export ELM_API_KEY`, paste the key, and press Enter. PowerShell shows an asterisk for each character; Bash and zsh show nothing.
 
 ## Start the service
 
@@ -429,6 +429,8 @@ trial: pro
 
 The second line is the end of the trial, 14 days from now, in UTC, such as `expires: 2026-01-29 09:30:00Z`. The service gives one trial of a product to each machine: it records the machine's fingerprints with the trial. [The security model](../explanation/security-model.md#on-the-licensees-machine) says how far this holds.
 
+The app takes the license key on its command line only to keep this tutorial short. A real app takes it from a field on a screen, or from a prompt that does not show what the customer types: a command line stays in the shell's history, and on Linux and macOS other users of the machine can read it in the list of processes.
+
 Now activate with the license key, in the same data folder. Replace `<license-key>` with the key from the license's answer:
 
 <!-- steps:run -->
@@ -444,8 +446,6 @@ activated: pro
 ```
 
 The second line is the license's ID, the `id` of the license's answer, such as `license: 01960000-0000-7000-8000-000000000301`. The activation replaced the trial in `client-data`. The order matters: the client starts a trial only when it keeps no activation, while an activation replaces a kept trial.
-
-The app takes the license key on its command line only to keep this tutorial short. A real app takes it from a field on a screen, or from a prompt that does not show what the customer types: a command line stays in the shell's history, and on Linux other users of the machine can read it in the list of processes.
 
 ## When the service refuses
 

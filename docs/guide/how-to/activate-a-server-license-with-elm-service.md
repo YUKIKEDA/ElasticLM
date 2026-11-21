@@ -97,7 +97,7 @@ The server stops at once with exit code 1, because it has no license yet, and pr
 
 ## Activate the server
 
-Activate the server with the license key. `elm server activate` takes the key from the environment variable `ELM_LICENSE_KEY`, never from the command line, where it would stay in the shell's history. Copy the key from the license's answer, and read it into the variable in the first terminal, so that it is not shown again. In PowerShell, type `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`, paste the key, and press Enter. In Bash or zsh, type `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`, paste the key, and press Enter. Nothing is shown while you paste. Without the variable, `elm` asks for the key when it needs it, and does not show what you type.
+Activate the server with the license key. `elm server activate` takes the key from the environment variable `ELM_LICENSE_KEY`, never from the command line, where it would stay in the shell's history. Copy the key from the license's answer, and read it into the variable in the first terminal, so that it is not shown again. In PowerShell 7.1 or later, type `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`, paste the key, and press Enter; PowerShell shows an asterisk for each character. In Bash or zsh, type `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`, paste the key, and press Enter; nothing is shown. When you type the key yourself, you can also leave the variable unset: `elm` then asks for the key, and does not show what you type. In a script or CI, set the variable from the CI service's store of secrets.
 
 The `elm server` commands that activate and renew do not read `server.json`, so each one below names the product, the data folder, and the root public key, and the ones that write a license file name its path:
 
@@ -248,11 +248,13 @@ As online, `elm` first prints `license 01960000-0000-7000-8000-000000000302, seq
 
 ## Activate offline, and move a server
 
-A server that never reaches the service is activated with files too, with no `service` in `server.json`. Start the server once to make its key, as above. Then `elm server activate-request` writes the request, with the license key from `ELM_LICENSE_KEY` as `elm server activate` takes it, the vendor answers it with `elm offline process`, and `elm server import` reads the answer and writes the license file; start the server after that. It then renews offline, as above.
+A server that never reaches the service is activated with files too, with no `service` in `server.json`. Start the server once to make its key, as above. Then `elm server activate-request` writes the request, with the license key from `ELM_LICENSE_KEY` as `elm server activate` takes it.
+
+The request file holds the license key, and `elm` writes it readable by its owner only; send it to the vendor in a way that others cannot read. The vendor answers it with `elm offline process`, and `elm server import` reads the answer and writes the license file; start the server after that. It then renews offline, as above.
 
 To move the license to another server, stop the server first, and free its activation: `elm server deactivate` does it online. Offline, `elm server deactivate-proof` removes the activation and writes a deactivation proof, which the vendor processes with `elm offline process`; once the service has it, `elm server forget-proof` lets the server activate again. Do not just delete `server-data`: the service would keep counting the activation, and with `maxActivations` 1, the license could not activate another server. [Server license commands](../reference/elm-cli.md#server-license-commands) lists every option of these commands.
 
-When you are done trying, press Ctrl+C in the third terminal to stop the server, and in the second terminal to stop the service. The license key stays in `ELM_LICENSE_KEY` of the first terminal until you close it.
+When you are done trying, press Ctrl+C in the third terminal to stop the server, and in the second terminal to stop the service. The license key stays in `ELM_LICENSE_KEY` of the first terminal until you close it, or until you remove it: `Remove-Item Env:ELM_LICENSE_KEY` in PowerShell, `unset ELM_LICENSE_KEY` in Bash or zsh.
 
 ## See also
 

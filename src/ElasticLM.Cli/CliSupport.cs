@@ -185,7 +185,7 @@ internal static class Passphrases
 /// Reads the license key of a server license from an environment variable, or from the person when nobody set it (design
 /// §13.7), so that the key is never on the command line.
 /// </summary>
-internal static class LicenseKeys
+internal static class ServerLicenseKeyInput
 {
     public const string EnvironmentVariable = "ELM_LICENSE_KEY";
 
