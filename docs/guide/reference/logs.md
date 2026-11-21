@@ -280,7 +280,7 @@ The options, the output, the exit codes, and the errors and warnings are those o
 
 ### What is recorded
 
-- Every authenticated call of the administration API, reads and refusals included, with the action of the call, also when the call ends without a whole answer. A successful `GET /v1/admin/me` writes no row.
+- Every authenticated call of the administration API, reads and refusals included, with the action of the call, also when the call ends without a whole answer. A successful `GET /v1/admin/me` writes no row, and neither does a request that the web server refuses before the service reads it, such as a path with a percent-encoded NUL character (see [Errors](administration-api.md#errors)).
 - Calls without valid authentication, counted and written as one `auth.failed` row a minute.
 - Admin UI sign-ins, sign-outs, and session changes.
 - From devices: activations, deactivations, trials, and detected clones. Token refreshes and refused device requests are not recorded.
@@ -296,7 +296,7 @@ Secrets, such as API keys, are never written.
 | `actorType` | `apikey`, `oidc`, `system`, or `installation`. |
 | `actorId` | For `apikey`, the API key ID. For `oidc`, the administrator's ID. For `system`, `setup` or `auth`. For `installation`, the thumbprint of the device's installation key. |
 | `action` | The action, from the table below. |
-| `target` | What the action acted on, such as a license, activation, or lease ID; or `null`. The ID is the one the service read, a UUID in lowercase. An ID in the path that is not in the form of an ID, and a usage log file name that the node does not have, give `null`. |
+| `target` | What the action acted on, such as a license, activation, or lease ID, or a usage log file name; or `null`. An ID is written as the service parsed it, not as the path spelled it: a UUID in lowercase. An ID in the path that is not in the form of an ID, and a usage log file name that the node does not have, give `null`. |
 | `result` | `ELM_OK`, or the error code name of the refusal (see [Error codes](error-codes.md)). A call that ended without a whole answer has `ELM_NETWORK_ERROR` when the connection was closed or reset before the answer ended, also in the middle of the request body, `ELM_MALFORMED` when the request body could not be read because of its form (for example, a bad chunk) on a connection that stayed open, `ELM_NETWORK_ERROR` when the request body came too slowly, and `ELM_INTERNAL_ERROR` when the operation failed inside the service. A change that was already stored keeps its row with `ELM_OK`. The service can tell that the connection was closed only until it has handed over the whole answer: when the caller closes it after that, without reading the answer, the row has the operation's own result. |
 | `ip` | The source address, or `null`. |
 | `detail` | A JSON object with the action's details, or `null`. |
@@ -364,7 +364,7 @@ A call refused for a missing permission is recorded with its action, `result` `E
 
 A call refused while the caller is authenticated is recorded the same way: an access token whose claims map to no role (`detail` has `issuer` and `subject`; `actorId` is `null` for a user who is not an administrator), and an admin UI request without the CSRF header or from another site (`detail` `{"reason": "csrf"}`). So is a refused admin UI sign-in (`session.create`). Each has `result` `ELM_FORBIDDEN`, or `ELM_NETWORK_ERROR` with the same `detail` when the connection was closed before the answer could be written.
 
-A call that ended without a whole answer can have `target` and `detail` `null`: the operation was stopped before the service knew them. A call refused for a missing permission, a download of `usagelog.get` that began, and `license.file` and `activation.offline` once the file was issued or processed always keep the `target` and `detail` of their action.
+A call that ended without a whole answer can have `target` and `detail` `null`: the operation was stopped before the service knew them. A call refused for a missing permission has `target` `null`, whatever ID its path names, because the service refuses it before it reads the path; its `detail` is always `{"permission": ...}`. A download of `usagelog.get` that began, and `license.file` and `activation.offline` once the file was issued or processed, always keep the `target` and `detail` of their action.
 
 ### The hash chain
 
