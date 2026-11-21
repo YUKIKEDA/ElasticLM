@@ -195,6 +195,47 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A replacement of the server license first runs the step the server gives, with the lease duration of the license in
+    /// use, and keeps that license when the step throws (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An engine on a server license of a 10-minute lease; a new license of the same key with a 30-minute lease.
+    ///
+    /// Steps:
+    /// - Replace with a step that notes its argument and throws IOException; replace with a step that notes its argument.
+    ///
+    /// Expected:
+    /// - The first replacement throws IOException, its step got 10 minutes, and the engine keeps the license it had. The
+    ///   second step got 10 minutes, and the engine then runs on the new license.
+    /// </remarks>
+    [Fact]
+    public void ReplaceLicense_StepBeforeTheSwitch_GetsTheLeaseInUseAndCanStopIt()
+    {
+        using var server = new TestServer();
+        LeaseEngine engine = server.OpenEngine();
+        ServerIdentity before = engine.Server;
+        server.ReplaceServerLicense(spec => spec with { LeaseDuration = TimeSpan.FromMinutes(30) });
+        var seen = new List<TimeSpan>();
+
+        Assert.Throws<IOException>(() =>
+            engine.ReplaceLicense(
+                server.Identity,
+                lease =>
+                {
+                    seen.Add(lease);
+                    throw new IOException("The disk is full.");
+                }
+            )
+        );
+        Assert.Same(before, engine.Server);
+        engine.ReplaceLicense(server.Identity, seen.Add);
+
+        Assert.Equal([TimeSpan.FromMinutes(10), TimeSpan.FromMinutes(10)], seen);
+        Assert.Equal(TimeSpan.FromMinutes(30), engine.Server.License.LeaseDuration);
+    }
+
+    /// <summary>
     /// A granted lease is a token the client accepts, for its key, with sequence number 1 and the license's lease duration.
     /// </summary>
     /// <remarks>

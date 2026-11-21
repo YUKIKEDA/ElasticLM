@@ -301,6 +301,96 @@ public sealed class BorrowJournalTests : IAsyncDisposable
         Assert.Equal(["x", "y"], again.Returns.Select(r => r.LeaseId));
     }
 
+    /// <summary>
+    /// The start counts the leases of the run before from that run's stop when the newest file ends with its signed
+    /// server.stopped line, and otherwise from the start itself (design §13.4, V1d25 question 25-4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T. Per case: "stopped" writes the stop and closes; "killed"
+    ///   closes without the stop; "after" writes the stop and then an early return, and closes; "unsigned" closes without
+    ///   the stop and then gets a server.stopped line of T after its last signature, as a stop cut while it wrote would leave.
+    ///
+    /// Steps:
+    /// - Move the clock an hour; load the record.
+    ///
+    /// Expected:
+    /// - The earliest time the earlier leases have ended: T + 10 min for "stopped"; T + 1 h + 10 min for "killed", "after", and
+    ///   "unsigned".
+    /// </remarks>
+    [Theory]
+    [InlineData("stopped")]
+    [InlineData("killed")]
+    [InlineData("after")]
+    [InlineData("unsigned")]
+    public void Load_StopLine_CountsTheEarlierLeasesFromIt(string shape)
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        DateTimeOffset t = clock.GetUtcNow();
+        BorrowJournal journal = Open(data, clock, NullLog(), own: false);
+        if (shape is "stopped" or "after")
+        {
+            journal.Stopped();
+        }
+
+        if (shape == "after")
+        {
+            journal.Returned(Return("x", clock));
+        }
+
+        journal.Dispose();
+        if (shape == "unsigned")
+        {
+            File.AppendAllText(Files(data)[^1], $"{{\"type\":\"server.stopped\",\"ts\":{t.ToUnixTimeSeconds()},\"at\":{t.ToUnixTimeSeconds()}}}\n");
+        }
+
+        clock.Advance(TimeSpan.FromHours(1));
+
+        DateTimeOffset expected = shape == "stopped" ? t + TimeSpan.FromMinutes(10) : clock.GetUtcNow() + TimeSpan.FromMinutes(10);
+        Assert.Equal(expected, Load(data, clock).EarlierLeasesUntil);
+    }
+
+    /// <summary>
+    /// A leases.until that is still ahead is carried into each new file, so the start reads it from the newest file alone;
+    /// one that has passed is not (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T on a day at noon.
+    ///
+    /// Steps:
+    /// - Record leases until T + 2 days; move to the next day and seal (a new file); stop and close; load at once. Then record
+    ///   leases until a later time in a new record that passes before the next day, seal on that day, and look at the new file.
+    ///
+    /// Expected:
+    /// - The new file of the next day holds a leases.until line; the load gives T + 2 days. The second new file holds none.
+    /// </remarks>
+    [Fact]
+    public void Seal_NewDay_CarriesTheLeasesUntilWhileAhead()
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        DateTimeOffset until = clock.GetUtcNow() + TimeSpan.FromDays(2);
+        BorrowJournal journal = Open(data, clock, NullLog(), own: false);
+        journal.LeasesIssuedUntil(until);
+        clock.Advance(TimeSpan.FromDays(1));
+        journal.Seal();
+        Assert.Equal(2, Files(data).Count);
+        Assert.Contains(BorrowJournal.LeasesUntil, Lines(Files(data)[1]).Select(Type));
+        journal.Stopped();
+        journal.Dispose();
+        Assert.Equal(until, Load(data, clock).EarlierLeasesUntil);
+
+        string other = NewServerFolder();
+        BorrowJournal second = Open(other, clock, NullLog(), own: false);
+        second.LeasesIssuedUntil(clock.GetUtcNow() + TimeSpan.FromHours(1));
+        clock.Advance(TimeSpan.FromDays(1));
+        second.Seal();
+        Assert.DoesNotContain(BorrowJournal.LeasesUntil, Lines(Files(other)[^1]).Select(Type));
+        second.Dispose();
+    }
+
     private static string Type(string line) => JsonDocument.Parse(line).RootElement.GetProperty("type").GetString()!;
 
     private static string Id(string line) => JsonDocument.Parse(line).RootElement.GetProperty("id").GetString()!;

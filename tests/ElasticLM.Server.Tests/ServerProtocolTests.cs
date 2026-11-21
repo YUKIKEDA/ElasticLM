@@ -973,7 +973,8 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// Steps:
     /// - On a TLS connection of its own, POST /v1/leases: "chunk" with Transfer-Encoding: chunked and the chunk size "zz";
     ///   "slow" with Content-Length 100 and 9 bytes of the body. Read until the server has closed the connection, for at most
-    ///   30 seconds.
+    ///   30 seconds, moving the server's clock a second every 50 ms, since the failed read waits up to a second on that clock
+    ///   for Kestrel to cancel the request.
     ///
     /// Expected:
     /// - No byte of an answer. The log has one line "A device request (POST /v1/leases) could not be read (400); the
@@ -991,7 +992,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             $"POST /v1/leases HTTP/1.1\r\nHost: {url.Authority}\r\nContent-Type: application/json\r\n"
             + (shape == "chunk" ? "Transfer-Encoding: chunked\r\n\r\nzz\r\n" : "Content-Length: 100\r\n\r\n{\"feature\"");
 
-        Assert.Equal(0, await SendRawTlsAsync(url, request, TimeSpan.FromSeconds(30)));
+        Assert.Equal(0, await SendRawTlsAsync(url, request, TimeSpan.FromSeconds(30), _deployment.Time));
 
         string line = $"A device request (POST /v1/leases) could not be read ({status}); the connection was closed.";
         await Deployment.WaitUntilAsync(() => log.Entries.Any(e => e.Message == line));
@@ -1002,9 +1003,61 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error);
     }
 
+    /// <summary>
+    /// A caller who resets the connection in the middle of a lease request's body leaves no error entry, every time: the read
+    /// of the body waits for Kestrel to cancel the request before it fails (design §18.3, V1d25 question 25-5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its window, whose operational log the test records from Information up. Its clock is never moved, so
+    ///   the failed read's wait can only end by Kestrel's cancellation.
+    ///
+    /// Steps:
+    /// - 40 times: on a TLS connection of its own, POST /v1/leases with Content-Length 100 and 9 bytes of the body; wait 100
+    ///   ms; close the socket with a linger time of 0, which sends RST. Then acquire a lease with a good proof.
+    ///
+    /// Expected:
+    /// - No entry at Error or above in the log (before the wait, 5 runs of 20 wrote Kestrel[13] at Error). The acquire gets
+    ///   201.
+    /// </remarks>
+    [Fact]
+    public async Task Body_CallerResetsInTheMiddle_LeavesNoErrorEntry()
+    {
+        using var log = new RecordingLoggerProvider();
+        await using Raw raw = await Raw.StartAsync(_deployment, log: log);
+        Uri url = raw.Server.PublicUrls[0];
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 40; i++)
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            await tcp.ConnectAsync(url.Host, url.Port, cancel);
+            var tls = new System.Net.Security.SslStream(tcp.GetStream(), false, (_, certificate, _, _) => certificate is not null);
+            await tls.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions { TargetHost = url.Host }, cancel);
+            await tls.WriteAsync(
+                Encoding.ASCII.GetBytes($"POST /v1/leases HTTP/1.1\r\nHost: {url.Authority}\r\nContent-Length: 100\r\n\r\n{{\"feature\""),
+                cancel
+            );
+            await tls.FlushAsync(cancel);
+            await Task.Delay(100, cancel);
+            tcp.Client.LingerState = new System.Net.Sockets.LingerOption(true, 0);
+            tcp.Client.Close();
+        }
+
+        using HttpResponseMessage accepted = await raw.SignedAsync(
+            HttpMethod.Post,
+            "v1/leases",
+            Raw.Json("""{"feature":"pro","count":1}"""),
+            includeKey: true
+        );
+        Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+        await Task.Delay(500, cancel);
+        Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error);
+    }
+
     // Sends a request as it is on a TLS connection of its own, then reads until the server closes or resets the connection,
-    // and returns the bytes of an answer that came.
-    private static async Task<int> SendRawTlsAsync(Uri url, string request, TimeSpan limit)
+    // and returns the bytes of an answer that came. Meanwhile the server's clock moves a second every 50 ms, for a wait of
+    // the server that is counted on it.
+    private static async Task<int> SendRawTlsAsync(Uri url, string request, TimeSpan limit, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock)
     {
         using var bound = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
         bound.CancelAfter(limit);
@@ -1014,6 +1067,15 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         await tls.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions { TargetHost = url.Host }, bound.Token);
         await tls.WriteAsync(Encoding.ASCII.GetBytes(request), bound.Token);
         await tls.FlushAsync(bound.Token);
+        using var moved = new CancellationTokenSource();
+        Task mover = Task.Run(async () =>
+        {
+            while (!moved.IsCancellationRequested)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(50, CancellationToken.None);
+            }
+        });
         byte[] buffer = new byte[1_024];
         int total = 0;
         try
@@ -1025,6 +1087,11 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             }
         }
         catch (IOException) { }
+        finally
+        {
+            await moved.CancelAsync();
+            await mover;
+        }
 
         return total;
     }

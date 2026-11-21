@@ -1422,23 +1422,24 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A server that ran and stopped; [] or an object whose type is a lone surrogate escape appended to its newest borrow
-    ///   record as its third line (after the chain line and its signature).
+    ///   record as its fifth line (after the chain line, its signature, the stop's server.stopped line, and its signature).
     ///
     /// Steps:
     /// - Start; start with the set-aside option.
     ///
     /// Expected:
-    /// - ServerStartException that names --set-aside-broken-records and line 3 with "The line is not a JSON object." or "The
+    /// - ServerStartException that names --set-aside-broken-records and line 5 with "The line is not a JSON object." or "The
     ///   line holds a string that is not valid Unicode."; then a running server and a borrows-broken file.
     /// </remarks>
     [Theory]
-    [InlineData("[]", "line 3: The line is not a JSON object.")]
-    [InlineData("{\"type\":\"\\ud800\"}", "line 3: The line holds a string that is not valid Unicode.")]
+    [InlineData("[]", "line 5: The line is not a JSON object.")]
+    [InlineData("{\"type\":\"\\ud800\"}", "line 5: The line holds a string that is not valid Unicode.")]
     public async Task BorrowRecord_EndsWithALineTheVerifierRefuses_IsABrokenRecord(string line, string problem)
     {
         string serverData = _deployment.NewFolder();
         await (await StartOpenServerAsync(serverData)).DisposeAsync();
         string record = SignedLog.FindFiles(serverData, "borrows")[^1];
+        Assert.Equal(4, File.ReadAllLines(record).Length);
         File.AppendAllText(record, line + "\n");
 
         var refused = await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(serverData));
@@ -1786,6 +1787,109 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
 
         Assert.Equal(start + TimeSpan.FromMinutes(expected), server.Engine.RecoveryEndsAt);
         _deployment.Time.Advance(TimeSpan.FromMinutes(expected) - TimeSpan.FromSeconds(1));
+        Assert.True(server.Engine.IsRecovering());
+        _deployment.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.False(server.Engine.IsRecovering());
+    }
+
+    /// <summary>
+    /// The reclaim window covers the leases that earlier licenses and earlier runs issued, through the borrow record's
+    /// leases.until and the stop's server.stopped line: after a reload to a shorter lease while the server runs, over two
+    /// restarts in a row, after a first start that failed, and after a kill right after a lease; a long graceful stop shrinks
+    /// the wait to the current lease (design §13.4, V1d25 questions 25-4a and 25-4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder whose server starts at T0 with a license of a 30-minute lease. Per case:
+    ///   - "reload": at T0 + 1 min a license of a 10-minute lease is reloaded; the server stops at T0 + 2 min.
+    ///   - "twice": the server stops at T0; a license of a 10-minute lease is written; the server starts and stops at T0 + 1 min.
+    ///   - "failed": the server stops at T0; a license of a 10-minute lease is written; at T0 + 1 min a start fails because its
+    ///     port is taken.
+    ///   - "long": the server stops at T0; two days pass; a license of a 10-minute lease is written.
+    ///   - "kill": at T0 + 30 min a lease is acquired; the server is ended without its stop line (its borrow record disposed
+    ///     first, as a killed process leaves it); two hours pass; a license of a 10-minute lease is written.
+    ///
+    /// Steps:
+    /// - One minute later, start the server with a license of a 10-minute lease; read the end of its reclaim window; move the
+    ///   clock to one second before it, then to it.
+    ///
+    /// Expected:
+    /// - The window ends at: T0 + 31 min for "reload" (the reload time and the earlier 30 minutes); T0 + 30 min for "twice"
+    ///   and "failed" (the first stop and 30 minutes, carried by the newer files); the start + 10 min for "long" (the stop and
+    ///   30 minutes have passed); the start + 30 min for "kill" (no stop line, so the leases of the 30-minute license may have
+    ///   been issued up to this start). The server recovers one second before the end and no longer at it.
+    /// </remarks>
+    [Theory]
+    [InlineData("reload")]
+    [InlineData("twice")]
+    [InlineData("failed")]
+    [InlineData("long")]
+    [InlineData("kill")]
+    public async Task Restart_ReclaimWindow_CoversEarlierLicensesAndRuns(string shape)
+    {
+        TimeSpan minute = TimeSpan.FromMinutes(1);
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(30) });
+        DateTimeOffset t0 = _deployment.Time.GetUtcNow();
+        ElmServer first = await _deployment.StartServerAsync(serverData);
+        void Shorter() => _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(10) });
+        DateTimeOffset expectedEnd;
+        switch (shape)
+        {
+            case "reload":
+                _deployment.Time.Advance(minute);
+                Shorter();
+                Assert.Null(first.ReloadLicense());
+                _deployment.Time.Advance(minute);
+                await first.DisposeAsync();
+                expectedEnd = t0 + TimeSpan.FromMinutes(31);
+                break;
+            case "twice":
+                await first.DisposeAsync();
+                Shorter();
+                _deployment.Time.Advance(minute);
+                await (await _deployment.StartServerAsync(serverData)).DisposeAsync();
+                expectedEnd = t0 + TimeSpan.FromMinutes(30);
+                break;
+            case "failed":
+                await first.DisposeAsync();
+                Shorter();
+                _deployment.Time.Advance(minute);
+                using (var taken = new System.Net.Sockets.TcpListener(IPAddress.Loopback, 0))
+                {
+                    taken.Start();
+                    int port = ((IPEndPoint)taken.LocalEndpoint).Port;
+                    await Assert.ThrowsAsync<ServerStartException>(() =>
+                        _deployment.StartServerAsync(serverData, s => s with { Listen = new Uri($"https://127.0.0.1:{port}") })
+                    );
+                }
+
+                expectedEnd = t0 + TimeSpan.FromMinutes(30);
+                break;
+            case "long":
+                await first.DisposeAsync();
+                _deployment.Time.Advance(TimeSpan.FromDays(2));
+                Shorter();
+                expectedEnd = _deployment.Time.GetUtcNow() + minute + TimeSpan.FromMinutes(10);
+                break;
+            default:
+                _deployment.Time.Advance(TimeSpan.FromMinutes(30));
+                Acquired(
+                    await _deployment.Client(first.PublicUrls[0]).AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+                );
+                first.Record.Dispose();
+                await first.DisposeAsync();
+                _deployment.Time.Advance(TimeSpan.FromHours(2));
+                Shorter();
+                expectedEnd = _deployment.Time.GetUtcNow() + minute + TimeSpan.FromMinutes(30);
+                break;
+        }
+
+        _deployment.Time.Advance(minute);
+        ElmServer server = await _deployment.StartServerAsync(serverData);
+
+        Assert.Equal(expectedEnd, server.Engine.RecoveryEndsAt);
+        _deployment.Time.Advance(expectedEnd - _deployment.Time.GetUtcNow() - TimeSpan.FromSeconds(1));
         Assert.True(server.Engine.IsRecovering());
         _deployment.Time.Advance(TimeSpan.FromSeconds(1));
         Assert.False(server.Engine.IsRecovering());
