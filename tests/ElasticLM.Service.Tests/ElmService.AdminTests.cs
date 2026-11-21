@@ -3,7 +3,6 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using System.Text.RegularExpressions;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using Microsoft.Data.Sqlite;
@@ -1033,16 +1032,19 @@ public sealed class ElmServiceAdminTests
     /// - Send each route without a body, with every placeholder set to a value of its form that names nothing (a UUID, a lease ID
     ///   of 22 characters, a usage file name of the node's form), then to each of: the UUID in capitals; the UUID between an
     ///   encoded LF and an encoded space; a%0Ab; a%0D%0Ab; 300 a characters; %C3%A9; %FF; 21 characters and an encoded LF; 23
-    ///   characters; the UUID with one more digit; and the node's file name with an encoded LF. The fake clock moves 200 ms
-    ///   after each call, inside the per-key limit.
-    /// - Read the targets of the audit rows written after the setup.
+    ///   characters; the UUID with one more digit; and the node's file name with an encoded LF. The feature route also gets
+    ///   a%0Ab as {id} with the UUID as {featureId}, and the reverse. The fake clock moves 200 ms after each call, inside the
+    ///   per-key limit.
+    /// - After the calls of each route, wait for their audit rows and read their action, target, and detail.
     ///
     /// Expected:
     /// - Each %00 call is 400 without a body, from Kestrel, and writes no row.
-    /// - Each call of a route gets the answer (status, code, and detail) of the value that names nothing.
-    /// - One row for each call. A UUID route's row names the UUID in lowercase for the three values that Guid.TryParseExact
-    ///   reads (also in capitals and between white space); the lease route's row names the lease ID of its form; every other row
-    ///   has no target. Before V1d26a, the rows held the route's text, LF, CR LF, and 300 characters included.
+    /// - Each call of a route gets the answer of the value that names nothing: the same status, the same headers but Date, and
+    ///   the same body text.
+    /// - One row for each call, all of one action, which no other route has, and none with a detail. A UUID route's row names
+    ///   the UUID in lowercase for the three values that Guid.TryParseExact reads (the UUID, in capitals, and between white
+    ///   space), and only when every ID of the route has its form; the lease route's row names the lease ID of its form; every
+    ///   other row has no target. Before V1d26a, the rows held the route's text, LF, CR LF, and 300 characters included.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -1096,7 +1098,9 @@ public sealed class ElmServiceAdminTests
             Uuid + "a",
             file + "%0A",
         ];
-        var expected = new List<string?>();
+        static bool Read(string value) => Guid.TryParseExact(Uri.UnescapeDataString(value), "D", out _);
+        var actions = new HashSet<string>(StringComparer.Ordinal);
+        long seen = before;
         foreach (string route in routes)
         {
             string method = route[..route.IndexOf(' ', StringComparison.Ordinal)];
@@ -1104,46 +1108,68 @@ public sealed class ElmServiceAdminTests
             Assert.Matches(@"^[^{}]*(\{(id|featureId|name)\}[^{}]*)+$", template);
             bool lease = route == "DELETE /v1/admin/leases/{id}";
             bool usage = template.Contains("{name}", StringComparison.Ordinal);
+            bool feature = template.Contains("{featureId}", StringComparison.Ordinal);
             string known =
                 lease ? LeaseId
                 : usage ? UnknownFile
                 : Uuid;
-            (HttpStatusCode Status, string Code, string Detail) answer = default;
-            foreach (string value in others.Prepend(known))
+
+            // The first call names nothing; the others are compared with it. The feature route also gets one ID of each form.
+            List<(string Id, string Other)> calls = [(known, known), .. others.Select(v => (v, v))];
+            if (feature)
             {
-                string path = Regex.Replace(template, @"\{[A-Za-z]+\}", value.Replace("$", "$$", StringComparison.Ordinal));
+                calls.Add(("a%0Ab", Uuid));
+                calls.Add((Uuid, "a%0Ab"));
+            }
+
+            (HttpStatusCode Status, string Headers, string Body) answer = default;
+            var expected = new List<string?>();
+            foreach ((string id, string other) in calls)
+            {
+                string path = template
+                    .Replace("{id}", id, StringComparison.Ordinal)
+                    .Replace("{featureId}", other, StringComparison.Ordinal)
+                    .Replace("{name}", id, StringComparison.Ordinal);
                 using var request = new HttpRequestMessage(new HttpMethod(method), path);
                 using HttpResponseMessage response = await admin.SendAsync(request, cancel);
-                string text = await response.Content.ReadAsStringAsync(cancel);
-                using JsonDocument problem = JsonDocument.Parse(text);
-                (HttpStatusCode, string, string) got = (
-                    response.StatusCode,
-                    problem.RootElement.GetProperty("code").GetString()!,
-                    problem.RootElement.GetProperty("detail").GetString()!
+                string headers = string.Join(
+                    '\n',
+                    response
+                        .Headers.Concat(response.Content.Headers)
+                        .Where(h => h.Key != "Date")
+                        .Select(h => h.Key + ": " + string.Join(", ", h.Value))
+                        .Order(StringComparer.Ordinal)
                 );
-                if (value == known)
+                (HttpStatusCode, string, string) got = (response.StatusCode, headers, await response.Content.ReadAsStringAsync(cancel));
+                if (id == known)
                 {
-                    Assert.True(response.StatusCode == HttpStatusCode.NotFound, route + ": " + text);
+                    Assert.True(response.StatusCode == HttpStatusCode.NotFound, route + ": " + got.Item3);
                     answer = got;
                 }
                 else
                 {
-                    Assert.True(answer == got, route + " with " + value + ": " + text);
+                    Assert.True(answer == got, route + " with " + id + " and " + other + ": " + got.Item2 + "\n" + got.Item3);
                 }
 
-                bool read = !lease && !usage && Guid.TryParseExact(Uri.UnescapeDataString(value), "D", out _);
+                bool formed = !lease && !usage && Read(id) && (!feature || Read(other));
                 expected.Add(
-                    lease && value == known ? LeaseId
-                    : read ? Uuid
+                    lease && id == known ? LeaseId
+                    : formed ? Uuid
                     : null
                 );
                 test.Time.Advance(TimeSpan.FromMilliseconds(200));
             }
-        }
 
-        string sql = "SELECT target FROM audit_log WHERE n > " + before.ToString(CultureInfo.InvariantCulture) + " ORDER BY n";
-        await TestService.WaitForAsync(async () => (await test.TextsAsync(sql)).Count >= expected.Count);
-        IReadOnlyList<string?> targets = await test.TextsAsync(sql);
-        Assert.Equal(expected.Order(StringComparer.Ordinal), targets.Order(StringComparer.Ordinal));
+            // design §18.2: a row is written after its answer, so the rows of this route are awaited before the next one.
+            string sql = "SELECT n, action, target, detail FROM audit_log WHERE n > " + seen.ToString(CultureInfo.InvariantCulture);
+            await TestService.WaitForAsync(async () => (await test.TextRowsAsync(sql)).Count >= expected.Count);
+            IReadOnlyList<IReadOnlyList<string?>> rows = await test.TextRowsAsync(sql);
+            Assert.True(rows.Count == expected.Count, route + ": " + rows.Count + " rows");
+            string action = Assert.Single(rows.Select(r => r[1]).Distinct())!;
+            Assert.True(actions.Add(action), route + ": " + action);
+            Assert.All(rows, r => Assert.Null(r[3]));
+            Assert.Equal(expected.Order(StringComparer.Ordinal), rows.Select(r => r[2]).Order(StringComparer.Ordinal));
+            seen = rows.Max(r => long.Parse(r[0]!, CultureInfo.InvariantCulture));
+        }
     }
 }
