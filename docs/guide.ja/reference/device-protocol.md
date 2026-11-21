@@ -85,7 +85,7 @@ sidebar_position: 7
 
 `elm-server` には、鍵ごとのレート制限がない。プルーフがリースの鍵で署名されているかは、本文を読んだあとに、ルート自身の確認と一緒に確かめる。
 
-`ELM_PROOF_INVALID` のレスポンスの `detail` は、ここの確認でもルート自身の確認でも、失敗した確認によらず `The request proof is not valid.` だ。`POST /v1/offline` の `400` のレスポンスも同じだ。`elm-service` の管理者が呼ぶ `POST /v1/admin/offline` だけは、`detail` に理由を返す。`elm-server` と `elm-service` は、失敗した確認を運用ログに `Information` レベル（既定）で `A request proof was refused (<route>): <reason>` として書く（[ログ](logs.md#運用ログ)を参照）。`Information` より上のレベルにすると、この行は書かれない。アプリのプルーフが拒否される理由（たとえば `htu` が `publicUrls` のエントリーと合わない）を調べるには、この行を読む。`elm-server` のログは顧客の管理者が、`elm-service` のログはベンダーが持っている。`elm-service` に自分のアプリのプルーフを拒否されたアプリの開発者は、サービスを運用するベンダーに、この行を頼む。
+`ELM_PROOF_INVALID` のレスポンスの `detail` は、ここの確認でもルート自身の確認でも、失敗した確認によらず `The request proof is not valid.` だ。`POST /v1/offline` の `400` のレスポンスも同じだ。`elm-service` の管理者が呼ぶ `POST /v1/admin/offline` だけは、`detail` に理由を返す。`elm-server` と `elm-service` は、失敗した確認を運用ログに `Information` レベル（既定）で `A request proof was refused (<route>): <reason>` として書く（[ログ](logs.md#運用ログ)を参照）。`Information` より上のレベルにすると、この行は書かれない。アプリのプルーフが拒否される理由（たとえば `htu` が `publicUrls` のエントリーと合わない）を調べるには、拒否したプログラムのログでこの行を読む。`elm-server` のログは顧客の管理者が、`elm-service` のログはベンダーが持っている。だれに頼むかは[エラーに対処する](../how-to/handle-errors.md)にある。
 
 最初のリクエストのようにノンスを持たないクライアントは、`GET /v1/nonce` からノンスを得る（[ノンス](#ノンス)を参照）。プルーフの確認で拒否したレスポンスも、[ヘッダー](#ヘッダー)に挙げたほかのレスポンスと同じく、`ELM-Nonce` に新しいノンスを持つ。
 

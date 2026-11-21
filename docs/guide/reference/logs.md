@@ -235,7 +235,7 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 | `borrow.started` | Before a borrow is granted, and when a new file copies a borrow that has not expired | `lease`, `lic`, `seats`, `borrow`, `fp` |
 | `borrow.returned` | Before an early return takes effect, and when a new file copies a return of the last 30 days | `id`, `key`, `fp`, `at` |
 | `leases.until` | When a new file starts and leases that an earlier license or run issued can still be valid, and before a reloaded server license takes effect | `until` |
-| `server.stopped` | Last, when the server stops normally, after it stopped serving requests | `at` |
+| `server.stopped` | Last, when the server stops normally (Ctrl+C, SIGTERM, or a stop from the service manager), after it stopped serving requests. It is not the usage log's `server.stopped`, which has `leases` | `at` |
 
 | Member | Value |
 | --- | --- |
@@ -247,7 +247,7 @@ The lines are JSON Lines, and every line starts with `type` and `ts` (Unix secon
 | `id` | The lease ID of the returned borrow. |
 | `key` | The thumbprint of the client's installation key that borrowed it. |
 | `at` | The time of the return, or of the stop, in Unix seconds. |
-| `until` | The latest time at which a lease issued so far under an earlier license or by an earlier run can be valid, in Unix seconds. The reclaim window after the next start lasts at least until then. |
+| `until` | The latest time at which a lease issued so far under an earlier license or by an earlier run can be valid, in Unix seconds. The reclaim window after the next start lasts until then, unless every feature's seats are taken again earlier. |
 
 For example, an early return (fake values):
 
