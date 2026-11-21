@@ -94,7 +94,7 @@ The local administration API, which the `elm server` commands use, has no port a
 | `product` | `ELM_PRODUCT` | string | none (required) | The product ID of the server license. 1 to 64 characters of lowercase letters, digits, and `-`. It also names the default `dataDirectory`. |
 | `listen` | `ELM_LISTEN` | URL | `https://0.0.0.0:7070` | Where the server listens for clients. An `https` URL without query or fragment. The host is an IP address, `localhost`, `0.0.0.0`, or `[::]`. |
 | `publicUrls` | `ELM_PUBLICURLS` | list of URLs | built from `listen` | The URLs that clients use to reach the server. Each is an `https` URL without query or fragment. See the notes below. |
-| `license` | `ELM_LICENSE` | file path | `server.elmlic` in the folder of the `elm-server` executable | The server license file. With `service.url` set, the server must be able to write this file. See the notes below. |
+| `license` | `ELM_LICENSE` | file path | `server.elmlic` in the folder of the `elm-server` executable | The server license file. With `service.url` set, the server must be able to write this file and to create files in its folder, since it writes a temporary file beside it. See the notes below. |
 | `allow` | `ELM_ALLOW` | list of strings | none | Entries that allow lease requests. See [Access rules](#access-rules). |
 | `deny` | `ELM_DENY` | list of strings | none | Entries that refuse lease requests. See [Access rules](#access-rules). |
 | `dataDirectory` | `ELM_DATADIRECTORY` | folder path | `%ProgramData%\ElasticLM\<product>` on Windows, `/Library/Application Support/ElasticLM/<product>` on macOS, `/var/lib/elasticlm/<product>` on Linux | The server's data folder. Its path has a limit, and it belongs on a local file system. See [Data folder](#data-folder). |
@@ -120,13 +120,34 @@ Notes:
 | `borrows-<UTC time>.jsonl` | The borrow record. See [Logs](logs.md#borrow-record-elm-server). |
 | `usage-<UTC time>.jsonl` | The usage log, unless `log.usage` names another folder. See [Logs](logs.md#usage-log). |
 
-The data folder and `admin.token` are readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Here the server's user is the user who started the server when it created the folder. The server creates the folder that way: on Linux and macOS with mode `0700`, and `admin.token` with mode `0600`; on Windows with an access list of those three, and `admin.token` protected with DPAPI for the machine, not for one user. Only the same users can connect to `admin.sock`. The server does not use an existing folder that other users can read or change; it stops with a message that says what to fix.
+The data folder and `admin.token` are readable only by the server's user and root on Linux and macOS, and only by the server's user, the Administrators group, and SYSTEM on Windows. Here the server's user is the user who started the server when it created the folder. The server creates the folder that way: on Linux and macOS with mode `0700`, and `admin.token` with mode `0600`; on Windows with an access list of those three, and `admin.token` protected with DPAPI for the machine, not for one user. Only the same users can connect to `admin.sock`. The server does not use an existing folder that users other than these own, can read, or can change; it stops with a message that says what to fix.
 
 Keep the data folder on a local file system. The file lock on `server.lock` keeps a second server off the folder. On Linux and macOS, that lock holds only where the file system has file locks, and some network file systems have none. On Linux and macOS it does not hold either when the environment variable `DOTNET_SYSTEM_IO_DISABLEFILELOCKING` is `1` or `true` in the server's environment; leave it unset. Where the lock does not hold, two servers started on one folder at almost the same moment can both run, and `elm server deactivate` can then take a running server for a stopped one.
 
 The absolute path of `admin.sock` is at most 107 bytes in UTF-8 on Windows and Linux, and 103 on macOS. The name and its separator take 11 of them, so the data folder's own absolute path is at most 96 bytes on Windows and Linux, and 92 on macOS; a character outside ASCII takes 2 to 4 bytes. A relative `dataDirectory` is made absolute from the working folder first. With a longer path, the server does not start and exits with 1; the `elm server` commands stop with the same message and exit with 2. The default folder is within the limit on Windows and Linux for every product ID. On macOS it is within the limit only for a product ID of up to 53 characters: a server with a longer one needs a `dataDirectory` with a shorter path, and the `elm server` commands for it need `--data`, since `--product` names the default folder.
 
-The installation key is in the data folder, so a server started on a new, empty folder makes a new key, which the server license does not match. A data folder that is moved must still pass the server's check at the new path, or the server stops with a line that starts `error: The folder '<folder>' is not safe for secrets`. On Linux and macOS, the folder must give no access to group or others (mode `0700`), and its parent folder must not be writable by group or others; the files in it, such as `installation.key`, have mode `0600`, so the folder must also keep its owner. On Windows, the folder's owner and its parent's owner must each be the server's user, the Administrators group, or SYSTEM; the access list must admit no one else, and must not be inherited from the parent folder. A copy of the folder takes the access list of its new parent, and is refused. `admin.sock`, `admin.token`, and `server.lock` need not be moved.
+The installation key is in the data folder, so a server started on a new, empty folder makes a new key, which the server license does not match. A data folder that is moved must still be one the server accepts at the new path ([Which folders the server accepts](#which-folders-the-server-accepts)). A copy of the folder takes the access of its new place, and is refused. `admin.sock`, `admin.token`, and `server.lock` need not be moved.
+
+### Which folders the server accepts
+
+The server checks its data folder before it uses it, and so do the [server license commands](elm-cli.md#server-license-commands) of `elm`. An app that keeps its installation key in the machine scope checks its folder in the same way ([Where the key is stored](../explanation/devices-and-proofs.md#where-the-key-is-stored) says why). A folder that fails stops the server with a line that starts with `error: The folder '<folder>' is not safe for secrets`, and exit code 1. In the list, "the server's user" is the user that runs the server or the command.
+
+- On Windows:
+  - The folder is owned by the server's user, the Administrators group, or SYSTEM.
+  - Its access list admits no one else, and is not inherited from its parent folder.
+  - Every folder above it, up to the root of the drive, is owned by one of them or by TrustedInstaller, the owner of `C:\`.
+  - No folder above it lets anyone else delete, rename, or change the access of what is in it. Letting others create folders in it is allowed, as `C:\` and `C:\ProgramData` do.
+- On Linux and macOS:
+  - The folder is owned by the server's user or by root, and gives no access to group or others (such as mode `0700`).
+  - Every folder above it, up to `/`, is owned by the server's user or by root, and is not writable by group or others. The sticky bit of `/tmp` does not change this.
+- On macOS, also:
+  - No entry of the folder's extended access list (`chmod +a`) lets anyone else in.
+  - No entry on a folder above it lets anyone else delete, rename, or change the access of what is in it. An entry that only what is created later inherits does not count there.
+- On every OS:
+  - When the path goes through a symbolic link or a junction, the folder it leads to, and every folder above that one, are checked in the same way. The server then uses the folder the link leads to.
+  - The folder is on a local disk. On Windows, a UNC path (`\\server\share\…`) and a network drive are refused, and so is a link that leads to one. On Linux and macOS, .NET tells the kind of the file system: NFS, SMB and CIFS, FUSE file systems (sshfs among them), autofs, aufs, ecryptfs, and 9p (WSL 2's `/mnt/c`) are network ones and are refused. A file system whose kind .NET does not know, such as erofs, bcachefs, or virtiofs, is refused too. ext4, xfs, btrfs, zfs, APFS, and tmpfs pass.
+
+Let the server create its data folder, or create it as the server's user. A folder that another account created passes only if it meets the rules above. On Linux and macOS, that means the server's user or root owns it and its mode gives group and others nothing. On Windows, its access list may name only the server's user, the Administrators group, and SYSTEM. The server, and the `elm server` license commands, add the account that runs them to the access list of a folder they create, so a folder that one administrator's run created is refused for a server that runs as another account.
 
 ### Access rules
 
@@ -195,7 +216,7 @@ Intermediate CA certificates:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `service.url` | `ELM_SERVICE_URL` | URL | none: the server license is not refreshed on its own | The `elm-service` that refreshes the server license. An `https` URL, or `http` on a loopback address. When set, the server checks at start that it can write the `license` file. |
+| `service.url` | `ELM_SERVICE_URL` | URL | none: the server license is not refreshed on its own | The `elm-service` that refreshes the server license. An `https` URL, or `http` on a loopback address. When set, the server checks at start that it can create a file beside the `license` file. |
 
 ## Example
 

@@ -11,7 +11,11 @@ public sealed class ElmCliTests : IDisposable
 {
     private const string Passphrase = "correct horse battery staple";
 
-    private readonly string _dir = Path.Combine(Path.GetTempPath(), "elm-cli-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
+    private readonly string _dir = Path.Combine(
+        ElasticLM.Service.Tests.TestFolders.Root,
+        "elm-cli-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6))
+    );
+
     private readonly FakeTimeProvider _time = new(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero));
     private readonly Dictionary<string, string> _environment = new(StringComparer.Ordinal) { ["ELM_KEY_PASSPHRASE"] = Passphrase };
 

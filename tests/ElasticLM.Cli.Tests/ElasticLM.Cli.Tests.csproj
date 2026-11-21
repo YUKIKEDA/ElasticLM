@@ -11,6 +11,7 @@
     <!-- elm offline process is tested against a real elm-service. -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestFolders.cs" Link="TestFolders.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\TestDevice.cs" Link="TestDevice.cs" />
     <Compile Include="..\ElasticLM.Service.Tests\FakeIdp.cs" Link="FakeIdp.cs" />
     <!-- design §12.8.4, V1d6: a service that writes answers over the limit, as the client tests use it. -->

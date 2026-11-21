@@ -47,13 +47,15 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
-                    CheckSocketPath(parse, common);
+                    string folder = Folder(parse, common);
+                    CheckSocketPath(folder);
                     Uri url = ServiceUrl(parse.GetValue(service)!);
                     string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "<license-key>") : null;
                     return Kept(
                         host,
                         common,
                         parse,
+                        folder,
                         url,
                         client => licenseKey is null ? client.RefreshAsync() : client.ActivateAsync(licenseKey),
                         parse.GetValue(license)!
@@ -75,9 +77,10 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
-                    CheckSocketPath(parse, common);
+                    string folder = Folder(parse, common);
+                    CheckSocketPath(folder);
                     string text = CliFiles.ReadText(parse.GetValue(answer)!, MaxAnswerBytes);
-                    return Kept(host, common, parse, null, client => client.ImportResponseAsync(text), parse.GetValue(license)!);
+                    return Kept(host, common, parse, folder, null, client => client.ImportResponseAsync(text), parse.GetValue(license)!);
                 }
             )
         );
@@ -97,12 +100,14 @@ internal static class ServerLicenseCommands
                 () =>
                 {
                     Uri url = ServiceUrl(parse.GetValue(service)!);
-                    StopFirst(host, common, parse);
-                    byte[]? kept = KeptLicense(host, common, parse);
+                    string folder = Folder(parse, common);
+                    StopFirst(host, folder);
+                    byte[]? kept = KeptLicense(host, folder);
                     int code = WithClient(
                         host,
                         common,
                         parse,
+                        folder,
                         url,
                         client => client.DeactivateAsync().GetAwaiter().GetResult() is LicenseError error ? Refused(host, error) : ExitCodes.Success
                     );
@@ -139,14 +144,16 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
-                    StopFirst(host, common, parse);
+                    string folder = Folder(parse, common);
+                    StopFirst(host, folder);
                     CliFiles.EnsureWritable(parse.GetValue(output)!, parse.GetValue(force));
-                    byte[]? kept = KeptLicense(host, common, parse);
+                    byte[]? kept = KeptLicense(host, folder);
                     string? proof = null;
                     int code = WithClient(
                         host,
                         common,
                         parse,
+                        folder,
                         null,
                         client =>
                         {
@@ -184,11 +191,13 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
-                    CheckSocketPath(parse, common);
+                    string folder = Folder(parse, common);
+                    CheckSocketPath(folder);
                     return WithClient(
                         host,
                         common,
                         parse,
+                        folder,
                         null,
                         client =>
                         {
@@ -230,7 +239,8 @@ internal static class ServerLicenseCommands
                 () =>
                 {
                     string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "--key") : null;
-                    if (Status(host, common, parse) is true)
+                    string folder = Folder(parse, common);
+                    if (Status(host, folder) is true)
                     {
                         return Refused(
                             host,
@@ -244,6 +254,7 @@ internal static class ServerLicenseCommands
                         host,
                         common,
                         parse,
+                        folder,
                         null,
                         client =>
                         {
@@ -285,6 +296,7 @@ internal static class ServerLicenseCommands
         CliHost host,
         Common common,
         ParseResult parse,
+        string folder,
         Uri? service,
         Func<ActivationClient, Task<ActivationResult>> operation,
         string licensePath
@@ -295,6 +307,7 @@ internal static class ServerLicenseCommands
             host,
             common,
             parse,
+            folder,
             service,
             client =>
             {
@@ -313,7 +326,7 @@ internal static class ServerLicenseCommands
             return code;
         }
 
-        byte[]? file = KeptLicense(host, common, parse);
+        byte[]? file = KeptLicense(host, folder);
         try
         {
             LicenseFiles.Write(licensePath, file ?? throw new IOException("The activation file holds no license."), host.Time);
@@ -327,13 +340,13 @@ internal static class ServerLicenseCommands
         }
 
         host.Out.WriteLine($"license {license!.LicenseId}, seq {license.Sequence}: {licensePath}");
-        return Reload(host, common, parse, license.TokenId);
+        return Reload(host, folder, license.TokenId);
     }
 
-    private static int WithClient(CliHost host, Common common, ParseResult parse, Uri? service, Func<ActivationClient, int> body)
+    private static int WithClient(CliHost host, Common common, ParseResult parse, string folder, Uri? service, Func<ActivationClient, int> body)
     {
         string product = Product(parse, common);
-        if (!new InstallationKeyStore(product, KeyScope.Machine, parse.GetValue(common.Data)).HasKey)
+        if (!new InstallationKeyStore(product, KeyScope.Machine, folder).HasKey)
         {
             // design §13.7: the server makes its key at its first start; a key made here could be the wrong folder's (R5).
             throw new CliException("The server's installation key does not exist; start elm-server once to make it.");
@@ -345,7 +358,7 @@ internal static class ServerLicenseCommands
             ServiceUrl = service,
             Trust = TrustKeys.Store(host, parse.GetValue(common.Trust), parse.GetValue(common.Revoked)),
             KeyScope = KeyScope.Machine,
-            DataDirectory = parse.GetValue(common.Data),
+            DataDirectory = folder,
             TimeProvider = host.Time,
             RequiredKind = LicenseKind.Server,
             CreateKey = false,
@@ -366,13 +379,13 @@ internal static class ServerLicenseCommands
     }
 
     // design §13.7: a running server reads the new file; one that is not running reads it when it starts.
-    private static int Reload(CliHost host, Common common, ParseResult parse, string tokenId)
+    private static int Reload(CliHost host, string folder, string tokenId)
     {
         const string Written = "The license file is written; the server did not confirm a reload.";
         AdminAnswer? answer;
         try
         {
-            answer = Send(host, common, parse, HttpMethod.Post, "admin/v1/license/reload");
+            answer = Send(host, folder, HttpMethod.Post, "admin/v1/license/reload");
         }
         catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
         {
@@ -412,9 +425,9 @@ internal static class ServerLicenseCommands
     }
 
     // design §13.7 R8: the license of a running server is deactivated only once it has stopped.
-    private static void StopFirst(CliHost host, Common common, ParseResult parse)
+    private static void StopFirst(CliHost host, string folder)
     {
-        if (Status(host, common, parse) is not null)
+        if (Status(host, folder) is not null)
         {
             throw new CliException("Stop elm-server before deactivating its license.", ExitCodes.VerificationFailed);
         }
@@ -425,9 +438,9 @@ internal static class ServerLicenseCommands
     // that is not a status (a wrong token, another program on the socket), and no answer from something that listens, do
     // not show that no server runs, so the command stops: going on would skip the checks that a running server calls for
     // (R8, R9).
-    private static bool? Status(CliHost host, Common common, ParseResult parse)
+    private static bool? Status(CliHost host, string folder)
     {
-        if (Send(host, common, parse, HttpMethod.Get, "admin/v1/status") is not AdminAnswer answer)
+        if (Send(host, folder, HttpMethod.Get, "admin/v1/status") is not AdminAnswer answer)
         {
             return null;
         }
@@ -440,16 +453,15 @@ internal static class ServerLicenseCommands
     // design §13.7 (V1d2): the commands that do not ask the server before their own work check the length of the socket's
     // path first, as the others do through Send, so that a folder whose path is too long is never taken for one whose
     // server does not run.
-    private static void CheckSocketPath(ParseResult parse, Common common) => _ = ServerAdminApi.SocketOf(Folder(parse, common));
+    private static void CheckSocketPath(string folder) => _ = ServerAdminApi.SocketOf(folder);
 
     // One call to the local administration API, on the socket file of the folder that holds the token; null when the server
     // does not run: the folder has no administrator token that can be read, it has no socket file, or the connection to
     // the socket file is refused (a file that a killed server left). The server's lock file is not looked at. Every other
     // connection error, and something that listens there and gives no whole answer in time, stops the call with a network
     // error: a server that is slow or stopping still runs.
-    private static AdminAnswer? Send(CliHost host, Common common, ParseResult parse, HttpMethod method, string path)
+    private static AdminAnswer? Send(CliHost host, string folder, HttpMethod method, string path)
     {
-        string folder = Folder(parse, common);
         (string socketPath, UnixDomainSocketEndPoint endPoint) = ServerAdminApi.SocketOf(folder);
 
         // Without the file, a connection is refused on Windows (measured on Windows 11). On Linux and macOS it fails with
@@ -505,8 +517,7 @@ internal static class ServerLicenseCommands
             : ExitCodes.VerificationFailed;
     }
 
-    private static byte[]? KeptLicense(CliHost host, Common common, ParseResult parse) =>
-        new ActivationStore(Folder(parse, common), host.Time).Read(out _)?.License;
+    private static byte[]? KeptLicense(CliHost host, string folder) => new ActivationStore(folder, host.Time).Read(out _)?.License;
 
     // design §13.7 R13: only the activation's own file is removed, not one an administrator put there by hand.
     private static void RemoveIfKept(string? licensePath, byte[]? kept)
@@ -535,8 +546,16 @@ internal static class ServerLicenseCommands
             ? url
             : throw new CliException($"--service must be an https URL, or http on a loopback address: '{text}'.");
 
-    private static string Folder(ParseResult parse, Common common) =>
-        new InstallationKeyStore(Product(parse, common), KeyScope.Machine, parse.GetValue(common.Data)).Directory;
+    // design §10.2 (V1d24): the data folder is checked once, before the command reads or writes anything in it; from then on,
+    // every file and the socket are taken in the folder where its links led then, not by its name, which a link on the way
+    // could make lead elsewhere during the command.
+    private static string Folder(ParseResult parse, Common common)
+    {
+        var store = new InstallationKeyStore(Product(parse, common), KeyScope.Machine, parse.GetValue(common.Data));
+        return store.TryCheck(out LicenseError? error)
+            ? store.Directory
+            : throw new CliException($"{ErrorCodes.ToWireName(error!.Code)}: {error.Message}", ExitCodes.VerificationFailed);
+    }
 
     // design §17.3 (V1c10): the key store's own refusal of an empty product ID does not name the option; an empty --data is a
     // parse error (CliPaths).

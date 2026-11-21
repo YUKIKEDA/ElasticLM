@@ -3,8 +3,9 @@ namespace ElasticLM.Client;
 // design §13.7, M4c3.
 
 /// <summary>
-/// Writes a server license file where <c>elm-server</c> reads it: to a temporary file beside it, then in
-/// its place, so a reader never sees half a file. <c>elm-server</c> and <c>elm server</c> both use it.
+/// Writes a server license file where <c>elm-server</c> reads it: to a new temporary file beside it, then in
+/// its place, so a reader never sees half a file. On Linux and macOS the file gets mode 0600. <c>elm-server</c> and
+/// <c>elm server</c> both use it.
 /// </summary>
 internal static class LicenseFiles
 {
@@ -17,8 +18,6 @@ internal static class LicenseFiles
     public static void Write(string path, byte[] file, TimeProvider time)
     {
         string full = Path.GetFullPath(path);
-        string temporary = full + ".tmp";
-        File.WriteAllBytes(temporary, file);
-        FileReplacement.Move(temporary, full, time);
+        FileReplacement.Write(full + ".tmp", full, file, time);
     }
 }

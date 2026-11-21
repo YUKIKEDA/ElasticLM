@@ -14,6 +14,7 @@
     <!-- design §13.7: the server license is activated against a real elm-service (M4c3). -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestFolders.cs" Link="TestFolders.cs" />
     <!-- design §12.7.5, V1d5: the relay that replays genuine lease answers, shared with the service's tests. -->
     <Compile Include="..\ElasticLM.Service.Tests\Recorder.cs" Link="Recorder.cs" />
     <!-- design §13.7, V1d6: a listener on the administration socket that writes answers over the limit, as the client tests use it. -->

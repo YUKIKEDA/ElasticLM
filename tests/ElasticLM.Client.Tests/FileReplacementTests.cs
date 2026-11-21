@@ -1,4 +1,7 @@
+using System.Runtime.Versioning;
+using System.Security.AccessControl;
 using System.Security.Cryptography;
+using System.Security.Principal;
 using Microsoft.Extensions.Time.Testing;
 
 namespace ElasticLM.Client.Tests;
@@ -348,6 +351,284 @@ public sealed class FileReplacementTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// A writer with a temporary file of a fixed name deletes a symbolic link it finds at that name and writes a file of its
+    /// own: the file the link points to is left alone (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A file victim.txt ("victim") in another folder, and a symbolic link to it at the writer's temporary path:
+    ///   activation: activation.json.tmp beside the activation file that ActivationStore.Write writes;
+    ///   license: server.elmlic.tmp beside the server license file that LicenseFiles.Write writes.
+    /// - Where the test cannot make a link (Windows without the right to), it is skipped and says so; GitHub's runners can.
+    ///
+    /// Steps:
+    /// - Write.
+    ///
+    /// Expected:
+    /// - victim.txt still holds "victim"; the written file is a regular file, not a link, and holds what was written; the
+    ///   temporary path is gone.
+    /// </remarks>
+    /// <param name="writer">The writer.</param>
+    [Theory]
+    [InlineData("activation")]
+    [InlineData("license")]
+    public void Writers_LinkAtTheTemporaryPath_LeaveTheLinkTargetAlone(string writer)
+    {
+        string victim = Path.Combine(_dir, "elsewhere", "victim.txt");
+        Directory.CreateDirectory(Path.GetDirectoryName(victim)!);
+        File.WriteAllText(victim, "victim");
+        (string target, Action write) = Writer(writer);
+        try
+        {
+            File.CreateSymbolicLink(target + ".tmp", victim);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run: " + e.Message);
+            Assert.Skip("This user cannot make a symbolic link: " + e.Message);
+        }
+
+        write();
+
+        Assert.Equal("victim", File.ReadAllText(victim));
+        Assert.Null(new FileInfo(target).LinkTarget);
+        Assert.Contains(writer == "activation" ? "\"retry\"" : "written", File.ReadAllText(target), StringComparison.Ordinal);
+        Assert.False(File.Exists(target + ".tmp"));
+    }
+
+    /// <summary>
+    /// A writer with a temporary file of a fixed name does not open a file it finds at that name: the written file does not
+    /// keep that file's access, on Windows its access rules and on Linux and macOS its mode (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A file at the writer's temporary path (the two writers of the test before) that every user may read: on Windows
+    ///   with an explicit rule that allows Everyone to read, on Linux and macOS with mode 0666.
+    ///
+    /// Steps:
+    /// - Write.
+    ///
+    /// Expected:
+    /// - The written file has no rule for Everyone on Windows, and mode 0600 on Linux and macOS; the temporary path is gone.
+    /// </remarks>
+    /// <param name="writer">The writer.</param>
+    [Theory]
+    [InlineData("activation")]
+    [InlineData("license")]
+    public void Writers_FileLeftAtTheTemporaryPath_IsNotOpened(string writer)
+    {
+        (string target, Action write) = Writer(writer);
+        string temporary = target + ".tmp";
+        File.WriteAllText(temporary, "left");
+        if (OperatingSystem.IsWindows())
+        {
+            var file = new FileInfo(temporary);
+            FileSecurity rules = file.GetAccessControl();
+            rules.AddAccessRule(new FileSystemAccessRule(Everyone, FileSystemRights.Read, AccessControlType.Allow));
+            file.SetAccessControl(rules);
+        }
+        else
+        {
+            File.SetUnixFileMode(temporary, (UnixFileMode)0b110_110_110);
+        }
+
+        write();
+
+        if (OperatingSystem.IsWindows())
+        {
+            var named = new List<string>();
+            foreach (FileSystemAccessRule rule in new FileInfo(target).GetAccessControl().GetAccessRules(true, true, typeof(SecurityIdentifier)))
+            {
+                named.Add(rule.IdentityReference.Value);
+            }
+
+            Assert.DoesNotContain(Everyone.Value, named);
+        }
+        else
+        {
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(target));
+        }
+
+        Assert.False(File.Exists(temporary));
+    }
+
+    /// <summary>
+    /// When the replacement fails, Write deletes its temporary file and leaves the target as it was (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file in it at the target path, so no file can replace it; a clock that moves 1 second each time it
+    ///   is read and fires each timer at once, so the tries on Windows end without a wait.
+    ///
+    /// Steps:
+    /// - Write a file to that path through target.tmp beside it.
+    ///
+    /// Expected:
+    /// - IOException or UnauthorizedAccessException; target.tmp is gone; the folder and its file are still there.
+    /// </remarks>
+    [Fact]
+    public void Write_ReplacementFails_DeletesTheTemporaryFile()
+    {
+        string target = Path.Combine(_dir, "target");
+        Directory.CreateDirectory(target);
+        File.WriteAllText(Path.Combine(target, "inside.txt"), "inside");
+
+        Exception error = Assert.ThrowsAny<Exception>(() => FileReplacement.Write(target + ".tmp", target, "new"u8, new JumpingTime()));
+
+        Assert.True(error is IOException or UnauthorizedAccessException, error.ToString());
+        Assert.False(File.Exists(target + ".tmp"));
+        Assert.Equal("inside", File.ReadAllText(Path.Combine(target, "inside.txt")));
+    }
+
+    /// <summary>
+    /// When a pin cannot replace the old one, TryWrite returns false and leaves no temporary file (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file in it at the pin's path of https://licenses.example/, so no file can replace it; the clock that
+    ///   moves 1 second each time it is read.
+    ///
+    /// Steps:
+    /// - Write the pin.
+    ///
+    /// Expected:
+    /// - false; servers/ holds no .tmp file; the folder at the pin's path is still there with its file.
+    /// </remarks>
+    [Fact]
+    public void ServerPins_ReplacementFails_LeavesNoTemporaryFile()
+    {
+        var url = new Uri("https://licenses.example/");
+        string servers = Path.Combine(_dir, "servers");
+        string pin = Path.Combine(
+            servers,
+            Convert.ToHexStringLower(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(ElasticLM.Licensing.HttpTargetUri.Normalize(url)))) + ".json"
+        );
+        Directory.CreateDirectory(pin);
+        File.WriteAllText(Path.Combine(pin, "inside.txt"), "inside");
+
+        Assert.False(new ServerPins(_dir, new JumpingTime()).TryWrite(url, "lic-1", "key-1"));
+
+        Assert.Empty(Directory.GetFiles(servers, "*.tmp"));
+        Assert.Equal("inside", File.ReadAllText(Path.Combine(pin, "inside.txt")));
+    }
+
+    /// <summary>
+    /// A file that a writer created but could not fill is deleted: the new file of CreateNew, a secret file, and the
+    /// installation key (design §12.6.2, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux, not as root, with sudo that lets this user mount without a password, as the CI runners do; on GitHub Actions
+    ///   the test fails without it, elsewhere it is skipped and says so. Other OSes have no tmpfs.
+    /// - A tmpfs of 4 KiB mounted on a new folder and owned by this user; a key folder made in it; then a file of 4096
+    ///   bytes, so no page is left for another file's content:
+    ///   create-new: FileReplacement.CreateNew of 64 bytes at file.tmp;
+    ///   secret: ProtectedFiles.TryCreateSecret of 64 bytes at admin.token.new;
+    ///   key: InstallationKeyStore.TryLoadOrCreate in the key folder (user scope).
+    ///
+    /// Steps:
+    /// - Write. Unmount at the end.
+    ///
+    /// Expected:
+    /// - create-new and secret throw IOException; key fails with ELM_INSTALLATION_KEY_UNREADABLE "The installation key
+    ///   cannot be created: …". In each case no file is left at the path.
+    /// </remarks>
+    /// <param name="writer">The writer.</param>
+    [Theory]
+    [InlineData("create-new")]
+    [InlineData("secret")]
+    [InlineData("key")]
+    public void Writers_DiskFullAfterCreating_DeleteTheNewFile(string writer)
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "tmpfs is Linux only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        if (!OperatingSystem.IsLinux())
+        {
+            return;
+        }
+
+        string disk = Path.Combine(_dir, "disk");
+        Directory.CreateDirectory(disk);
+        string uid = UnixOwner.EffectiveUserId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Sudo("mount", "-t", "tmpfs", "-o", $"size=4k,uid={uid},mode=0700", "tmpfs", disk);
+        try
+        {
+            string keys = Path.Combine(disk, "keys");
+            Directory.CreateDirectory(keys);
+            File.WriteAllBytes(Path.Combine(disk, "filler"), new byte[4096]);
+            string path = writer switch
+            {
+                "create-new" => Path.Combine(disk, "file.tmp"),
+                "secret" => Path.Combine(disk, "admin.token.new"),
+                _ => Path.Combine(keys, "installation.key"),
+            };
+
+            if (writer == "key")
+            {
+                Assert.False(
+                    new InstallationKeyStore("acme-cad", KeyScope.User, keys).TryLoadOrCreate(out _, out ElasticLM.Licensing.LicenseError? error)
+                );
+                Assert.Equal(ElasticLM.Licensing.ErrorCode.InstallationKeyUnreadable, error!.Code);
+                Assert.StartsWith("The installation key cannot be created: ", error.Message, StringComparison.Ordinal);
+            }
+            else
+            {
+                Assert.Throws<IOException>(() =>
+                {
+                    if (writer == "create-new")
+                    {
+                        FileReplacement.CreateNew(path, new byte[64]);
+                    }
+                    else
+                    {
+                        ProtectedFiles.TryCreateSecret(path, new byte[64], KeyScope.User, "test"u8.ToArray());
+                    }
+                });
+            }
+
+            Assert.False(File.Exists(path));
+        }
+        finally
+        {
+            Sudo("umount", disk);
+        }
+    }
+
+    // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.
+    private static void Sudo(params string[] arguments)
+    {
+        using var sudo = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("sudo", ["-n", .. arguments]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = sudo.StandardError.ReadToEnd();
+        sudo.WaitForExit();
+        if (sudo.ExitCode != 0)
+        {
+            string why = $"sudo -n {arguments[0]} exited with {sudo.ExitCode}: {error.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This machine does not let the test run " + arguments[0] + " as root. " + why);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static SecurityIdentifier Everyone => new(WellKnownSidType.WorldSid, null);
+
+    // The target and the write of each writer whose temporary file has a fixed name.
+    private (string Target, Action Write) Writer(string writer)
+    {
+        if (writer == "activation")
+        {
+            string folder = Path.Combine(_dir, "activation");
+            Directory.CreateDirectory(folder);
+            var store = new ActivationStore(folder, new FakeTimeProvider(Start));
+            return (Path.Combine(folder, "activation.json"), () => store.Write(new StoredActivation(null, 0, null, null, ["p"])));
+        }
+
+        string license = Path.Combine(_dir, "server.elmlic");
+        return (license, () => LicenseFiles.Write(license, "written"u8.ToArray(), new FakeTimeProvider(Start)));
+    }
+
     private static Task MoveAsync(bool asynchronous, string temporary, string path, TimeProvider time)
     {
         if (asynchronous)
@@ -382,6 +663,22 @@ public sealed class FileReplacementTests : IDisposable
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
         {
             // The test has asserted what it expects of the move.
+        }
+    }
+
+    // A clock that moves 1 second each time it is read and fires each timer at once: a wait on it ends without waiting.
+    private sealed class JumpingTime : TimeProvider
+    {
+        private long _seconds;
+
+        public override long TimestampFrequency => 1;
+
+        public override long GetTimestamp() => Interlocked.Increment(ref _seconds);
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            callback(state);
+            return new FakeTimeProvider().CreateTimer(_ => { }, null, Timeout.InfiniteTimeSpan, Timeout.InfiniteTimeSpan);
         }
     }
 
