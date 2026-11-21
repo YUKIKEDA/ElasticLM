@@ -64,7 +64,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         Assert.Contains("elm server activate", none.Message, StringComparison.Ordinal);
         (int code, string output, string error) = Run(
             test,
-            ["server", "activate", key, .. Common(folder), "--service", service.Url.ToString(), "--license", license]
+            ["server", "activate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
+            licenseKey: key
         );
         Assert.True(code == 0, error);
         Assert.Contains("The server", output, StringComparison.Ordinal);
@@ -141,7 +142,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         string[] through = [.. Common(folder), "--service", relay.Url.ToString(), "--license", license];
         ServerSettings settings = Settings(test, folder) with { ServiceUrl = relay.Url };
         await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
-        (int code, _, string error) = Run(test, ["server", "activate", key, .. through]);
+        (int code, _, string error) = Run(test, ["server", "activate", .. through], licenseKey: key);
         Assert.True(code == 0, error);
         (code, _, error) = Run(test, ["server", "refresh", .. through]);
         Assert.True(code == 0, error);
@@ -210,7 +211,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
 
         string request = Path.Combine(folder, "a.elmreq");
-        Assert.Equal(0, Run(test, ["server", "activate-request", "--key", key, .. Common(folder), "--out", request]).Code);
+        Assert.Equal(0, Run(test, ["server", "activate-request", .. Common(folder), "--out", request], licenseKey: key).Code);
         string answer = await ProcessAsync(service, request);
         Assert.Equal(0, Run(test, ["server", "import", answer, .. Common(folder), "--license", license]).Code);
         ElmServer server = await StartAsync(test, settings);
@@ -273,7 +274,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         string bare = _deployment.NewFolder();
         (int code, _, string error) = Run(
             test,
-            ["server", "activate", key, .. Common(bare), "--service", url, "--license", Path.Combine(bare, "s.elmlic")]
+            ["server", "activate", .. Common(bare), "--service", url, "--license", Path.Combine(bare, "s.elmlic")],
+            licenseKey: key
         );
         Assert.Equal((2, "error: The server's installation key does not exist; start elm-server once to make it."), (code, error.Trim()));
 
@@ -281,10 +283,10 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         string license = Path.Combine(folder, "server.elmlic");
         ServerSettings settings = Settings(test, folder) with { ServiceUrl = service.Url };
         await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
-        (code, _, error) = Run(test, ["server", "activate", standard, .. Common(folder), "--service", url, "--license", license]);
+        (code, _, error) = Run(test, ["server", "activate", .. Common(folder), "--service", url, "--license", license], licenseKey: standard);
         Assert.Equal(1, code);
         Assert.StartsWith("error: ELM_WRONG_KIND", error, StringComparison.Ordinal);
-        Assert.Equal(0, Run(test, ["server", "activate", key, .. Common(folder), "--service", url, "--license", license]).Code);
+        Assert.Equal(0, Run(test, ["server", "activate", .. Common(folder), "--service", url, "--license", license], licenseKey: key).Code);
 
         // Without service.url the server does not read the kept activation, so the path it reads is all it has (R6).
         ElmServer server = await StartAsync(test, Settings(test, folder));
@@ -314,6 +316,258 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             (code, error.Trim())
         );
     }
+
+    /// <summary>
+    /// elm server activate and activate-request take the license key from ELM_LICENSE_KEY, or ask for it hidden when the
+    /// variable is not set or is empty, and the key appears in none of their output (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy and a license key of it; a stopped server's data folder with its installation key.
+    ///
+    /// Steps:
+    /// - Run the case's command (activate online, or activate-request and then import of the processed answer) with the key
+    ///   in ELM_LICENSE_KEY, with no variable, or with an empty variable; the reader of typed secrets records each prompt and
+    ///   gives the key.
+    ///
+    /// Expected:
+    /// - Exit 0; no prompt with the variable, one "License key: " prompt otherwise; the output and error output do not hold
+    ///   the key; the service holds the license's activation, and the license file is written.
+    /// </remarks>
+    /// <param name="command">The command: activate or activate-request.</param>
+    /// <param name="source">Where the key comes from: variable, typed, or empty variable (then typed).</param>
+    [Theory]
+    [InlineData("activate", "variable")]
+    [InlineData("activate", "typed")]
+    [InlineData("activate", "empty variable")]
+    [InlineData("activate-request", "variable")]
+    [InlineData("activate-request", "typed")]
+    [InlineData("activate-request", "empty variable")]
+    public async Task LicenseKey_FromTheVariableOrTyped_IsUsed(string command, string source)
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "activated.elmlic");
+        string request = Path.Combine(folder, "a.elmreq");
+        var prompts = new List<string>();
+        string? Typed(string prompt)
+        {
+            prompts.Add(prompt);
+            return key;
+        }
+
+        string? variable = source switch
+        {
+            "variable" => key,
+            "empty variable" => string.Empty,
+            _ => null,
+        };
+
+        (int code, string output, string error) = Run(
+            test,
+            KeyCommand(command, folder, service, license, request),
+            licenseKey: variable,
+            readSecret: Typed
+        );
+
+        Assert.True(code == 0, error);
+        string[] asked = source == "variable" ? [] : ["License key: "];
+        Assert.Equal(asked, prompts);
+        Assert.DoesNotContain(key, output + error, StringComparison.OrdinalIgnoreCase);
+        if (command == "activate-request")
+        {
+            Assert.Equal(0, Run(test, ["server", "import", await ProcessAsync(service, request), .. Common(folder), "--license", license]).Code);
+        }
+
+        Assert.Equal(HttpStatusCode.OK, await ActivationStatusAsync(test, service));
+        Assert.True(File.Exists(license));
+    }
+
+    /// <summary>
+    /// Without ELM_LICENSE_KEY, elm server activate and activate-request stop with exit code 2 when input is not
+    /// interactive, or when the typed key is empty, and send and write nothing (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a stopped server's data folder with its installation key; no ELM_LICENSE_KEY.
+    ///
+    /// Steps:
+    /// - Run the case's command with no reader of typed secrets (input not interactive), or with one that records each
+    ///   prompt and gives an empty string.
+    ///
+    /// Expected:
+    /// - Exit 2 and exactly "error: Set the license key in the environment variable ELM_LICENSE_KEY; input is not
+    ///   interactive." or "error: The license key must not be empty." (after one "License key: " prompt) on the error
+    ///   output, nothing on the output; the service holds no activation of the license; no license file, request file, or
+    ///   activation.json.
+    /// </remarks>
+    /// <param name="command">The command: activate or activate-request.</param>
+    /// <param name="input">not interactive, or typed empty.</param>
+    [Theory]
+    [InlineData("activate", "not interactive")]
+    [InlineData("activate", "typed empty")]
+    [InlineData("activate-request", "not interactive")]
+    [InlineData("activate-request", "typed empty")]
+    public async Task LicenseKey_NotGiven_ExitsWithTwoAndSendsNothing(string command, string input)
+    {
+        (TestService test, ElmService service, _) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "activated.elmlic");
+        string request = Path.Combine(folder, "a.elmreq");
+        var prompts = new List<string>();
+        string? Empty(string prompt)
+        {
+            prompts.Add(prompt);
+            return string.Empty;
+        }
+
+        (int code, string output, string error) = Run(
+            test,
+            KeyCommand(command, folder, service, license, request),
+            readSecret: input == "typed empty" ? Empty : null
+        );
+
+        string line =
+            input == "typed empty"
+                ? "error: The license key must not be empty."
+                : "error: Set the license key in the environment variable ELM_LICENSE_KEY; input is not interactive.";
+        Assert.Equal((2, string.Empty, line + Environment.NewLine), (code, output, error));
+        string[] asked = input == "typed empty" ? ["License key: "] : [];
+        Assert.Equal(asked, prompts);
+        Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
+        Assert.False(File.Exists(license));
+        Assert.False(File.Exists(request));
+        Assert.False(File.Exists(Path.Combine(folder, "activation.json")));
+    }
+
+    /// <summary>
+    /// The removed forms that put the key on the command line, and any other word the two commands do not know, are refused
+    /// with one line that does not repeat the word, before anything is read, asked, or sent (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy and a license key of it in ELM_LICENSE_KEY, so that the key itself is not what is
+    ///   missing; a stopped server's data folder; a reader of typed secrets that records each prompt.
+    ///
+    /// Steps:
+    /// - Run elm server activate with the key as an argument; activate with --key and the key; activate-request with --key and
+    ///   the key; activate-request with the key as an argument.
+    ///
+    /// Expected:
+    /// - Exit 2, nothing on the output, and exactly "error: An argument is not recognized; elm server &lt;command&gt; takes
+    ///   the license key from ELM_LICENSE_KEY, or asks for it." on the error output, which does not hold the key; no prompt;
+    ///   the service holds no activation; no license file or request file.
+    /// </remarks>
+    /// <param name="command">The command: activate or activate-request.</param>
+    /// <param name="form">argument, or --key.</param>
+    [Theory]
+    [InlineData("activate", "argument")]
+    [InlineData("activate", "--key")]
+    [InlineData("activate-request", "--key")]
+    [InlineData("activate-request", "argument")]
+    public async Task LicenseKey_OnTheCommandLine_IsRefusedWithoutRepeatingIt(string command, string form)
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "activated.elmlic");
+        string request = Path.Combine(folder, "a.elmreq");
+        var prompts = new List<string>();
+        string? Typed(string prompt)
+        {
+            prompts.Add(prompt);
+            return key;
+        }
+
+        string[] words = form == "--key" ? ["--key", key] : [key];
+        string[] args = KeyCommand(command, folder, service, license, request);
+
+        (int code, string output, string error) = Run(test, [.. args[..2], .. words, .. args[2..]], licenseKey: key, readSecret: Typed);
+
+        string line = $"error: An argument is not recognized; elm server {command} takes the license key from ELM_LICENSE_KEY, or asks for it.";
+        Assert.Equal((2, string.Empty, line + Environment.NewLine), (code, output, error));
+        Assert.Empty(prompts);
+        Assert.Equal(HttpStatusCode.NotFound, await ActivationStatusAsync(test, service));
+        Assert.False(File.Exists(license));
+        Assert.False(File.Exists(request));
+    }
+
+    /// <summary>
+    /// The key is asked for only after every local check of the command has passed: a command that one of them stops asks
+    /// nothing (design §13.7, V1d19).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; no ELM_LICENSE_KEY; a reader of typed secrets that records each prompt.
+    ///
+    /// Steps:
+    /// - activate with --service ftp://service.example/; activate in a data folder without an installation key;
+    ///   activate-request with an --out file that exists; activate-request while a listener on the folder's admin.sock
+    ///   answers the status with autoRefresh true.
+    ///
+    /// Expected:
+    /// - Exactly the check's line and exit code: 2 "--service must be an https URL …"; 2 "The server's installation key does
+    ///   not exist …"; 2 "The file … exists. Pass --force to overwrite it."; 1 "ELM_INVALID_STATE: The server refreshes its
+    ///   license online; use elm server refresh."; no prompt in any case.
+    /// </remarks>
+    /// <param name="check">The local check that stops the command.</param>
+    [Theory]
+    [InlineData("service")]
+    [InlineData("installation key")]
+    [InlineData("out")]
+    [InlineData("auto refresh")]
+    public async Task LicenseKey_LocalCheckFails_IsNotAskedFor(string check)
+    {
+        (TestService test, ElmService service, _) = await ServiceAsync(string.Empty);
+        string folder = check == "installation key" ? _deployment.NewFolder() : await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "activated.elmlic");
+        string request = Path.Combine(folder, "a.elmreq");
+        var prompts = new List<string>();
+        string? Typed(string prompt)
+        {
+            prompts.Add(prompt);
+            return "ELM-AAAAA-AAAAA-AAAAA-AAAAA";
+        }
+
+        string[] args = check switch
+        {
+            "service" => ["server", "activate", .. Common(folder), "--service", "ftp://service.example/", "--license", license],
+            "installation key" or "auto refresh" => KeyCommand(
+                check == "auto refresh" ? "activate-request" : "activate",
+                folder,
+                service,
+                license,
+                request
+            ),
+            _ => KeyCommand("activate-request", folder, service, license, request),
+        };
+        if (check == "out")
+        {
+            File.WriteAllText(request, "kept");
+        }
+
+        const string Status =
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 20\r\nConnection: close\r\n\r\n{\"autoRefresh\":true}";
+        using FakeAdminSocket? listener =
+            check == "auto refresh" ? new FakeAdminSocket(folder, connection => connection == 0 ? Status : NotFound) : null;
+
+        (int code, string output, string error) = Run(test, args, readSecret: Typed);
+
+        (int, string) expected = check switch
+        {
+            "service" => (2, "error: --service must be an https URL, or http on a loopback address: 'ftp://service.example/'."),
+            "installation key" => (2, "error: The server's installation key does not exist; start elm-server once to make it."),
+            "out" => (2, $"error: The file '{request}' exists. Pass --force to overwrite it."),
+            _ => (1, "error: ELM_INVALID_STATE: The server refreshes its license online; use elm server refresh."),
+        };
+        Assert.Equal((expected.Item1, string.Empty, expected.Item2 + Environment.NewLine), (code, output, error));
+        Assert.Empty(prompts);
+    }
+
+    // The command line of activate or activate-request in a folder, without the license key.
+    private static string[] KeyCommand(string command, string folder, ElmService service, string license, string request) =>
+        command == "activate"
+            ? ["server", "activate", .. Common(folder), "--service", service.Url.ToString(), "--license", license]
+            : ["server", "activate-request", .. Common(folder), "--out", request];
 
     // The license's activations in the service, through its administration API: 404 when the one there was is gone.
     private async Task<HttpStatusCode> ActivationStatusAsync(TestService test, ElmService service)
@@ -357,7 +611,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
 
         (int code, _, string error) = Run(
             test,
-            ["server", "activate", key, .. Common(folder), "--service", service.Url.ToString(), "--license", license]
+            ["server", "activate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
+            licenseKey: key
         );
         Assert.True(code == 0, error);
         string activated = server.Engine.Server.License.LicenseId;
@@ -433,7 +688,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             MakeLink(second, other);
             (int code, _, string error) = Run(
                 test,
-                ["server", "activate", key, .. Common(end), "--service", service.Url.ToString(), "--license", license]
+                ["server", "activate", .. Common(end), "--service", service.Url.ToString(), "--license", license],
+                licenseKey: key
             );
             Assert.True(code == 0, error);
             Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
@@ -500,7 +756,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             ServerSettings settings = Settings(test, end) with { ServiceUrl = service.Url };
             await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
             string[] target = [.. Common(first), "--service", service.Url.ToString(), "--license", license];
-            (int code, _, string error) = Run(test, ["server", "activate", key, .. target]);
+            (int code, _, string error) = Run(test, ["server", "activate", .. target], licenseKey: key);
             Assert.True(code == 0, error);
             ElmServer server = await StartAsync(test, settings);
             _owned.Remove(server);
@@ -637,7 +893,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         clock.Now -= TimeSpan.FromDays(2);
         (int code, string output, string error) = Run(
             test,
-            ["server", "activate", key, .. Common(folder), "--service", service.Url.ToString(), "--license", license]
+            ["server", "activate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
+            licenseKey: key
         );
 
         Assert.Equal(
@@ -683,13 +940,13 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         [
             ["server", "deactivate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
             ["server", "deactivate-proof", .. Common(folder), "--out", made],
-            ["server", "activate-request", "--key", key, .. Common(folder), "--out", made],
+            ["server", "activate-request", .. Common(folder), "--out", made],
             ["server", "refresh-request", .. Common(folder), "--out", made],
         ];
 
         foreach (string[] command in commands)
         {
-            (int code, _, string error) = Run(test, command);
+            (int code, _, string error) = Run(test, command, licenseKey: key);
 
             Assert.Equal((1, "error: ELM_UNAUTHORIZED: The administrator token is missing or wrong."), (code, error.Trim()));
             if (command[1] == "deactivate")
@@ -743,7 +1000,11 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         byte[] before = File.ReadAllBytes(license);
 
         Assert.NotNull(await AdminToken.CreateAsync(folder, test.Time, TestContext.Current.CancellationToken));
-        (int Code, string Out, string Error) activated = Run(test, ["server", "activate", key, "--service", service.Url.ToString(), .. tail]);
+        (int Code, string Out, string Error) activated = Run(
+            test,
+            ["server", "activate", "--service", service.Url.ToString(), .. tail],
+            licenseKey: key
+        );
         byte[] first = File.ReadAllBytes(license);
         (int Code, string Out, string Error) refreshed = Run(test, ["server", "refresh", "--service", service.Url.ToString(), .. tail]);
         byte[] second = File.ReadAllBytes(license);
@@ -826,7 +1087,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         }
 
         // The folder is activated once; the second file comes from a refresh, which asks for the reload the same way.
-        string[] first = ["server", "activate", key];
+        string[] first = ["server", "activate"];
         string[] second = ["server", "refresh"];
         foreach ((string[] head, (string answer, int status)) in new[] { (first, answers[0]), (second, answers[5]) })
         {
@@ -834,7 +1095,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
                 test,
                 other,
                 answer,
-                [.. head, .. Common(other), "--service", service.Url.ToString(), "--license", license]
+                [.. head, .. Common(other), "--service", service.Url.ToString(), "--license", license],
+                licenseKey: key
             );
 
             Assert.Equal(
@@ -910,8 +1172,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             test,
             other,
             null,
-            ["server", "activate", key, .. Common(other), "--service", service.Url.ToString(), "--license", license],
-            wait
+            ["server", "activate", .. Common(other), "--service", service.Url.ToString(), "--license", license],
+            wait,
+            key
         );
 
         Assert.Equal(
@@ -1018,7 +1281,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
                 };
                 string made = Path.Combine(folder, "made.elmreq");
 
-                (int code, _, string error) = Run(test, ["server", "activate-request", "--key", key, .. Common(folder), "--out", made]);
+                (int code, _, string error) = Run(test, ["server", "activate-request", .. Common(folder), "--out", made], licenseKey: key);
 
                 string what = $"{state}, server.lock {lockState}";
                 if (state == "answering")
@@ -1081,8 +1344,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
 
         (int activated, string output, string activateError) = Run(
             test,
-            ["server", "activate", key, .. Common(other), "--service", service.Url.ToString(), "--license", license],
-            Denied
+            ["server", "activate", .. Common(other), "--service", service.Url.ToString(), "--license", license],
+            Denied,
+            key
         );
 
         Assert.Equal(
@@ -1174,7 +1438,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             Assert.True(Volatile.Read(ref taken) == 0, "A connection came to 127.0.0.1:7071.");
             void Reloads(string name, string[] command)
             {
-                (int code, string output, string error) = Run(test, command);
+                (int code, string output, string error) = Run(test, command, licenseKey: key);
                 Assert.True(code == 0 && output.Contains(NotRunning, StringComparison.Ordinal), $"{name}: {code} {error}");
             }
 
@@ -1184,13 +1448,13 @@ public sealed class ServerLicenseTests : IAsyncDisposable
                 Assert.True(code == 0, $"{name}: {code} {error}");
             }
 
-            Reloads("activate", ["server", "activate", key, .. tail]);
+            Reloads("activate", ["server", "activate", .. tail]);
             Reloads("refresh", ["server", "refresh", .. tail]);
             Passes("refresh-request", ["server", "refresh-request", .. Common(folder), "--out", request]);
             Reloads("import", ["server", "import", await ProcessAsync(service, request), .. Common(folder), "--license", license]);
 
             // These two end as the activation's state has it; what counts is the status they ask the server for first.
-            Run(test, ["server", "activate-request", "--key", key, .. Common(folder), "--out", Path.Combine(folder, "a.elmreq")]);
+            Run(test, ["server", "activate-request", .. Common(folder), "--out", Path.Combine(folder, "a.elmreq")], licenseKey: key);
             Passes("deactivate-proof", ["server", "deactivate-proof", .. Common(folder), "--out", Path.Combine(folder, "p.elmdeact")]);
             Run(test, ["server", "forget-proof", .. Common(folder)]);
             Run(test, ["server", "deactivate", .. tail]);
@@ -1210,7 +1474,8 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         string folder,
         string? answer,
         string[] command,
-        TimeSpan? clockAdvance = null
+        TimeSpan? clockAdvance = null,
+        string? licenseKey = null
     )
     {
         using var listener = new FakeAdminSocket(
@@ -1218,7 +1483,7 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             connection => connection == 0 ? answer : NotFound,
             clockAdvance is TimeSpan advance ? () => test.Time.Advance(advance) : null
         );
-        (int Code, string Out, string Error) result = Run(test, command);
+        (int Code, string Out, string Error) result = Run(test, command, licenseKey: licenseKey);
         Assert.True(listener.Requests > 0, "The command did not call the administration API.");
         return result;
     }
@@ -1427,7 +1692,9 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     private static (int Code, string Out, string Error) Run(
         TestService test,
         string[] args,
-        Func<UnixDomainSocketEndPoint, CancellationToken, ValueTask<Stream>>? connect = null
+        Func<UnixDomainSocketEndPoint, CancellationToken, ValueTask<Stream>>? connect = null,
+        string? licenseKey = null,
+        Func<string, string?>? readSecret = null
     )
     {
         var output = new StringWriter();
@@ -1438,8 +1705,15 @@ public sealed class ServerLicenseTests : IAsyncDisposable
             Out = output,
             Error = error,
             Time = test.Time,
-            GetEnvironmentVariable = name => name == "ELM_TRUST_ROOT_KEYS" ? pem : null,
+            GetEnvironmentVariable = name =>
+                name switch
+                {
+                    "ELM_TRUST_ROOT_KEYS" => pem,
+                    "ELM_LICENSE_KEY" => licenseKey,
+                    _ => null,
+                },
             ConnectAdminSocket = connect,
+            ReadSecret = readSecret,
         };
         int code = ElmApp.Run(args, host);
         return (code, output.ToString(), error.ToString());

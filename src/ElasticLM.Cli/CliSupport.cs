@@ -182,6 +182,32 @@ internal static class Passphrases
 }
 
 /// <summary>
+/// Reads the license key of a server license from an environment variable, or from the person when nobody set it (design
+/// §13.7), so that the key is never on the command line.
+/// </summary>
+internal static class LicenseKeys
+{
+    public const string EnvironmentVariable = "ELM_LICENSE_KEY";
+
+    public static string Read(CliHost host)
+    {
+        string? fromEnvironment = host.GetEnvironmentVariable(EnvironmentVariable);
+        if (!string.IsNullOrEmpty(fromEnvironment))
+        {
+            return fromEnvironment;
+        }
+
+        if (host.ReadSecret is null)
+        {
+            throw new CliException($"Set the license key in the environment variable {EnvironmentVariable}; input is not interactive.");
+        }
+
+        string typed = host.ReadSecret("License key: ") ?? string.Empty;
+        return typed.Length > 0 ? typed : throw new CliException("The license key must not be empty.");
+    }
+}
+
+/// <summary>
 /// Parses option values that System.CommandLine leaves as strings.
 /// </summary>
 internal static class CliParse

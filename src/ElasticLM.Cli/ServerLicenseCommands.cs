@@ -19,10 +19,24 @@ internal static class ServerLicenseCommands
 
     public static void Add(Command server, CliHost host)
     {
-        server.Subcommands.Add(Online(host, "activate", "Activate this server's license online and write the license file.", activate: true));
+        server.Subcommands.Add(
+            Online(
+                host,
+                "activate",
+                "Activate this server's license online and write the license file. The license key comes from ELM_LICENSE_KEY, or is asked for.",
+                activate: true
+            )
+        );
         server.Subcommands.Add(Online(host, "refresh", "Refresh this server's license online and write the license file.", activate: false));
         server.Subcommands.Add(Deactivate(host));
-        server.Subcommands.Add(Request(host, "activate-request", "Make an offline activation request file (.elmreq).", activate: true));
+        server.Subcommands.Add(
+            Request(
+                host,
+                "activate-request",
+                "Make an offline activation request file (.elmreq). The license key comes from ELM_LICENSE_KEY, or is asked for.",
+                activate: true
+            )
+        );
         server.Subcommands.Add(Request(host, "refresh-request", "Make an offline refresh request file (.elmreq).", activate: false));
         server.Subcommands.Add(Import(host));
         server.Subcommands.Add(Proof(host));
@@ -33,12 +47,7 @@ internal static class ServerLicenseCommands
     private static Command Online(CliHost host, string name, string description, bool activate)
     {
         var command = new Command(name, description);
-        var key = new Argument<string>("license-key") { Description = "The license key of a server license." };
-        if (activate)
-        {
-            command.Arguments.Add(key);
-        }
-
+        TakesNoKey(command, activate);
         Common common = AddCommon(command);
         Option<string> service = ServiceOption(command);
         Option<string> license = LicenseOption(command);
@@ -47,17 +56,20 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
+                    RefuseUnmatched(parse, name);
                     string folder = Folder(parse, common);
                     CheckSocketPath(folder);
                     Uri url = ServiceUrl(parse.GetValue(service)!);
-                    string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "<license-key>") : null;
+
+                    // design §13.7 (V1d19): the key is read once every local check has passed; the client takes its lock in
+                    // the operation, so the person types with no lock held.
                     return Kept(
                         host,
                         common,
                         parse,
                         folder,
                         url,
-                        client => licenseKey is null ? client.RefreshAsync() : client.ActivateAsync(licenseKey),
+                        client => activate ? client.ActivateAsync(LicenseKeys.Read(host)) : client.RefreshAsync(),
                         parse.GetValue(license)!
                     );
                 }
@@ -220,12 +232,7 @@ internal static class ServerLicenseCommands
     private static Command Request(CliHost host, string name, string description, bool activate)
     {
         var command = new Command(name, description);
-        var key = new Option<string>("--key") { Description = "The license key of a server license.", Required = true };
-        if (activate)
-        {
-            command.Options.Add(key);
-        }
-
+        TakesNoKey(command, activate);
         Common common = AddCommon(command);
         var output = new Option<string>("--out") { Description = "Where to write the request file.", Required = true }.AsPath();
         var renew = new Option<bool>("--renew") { Description = "Make a new request before the waiting one expires." };
@@ -238,7 +245,7 @@ internal static class ServerLicenseCommands
                 host,
                 () =>
                 {
-                    string? licenseKey = activate ? CliParse.NotEmpty(parse.GetValue(key)!, "--key") : null;
+                    RefuseUnmatched(parse, name);
                     string folder = Folder(parse, common);
                     if (Status(host, folder) is true)
                     {
@@ -258,8 +265,8 @@ internal static class ServerLicenseCommands
                         null,
                         client =>
                         {
-                            OfflineRequestResult result = licenseKey is not null
-                                ? client.CreateActivationRequestAsync(licenseKey, parse.GetValue(renew)).GetAwaiter().GetResult()
+                            OfflineRequestResult result = activate
+                                ? client.CreateActivationRequestAsync(LicenseKeys.Read(host), parse.GetValue(renew)).GetAwaiter().GetResult()
                                 : client.CreateRefreshRequestAsync(parse.GetValue(renew)).GetAwaiter().GetResult();
                             if (result is OfflineRequestResult.Failed failed)
                             {
@@ -515,6 +522,27 @@ internal static class ServerLicenseCommands
         return error.Code == ErrorCode.NetworkError || ReferenceEquals(error, ActivationClient.AnswerTooLarge)
             ? ExitCodes.NetworkError
             : ExitCodes.VerificationFailed;
+    }
+
+    // design §13.7 (V1d19): activate and activate-request take the license key from ELM_LICENSE_KEY or ask for it. A word
+    // they do not know, such as a key typed as an argument out of habit, is refused by RefuseUnmatched, not by the parser,
+    // whose error repeats the word.
+    private static void TakesNoKey(Command command, bool activate)
+    {
+        if (activate)
+        {
+            command.TreatUnmatchedTokensAsErrors = false;
+        }
+    }
+
+    private static void RefuseUnmatched(ParseResult parse, string name)
+    {
+        if (parse.UnmatchedTokens.Count > 0)
+        {
+            throw new CliException(
+                $"An argument is not recognized; elm server {name} takes the license key from {LicenseKeys.EnvironmentVariable}, or asks for it."
+            );
+        }
     }
 
     private static byte[]? KeptLicense(CliHost host, string folder) => new ActivationStore(folder, host.Time).Read(out _)?.License;
