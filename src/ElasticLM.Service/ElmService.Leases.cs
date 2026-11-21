@@ -549,7 +549,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow license)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         string target = license.Id.ToString("D");
@@ -584,7 +584,7 @@ internal sealed partial class ElmService
     {
         if (await FindLeaseAsync(context).ConfigureAwait(false) is not LeaseRow found)
         {
-            return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.UnknownLease, "No lease has this ID.", RouteLeaseId(context)).ConfigureAwait(false);
         }
 
         // design §18.1, §18.2 (V1d9a): the product's code for the usage line is read before the transaction, as the device's
@@ -648,9 +648,13 @@ internal sealed partial class ElmService
 
     // A route ID that cannot be a lease is answered without a query (design §12.7.6); the per-source limit already counted it.
     private async Task<LeaseRow?> FindLeaseAsync(HttpContext context) =>
-        RouteText(context, "id") is string id && LeaseRequests.IsLeaseId(id)
+        RouteLeaseId(context) is string id
             ? await Database.FindLeaseAsync(id, Time.GetUtcNow().ToUnixTimeSeconds(), context.RequestAborted).ConfigureAwait(false)
             : null;
+
+    // The route's lease ID when it has the form of one, which is also the audit target of a refusal (design §14.5, V1d26a); a
+    // lease ID tells case apart, so it is kept as it came.
+    private static string? RouteLeaseId(HttpContext context) => RouteText(context, "id") is string id && LeaseRequests.IsLeaseId(id) ? id : null;
 
     private static ClientResult Released { get; } = new(StatusCodes.Status204NoContent, null, null, Guid.Empty, null);
 

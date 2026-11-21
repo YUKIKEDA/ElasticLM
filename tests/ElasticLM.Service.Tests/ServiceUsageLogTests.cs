@@ -1404,7 +1404,7 @@ public sealed class ServiceUsageLogTests
 
     /// <summary>
     /// The rows of a download that was refused have no detail: sent and size belong to a download that began (design
-    /// §18.2, V1d9).
+    /// §18.2, V1d9); a name the node does not have is not their target (design §14.5, V1d26a).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -1414,7 +1414,7 @@ public sealed class ServiceUsageLogTests
     /// - Get a file that the node does not have; get a file from the second service; read each service's rows.
     ///
     /// Expected:
-    /// - 404 ELM_NOT_FOUND, with a usagelog.get row of that result, the name as its target, and no detail; 409
+    /// - 404 ELM_NOT_FOUND, with a usagelog.get row of that result, no target (before V1d26a, the name), and no detail; 409
     ///   ELM_CONFLICT, with a usagelog.get row of that result, no target, and no detail.
     /// </remarks>
     [Fact]
@@ -1432,7 +1432,7 @@ public sealed class ServiceUsageLogTests
         );
         await TestService.WaitForAsync(async () => (await RowsAsync(service, "usagelog.get")).Length > 0);
         AuditEntry missing = Assert.Single(await RowsAsync(service, "usagelog.get"));
-        Assert.Equal(("ELM_NOT_FOUND", Unknown, null), (missing.Result, missing.Target, missing.Detail));
+        Assert.Equal(("ELM_NOT_FOUND", null, null), (missing.Result, missing.Target, missing.Detail));
 
         await using TestService plain = TestService.Open("sqlite");
         string owner = await plain.SetupAsync();
@@ -1550,7 +1550,7 @@ public sealed class ServiceUsageLogTests
         return test.Settings(s => s with { UsageLogDirectory = test.FilePath("usage"), NodeName = node, SigningCertificateFiles = [certificate] });
     }
 
-    private static async Task<(ElmService Service, HttpClient Admin)> StartLoggedAsync(
+    internal static async Task<(ElmService Service, HttpClient Admin)> StartLoggedAsync(
         TestService test,
         string node,
         RecordingLoggerProvider? log = null

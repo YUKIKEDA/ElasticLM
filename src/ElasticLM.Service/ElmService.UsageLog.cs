@@ -86,7 +86,8 @@ internal sealed partial class ElmService
         string? file = name is null ? null : _usage.Files().FirstOrDefault(f => f == name);
         if (file is null)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoUsageFile, name).ConfigureAwait(false);
+            // design §14.5 (V1d26a): a name that is not one of this node's files is the caller's text, not a target.
+            return await RefuseAsync(context, ErrorCode.NotFound, NoUsageFile).ConfigureAwait(false);
         }
 
         FileStream stream;

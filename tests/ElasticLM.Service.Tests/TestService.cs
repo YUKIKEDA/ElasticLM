@@ -170,6 +170,22 @@ internal sealed class TestService : IAsyncDisposable
         return Convert.ToInt64(value, System.Globalization.CultureInfo.InvariantCulture);
     }
 
+    /// <summary>Reads the first column of every row of a query as text, <see langword="null"/> for a null value.</summary>
+    public async Task<IReadOnlyList<string?>> TextsAsync(string sql)
+    {
+        await using Database database = Database.Create(Provider, ConnectionString);
+        await using DbConnection connection = await database.OpenAsync(TestContext.Current.CancellationToken);
+        await using DbCommand command = Database.Command(connection, null, sql);
+        await using DbDataReader reader = await command.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        var texts = new List<string?>();
+        while (await reader.ReadAsync(TestContext.Current.CancellationToken))
+        {
+            texts.Add(reader.IsDBNull(0) ? null : reader.GetString(0));
+        }
+
+        return texts;
+    }
+
     public async ValueTask DisposeAsync()
     {
         foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned))
