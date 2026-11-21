@@ -69,7 +69,9 @@ internal sealed record RawAnswer
         };
 
     /// <summary>An answer without a <c>Content-Length</c>, whose body of <paramref name="length"/> bytes ends when the server
-    /// closes the connection.</summary>
+    /// closes the connection. A test that needs the client to see that end does not use it on a Unix domain socket on
+    /// Windows, where the reader now and then is not told of the close (Issue #438, measured in
+    /// <c>AdminAnswerLimitTests</c>).</summary>
     public static RawAnswer UntilClose(string start, long length, int status = 200) =>
         new()
         {
