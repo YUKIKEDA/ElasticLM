@@ -13,6 +13,7 @@
     <!-- design §12.6.2: the activation tests run against a real elm-service on loopback, started by the service tests' helper. -->
     <ProjectReference Include="..\..\src\ElasticLM.Service\ElasticLM.Service.csproj" />
     <Compile Include="..\ElasticLM.Service.Tests\TestService.cs" Link="TestService.cs" />
+    <Compile Include="..\ElasticLM.Service.Tests\TestFolders.cs" Link="TestFolders.cs" />
     <!-- design §20.7, V1c2c: the public types and members are compared with the .NET API reference page. -->
     <Compile Include="..\ElasticLM.Licensing.Tests\ReferencePages.cs" Link="ReferencePages.cs" />
     <!-- design §20.7, V1c6: the XML documentation file of ElasticLM.Client is searched for internal identifiers. -->

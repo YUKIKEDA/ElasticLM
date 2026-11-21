@@ -70,7 +70,20 @@ $root = Resolve-Path (Join-Path $PSScriptRoot '..' '..')
 # design §20.7 (the V1d2 Grill): the work folder is elm-<8 hex digits> and elm-server's data folder in it has a name of two
 # characters, so that the path of the server's administration socket (admin.sock in the data folder, design §13.7) stays
 # within the system's limit: 103 bytes on macOS, 107 on Windows and Linux.
-$work = Join-Path ([IO.Path]::GetTempPath()) ('elm-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(4)).ToLowerInvariant())
+# design §10.2 (V1d24): a machine-scope folder is refused when a folder above it lets other users replace what is in it.
+# On Linux and macOS /tmp does (every user can write it), so the work folder goes under .elm-test in the home folder, of
+# mode 0755. On Windows a temporary folder can let other accounts modify it, so it goes under elm-test in the local
+# application data.
+if ($IsWindows) {
+    $tempRoot = Join-Path $env:LOCALAPPDATA 'elm-test'
+    New-Item -ItemType Directory -Force $tempRoot | Out-Null
+}
+else {
+    $tempRoot = Join-Path $HOME '.elm-test'
+    New-Item -ItemType Directory -Force $tempRoot | Out-Null
+    [IO.File]::SetUnixFileMode($tempRoot, [IO.UnixFileMode]'UserRead, UserWrite, UserExecute, GroupRead, GroupExecute, OtherRead, OtherExecute')
+}
+$work = Join-Path ($tempRoot) ('elm-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(4)).ToLowerInvariant())
 $serverData = Join-Path $work 'sd'
 $socketPath = Join-Path $serverData 'admin.sock'
 $socketBytes = [Text.Encoding]::UTF8.GetByteCount($socketPath)

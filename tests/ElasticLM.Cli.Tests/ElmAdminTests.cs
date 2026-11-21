@@ -521,6 +521,47 @@ public sealed class ElmAdminTests
         Assert.Equal("https://two.example/", AdminLoginFile.Read(path)!.Url);
     }
 
+    /// <summary>
+    /// When the new login file cannot replace the old one, the writer deletes it: it holds the tokens (design §12.6.2, §16,
+    /// V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file in it at the login file's path, so no file can replace it; a fake clock given to the writer.
+    ///
+    /// Steps:
+    /// - Write a login on another thread; move the clock in steps of 50 milliseconds until the write ends (on Windows the
+    ///   refused move is tried again for 2 seconds of the clock).
+    ///
+    /// Expected:
+    /// - CliException "The login file '…' cannot be written: …"; the folder that holds the login path has no .tmp file; the
+    ///   folder at the login path is still there with its file.
+    /// </remarks>
+    [Fact]
+    public async Task LoginFile_ReplacementFails_LeavesNoNewFile()
+    {
+        await using var test = new TestService();
+        string path = test.FilePath(Path.Combine("home", "login"));
+        Directory.CreateDirectory(path);
+        File.WriteAllText(Path.Combine(path, "inside.txt"), "inside");
+        Task write = Task.Run(
+            () => AdminLoginFile.Write(path, new AdminLogin("https://one.example/", "https://idp.example/", "elm", "access-1", null, 1), test.Time),
+            TestContext.Current.CancellationToken
+        );
+        for (int i = 0; i < 1_000 && !write.IsCompleted; i++)
+        {
+            test.Time.Advance(TimeSpan.FromMilliseconds(50));
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        }
+
+        CliException error = await Assert.ThrowsAsync<CliException>(() =>
+            write.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken)
+        );
+        Assert.StartsWith($"The login file '{path}' cannot be written: ", error.Message, StringComparison.Ordinal);
+        Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
+        Assert.Equal("inside", File.ReadAllText(Path.Combine(path, "inside.txt")));
+    }
+
     private string SetLoginFile(TestService test)
     {
         string path = test.FilePath(Path.Combine("home", "login"));

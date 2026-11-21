@@ -15,6 +15,73 @@ internal static class FileReplacement
     private static readonly TimeSpan Interval = TimeSpan.FromMilliseconds(100);
     private static readonly TimeSpan Limit = TimeSpan.FromSeconds(2);
 
+    /// <summary>
+    /// Writes a file through a new temporary file beside it, then puts that file in its place with
+    /// <see cref="Move(string, string, TimeProvider)"/>. When writing or replacing fails, the temporary file is deleted.
+    /// </summary>
+    /// <param name="temporary">The temporary file, in the same folder as <paramref name="path"/>; see
+    /// <see cref="CreateNew"/>.</param>
+    /// <param name="path">The file to replace; it need not exist.</param>
+    /// <param name="content">What the file holds.</param>
+    /// <param name="time">The clock that counts the wait on Windows: a try every 100 milliseconds, for at most 2 seconds.</param>
+    /// <exception cref="IOException">The file cannot be written or moved, also when something was put at
+    /// <paramref name="temporary"/> after it was deleted.</exception>
+    /// <exception cref="UnauthorizedAccessException">Access is denied, on Windows also after the last try.</exception>
+    public static void Write(string temporary, string path, ReadOnlySpan<byte> content, TimeProvider time)
+    {
+        CreateNew(temporary, content);
+        try
+        {
+            Move(temporary, path, time);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            DeleteQuietly(temporary);
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Creates a new file that only this user can read on Linux and macOS (mode 0600), and that takes the folder's access
+    /// rules on Windows. Whatever is at the path first (a file left by a write that failed, a link, a file another user put
+    /// there) is deleted, never opened, so the new content goes to no other file and keeps no other file's access rules.
+    /// When writing fails after the file was created, the file is deleted.
+    /// </summary>
+    /// <param name="path">The file.</param>
+    /// <param name="content">What the file holds.</param>
+    /// <exception cref="IOException">The file cannot be created or written, also when something was put at the path after it
+    /// was deleted.</exception>
+    /// <exception cref="UnauthorizedAccessException">Access is denied.</exception>
+    public static void CreateNew(string path, ReadOnlySpan<byte> content)
+    {
+        // design §12.6.2 (V1d24): File.WriteAllBytes and FileMode.Create open what is there, a symbolic link included, and on
+        // Windows keep the access rules of a file another user created; CreateNew refuses anything at the path (O_EXCL).
+        File.Delete(path);
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        bool created = false;
+        try
+        {
+            using var stream = new FileStream(path, options);
+            created = true;
+            stream.Write(content);
+        }
+        catch (Exception e) when (created && e is IOException or UnauthorizedAccessException)
+        {
+            DeleteQuietly(path);
+            throw;
+        }
+    }
+
     /// <summary>Moves the new file over the old one, waiting on the calling thread between the tries.</summary>
     /// <param name="temporary">The new file, in the same folder as <paramref name="path"/>.</param>
     /// <param name="path">The file to replace; it need not exist.</param>
@@ -63,6 +130,21 @@ internal static class FileReplacement
             {
                 await Task.Delay(Interval, time, cancellationToken).ConfigureAwait(false);
             }
+        }
+    }
+
+    /// <summary>Deletes a file, if it can. A file it cannot delete stays; when its name is fixed, the next write of the same
+    /// file deletes it before it creates its own.</summary>
+    /// <param name="path">The file.</param>
+    public static void DeleteQuietly(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // It stays; a fixed name is deleted by the next write, and what else stays is V1d24a's (design §12.6.2).
         }
     }
 }

@@ -136,7 +136,6 @@ public sealed class ActivationClient : IAsyncDisposable
     private readonly ActivationClientOptions _options;
     private readonly Uri? _service;
     private readonly InstallationKeyStore _keys;
-    private readonly ActivationStore _files;
     private readonly IReadOnlyList<string> _fingerprints;
     private readonly ClientInfoBody? _clientInfo;
     private readonly LicenseVerifier _received;
@@ -145,6 +144,9 @@ public sealed class ActivationClient : IAsyncDisposable
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Lock _stateLock = new();
     private readonly CancellationTokenSource _stopping = new();
+
+    // design §10.2 (V1d24): made again in the folder the key's check resolved, once the key is read (UseKey).
+    private ActivationStore _files;
     private InstallationKey? _key;
     private ECDsa? _guardKey;
     private IClockGuard? _guard;
@@ -207,13 +209,14 @@ public sealed class ActivationClient : IAsyncDisposable
     // design §10.2.
 
     /// <summary>
-    /// Creates a client: reads the installation key when there is one (a new one is made by the first
-    /// activation or trial), computes the machine fingerprints, reads the kept activation, and schedules its refresh. It
-    /// does not contact the service.
+    /// Creates a client: in the machine scope checks an existing folder first, then reads the installation key when there is
+    /// one (a new one is made by the first activation or trial), computes the machine fingerprints, reads the kept
+    /// activation, and schedules its refresh. It does not contact the service.
     /// </summary>
     /// <param name="options">The settings.</param>
     /// <param name="client">The client, or <see langword="null"/> on failure.</param>
-    /// <param name="error">Why it failed: <c>ELM_INSTALLATION_KEY_UNREADABLE</c>.</param>
+    /// <param name="error">Why it failed: <c>ELM_INSTALLATION_KEY_UNREADABLE</c>, also when the machine-scope folder is not
+    /// safe though it holds no key yet.</param>
     /// <returns><see langword="true"/> when the client was created.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="options"/>, its trust store, or its time provider is
     /// <see langword="null"/>.</exception>
@@ -241,7 +244,10 @@ public sealed class ActivationClient : IAsyncDisposable
         error = null;
         var keys = new InstallationKeyStore(options.ProductId, options.KeyScope, options.DataDirectory);
         InstallationKey? key = null;
-        if (keys.HasKey && !keys.TryLoad(out key, out error))
+
+        // design §10.2 (V1d24): the folder is checked, and its links resolved, before any file in it is read, also when it
+        // holds no key yet; the activation's files are kept where the links led then.
+        if (!keys.TryCheck(out error) || (keys.HasKey && !keys.TryLoad(out key, out error)))
         {
             return false;
         }
@@ -664,6 +670,7 @@ public sealed class ActivationClient : IAsyncDisposable
     private void UseKey(InstallationKey key)
     {
         _key = key;
+        _files = new ActivationStore(_keys.Directory, _time);
 
         // design §11.4 step 3: the guard's state is signed with the installation key (a copy the guard keeps).
         if (_options.ClockGuard is null)

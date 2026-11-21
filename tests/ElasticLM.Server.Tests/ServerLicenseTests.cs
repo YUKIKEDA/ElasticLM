@@ -382,6 +382,219 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A server whose data folder is reached through two links in a row goes on in the folder where they ended at the start:
+    /// its socket is there, and when an activation made while it runs makes its client again, the client keeps its files
+    /// there too, though the second link now leads elsewhere (design §10.2, V1d24, review K1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; end and other, two data folders that pass the check; in a folder of the test,
+    ///   two/second, a link to end, and one/first, a link to two/second. Links are symbolic links on Linux and macOS and
+    ///   junctions on Windows, where the first junction gets an access list of its own that passes. A server with
+    ///   dataDirectory one/first, service.url, and a license issued by hand at end/server.elmlic.
+    ///
+    /// Steps:
+    /// - Start the server; point two/second at other; activate with elm server on end while the server runs.
+    ///
+    /// Expected:
+    /// - The server's data folder is end and its socket end/admin.sock; after the activation autoRefresh is true, and other
+    ///   holds neither a key nor an activation.
+    /// </remarks>
+    [Fact]
+    public async Task DataFolderThroughTwoLinks_LinkChangedWhileRunning_KeepsTheFilesWhereTheLinksEnded()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string end = _deployment.NewFolder();
+        string other = _deployment.NewFolder();
+        string two = _deployment.NextFolderPath();
+        string one = _deployment.NextFolderPath();
+        Directory.CreateDirectory(two);
+        Directory.CreateDirectory(one);
+        string second = Path.Combine(two, "2");
+        string first = Path.Combine(one, "1");
+        MakeLink(second, end);
+        MakeLink(first, second);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+                Run("icacls", first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            }
+
+            string license = Path.Combine(end, "server.elmlic");
+            ServerSettings settings = Settings(test, first) with { ServiceUrl = service.Url, LicensePath = license };
+            File.WriteAllBytes(license, HandLicense(test, Deployment.ServerKeyId(end)));
+            ElmServer server = await StartAsync(test, settings);
+            Assert.Equal(end, server.DataDirectory);
+            Assert.Equal(Path.Combine(end, "admin.sock"), server.AdminSocketPath);
+
+            Directory.Delete(second);
+            MakeLink(second, other);
+            (int code, _, string error) = Run(
+                test,
+                ["server", "activate", key, .. Common(end), "--service", service.Url.ToString(), "--license", license]
+            );
+            Assert.True(code == 0, error);
+            Assert.True((await StatusAsync(server)).GetProperty("autoRefresh").GetBoolean());
+            Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            Assert.False(File.Exists(Path.Combine(other, "activation.json")));
+        }
+        finally
+        {
+            foreach (IAsyncDisposable owned in Enumerable.Reverse(_owned))
+            {
+                await owned.DisposeAsync();
+            }
+
+            _owned.Clear();
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
+    /// The server license commands check the data folder once and then take every file in the folder where its links led:
+    /// a change of the second of two links while elm server deactivate runs does not make it read the kept license or the key
+    /// elsewhere (design §10.2, V1d24, the owner's decision on the final review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; end and other, two data folders that pass the check, other without a key; in a
+    ///   folder of the test, two/2, a link to end, and one/1, a link to two/2 (symbolic links on Linux and macOS, junctions
+    ///   on Windows, where one/1 gets an access list of its own that passes). A server on end made its key, was activated by
+    ///   elm server activate with --data one/1 and --license end/server.elmlic, started and stopped (its administrator token
+    ///   stays); a file at end/admin.sock. The commands' connection to the socket is replaced by one that points two/2 at
+    ///   other and then refuses the connection.
+    ///
+    /// Steps:
+    /// - elm server deactivate with --data one/1 and the same --license.
+    ///
+    /// Expected:
+    /// - The activation exits 0. The deactivation connects once, exits 0 printing "deactivated", and removes the license
+    ///   file; other holds neither a key nor an activation.
+    /// </remarks>
+    [Fact]
+    public async Task Deactivate_SecondLinkChangedDuringTheCommand_UsesTheFolderItChecked()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string end = _deployment.NewFolder();
+        string other = _deployment.NewFolder();
+        string two = _deployment.NextFolderPath();
+        string one = _deployment.NextFolderPath();
+        Directory.CreateDirectory(two);
+        Directory.CreateDirectory(one);
+        string second = Path.Combine(two, "2");
+        string first = Path.Combine(one, "1");
+        MakeLink(second, end);
+        MakeLink(first, second);
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                string me = "*" + System.Security.Principal.WindowsIdentity.GetCurrent().User!.Value;
+                Run("icacls", first, "/inheritance:r", "/grant:r", me + ":(F)", "*S-1-5-18:(F)", "*S-1-5-32-544:(F)", "/L");
+            }
+
+            string license = Path.Combine(end, "server.elmlic");
+            ServerSettings settings = Settings(test, end) with { ServiceUrl = service.Url };
+            await Assert.ThrowsAsync<ServerStartException>(() => StartAsync(test, settings));
+            string[] target = [.. Common(first), "--service", service.Url.ToString(), "--license", license];
+            (int code, _, string error) = Run(test, ["server", "activate", key, .. target]);
+            Assert.True(code == 0, error);
+            ElmServer server = await StartAsync(test, settings);
+            _owned.Remove(server);
+            await server.DisposeAsync();
+            File.WriteAllBytes(Path.Combine(end, "admin.sock"), []);
+
+            Assert.Null(ProtectedFiles.CheckDirectory(end, KeyScope.Machine, out string resolvedEnd));
+            int connections = 0;
+            ValueTask<Stream> Swap(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
+            {
+                connections++;
+                Assert.Equal(Path.Combine(resolvedEnd, "admin.sock"), endPoint.ToString());
+                Directory.Delete(second);
+                MakeLink(second, other);
+                throw new SocketException((int)SocketError.ConnectionRefused);
+            }
+
+            (code, string output, error) = Run(test, ["server", "deactivate", .. target], Swap);
+            Assert.True(code == 0, error);
+            Assert.Equal((1, "deactivated"), (connections, output.Trim()));
+            Assert.False(File.Exists(license));
+            Assert.False(File.Exists(Path.Combine(other, "installation.key")));
+            Assert.False(File.Exists(Path.Combine(other, "activation.json")));
+        }
+        finally
+        {
+            Directory.Delete(first);
+            Directory.Delete(second);
+        }
+    }
+
+    /// <summary>
+    /// A server license command on a data folder that others may change stops before it reads anything there: it does not
+    /// connect to the socket, though a stopped server's administrator token and a socket file are there (design §10.2,
+    /// V1d24, the owner's decision on the final review).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; a data folder where a server with a license issued by hand started and stopped,
+    ///   with a file at admin.sock, then opened to others (on Windows it inherits from its parent again; on Linux and macOS
+    ///   mode 0755). The commands' connection to the socket is counted and refused.
+    ///
+    /// Steps:
+    /// - elm server deactivate on that folder.
+    ///
+    /// Expected:
+    /// - Exit code 1; standard error starts "error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '"; no connection.
+    /// </remarks>
+    [Fact]
+    public async Task Deactivate_DataFolderOpenToOthers_StopsBeforeConnecting()
+    {
+        (TestService test, ElmService service, _) = await ServiceAsync("\"tokenLifetime\":7200,\"refreshWindow\":3600");
+        string folder = _deployment.NewFolder();
+        string license = Path.Combine(folder, "server.elmlic");
+        File.WriteAllBytes(license, HandLicense(test, Deployment.ServerKeyId(folder)));
+        ElmServer server = await StartAsync(test, Settings(test, folder));
+        _owned.Remove(server);
+        await server.DisposeAsync();
+        File.WriteAllBytes(Path.Combine(folder, "admin.sock"), []);
+        OpenToOthers(folder);
+        int connections = 0;
+        ValueTask<Stream> Refuse(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
+        {
+            connections++;
+            throw new SocketException((int)SocketError.ConnectionRefused);
+        }
+
+        (int code, _, string error) = Run(
+            test,
+            ["server", "deactivate", .. Common(folder), "--service", service.Url.ToString(), "--license", license],
+            Refuse
+        );
+        Assert.Equal(1, code);
+        Assert.StartsWith("error: ELM_INSTALLATION_KEY_UNREADABLE: The folder '", error, StringComparison.Ordinal);
+        Assert.Equal(0, connections);
+    }
+
+    // Opens a folder to other users: on Windows it inherits again from its parent; on Linux and macOS it gets mode 0755.
+    private static void OpenToOthers(string folder)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            var info = new DirectoryInfo(folder);
+            System.Security.AccessControl.DirectorySecurity security = info.GetAccessControl();
+            security.SetAccessRuleProtection(isProtected: false, preserveInheritance: true);
+            info.SetAccessControl(security);
+        }
+        else
+        {
+            File.SetUnixFileMode(folder, (UnixFileMode)0b111_101_101);
+        }
+    }
+
+    /// <summary>
     /// When the running server refuses the file that elm server activate wrote, the command prints one line with the code and
     /// the server's reason, and the server keeps its license.
     /// </summary>
@@ -1185,6 +1398,30 @@ public sealed class ServerLicenseTests : IAsyncDisposable
         ElmServer server = await ElmServer.StartAsync(settings, host);
         _owned.Add(server);
         return server;
+    }
+
+    // A symbolic link on Linux and macOS; a junction on Windows, which needs no right of its own.
+    private static void MakeLink(string link, string target)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            Run("cmd.exe", "/c", "mklink", "/J", link, target);
+        }
+        else
+        {
+            File.CreateSymbolicLink(link, target);
+        }
+    }
+
+    // Runs a program and fails the test when it does not succeed.
+    private static void Run(string program, params string[] arguments)
+    {
+        using var process = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo(program, arguments) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+        process.WaitForExit();
+        Assert.True(process.ExitCode == 0, $"{program} {string.Join(' ', arguments.Take(3))} exited with {process.ExitCode}: {output.Trim()}");
     }
 
     private static (int Code, string Out, string Error) Run(

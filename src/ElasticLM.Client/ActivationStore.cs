@@ -246,11 +246,8 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
             w.WriteEndObject();
         }
 
-        string temporary = FilePath + ".tmp";
-        File.WriteAllBytes(temporary, buffer.ToArray());
-
         // design §12.6.2 (V1d2a): readers do not take the lock, and on Windows one of them refuses the move while it reads.
-        FileReplacement.Move(temporary, FilePath, time);
+        FileReplacement.Write(FilePath + ".tmp", FilePath, buffer.GetBuffer().AsSpan(0, (int)buffer.Length), time);
     }
 
     /// <summary>Removes the activation file.</summary>

@@ -16,13 +16,15 @@ internal sealed partial class ElmServer
     // Whether the server refreshes its license on its own: a service URL and a kept activation (the status, design §13.7).
     private bool AutoRefresh => _activation?.ActivationId is not null;
 
-    // design §13.8: with service.url the license path must be writable, or every refresh would fail; known at the start.
+    // design §13.8: with service.url the license path must be writable, or every refresh would fail; known at the start. The
+    // probe is the temporary file a refresh writes, made the same way (design §12.6.2, V1d24), so a link there is deleted,
+    // not followed.
     private static void EnsureWritable(string licensePath)
     {
         string probe = Path.GetFullPath(licensePath) + ".tmp";
         try
         {
-            File.WriteAllBytes(probe, []);
+            FileReplacement.CreateNew(probe, []);
             File.Delete(probe);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -54,13 +56,15 @@ internal sealed partial class ElmServer
                 return;
             }
 
+            // design §10.2 (V1d24): the data folder is the one the start checked, where links led then; its name in the settings
+            // would follow them again.
             var options = new ActivationClientOptions
             {
                 ProductId = _settings.Product,
                 ServiceUrl = service,
                 Trust = _trust,
                 KeyScope = KeyScope.Machine,
-                DataDirectory = _settings.DataDirectory,
+                DataDirectory = _store.Directory,
                 TimeProvider = Time,
                 ClockGuard = _guard,
                 RequiredKind = LicenseKind.Server,

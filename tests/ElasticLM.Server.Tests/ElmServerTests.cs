@@ -134,6 +134,48 @@ public sealed class ElmServerTests : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// With service.url, the start's check that the license path can be written deletes a symbolic link it finds at its
+    /// temporary path and leaves the file the link points to alone (design §12.6.2, §13.7, V1d24).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder with a server license; a file victim.txt ("victim") in another folder, and a symbolic link to it at
+    ///   server.elmlic.tmp beside the license. Where the test cannot make a link (Windows without the right to), it is
+    ///   skipped and says so; GitHub's runners can.
+    ///
+    /// Steps:
+    /// - Start the server with service.url (an address that no one answers; the start does not call it without a kept
+    ///   activation).
+    ///
+    /// Expected:
+    /// - The server starts; victim.txt still holds "victim"; nothing is left at server.elmlic.tmp.
+    /// </remarks>
+    [Fact]
+    public async Task Start_LinkAtTheLicenseProbe_LeavesTheLinkTargetAlone()
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        string victim = _deployment.FilePath("victim.txt");
+        File.WriteAllText(victim, "victim");
+        string probe = Path.Combine(data, "server.elmlic.tmp");
+        try
+        {
+            File.CreateSymbolicLink(probe, victim);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run: " + e.Message);
+            Assert.Skip("This user cannot make a symbolic link: " + e.Message);
+        }
+
+        await _deployment.StartServerAsync(data, s => s with { ServiceUrl = new Uri("https://127.0.0.1:9/") });
+
+        Assert.Equal("victim", File.ReadAllText(victim));
+        Assert.Null(new FileInfo(probe).LinkTarget);
+        Assert.False(File.Exists(probe));
+    }
+
     private async Task<string> RefusedAsync(string data, Func<ServerSettings, ServerSettings> change) =>
         (await Assert.ThrowsAsync<ServerStartException>(() => _deployment.StartServerAsync(data, change))).Message;
 }

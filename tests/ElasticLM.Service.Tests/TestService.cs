@@ -35,7 +35,7 @@ internal sealed class TestService : IAsyncDisposable
     public TestService(DatabaseProvider provider = DatabaseProvider.Sqlite)
     {
         Provider = provider;
-        Directory = Path.Combine(Path.GetTempPath(), "elm-service-tests-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)));
+        Directory = Path.Combine(TestFolders.Root, "elm-service-tests-" + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)));
         System.IO.Directory.CreateDirectory(Directory);
         File.WriteAllText(FilePath("root.pub.pem"), KeyFiles.ExportPublic(_root));
         SigningKey = KeyFiles.CreateKey();
