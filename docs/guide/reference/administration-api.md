@@ -174,7 +174,7 @@ An error is a problem response (RFC 9457) with the type `application/problem+jso
 | 429 | `ELM_RATE_LIMITED` | A rate limit was reached. The answer has `Retry-After: 1`. |
 | 500 | `ELM_INTERNAL_ERROR` | The database failed. The reason is in the operational log ([Logs](logs.md#operational-log)). |
 
-A route path that does not exist gets `404` without a body, and a method that a path does not take gets `405` without a body. An `{id}` in a path that is not in the form of an ID gets the same answer as an unknown ID.
+A route path that does not exist gets `404` without a body, and a method that a path does not take gets `405` without a body. An `{id}` in a path that is not in the form of an ID gets the same answer as an unknown ID, and the audit row of the call has `target` `null`; so does a call to `GET /v1/admin/usage-log/files/{name}` that names no file of the node. A path with an encoded NUL character (`%00`) gets `400` without a body from the web server, before the service reads it, and leaves no audit row.
 
 A request whose body cannot be read, because of its form (for example, a bad chunk of `Transfer-Encoding: chunked`) or because it comes too slowly, gets no answer: the service closes the connection. The call is still recorded in the audit log, with `ELM_MALFORMED` or `ELM_NETWORK_ERROR` ([Logs](logs.md#row-fields)).
 
