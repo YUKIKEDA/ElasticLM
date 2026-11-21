@@ -13,6 +13,11 @@ namespace ElasticLM.Issuing;
 //   on macOS fcntl(F_FULLFSYNC) and, when that fails, fsync; elsewhere fsync; each again after EINTR.
 //   FileStreamHelpers.Unix.cs (FlushToDisk) of the same branch ignores EROFS, EINVAL, and ENOTSUP from it; here EINVAL and
 //   ENOTSUP pass (a file system that takes no flush of a folder), and every other error refuses the write.
+// - The C library is named as UnixOwner of ElasticLM.Client names it (V1d24, PR #447): libc.so.6 on Linux, which glibc has
+//   and musl's loader answers with musl itself, and /usr/lib/libSystem.B.dylib on macOS. The bare "libc" would become
+//   libc.so under NativeAOT (NativeLibrary.NativeAot.cs and LibraryNameVariation.Unix.cs of dotnet/runtime release/10.0),
+//   which a glibc system without its development package, such as the chiseled image of elm-service, does not have (the
+//   owner's review S1 of PR #453). A library or call that cannot be found is reported as a failed flush, not thrown.
 // - The constants are read in the headers: O_CLOEXEC 02000000 (Linux, bits/fcntl-linux.h) and 0x01000000 (macOS, xnu
 //   bsd/sys/fcntl.h), F_FULLFSYNC 51 (xnu bsd/sys/fcntl.h), EINTR 4 and EINVAL 22 (both), ENOTSUP 95 (Linux, EOPNOTSUPP in
 //   asm-generic/errno.h) and 45 (macOS, xnu bsd/sys/errno.h).
@@ -31,6 +36,8 @@ internal delegate bool DurableMove(string from, string to, out string? flushProb
 /// </summary>
 internal static partial class DurableRename
 {
+    private const string LinuxLibc = "libc.so.6";
+    private const string MacLibc = "/usr/lib/libSystem.B.dylib";
     private const uint WriteThrough = 0x8;
     private const int ReadOnly = 0;
     private const int FullFsync = 51;
@@ -78,7 +85,27 @@ internal static partial class DurableRename
     /// <returns><see langword="null"/>, or why the folder could not be flushed.</returns>
     internal static string? FlushFolder(string directory)
     {
-        int descriptor = Open(directory, ReadOnly | CloseOnExec);
+        try
+        {
+            return OperatingSystem.IsMacOS()
+                ? Flush(directory, MacOpen, MacFcntl, MacFsync, MacClose)
+                : Flush(directory, LinuxOpen, null, LinuxFsync, LinuxClose);
+        }
+        catch (Exception e) when (e is DllNotFoundException or EntryPointNotFoundException)
+        {
+            return "The C library cannot be called to flush the folder of the log: " + e.Message;
+        }
+    }
+
+    private static string? Flush(
+        string directory,
+        Func<string, int, int> open,
+        Func<int, int, int>? fcntl,
+        Func<int, int> fsync,
+        Func<int, int> close
+    )
+    {
+        int descriptor = open(directory, ReadOnly | CloseOnExec);
         if (descriptor < 0)
         {
             return $"The folder of the log cannot be opened to flush it (errno {Marshal.GetLastPInvokeError()}).";
@@ -88,17 +115,17 @@ internal static partial class DurableRename
         {
             int result = -1;
             int error = 0;
-            bool full = OperatingSystem.IsMacOS();
+            bool full = fcntl is not null;
             while (full)
             {
-                result = Fcntl(descriptor, FullFsync);
+                result = fcntl!(descriptor, FullFsync);
                 error = Marshal.GetLastPInvokeError();
                 full = result < 0 && error == Interrupted;
             }
 
             while (result < 0)
             {
-                result = Fsync(descriptor);
+                result = fsync(descriptor);
                 error = Marshal.GetLastPInvokeError();
                 if (result < 0 && error != Interrupted)
                 {
@@ -112,7 +139,7 @@ internal static partial class DurableRename
         }
         finally
         {
-            _ = Close(descriptor);
+            _ = close(descriptor);
         }
     }
 
@@ -120,15 +147,24 @@ internal static partial class DurableRename
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool MoveFileEx(string from, string to, uint flags);
 
-    [LibraryImport("libc", EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
-    private static partial int Open(string path, int flags);
+    [LibraryImport(LinuxLibc, EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int LinuxOpen(string path, int flags);
 
-    [LibraryImport("libc", EntryPoint = "fcntl", SetLastError = true)]
-    private static partial int Fcntl(int descriptor, int command);
+    [LibraryImport(LinuxLibc, EntryPoint = "fsync", SetLastError = true)]
+    private static partial int LinuxFsync(int descriptor);
 
-    [LibraryImport("libc", EntryPoint = "fsync", SetLastError = true)]
-    private static partial int Fsync(int descriptor);
+    [LibraryImport(LinuxLibc, EntryPoint = "close")]
+    private static partial int LinuxClose(int descriptor);
 
-    [LibraryImport("libc", EntryPoint = "close")]
-    private static partial int Close(int descriptor);
+    [LibraryImport(MacLibc, EntryPoint = "open", StringMarshalling = StringMarshalling.Utf8, SetLastError = true)]
+    private static partial int MacOpen(string path, int flags);
+
+    [LibraryImport(MacLibc, EntryPoint = "fcntl", SetLastError = true)]
+    private static partial int MacFcntl(int descriptor, int command);
+
+    [LibraryImport(MacLibc, EntryPoint = "fsync", SetLastError = true)]
+    private static partial int MacFsync(int descriptor);
+
+    [LibraryImport(MacLibc, EntryPoint = "close")]
+    private static partial int MacClose(int descriptor);
 }
