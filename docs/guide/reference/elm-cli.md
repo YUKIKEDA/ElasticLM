@@ -172,6 +172,7 @@ Issues a license file signed by a certified signing key; the file is verified wi
 | `--overage` | Integer, 0 to 1000 | `0` | No | Server licenses only: the overage percentage. |
 | `--clone` | `deny`, `flag` | `deny` | No | Server licenses only. What `elm-server` does when a copied app installation renews the same lease as the original: `deny` stops the lease for both copies, and `flag` records the clone in the usage log and renews as usual ([Retries and clones](../explanation/floating-licenses.md#retries-and-clones)). |
 | `--borrow-returns` | Integer, 0 to 1000 | `2` | No | Server licenses only: early returns of borrows one installation may make in 30 days. |
+| `--server-borrow-returns` | Integer, 1 to 10000 | `10000` | No | Server licenses only: early returns of borrows the server takes in 30 days, from all installations together. |
 | `--meta` | `key=value` | — | No | Vendor metadata. Repeat for several. |
 | `--out` | File path | — | Yes | The license file to write. |
 | `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to verify the license with before it is written. Repeat for several. |
@@ -180,9 +181,9 @@ Issues a license file signed by a certified signing key; the file is verified wi
 | `--force` | — | Off | No | Overwrite the file if it exists. |
 | `--json` | — | Off | No | Write the result as JSON. |
 
-`--grace-days`, `--refresh-days`, `--lease-minutes`, and `--borrow-days` accept fractions such as `0.5`; the license holds each as whole seconds, rounded down, and `--lease-minutes` must come to at least one second. `--overage` and `--borrow-returns` take whole numbers only.
+`--grace-days`, `--refresh-days`, `--lease-minutes`, and `--borrow-days` accept fractions such as `0.5`; the license holds each as whole seconds, rounded down, and `--lease-minutes` must come to at least one second. `--overage`, `--borrow-returns`, and `--server-borrow-returns` take whole numbers only.
 
-`--lease-minutes`, `--borrow-days`, `--overage`, `--clone`, and `--borrow-returns` with a `--kind` other than `server` stop the command with exit code 2. A `server` license also needs `--bind-key` and `seats=` on every feature; a `standard` or `trial` license takes no `seats=`, and a `trial` license takes only `--grace-days 0`. A license that breaks one of these rules is not written, and the command stops with exit code 2.
+`--lease-minutes`, `--borrow-days`, `--overage`, `--clone`, `--borrow-returns`, and `--server-borrow-returns` with a `--kind` other than `server` stop the command with exit code 2. A `server` license also needs `--bind-key` and `seats=` on every feature; a `standard` or `trial` license takes no `seats=`, and a `trial` license takes only `--grace-days 0`. A license that breaks one of these rules is not written, and the command stops with exit code 2.
 
 #### Feature values
 

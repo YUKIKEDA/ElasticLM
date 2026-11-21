@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -638,6 +639,7 @@ public sealed class LicenseVerifierTests : IDisposable
             license["overage"] = 0;
             license["clone"] = "deny";
             license["brl"] = 2;
+            license["sbrl"] = 10_000;
         }
 
         LicenseRequirement requirement = _issuer.Requirement(version: null) with { Kind = required };
@@ -1052,6 +1054,7 @@ public sealed class LicenseVerifierTests : IDisposable
                 license["borrow"] = 0;
                 license["overage"] = 0;
                 license["clone"] = "deny";
+                license["sbrl"] = 10_000;
                 if (kind != "server-without-brl")
                 {
                     license["brl"] = kind == "brl-negative" ? -1 : 1_001;
@@ -1066,6 +1069,7 @@ public sealed class LicenseVerifierTests : IDisposable
                 license["borrow"] = 0;
                 license["overage"] = 0;
                 license["brl"] = 2;
+                license["sbrl"] = 10_000;
                 if (kind == "unknown-clone")
                 {
                     license["clone"] = "Deny";
@@ -1193,6 +1197,70 @@ public sealed class LicenseVerifierTests : IDisposable
 
         VerifiedLicense verified = Assert.IsType<LicenseVerificationResult.Valid>(result).License;
         Assert.Equal((license["areq"]?.GetValue<string>(), license["act"]?.GetValue<string>()), (verified.AnsweredRequestId, verified.ActivationId));
+    }
+
+    /// <summary>
+    /// A server license carries sbrl, the early returns its server takes in 30 days, from 1 to 10,000; another kind may carry
+    /// it in that range and does not use it (design §8.4.2, §8.6, V1d16). Anything else is malformed, not an exception.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Correctly signed server payloads with every other server claim: sbrl 1, 10,000, missing, null, 0, 10,001, -1, the
+    ///   string "10", 1.5, and an object; a standard payload with sbrl 5, with sbrl 0, and without it.
+    ///
+    /// Steps:
+    /// - Verify each against a requirement of its kind.
+    ///
+    /// Expected:
+    /// - Valid for the server's 1 and 10,000, with ServerBorrowReturnLimit that value, and for the standard's 5 and none, with
+    ///   ServerBorrowReturnLimit 5 and null; ELM_MALFORMED for the others.
+    /// </remarks>
+    [Theory]
+    [InlineData("server", "1", true)]
+    [InlineData("server", "10000", true)]
+    [InlineData("server", null, false)]
+    [InlineData("server", "null", false)]
+    [InlineData("server", "0", false)]
+    [InlineData("server", "10001", false)]
+    [InlineData("server", "-1", false)]
+    [InlineData("server", "\"10\"", false)]
+    [InlineData("server", "1.5", false)]
+    [InlineData("server", "{}", false)]
+    [InlineData("standard", "5", true)]
+    [InlineData("standard", "0", false)]
+    [InlineData("standard", null, true)]
+    public void Verify_ServerBorrowReturnLimit_IsBoundedExactly(string kind, string? sbrl, bool valid)
+    {
+        JsonObject license = _issuer.LicensePayload();
+        license["kind"] = kind;
+        if (kind == "server")
+        {
+            license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["seats"] = 5 });
+            license["lease"] = 600;
+            license["borrow"] = 0;
+            license["overage"] = 0;
+            license["clone"] = "deny";
+            license["brl"] = 2;
+        }
+
+        if (sbrl is not null)
+        {
+            license["sbrl"] = JsonNode.Parse(sbrl);
+        }
+
+        LicenseRequirement requirement = _issuer.Requirement(version: null) with
+        {
+            Kind = kind == "server" ? LicenseKind.Server : LicenseKind.Standard,
+        };
+        LicenseVerificationResult result = _issuer.Verifier().Verify(_issuer.File(license), requirement);
+        if (!valid)
+        {
+            AssertError(ErrorCode.Malformed, result);
+            return;
+        }
+
+        VerifiedLicense verified = Assert.IsType<LicenseVerificationResult.Valid>(result).License;
+        Assert.Equal(sbrl is null ? null : int.Parse(sbrl, CultureInfo.InvariantCulture), verified.ServerBorrowReturnLimit);
     }
 
     /// <summary>

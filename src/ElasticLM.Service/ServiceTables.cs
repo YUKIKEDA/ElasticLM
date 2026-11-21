@@ -127,6 +127,7 @@ internal sealed partial record PolicyRow(
     long? Overage,
     long? BorrowLimit,
     long BorrowReturnLimit,
+    long ServerBorrowReturnLimit,
     string ClientInfoStrategy,
     long TrialDuration,
     long TrialDailyLimit,

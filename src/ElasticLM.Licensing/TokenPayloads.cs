@@ -177,6 +177,9 @@ internal sealed class LicensePayload
     [JsonPropertyName("brl")]
     public int? Brl { get; set; }
 
+    [JsonPropertyName("sbrl")]
+    public int? Sbrl { get; set; }
+
     [JsonPropertyName("meta")]
     public Dictionary<string, string>? Meta { get; set; }
 }

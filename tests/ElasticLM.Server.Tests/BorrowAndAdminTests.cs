@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Security.Cryptography;
 using System.Text;
@@ -9,6 +10,7 @@ using ElasticLM.Leasing;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Time.Testing;
 using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
@@ -139,6 +141,160 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
         Assert.Equal(ErrorCode.ReturnNotAllowed, refused?.Code);
         Assert.Equal(LeaseState.Held, kept.State);
         Assert.Single(Directory.GetFiles(Path.Combine(data, "borrows")));
+    }
+
+    /// <summary>
+    /// At the server's limit of early returns in 30 days (sbrl), an early return from another installation is refused with
+    /// ELM_RETURN_NOT_ALLOWED and keeps its borrow, and the operational log warns once with the limit and the time from which
+    /// one more fits (design §12.7.4, §18.3, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license with 3 seats, brl 1,000, and sbrl 1; a server whose operational log is recorded; three clients, each with
+    ///   its own installation key, each with a borrow of a day.
+    ///
+    /// Steps:
+    /// - The first client returns its borrow early at t; the second and then the third try.
+    ///
+    /// Expected:
+    /// - The first is released; the other two get ELM_RETURN_NOT_ALLOWED, stay held, and 2 seats stay borrowed; one Warning
+    ///   "The server reached its limit of 1 early returns in 30 days; early returns are refused at least until t + 30 days."
+    ///   with the time in the round-trip format.
+    /// </remarks>
+    [Fact]
+    public async Task EarlyReturn_AtTheServerLimit_IsRefusedAndWarnedOnce()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(
+            serverData,
+            s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 3)], BorrowReturnLimit = 1_000, ServerBorrowReturnLimit = 1 }
+        );
+        using var log = new RecordingLoggerProvider();
+        var host = new ServerHostOptions
+        {
+            Time = _deployment.Time,
+            Environment = _ => null,
+            MinimumLogLevel = LogLevel.Information,
+            LoggerProvider = log,
+        };
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        await using ElmServer server = await ElmServer.StartAsync(_deployment.Settings(serverData), host, cancel);
+        _deployment.Time.Advance(Window);
+        LicenseClient[] clients = [.. Enumerable.Range(0, 3).Select(_ => _deployment.Client(server.PublicUrls[0]))];
+        var borrows = new List<Lease>();
+        foreach (LicenseClient client in clients)
+        {
+            borrows.Add(Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: cancel)));
+        }
+
+        DateTimeOffset t = _deployment.Time.GetUtcNow();
+        Assert.Null(await clients[0].ReleaseLeaseAsync(borrows[0], cancel));
+        Assert.Equal(ErrorCode.ReturnNotAllowed, (await clients[1].ReleaseLeaseAsync(borrows[1], cancel))?.Code);
+        Assert.Equal(ErrorCode.ReturnNotAllowed, (await clients[2].ReleaseLeaseAsync(borrows[2], cancel))?.Code);
+        Assert.Equal((LeaseState.Held, LeaseState.Held), (borrows[1].State, borrows[2].State));
+        Assert.Equal(2, Assert.Single(server.Engine.Usage()).Borrowed);
+        string until = (t + TimeSpan.FromDays(30)).ToString("O", CultureInfo.InvariantCulture);
+        Assert.Equal(
+            [$"The server reached its limit of 1 early returns in 30 days; early returns are refused at least until {until}."],
+            log.Entries.Where(e => e.Level == LogLevel.Warning && e.Message.Contains("early returns", StringComparison.Ordinal))
+                .Select(e => e.Message)
+        );
+    }
+
+    /// <summary>
+    /// The 30-second cleanup drops from the record's memory an early return once it is 30 days old, between two new files
+    /// (design §12.7.4, V1d16); before, only a new file dropped it.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server started at 00:00 UTC, whose cleanup runs every 30 seconds from then; its client borrowed and returned early
+    ///   at t, 10 minutes later.
+    ///
+    /// Steps:
+    /// - Advance to t + 30 days - 1 s (the new file of that day was started at 00:00, when the return was 29 days, 23 hours,
+    ///   and 50 minutes old); read the record's returns; advance 1 second, to the cleanup at t + 30 days; read them again.
+    ///
+    /// Expected:
+    /// - One return, then none.
+    /// </remarks>
+    [Fact]
+    public async Task BorrowRecord_ReturnOf30Days_IsDroppedByTheCleanup()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        Lease borrow = Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Null(await client.ReleaseLeaseAsync(borrow, TestContext.Current.CancellationToken));
+        await client.DisposeAsync();
+        DateTimeOffset t = _deployment.Time.GetUtcNow();
+
+        _deployment.Time.Advance(TimeSpan.FromDays(30) - TimeSpan.FromSeconds(1));
+        Assert.Single(server.Record.Returns);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(1));
+        Assert.Empty(server.Record.Returns);
+    }
+
+    /// <summary>
+    /// The record's purge drops a borrow once it has expired and an early return once it is 30 days old, the same rule as a
+    /// new file's (design §13.4, V1d16).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A borrow record signed with the server's key: a borrow whose token expires at t + 1 s, and early returns at
+    ///   t - 30 days + 1 s and t - 1 day; the record loaded on a clock at t.
+    ///
+    /// Steps:
+    /// - Purge at t; at t + 1 s; at t + 2 s.
+    ///
+    /// Expected:
+    /// - One borrow and two returns; one borrow and the later return; no borrow and the later return.
+    /// </remarks>
+    [Fact]
+    public async Task BorrowRecord_Purge_DropsWhatANewFileWouldNotCarry()
+    {
+        string serverData = _deployment.NewFolder();
+        await (await StartOpenServerAsync(serverData)).DisposeAsync();
+        long t = _deployment.Time.GetUtcNow().ToUnixTimeSeconds();
+        string token = Token($"{{\"lse\":\"a\",\"exp\":{t + 1}}}");
+        using (ServerRecord record = ServerRecord.Open(serverData, _deployment.Time))
+        {
+            record.Log.Append(
+                "borrow.started",
+                w =>
+                {
+                    w.WriteString("lease", token);
+                    w.WriteString("lic", "lic-srv");
+                    w.WriteNumber("seats", 2);
+                    w.WriteNumber("borrow", 86_400);
+                }
+            );
+            foreach ((string id, long at) in new[] { ("x", t - (30 * 86_400) + 1), ("y", t - 86_400) })
+            {
+                record.Log.Append(
+                    "borrow.returned",
+                    w =>
+                    {
+                        w.WriteString("id", id);
+                        w.WriteString("key", "k");
+                        w.WriteNumber("at", at);
+                    }
+                );
+            }
+        }
+
+        var clock = new FakeTimeProvider(_deployment.Time.GetUtcNow());
+        using ServerIdentity server = ServerIdentityOf(serverData);
+        using BorrowJournal journal = BorrowJournal.Load(serverData, _deployment.Trust, server, setAsideBroken: false, clock);
+        journal.Purge();
+        Assert.Single(journal.Borrows);
+        Assert.Equal(["x", "y"], journal.Returns.Select(r => r.LeaseId));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        journal.Purge();
+        Assert.Single(journal.Borrows);
+        Assert.Equal(["y"], journal.Returns.Select(r => r.LeaseId));
+        clock.Advance(TimeSpan.FromSeconds(1));
+        journal.Purge();
+        Assert.Empty(journal.Borrows);
+        Assert.Equal(["y"], journal.Returns.Select(r => r.LeaseId));
     }
 
     /// <summary>

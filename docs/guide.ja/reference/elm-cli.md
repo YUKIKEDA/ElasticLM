@@ -172,6 +172,7 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | `--overage` | 整数（0 から 1000） | `0` | いいえ | サーバーライセンスのみ。超過を許すパーセント |
 | `--clone` | `deny`、`flag` | `deny` | いいえ | サーバーライセンスのみ。コピーされたアプリのインストールが、コピー元と同じリースを更新したときに `elm-server` がすること。`deny` なら両方のコピーのリースを止め、`flag` ならクローンを利用ログに記録して通常どおりリースを更新する（[再試行とクローン](../explanation/floating-licenses.md#再試行とクローン)） |
 | `--borrow-returns` | 整数（0 から 1000） | `2` | いいえ | サーバーライセンスのみ。1 つのインストールが 30 日間に借用を早期返却できる回数 |
+| `--server-borrow-returns` | 整数（1 から 10000） | `10000` | いいえ | サーバーライセンスのみ。サーバーが 30 日間に受け付ける借用の早期返却の回数。すべてのインストールを合わせて数える |
 | `--meta` | `key=value` | — | いいえ | ベンダーのメタデータ。複数を指定するときは繰り返す |
 | `--out` | ファイルのパス | — | はい | 書き出すライセンスファイル |
 | `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 書き出す前にライセンスを検証するルート公開鍵のファイル。複数を指定するときは繰り返す |
@@ -180,9 +181,9 @@ elm license issue --signing-key <file> --certificate <file> --product <id> --lic
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
-`--grace-days`、`--refresh-days`、`--lease-minutes`、`--borrow-days` には、`0.5` のような小数も指定できる。ライセンスにはそれぞれを秒単位で、端数を切り捨てて記録する。`--lease-minutes` は 1 秒以上にならなければならない。`--overage` と `--borrow-returns` は整数だけを受け付ける。
+`--grace-days`、`--refresh-days`、`--lease-minutes`、`--borrow-days` には、`0.5` のような小数も指定できる。ライセンスにはそれぞれを秒単位で、端数を切り捨てて記録する。`--lease-minutes` は 1 秒以上にならなければならない。`--overage`、`--borrow-returns`、`--server-borrow-returns` は整数だけを受け付ける。
 
-`--lease-minutes`、`--borrow-days`、`--overage`、`--clone`、`--borrow-returns` を、`server` 以外の `--kind` と一緒に指定すると、コマンドは終了コード 2 で止まる。`server` のライセンスには、`--bind-key` と、すべての機能の `seats=` も必要だ。`standard` と `trial` のライセンスには `seats=` を付けられず、`trial` のライセンスの猶予期間には `--grace-days 0` しか指定できない。これらの規則のどれかに反するライセンスは書き出さず、コマンドは終了コード 2 で止まる。
+`--lease-minutes`、`--borrow-days`、`--overage`、`--clone`、`--borrow-returns`、`--server-borrow-returns` を、`server` 以外の `--kind` と一緒に指定すると、コマンドは終了コード 2 で止まる。`server` のライセンスには、`--bind-key` と、すべての機能の `seats=` も必要だ。`standard` と `trial` のライセンスには `seats=` を付けられず、`trial` のライセンスの猶予期間には `--grace-days 0` しか指定できない。これらの規則のどれかに反するライセンスは書き出さず、コマンドは終了コード 2 で止まる。
 
 #### 機能の値
 

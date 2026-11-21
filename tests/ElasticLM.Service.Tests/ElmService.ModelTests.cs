@@ -259,7 +259,7 @@ public sealed class ElmServiceModelTests
         await TestService.PolicyAsync(admin, b, "\"duration\":31536000,\"overage\":10");
         JsonElement read = await TestService.GetAsync(admin, $"v1/admin/policies/{first}");
         Assert.Equal(
-            "standard nodeLocked 1 null fromIssue null 2592000 1728000 604800 any deny none 600 null null 2 none 1209600 1000",
+            "standard nodeLocked 1 null fromIssue null 2592000 1728000 604800 any deny none 600 null null 2 10000 none 1209600 1000",
             string.Join(' ', Policies.Members.Select(m => read.GetProperty(m.Name).ToString() is { Length: > 0 } s ? s : "null"))
         );
         Assert.Equal(1, (await TestService.GetAsync(admin, $"v1/admin/policies?productId={a}")).GetProperty("items").GetArrayLength());

@@ -383,6 +383,7 @@ internal sealed record PolicyItem(
     [property: JsonPropertyName("overage"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? Overage,
     [property: JsonPropertyName("borrowLimit"), JsonIgnore(Condition = JsonIgnoreCondition.Never)] long? BorrowLimit,
     [property: JsonPropertyName("borrowReturnLimit")] long BorrowReturnLimit,
+    [property: JsonPropertyName("serverBorrowReturnLimit")] long ServerBorrowReturnLimit,
     [property: JsonPropertyName("clientInfoStrategy")] string ClientInfoStrategy,
     [property: JsonPropertyName("trialDuration")] long TrialDuration,
     [property: JsonPropertyName("trialDailyLimit")] long TrialDailyLimit,

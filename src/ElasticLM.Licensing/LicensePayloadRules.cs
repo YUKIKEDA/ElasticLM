@@ -98,6 +98,7 @@ internal static class LicensePayloadRules
             || !Limits.IsDuration(payload.Borrow)
             || payload.Overage is < 0 or > 1000
             || payload.Brl is < 0 or > Limits.MaxBorrowReturns
+            || payload.Sbrl is < 1 or > Limits.MaxServerBorrowReturns
         )
         {
             return false;
@@ -128,6 +129,7 @@ internal static class LicensePayloadRules
                 || payload.Cnf is null
                 || payload.Clone is null
                 || payload.Brl is null
+                || payload.Sbrl is null
             )
         )
         {

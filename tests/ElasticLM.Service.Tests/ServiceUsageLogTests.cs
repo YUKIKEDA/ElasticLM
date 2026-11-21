@@ -272,8 +272,9 @@ public sealed class ServiceUsageLogTests
     /// - Acquire; make the key fail; seal through the administration API; acquire; let the key work; acquire; stop; verify.
     ///
     /// Expected:
-    /// - 201, 204, 201, 201; three files (the first; one whose chain.reset could not be signed while the key still failed;
-    ///   the one after); intact with a warning that names the reset after the failed write.
+    /// - 201, 204, 201, 201; two files: the first, and the one started after the key works again (the one started while it
+    ///   still failed could not sign its chain.reset and was removed as unfinished, design §18.1, V1d16); intact with a
+    ///   warning that names the first file's failed write.
     /// </remarks>
     [Fact]
     public async Task Usage_WriteFails_RequestsGoOn()
@@ -310,12 +311,14 @@ public sealed class ServiceUsageLogTests
         Assert.Equal(HttpStatusCode.Created, (await device.AcquireAsync(key)).Status);
         await service.StopAsync();
 
-        Assert.Equal(3, Files(test, "n1").Count);
+        IReadOnlyList<string> files = Files(test, "n1");
+        Assert.Equal(2, files.Count);
+        Assert.Empty(Directory.GetFiles(test.FilePath("usage"), "*.partial"));
         VerifiedLog report = Verify(test, "n1");
         Assert.True(report.Intact);
         Assert.Contains(
             report.Issues,
-            i => i.Severity == LogIssueSeverity.Warning && i.Message.StartsWith("The chain was reset: a write to", StringComparison.Ordinal)
+            i => i.Severity == LogIssueSeverity.Warning && i.Message == $"The chain was reset: a write to {Path.GetFileName(files[0])} failed"
         );
     }
 

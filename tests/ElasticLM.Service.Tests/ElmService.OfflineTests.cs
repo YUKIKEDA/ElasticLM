@@ -587,7 +587,7 @@ public sealed class ElmServiceOfflineTests
     /// - Post an activation file; verify the file as a server license.
     ///
     /// Expected:
-    /// - 200; kind Server, 5 seats, lease 600 s, borrow 1 h, overage 10, borrow returns 3, clone Flag, areq the request's
+    /// - 200; kind Server, 5 seats, lease 600 s, borrow 1 h, overage 10, borrow returns 3, server returns 7, clone Flag, areq the request's
     ///   nonce.
     /// </remarks>
     [Theory]
@@ -600,7 +600,7 @@ public sealed class ElmServiceOfflineTests
         string policy = await TestService.PolicyAsync(
             admin,
             product,
-            "\"licenseKind\":\"server\",\"leaseDuration\":600,\"borrowLimit\":3600,\"overage\":10,\"borrowReturnLimit\":3,\"cloneStrategy\":\"flag\""
+            "\"licenseKind\":\"server\",\"leaseDuration\":600,\"borrowLimit\":3600,\"overage\":10,\"borrowReturnLimit\":3,\"serverBorrowReturnLimit\":7,\"cloneStrategy\":\"flag\""
         );
         (_, string key) = await LicenseAsync(admin, policy, features: """[{"code":"core","seats":5}]""");
         using var device = TestDevice.Create(test, service);
@@ -611,7 +611,7 @@ public sealed class ElmServiceOfflineTests
         Assert.True(answer.Status == HttpStatusCode.OK, answer.Text);
         VerifiedLicense license = device.Verify(answer.File, prints, LicenseKind.Server);
         Assert.Equal(
-            (LicenseKind.Server, 5, TimeSpan.FromSeconds(600), TimeSpan.FromHours(1), 10, 3, CloneStrategy.Flag, nonce),
+            (LicenseKind.Server, 5, TimeSpan.FromSeconds(600), TimeSpan.FromHours(1), 10, 3, 7, CloneStrategy.Flag, nonce),
             (
                 license.Kind,
                 license.Features.Single().Seats!.Value,
@@ -619,6 +619,7 @@ public sealed class ElmServiceOfflineTests
                 license.BorrowLimit!.Value,
                 license.OveragePercent!.Value,
                 license.BorrowReturnLimit!.Value,
+                license.ServerBorrowReturnLimit!.Value,
                 license.CloneStrategy!.Value,
                 license.AnsweredRequestId
             )

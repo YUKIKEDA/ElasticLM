@@ -458,6 +458,7 @@ public sealed unsafe partial class ExportsTests : IDisposable
         payload["overage"] = 0;
         payload["clone"] = "deny";
         payload["brl"] = 0;
+        payload["sbrl"] = 10_000;
         nint verifier = _api.CreateVerifier(_api.VerifierOptions(Roots));
 
         (int code, nint license) = _api.Verify(verifier, _issuer.File(payload), _api.Requirement(kind: 2, installation: installation));

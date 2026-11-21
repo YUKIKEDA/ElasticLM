@@ -186,7 +186,7 @@ public sealed class ReleaseRequestTests : IDisposable
         Assert.Equal(0, after.SeatsInUse("pro"));
     }
 
-    private sealed class Journal : IBorrowJournal
+    internal sealed class Journal : IBorrowJournal
     {
         public List<BorrowRecord> Borrows { get; } = [];
 

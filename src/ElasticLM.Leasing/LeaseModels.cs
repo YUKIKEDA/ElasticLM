@@ -122,6 +122,12 @@ public sealed class LeaseEngineOptions
 
     /// <summary>Gets a callback for each lease removed because it expired.</summary>
     public Action<LeaseInfo>? Expired { get; init; }
+
+    /// <summary>
+    /// Gets a callback for an early return refused because the server reached its limit of early returns in 30 days, with
+    /// the limit and the time until which early returns stay refused at least. It is called at most once in 30 days.
+    /// </summary>
+    public Action<int, DateTimeOffset>? ServerReturnLimitReached { get; init; }
 }
 
 /// <summary>

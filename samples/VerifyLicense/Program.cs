@@ -259,6 +259,7 @@ internal static class SelfTest
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,
             BorrowReturnLimit = 2,
+            ServerBorrowReturnLimit = 10_000,
         };
         byte[] file = ElasticLM.Issuing.LicenseIssuer.Issue(signing, [certificate], spec, TimeProvider.System).File;
         var licenses = new LicenseVerifier(trust, TimeProvider.System, StatelessClockGuard.Instance);
