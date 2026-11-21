@@ -241,7 +241,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow license)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         LicenseItem item = ToItem(license, Time.GetUtcNow().ToUnixTimeSeconds());
@@ -253,7 +253,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow found)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         return await WithBodyAsync(
@@ -332,7 +332,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow found)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         // design §14.5: only extend has a body; suspend, resume, and revoke read none, so a POST without one works.
@@ -425,7 +425,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow license)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         string target = license.Id.ToString("D");

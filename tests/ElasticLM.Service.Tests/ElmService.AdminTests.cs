@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -1013,5 +1014,162 @@ public sealed class ElmServiceAdminTests
         );
 
         Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// Every administration route that takes an ID or a usage log file name answers an ID of another form as an unknown one,
+    /// and its audit row names only an ID the service read, never the route's text (design §14.5, §18.2, V1d26a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A node "n1" writing its usage log, sealed once so that it has one file; an owner key; each engine.
+    ///
+    /// Steps:
+    /// - Read every route of the host under /v1/admin/ with a {…} in its path; each is a lease route (DELETE
+    ///   /v1/admin/leases/{id}), the usage log file route ({name}), or a UUID route ({id}, and {featureId} too).
+    /// - Send GET /v1/admin/licenses/a%00b, DELETE /v1/admin/leases/AAAAAAAAAAAAAAAAAAAAA%00, and GET
+    ///   /v1/admin/usage-log/files/a%00b.
+    /// - Send each route without a body, with every placeholder set to a value of its form that names nothing (a UUID, a lease ID
+    ///   of 22 characters, a usage file name of the node's form), then to each of: the UUID in capitals; the UUID between an
+    ///   encoded LF and an encoded space; a%0Ab; a%0D%0Ab; 300 a characters; %C3%A9; %FF; 21 characters and an encoded LF; 23
+    ///   characters; the UUID with one more digit; and the node's file name with an encoded LF. The feature route also gets
+    ///   a%0Ab as {id} with the UUID as {featureId}, and the reverse. The fake clock moves 200 ms after each call, inside the
+    ///   per-key limit.
+    /// - After the calls of each route, wait for their audit rows and read their action, target, and detail.
+    ///
+    /// Expected:
+    /// - Each %00 call is 400 without a body, from Kestrel, and writes no row.
+    /// - Each call of a route gets the answer of the value that names nothing: the same status, the same headers but Date, and
+    ///   the same body text.
+    /// - One row for each call, all of one action, which no other route has, and none with a detail. A UUID route's row names
+    ///   the UUID in lowercase for the three values that Guid.TryParseExact reads (the UUID, in capitals, and between white
+    ///   space), and only when every ID of the route has its form; the lease route's row names the lease ID of its form; every
+    ///   other row has no target. Before V1d26a, the rows held the route's text, LF, CR LF, and 300 characters included.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task AdminRoutes_IdOfAnotherForm_IsUnknownAndNoTarget(string provider)
+    {
+        const string Uuid = "0190a000-0000-7000-8000-0000000000aa";
+        const string LeaseId = "AAAAAAAAAAAAAAAAAAAAAA";
+        const string UnknownFile = "usage-n1-20000101T000000000Z.jsonl";
+        await using TestService test = TestService.Open(provider);
+        (ElmService service, HttpClient admin) = await ServiceUsageLogTests.StartLoggedAsync(test, "n1");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        using (HttpResponseMessage sealedNow = await admin.PostAsync("v1/admin/usage-log/seal", null, cancel))
+        {
+            Assert.Equal(HttpStatusCode.NoContent, sealedNow.StatusCode);
+        }
+
+        string file = (await TestService.GetAsync(admin, "v1/admin/usage-log/files"))
+            .GetProperty("items")
+            .EnumerateArray()
+            .Single()
+            .GetProperty("name")
+            .GetString()!;
+        long before = await test.ScalarAsync("SELECT MAX(n) FROM audit_log");
+
+        foreach (string path in new[] { "v1/admin/licenses/a%00b", "v1/admin/leases/" + LeaseId[1..] + "%00", "v1/admin/usage-log/files/a%00b" })
+        {
+            using var request = new HttpRequestMessage(path.Contains("leases", StringComparison.Ordinal) ? HttpMethod.Delete : HttpMethod.Get, path);
+            using HttpResponseMessage refused = await admin.SendAsync(request, cancel);
+            Assert.Equal((HttpStatusCode.BadRequest, string.Empty), (refused.StatusCode, await refused.Content.ReadAsStringAsync(cancel)));
+        }
+
+        string[] routes =
+        [
+            .. EndpointRoutes
+                .Of(service.Services)
+                .Where(r => r.Contains(" /v1/admin/", StringComparison.Ordinal) && r.Contains('{', StringComparison.Ordinal)),
+        ];
+        Assert.Contains("DELETE /v1/admin/leases/{id}", routes);
+        Assert.Contains("GET /v1/admin/usage-log/files/{name}", routes);
+        string[] others =
+        [
+            Uuid.ToUpperInvariant(),
+            "%0A" + Uuid + "%20",
+            "a%0Ab",
+            "a%0D%0Ab",
+            new string('a', 300),
+            "%C3%A9",
+            "%FF",
+            LeaseId[1..] + "%0A",
+            LeaseId + "A",
+            Uuid + "a",
+            file + "%0A",
+        ];
+        static bool Read(string value) => Guid.TryParseExact(Uri.UnescapeDataString(value), "D", out _);
+        var actions = new HashSet<string>(StringComparer.Ordinal);
+        long seen = before;
+        foreach (string route in routes)
+        {
+            string method = route[..route.IndexOf(' ', StringComparison.Ordinal)];
+            string template = route[(method.Length + 2)..];
+            Assert.Matches(@"^[^{}]*(\{(id|featureId|name)\}[^{}]*)+$", template);
+            bool lease = route == "DELETE /v1/admin/leases/{id}";
+            bool usage = template.Contains("{name}", StringComparison.Ordinal);
+            bool feature = template.Contains("{featureId}", StringComparison.Ordinal);
+            string known =
+                lease ? LeaseId
+                : usage ? UnknownFile
+                : Uuid;
+
+            // The first call names nothing; the others are compared with it. The feature route also gets one ID of each form.
+            List<(string Id, string Other)> calls = [(known, known), .. others.Select(v => (v, v))];
+            if (feature)
+            {
+                calls.Add(("a%0Ab", Uuid));
+                calls.Add((Uuid, "a%0Ab"));
+            }
+
+            (HttpStatusCode Status, string Headers, string Body) answer = default;
+            var expected = new List<string?>();
+            foreach ((string id, string other) in calls)
+            {
+                string path = template
+                    .Replace("{id}", id, StringComparison.Ordinal)
+                    .Replace("{featureId}", other, StringComparison.Ordinal)
+                    .Replace("{name}", id, StringComparison.Ordinal);
+                using var request = new HttpRequestMessage(new HttpMethod(method), path);
+                using HttpResponseMessage response = await admin.SendAsync(request, cancel);
+                string headers = string.Join(
+                    '\n',
+                    response
+                        .Headers.Concat(response.Content.Headers)
+                        .Where(h => h.Key != "Date")
+                        .Select(h => h.Key + ": " + string.Join(", ", h.Value))
+                        .Order(StringComparer.Ordinal)
+                );
+                (HttpStatusCode, string, string) got = (response.StatusCode, headers, await response.Content.ReadAsStringAsync(cancel));
+                if (id == known)
+                {
+                    Assert.True(response.StatusCode == HttpStatusCode.NotFound, route + ": " + got.Item3);
+                    answer = got;
+                }
+                else
+                {
+                    Assert.True(answer == got, route + " with " + id + " and " + other + ": " + got.Item2 + "\n" + got.Item3);
+                }
+
+                bool formed = !lease && !usage && Read(id) && (!feature || Read(other));
+                expected.Add(
+                    lease && id == known ? LeaseId
+                    : formed ? Uuid
+                    : null
+                );
+                test.Time.Advance(TimeSpan.FromMilliseconds(200));
+            }
+
+            // design §18.2: a row is written after its answer, so the rows of this route are awaited before the next one.
+            string sql = "SELECT n, action, target, detail FROM audit_log WHERE n > " + seen.ToString(CultureInfo.InvariantCulture);
+            await TestService.WaitForAsync(async () => (await test.TextRowsAsync(sql)).Count >= expected.Count);
+            IReadOnlyList<IReadOnlyList<string?>> rows = await test.TextRowsAsync(sql);
+            Assert.True(rows.Count == expected.Count, route + ": " + rows.Count + " rows");
+            string action = Assert.Single(rows.Select(r => r[1]).Distinct())!;
+            Assert.True(actions.Add(action), route + ": " + action);
+            Assert.All(rows, r => Assert.Null(r[3]));
+            Assert.Equal(expected.Order(StringComparer.Ordinal), rows.Select(r => r[2]).Order(StringComparer.Ordinal));
+            seen = rows.Max(r => long.Parse(r[0]!, CultureInfo.InvariantCulture));
+        }
     }
 }

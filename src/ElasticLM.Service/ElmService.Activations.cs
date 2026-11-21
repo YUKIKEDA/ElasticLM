@@ -34,7 +34,7 @@ internal sealed partial class ElmService
     {
         if (await FindLicenseAsync(context).ConfigureAwait(false) is not LicenseRow license)
         {
-            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.LicenseNotFound, NoLicense, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         if (await ReadPageAsync(context).ConfigureAwait(false) is not (int limit, var after))
@@ -55,7 +55,7 @@ internal sealed partial class ElmService
     {
         if (await FindActivationAsync(context).ConfigureAwait(false) is not ActivationRow activation)
         {
-            return await RefuseAsync(context, ErrorCode.ActivationNotFound, "No activation has this ID.", RouteText(context, "id"))
+            return await RefuseAsync(context, ErrorCode.ActivationNotFound, "No activation has this ID.", RouteTarget(context, "id"))
                 .ConfigureAwait(false);
         }
 
@@ -69,7 +69,7 @@ internal sealed partial class ElmService
         const string None = "No activation has this ID.";
         if (await FindActivationAsync(context).ConfigureAwait(false) is not ActivationRow found)
         {
-            return await RefuseAsync(context, ErrorCode.ActivationNotFound, None, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.ActivationNotFound, None, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         DateTimeOffset now = Time.GetUtcNow();
@@ -147,7 +147,7 @@ internal sealed partial class ElmService
     {
         if (!TryRouteId(context, "id", out Guid id))
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoTrial, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoTrial, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         var entry = new AuditEntry(caller.ActorType, caller.ActorId, AuditActions.TrialDelete, id.ToString("D"), "ELM_OK", Ip(context), null);

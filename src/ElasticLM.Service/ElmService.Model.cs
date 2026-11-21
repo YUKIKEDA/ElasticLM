@@ -97,7 +97,7 @@ internal sealed partial class ElmService
     {
         if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow product)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(product), ServiceJsonContext.Default.ProductItem).ConfigureAwait(false);
@@ -108,7 +108,7 @@ internal sealed partial class ElmService
     {
         if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow found)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         return await WithBodyAsync(
@@ -173,7 +173,7 @@ internal sealed partial class ElmService
     {
         if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow product)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         return await WithBodyAsync(
@@ -216,7 +216,7 @@ internal sealed partial class ElmService
     {
         if (await FindProductAsync(context).ConfigureAwait(false) is not ProductRow product)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoProduct, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         if (await ReadPageAsync(context).ConfigureAwait(false) is not (int limit, var after))
@@ -233,13 +233,13 @@ internal sealed partial class ElmService
 
     private async Task<AdminOutcome> UpdateFeatureAsync(HttpContext context, Caller caller)
     {
-        FeatureRow? found =
-            TryRouteId(context, "id", out Guid productId) && TryRouteId(context, "featureId", out Guid featureId)
-                ? await Database.FindFeatureAsync(productId, featureId, context.RequestAborted).ConfigureAwait(false)
-                : null;
+        Guid featureId = Guid.Empty;
+        bool formed = TryRouteId(context, "id", out Guid productId) && TryRouteId(context, "featureId", out featureId);
+        FeatureRow? found = formed ? await Database.FindFeatureAsync(productId, featureId, context.RequestAborted).ConfigureAwait(false) : null;
         if (found is null)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoFeature, RouteText(context, "featureId")).ConfigureAwait(false);
+            // design §14.5 (V1d26a): the feature is the target only when both route IDs have the form of one.
+            return await RefuseAsync(context, ErrorCode.NotFound, NoFeature, formed ? featureId.ToString("D") : null).ConfigureAwait(false);
         }
 
         return await WithBodyAsync(
@@ -362,7 +362,7 @@ internal sealed partial class ElmService
     {
         if (await FindPolicyAsync(context).ConfigureAwait(false) is not PolicyRow policy)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         await WriteJsonAsync(context, StatusCodes.Status200OK, ToItem(policy), ServiceJsonContext.Default.PolicyItem).ConfigureAwait(false);
@@ -373,7 +373,7 @@ internal sealed partial class ElmService
     {
         if (await FindPolicyAsync(context).ConfigureAwait(false) is not PolicyRow found)
         {
-            return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, RouteText(context, "id")).ConfigureAwait(false);
+            return await RefuseAsync(context, ErrorCode.NotFound, NoPolicy, RouteTarget(context, "id")).ConfigureAwait(false);
         }
 
         return await WithBodyAsync(
@@ -530,6 +530,10 @@ internal sealed partial class ElmService
 
     private static bool TryRouteId(HttpContext context, string name, out Guid id) =>
         Guid.TryParseExact(context.Request.RouteValues[name] as string, "D", out id);
+
+    // design §14.5 (V1d26a): the audit target of a refused call is the ID read from the route, written again, and none when the
+    // route's text does not have the form of an ID; the text as it came never reaches the row.
+    private static string? RouteTarget(HttpContext context, string name) => TryRouteId(context, name, out Guid id) ? id.ToString("D") : null;
 
     private static string? RouteText(HttpContext context, string name) => context.Request.RouteValues[name] as string;
 
