@@ -531,7 +531,7 @@ The checks, in order: the rate limit for the source address; the form of `{jti}`
 
 `elm-server` has seven routes for clients. Every route can also answer `403` with `ELM_FORBIDDEN` for an address its IP rules refuse, and `429` with `ELM_RATE_LIMITED`. Every route with a proof can also answer the codes of the proof check (including `503` with `ELM_SERVER_BUSY`), `400` with `ELM_MALFORMED` for a body that breaks the rules, and `413` with `ELM_PAYLOAD_TOO_LARGE`. Each route below lists its other codes, in the order the server checks them.
 
-`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold. At the first start after the server license was replaced while the server was stopped, the window is the longer of the new and the earlier license's lease time, when the server's borrow record names the earlier license. The window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
+`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold. When leases that an earlier run issued, under this or an earlier server license, can live longer, the window lasts until they have ended, as the server's borrow record gives it. The window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
 
 ### `GET /v1/nonce` on `elm-server`
 

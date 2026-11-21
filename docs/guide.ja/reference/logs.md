@@ -24,7 +24,7 @@ info: elm-server[2]
 | `Microsoft.Hosting.Lifetime` | Web ホストの起動と停止。待ち受けるアドレスとソケットのファイルのそれぞれ（`Now listening on: …`）、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、コンテンツのルートのパス、`Application is shutting down...`。 |
 | `Microsoft.Extensions.Hosting.Internal.Host` | プログラムが待ち受けられないときのエラー `Hosting failed to start` と、その例外。 |
 | `Microsoft.AspNetCore.Routing.EndpointMiddleware` | エンドポイントに届いたリクエストごとに、そのメソッドとルートのパターンを、処理の前とあとに書く。たとえば `Executing endpoint 'HTTP: GET /v1/nonce'` と `Executed endpoint 'HTTP: GET /v1/nonce'` だ。パスの中の値は、`HTTP: DELETE /admin/v1/leases/{id}` の `{id}` のように、プレースホルダーのまま書く。 |
-| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文の届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。`elm-server` では、リースのリクエストの本文の途中で呼び出し側が接続をリセットすると、このエラーが書かれることがある。これは、呼び出し側が接続を切ったことを示すだけだ。 |
+| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文の届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。リクエストの本文の途中で呼び出し側が接続をリセットしたときも書かない。 |
 | `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | 管理画面のサインインを使う `elm-service` だけ。サインイン用の鍵を作る起動で、`Creating key {…} …` と、警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` を書く。[OIDC でサインインする](../how-to/sign-in-with-oidc.md)で説明しているとおり、サービスはこの鍵を保存する前に自分で暗号化する。 |
 
 リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。`Logging` の下の設定は、このカテゴリを指すものでも、このカテゴリに当たる `*` のパターンでも、プロバイダー `Console` のものでも、`Default` でも、これを下げられない。`None` のように `Warning` より上のレベルを求める設定は、このカテゴリにもそのまま効く。
@@ -234,6 +234,8 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 | --- | --- | --- |
 | `borrow.started` | 借用を貸し出す前と、新しいファイルに期限の切れていない借用を書き写すとき | `lease`、`lic`、`seats`、`borrow`、`fp` |
 | `borrow.returned` | 早期返却が反映される前と、新しいファイルに過去 30 日の返却を書き写すとき | `id`、`key`、`fp`、`at` |
+| `leases.until` | 新しいファイルを始めるときに、前のライセンスか前の起動で出したリースがまだ有効でありうるとき。読み直したサーバーライセンスが効く前 | `until` |
+| `server.stopped` | ふつうに止めるときの最後。リクエストを受けなくなったあと | `at` |
 
 | 項目 | 値 |
 | --- | --- |
@@ -244,7 +246,8 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 | `fp` | クライアントが送ったマシンフィンガープリント。最大 8 個の文字列の配列。それ以外の値は、フィンガープリントなしとして読む。 |
 | `id` | 返却した借用のリース ID。 |
 | `key` | その借用をしたクライアントのインストール鍵のサムプリント。 |
-| `at` | 返却した時刻。Unix 秒で表す。 |
+| `at` | 返却した時刻か、止めた時刻。Unix 秒で表す。 |
+| `until` | 前のライセンスか前の起動でこれまでに出したリースが有効でありうる、最後の時刻。Unix 秒で表す。次の起動のあとのリースの再登録の期間は、少なくともこの時刻まで続く。 |
 
 たとえば、早期返却の行は次のようになる（値は架空のもの）。
 
@@ -258,7 +261,7 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 
 1. サーバーは、最新のファイルを `elm log verify` と同じ方法で検証する。ファイルの最後の鍵は、サーバー自身の鍵か、同じサーバーライセンスの鍵（サーバーを別のマシンに移した場合）でなければならない。別のサーバーの記録は、壊れているとみなす。
 2. 記録が壊れていると、サーバーは終了コード 1 で起動を止め、メッセージで問題を示す。`--set-aside-broken-records` を付けると、サーバーはファイルの名前を変えて退避し、その借用なしで起動し、ファイル名を入れた `records.set_aside` を利用ログに書く。
-3. 完全なファイルからは、サーバーが署名したリーストークンを持ち、期限の切れていない借用を、返却済みのものを除いて復元する。`borrow.started` や `borrow.returned` の行のうち、項目が上の表のとおりでないものと、Unicode として正しくない文字列を持つものは、読み飛ばす。
+3. 完全なファイルからは、サーバーが署名したリーストークンを持ち、期限の切れていない借用を、返却済みのものを除いて復元する。また、署名のある `leases.until` のいちばん遅いものと、ファイルの終わりに署名したライセンスのリースの期間 1 回分（ファイルの最後の行が署名のある `server.stopped` ならその時刻から、そうでなければこの起動の時刻から数える）を取る。リースの再登録の期間は、今のライセンスのリースの期間 1 回分より遅ければ、この 2 つの遅いほうまで続く。`borrow.started` や `borrow.returned` の行のうち、項目が上の表のとおりでないものと、Unicode として正しくない文字列を持つものは、読み飛ばす。
 
 退避、削除、書き換えをされたファイルにある借用は、その借用が終わるまで数に入らない。データフォルダーに書き込める管理者は、この方法で借用中のシートを空けられる。痕跡として残るのは、ログの `records.set_aside` と `chain.reset`、または欠けたファイルだ。
 
