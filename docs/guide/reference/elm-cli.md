@@ -22,7 +22,7 @@ A date or time (`--expires`, `--not-before`, `exp=` in `--feature`) is ISO 8601:
 
 A product ID (`--product`) is 1 to 64 lowercase letters, digits, and `-`, such as `example-editor`: the product's `code` in `elm-service` and the setting `product` of `elm-server`. `ElasticLM.Client`, `elm-server`, and `elm-service` accept no other form, and the `elm server` commands use it to find the server's folder. `elm license issue` does not check the form, but a license whose product ID has another form cannot be used with those three.
 
-Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, a missing required option, or a file or folder path option or argument that is empty or only white space is followed by `Run 'elm --help' for usage.` and exit code 2.
+Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, a missing required option, or a file or folder path option or argument that is empty or only white space is followed by `Run 'elm --help' for usage.` and exit code 2. `elm server activate` and `elm server activate-request` are the exception for an unknown word: see [The license key of a server license](#the-license-key-of-a-server-license).
 
 ### `--json`
 
@@ -58,6 +58,7 @@ The commands that verify a signature (`elm license issue`, `elm license verify`,
 | --- | --- | --- |
 | `ELM_KEY_PASSPHRASE` | `elm key`, `elm license issue` | The passphrase of a private key, unless `--passphrase-env` names another variable. |
 | `ELM_TRUST_ROOT_KEYS` | Commands with `--trust` | One or more root public keys in PEM, used when `--trust` is not given. |
+| `ELM_LICENSE_KEY` | `elm server activate`, `elm server activate-request` | The license key of a server license. When it is not set or is empty, the key is asked for. |
 | `ELM_API_KEY` | `elm admin request`, `elm offline process` | An API key of `elm-service`. When set, it is used instead of a saved login. |
 | `ELM_SERVICE_URL` | `elm admin request` | The `elm-service` URL when `--url` is not given. |
 | `ELM_ADMIN_LOGIN` | `elm admin`, `elm offline process` | The file that holds the login of `elm admin login`, instead of the default place. |
@@ -72,7 +73,7 @@ The default login file is `%LOCALAPPDATA%\ElasticLM\elm\login` on Windows, `$XDG
 | --- | --- | --- |
 | `0` | Success | The command did what it was asked. `elm log verify` returns 0 when the log is intact, even with warnings. |
 | `1` | Verification failed | A license file or log did not verify, or a server, `elm-service`, or the identity provider refused the request or answered with an error. |
-| `2` | Invalid input | An argument, option, or value is wrong or missing; a file is missing, unreadable, too large, or exists without `--force`; no passphrase, trust keys, or credentials were found. |
+| `2` | Invalid input | An argument, option, or value is wrong or missing; a file is missing, unreadable, too large, or exists without `--force`; no passphrase, license key, trust keys, or credentials were found. |
 | `3` | Network error | A server, `elm-service`, or the identity provider cannot be reached, the request timed out, or (for `elm server` and `elm offline process`) the answer cannot be read or is larger than `elm` reads. |
 
 When `elm` prints an [error code](error-codes.md), the exit code follows from it: `ELM_NETWORK_ERROR` gives `3`, and every other code, from a check `elm` runs or from the answer of a server or `elm-service`, gives `1`. `ELM_MALFORMED` also gives `3` when its message is one of these three, which say that an answer is larger than `elm` reads: `The service's answer is larger than the limit.` (the server license commands), `The service's answer is larger than 262144 bytes.` (`elm offline process`), and `The server's administration API answered with a body larger than 67108864 bytes.` (`elm server`). `elm` read nothing of that answer, so it cannot tell a refusal from a success. Every other `ELM_MALFORMED` gives `1`, also one whose message says that a file is larger than a limit. Exit code `2` comes from `elm`'s own checks of its input, before anything is verified or sent, and its message names the input instead of a code. The one exception is `elm license issue`: it verifies the license before writing it, and a code from that check gives `2`, because the input made the license.
@@ -255,7 +256,7 @@ Run the [server license commands](#server-license-commands) as the server's user
 
 When the line names the data folder itself, it ends by telling you to remove or restrict the folder. Do not do that here: run the command as the server's user.
 
-On Linux and macOS, use `sudo -u <server user>`. `sudo` does not pass your environment variables to the command by default (its `env_reset` option), so give the trust store with `--trust <file>` rather than `ELM_TRUST_ROOT_KEYS`. It may also look for `elm` only in its own `secure_path` rather than your `PATH` (sudoers(5)), so give the full path of `elm`, as in `sudo -u <server user> <full path of elm> server activate …`. Use files and a working folder that the server's user can read, and write where the command writes. The server's user must also be able to create files in the folder of `--license`: the commands write the license file through a temporary file beside it, so keep the file in the data folder or in another folder that user can write.
+On Linux and macOS, use `sudo -u <server user>`. `sudo` does not pass your environment variables to the command by default (its `env_reset` option), so give the trust store with `--trust <file>` rather than `ELM_TRUST_ROOT_KEYS`, and type the license key when `elm server activate` or `elm server activate-request` asks for it, since `ELM_LICENSE_KEY` does not reach the command either. Do not give it as `sudo -u <server user> ELM_LICENSE_KEY=<key> …` or with `env`: that puts the key on the command line. Where the sudoers policy lets you keep the variable, `sudo --preserve-env=ELM_LICENSE_KEY -u <server user> …` passes it instead (sudo(8), sudoers(5)). It may also look for `elm` only in its own `secure_path` rather than your `PATH` (sudoers(5)), so give the full path of `elm`, as in `sudo -u <server user> <full path of elm> server activate …`. Use files and a working folder that the server's user can read, and write where the command writes. The server's user must also be able to create files in the folder of `--license`: the commands write the license file through a temporary file beside it, so keep the file in the data folder or in another folder that user can write.
 
 On Windows, a server that runs as LocalSystem adds SYSTEM, the account it runs as, to the access list of the data folder it creates, so the list names only the Administrators group and SYSTEM. The check lets the Administrators group through, so an administrator can run the commands on that folder. Nobody can sign in as a virtual service account or as LocalService to run the commands, so a server that runs as one of them cannot use them: run the server as LocalSystem, or as a normal user account and run the commands as that account.
 
@@ -370,17 +371,28 @@ A command that stops at the status question writes nothing. After a written file
 
 In the rows with exit code 3 and in the last row, something may be listening on the socket file, so a server may be running. For `deactivate` and `deactivate-proof`, stop the server and run the command again. For the other commands, run the command again, and restart the server if the line comes again. For `ELM_UNAUTHORIZED`, see the top of [elm server](#elm-server).
 
+### The license key of a server license
+
+`elm server activate` and `elm server activate-request` need the license key of a server license. They never take it on the command line, which stays in the shell's history and which other users of the machine can read in the list of processes: on Linux, `/proc` shows every process's command line to every user by default (proc(5)), and on macOS, `ps -A` lists other users' processes with their arguments (ps(1)).
+
+- The key comes from the environment variable `ELM_LICENSE_KEY`. Its value is used as it is: white space around it is not removed. A value that is not the key is refused with `ELM_LICENSE_NOT_FOUND`: by `elm-service` at once for `elm server activate`, and when the vendor processes the request file for `elm server activate-request`.
+- When the variable is not set or is empty and input is interactive, `elm` writes `License key: ` to standard error and reads the key from the terminal without echoing it. An empty key stops the command with `error: The license key must not be empty.` and exit code 2.
+- When the variable is not set or is empty and input is redirected, the command stops with `error: Set the license key in the environment variable ELM_LICENSE_KEY; input is not interactive.` and exit code 2.
+- The key is read only after the command's own checks have passed: the data folder, `--service` (`elm server activate`), `--out` and the server's status (`elm server activate-request`), and the server's installation key. A command that one of them stops does not ask for it.
+- A word that the command does not know, such as a license key given as an argument or with `--key`, stops the command with `error: An argument is not recognized; elm server <command> takes the license key from ELM_LICENSE_KEY, or asks for it.`, where `<command>` is `activate` or `activate-request`, and exit code 2, before anything is read or sent. The line does not repeat the word, so a key typed there does not reach the error output.
+
+When you type the key yourself, leave the variable unset and type or paste the key when `elm` asks for it: the key then stays in the memory of `elm` only. The environment of a running `elm` can be read by the programs that the operating system lets read its memory, such as those of the same user and root on Linux, and a variable set in a shell goes to every program started from that shell later. The variable is for scripts and CI. In CI, set it from the CI service's secrets, never from a value written in the script. To set it by hand without showing the key or keeping it in the history, type `$env:ELM_LICENSE_KEY = Read-Host -MaskInput` in PowerShell 7.1 or later, which shows an asterisk for each character, or `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY` in Bash or zsh, which shows nothing, and paste the key. Remove it when you are done: `Remove-Item Env:ELM_LICENSE_KEY` in PowerShell, `unset ELM_LICENSE_KEY` in Bash or zsh. Do not write `ELM_LICENSE_KEY=<key> elm …` or `env ELM_LICENSE_KEY=<key> elm …`: that puts the key on a command line again.
+
 ### elm server activate
 
 ```text
-elm server activate <license-key> --product <id> --service <url> --license <file> [options]
+elm server activate --product <id> --service <url> --license <file> [options]
 ```
 
-Activates the server's license online with `elm-service` and writes the license file. It takes the license key as an argument, while `elm server activate-request` takes it with `--key`. It also takes the [options of the server license commands](#server-license-commands).
+Activates the server's license online with `elm-service` and writes the license file. It takes the license key from `ELM_LICENSE_KEY`, or asks for it ([The license key of a server license](#the-license-key-of-a-server-license)). It also takes the [options of the server license commands](#server-license-commands).
 
-| Option or argument | Value | Default | Required | Meaning |
+| Option | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
-| `<license-key>` | License key | — | Yes | Argument: the license key of a server license. |
 | `--service` | `https` URL, or `http` on a loopback address | — | Yes | The `elm-service` URL. |
 | `--license` | File path | — | Yes | The server's license file (its setting `license`). |
 
@@ -413,14 +425,13 @@ Deactivates the server's license online and removes its license file; it stops w
 ### elm server activate-request
 
 ```text
-elm server activate-request --key <license-key> --product <id> --out <file> [options]
+elm server activate-request --product <id> --out <file> [options]
 ```
 
-Writes an offline activation request file (`.elmreq`) for `elm offline process`; it stops with exit code 1 while the running server refreshes its license online. It takes the license key with `--key`, while `elm server activate` takes it as an argument. It also takes the [options of the server license commands](#server-license-commands).
+Writes an offline activation request file (`.elmreq`) for `elm offline process`; it stops with exit code 1 while the running server refreshes its license online. It takes the license key from `ELM_LICENSE_KEY`, or asks for it ([The license key of a server license](#the-license-key-of-a-server-license)). The request file holds the license key. On Linux and macOS `elm` writes it with mode `0600`, readable by its owner only; on Windows it takes the access rules of its folder, as a private key file does ([Passphrases](#passphrases)), so keep it in a folder that others cannot read. With `--force`, the new file replaces the old one instead of being written into it. Do not copy it where others can read it. It also takes the [options of the server license commands](#server-license-commands).
 
 | Option | Value | Default | Required | Meaning |
 | --- | --- | --- | --- | --- |
-| `--key` | License key | — | Yes | The license key of a server license. |
 | `--out` | File path | — | Yes | Where to write the request file. |
 | `--renew` | — | Off | No | Make a new request before the waiting one expires. The earlier request file is then replaced and must be discarded. |
 | `--force` | — | Off | No | Overwrite the file if it exists. |

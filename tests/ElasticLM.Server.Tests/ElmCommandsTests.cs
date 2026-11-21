@@ -292,7 +292,8 @@ public sealed class ElmCommandsTests : IAsyncDisposable
     /// - Run each of the thirteen elm server commands with its options and "--url http://127.0.0.1:7071/".
     ///
     /// Expected:
-    /// - Each exits 2, and standard error names '--url' as an unrecognized argument.
+    /// - Each exits 2, and standard error names '--url' as an unrecognized argument; activate and activate-request, which
+    ///   repeat no word they do not know (design §13.7, V1d19), say instead that an argument is not recognized.
     /// </remarks>
     [Fact]
     public void ServerCommands_UrlOption_IsAnUnknownOption()
@@ -304,7 +305,10 @@ public sealed class ElmCommandsTests : IAsyncDisposable
             (int code, _, string error) = Run([.. command, "--url", "http://127.0.0.1:7071/"]);
 
             Assert.True(code == 2, $"elm server {command[1]}: {code} {error}");
-            Assert.Contains("Unrecognized command or argument '--url'", error, StringComparison.Ordinal);
+            string expected = command[1] is "activate" or "activate-request"
+                ? $"error: An argument is not recognized; elm server {command[1]} takes the license key from ELM_LICENSE_KEY, or asks for it."
+                : "Unrecognized command or argument '--url'";
+            Assert.Contains(expected, error, StringComparison.Ordinal);
         }
     }
 
@@ -507,10 +511,10 @@ public sealed class ElmCommandsTests : IAsyncDisposable
             ["server", "release", "some-lease", .. folder],
             ["server", "reload", .. folder],
             ["server", "seal", .. folder],
-            ["server", "activate", "some-key", .. license, "--service", Service, "--license", made],
+            ["server", "activate", .. license, "--service", Service, "--license", made],
             ["server", "refresh", .. license, "--service", Service, "--license", made],
             ["server", "deactivate", .. license, "--service", Service, "--license", made],
-            ["server", "activate-request", "--key", "some-key", .. license, "--out", made],
+            ["server", "activate-request", .. license, "--out", made],
             ["server", "refresh-request", .. license, "--out", made],
             ["server", "import", made, .. license, "--license", made],
             ["server", "deactivate-proof", .. license, "--out", made],
@@ -528,7 +532,13 @@ public sealed class ElmCommandsTests : IAsyncDisposable
             Out = output,
             Error = error,
             Time = _deployment.Time,
-            GetEnvironmentVariable = name => name == "ELM_TRUST_ROOT_KEYS" ? pem : null,
+            GetEnvironmentVariable = name =>
+                name switch
+                {
+                    "ELM_TRUST_ROOT_KEYS" => pem,
+                    "ELM_LICENSE_KEY" => "some-key",
+                    _ => null,
+                },
         };
         int code = ElmApp.Run(args, host);
         return (code, output.ToString(), error.ToString());

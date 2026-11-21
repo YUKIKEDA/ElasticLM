@@ -26,9 +26,11 @@
                                         stream=stderr       takes the value from the standard error (default: stdout).
                                         pattern="<regex>"   the value is group 1 of the first match, so the pattern needs a
                                                             group; without a pattern, it is the whole stream, trimmed.
-                                        env=ELM_API_KEY     the value goes into ELM_API_KEY of the page's later elm lines
-                                                            only, never into a placeholder, a file, another program, or
-                                                            this script's own environment. No other name is taken.
+                                        env=<variable>      ELM_API_KEY or ELM_LICENSE_KEY: the value goes into that
+                                                            variable of the page's later elm lines only, never into a
+                                                            placeholder, a file, another program, or this script's own
+                                                            environment. No other name is taken. A later capture into
+                                                            the same variable replaces the value.
                                       stream, pattern, and env need capture. A value must be one line of at most 256
                                       characters of A-Za-z0-9._~- and must not be empty.
       steps:background ready=<url>    One line that starts with elm-server, elm-service, or docker run --rm --name <name>
@@ -110,7 +112,7 @@
     names it runs in a copy of those two folders, with the protection of each folder and file kept (the access rules on
     Windows, the mode on Linux and macOS), and the named page's background line is started again in the copy before the
     How-to page's steps:
-      - The named page's steps:prebuilt names, its captured values, and the value it captured with env=ELM_API_KEY carry
+      - The named page's steps:prebuilt names, its captured values, and the values it captured with env carry
         over, so that the How-to page's elm-service, dotnet add ... package, and elm lines and its <name> placeholders work
         as on the named page. A How-to page that captures a name the named page captured fails, as a name captured twice.
       - The named page's passphrase carries over too, since its keys were made with it. Its background process, started
@@ -140,11 +142,12 @@
     is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. cl, cc,
     xattr, and a program the page built get no ELM_ variable either; cl and the program get the MSVC environment on Windows,
     which this script's own environment never holds. elm and dotnet get the environment as it is, and elm lines also
-    ELM_API_KEY once a block captured it with env. On Windows, dotnet lines also get the Visual Studio Installer folder at
-    the front of PATH when it exists, as eng/release/Publish-Rid.ps1 sets it, since a NativeAOT publish runs the Visual
-    Studio environment scripts, which call vswhere.exe by name (design §20.7, V1c4e). docker lines run -ContainerCli with no
-    ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE, so that a page's -e ELM_SIGNING_PASSPHRASE without
-    a value hands it to the container as the reader's terminal does (design §20.7, V1c4d2, Q9).
+    ELM_API_KEY and ELM_LICENSE_KEY once a block captured them with env. On Windows, dotnet lines also get the Visual
+    Studio Installer folder at the front of PATH when it exists, as eng/release/Publish-Rid.ps1 sets it, since a NativeAOT
+    publish runs the Visual Studio environment scripts, which call vswhere.exe by name (design §20.7, V1c4e). docker lines
+    run -ContainerCli with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE, so that a page's -e
+    ELM_SIGNING_PASSPHRASE without a value hands it to the container as the reader's terminal does (design §20.7, V1c4d2,
+    Q9).
 
     The lines of the container pages (design §20.7, V1c4d2, Q9 and reviews R1, R2, R4, R7, R13, and R16):
       docker        A line that runs -ContainerCli (docker by default) with the rest of the line as its arguments; with
@@ -271,7 +274,8 @@ $thisOs = $IsWindows ? 'windows' : ($IsMacOS ? 'macos' : 'linux')
 $libraryFiles = switch ($thisOs) { 'windows' { @('elasticlm.dll', 'elasticlm.lib') } 'linux' { @('libelasticlm.so') } 'macos' { @('libelasticlm.dylib') } }
 # The OS that runs each new program: a cl line runs on Windows only, cc on Linux and macOS, xattr on macOS.
 $programOs = @{ cl = @('windows'); cc = @('linux', 'macos'); xattr = @('macos') }
-$apiKeyVariable = 'ELM_API_KEY'
+# The variables that env= may name (design §20.7, V1c3d; V1d19).
+$envVariables = @('ELM_API_KEY', 'ELM_LICENSE_KEY')
 $dotnetPath = (Get-Command dotnet -CommandType Application | Select-Object -First 1).Source
 $commandTimeout = [TimeSpan]::FromMinutes(10)
 $readyTimeout = [TimeSpan]::FromSeconds(60)
@@ -600,7 +604,7 @@ function Read-Command([string]$name, [object]$block, [Collections.Generic.HashSe
         foreach ($word in $words | Select-Object -Skip 1) {
             foreach ($placeholder in [regex]::Matches($word, '<([A-Za-z][A-Za-z0-9._-]*)>')) {
                 if ($hidden.Contains($placeholder.Groups[1].Value)) {
-                    throw "$($name):$($lineNumber): $($placeholder.Value) was captured for $apiKeyVariable only and fills no placeholder."
+                    throw "$($name):$($lineNumber): $($placeholder.Value) was captured with env and fills no placeholder."
                 }
                 if (-not $captured.Contains($placeholder.Groups[1].Value)) {
                     throw "$($name):$($lineNumber): $($placeholder.Value) is not a value captured before this line."
@@ -651,7 +655,7 @@ function Test-ContainerPage([string]$path, [switch]$Named) {
 # steps:after names, with its own plan (After), or $null.
 function Read-Plan([string]$name, [object]$parsed) {
     $captured = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
-    # The names captured with env: their values go into ELM_API_KEY only, never into a placeholder.
+    # The names captured with env: their values go into the environment of elm lines only, never into a placeholder.
     $hidden = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     $prebuilt = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
     # The names that the page steps:after names captured, so that the error of a name captured again says where.
@@ -709,7 +713,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     if ($inherited.Contains($capture)) { throw "$($at): $capture is captured twice: $($after.Name) captures it." }
                     if ($captured.Contains($capture) -or $hidden.Contains($capture)) { throw "$($at): $capture is captured twice on the page." }
                 }
-                if ($attributes.ContainsKey('env') -and $attributes['env'] -cne $apiKeyVariable) { throw "$($at): env takes $apiKeyVariable only." }
+                if ($attributes.ContainsKey('env') -and $attributes['env'] -cnotin $envVariables) { throw "$($at): env takes $($envVariables -join ' or ') only." }
                 if ($attributes.ContainsKey('stream') -and $attributes['stream'] -cnotin 'stdout', 'stderr') { throw "$($at): stream is stdout or stderr." }
                 if ($attributes.ContainsKey('pattern')) {
                     try {
@@ -801,7 +805,7 @@ function Read-Plan([string]$name, [object]$parsed) {
                     $lineNumber++
                     foreach ($placeholder in [regex]::Matches($line, "<($captureName)>")) {
                         if ($hidden.Contains($placeholder.Groups[1].Value)) {
-                            throw "$($name):$($lineNumber): $($placeholder.Value) was captured for $apiKeyVariable only and fills no placeholder."
+                            throw "$($name):$($lineNumber): $($placeholder.Value) was captured with env and fills no placeholder."
                         }
                         if (-not $captured.Contains($placeholder.Groups[1].Value) -and $pageCaptures -ccontains $placeholder.Groups[1].Value) {
                             throw "$($name):$($lineNumber): $($placeholder.Value) is captured only after this block."
@@ -908,11 +912,11 @@ function Find-Program([string]$program) {
 
 # A process in the work folder. elm-server gets no ELM_ variable: it reads ELM_<KEY> before its settings file.
 # elm-service likewise, except that the background elm-service gets the run's passphrase for its signing key. An elm line
-# gets the API key captured with env; no other program gets it, and this script's own environment never holds it. cl, cc,
-# xattr, and a program the page built get no ELM_ variable either, so that the run's passphrase stays with elm (design
-# §20.7, V1c3c, review R10); cl and the built program get the MSVC environment on Windows. A docker line runs -ContainerCli
-# with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE (design §20.7, V1c4d2, Q9).
-function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [string]$folder, [string]$apiKey, [switch]$Background, [switch]$Own) {
+# gets the values captured with env; no other program gets them, and this script's own environment never holds them.
+# cl, cc, xattr, and a program the page built get no ELM_ variable either, so that the run's passphrase stays with elm
+# (design §20.7, V1c3c, review R10); cl and the built program get the MSVC environment on Windows. A docker line runs
+# -ContainerCli with no ELM_ variable except the run's passphrase as ELM_SIGNING_PASSPHRASE (design §20.7, V1c4d2, Q9).
+function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [string]$folder, [hashtable]$secrets, [switch]$Background, [switch]$Own) {
     $file = switch -CaseSensitive ($kind) {
         'elm' { $elmPath }
         'dotnet' { $dotnetPath }
@@ -955,7 +959,9 @@ function New-StartInfo([string]$program, [string]$kind, [string[]]$arguments, [s
     # A docker line hands the passphrase to a container with -e ELM_SIGNING_PASSPHRASE and no value (design §20.7, V1c4d2,
     # Q9). The script's own container commands (-Own), such as the removals at the end of the page, run without it.
     if ($kind -ceq 'docker' -and -not $Own -and $script:passphrase) { $info.Environment['ELM_SIGNING_PASSPHRASE'] = $script:passphrase }
-    if ($kind -ceq 'elm' -and $apiKey) { $info.Environment[$apiKeyVariable] = $apiKey }
+    if ($kind -ceq 'elm' -and $secrets) {
+        foreach ($entry in $secrets.GetEnumerator()) { $info.Environment[$entry.Key] = $entry.Value }
+    }
     return $info
 }
 
@@ -1222,9 +1228,9 @@ function Test-Translation([string]$path, [object]$parsed) {
     }
 }
 
-# Runs the steps of a page in the work folder. $state carries the captured values (Values), the value captured with env for
-# the elm lines after it (ApiKey), and the standard output of the last command (LastOutput); a How-to page starts with those
-# of the page that its steps:after names (Invoke-Page).
+# Runs the steps of a page in the work folder. $state carries the captured values (Values), the values captured with env
+# for the elm lines after them, by variable (Secrets), and the standard output of the last command (LastOutput); a How-to
+# page starts with those of the page that its steps:after names (Invoke-Page).
 function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$work) {
     $values = $state.Values
     foreach ($step in $steps) {
@@ -1239,7 +1245,7 @@ function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$w
                 $last = $step.Commands[-1]
                 foreach ($command in $step.Commands) {
                     $expected = $command.Line -eq $last.Line ? $step.Exit : 0
-                    try { $result = Invoke-Step (New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $work $state.ApiKey) }
+                    try { $result = Invoke-Step (New-StartInfo $command.Words[0] $command.Kind (Resolve-Argument $command.Words $values) $work $state.Secrets) }
                     catch {
                         # The reason a compiler or a tool cannot be found holds no argument, output, or value.
                         $reason = $command.Kind -cin 'cl', 'cc', 'xattr', 'docker' ? ": $($_.Exception.Message)" : '.'
@@ -1255,8 +1261,8 @@ function Invoke-Plan([string]$name, [object[]]$steps, [object]$state, [string]$w
                     $capture = $step.Attributes['capture']
                     $captured = Get-CapturedValue "$($name):$($last.Line)" $step $result
                     if ($step.Attributes.ContainsKey('env')) {
-                        $state.ApiKey = $captured
-                        "ok: $($name):$($last.Line): captured $capture for $apiKeyVariable"
+                        $state.Secrets[$step.Attributes['env']] = $captured
+                        "ok: $($name):$($last.Line): captured $capture for $($step.Attributes['env'])"
                     }
                     else {
                         $values[$capture] = $captured
@@ -1450,13 +1456,13 @@ function Invoke-Page([string]$path) {
             Copy-Protected $source.Work $work
             Copy-Protected $source.Packages $packages
             $script:passphrase = $source.Passphrase
-            $state = [pscustomobject]@{ Values = $source.Values.Clone(); ApiKey = $source.ApiKey; LastOutput = $null }
+            $state = [pscustomobject]@{ Values = $source.Values.Clone(); Secrets = $source.Secrets.Clone(); LastOutput = $null }
         }
         else {
             New-Item -ItemType Directory $work, $packages | Out-Null
             $script:passphrase = 'steps ' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(8))
-            # A local of the page, so the next page never gets its values or its API key.
-            $state = [pscustomobject]@{ Values = @{}; ApiKey = $null; LastOutput = $null }
+            # A local of the page, so the next page never gets its values or the values it captured with env.
+            $state = [pscustomobject]@{ Values = @{}; Secrets = @{}; LastOutput = $null }
         }
         $env:ELM_KEY_PASSPHRASE = $script:passphrase
         $env:NUGET_PACKAGES = $packages
@@ -1474,7 +1480,7 @@ function Invoke-Page([string]$path) {
         $script:ran.Add($name) | Out-Null
         if ($script:wanted.ContainsKey($name)) {
             $background = @($plan.Steps | Where-Object Kind -ceq 'background') | Select-Object -First 1
-            $script:sources[$name] = [pscustomobject]@{ Work = $work; Packages = $packages; Passphrase = $script:passphrase; Values = $state.Values.Clone(); ApiKey = $state.ApiKey; Background = $background }
+            $script:sources[$name] = [pscustomobject]@{ Work = $work; Packages = $packages; Passphrase = $script:passphrase; Values = $state.Values.Clone(); Secrets = $state.Secrets.Clone(); Background = $background }
             $keep = $true
         }
     }
