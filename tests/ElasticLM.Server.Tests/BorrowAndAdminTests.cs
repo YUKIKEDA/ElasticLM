@@ -1661,6 +1661,89 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A reload whose leases.until or key.changed cannot be written keeps the old license, and the record's newest file still
+    /// covers the leases of the old license: leases.until comes before key.changed, so a key change on the record is never
+    /// without the time of the old license's leases (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A running server past its reclaim window, on a license of a 30-minute lease, at T; its borrow record set to fail the
+    ///   line of the case ("leases.until" or "key.changed") with an IOException; a license of a 10-minute lease written over
+    ///   the server's file.
+    ///
+    /// Steps:
+    /// - Reload; stop; read the newest borrow record file; one minute later, start the server.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR and the old license. The file has no key.changed; for "key.changed" it has a leases.until with
+    ///   until T + 30 min. The start's reclaim window ends at T + 30 min.
+    /// </remarks>
+    [Theory]
+    [InlineData("leases.until")]
+    [InlineData("key.changed")]
+    public async Task Reload_RecordLineFails_StartStillCoversTheOldLease(string failing)
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(30) });
+        ElmServer first = await _deployment.StartServerAsync(serverData);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(30));
+        DateTimeOffset t = _deployment.Time.GetUtcNow();
+        string started = first.Engine.Server.License.TokenId;
+        first.Record.FailsToWrite = type => type == failing;
+        _deployment.WriteServerLicense(serverData, s => s with { LeaseDuration = TimeSpan.FromMinutes(10) });
+
+        Assert.Equal(ErrorCode.InternalError, first.ReloadLicense()?.Code);
+        Assert.Equal(started, first.Engine.Server.License.TokenId);
+        await first.DisposeAsync();
+
+        string[] lines = File.ReadAllLines(SignedLog.FindFiles(serverData, BorrowJournal.BaseName)[^1]);
+        Assert.DoesNotContain(lines, l => l.Contains("\"key.changed\"", StringComparison.Ordinal));
+        if (failing == "key.changed")
+        {
+            Assert.Contains(
+                lines,
+                l =>
+                    l.Contains($"\"type\":\"leases.until\"", StringComparison.Ordinal)
+                    && l.Contains($"\"until\":{(t + TimeSpan.FromMinutes(30)).ToUnixTimeSeconds()}", StringComparison.Ordinal)
+            );
+        }
+
+        _deployment.Time.Advance(TimeSpan.FromMinutes(1));
+        ElmServer server = await _deployment.StartServerAsync(serverData);
+        Assert.Equal(t + TimeSpan.FromMinutes(30), server.Engine.RecoveryEndsAt);
+    }
+
+    /// <summary>
+    /// A reload that comes after the stop began changes nothing: the stop closes the logs under the same lock as a reload,
+    /// and a reload checks the stop first (design §13.1, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that was stopped; a new license file for the same key with 3 seats; a log the test records.
+    ///
+    /// Steps:
+    /// - Reload the license.
+    ///
+    /// Expected:
+    /// - ELM_INTERNAL_ERROR "The server is stopping; the license was not reloaded."; no Error entry about the borrow record.
+    /// </remarks>
+    [Fact]
+    public async Task Reload_AfterTheStop_ChangesNothing()
+    {
+        string serverData = _deployment.NewFolder();
+        _deployment.WriteServerLicense(serverData);
+        using var log = new RecordingLoggerProvider();
+        await using ElmServer server = await StartLoggedAsync(serverData, log);
+        await server.StopAsync();
+        _deployment.WriteServerLicense(serverData, s => s with { Features = [new FeatureSpec("pro", ">=2.0 <3.0", Seats: 3)] });
+
+        LicenseError? error = server.ReloadLicense();
+
+        Assert.Equal((ErrorCode.InternalError, "The server is stopping; the license was not reloaded."), (error?.Code, error?.Message));
+        Assert.DoesNotContain(log.Entries, e => e.Message.StartsWith("The borrow record", StringComparison.Ordinal));
+    }
+
+    /// <summary>
     /// A reload that reaches the borrow record after the stop closed it, as an automatic refresh can while the server stops,
     /// keeps the old license and writes the cause to the operational log (design §13.1, V1d25).
     /// </summary>

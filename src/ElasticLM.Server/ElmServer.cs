@@ -446,15 +446,18 @@ internal sealed partial class ElmServer : IAsyncDisposable
         try
         {
             await _app.StopAsync().ConfigureAwait(false);
-            int leases = Engine.LeaseCount;
-            _usage.WriteDenials();
-            _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
-            ServerLog.Stopped(_log, leases);
-            _usage.Dispose();
+            lock (_reloadLock)
+            {
+                int leases = Engine.LeaseCount;
+                _usage.WriteDenials();
+                _usage.Write("server.stopped", w => w.WriteNumber("leases", leases));
+                ServerLog.Stopped(_log, leases);
+                _usage.Dispose();
 
-            // design §13.4 (V1d25): no request is served any more, so the next start counts this run's leases from now.
-            _journal.Stopped();
-            _journal.Dispose();
+                // design §13.4 (V1d25): no request is served any more, so the next start counts this run's leases from now.
+                _journal.Stopped();
+                _journal.Dispose();
+            }
         }
         finally
         {
@@ -514,6 +517,14 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
         lock (_reloadLock)
         {
+            // A stop takes the same lock before it closes the logs, so a reload that gets the lock first finishes before, and one
+            // that gets it after changes nothing (design §13.1, V1d25).
+            if (_stopped)
+            {
+                identity!.Dispose();
+                return new LicenseError(ErrorCode.InternalError, "The server is stopping; the license was not reloaded.");
+            }
+
             try
             {
                 // design §13.4 (V1d25): while no request is served, the borrow record first says until when the leases of the
@@ -521,9 +532,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 // take effect. A start after this covers those leases whatever license it runs with.
                 Engine.ReplaceLicense(
                     identity!,
-                    lease =>
+                    until =>
                     {
-                        _journal.LeasesIssuedUntil(Time.GetUtcNow() + lease);
+                        _journal.LeasesIssuedUntil(until);
                         _journal.ChangeKey(file!, _keyJwk, KeyAccess);
 
                         // A usage log that cannot record it says so in the operational log and starts its next file with the

@@ -461,16 +461,30 @@ public sealed class LeaseEngine : IDisposable
     /// refused (<c>ELM_NO_SEATS</c>) until enough leases expire.
     /// </summary>
     /// <param name="server">The new server identity.</param>
-    /// <param name="beforeSwitch">Runs while no request is served, before the new license takes effect, with the lease
-    /// duration of the license in use: the server records there until when the leases issued under it can live (design §13.4,
-    /// V1d25). When it throws, the license in use stays.</param>
-    public void ReplaceLicense(ServerIdentity server, Action<TimeSpan>? beforeSwitch = null)
+    /// <param name="beforeSwitch">Runs while no request is served, before the new license takes effect, with the latest
+    /// time a lease the engine holds or issued under the license in use can be valid: one lease duration from now, or the
+    /// latest expiry of a lease it holds (a reclaimed lease keeps its own) when that is later. The server records it there
+    /// (design §13.4, V1d25). When it throws, the license in use stays.</param>
+    public void ReplaceLicense(ServerIdentity server, Action<DateTimeOffset>? beforeSwitch = null)
     {
         ArgumentNullException.ThrowIfNull(server);
         _gate.EnterWriteLock();
         try
         {
-            beforeSwitch?.Invoke(_state.Lease);
+            if (beforeSwitch is not null)
+            {
+                DateTimeOffset until = _time.GetUtcNow() + _state.Lease;
+                foreach (LeaseRecord held in _leases.Values)
+                {
+                    if (!held.IsBorrow && DateTimeOffset.FromUnixTimeSeconds(held.ExpiresAt) > until)
+                    {
+                        until = DateTimeOffset.FromUnixTimeSeconds(held.ExpiresAt);
+                    }
+                }
+
+                beforeSwitch(until);
+            }
+
             var state = new LicenseState(server);
             foreach (LeaseRecord record in _leases.Values)
             {

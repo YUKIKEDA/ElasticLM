@@ -61,6 +61,10 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     /// <summary>Gets or sets a step run after the lines of a new file are built and before it is written, for tests.</summary>
     internal Action? Built { get; set; }
 
+    /// <summary>Gets or sets a test of the line types whose write fails with an IOException, as a full disk would, for tests:
+    /// <c>leases.until</c> and <c>key.changed</c>.</summary>
+    internal Func<string, bool>? FailsToWrite { get; set; }
+
     /// <summary>Gets a value indicating whether the calling thread holds the record's lock, for tests.</summary>
     internal bool IsLockHeld => _lock.IsHeldByCurrentThread;
 
@@ -242,7 +246,11 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         {
             Later(until);
             DateTimeOffset value = _leasesUntil!.Value;
-            Recorded(() => _log!.Append(LeasesUntil, LeasesUntilFields(value)));
+            Recorded(() =>
+            {
+                FailFor(LeasesUntil);
+                _log!.Append(LeasesUntil, LeasesUntilFields(value));
+            });
             _since?.Add(new LogLine(LeasesUntil, LeasesUntilFields(value)));
         }
     }
@@ -293,6 +301,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     {
         lock (_lock)
         {
+            FailFor(LogLineTypes.KeyChanged);
             _log?.ChangeKey(licenseFile, keyJwk, key, takeOnFailure: false);
         }
     }
@@ -499,6 +508,24 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         if (_leasesUntil <= now)
         {
             _leasesUntil = null;
+        }
+    }
+
+    /// <summary>Writes an event line of any shape, signed as the record signs its lines, for tests of the reader.</summary>
+    internal void AppendForTests(string type, Action<Utf8JsonWriter> fields)
+    {
+        lock (_lock)
+        {
+            _log!.Append(type, fields);
+        }
+    }
+
+    // Throws as a full disk would when the test asks for it.
+    private void FailFor(string type)
+    {
+        if (FailsToWrite?.Invoke(type) == true)
+        {
+            throw new IOException("The disk is full.");
         }
     }
 
