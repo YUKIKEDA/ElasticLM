@@ -445,6 +445,8 @@ activated: pro
 
 The second line is the license's ID, the `id` of the license's answer, such as `license: 01960000-0000-7000-8000-000000000301`. The activation replaced the trial in `client-data`. The order matters: the client starts a trial only when it keeps no activation, while an activation replaces a kept trial.
 
+The app takes the license key on its command line only to keep this tutorial short. A real app takes it from a field on a screen, or from a prompt that does not show what the customer types: a command line stays in the shell's history, and on Linux other users of the machine can read it in the list of processes.
+
 ## When the service refuses
 
 When the client, the service, or the check refuses, the app prints an error code and the reason, and ends with exit code 1. Each run of the app in this section ends that way on purpose. Most of them use a second data folder, `other-data`, which the client creates as it does `client-data`: to the service, it is another installation of the app on the same machine.
