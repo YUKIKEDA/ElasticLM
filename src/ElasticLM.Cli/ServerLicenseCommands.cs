@@ -390,7 +390,7 @@ internal static class ServerLicenseCommands
         catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
         {
             // Something took the connection to the socket and gave no answer that can be read: the file is written all the same.
-            host.Error.WriteLine($"error: {e.Message} {Written}");
+            host.Error.WriteLine($"error: {CliText.Printable(e.Message)} {Written}");
             return ExitCodes.NetworkError;
         }
 

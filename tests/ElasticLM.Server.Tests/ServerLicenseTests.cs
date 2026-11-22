@@ -855,6 +855,55 @@ public sealed class ServerLicenseTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// The server license commands replace the control characters of what they print from an answer: the refusal of a
+    /// reload on the administration socket, and the refusal of elm-service that ActivationClient hands on (design §16,
+    /// V1d27).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - elm-service with a server policy; the folder of a stopped server; a listener of the test on admin.sock that answers
+    ///   the reload with 409 and code "ELM_X" ESC "[2J" and detail "d" U+0085 CR, as JSON escapes; then a listener of the
+    ///   test in place of elm-service that answers every request with 404, code ELM_LICENSE_NOT_FOUND, and detail "gone" ESC
+    ///   "]0;t" BEL.
+    ///
+    /// Steps:
+    /// - Activate with elm server against the service and the listener on admin.sock; then refresh with --service the other
+    ///   listener.
+    ///
+    /// Expected:
+    /// - The activation exits 1 with the one line "error: the server kept its license: ELM_X\u001B[2J: d\u0085\u000D".
+    /// - The refresh exits 1 with the one line "error: ELM_LICENSE_NOT_FOUND: gone\u001B]0;t\u0007".
+    /// </remarks>
+    [Fact]
+    public async Task ServerLicenseCommands_RefusalsWithControlCharacters_ReplaceThem()
+    {
+        (TestService test, ElmService service, string key) = await ServiceAsync(string.Empty);
+        string folder = await StoppedServerFolderAsync(test);
+        string license = Path.Combine(folder, "server.elmlic");
+        const string Refusal = "{\"code\":\"ELM_X\\u001b[2J\",\"detail\":\"d\\u0085\\r\"}";
+        string conflict =
+            $"HTTP/1.1 409 Conflict\r\nContent-Type: application/problem+json\r\nContent-Length: {Refusal.Length}\r\nConnection: close\r\n\r\n{Refusal}";
+
+        (int activated, _, string activateError) = RunAgainst(
+            test,
+            folder,
+            conflict,
+            ["server", "activate", key, .. Common(folder), "--service", service.Url.ToString(), "--license", license]
+        );
+        Assert.Equal((1, "error: the server kept its license: ELM_X\\u001B[2J: d\\u0085\\u000D"), (activated, activateError.Trim()));
+
+        byte[] gone = System.Text.Encoding.UTF8.GetBytes("{\"code\":\"ELM_LICENSE_NOT_FOUND\",\"detail\":\"gone\\u001b]0;t\\u0007\"}");
+        await using ElasticLM.Client.Tests.RawAnswerServer fake = ElasticLM.Client.Tests.RawAnswerServer.Start(_ =>
+            ElasticLM.Client.Tests.RawAnswer.Bytes(gone, 404)
+        );
+        (int refreshed, _, string refreshError) = Run(
+            test,
+            ["server", "refresh", .. Common(folder), "--service", fake.Url.ToString(), "--license", license]
+        );
+        Assert.Equal((1, "error: ELM_LICENSE_NOT_FOUND: gone\\u001B]0;t\\u0007"), (refreshed, refreshError.Trim()));
+    }
+
+    /// <summary>
     /// Something that listens on the administration socket and gives no whole answer in time does not count as "no server
     /// runs": the commands stop with a network error.
     /// </summary>

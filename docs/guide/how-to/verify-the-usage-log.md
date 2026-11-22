@@ -43,7 +43,7 @@ file: usage-20260115T093000000Z.jsonl: server license floating-server
 intact: 1 file(s), 9 event line(s)
 ```
 
-The `file:` line names each file and the server licenses whose keys signed it. The names and numbers are those of your log: the server starts a new file at each start and at each UTC day. When you receive a log from someone else, add `--license <ID>` with the ID of the server license that the log should come from: a file that another server license also signed is then an error. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
+The `file:` line names each file and the server licenses whose keys signed it. The names and numbers are those of your log: the server starts a new file at each start and at each UTC day. When you receive a log from someone else, add `--license <ID>`, where `<ID>` is the ID of the server license that the log should come from. The vendor finds it as `license ID:` in the output of `elm license issue`, and the customer's administrator as `license:` in the output of `elm server status`. A file that any other server license also signed is then an error, and the result is `NOT INTACT:` with exit code 1. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
 
 <!-- steps:run -->
 ```shell

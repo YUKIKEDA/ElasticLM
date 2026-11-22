@@ -162,8 +162,9 @@ public sealed class ElmRemoteTextTests : IDisposable
     ///
     /// Expected:
     /// - Exit code 3 and the one line "error: The service cannot be reached: No byte of the answer came within 100
-    ///   seconds."; standard output holds "{"; the clock had moved 100 or 101 seconds (the wait starts when the read that
-    ///   follows the byte starts, which may come after the first move), and the command had not ended after 99.
+    ///   seconds."; standard output holds "{"; the command had not ended after 99 seconds of the clock (checked after half a
+    ///   second of the real clock), and ended after 100 or 101 (the wait starts when the read that follows the byte starts,
+    ///   which may come after the first move).
     /// </remarks>
     [Fact]
     public async Task Request_BodyThatStops_EndsAfter100SecondsWithoutAByte()
@@ -180,9 +181,17 @@ public sealed class ElmRemoteTextTests : IDisposable
         await WaitForAsync(() => output.Text == "{");
 
         int moved = 0;
+        for (; moved < 99; moved++)
+        {
+            time.Advance(TimeSpan.FromSeconds(1));
+            await Task.WhenAny(running, Task.Delay(20, TestContext.Current.CancellationToken));
+        }
+
+        // design §16 (V1d27): 99 seconds without a byte do not end the command.
+        await Task.WhenAny(running, Task.Delay(500, TestContext.Current.CancellationToken));
+        Assert.False(running.IsCompleted, "The command ended before 100 seconds without a byte.");
         while (!running.IsCompleted && moved < 120)
         {
-            Assert.False(moved == 99 && running.IsCompleted);
             time.Advance(TimeSpan.FromSeconds(1));
             moved++;
             await Task.WhenAny(running, Task.Delay(50, TestContext.Current.CancellationToken));
@@ -322,10 +331,11 @@ public sealed class ElmRemoteTextTests : IDisposable
     ///   and then nothing (body); a fake clock.
     ///
     /// Steps:
-    /// - Send a GET through OidcHttp.Send; once the listener waits, move the clock 30 seconds.
+    /// - Send a GET through OidcHttp.Send; once the listener waits, move the clock 29 seconds, then 1 more.
     ///
     /// Expected:
-    /// - CliException with exit code 3 and "(URL) cannot be reached: No whole answer came within 30 seconds.", within 20
+    /// - After 29 seconds the reader still waits. After 30: CliException with exit code 3 and "(URL) cannot be reached: No
+    ///   whole answer came within 30 seconds.", within 20
     ///   seconds of the real clock; a limit on the real clock would not end in that time.
     /// </remarks>
     /// <param name="stop">Where the answer stops.</param>
@@ -341,7 +351,10 @@ public sealed class ElmRemoteTextTests : IDisposable
 
         Task<(HttpStatusCode, JsonDocument?)> sending = Task.Run(() => OidcHttp.Send(http, request, time), TestContext.Current.CancellationToken);
         await listener.Held.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
-        time.Advance(TimeSpan.FromSeconds(30));
+        time.Advance(TimeSpan.FromSeconds(29));
+        await Task.WhenAny(sending, Task.Delay(500, TestContext.Current.CancellationToken));
+        Assert.False(sending.IsCompleted, "The reader gave up before 30 seconds.");
+        time.Advance(TimeSpan.FromSeconds(1));
 
         CliException e = await Assert.ThrowsAsync<CliException>(() =>
             sending.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken)
@@ -467,6 +480,39 @@ public sealed class ElmRemoteTextTests : IDisposable
         Assert.Contains("\"k\\u007F\\u0085\"", output, StringComparison.Ordinal);
         Assert.Contains("\"L\\u001B\"", output, StringComparison.Ordinal);
         Assert.DoesNotContain(output, c => char.IsControl(c) && c is not '\r' and not '\n');
+    }
+
+    /// <summary>
+    /// A success of the identity provider whose body of one byte is not JSON is "not JSON", not an answer without a body
+    /// (design §16): only an empty body counts as none.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A listener that answers 200 with the one byte "x", and one that answers 200 with no body.
+    ///
+    /// Steps:
+    /// - Send a GET through OidcHttp.Send to each.
+    ///
+    /// Expected:
+    /// - "x": CliException with exit code 1 and "The answer of (URL) is not JSON."; no body: status 200 and no document.
+    /// </remarks>
+    [Fact]
+    public async Task OidcAnswer_OneByteThatIsNotJson_IsNotJson()
+    {
+        using HttpClient http = OidcHttp.Create();
+        await using (RawAnswerServer listener = RawAnswerServer.Start(_ => RawAnswer.Bytes("x"u8.ToArray())))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, listener.Url);
+            CliException e = await Assert.ThrowsAsync<CliException>(() => Task.Run(() => OidcHttp.Send(http, request, TimeProvider.System)));
+            Assert.Equal((1, $"The answer of {listener.Url} is not JSON."), (e.ExitCode, e.Message));
+        }
+
+        await using (RawAnswerServer listener = RawAnswerServer.Start(_ => RawAnswer.Bytes([])))
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, listener.Url);
+            (HttpStatusCode status, JsonDocument? body) = await Task.Run(() => OidcHttp.Send(http, request, TimeProvider.System));
+            Assert.Equal((HttpStatusCode.OK, null), (status, body));
+        }
     }
 
     private static RawAnswer Json(string text, int status = 200) => RawAnswer.Bytes(Encoding.UTF8.GetBytes(text), status);
