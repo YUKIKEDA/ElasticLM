@@ -51,12 +51,12 @@ Its `id` is `<server-policy-id>` below. A server license needs `seats` for each 
 {"policyId":"<server-policy-id>","name":"Customer server","features":[{"code":"pro","seats":5}]}
 ```
 
-<!-- steps:run capture=server-license-key pattern="(ELM(?:-[0-9A-Z]{5}){4})" -->
+<!-- steps:run capture=server-license-key pattern="(ELM(?:-[0-9A-Z]{5}){4})" env=ELM_LICENSE_KEY -->
 ```shell
 elm admin request POST /v1/admin/licenses --body server-license.json --url http://127.0.0.1:8080
 ```
 
-`elm` prints the license. The `key` at the end is its license key, `<server-license-key>` below, which the vendor gives to the customer's administrator; the service shows it only in this answer. The `id` at the start is the license ID, which the server shows later:
+`elm` prints the license. The `key` at the end is its license key, which the vendor gives to the customer's administrator; the service shows it only in this answer. The `id` at the start is the license ID, which the server shows later:
 
 ```text
 {"id":"01960000-0000-7000-8000-000000000302","productId":"01960000-0000-7000-8000-000000000101","policyId":"01960000-0000-7000-8000-000000000203","name":"Customer server","features":[{"code":"pro","ver":null,"seats":5,"expiresAt":null}],"maxActivations":null,"state":"active","createdAt":"2026-01-15T09:30:00Z","expiresAt":null,"suspendedAt":null,"revokedAt":null,"meta":{},"deactivations":0,"key":"ELM-FAKE0-0000S-ERVER-00000"}
@@ -97,11 +97,13 @@ The server stops at once with exit code 1, because it has no license yet, and pr
 
 ## Activate the server
 
-Activate the server with the license key. The `elm server` commands that activate and renew do not read `server.json`, so each one below names the product, the data folder, and the root public key, and the ones that write a license file name its path:
+Activate the server with the license key. `elm server activate` takes the key from the environment variable `ELM_LICENSE_KEY`, never from the command line, where it would stay in the shell's history. When you activate a server yourself, leave the variable unset: `elm` asks for the key, and does not show what you type, so you can paste it there. In CI, set the variable from the CI service's secrets. In this guide, read the key into the variable instead, so that the steps below are the same for every reader: copy the key from the license's answer, and in the first terminal, in PowerShell 7.1 or later, type `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`, paste the key, and press Enter; PowerShell shows an asterisk for each character. In Bash or zsh, type `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`, paste the key, and press Enter; nothing is shown.
+
+The `elm server` commands that activate and renew do not read `server.json`, so each one below names the product, the data folder, and the root public key, and the ones that write a license file name its path:
 
 <!-- steps:run capture=first-seq pattern="seq (1):" -->
 ```shell
-elm server activate <server-license-key> --product acme-cad --data server-data --trust root.pub.pem --service http://127.0.0.1:8080 --license server.elmlic
+elm server activate --product acme-cad --data server-data --trust root.pub.pem --service http://127.0.0.1:8080 --license server.elmlic
 ```
 
 `elm` prints the license ID, the license's sequence number, and the path it wrote, and then that the server is not running yet:
@@ -246,11 +248,13 @@ As online, `elm` first prints `license 01960000-0000-7000-8000-000000000302, seq
 
 ## Activate offline, and move a server
 
-A server that never reaches the service is activated with files too, with no `service` in `server.json`. Start the server once to make its key, as above. Then `elm server activate-request --key <server-license-key>` writes the request, the vendor answers it with `elm offline process`, and `elm server import` reads the answer and writes the license file; start the server after that. It then renews offline, as above.
+A server that never reaches the service is activated with files too, with no `service` in `server.json`. Start the server once to make its key, as above. Then `elm server activate-request` writes the request, with the license key from `ELM_LICENSE_KEY` as `elm server activate` takes it.
+
+The request file holds the license key. On Linux and macOS `elm` writes it readable by its owner only; on Windows it takes the access rules of its folder, so keep it in a folder that others cannot read. Send it to the vendor in a way that others cannot read. The vendor answers it with `elm offline process`, and `elm server import` reads the answer and writes the license file; start the server after that. It then renews offline, as above.
 
 To move the license to another server, stop the server first, and free its activation: `elm server deactivate` does it online. Offline, `elm server deactivate-proof` removes the activation and writes a deactivation proof, which the vendor processes with `elm offline process`; once the service has it, `elm server forget-proof` lets the server activate again. Do not just delete `server-data`: the service would keep counting the activation, and with `maxActivations` 1, the license could not activate another server. [Server license commands](../reference/elm-cli.md#server-license-commands) lists every option of these commands.
 
-When you are done trying, press Ctrl+C in the third terminal to stop the server, and in the second terminal to stop the service.
+When you are done trying, press Ctrl+C in the third terminal to stop the server, and in the second terminal to stop the service. The license key stays in `ELM_LICENSE_KEY` of the first terminal until you close it, or until you remove it: `Remove-Item Env:ELM_LICENSE_KEY` in PowerShell, `unset ELM_LICENSE_KEY` in Bash or zsh.
 
 ## See also
 

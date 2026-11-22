@@ -22,7 +22,7 @@ elm <group> <command> [arguments] [options]
 
 製品 ID（`--product`）は、英小文字、数字、`-` からなる 1 から 64 文字で、たとえば `example-editor` のように書く。`elm-service` での製品の `code` であり、`elm-server` の設定 `product` でもある。`ElasticLM.Client`、`elm-server`、`elm-service` はこれ以外の形を受け付けず、`elm server` のコマンドはこの ID でサーバーのフォルダーを探す。`elm license issue` は形を確かめないが、製品 ID がこれ以外の形のライセンスは、この 3 つでは使えない。
 
-エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプションのとき、必須のオプションがないとき、ファイルかフォルダーのパスを受け取るオプションか引数が空か空白だけのときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。
+エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプションのとき、必須のオプションがないとき、ファイルかフォルダーのパスを受け取るオプションか引数が空か空白だけのときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。不明な語について、`elm server activate` と `elm server activate-request` は例外になる。[サーバーライセンスのライセンスキー](#サーバーライセンスのライセンスキー)を参照。
 
 ### `--json`
 
@@ -58,6 +58,7 @@ elm <group> <command> [arguments] [options]
 | --- | --- | --- |
 | `ELM_KEY_PASSPHRASE` | `elm key`、`elm license issue` | 秘密鍵のパスフレーズ。`--passphrase-env` で別の変数を指定したときは使わない |
 | `ELM_TRUST_ROOT_KEYS` | `--trust` をとるコマンド | PEM 形式のルート公開鍵 1 つ以上。`--trust` を指定しないときに使う |
+| `ELM_LICENSE_KEY` | `elm server activate`、`elm server activate-request` | サーバーライセンスのライセンスキー。設定されていないか空のときは、キーを尋ねる |
 | `ELM_API_KEY` | `elm admin request`、`elm offline process` | `elm-service` の API キー。設定されていれば、保存したログインの代わりに使う |
 | `ELM_SERVICE_URL` | `elm admin request` | `--url` を指定しないときの `elm-service` の URL |
 | `ELM_ADMIN_LOGIN` | `elm admin`、`elm offline process` | `elm admin login` のログインを保存するファイル。既定の場所の代わりに使う |
@@ -72,7 +73,7 @@ elm <group> <command> [arguments] [options]
 | --- | --- | --- |
 | `0` | 成功 | コマンドが求められたことをした。`elm log verify` は、ログが壊れていなければ、警告があっても 0 を返す |
 | `1` | 検証の失敗 | ライセンスファイルやログの検証に失敗した。または、サーバー、`elm-service`、ID プロバイダーがリクエストを拒否したか、エラーを返した |
-| `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、信頼する鍵、資格情報のどれかが見つからない |
+| `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、ライセンスキー、信頼する鍵、資格情報のどれかが見つからない |
 | `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server` と `elm offline process` では）レスポンスを読めないか、レスポンスが `elm` の読むサイズより大きい |
 
 `elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。メッセージが、レスポンスが `elm` の読むサイズより大きいことを示す次の 3 つのときは、`ELM_MALFORMED` でも `3` になる。`The service's answer is larger than the limit.`（サーバーライセンスのコマンド）、`The service's answer is larger than 262144 bytes.`（`elm offline process`）、`The server's administration API answered with a body larger than 67108864 bytes.`（`elm server`）だ。`elm` はそのレスポンスを何も読んでいないので、拒否だったのか成功だったのかを判断できないからだ。ほかの `ELM_MALFORMED` は、ファイルが上限より大きいことを示すメッセージのものも含めて、`1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
@@ -255,7 +256,7 @@ OS を問わず、[サーバーライセンスのコマンド](#サーバーラ�
 
 行がデータフォルダーそのものを示すときは、行の終わりは、フォルダーを消すか制限するよう求める。ここではそうせず、サーバーのユーザーでコマンドを実行する。
 
-Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`sudo` は、`elm` を、実行した人の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。そのため、`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
+Linux と macOS では `sudo -u <server user>` を使う。`sudo` は、既定では環境変数をコマンドに渡さない（`env_reset` の設定）。トラストストアは、`ELM_TRUST_ROOT_KEYS` ではなく `--trust <file>` で渡す。`ELM_LICENSE_KEY` もコマンドに届かないので、ライセンスキーは、`elm server activate` か `elm server activate-request` に尋ねられたときに打つ。`sudo -u <server user> ELM_LICENSE_KEY=<key> …` や `env` で渡さない。キーがコマンドラインに載るからだ。sudoers の設定が変数を残すことを許していれば、`sudo --preserve-env=ELM_LICENSE_KEY -u <server user> …` で渡せる（sudo(8)、sudoers(5)）。`sudo` は、`elm` を、実行した人の `PATH` ではなく、`secure_path` の設定のフォルダーだけで探すこともある（sudoers(5)）。そのため、`sudo -u <server user> <full path of elm> server activate …` のように、`elm` はフルパスで指定する。サーバーのユーザーが読めるファイルと作業フォルダーを使い、コマンドが書く場所には、サーバーのユーザーが書き込めるようにする。サーバーのユーザーは、`--license` のフォルダーにファイルを作れる必要もある。コマンドは、ライセンスファイルを、隣の一時ファイルを通して書くからだ。このファイルは、データフォルダーか、そのユーザーが書き込める別のフォルダーに置く。
 
 Windows では、LocalSystem で動くサーバーは、データフォルダーを作るとき、動いているアカウントである SYSTEM をアクセス制御リストに入れる。そのため、リストにあるのは Administrators グループと SYSTEM だけになる。確認は Administrators グループを通すので、管理者はこのフォルダーでコマンドを実行できる。仮想サービスアカウントや LocalService には、誰もサインインしてコマンドを実行できないので、そのどちらかで動くサーバーには、これらのコマンドを使えない。サーバーを LocalSystem か通常のユーザーアカウントで動かし、後者ならそのアカウントでコマンドを実行する。
 
@@ -370,17 +371,28 @@ elm server release <lease-id> (--data <folder> | --product <id>) [options]
 
 上の表の、終了コード 3 の行と最後の行の場合は、何かがソケットのファイルで待ち受けているかもしれないので、サーバーが実行中かもしれない。`deactivate` と `deactivate-proof` では、サーバーを止めて、コマンドをもう一度実行する。ほかのコマンドでは、コマンドをもう一度実行し、同じ行がまた出るなら、サーバーを再起動する。`ELM_UNAUTHORIZED` については、[elm server](#elm-server) の冒頭を参照。
 
+### サーバーライセンスのライセンスキー
+
+`elm server activate` と `elm server activate-request` には、サーバーライセンスのライセンスキーが要る。どちらも、キーをコマンドラインでは受け取らない。コマンドラインはシェルの履歴に残り、同じマシンのほかのユーザーがプロセスの一覧で読めるからだ。Linux では、既定で、`/proc` がどのプロセスのコマンドラインもすべてのユーザーに見せる（proc(5)）。macOS では、`ps -A` がほかのユーザーのプロセスを引数とともに表示する（ps(1)）。
+
+- キーは、環境変数 `ELM_LICENSE_KEY` から読む。値はそのまま使い、前後の空白も除かない。キーでない値は `ELM_LICENSE_NOT_FOUND` で断られる。`elm server activate` では、`elm-service` がすぐに断る。`elm server activate-request` では、ベンダーがリクエストファイルを処理したときに断られる。
+- 変数が設定されていないか空で、入力が対話的なときは、`elm` は標準エラー出力に `License key: ` と書き、キーをターミナルから読む。入力した文字は表示しない。空のキーでは、`error: The license key must not be empty.` を書き、終了コード 2 で止まる。
+- 変数が設定されていないか空で、入力がリダイレクトされているときは、`error: Set the license key in the environment variable ELM_LICENSE_KEY; input is not interactive.` を書き、終了コード 2 で止まる。
+- キーを読むのは、コマンド自身の確認がすべて通ったあとだ。確認するのは、データフォルダー、`--service`（`elm server activate`）、`--out` とサーバーの状態（`elm server activate-request`）、サーバーのインストール鍵である。そのどれかで止まるときは、キーを尋ねない。
+- コマンドが知らない語（引数や `--key` で渡したライセンスキーなど）があると、`error: An argument is not recognized; elm server <command> takes the license key from ELM_LICENSE_KEY, or asks for it.` を書き（`<command>` は `activate` か `activate-request`）、何も読まず、何も送らずに、終了コード 2 で止まる。この行は語をくり返さないので、そこに打ったキーがエラー出力に出ることはない。
+
+自分でキーを打つときは、変数を設定せず、`elm` に尋ねられたときにキーを打つか貼り付ける。こうすると、キーは `elm` のメモリーにだけある。実行中の `elm` の環境は、OS がそのプロセスのメモリーを読むことを許すプログラム（Linux では、同じユーザーと root のもの）から読める。また、シェルで設定した変数は、そのシェルからあとで起動するどのプログラムにも渡る。変数は、スクリプトと CI のためのものだ。CI では、CI サービスのシークレットから変数を設定し、スクリプトに書いた値からは設定しない。キーを表示せず、履歴にも残さずに手で変数を設定するには、PowerShell 7.1 以降では `$env:ELM_LICENSE_KEY = Read-Host -MaskInput`（1 文字ごとにアスタリスクを表示する）、Bash か zsh では `read -rs ELM_LICENSE_KEY; export ELM_LICENSE_KEY`（何も表示しない）と打ち、キーを貼り付ける。使い終えたら消す。PowerShell では `Remove-Item Env:ELM_LICENSE_KEY`、Bash か zsh では `unset ELM_LICENSE_KEY` と打つ。`ELM_LICENSE_KEY=<key> elm …` や `env ELM_LICENSE_KEY=<key> elm …` とは書かない。キーがまたコマンドラインに載るからだ。
+
 ### elm server activate
 
 ```text
-elm server activate <license-key> --product <id> --service <url> --license <file> [options]
+elm server activate --product <id> --service <url> --license <file> [options]
 ```
 
-`elm-service` を使ってサーバーのライセンスをオンラインでアクティベーションし、ライセンスファイルを書く。ライセンスキーは、このコマンドでは引数で渡し、`elm server activate-request` では `--key` で渡す。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
+`elm-service` を使ってサーバーのライセンスをオンラインでアクティベーションし、ライセンスファイルを書く。ライセンスキーは `ELM_LICENSE_KEY` から読むか、尋ねる（[サーバーライセンスのライセンスキー](#サーバーライセンスのライセンスキー)）。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
-| オプションまたは引数 | 値 | 既定 | 必須 | 意味 |
+| オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `<license-key>` | ライセンスキー | — | はい | 引数。サーバーライセンスのライセンスキー |
 | `--service` | `https` の URL、またはループバックアドレスの `http` の URL | — | はい | `elm-service` の URL |
 | `--license` | ファイルのパス | — | はい | サーバーのライセンスファイル（サーバーの設定 `license`） |
 
@@ -413,14 +425,13 @@ elm server deactivate --product <id> --service <url> [options]
 ### elm server activate-request
 
 ```text
-elm server activate-request --key <license-key> --product <id> --out <file> [options]
+elm server activate-request --product <id> --out <file> [options]
 ```
 
-`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。ライセンスキーは、このコマンドでは `--key` で渡し、`elm server activate` では引数で渡す。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
+`elm offline process` に渡す、オフラインのアクティベーションのリクエストファイル（`.elmreq`）を書く。実行中のサーバーがオンラインでライセンスのトークンの更新をしているあいだは、終了コード 1 で止まる。ライセンスキーは `ELM_LICENSE_KEY` から読むか、尋ねる（[サーバーライセンスのライセンスキー](#サーバーライセンスのライセンスキー)）。リクエストファイルはライセンスキーを含む。Linux と macOS では、`elm` はこのファイルをモード `0600` で書き、所有者だけが読める。Windows では、秘密鍵のファイルと同じく、ファイルは置いたフォルダーのアクセス権を引き継ぐ（[パスフレーズ](#パスフレーズ)）。そのため、ほかの人が読めないフォルダーに置く。`--force` のときは、前のファイルに書き込まずに、新しいファイルで置き換える。ほかの人が読める場所にコピーしない。[サーバーライセンスのコマンドのオプション](#サーバーライセンスのコマンド)もとる。
 
 | オプション | 値 | 既定 | 必須 | 意味 |
 | --- | --- | --- | --- | --- |
-| `--key` | ライセンスキー | — | はい | サーバーライセンスのライセンスキー |
 | `--out` | ファイルのパス | — | はい | リクエストファイルの書き出し先 |
 | `--renew` | — | オフ | いいえ | 待機中のリクエストの期限が切れる前に、新しいリクエストを作る。それまでのリクエストファイルは置き換わるので、捨てなければならない |
 | `--force` | — | オフ | いいえ | ファイルがすでにあれば上書きする |

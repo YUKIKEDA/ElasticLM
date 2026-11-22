@@ -16,7 +16,7 @@ public sealed class ServerActivationTests
     ///   published elm-server, run once without its license so that it makes its installation key.
     ///
     /// Steps:
-    /// - elm server activate the key --product acme-cad --data the server's folder --service the service --license the file --trust the root key;
+    /// - elm server activate with the key in ELM_LICENSE_KEY --product acme-cad --data the server's folder --service the service --license the file --trust the root key;
     ///   start the server with the service's address; elm server status --json.
     ///
     /// Expected:
@@ -39,21 +39,29 @@ public sealed class ServerActivationTests
         string license = vendor.File("activated.elmlic");
         await using ServerProcess server = ServerProcess.Prepare(vendor, "a", "acme-cad", license, service.Url);
         await server.InstallationKeyAsync();
-        await vendor.ElmOkAsync(
-            "server",
-            "activate",
-            key,
-            "--product",
-            "acme-cad",
-            "--data",
-            server.DataDirectory,
-            "--service",
-            service.Url.ToString(),
-            "--license",
-            license,
-            "--trust",
-            vendor.RootPublicKey
+
+        // design §13.7 (V1d19): the key comes from ELM_LICENSE_KEY, never from the command line; standard input is redirected,
+        // so elm does not ask for it.
+        (int activated, _, string activateError) = await Binaries.RunAsync(
+            Binaries.Elm,
+            [
+                "server",
+                "activate",
+                "--product",
+                "acme-cad",
+                "--data",
+                server.DataDirectory,
+                "--service",
+                service.Url.ToString(),
+                "--license",
+                license,
+                "--trust",
+                vendor.RootPublicKey,
+            ],
+            vendor.Folder,
+            new Dictionary<string, string?>(vendor.Environment) { ["ELM_LICENSE_KEY"] = key }
         );
+        Assert.True(activated == 0, $"elm server activate exited with {activated}: {activateError}");
         await server.StartAsync();
 
         (int code, string status, string error) = await server.ElmServerAsync(vendor, "status", "--json");
