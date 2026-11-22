@@ -218,6 +218,66 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A lease that the server's own key signed for more seats than its server license holds is refused, so a server that
+    /// counts no seats cannot hand them out (design §5.3 T17, §12.7.5 step 3): the client holds and saves nothing.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with pro (2 seats), past its reclaim window; a client behind a relay that answers its acquisition, without
+    ///   passing it on, with a 10-minute lease of pro for 3 seats, signed with the server's installation key for that
+    ///   request's jti, the client's key, and the server license in use.
+    ///
+    /// Steps:
+    /// - Acquire pro.
+    ///
+    /// Expected:
+    /// - Failed with ELM_LEASE_OUT_OF_BOUNDS "The lease is outside the features or seats of the server license."; no borrow
+    ///   file; the server counts no seat.
+    /// </remarks>
+    [Fact]
+    public async Task Acquire_LeaseOverTheServerLicenseSeats_IsRefused()
+    {
+        string data = _deployment.NewFolder();
+        _deployment.WriteServerLicense(data);
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(Window);
+        var relay = new Recorder();
+        string folder = _deployment.NewFolder();
+        LicenseClient client = Client(server, relay, folder);
+        relay.AnswerNextAcquisition(sent =>
+        {
+            var spec = new LeaseSpec
+            {
+                LeaseId = "lease-9-AAAAAAAAAAAAAA",
+                ProductId = "acme-cad",
+                LicenseId = "lic-srv",
+                FeatureId = "pro",
+                Seats = 3,
+                InstallationKeyThumbprint = client.InstallationKeyThumbprint,
+                Duration = TimeSpan.FromMinutes(10),
+                ServerLicenseTokenId = server.Engine.Server.License.TokenId,
+                AnsweredProofId = sent.ProofId!,
+            };
+            Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, data).TryLoadOrCreate(out InstallationKey? serverKey, out _));
+            using (serverKey)
+            {
+                string token = serverKey!.WithPrivateKey(key => LeaseIssuer.Issue(key, spec, _deployment.Time));
+                return new KeptAnswer(sent.Path, HttpStatusCode.Created, $$"""{"lease":"{{token}}","certificates":[]}""", spec.ServerLicenseTokenId);
+            }
+        });
+
+        LeaseResult result = await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, relay.Replayed);
+        Assert.Equal(
+            new LicenseError(ErrorCode.LeaseOutOfBounds, "The lease is outside the features or seats of the server license."),
+            Assert.IsType<LeaseResult.Failed>(result).Error
+        );
+        Assert.Empty(BorrowFiles(folder));
+        Assert.Equal(0, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
     /// The request checks come before the version check (design §12.7.5 step 7, V1d18): an answer to an acquisition of a
     /// version outside the range that carries a lease of another feature is ELM_REQUEST_MISMATCH, not
     /// ELM_FEATURE_VERSION_NOT_LICENSED.

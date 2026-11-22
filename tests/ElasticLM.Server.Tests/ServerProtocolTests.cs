@@ -1054,6 +1054,52 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error);
     }
 
+    /// <summary>
+    /// The server keeps Kestrel's limits on the request line and the headers, as the service does (design §5.3 T16): a
+    /// request line of 8,192 bytes, 100 headers, and a header section of 32 KiB and the empty line that ends it are read; a
+    /// byte or a header more is refused before any route runs.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started server on loopback https. The defaults are those of Kestrel's KestrelServerLimits (aspnetcore
+    ///   release/10.0); the server sets only MaxRequestBodySize. Kestrel counts the header section's bytes with their CRLFs
+    ///   and allows the limit plus the 2 bytes of the empty line (Http1Connection.cs, MaxRequestHeadersTotalSize + 2).
+    ///
+    /// Steps:
+    /// - Over a new TLS connection each time, send GET /v1/nonce with a request line of the length given (with its CRLF), or
+    ///   with the given number of headers (Host among them), or with a header section (Host, one padding header, and the
+    ///   empty line) of the given number of bytes; read the status line of the answer.
+    ///
+    /// Expected:
+    /// - At each limit: 200. One past: 414 for the request line, 431 for the headers.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The size of the request at or past it.</param>
+    /// <param name="status">The status of the answer.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.AtAndPastEachLimit), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_RequestLineAndHeaders_KeepTheirLimits(string kind, int size, int status)
+    {
+        ElmServer server = await _deployment.StartServerAsync();
+        Uri url = server.PublicUrls[0];
+
+        int answered = await KestrelLimits.StatusAsync(
+            url,
+            KestrelLimits.Request("/v1/nonce", kind, size),
+            async stream =>
+            {
+                var tls = new System.Net.Security.SslStream(stream, false, (_, certificate, _, _) => certificate is not null);
+                await tls.AuthenticateAsClientAsync(
+                    new System.Net.Security.SslClientAuthenticationOptions { TargetHost = url.Host },
+                    TestContext.Current.CancellationToken
+                );
+                return tls;
+            }
+        );
+
+        Assert.Equal(status, answered);
+    }
+
     // Sends a request as it is on a TLS connection of its own, then reads until the server closes or resets the connection,
     // and returns the bytes of an answer that came. Meanwhile the server's clock moves a second every 50 ms, for a wait of
     // the server that is counted on it.

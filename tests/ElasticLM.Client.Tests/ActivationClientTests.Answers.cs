@@ -564,6 +564,51 @@ public sealed partial class ActivationClientTests
         Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
     }
 
+    /// <summary>
+    /// The clock guard takes the service's time only from an online answer that the client keeps: an answer whose license
+    /// file does not verify, or that names another activation, moves nothing (design §11.4 step 4, §5.3 T5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client behind a relay that can rewrite the next answer, with a clock guard that records the server
+    ///   times it is given.
+    ///
+    /// Steps:
+    /// - Have the relay change one character of the signature of the next answer's license token; activate. Have it put
+    ///   another UUID in the next answer's activationId; activate. Activate.
+    ///
+    /// Expected:
+    /// - ELM_BAD_SIGNATURE, then ELM_REQUEST_MISMATCH, and the guard got no time; then Activated, and the guard got one time,
+    ///   the iat of the kept license.
+    /// </remarks>
+    [Fact]
+    public async Task Answer_NotKept_LeavesTheClockGuard()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var relay = new Relay();
+        var guard = new RecordingGuard();
+        await using ActivationClient client = vendor.Client("a", relay, guard: guard);
+
+        relay.ReplaceNext((body, _) => WithBrokenSignature(body));
+        Assert.Equal(ErrorCode.BadSignature, Failed(await client.ActivateAsync(key, Cancel)).Code);
+        relay.ReplaceNext((body, _) => WithActivationId(body, Guid.CreateVersion7().ToString("D")));
+        Assert.Equal((ErrorCode.RequestMismatch, AnotherActivation), Code(Failed(await client.ActivateAsync(key, Cancel))));
+        Assert.Empty(guard.Accepted);
+
+        VerifiedLicense kept = Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal([kept.IssuedAt], guard.Accepted);
+    }
+
+    // The same answer with one character of its license token's signature changed.
+    private static string WithBrokenSignature(string answer)
+    {
+        using JsonDocument document = JsonDocument.Parse(answer);
+        string token = document.RootElement.GetProperty("license").GetProperty("license").GetString()!;
+        string changed = token[..^4] + (token[^4] == 'A' ? 'B' : 'A') + token[^3..];
+        return answer.Replace(token, changed, StringComparison.Ordinal);
+    }
+
     private static string Text(byte[]? file) => file is null ? string.Empty : Encoding.UTF8.GetString(file);
 
     // {activationId, license} as the service answers (design §12.6.1).

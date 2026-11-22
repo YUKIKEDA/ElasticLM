@@ -14,6 +14,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
 {
     private static readonly TimeSpan Window = TimeSpan.FromMinutes(10);
 
+    private static readonly LicenseError PinnedTlsKey = new(ErrorCode.ServerPinMismatch, "The server's TLS key is not the pinned server key.");
+
+    private static readonly LicenseError PinnedServer = new(ErrorCode.ServerPinMismatch, "The server is not the one this client is pinned to.");
+
     private readonly Deployment _deployment = new();
 
     public ValueTask DisposeAsync() => _deployment.DisposeAsync();
@@ -276,8 +280,9 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - A acquires twice; resets the pin; acquires. B acquires twice.
     ///
     /// Expected:
-    /// - A: ELM_SERVER_PIN_MISMATCH from the TLS check, then from the stored pin; after the reset a lease. B: the TLS check
-    ///   fails once, then the new server is accepted.
+    /// - A: ELM_SERVER_PIN_MISMATCH from the TLS check ("The server's TLS key is not the pinned server key."), then from the
+    ///   stored pin ("The server is not the one this client is pinned to."); after the reset a lease. B: the TLS check fails
+    ///   once with the first message, then the new server is accepted.
     /// </remarks>
     [Fact]
     public async Task MovedServer_IsRefusedByThePinUntilReset()
@@ -305,12 +310,12 @@ public sealed class LeaseClientTests : IAsyncDisposable
         await _deployment.StartServerAsync(change: s => With(s, port));
         _deployment.Time.Advance(Window);
 
-        Failed(ErrorCode.ServerPinMismatch, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
-        Failed(ErrorCode.ServerPinMismatch, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(PinnedTlsKey, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(PinnedServer, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Assert.True(a.ResetServerPin(before.PublicUrls[0]));
         Acquired(await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
 
-        Failed(ErrorCode.ServerPinMismatch, await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(PinnedTlsKey, await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Acquired(await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
     }
 
@@ -330,7 +335,8 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - Acquire.
     ///
     /// Expected:
-    /// - ELM_SERVER_PIN_MISMATCH, and no pin is stored: after the server uses its own key, the client connects.
+    /// - ELM_SERVER_PIN_MISMATCH "The server's TLS key is not the key of its server license.", and no pin is stored: after
+    ///   the server uses its own key, the client connects.
     /// </remarks>
     [Fact]
     public async Task FirstConnection_TlsKeyIsNotTheLicenseKey_IsRefused()
@@ -349,7 +355,10 @@ public sealed class LeaseClientTests : IAsyncDisposable
         string clientData = _deployment.NewFolder();
         LicenseClient client = _deployment.Client(proxied.PublicUrls[0], clientData);
 
-        Failed(ErrorCode.ServerPinMismatch, await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(
+            new LicenseError(ErrorCode.ServerPinMismatch, "The server's TLS key is not the key of its server license."),
+            await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+        );
         Assert.False(Directory.Exists(System.IO.Path.Combine(clientData, "servers")));
 
         await proxied.DisposeAsync();
@@ -370,7 +379,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - Acquire; reset the pin; acquire.
     ///
     /// Expected:
-    /// - ELM_SERVER_PIN_MISMATCH, then a lease.
+    /// - ELM_SERVER_PIN_MISMATCH "The server pin is damaged; reset it to connect again.", then a lease.
     /// </remarks>
     [Fact]
     public async Task DamagedPin_RefusesTheServerUntilReset()
@@ -388,9 +397,96 @@ public sealed class LeaseClientTests : IAsyncDisposable
         File.WriteAllText(Assert.Single(Directory.GetFiles(System.IO.Path.Combine(data, "servers"))), "{damaged");
 
         LicenseClient second = _deployment.Client(server.PublicUrls[0], data);
-        Failed(ErrorCode.ServerPinMismatch, await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Failed(
+            new LicenseError(ErrorCode.ServerPinMismatch, "The server pin is damaged; reset it to connect again."),
+            await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+        );
         Assert.True(second.ResetServerPin(server.PublicUrls[0]));
         Acquired(await second.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+    }
+
+    /// <summary>
+    /// A client configured with a server license ID refuses a server whose license has another ID, and stores no pin for it
+    /// (design §13.5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server of lic-srv past its window; a client whose ExpectedServerLicenseId is lic-other.
+    ///
+    /// Steps:
+    /// - Acquire.
+    ///
+    /// Expected:
+    /// - ELM_SERVER_PIN_MISMATCH "The server is not the one this client is pinned to.", no lease is held on the server, and
+    ///   the client's data folder has no servers folder.
+    /// </remarks>
+    [Fact]
+    public async Task ExpectedServerLicenseId_OfAnotherLicense_IsRefused()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        string data = _deployment.NewFolder();
+        LicenseClient client = _deployment.Client(server.PublicUrls[0], data, o => With(o, "lic-other"));
+
+        Failed(PinnedServer, await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(0, server.Engine.SeatsInUse("pro"));
+        Assert.False(Directory.Exists(System.IO.Path.Combine(data, "servers")));
+    }
+
+    /// <summary>
+    /// A server that presents a standard license of the vendor, signed and bound to its key, is refused: the client takes
+    /// leases only from a server license (design §5.3 T18, §13.5 step 2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license of kind standard for pro, issued by the vendor for the key of a server data folder (an on-premises server
+    ///   does not start with it, so a listener stands in); a TLS listener on loopback that answers every
+    ///   request with that license and the key's JWK, as GET /v1/server/license answers.
+    ///
+    /// Steps:
+    /// - A client of that listener acquires pro.
+    ///
+    /// Expected:
+    /// - ELM_WRONG_KIND "The license kind is not the required one.", and no pin is stored.
+    /// </remarks>
+    [Fact]
+    public async Task ServerLicense_OfAnotherKind_IsRefused()
+    {
+        string serverData = _deployment.NewFolder();
+        string path = _deployment.WriteServerLicense(
+            serverData,
+            s =>
+                s with
+                {
+                    Kind = LicenseKind.Standard,
+                    Features = [new FeatureSpec("pro")],
+                    LeaseDuration = null,
+                    BorrowLimit = null,
+                    OveragePercent = null,
+                    CloneStrategy = null,
+                }
+        );
+        byte[] license = File.ReadAllBytes(path);
+        Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, serverData).TryLoadOrCreate(out InstallationKey? key, out _));
+        ECParameters point;
+        using (key)
+        {
+            point = key!.PublicParameters();
+        }
+
+        string jwk =
+            $"{{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"{System.Buffers.Text.Base64Url.EncodeToString(point.Q.X)}\",\"y\":\"{System.Buffers.Text.Base64Url.EncodeToString(point.Q.Y)}\"}}";
+        await using FixedAnswerServer listener = await FixedAnswerServer.StartAsync(
+            "{\"license\":" + System.Text.Encoding.UTF8.GetString(license) + ",\"key\":" + jwk + "}"
+        );
+        string data = _deployment.NewFolder();
+        LicenseClient client = _deployment.Client(listener.Url, data);
+
+        Failed(
+            new LicenseError(ErrorCode.WrongKind, "The license kind is not the required one."),
+            await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken)
+        );
+        Assert.False(Directory.Exists(System.IO.Path.Combine(data, "servers")));
+        await client.DisposeAsync();
     }
 
     /// <summary>
@@ -689,6 +785,98 @@ public sealed class LeaseClientTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A TLS listener on a loopback port that answers every request with status 200 and the same JSON body, then closes the
+    /// connection: a server that answers as it likes. Its certificate is self-signed for a key of its own.
+    /// </summary>
+    private sealed class FixedAnswerServer : IAsyncDisposable
+    {
+        private readonly System.Net.Sockets.TcpListener _listener;
+        private readonly X509Certificate2 _certificate;
+        private readonly CancellationTokenSource _stop = new();
+        private readonly byte[] _answer;
+        private Task _serving = Task.CompletedTask;
+
+        private FixedAnswerServer(string body)
+        {
+            _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+            using ECDsa key = KeyFiles.CreateKey();
+            var request = new CertificateRequest("CN=127.0.0.1", key, HashAlgorithmName.SHA256);
+            using X509Certificate2 made = request.CreateSelfSigned(Deployment.Start.AddDays(-1), Deployment.Start.AddDays(30));
+
+            // SChannel on Windows needs a key it can open from a store, not an ephemeral one.
+            _certificate = X509CertificateLoader.LoadPkcs12(made.Export(X509ContentType.Pkcs12), null);
+            byte[] content = System.Text.Encoding.UTF8.GetBytes(body);
+            _answer =
+            [
+                .. System.Text.Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {content.Length}\r\nConnection: close\r\n\r\n"
+                ),
+                .. content,
+            ];
+        }
+
+        public Uri Url => new($"https://127.0.0.1:{((System.Net.IPEndPoint)_listener.LocalEndpoint).Port}");
+
+        public static Task<FixedAnswerServer> StartAsync(string body)
+        {
+            var server = new FixedAnswerServer(body);
+            server._listener.Start();
+            server._serving = server.ServeAsync();
+            return Task.FromResult(server);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            _listener.Stop();
+            try
+            {
+                await _serving;
+            }
+            catch (Exception e) when (e is OperationCanceledException or System.Net.Sockets.SocketException or ObjectDisposedException)
+            {
+                // The listener was stopped while it waited for a connection.
+            }
+
+            _certificate.Dispose();
+            _stop.Dispose();
+        }
+
+        private async Task ServeAsync()
+        {
+            while (!_stop.IsCancellationRequested)
+            {
+                using System.Net.Sockets.TcpClient tcp = await _listener.AcceptTcpClientAsync(_stop.Token);
+                try
+                {
+                    await using var tls = new System.Net.Security.SslStream(tcp.GetStream());
+                    await tls.AuthenticateAsServerAsync(_certificate);
+                    byte[] buffer = new byte[16 * 1024];
+                    int read = 0;
+
+                    // The request ends at its empty line: GET /v1/server/license has no body.
+                    while (read < buffer.Length && buffer.AsSpan(0, read).IndexOf("\r\n\r\n"u8) < 0)
+                    {
+                        int count = await tls.ReadAsync(buffer.AsMemory(read), _stop.Token);
+                        if (count == 0)
+                        {
+                            break;
+                        }
+
+                        read += count;
+                    }
+
+                    await tls.WriteAsync(_answer, _stop.Token);
+                }
+                catch (Exception e) when (e is IOException or System.Security.Authentication.AuthenticationException)
+                {
+                    // A connection the client closed or refused; the next one is served.
+                }
+            }
+        }
+    }
+
+    /// <summary>
     /// Passes requests on and, when asked, throws away the answer of the next renewal after the server handled it.
     /// </summary>
     private sealed class LosingHandler : DelegatingHandler
@@ -805,6 +993,9 @@ public sealed class LeaseClientTests : IAsyncDisposable
         LeaseResult.Failed failed = Assert.IsType<LeaseResult.Failed>(result);
         Assert.True(failed.Error.Code == expected, $"Expected {expected}, got {failed.Error.Code}: {failed.Error.Message}");
     }
+
+    // The refusal's code and message: ELM_SERVER_PIN_MISMATCH has four messages (design §13.5), one for each check.
+    private static void Failed(LicenseError expected, LeaseResult result) => Assert.Equal(expected, Assert.IsType<LeaseResult.Failed>(result).Error);
 
     private static ServerSettings With(ServerSettings settings, int? port = null, string? tlsCertificate = null) =>
         new()
