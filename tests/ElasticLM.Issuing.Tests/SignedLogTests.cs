@@ -125,16 +125,22 @@ public sealed class SignedLogTests : IDisposable
     ///   character of a signature; replace an event with "not json"; write the first line's time as text.
     ///
     /// Expected:
-    /// - Each report is not intact.
+    /// - Each report is not intact, with the error of the check that found it, at the line that shows it. The file's lines
+    ///   are: 1 chain.start, 2 its signature, 3 and 4 events, 5 a signature, 6 and 7 events, 8 a signature.
+    /// - A changed, removed, or added event: "The lines before the signature were changed, added, or removed." at the next
+    ///   signature (line 5, 4, and 6).
+    /// - A changed signature: "The signature is not made with the server's key." at line 8.
+    /// - "not json": "The line is not a JSON object." at line 4.
+    /// - The time as text: "The line does not carry a server license, a key, and a time." at line 1.
     /// </remarks>
     [Theory]
-    [InlineData("change")]
-    [InlineData("remove")]
-    [InlineData("add")]
-    [InlineData("signature")]
-    [InlineData("garbage")]
-    [InlineData("ts-text")]
-    public void Verify_ChangedLines_AreErrors(string change)
+    [InlineData("change", 5, "The lines before the signature were changed, added, or removed.")]
+    [InlineData("remove", 4, "The lines before the signature were changed, added, or removed.")]
+    [InlineData("add", 6, "The lines before the signature were changed, added, or removed.")]
+    [InlineData("signature", 8, "The signature is not made with the server's key.")]
+    [InlineData("garbage", 4, "The line is not a JSON object.")]
+    [InlineData("ts-text", 1, "The line does not carry a server license, a key, and a time.")]
+    public void Verify_ChangedLines_AreErrors(string change, int line, string message)
     {
         using (SignedLog log = Open(sealEvery: 2))
         {
@@ -171,7 +177,191 @@ public sealed class SignedLogTests : IDisposable
         }
 
         File.WriteAllText(file, string.Join('\n', lines) + "\n");
-        Assert.False(Verify().Intact);
+        VerifiedLog report = Verify();
+        Assert.False(report.Intact);
+        LogIssue error = Assert.Single(report.Issues, i => i.Severity == LogIssueSeverity.Error);
+        Assert.Equal((line, message), (error.Line, error.Message));
+    }
+
+    /// <summary>
+    /// Each refusal of the verifier that no other test names is an error at the line that shows it (design §18.1): a chain
+    /// line after the first line, a key change that no signature of the old key follows, a signature line without a
+    /// signature or with one that is not text, a signature payload of another version or stream, a first line of another
+    /// type, a file of another stream, a first line without a server license and key or with a license that is not an
+    /// object, a server license that does not verify,
+    /// a service's first line without one to four certificates, and a file that follows a file that could not be read to its
+    /// end (finding T15-4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed log of one event (lines: 1 chain.start, 2 its signature, 3 the event, 4 a signature), or a file written by
+    ///   hand for the first-line cases, or (the last case) two files of the log, the second linked to the first's last
+    ///   signature, with a line longer than 1 MiB appended to the first afterwards.
+    ///
+    /// Steps:
+    /// - Change the log as the case names, then verify the files with the product acme-cad (acme-cam for the license that
+    ///   does not verify; none for the service's file) and the stream usage (borrows for the file of another stream).
+    ///
+    /// Expected:
+    /// - The one error the case names, with its message and its line.
+    /// </remarks>
+    [Theory]
+    [InlineData("chain-after-first", 5, "A chain line appears after the first line.")]
+    [InlineData("key-change-unsigned", 6, "A key change is not followed by a signature of the old key.")]
+    [InlineData("sig-missing", 5, "The signature line is not an elm-log+jws.")]
+    [InlineData("sig-number", 5, "The signature line is not an elm-log+jws.")]
+    [InlineData("payload-version", 5, "The signature's payload is not valid.")]
+    [InlineData("payload-stream", 5, "The signature's payload is not valid.")]
+    [InlineData("first-line-event", 1, "The file does not start with chain.start or chain.reset.")]
+    [InlineData("other-stream", 1, "The file is not of the stream 'borrows'.")]
+    [InlineData("no-license", 1, "The line does not carry a server license, a key, and a time.")]
+    [InlineData("license-not-object", 1, "The line does not carry a server license, a key, and a time.")]
+    [InlineData(
+        "license-other-product",
+        1,
+        "The server license on the line does not verify (ELM_WRONG_PRODUCT): The license is for another product."
+    )]
+    [InlineData("no-certificates", 1, "The line does not carry one to four certificates and a time.")]
+    [InlineData("after-unreadable", 1, "The link to '{0}' does not match its last signature: that file was cut or changed.")]
+    public void Verify_EachOtherRefusal_IsAnErrorAtItsLine(string kind, int line, string message)
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string file = SignedLog.FindFiles(_dir, "usage").Single();
+        IReadOnlyList<string> files = [file];
+        string? product = "acme-cad";
+        string stream = "usage";
+        string Auth(LogPayload payload) =>
+            "{\"type\":\"auth\",\"ts\":1,\"sig\":\""
+            + JwsWriter.Sign(_server, TokenTypes.Log, payload, LicensingJsonContext.Default.LogPayload)
+            + "\"}\n";
+        LogPayload Next(string ofStream, int version = 1) =>
+            new()
+            {
+                Ver = version,
+                Iat = Now.ToUnixTimeSeconds(),
+                Jti = JwsWriter.NewTokenId(),
+                Stream = ofStream,
+                N = ReadPayload(File.ReadAllLines(file)[^1]).N + 1,
+                Prev = SignedLog.Hash(Encoding.UTF8.GetBytes(File.ReadAllLines(file)[^1] + "\n")),
+                Digest = SignedLog.Hash([]),
+                Lines = 0,
+            };
+        switch (kind)
+        {
+            case "chain-after-first":
+                File.AppendAllText(file, "{\"type\":\"chain.start\",\"ts\":1,\"stream\":\"usage\"}\n");
+                break;
+            case "key-change-unsigned":
+                string keyChanged =
+                    "{\"type\":\"key.changed\",\"ts\":"
+                    + Now.ToUnixTimeSeconds()
+                    + ",\"license\":"
+                    + Encoding.UTF8.GetString(LicenseFile(_server))
+                    + ",\"key\":"
+                    + Encoding.UTF8.GetString(KeyFiles.ExportPublicJwk(_server))
+                    + "}\n";
+                File.AppendAllText(file, keyChanged + "{\"type\":\"lease.acquired\",\"ts\":1,\"i\":1}\n");
+                break;
+            case "sig-missing":
+                File.AppendAllText(file, "{\"type\":\"auth\",\"ts\":1}\n");
+                break;
+            case "sig-number":
+                File.AppendAllText(file, "{\"type\":\"auth\",\"ts\":1,\"sig\":5}\n");
+                break;
+            case "payload-version":
+                File.AppendAllText(file, Auth(Next("usage", version: 2)));
+                break;
+            case "payload-stream":
+                File.AppendAllText(file, Auth(Next("borrows")));
+                break;
+            case "first-line-event":
+                File.WriteAllText(file, "{\"type\":\"lease.acquired\",\"ts\":1}\n");
+                break;
+            case "other-stream":
+                stream = "borrows";
+                break;
+            case "no-license":
+                File.WriteAllText(file, "{\"type\":\"chain.start\",\"ts\":1,\"stream\":\"usage\"}\n");
+                break;
+            case "license-not-object":
+                string jwk = Encoding.UTF8.GetString(KeyFiles.ExportPublicJwk(_server));
+                File.WriteAllText(file, "{\"type\":\"chain.start\",\"ts\":1,\"stream\":\"usage\",\"license\":\"x\",\"key\":" + jwk + "}\n");
+                break;
+            case "license-other-product":
+                product = "acme-cam";
+                break;
+            case "no-certificates":
+                product = null;
+                File.WriteAllText(file, "{\"type\":\"chain.start\",\"ts\":1,\"stream\":\"usage\",\"node\":\"n1\",\"certificates\":[]}\n");
+                break;
+            default:
+                _time.Advance(TimeSpan.FromMinutes(1));
+                using (SignedLog log = Open())
+                {
+                    Append(log, 1);
+                }
+
+                files = SignedLog.FindFiles(_dir, "usage");
+                Assert.True(Verify(files).Intact);
+
+                // The first file's signatures are read; then its read stops, and the second file's link matches what was read.
+                File.AppendAllText(files[0], new string('x', (1024 * 1024) + 1) + "\n");
+                message = string.Format(System.Globalization.CultureInfo.InvariantCulture, message, Path.GetFileName(files[0]));
+                break;
+        }
+
+        VerifiedLog report = VerifiedLog.Of(files, _trust, product, stream);
+
+        Assert.False(report.Intact);
+        LogIssue error = Assert.Single(report.Issues, i => i.Severity == LogIssueSeverity.Error && i.File == Path.GetFileName(files[^1]));
+        Assert.Equal((line, message), (error.Line, error.Message));
+    }
+
+    /// <summary>
+    /// The writer looks for the previous file's last signature in its last 1 MiB: a signature line that starts exactly
+    /// 1 MiB before the end continues the chain, and one that starts a byte earlier is not found, so the next file starts
+    /// with chain.reset (design §18.1).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A closed file of the log whose last line is a signature, then one unsigned event line appended, long enough that
+    ///   the signature line and the event line are 1,048,576 bytes together, or 1,048,577.
+    ///
+    /// Steps:
+    /// - A minute later, open the log and read its reset reason; close it.
+    ///
+    /// Expected:
+    /// - 1,048,576 bytes: no reset reason. 1,048,577 bytes: "no signature was found at the end of the previous file (name)".
+    /// </remarks>
+    [Theory]
+    [InlineData(0, false)]
+    [InlineData(1, true)]
+    public void Open_PreviousSignatureAtTheEdgeOfTheTail_IsFoundInsideIt(int over, bool reset)
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        string previous = SignedLog.FindFiles(_dir, "usage").Single();
+        int lastAuth = Encoding.UTF8.GetByteCount(File.ReadAllLines(previous)[^1] + "\n");
+        const string Head = "{\"type\":\"lease.acquired\",\"ts\":1,\"p\":\"";
+        const string Tail = "\"}\n";
+        int padding = (1024 * 1024) + over - lastAuth - Head.Length - Tail.Length;
+        File.AppendAllText(previous, Head + new string('p', padding) + Tail);
+
+        _time.Advance(TimeSpan.FromMinutes(1));
+        string? reason;
+        using (SignedLog log = Open())
+        {
+            reason = log.ResetReason;
+        }
+
+        Assert.Equal(reset ? $"no signature was found at the end of the previous file {Path.GetFileName(previous)}" : null, reason);
     }
 
     /// <summary>
