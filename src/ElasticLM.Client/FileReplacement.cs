@@ -173,10 +173,18 @@ internal static class FileReplacement
         && candidate.EndsWith(TemporaryExtension, StringComparison.Ordinal)
         && !candidate.AsSpan(name.Length + 1, RandomLength).ContainsAnyExcept(LowerHex);
 
-    // design §12.6.2 (V1d24a): a writer holds its temporary file until it is in place, so an open with FileShare.None fails
-    // while one is at work. A link is not opened: File.Delete removes the link, not what it points to.
+    // design §12.6.2 (V1d24a): a writer holds its temporary file until it is in place, so an exclusive open fails while one
+    // is at work. A link is not opened: File.Delete removes the link, not what it points to. On Linux and macOS a FileStream
+    // open of a FIFO waits for a writer, so UnixLeftover opens without waiting and leaves anything that is not a regular file
+    // (review of PR #475).
     private static void RemoveIfNotHeld(string path)
     {
+        if (!OperatingSystem.IsWindows())
+        {
+            UnixLeftover.TryRemove(path);
+            return;
+        }
+
         try
         {
             if (new FileInfo(path).LinkTarget is null)
@@ -247,20 +255,36 @@ internal static class FileReplacement
     /// Reads a whole file that a writer may delete, move, or replace while it is read: the file is opened with
     /// <see cref="FileShare.ReadWrite"/> and <see cref="FileShare.Delete"/>, so on Windows a delete of the file and a move of
     /// it to another name are not refused for this reader. A move over it is refused on Windows whatever the sharing; the
-    /// writer tries again (<see cref="Move(string, string, TimeProvider)"/>).
+    /// writer tries again (<see cref="Move(string, string, TimeProvider)"/>). A file that cannot seek (a pipe, a device) is
+    /// read to its end, and the limit is checked on what the open file gives, not on a length read before it was opened.
     /// </summary>
     /// <param name="path">The file.</param>
-    /// <returns>Its bytes.</returns>
+    /// <param name="maxLength">The most bytes the file may hold.</param>
+    /// <returns>Its bytes, or <see langword="null"/> when it holds more than <paramref name="maxLength"/> bytes.</returns>
     /// <exception cref="IOException">The file cannot be read.</exception>
     /// <exception cref="UnauthorizedAccessException">Access is denied.</exception>
-    public static byte[] ReadShared(string path)
+    public static byte[]? ReadShared(string path, int maxLength)
     {
         // design §12.6.2 (V1d24a): with FileShare.Read or ReadWrite, File.Delete and File.Move of the file throw IOException
         // 0x80070020 on Windows while this handle is open; with Delete added they pass (Windows 11, .NET 10.0.14).
         using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, ShareWithWriters);
-        byte[] bytes = new byte[stream.Length];
-        stream.ReadExactly(bytes);
-        return bytes;
+        if (stream.CanSeek)
+        {
+            if (stream.Length > maxLength)
+            {
+                return null;
+            }
+
+            byte[] bytes = new byte[stream.Length];
+            stream.ReadExactly(bytes);
+            return bytes;
+        }
+
+        // Review of PR #475: Length throws NotSupportedException on a stream that cannot seek; File.ReadAllBytes reads such
+        // a file to its end, and so does this, one byte past the limit at most.
+        byte[] buffer = new byte[maxLength + 1];
+        int read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+        return read > maxLength ? null : buffer[..read];
     }
 
     /// <summary>Deletes a file, if it can. A temporary file it cannot delete stays for <see cref="RemoveLeftovers(string)"/>.</summary>

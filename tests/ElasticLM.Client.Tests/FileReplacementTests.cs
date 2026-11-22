@@ -515,6 +515,120 @@ public sealed class FileReplacementTests : IDisposable
     }
 
     /// <summary>
+    /// On Linux and macOS a clean neither waits on a FIFO nor follows a link to one: a FIFO with a temporary file's name
+    /// stays, and a link with such a name to a FIFO elsewhere is removed itself (design §12.6.2, V1d24a, review of PR
+    /// #475).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS; mkfifo; a FIFO at server.elmlic.0123456789abcdef.tmp beside the server license file, and a FIFO
+    ///   elsewhere/fifo with a symbolic link to it at server.elmlic.fedcba9876543210.tmp. No process opens either FIFO for
+    ///   writing, so an open that waits for a writer never returns.
+    ///
+    /// Steps:
+    /// - Write the server license file with LicenseFiles.Write on another thread, and wait for it for at most 30 seconds.
+    ///
+    /// Expected:
+    /// - The write ends and the file holds what was written; the FIFO at the temporary name stays; the link is gone; the
+    ///   FIFO it pointed to stays.
+    /// </remarks>
+    [Fact]
+    public async Task Clean_FifoAndLinkToAFifo_DoesNotWaitAndRemovesTheLinkOnly()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "FIFOs that a path names are Linux and macOS only.");
+        string license = Path.Combine(_dir, "server.elmlic");
+        string fifo = license + ".0123456789abcdef.tmp";
+        string elsewhere = Path.Combine(_dir, "elsewhere");
+        Directory.CreateDirectory(elsewhere);
+        string target = Path.Combine(elsewhere, "fifo");
+        MakeFifo(fifo);
+        MakeFifo(target);
+        string link = license + ".fedcba9876543210.tmp";
+        File.CreateSymbolicLink(link, target);
+
+        Task write = Task.Run(
+            () => LicenseFiles.Write(license, "written"u8.ToArray(), new FakeTimeProvider(Start)),
+            TestContext.Current.CancellationToken
+        );
+        await write.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+        Assert.Equal("written", File.ReadAllText(license));
+        Assert.Equal((true, false, true), (Path.Exists(fifo), Path.Exists(link) || new FileInfo(link).LinkTarget is not null, Path.Exists(target)));
+    }
+
+    /// <summary>
+    /// ReadShared reads a file that cannot seek (a pipe) to its end, and gives null when it holds more than the limit
+    /// (review of PR #475: Length throws NotSupportedException on such a file, where File.ReadAllBytes reads it).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A pipe that a path names: on Windows a named pipe \\.\pipe\elm-…; on Linux and macOS a FIFO made with mkfifo. A
+    ///   writer on another thread writes the given number of bytes and closes it.
+    ///
+    /// Steps:
+    /// - Read it with ReadShared and a limit of 16 bytes, once with 16 bytes written and once with 17.
+    ///
+    /// Expected:
+    /// - The 16 bytes; then null.
+    /// </remarks>
+    /// <param name="written">The bytes the writer writes.</param>
+    [Theory]
+    [InlineData(16)]
+    [InlineData(17)]
+    public async Task ReadShared_FileThatCannotSeek_IsReadToItsEndWithinTheLimit(int written)
+    {
+        byte[] content = [.. Enumerable.Range(0, written).Select(i => (byte)('a' + (i % 26)))];
+        string path;
+        Task writer;
+        System.IO.Pipes.NamedPipeServerStream? server = null;
+        if (OperatingSystem.IsWindows())
+        {
+            string name = "elm-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6));
+            server = new System.IO.Pipes.NamedPipeServerStream(
+                name,
+                System.IO.Pipes.PipeDirection.Out,
+                1,
+                System.IO.Pipes.PipeTransmissionMode.Byte,
+                System.IO.Pipes.PipeOptions.Asynchronous
+            );
+            path = @"\\.\pipe\" + name;
+            writer = Task.Run(
+                async () =>
+                {
+                    await server.WaitForConnectionAsync(TestContext.Current.CancellationToken);
+                    await server.WriteAsync(content, TestContext.Current.CancellationToken);
+                    if (OperatingSystem.IsWindows())
+                    {
+                        server.WaitForPipeDrain();
+                    }
+
+                    server.Dispose();
+                },
+                TestContext.Current.CancellationToken
+            );
+        }
+        else
+        {
+            path = Path.Combine(_dir, "pipe");
+            MakeFifo(path);
+            writer = Task.Run(() => File.WriteAllBytes(path, content), TestContext.Current.CancellationToken);
+        }
+
+        try
+        {
+            byte[]? read = await Task.Run(() => FileReplacement.ReadShared(path, 16), TestContext.Current.CancellationToken)
+                .WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+            await writer.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
+
+            Assert.Equal(written <= 16 ? content : null, read);
+        }
+        finally
+        {
+            server?.Dispose();
+        }
+    }
+
+    /// <summary>
     /// A pin's write removes the left temporary files of every pin in servers/, not only of its own (design §12.6.2,
     /// V1d24a).
     /// </summary>
@@ -688,7 +802,7 @@ public sealed class FileReplacementTests : IDisposable
             writer.Flush();
             File.Move(fresh, Old, overwrite: true);
 
-            Assert.Equal("new", System.Text.Encoding.UTF8.GetString(FileReplacement.ReadShared(Old)));
+            Assert.Equal("new", System.Text.Encoding.UTF8.GetString(FileReplacement.ReadShared(Old, 16)!));
         }
 
         using (new FileStream(Old, FileMode.Open, FileAccess.Read, FileReplacement.ShareWithWriters))
@@ -812,6 +926,17 @@ public sealed class FileReplacementTests : IDisposable
         {
             Sudo("umount", disk);
         }
+    }
+
+    // Makes a FIFO at a path with mkfifo, which Linux and macOS have.
+    private static void MakeFifo(string path)
+    {
+        using var mkfifo = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("mkfifo", [path]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = mkfifo.StandardError.ReadToEnd();
+        mkfifo.WaitForExit();
+        Assert.True(mkfifo.ExitCode == 0, "mkfifo failed: " + error);
     }
 
     // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.

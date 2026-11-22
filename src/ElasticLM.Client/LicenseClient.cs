@@ -792,7 +792,7 @@ public sealed class LicenseClient : IAsyncDisposable
     // Reads and verifies one saved borrow of this server; null when it is of another server, damaged, or no longer valid.
     private Lease? LoadBorrow(string path)
     {
-        byte[] bytes;
+        byte[]? bytes;
         try
         {
             var info = new FileInfo(path);
@@ -802,9 +802,14 @@ public sealed class LicenseClient : IAsyncDisposable
             }
 
             // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it.
-            bytes = FileReplacement.ReadShared(path);
+            bytes = FileReplacement.ReadShared(path, MaxBorrowFileLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (bytes is null)
         {
             return null;
         }

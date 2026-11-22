@@ -219,7 +219,7 @@ internal static class ProtectedFiles
     /// unreadable, or protected for another user, machine, or purpose.</returns>
     public static byte[]? TryReadSecret(string path, int maxLength, byte[] purpose)
     {
-        byte[] stored;
+        byte[]? stored;
         try
         {
             var info = new FileInfo(path);
@@ -230,9 +230,14 @@ internal static class ProtectedFiles
 
             // design §12.6.2 (V1d24a): elm logout deletes the login file, which this reader then does not refuse. A replacement is
             // refused on Windows whatever the sharing, and the writer tries again.
-            stored = FileReplacement.ReadShared(path);
+            stored = FileReplacement.ReadShared(path, maxLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (stored is null)
         {
             return null;
         }

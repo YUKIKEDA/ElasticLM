@@ -44,7 +44,12 @@ internal sealed class ServerPins(string directory, TimeProvider time)
             }
 
             // design §12.6.2 (V1d24a): ResetServerPin deletes the file, and on Windows a reader without Delete would refuse it.
-            pin = JsonSerializer.Deserialize(FileReplacement.ReadShared(path), ClientWireContext.Default.PinFile);
+            if (FileReplacement.ReadShared(path, MaxPinFileLength) is not byte[] bytes)
+            {
+                return false;
+            }
+
+            pin = JsonSerializer.Deserialize(bytes, ClientWireContext.Default.PinFile);
             return pin is not null && pin.Url == HttpTargetUri.Normalize(server);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)

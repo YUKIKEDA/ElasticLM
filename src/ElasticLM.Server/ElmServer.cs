@@ -759,7 +759,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
 
             // design §12.6.2 (V1d24a): elm server deactivate deletes the file, which this reader then does not refuse. A refresh
             // that replaces it is refused on Windows whatever the sharing, and tries again.
-            return (FileReplacement.ReadShared(settings.LicensePath), null);
+            return FileReplacement.ReadShared(settings.LicensePath, MaxLicenseFileLength) is byte[] read
+                ? (read, null)
+                : (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

@@ -191,7 +191,13 @@ public sealed partial class InstallationKeyStore
             }
 
             // design §12.6.2 (V1d24a): Delete is not refused on Windows while this reads the key.
-            stored = FileReplacement.ReadShared(KeyPath);
+            if (FileReplacement.ReadShared(KeyPath, MaxKeyFileLength) is not byte[] read)
+            {
+                error = Unreadable("The installation key does not exist or is too large.");
+                return false;
+            }
+
+            stored = read;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
