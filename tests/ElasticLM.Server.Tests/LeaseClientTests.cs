@@ -439,8 +439,9 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A license of kind standard for pro, issued by the vendor for the key of a server data folder (an on-premises server
-    ///   does not start with it, so a listener stands in); a TLS listener on loopback that answers every
-    ///   request with that license and the key's JWK, as GET /v1/server/license answers.
+    ///   does not start with it, so a listener stands in); a TLS listener on loopback, whose certificate is made from that
+    ///   same installation key, that answers every request with that license and the key's JWK, as GET /v1/server/license
+    ///   answers. The server thus matches its license in every way but the kind (design §5.3 T18).
     ///
     /// Steps:
     /// - A client of that listener acquires pro.
@@ -468,15 +469,25 @@ public sealed class LeaseClientTests : IAsyncDisposable
         byte[] license = File.ReadAllBytes(path);
         Assert.True(new InstallationKeyStore("acme-cad", KeyScope.Machine, serverData).TryLoadOrCreate(out InstallationKey? key, out _));
         ECParameters point;
+        byte[] pfx;
         using (key)
         {
             point = key!.PublicParameters();
+
+            // The TLS key is the license's key, as on a real server, so only the license's kind can refuse it.
+            pfx = key.WithPrivateKey(ecdsa =>
+            {
+                var request = new CertificateRequest("CN=127.0.0.1", ecdsa, HashAlgorithmName.SHA256);
+                using X509Certificate2 made = request.CreateSelfSigned(Deployment.Start.AddDays(-1), Deployment.Start.AddDays(30));
+                return made.Export(X509ContentType.Pkcs12);
+            });
         }
 
         string jwk =
             $"{{\"kty\":\"EC\",\"crv\":\"P-256\",\"x\":\"{System.Buffers.Text.Base64Url.EncodeToString(point.Q.X)}\",\"y\":\"{System.Buffers.Text.Base64Url.EncodeToString(point.Q.Y)}\"}}";
         await using FixedAnswerServer listener = await FixedAnswerServer.StartAsync(
-            "{\"license\":" + System.Text.Encoding.UTF8.GetString(license) + ",\"key\":" + jwk + "}"
+            "{\"license\":" + System.Text.Encoding.UTF8.GetString(license) + ",\"key\":" + jwk + "}",
+            pfx
         );
         string data = _deployment.NewFolder();
         LicenseClient client = _deployment.Client(listener.Url, data);
@@ -786,7 +797,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
 
     /// <summary>
     /// A TLS listener on a loopback port that answers every request with status 200 and the same JSON body, then closes the
-    /// connection: a server that answers as it likes. Its certificate is self-signed for a key of its own.
+    /// connection: a server that answers as it likes. Its certificate is the self-signed one given as PKCS#12.
     /// </summary>
     private sealed class FixedAnswerServer : IAsyncDisposable
     {
@@ -796,15 +807,12 @@ public sealed class LeaseClientTests : IAsyncDisposable
         private readonly byte[] _answer;
         private Task _serving = Task.CompletedTask;
 
-        private FixedAnswerServer(string body)
+        private FixedAnswerServer(string body, byte[] pfx)
         {
             _listener = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
-            using ECDsa key = KeyFiles.CreateKey();
-            var request = new CertificateRequest("CN=127.0.0.1", key, HashAlgorithmName.SHA256);
-            using X509Certificate2 made = request.CreateSelfSigned(Deployment.Start.AddDays(-1), Deployment.Start.AddDays(30));
 
-            // SChannel on Windows needs a key it can open from a store, not an ephemeral one.
-            _certificate = X509CertificateLoader.LoadPkcs12(made.Export(X509ContentType.Pkcs12), null);
+            // Loaded from PKCS#12: SChannel on Windows needs a key it can open from a store, not an ephemeral one.
+            _certificate = X509CertificateLoader.LoadPkcs12(pfx, null);
             byte[] content = System.Text.Encoding.UTF8.GetBytes(body);
             _answer =
             [
@@ -817,9 +825,9 @@ public sealed class LeaseClientTests : IAsyncDisposable
 
         public Uri Url => new($"https://127.0.0.1:{((System.Net.IPEndPoint)_listener.LocalEndpoint).Port}");
 
-        public static Task<FixedAnswerServer> StartAsync(string body)
+        public static Task<FixedAnswerServer> StartAsync(string body, byte[] pfx)
         {
-            var server = new FixedAnswerServer(body);
+            var server = new FixedAnswerServer(body, pfx);
             server._listener.Start();
             server._serving = server.ServeAsync();
             return Task.FromResult(server);

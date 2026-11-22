@@ -53,7 +53,12 @@ internal static class KestrelLimits
             await stream.WriteAsync(Encoding.ASCII.GetBytes(request), cancel);
             using var reader = new StreamReader(stream, Encoding.ASCII, leaveOpen: true);
             string line = await reader.ReadLineAsync(cancel) ?? string.Empty;
-            return int.Parse(line.Split(' ')[1], CultureInfo.InvariantCulture);
+            string[] parts = line.Split(' ');
+            Assert.True(
+                parts.Length >= 2 && parts[0] == "HTTP/1.1" && parts[1].Length == 3 && parts[1].All(char.IsAsciiDigit),
+                $"The answer has no HTTP/1.1 status line; its first line is '{line}'."
+            );
+            return int.Parse(parts[1], CultureInfo.InvariantCulture);
         }
     }
 }

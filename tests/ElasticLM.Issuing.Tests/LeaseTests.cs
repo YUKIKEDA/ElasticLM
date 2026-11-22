@@ -1013,7 +1013,8 @@ public sealed class LeaseTests : IDisposable
     ///   lease certificate.
     ///
     /// Steps:
-    /// - For each claim, change only that claim in the payload, re-encode it, and keep the header and the signature; or
+    /// - For each claim, change only that claim in the payload, or add it where the lease has none (the hosted lease has no
+    ///   slic), re-encode it, and keep the header and the signature; or
     ///   ("other-lease") keep the header and payload and take the signature of a second lease with another lease ID.
     /// - Verify on the path named.
     ///
@@ -1156,11 +1157,14 @@ public sealed class LeaseTests : IDisposable
     /// <summary>
     /// When two adjacent steps of the on-premises check fail, the first one is reported (design §12.7.5 order: the
     /// signature, the payload's form, the server license token ID, the product, the installation, the license, feature, and
-    /// seats, the length, the server license's expiry, the feature's expiry, then the issue time, the clock guard, and the
-    /// expiry). The pair of the server license's expiry and the feature's is in
-    /// <see cref="VerifyOnPremises_LeaseOutlivingLicenseAndFeature_FailsOnTheLicense"/>.
+    /// seats, the length, the server license's expiry, the feature's expiry, then step 6). The pair of the server license's
+    /// expiry and the feature's is in <see cref="VerifyOnPremises_LeaseOutlivingLicenseAndFeature_FailsOnTheLicense"/>.
     /// </summary>
     /// <remarks>
+    /// The design lists step 6 (not issued in the future, and the clock guard) without an order and the expiry after the
+    /// steps: the cases future+clock-guard and clock-guard+expired pin the order of LeaseVerifier.CheckTime (the issue time,
+    /// the clock guard, then the expiry), which is the code's order, not a design statement.
+    ///
     /// Preconditions:
     /// - The server identity of the valid case, or (feature-expiry+future) one whose pro expires 5 minutes from now; each
     ///   lease fails the two steps its case names, through the issuer's spec, the issue and verification times, the signing

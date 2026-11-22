@@ -1559,7 +1559,9 @@ public sealed class LicenseVerifierTests : IDisposable
     /// - Re-encode the changed payload, keep the header and the signature, and verify the token with only that certificate.
     ///
     /// Expected:
-    /// - ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for each.
+    /// - ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for each. A changed sub or jwk is
+    ///   also refused by the subject check (the certified key must be the token's kid), so those two cases do not show the
+    ///   root's signature check alone; the other cases do.
     /// </remarks>
     [Theory]
     [InlineData("iat")]
