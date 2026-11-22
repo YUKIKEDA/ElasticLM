@@ -61,12 +61,12 @@ public sealed class ElmAdminTests
                 using var request = new HttpRequestMessage(HttpMethod.Get, listener.Url);
                 if (status == 200)
                 {
-                    CliException e = Assert.Throws<CliException>(() => OidcHttp.Send(http, request));
+                    CliException e = Assert.Throws<CliException>(() => OidcHttp.Send(http, request, TimeProvider.System));
                     Assert.Equal((1, $"The answer of {listener.Url} is not JSON."), (e.ExitCode, e.Message));
                 }
                 else
                 {
-                    (System.Net.HttpStatusCode answered, JsonDocument? body) = OidcHttp.Send(http, request);
+                    (System.Net.HttpStatusCode answered, JsonDocument? body) = OidcHttp.Send(http, request, TimeProvider.System);
                     Assert.Equal((System.Net.HttpStatusCode.BadRequest, null), (answered, body));
                 }
             }

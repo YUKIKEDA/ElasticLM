@@ -377,7 +377,7 @@ public sealed class ElmCommandsTests : IAsyncDisposable
 
         (int code, string output, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
         Assert.Equal(0, code);
-        Assert.StartsWith("intact", output.Trim(), StringComparison.Ordinal);
+        Assert.Contains("intact: ", output, StringComparison.Ordinal);
         Assert.Equal(0, Run(["log", "verify", data, "--product", "acme-cad", "--stream", "borrows"]).Code);
         using (JsonDocument json = JsonDocument.Parse(Run(["log", "verify", data, "--product", "acme-cad", "--json"]).Out))
         {
