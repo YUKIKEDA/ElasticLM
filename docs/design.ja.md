@@ -3654,12 +3654,11 @@ M5b の形（0.99）:
   - 管理 API の答えの `code` と `detail`（`ServerAdminApi.Unexpected`、`elm server reload` の断りの行）。`elm server status`・`leases`・`reload` の表示の、答えから読んだ文字列のすべて。サーバーライセンスのコマンドが `ActivationClient` から受けた誤りの文（サービスの `detail` を持つ。`ServerLicenseCommands.Refused`）。
   - `elm admin login` が標準エラーに書く発行者（`GET /v1/admin/oidc` の答え）、`verification_uri`、`user_code`、`verification_uri_complete`。`elm admin logout` の取り消しの失敗の行。
   - `elm license inspect` の文の出力のヘッダー（`JsonElement.GetRawText` は、文字列の中の U+007F と C1 を、そのまま返す）。ペイロードは `JsonSerializer` で書くので、下の `--json` と同じく逃がしてある。
-  - `elm license verify` の断りの文（`Message` は、署名を確かめる前のヘッダーの値を持ちうる）。
   - `elm log verify` の指摘のファイルの名前と文（文は、行の中のファイルの名前やノードの名前を持つ）と、下の §18.1 のライセンスの行。
 - `elm admin request` の本文（成功の標準出力と、誤りの標準エラー）は、LF と TAB を残し、ほかの制御文字を置き換える。JSON と NDJSON の行を、行のまま書くためである。サービスが書く JSON は、既定のエンコーダーで U+007F から上のすべてと C0 を逃がすので（下の測ったこと）、サービスの答えの本文は、これで 1 バイトも変わらない。
 - `--json` の出力は置き換えない。`JsonSerializer` と `Utf8JsonWriter` の既定のエンコーダーが、C0、DEL、C1 を `\u0001`、`\u001B`、`\u007F`、`\u0085` のように書く。`JsonElement` を `JsonSerializer` で書くときも、文字列を戻してから書き直すので同じである（.NET 10.0.14、Windows で測った。`GetRawText` だけが、U+007F と U+0085 を 0x7F と 0xC2 0x85 のまま返した）。
 - 対のないサロゲートは、この出力に届かない。JSON の文字列は、読む所で読めない文字として断る（§8.3、V1d23）。`elm admin request` の本文は UTF-8 として読み、正しくないバイトは U+FFFD になる。
-- 置き換えないもの: `elm` が自分で作った文、利用者が渡した値（パス、オプション。ただし `CliException` の文に入れば置き換わる）、検証を通ったライセンスの値（`elm license verify` の成功の出力。ベンダーの鍵が署名した値である）。
+- 置き換えないもの: `elm` が自分で作った文、利用者が渡した値（パス、オプション。ただし `CliException` の文に入れば置き換わる）、検証を通ったライセンスの値（`elm license verify` の成功の出力。ベンダーの鍵が署名した値である）、`elm license verify` の断りの文（`ElasticLM.Licensing` の決まった文で、トークンの値を持たない。`src/ElasticLM.Licensing` に補間した文字列はない）。
 
 `elm admin`（M5a、0.98）:
 

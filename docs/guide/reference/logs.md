@@ -165,7 +165,7 @@ A line is written after the request's change is committed. An expired lease is w
 ### Verifying the usage log
 
 ```text
-elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--json]
+elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--license <ID>] [--json]
 ```
 
 Every option is listed in [`elm log verify`](elm-cli.md#elm-log-verify). For the usage log:
@@ -173,9 +173,10 @@ Every option is listed in [`elm log verify`](elm-cli.md#elm-log-verify). For the
 - Give the log files, or folders of them. Files are verified in name order, oldest first. A folder stands for the files of the stream in it.
 - `--product` is needed for the log of `elm-server`, not for that of `elm-service`.
 - `--node` picks a node's `usage-<node>-*.jsonl` files in folders of `elm-service`'s usage logs. It is not allowed with file paths.
-- `--json` writes `intact`, `files`, `entries`, and `issues` (each with `file`, `line`, `severity`, `message`).
+- `--license` names the server license that must have signed each file. A file whose end was signed under another server license is an error, `The file is signed by the key of server license <ID>, not of <expected ID> (--license).`, and so is a file of `elm-service`, `The file is a log of elm-service, not of server license <expected ID> (--license).`. The comparison is made with the server license at the end of each file: when the server reloaded a server license with another ID in the middle of a file, the lines before that change were signed under the earlier one, which is not named.
+- `--json` writes `intact`, `files`, `entries`, `issues` (each with `file`, `line`, `severity`, `message`), and `licenses` (each with `file` and, for a server's log, `licenseId`).
 
-The command checks the key material of each first line against the trust store at the time of that line: a server license for `elm-server`, certificates for logs for `elm-service`. It then checks every `auth` line, the chain inside each file, and the chain from file to file. The text output gives one line per issue, `error: <file>:<line>: <message>` or `warning: ...`, then `intact: <files> file(s), <lines> event line(s)` or `NOT INTACT: ...`.
+The command checks the key material of each first line against the trust store at the time of that line: a server license for `elm-server`, certificates for logs for `elm-service`. It then checks every `auth` line, the chain inside each file, and the chain from file to file. The text output gives one line per issue, `error: <file>:<line>: <message>` or `warning: ...`, then one line per file whose first line verified, `file: <file>: server license <ID>` or `file: <file>: elm-service`, then `intact: <files> file(s), <lines> event line(s)` or `NOT INTACT: ...`. When a folder holds no file to verify, only files whose names have no real date and time, the command writes their warnings to standard error before the error `No usage log file was found.`, and exits with 2.
 
 | Exit code | Meaning |
 | --- | --- |

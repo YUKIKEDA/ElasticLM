@@ -165,7 +165,7 @@ info: elm-server[2]
 ### 利用ログの検証
 
 ```text
-elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--json]
+elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--license <ID>] [--json]
 ```
 
 すべてのオプションは [`elm log verify`](elm-cli.md#elm-log-verify) に載せている。利用ログについては次のとおり。
@@ -173,9 +173,10 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 - ログのファイル、またはそれを入れたフォルダーを指定する。ファイルは名前の順に、古いものから検証する。フォルダーを指定すると、その中にあるそのストリームのファイルを指定したことになる。
 - `--product` は、`elm-server` のログでは必要で、`elm-service` のログでは要らない。
 - `--node` は、`elm-service` の利用ログのフォルダーから、そのノードの `usage-<node>-*.jsonl` のファイルを選ぶ。ファイルのパスと一緒には使えない。
-- `--json` は、`intact`、`files`、`entries`、`issues`（それぞれ `file`、`line`、`severity`、`message` を持つ）を書き出す。
+- `--license` は、各ファイルに署名しているはずのサーバーライセンスを指定する。ファイルの終わりを別のサーバーライセンスで署名していればエラー（`The file is signed by the key of server license <ID>, not of <expected ID> (--license).`）で、`elm-service` のファイルもエラー（`The file is a log of elm-service, not of server license <expected ID> (--license).`）になる。比べるのは、各ファイルの終わりのサーバーライセンスだ。ファイルの途中でサーバーが別の ID のサーバーライセンスを読み込み直したときは、その前の行に署名した前のサーバーライセンスは出ない。
+- `--json` は、`intact`、`files`、`entries`、`issues`（それぞれ `file`、`line`、`severity`、`message` を持つ）、`licenses`（それぞれ `file` と、サーバーのログなら `licenseId` を持つ）を書き出す。
 
-このコマンドは、各ファイルの最初の行にある鍵の情報を、その行の時刻でのトラストストアと照らし合わせる。`elm-server` ならサーバーライセンス、`elm-service` ならログ用の鍵証明書だ。次に、すべての `auth` 行、各ファイルの中のチェーン、ファイルからファイルへのチェーンを確かめる。テキストの出力は、問題ごとに `error: <file>:<line>: <message>` か `warning: ...` を 1 行ずつ出し、最後に `intact: <files> file(s), <lines> event line(s)` か `NOT INTACT: ...` を出す。
+このコマンドは、各ファイルの最初の行にある鍵の情報を、その行の時刻でのトラストストアと照らし合わせる。`elm-server` ならサーバーライセンス、`elm-service` ならログ用の鍵証明書だ。次に、すべての `auth` 行、各ファイルの中のチェーン、ファイルからファイルへのチェーンを確かめる。テキストの出力は、問題ごとに `error: <file>:<line>: <message>` か `warning: ...` を 1 行ずつ出し、次に、最初の行を確かめられたファイルごとに `file: <file>: server license <ID>` か `file: <file>: elm-service` を 1 行ずつ出し、最後に `intact: <files> file(s), <lines> event line(s)` か `NOT INTACT: ...` を出す。フォルダーに確かめるファイルがなく、日時として読めない名前のファイルしかないときは、その警告を標準エラー出力に書いてから、エラー `No usage log file was found.` を書き、終了コード 2 で終わる。
 
 | 終了コード | 意味 |
 | --- | --- |
