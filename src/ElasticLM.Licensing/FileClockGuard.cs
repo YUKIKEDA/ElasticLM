@@ -213,7 +213,9 @@ public sealed class FileClockGuard : IClockGuard
     // design §11.4 step 7 (V1d24d): deletes the temporary files of this state that no writer holds, those left by a write
     // whose delete was refused or by a process that ended between creating and moving. A writer holds its file until it is in
     // place, so an open with FileShare.None fails while one is at work: on Windows by the share mode, on Linux and macOS by
-    // the shared flock .NET takes. A link is deleted itself, not opened. Nothing is thrown.
+    // the shared flock .NET takes, which UnixLeftover's exclusive flock meets. A link is deleted itself, never followed. On
+    // Linux and macOS UnixLeftover opens without waiting and leaves anything that is not a regular file (a FIFO, whose open
+    // would wait for a writer; a socket; a device): the owner's 24d-6 and 24d-6a. Nothing is thrown.
     private void RemoveLeftovers()
     {
         string name = Path.GetFileName(_path);
@@ -230,6 +232,12 @@ public sealed class FileClockGuard : IClockGuard
                 if (++seen > MaxLeftovers)
                 {
                     return;
+                }
+
+                if (!OperatingSystem.IsWindows())
+                {
+                    UnixLeftover.TryRemove(candidate);
+                    continue;
                 }
 
                 try

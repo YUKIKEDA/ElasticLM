@@ -554,6 +554,38 @@ public sealed class FileClockGuardTests : IDisposable
         Assert.True(File.Exists(StatePath));
     }
 
+    /// <summary>
+    /// A FIFO at a leftover's name is neither opened nor deleted: its open would wait for a writer and hold the guard (design
+    /// §11.4 step 8, V1d24d, the owner's 24d-6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS (mkfifo); Windows is skipped.
+    /// - A FIFO made with mkfifo at clock.json.0123456789ABCDEF.tmp beside the state path.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes).
+    ///
+    /// Expected:
+    /// - Accepted without waiting; the FIFO is still there; the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_FifoAtALeftoverName_IsLeftAlone()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "mkfifo is Linux and macOS only.");
+        string fifo = Path.Combine(_directory, "clock.json.0123456789ABCDEF.tmp");
+        using (var mkfifo = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("mkfifo", [fifo]))!)
+        {
+            mkfifo.WaitForExit();
+            Assert.Equal(0, mkfifo.ExitCode);
+        }
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.True(File.Exists(fifo));
+        Assert.True(File.Exists(StatePath));
+    }
+
     // The user ID of this process, read with id -u: .NET has no API for it.
     private static string UserId()
     {
