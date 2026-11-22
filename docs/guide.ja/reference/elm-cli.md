@@ -24,7 +24,7 @@ elm <group> <command> [arguments] [options]
 
 エラーは、`error:` で始まる 1 行として標準エラー出力に書く。警告は `warning:` で始まる。不明なコマンドやオプションのとき、必須のオプションがないとき、ファイルかフォルダーのパスを受け取るオプションか引数が空か空白だけのときは、続けて `Run 'elm --help' for usage.` を書き、終了コード 2 で終わる。
 
-`elm` は、外から来た文字をテキストで書くとき、制御文字を `\uXXXX` に置き換える（ESC なら `\u001B`）。外から来た文字とは、サーバー、`elm-service`、ID プロバイダーのレスポンスにある文字と、ファイルとファイル名にある文字だ。ファイルは、`elm license inspect` が示すライセンスファイルのヘッダーと、`elm log verify` が報告するログのファイルとその名前である。メッセージの中に入った文字（エラーのレスポンスの detail や、問題の行のファイル名など）も置き換える。置き換えるのは U+0000〜U+001F、U+007F、U+0080〜U+009F である。そのままだと、端末の色、書いたあとの行、ウィンドウのタイトルなどを変えられてしまう。U+202E（右から左への書き換え）や U+2028 のような、ほかの見えない文字はそのまま書く。`elm admin request` が書く本文では、改行（LF）とタブは残し、復帰（CR）は置き換える。もともと `\u001B` という 6 文字だった部分と、置き換えた ESC は、出力では見分けられない。`--json` の出力は変えない。これらの文字を、もともと JSON のエスケープで書くからだ。
+`elm` は、外から来た文字をテキストで書くとき、制御文字を `\uXXXX` に置き換える（ESC なら `\u001B`）。外から来た文字とは、サーバー、`elm-service`、ID プロバイダーのレスポンスにある文字と、ファイルとファイル名にある文字だ。ファイルは、`elm license inspect` が示すライセンスファイルのヘッダーと、`elm log verify` が報告するログのファイルとその名前である。メッセージの中に入った文字（エラーのレスポンスの detail や、問題の行のファイル名など）も置き換える。置き換えるのは U+0000〜U+001F、U+007F、U+0080〜U+009F である。そのままだと、端末の色、書いたあとの行、ウィンドウのタイトルなどを変えられてしまう。U+202E（右から左への上書き）や U+2028 のような、ほかの見えない文字はそのまま書く。`elm admin request` が書く本文では、改行（LF）とタブは残し、復帰（CR）は置き換える。もともと `\u001B` という 6 文字だった部分と、置き換えた ESC は、出力では見分けられない。`--json` の出力は変えない。これらの文字を、もともと JSON のエスケープで書くからだ。
 
 ### `--json`
 
@@ -77,7 +77,7 @@ elm <group> <command> [arguments] [options]
 | `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、信頼する鍵、資格情報のどれかが見つからない |
 | `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server`、`elm offline process`、`elm admin` では）レスポンスを読めないか、レスポンスが `elm` の読むサイズより大きい |
 
-`elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。メッセージが、レスポンスが `elm` の読むサイズより大きいことを示す次の 4 つのときは、`ELM_MALFORMED` でも `3` になる。`The service's answer is larger than the limit.`（サーバーライセンスのコマンド）、`The service's answer is larger than 262144 bytes.`（`elm offline process`）、`The server's administration API answered with a body larger than 67108864 bytes.`（`elm server`）、`The answer of <URL> is larger than 262144 bytes.`（`elm admin login`、`elm admin logout`、保存したログインの更新）だ。`elm` はそのレスポンスを何も読んでいないので、拒否だったのか成功だったのかを判断できないからだ。ほかの `ELM_MALFORMED` は、ファイルが上限より大きいことを示すメッセージのものも含めて、`1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
+`elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。メッセージが、レスポンスが `elm` の読むサイズより大きいことを示す次の 4 つのときは、`ELM_MALFORMED` でも `3` になる。`The service's answer is larger than the limit.`（サーバーライセンスのコマンド）、`The service's answer is larger than 262144 bytes.`（`elm offline process`）、`The server's administration API answered with a body larger than 67108864 bytes.`（`elm server`）、`The answer of <URL> is larger than 262144 bytes.`（`elm admin login` と、`elm admin request` と `elm offline process` が行う保存したログインの更新）だ。`elm` はそのレスポンスを何も読んでいないので、拒否だったのか成功だったのかを判断できないからだ。ほかの `ELM_MALFORMED` は、ファイルが上限より大きいことを示すメッセージのものも含めて、`1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。
 
 ## elm key
 
@@ -478,7 +478,7 @@ elm server forget-proof --product <id> [options]
 
 ## elm admin
 
-`elm admin` のコマンドは、`elm-service` にサインインし、その管理 API を呼び出す。サービスの URL は `https`、またはループバックアドレスの `http` だ。保存したログインは、そのログインを作った URL と同じオリジン（スキーム、ホスト、ポート）へのリクエストにだけ使う。アクセストークンは、期限切れまで 60 秒を切ると更新する。ID プロバイダーと `GET /v1/admin/oidc` のレスポンスは、それぞれ、リクエストから 30 秒のうちに本文を含む全体が届き、256 KiB 以下でなければならない。そうでないときは、`elm admin login` と、`elm admin request` と `elm offline process` が行う保存したログインの更新で、`error: <URL> cannot be reached: No whole answer came within 30 seconds.` か `error: ELM_MALFORMED: The answer of <URL> is larger than 262144 bytes.` と終了コード 3 で止まる。`elm admin login` がサインインの承認を待つあいだは、トークンのリクエストのこうした失敗を、ネットワークの失敗として扱う。リクエストの間隔を 2 倍にして（60 秒まで）また尋ね、デバイスコードの期限が切れるまで続ける（`error: The device code expired before the sign-in was approved.`、終了コード 1）。`elm admin logout` は、その行を付けた `The refresh token was not revoked: ` を標準エラー出力に書き、それでもログインを消して、終了コード 0 で終わる。トークンと鍵を標準出力や標準エラー出力に書くことはない。
+`elm admin` のコマンドは、`elm-service` にサインインし、その管理 API を呼び出す。サービスの URL は `https`、またはループバックアドレスの `http` だ。保存したログインは、そのログインを作った URL と同じオリジン（スキーム、ホスト、ポート）へのリクエストにだけ使う。アクセストークンは、期限切れまで 60 秒を切ると更新する。ID プロバイダーと `GET /v1/admin/oidc` のレスポンスは、それぞれ、リクエストから 30 秒のうちに本文を含む全体が届き、256 KiB 以下でなければならない。そうでないときは、`elm admin login` と、`elm admin request` と `elm offline process` が行う保存したログインの更新で、`error: <URL> cannot be reached: No whole answer came within 30 seconds.` か `error: ELM_MALFORMED: The answer of <URL> is larger than 262144 bytes.` と終了コード 3 で止まる。`elm admin login` がサインインの承認を待つあいだは、トークンのリクエストのこうした失敗を、ネットワークの失敗として扱う。リクエストの間隔を 2 倍にして（60 秒まで）また尋ね、デバイスコードの期限が切れるまで続ける（`error: The device code expired before the sign-in was approved.`、終了コード 1）。`elm admin logout` は、`The refresh token was not revoked: ` のあとにそのメッセージを続けた 1 行を、`error:` を付けずに標準エラー出力に書く。それでもログインを消し、標準出力に `Signed out.` を書いて、終了コード 0 で終わる。トークンと鍵を標準出力や標準エラー出力に書くことはない。
 
 ### elm admin login
 
@@ -573,7 +573,7 @@ elm log verify <files>... [options]
 | `--stream` | `usage`、`borrows` | `usage` | いいえ | 検証するログ。利用ログか借用の記録か |
 | `--trust` | ファイルのパス | `ELM_TRUST_ROOT_KEYS` | いいえ | 信頼するルート公開鍵のファイル。複数を指定するときは繰り返す |
 | `--revoked` | 鍵 ID | — | いいえ | 失効した鍵 ID。複数を指定するときは繰り返す |
-| `--license` | サーバーライセンスの ID | — | いいえ | 各ファイルに署名しているはずのサーバーライセンス。ほかのサーバーライセンスも署名したファイルと、`elm-service` のファイルはエラーになる |
+| `--license` | サーバーライセンスの ID | — | いいえ | 各ファイルに署名しているはずのサーバーライセンス。ほかのサーバーライセンスが 1 行でも署名したファイルと、`elm-service` のファイルはエラーになる |
 | `--json` | — | オフ | いいえ | 結果を JSON で書く |
 
 出力には、ファイルごとに、署名した鍵のサーバーライセンスのすべてか、`elm-service` が出る。形は[利用ログの検証](logs.md#利用ログの検証)にある。
