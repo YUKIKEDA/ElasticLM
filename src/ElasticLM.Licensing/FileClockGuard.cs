@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
@@ -15,6 +16,10 @@ namespace ElasticLM.Licensing;
 public sealed class FileClockGuard : IClockGuard
 {
     private const int MaxStateLength = 4096;
+    private const int RandomLength = 16;
+    private const int MaxLeftovers = 1000;
+    private const string TemporaryExtension = ".tmp";
+    private static readonly SearchValues<char> UppercaseHex = SearchValues.Create("0123456789ABCDEF");
     private static readonly TimeSpan WriteThreshold = TimeSpan.FromSeconds(60);
 
     private readonly string _path;
@@ -27,7 +32,8 @@ public sealed class FileClockGuard : IClockGuard
     /// <summary>
     /// Initializes a new instance of the <see cref="FileClockGuard"/> class.
     /// </summary>
-    /// <param name="path">The state file path. The directory must exist.</param>
+    /// <param name="path">The state file path. The directory must exist. On Linux and macOS only the user who writes the state
+    /// can read it (mode 0600).</param>
     /// <param name="installationKey">The installation key with its private part to sign the state, or <see langword="null"/> for unbound licenses.</param>
     /// <exception cref="ArgumentException"><paramref name="path"/> is empty.</exception>
     public FileClockGuard(string path, ECDsa? installationKey = null)
@@ -154,13 +160,16 @@ public sealed class FileClockGuard : IClockGuard
             state.Sig = Base64UrlCodec.Encode(signature);
         }
 
+        RemoveLeftovers();
+
         // A random name, so that processes writing the same state at once never touch each other's temporary file.
-        string temp = _path + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)) + ".tmp";
+        string temp = _path + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(RandomLength / 2)) + TemporaryExtension;
         try
         {
-            CreateNew(temp, JsonSerializer.SerializeToUtf8Bytes(state, LicensingJsonContext.Default.ClockState));
+            using FileStream held = OpenNew(temp);
             try
             {
+                held.Write(JsonSerializer.SerializeToUtf8Bytes(state, LicensingJsonContext.Default.ClockState));
                 File.Move(temp, _path, overwrite: true);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -178,39 +187,80 @@ public sealed class FileClockGuard : IClockGuard
         }
     }
 
-    // design §11.4 step 7 (V1d24d), the same way as FileReplacement.CreateNew in ElasticLM.Client (§12.6.2): File.WriteAllBytes
+    // design §11.4 step 7 (V1d24d), the way FileReplacement in ElasticLM.Client creates its files (§12.6.2): File.WriteAllBytes
     // opens what is at the path and on Linux and macOS takes the mode from the umask (0644 under umask 022, measured in V1d24d);
-    // CreateNew refuses anything at the path (O_EXCL) and the mode is 0600, which the state file keeps after the move.
-    private static void CreateNew(string path, byte[] content)
+    // CreateNew refuses anything at the path (O_EXCL), so nothing is deleted first, and the mode is 0600, which the state file
+    // keeps after the move. The caller holds the file until it is in place: Delete lets this process move it on Windows, and
+    // RemoveLeftovers cannot open it with FileShare.None (both measured on Windows 11 with .NET 10.0.14 in V1d24d). No buffer,
+    // so a write that fails throws at once and the dispose writes nothing.
+    private static FileStream OpenNew(string path)
     {
-        File.Delete(path);
         var options = new FileStreamOptions
         {
             Mode = FileMode.CreateNew,
             Access = FileAccess.Write,
-            Share = FileShare.None,
+            Share = FileShare.Read | FileShare.Delete,
+            BufferSize = 0,
         };
         if (!OperatingSystem.IsWindows())
         {
             options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
         }
 
-        bool created = false;
+        return new FileStream(path, options);
+    }
+
+    // design §11.4 step 7 (V1d24d): deletes the temporary files of this state that no writer holds, those left by a write
+    // whose delete was refused or by a process that ended between creating and moving. A writer holds its file until it is in
+    // place, so an open with FileShare.None fails while one is at work: on Windows by the share mode, on Linux and macOS by
+    // the shared flock .NET takes. A link is deleted itself, not opened. Nothing is thrown.
+    private void RemoveLeftovers()
+    {
+        string name = Path.GetFileName(_path);
         try
         {
-            using var stream = new FileStream(path, options);
-            created = true;
-            stream.Write(content);
+            int seen = 0;
+            foreach (string candidate in Directory.EnumerateFiles(Path.GetDirectoryName(_path)!, name + ".*" + TemporaryExtension))
+            {
+                if (!IsTemporaryOf(Path.GetFileName(candidate), name))
+                {
+                    continue;
+                }
+
+                if (++seen > MaxLeftovers)
+                {
+                    return;
+                }
+
+                try
+                {
+                    if (new FileInfo(candidate).LinkTarget is null)
+                    {
+                        using var probe = new FileStream(candidate, FileMode.Open, FileAccess.Read, FileShare.None);
+                    }
+
+                    File.Delete(candidate);
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+                {
+                    // Held by a writer, unreadable, or refused: it stays for a later write.
+                }
+            }
         }
-        catch (Exception e) when (created && e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            TryDelete(path);
-            throw;
+            // The folder cannot be listed; the write that follows fails the same way.
         }
     }
 
-    // A file that cannot be deleted stays, and nothing deletes it later: the state is read from its own path only, so it does
-    // not reach the guard (design §11.4 step 7, V1d24d).
+    // <name>.<16 uppercase hexadecimal digits>.tmp, compared case-sensitively: the listing's pattern is not, on Windows.
+    private static bool IsTemporaryOf(string candidate, string name) =>
+        candidate.Length == name.Length + 1 + RandomLength + TemporaryExtension.Length
+        && candidate.StartsWith(name + ".", StringComparison.Ordinal)
+        && candidate.EndsWith(TemporaryExtension, StringComparison.Ordinal)
+        && !candidate.AsSpan(name.Length + 1, RandomLength).ContainsAnyExcept(UppercaseHex);
+
+    // A file that cannot be deleted stays until a later write of this state removes it (design §11.4 step 7, V1d24d).
     private static void TryDelete(string path)
     {
         try

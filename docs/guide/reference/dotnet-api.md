@@ -148,7 +148,7 @@ A clock guard that keeps the last time seen in the file whose path the app passe
 | --- | --- |
 | `FileClockGuard` | `string path`, `ECDsa? installationKey = null`. The folder of `path` must exist. Given a P-256 key with its private part, the guard signs the state with it and treats a state whose signature fails as missing; it neither copies nor disposes the key, so the key must stay usable while the guard is used. Without a key the state is not signed, and whoever can write the file can reset the guard. Throws `ArgumentException` when `path` is empty. |
 
-A state that is missing, edited, or unreadable falls back to the token's issue time. When the file cannot be written, the guard keeps the time in memory only and tries to write it again after 60 seconds.
+A state that is missing, edited, or unreadable falls back to the token's issue time. When the file cannot be written, the guard keeps the time in memory only and tries to write it again after 60 seconds. On Linux and macOS only the user who writes the state can read the file (mode `0600`). The guard writes through a temporary file beside it, `<file>.<16 hexadecimal digits>.tmp`, and before each write deletes those that an earlier write left and no writer still holds.
 
 The `ECDsa` of an `InstallationKey` is not public. To sign the state with the installation key of `ElasticLM.Client`, call `InstallationKey.CreateClockGuard(string path)`: it returns an `InstallationClockGuard`, which keeps the state as a `FileClockGuard` does with its own copy of the key, and destroys the copy when it is disposed.
 

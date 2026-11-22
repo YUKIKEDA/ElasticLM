@@ -407,6 +407,153 @@ public sealed class FileClockGuardTests : IDisposable
         }
     }
 
+    /// <summary>
+    /// Before writing, the guard deletes the temporary files of its state that no writer holds, and no other file (design
+    /// §11.4 step 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Beside the state path clock.json, files that a write left: clock.json.0123456789ABCDEF.tmp and
+    ///   clock.json.FEDCBA9876543210.tmp; and files of other shapes: clock.json.aaaaaaaaaaaaaaaa.tmp (lowercase; Windows names ignore case, so it differs from the others in more than case),
+    ///   clock.json.0123456789ABCDE.tmp (15 digits), clock.json.0123456789ABCDEG.tmp (not hexadecimal),
+    ///   other.json.0123456789ABCDEF.tmp (another file's).
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes).
+    ///
+    /// Expected:
+    /// - Accepted; the two files of clock.json are gone; the four others are still there; the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_LeftoverTemporaryFiles_AreDeletedBeforeWriting()
+    {
+        string[] leftovers = ["clock.json.0123456789ABCDEF.tmp", "clock.json.FEDCBA9876543210.tmp"];
+        string[] others =
+        [
+            "clock.json.aaaaaaaaaaaaaaaa.tmp",
+            "clock.json.0123456789ABCDE.tmp",
+            "clock.json.0123456789ABCDEG.tmp",
+            "other.json.0123456789ABCDEF.tmp",
+        ];
+        foreach (string name in leftovers.Concat(others))
+        {
+            File.WriteAllText(Path.Combine(_directory, name), "left");
+        }
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        foreach (string name in leftovers)
+        {
+            Assert.False(File.Exists(Path.Combine(_directory, name)), name);
+        }
+
+        foreach (string name in others)
+        {
+            Assert.True(File.Exists(Path.Combine(_directory, name)), name);
+        }
+
+        Assert.True(File.Exists(StatePath));
+    }
+
+    /// <summary>
+    /// One write looks at no more than 1,000 leftover temporary files (design §11.4 step 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - 1,000 or 1,001 files clock.json.&lt;16 uppercase hexadecimal digits&gt;.tmp beside the state path.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes); count the .tmp files.
+    ///
+    /// Expected:
+    /// - Accepted; 1,000: none is left; 1,001: one is left.
+    /// </remarks>
+    /// <param name="count">The number of leftover files.</param>
+    /// <param name="left">The number expected to stay.</param>
+    [Theory]
+    [InlineData(1000, 0)]
+    [InlineData(1001, 1)]
+    public void Observe_ManyLeftovers_DeletesAtMostAThousand(int count, int left)
+    {
+        for (int i = 0; i < count; i++)
+        {
+            File.WriteAllText(Path.Combine(_directory, $"clock.json.{i:X16}.tmp"), "left");
+        }
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.Equal(left, Directory.GetFiles(_directory, "*.tmp").Length);
+    }
+
+    /// <summary>
+    /// A temporary file that another writer holds is not deleted: the writer holds it until it is in place (design §11.4
+    /// step 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - clock.json.0123456789ABCDEF.tmp beside the state path, opened for writing with FileShare.Read | FileShare.Delete,
+    ///   as a writer holds its file, and kept open.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes); close the held file.
+    ///
+    /// Expected:
+    /// - Accepted; the held file is still there with its content; the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_TemporaryFileHeldByAnotherWriter_IsLeft()
+    {
+        string held = Path.Combine(_directory, "clock.json.0123456789ABCDEF.tmp");
+        using (var writer = new FileStream(held, FileMode.CreateNew, FileAccess.Write, FileShare.Read | FileShare.Delete))
+        {
+            writer.Write("held"u8);
+            writer.Flush();
+
+            Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+        }
+
+        Assert.Equal("held", File.ReadAllText(held));
+        Assert.True(File.Exists(StatePath));
+    }
+
+    /// <summary>
+    /// A link at a leftover's name is deleted itself, and what it points to is not opened: a FIFO behind it would hold the
+    /// guard (design §11.4 step 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS (mkfifo); Windows is skipped.
+    /// - A FIFO made with mkfifo in a folder beside the state's folder, and a symbolic link to it at
+    ///   clock.json.0123456789ABCDEF.tmp beside the state path.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes).
+    ///
+    /// Expected:
+    /// - Accepted without waiting; the link is gone; the FIFO is still there; the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_LinkAtALeftoverName_DeletesTheLinkOnly()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "mkfifo is Linux and macOS only.");
+        string fifo = Path.Combine(_directory, "elsewhere", "fifo");
+        Directory.CreateDirectory(Path.GetDirectoryName(fifo)!);
+        using (var mkfifo = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("mkfifo", [fifo]))!)
+        {
+            mkfifo.WaitForExit();
+            Assert.Equal(0, mkfifo.ExitCode);
+        }
+
+        string link = Path.Combine(_directory, "clock.json.0123456789ABCDEF.tmp");
+        File.CreateSymbolicLink(link, fifo);
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.False(File.Exists(link));
+        Assert.True(File.Exists(fifo));
+        Assert.True(File.Exists(StatePath));
+    }
+
     // The user ID of this process, read with id -u: .NET has no API for it.
     private static string UserId()
     {
