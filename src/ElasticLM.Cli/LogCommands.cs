@@ -88,7 +88,7 @@ internal static class LogCommands
                         .. report.Issues,
                         .. expected is null
                             ? Enumerable.Empty<LogIssue>()
-                            : report.Files.Where(f => f.LicenseId != expected).Select(f => OtherLicense(f, expected)),
+                            : report.Files.Where(f => !SignedOnlyBy(f, expected)).Select(f => OtherLicense(f, expected)),
                     ];
                     bool intact = !issues.Any(i => i.Severity == LogIssueSeverity.Error);
                     if (parse.GetValue(jsonOption))
@@ -105,7 +105,7 @@ internal static class LogCommands
                                     i.Message
                                 )),
                             ],
-                            [.. report.Files.Select(f => new LogLicenseOutput(f.File, f.LicenseId))]
+                            [.. report.Files.Select(f => new LogLicenseOutput(f.File, f.LicenseIds.Count > 0 ? [.. f.LicenseIds] : null))]
                         );
                         host.Out.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.LogVerifyOutput));
                     }
@@ -119,7 +119,8 @@ internal static class LogCommands
                         // design §18.1 (V1d27): the server license whose key signed the end of each file.
                         foreach (LogFileKey file in report.Files)
                         {
-                            string signer = file.LicenseId is string id ? "server license " + CliText.Printable(id) : "elm-service";
+                            string signer =
+                                file.LicenseIds.Count > 0 ? "server license " + CliText.Printable(string.Join(", ", file.LicenseIds)) : "elm-service";
                             host.Out.WriteLine($"file: {CliText.Printable(file.File)}: {signer}");
                         }
 
@@ -144,12 +145,20 @@ internal static class LogCommands
     private static string IssueLine(LogIssue issue) =>
         $"{(issue.Severity == LogIssueSeverity.Error ? "error" : "warning")}: {CliText.Printable(issue.File)}:{issue.Line}: {CliText.Printable(issue.Message)}";
 
-    // design §18.1 (V1d27, T15-3): a file whose end was signed under another server license than --license, or by elm-service.
+    // design §18.1 (V1d27, T15-3): a file passes --license only when every server license whose key signed it is that one; a
+    // server license taken in the middle of the file (key.changed) counts as much as the first.
+    private static bool SignedOnlyBy(LogFileKey file, string expected) =>
+        file.LicenseIds.Count > 0 && file.LicenseIds.All(id => string.Equals(id, expected, StringComparison.Ordinal));
+
+    // design §18.1 (V1d27, T15-3): a file signed under another server license than --license, or by elm-service.
     private static LogIssue OtherLicense(LogFileKey file, string expected)
     {
-        string message = file.LicenseId is string id
-            ? $"The file is signed by the key of server license {id}, not of {expected} (--license)."
-            : $"The file is a log of elm-service, not of server license {expected} (--license).";
+        string message = file.LicenseIds switch
+        {
+            [] => $"The file is a log of elm-service, not of server license {expected} (--license).",
+            [string id] => $"The file is signed by the key of server license {id}, not of {expected} (--license).",
+            _ => $"The file is signed by the keys of server licenses {string.Join(", ", file.LicenseIds)}, not only of {expected} (--license).",
+        };
         return new LogIssue(file.File, 0, LogIssueSeverity.Error, message);
     }
 

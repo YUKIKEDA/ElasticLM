@@ -43,7 +43,7 @@ file: usage-20260115T093000000Z.jsonl: server license floating-server
 intact: 1 file(s), 9 event line(s)
 ```
 
-The `file:` line names each file and the server license whose key signed it. The names and numbers are those of your log: the server starts a new file at each start and at each UTC day. When you receive a log from someone else, add `--license <ID>` with the ID of the server license that the log should come from: a file signed under another server license is then an error. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
+The `file:` line names each file and the server licenses whose keys signed it. The names and numbers are those of your log: the server starts a new file at each start and at each UTC day. When you receive a log from someone else, add `--license <ID>` with the ID of the server license that the log should come from: a file that another server license also signed is then an error. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
 
 <!-- steps:run -->
 ```shell
@@ -55,7 +55,7 @@ elm log verify server-data --product acme-cad --trust root.pub.pem --json
   "intact": true,
 ```
 
-The JSON also has `files` and `entries`, the numbers of files and of event lines, `issues`, the list of issues, each with its `file`, `line`, `severity`, and `message`, and `licenses`, each file with the `licenseId` of the server license that signed it.
+The JSON also has `files` and `entries`, the numbers of files and of event lines, `issues`, the list of issues, each with its `file`, `line`, `severity`, and `message`, and `licenses`, each file with the `licenseIds` of the server licenses that signed it.
 
 The server also keeps a record of its borrows in the same folder, signed in the same way. Verify it with `--stream borrows`:
 

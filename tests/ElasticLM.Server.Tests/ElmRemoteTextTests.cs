@@ -207,7 +207,7 @@ public sealed class ElmRemoteTextTests : IAsyncDisposable
     ///   same with --license lic-srv.
     /// - The second with --license lic-srv: exit 1, the lines "error: (name):0: The file is signed by the key of server
     ///   license lic-other, not of lic-srv (--license).", "file: (name): server license lic-other", and "NOT INTACT: 1
-    ///   file(s), …"; --json has intact false, licenses [{file (name), licenseId lic-other}], and that issue as an error.
+    ///   file(s), …"; --json has intact false, licenses [{file (name), licenseIds [lic-other]}], and that issue as an error.
     /// - --license "": exit 2 and "error: --license must not be empty.".
     /// </remarks>
     [Fact]
@@ -247,7 +247,10 @@ public sealed class ElmRemoteTextTests : IAsyncDisposable
             JsonElement root = json.RootElement;
             Assert.False(root.GetProperty("intact").GetBoolean());
             JsonElement license = Assert.Single(root.GetProperty("licenses").EnumerateArray());
-            Assert.Equal((secondName, "lic-other"), (license.GetProperty("file").GetString(), license.GetProperty("licenseId").GetString()));
+            Assert.Equal(
+                (secondName, "lic-other"),
+                (license.GetProperty("file").GetString(), Assert.Single(license.GetProperty("licenseIds").EnumerateArray()).GetString())
+            );
             Assert.Contains(
                 root.GetProperty("issues").EnumerateArray(),
                 i =>
@@ -260,6 +263,57 @@ public sealed class ElmRemoteTextTests : IAsyncDisposable
 
         (int emptyCode, _, string emptyError) = await RunAsync(["log", "verify", first, "--product", "acme-cad", "--license", string.Empty]);
         Assert.Equal((2, "error: --license must not be empty."), (emptyCode, emptyError.Trim()));
+    }
+
+    /// <summary>
+    /// A file whose server license changed in the middle (a reload of a server license with another ID, written as
+    /// key.changed) names both licenses, and passes --license with neither of them: a file passes only when every license
+    /// that signed it is the one given (design §18.1, V1d27, T15-3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server of lic-srv that, while it runs, reloads a server license lic-other bound to the same installation key,
+    ///   and stops: its one usage log file has a key.changed line from lic-srv to lic-other.
+    ///
+    /// Steps:
+    /// - Verify the folder; with --license lic-srv, with --license lic-other, and with --license lic-x; with --json.
+    ///
+    /// Expected:
+    /// - Without --license: exit 0 and "file: (name): server license lic-srv, lic-other".
+    /// - Each --license: exit 1 and "error: (name):0: The file is signed by the keys of server licenses lic-srv,
+    ///   lic-other, not only of (ID) (--license).", then "NOT INTACT: 1 file(s), …".
+    /// - --json: licenses has the file with licenseIds [lic-srv, lic-other].
+    /// </remarks>
+    [Fact]
+    public async Task LogVerify_LicenseChangedInTheFile_PassesNoSingleLicense()
+    {
+        ElmServer server = await _deployment.StartServerAsync();
+        string data = server.DataDirectory;
+        _deployment.WriteServerLicense(data, s => s with { LicenseId = "lic-other" });
+        Assert.Null(server.ReloadLicense());
+        await server.DisposeAsync();
+        string name = Path.GetFileName(SignedLog.FindFiles(data, "usage").Single());
+
+        (int code, string output, string error) = await RunAsync(["log", "verify", data, "--product", "acme-cad"]);
+        Assert.True(code == 0, output + error);
+        Assert.Contains($"file: {name}: server license lic-srv, lic-other", output.TrimEnd().Split(Environment.NewLine));
+
+        foreach (string expected in new[] { "lic-srv", "lic-other", "lic-x" })
+        {
+            (code, output, _) = await RunAsync(["log", "verify", data, "--product", "acme-cad", "--license", expected]);
+            string[] lines = output.TrimEnd().Split(Environment.NewLine);
+            Assert.Equal(1, code);
+            Assert.Equal(
+                $"error: {name}:0: The file is signed by the keys of server licenses lic-srv, lic-other, not only of {expected} (--license).",
+                lines[0]
+            );
+            Assert.StartsWith("NOT INTACT: 1 file(s), ", lines[^1], StringComparison.Ordinal);
+        }
+
+        (_, output, _) = await RunAsync(["log", "verify", data, "--product", "acme-cad", "--json"]);
+        using JsonDocument json = JsonDocument.Parse(output);
+        JsonElement license = Assert.Single(json.RootElement.GetProperty("licenses").EnumerateArray());
+        Assert.Equal(["lic-srv", "lic-other"], license.GetProperty("licenseIds").EnumerateArray().Select(e => e.GetString()!));
     }
 
     /// <summary>

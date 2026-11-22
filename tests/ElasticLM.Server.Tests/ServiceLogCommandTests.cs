@@ -100,7 +100,7 @@ public sealed class ServiceLogCommandTests
         {
             JsonElement license = Assert.Single(json.RootElement.GetProperty("licenses").EnumerateArray());
             Assert.Equal(name, license.GetProperty("file").GetString());
-            Assert.False(license.TryGetProperty("licenseId", out _));
+            Assert.False(license.TryGetProperty("licenseIds", out _));
         }
 
         (code, _, fault) = Run(test, ["log", "verify", folder]);

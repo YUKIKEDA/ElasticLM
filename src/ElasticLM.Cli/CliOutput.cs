@@ -36,7 +36,7 @@ internal sealed record VerifyOutput(
 
 internal sealed record LogIssueOutput(string File, int Line, string Severity, string Message);
 
-internal sealed record LogLicenseOutput(string File, string? LicenseId);
+internal sealed record LogLicenseOutput(string File, string[]? LicenseIds);
 
 internal sealed record LogVerifyOutput(bool Intact, int Files, long Entries, LogIssueOutput[] Issues, LogLicenseOutput[] Licenses);
 

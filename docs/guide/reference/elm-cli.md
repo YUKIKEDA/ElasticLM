@@ -573,10 +573,10 @@ Verifies the signatures and the chain of a license server's usage log or borrow 
 | `--stream` | `usage`, `borrows` | `usage` | No | Which log to verify: the usage log or the borrow record. |
 | `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
 | `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
-| `--license` | Server license ID | — | No | The server license that must have signed each file. A file signed under another server license, or a file of `elm-service`, is an error. |
+| `--license` | Server license ID | — | No | The server license that must have signed each file. A file that any other server license also signed, and a file of `elm-service`, is an error. |
 | `--json` | — | Off | No | Write the result as JSON. |
 
-The output names, for each file, the server license whose key signed its end, or `elm-service`. [Verifying the usage log](logs.md#verifying-the-usage-log) gives the form.
+The output names, for each file, every server license whose key signed it, or `elm-service`. [Verifying the usage log](logs.md#verifying-the-usage-log) gives the form.
 
 ## Examples
 

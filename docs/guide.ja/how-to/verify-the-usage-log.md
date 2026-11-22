@@ -43,7 +43,7 @@ file: usage-20260115T093000000Z.jsonl: server license floating-server
 intact: 1 file(s), 9 event line(s)
 ```
 
-`file:` の行は、各ファイルと、それに署名した鍵のサーバーライセンスを示す。名前と数は手元のログのものになる。サーバーは、起動するたびと、UTC で日が変わるたびに新しいファイルを始める。ほかの人からログを受け取ったときは、`--license <ID>` に、そのログを書いたはずのサーバーライセンスの ID を足す。別のサーバーライセンスで署名したファイルは、エラーになる。終了コード 0 は、ログが欠けておらず変えられていないことを示す。出力に `warning:` の行があっても同じだ。スクリプトのために結果を JSON で受け取るには、次のようにする。
+`file:` の行は、各ファイルと、それに署名した鍵のサーバーライセンスを示す。名前と数は手元のログのものになる。サーバーは、起動するたびと、UTC で日が変わるたびに新しいファイルを始める。ほかの人からログを受け取ったときは、`--license <ID>` に、そのログを書いたはずのサーバーライセンスの ID を足す。ほかのサーバーライセンスも署名したファイルは、エラーになる。終了コード 0 は、ログが欠けておらず変えられていないことを示す。出力に `warning:` の行があっても同じだ。スクリプトのために結果を JSON で受け取るには、次のようにする。
 
 <!-- steps:run -->
 ```shell
@@ -55,7 +55,7 @@ elm log verify server-data --product acme-cad --trust root.pub.pem --json
   "intact": true,
 ```
 
-JSON には、ファイルの数とイベントの行の数を示す `files` と `entries`、問題の一覧 `issues`、ファイルごとに署名したサーバーライセンスの `licenseId` を示す `licenses` もある。`issues` の各問題には、`file`、`line`、`severity`、`message` がある。
+JSON には、ファイルの数とイベントの行の数を示す `files` と `entries`、問題の一覧 `issues`、ファイルごとに署名したサーバーライセンスの `licenseIds` を示す `licenses` もある。`issues` の各問題には、`file`、`line`、`severity`、`message` がある。
 
 サーバーは、借用の記録も同じフォルダーに置き、同じ方法で署名している。これは `--stream borrows` で検証する。
 
