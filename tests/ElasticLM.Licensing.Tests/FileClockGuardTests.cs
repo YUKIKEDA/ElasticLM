@@ -586,6 +586,76 @@ public sealed class FileClockGuardTests : IDisposable
         Assert.True(File.Exists(StatePath));
     }
 
+    /// <summary>
+    /// A link at a leftover's name whose target does not exist is deleted itself, on every OS: the cleanup removes a link
+    /// without opening it (design §11.4 step 8, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A symbolic link at clock.json.0123456789ABCDEF.tmp beside the state path to a file that does not exist. Where this
+    ///   user cannot make a link (Windows without the right to), the test is skipped and says so; GitHub's runners can.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes).
+    ///
+    /// Expected:
+    /// - Accepted; the link is gone (its target never existed); the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_DanglingLinkAtALeftoverName_IsDeleted()
+    {
+        string link = Path.Combine(_directory, "clock.json.0123456789ABCDEF.tmp");
+        try
+        {
+            File.CreateSymbolicLink(link, Path.Combine(_directory, "missing"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.Skip("This user cannot make a symbolic link: " + e.Message);
+        }
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.Null(new FileInfo(link).LinkTarget);
+        Assert.Empty(Directory.GetFileSystemEntries(_directory, "*.tmp"));
+        Assert.True(File.Exists(StatePath));
+    }
+
+    /// <summary>
+    /// A regular file at a leftover's name that this user cannot open stays: the cleanup deletes only what it could open and
+    /// lock, or a link (design §11.4 step 8, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS, not as root (root opens a file of any mode); Windows is skipped.
+    /// - A file at clock.json.0123456789ABCDEF.tmp beside the state path with mode 0000.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (no state, so the guard writes).
+    ///
+    /// Expected:
+    /// - Accepted; the file is still there; the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_UnopenableFileAtALeftoverName_IsLeft()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Modes are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "Root opens a file of any mode.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        string file = Path.Combine(_directory, "clock.json.0123456789ABCDEF.tmp");
+        File.WriteAllText(file, "left");
+        File.SetUnixFileMode(file, UnixFileMode.None);
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.True(File.Exists(file));
+        Assert.True(File.Exists(StatePath));
+    }
+
     // The user ID of this process, read with id -u: .NET has no API for it.
     private static string UserId()
     {

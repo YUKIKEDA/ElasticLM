@@ -52,14 +52,20 @@ internal static unsafe partial class UnixLeftover
 
     /// <summary>
     /// Removes a file if it is a regular file that no other open file holds a lock on, or a link itself. Anything else (a
-    /// FIFO, a socket, a device, a file a writer holds) stays, as does a file that cannot be opened. Nothing is thrown.
+    /// FIFO, a socket, a device, a file a writer holds) stays, as does a file that cannot be opened, and every file on an
+    /// architecture other than x64 and Arm64. Nothing is thrown.
     /// </summary>
     /// <param name="path">The file.</param>
     public static void TryRemove(string path)
     {
+        if (OpenFlags is not int flags)
+        {
+            return;
+        }
+
         try
         {
-            int file = OperatingSystem.IsMacOS() ? MacOpen(path, MacNonBlock | MacNoFollow | MacCloseOnExec) : LinuxOpen(path, LinuxFlags);
+            int file = OperatingSystem.IsMacOS() ? MacOpen(path, flags) : LinuxOpen(path, flags);
             if (file < 0)
             {
                 // O_NOFOLLOW refuses a link: the link itself is removed, never what it points to.
@@ -89,8 +95,16 @@ internal static unsafe partial class UnixLeftover
         }
     }
 
-    private static int LinuxFlags =>
-        LinuxNonBlock | LinuxCloseOnExec | (RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? LinuxNoFollowArm64 : LinuxNoFollowX64);
+    // The flags of open, or null on an architecture whose O_NOFOLLOW is not one of the two read above: 32-bit ARM and ppc64le
+    // give 0x20000 to O_LARGEFILE and O_DIRECT and use 0x8000, and others are not read, so nothing is cleaned there.
+    private static int? OpenFlags =>
+        RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.X64 or Architecture.Arm64 when OperatingSystem.IsMacOS() => MacNonBlock | MacNoFollow | MacCloseOnExec,
+            Architecture.X64 => LinuxNonBlock | LinuxNoFollowX64 | LinuxCloseOnExec,
+            Architecture.Arm64 => LinuxNonBlock | LinuxNoFollowArm64 | LinuxCloseOnExec,
+            _ => null,
+        };
 
     private static bool IsRegularFile(int file)
     {

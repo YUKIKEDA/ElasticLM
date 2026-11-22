@@ -190,9 +190,10 @@ public sealed class FileClockGuard : IClockGuard
     // design §11.4 step 7 (V1d24d), the way FileReplacement in ElasticLM.Client creates its files (§12.6.2): File.WriteAllBytes
     // opens what is at the path and on Linux and macOS takes the mode from the umask (0644 under umask 022, measured in V1d24d);
     // CreateNew refuses anything at the path (O_EXCL), so nothing is deleted first, and the mode is 0600, which the state file
-    // keeps after the move. The caller holds the file until it is in place: Delete lets this process move it on Windows, and
-    // RemoveLeftovers cannot open it with FileShare.None (both measured on Windows 11 with .NET 10.0.14 in V1d24d). No buffer,
-    // so a write that fails throws at once and the dispose writes nothing.
+    // keeps after the move. The caller holds the file until it is in place: Delete lets this process move it on Windows, where
+    // RemoveLeftovers cannot open it with FileShare.None (both measured on Windows 11 with .NET 10.0.14 in V1d24d); on Linux and
+    // macOS the shared flock that .NET takes for this handle refuses RemoveLeftovers' exclusive one. No buffer, so a write that
+    // fails throws at once and the dispose writes nothing.
     private static FileStream OpenNew(string path)
     {
         var options = new FileStreamOptions
@@ -210,12 +211,12 @@ public sealed class FileClockGuard : IClockGuard
         return new FileStream(path, options);
     }
 
-    // design §11.4 step 7 (V1d24d): deletes the temporary files of this state that no writer holds, those left by a write
+    // design §11.4 step 8 (V1d24d): deletes the temporary files of this state that no writer holds, those left by a write
     // whose delete was refused or by a process that ended between creating and moving. A writer holds its file until it is in
-    // place, so an open with FileShare.None fails while one is at work: on Windows by the share mode, on Linux and macOS by
-    // the shared flock .NET takes, which UnixLeftover's exclusive flock meets. A link is deleted itself, never followed. On
-    // Linux and macOS UnixLeftover opens without waiting and leaves anything that is not a regular file (a FIFO, whose open
-    // would wait for a writer; a socket; a device): the owner's 24d-6 and 24d-6a. Nothing is thrown.
+    // place. On Windows an open with FileShare.None fails while one is at work, by the share mode. On Linux and macOS
+    // UnixLeftover takes an exclusive flock, which fails while the writer's FileStream holds its shared flock; it opens without
+    // waiting and leaves anything that is not a regular file (a FIFO, whose open would wait for a writer; a socket; a device):
+    // the owner's 24d-6 and 24d-6a. A link is deleted itself, never followed. Nothing is thrown.
     private void RemoveLeftovers()
     {
         string name = Path.GetFileName(_path);
@@ -268,7 +269,7 @@ public sealed class FileClockGuard : IClockGuard
         && candidate.EndsWith(TemporaryExtension, StringComparison.Ordinal)
         && !candidate.AsSpan(name.Length + 1, RandomLength).ContainsAnyExcept(UppercaseHex);
 
-    // A file that cannot be deleted stays until a later write of this state removes it (design §11.4 step 7, V1d24d).
+    // A file that cannot be deleted stays until a later write of this state removes it (design §11.4 step 8, V1d24d).
     private static void TryDelete(string path)
     {
         try
