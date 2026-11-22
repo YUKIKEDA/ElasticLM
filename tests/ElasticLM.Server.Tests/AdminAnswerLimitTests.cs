@@ -251,7 +251,6 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
         (int Code, string Out, string Error) result = await RunAsync([
             "server",
             "activate",
-            "ELM-AAAA-AAAA-AAAA-AAAA",
             .. Common(folder),
             "--service",
             service.Url.ToString(),
@@ -350,7 +349,13 @@ public sealed class AdminAnswerLimitTests : IAsyncDisposable
                         Out = output,
                         Error = error,
                         Time = _deployment.Time,
-                        GetEnvironmentVariable = name => name == "ELM_TRUST_ROOT_KEYS" ? pem : null,
+                        GetEnvironmentVariable = name =>
+                            name switch
+                            {
+                                "ELM_TRUST_ROOT_KEYS" => pem,
+                                "ELM_LICENSE_KEY" => "ELM-AAAA-AAAA-AAAA-AAAA",
+                                _ => null,
+                            },
                     };
                     int code = ElmApp.Run(args, host);
                     return (code, output.ToString(), error.ToString());

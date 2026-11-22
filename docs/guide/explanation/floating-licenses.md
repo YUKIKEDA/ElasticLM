@@ -166,7 +166,7 @@ sequenceDiagram
     participant S as elm-server
     participant N as New client
     Note over S: restarts with no leases in memory
-    Note over S: recovery window starts (the server license's lease time)
+    Note over S: reclaim window starts (one lease time, see below)
     C->>S: POST /v1/leases/{id}/renew (seq, proof)
     S-->>C: 404 ELM_UNKNOWN_LEASE
     Note over C: lease state Reclaiming
@@ -180,9 +180,9 @@ sequenceDiagram
     S-->>N: 503 ELM_SERVER_RECOVERING with Retry-After
 ```
 
-During the recovery window, new acquires get `503` and `ELM_SERVER_RECOVERING` with a `Retry-After` header, so the server does not lend a seat that a running app still holds. A client sends up to 64 tokens per reclaim request, and the server restores each one with the checks in the figure; each result is `ELM_OK` or the reason for refusal, such as `ELM_NO_SEATS`. If the reclaim request itself fails, the leases go to `Retrying`.
+During the reclaim window, new acquires get `503` and `ELM_SERVER_RECOVERING` with a `Retry-After` header, so the server does not lend a seat that a running app still holds. A client sends up to 64 tokens per reclaim request, and the server restores each one with the checks in the figure; each result is `ELM_OK` or the reason for refusal, such as `ELM_NO_SEATS`. If the reclaim request itself fails, the leases go to `Retrying`.
 
-The window lasts the server license's lease time, 10 minutes with the default policy, and ends early once reclaimed seats and restored borrows fill every feature. A reclaim after the window (from a machine that was asleep) is accepted if free seats remain. The server also makes a new nonce secret at each start, so a proof made before the restart cannot be replayed after it.
+The window lasts the server license's lease time, 10 minutes with the default policy. When leases that an earlier run issued can still be valid after one lease time of the current license has passed since the start, the window lasts until they have ended. That happens after the server license was replaced by one with a shorter lease time: while the server was stopped (a new file put at the path that `license` names, or `elm server activate` or `elm server import` run while the server was down), or while it ran (`elm server reload`, or an automatic renewal). The server writes into its borrow record (see [Borrows and restarts](#borrows-and-restarts)) the latest time at which the leases of each license can still be valid, before a reloaded license takes effect and again into each new file of the record, so the window also covers a second restart and a restart after a start that failed. A server that stops normally (Ctrl+C, SIGTERM, or a stop by the service manager) also writes the time of its stop, and the next start counts one lease time of the license it stopped with from that time. After a server that was killed or crashed, that lease time is counted from the new start. These are times, not lengths, so the longer the server was stopped, the less of that extension is left; the window is never shorter than one lease time of the current license. The extension does not shrink in one case only: the server was killed or crashed, and its license was replaced while it was stopped. With no borrow record, or one set aside with `--set-aside-broken-records`, the window is the current license's lease time. In every case, the window ends early once reclaimed seats and restored borrows fill every feature. A reclaim after the window (from a machine that was asleep) is accepted if free seats remain. The server also makes a new nonce secret at each start, so a proof made before the restart cannot be replayed after it.
 
 ### Why there is no standby server
 
@@ -254,7 +254,7 @@ For the exact `elm server` commands and their options, see the [elm command refe
 - **A copied server machine** is found only at the next renewal of its server license from `elm-service`, up to 30 days later by default. A copy of a server whose license was issued by hand is never found.
 - **A TLS-inspecting proxy that the OS trusts** can fake an error such as `ELM_CLONE_DETECTED` and make the app lose a lease, but cannot fake a lease. See [the security model](security-model.md).
 - **The first connection is trusted** when the app does not set `ExpectedServerLicenseId`. An attacker who holds another real server license for the same product together with that server's installation key, for example another customer of the same vendor, and who reaches the client before its first connection to the real server, would be pinned instead. The client would then lease that server's seats and refuse the real server until the app calls `ResetServerPin`. App developers who know the customer's server license ID should set it.
-- **New users wait after a restart**, up to the lease time. Show them the `Retry-After` time that comes with `ELM_SERVER_RECOVERING`.
+- **New users wait after a restart**, up to the lease time. Show them the `Retry-After` time that comes with `ELM_SERVER_RECOVERING`. A restart that follows a replacement of the server license by one with a shorter lease time can make them wait until the earlier license's leases have ended, at most that license's lease time; a reload alone makes no one wait.
 - **The app must handle `Lost`**, and check a borrow's `ExpiresAt` itself.
 - **The server needs its own data folder** when an app of the same product runs on the same machine (see [Running `elm-server`](#running-elm-server)).
 

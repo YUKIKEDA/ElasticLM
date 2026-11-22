@@ -4,6 +4,7 @@ using System.Text;
 using System.Text.Json;
 using ElasticLM.Licensing;
 using ElasticLM.Licensing.Tests;
+using ElasticLM.Server.Tests;
 using static ElasticLM.Service.Tests.ElmServiceActivationsTests;
 
 namespace ElasticLM.Service.Tests;
@@ -127,14 +128,17 @@ public sealed class ElmServiceOfflineTests
     /// Expected:
     /// - 400 ELM_MALFORMED twice; 400 ELM_PROOF_INVALID; 400 ELM_MALFORMED twice; 400 ELM_MALFORMED "issued in the future",
     ///   then 200; 400 ELM_REQUEST_EXPIRED, then 200; 400 ELM_WRONG_PRODUCT; 404 ELM_LICENSE_NOT_FOUND; 409 ELM_REPLAYED;
-    ///   200 for B; 404 ELM_ACTIVATION_NOT_FOUND; 400 ELM_PROOF_INVALID three times; 400 ELM_MALFORMED twice; 413.
+    ///   200 for B; 404 ELM_ACTIVATION_NOT_FOUND; 400 ELM_PROOF_INVALID three times; 400 ELM_MALFORMED twice; 413. Each
+    ///   ELM_PROOF_INVALID has the detail "The request proof is not valid.", and the operational log's line on POST /v1/offline
+    ///   names the check (design §12.1, V1d25).
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
     public async Task Offline_EachRefusal_IsAsDesigned(string provider)
     {
         await using TestService test = TestService.Open(provider);
-        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
         string product = await ProductAsync(admin, "app", "core");
         await ProductAsync(admin, "other");
         string policy = await TestService.PolicyAsync(admin, product, "\"maxActivations\":10");
@@ -143,6 +147,7 @@ public sealed class ElmServiceOfflineTests
         using var a = TestDevice.Create(test, service);
         using var b = TestDevice.Create(test, service);
         string[] prints = TestDevice.Fingerprints();
+        const string Route = "POST /v1/offline";
         const string Malformed = "The file is not a valid offline request.";
         const string NotAFile = "The file is not an elm-actreq+jws or elm-deact+jws.";
 
@@ -151,10 +156,11 @@ public sealed class ElmServiceOfflineTests
         AssertProblem(await a.OfflineAsync(proofType), HttpStatusCode.BadRequest, "ELM_MALFORMED", NotAFile);
         string[] one = a.ActivationFile(key, prints).Split('.');
         string[] two = a.ActivationFile(key, prints).Split('.');
-        AssertProblem(
+        AssertProofRefused(
             await a.OfflineAsync(one[0] + "." + one[1] + "." + two[2]),
             HttpStatusCode.BadRequest,
-            "ELM_PROOF_INVALID",
+            log,
+            Route,
             "The request's signature does not verify with its key."
         );
         AssertProblem(
@@ -210,17 +216,19 @@ public sealed class ElmServiceOfflineTests
             "ELM_ACTIVATION_NOT_FOUND",
             NoActivation
         );
-        AssertProblem(
+        AssertProofRefused(
             await b.OfflineAsync(b.RefreshFile(kept.ActivationId, 2)),
             HttpStatusCode.BadRequest,
-            "ELM_PROOF_INVALID",
+            log,
+            Route,
             "The request is not made with the activation's installation key."
         );
         const string NotSigned = "The proof is not signed with the activation's installation key.";
-        AssertProblem(
+        AssertProofRefused(
             await a.OfflineAsync(a.DeactivationFile(kept.ActivationId, 2, signer: b.Key)),
             HttpStatusCode.BadRequest,
-            "ELM_PROOF_INVALID",
+            log,
+            Route,
             NotSigned
         );
         string[] proof = a.DeactivationFile(kept.ActivationId, 2).Split('.');
@@ -229,7 +237,7 @@ public sealed class ElmServiceOfflineTests
                 Encoding.UTF8.GetString(Base64Url.DecodeFromChars(proof[1])).Replace("\"seq\":2", "\"seq\":3", StringComparison.Ordinal)
             )
         );
-        AssertProblem(await a.OfflineAsync(proof[0] + "." + changed + "." + proof[2]), HttpStatusCode.BadRequest, "ELM_PROOF_INVALID", NotSigned);
+        AssertProofRefused(await a.OfflineAsync(proof[0] + "." + changed + "." + proof[2]), HttpStatusCode.BadRequest, log, Route, NotSigned);
         AssertProblem(
             await a.OfflineAsync(a.DeactivationFile(kept.ActivationId, 2, iat: 301)),
             HttpStatusCode.BadRequest,
@@ -267,7 +275,8 @@ public sealed class ElmServiceOfflineTests
     /// - Post the changed file, then the file itself.
     ///
     /// Expected:
-    /// - For the four signatures 400 ELM_PROOF_INVALID: "The request's signature does not verify with its key." for the two
+    /// - For the four signatures 400 ELM_PROOF_INVALID with the detail "The request proof is not valid." (design §12.1, V1d25),
+    ///   and the operational log's line names the check: "The request's signature does not verify with its key." for the two
     ///   requests, "The proof is not signed with the activation's installation key." for the proof. For the two algs 400
     ///   ELM_MALFORMED "The file is not an elm-actreq+jws or elm-deact+jws.".
     /// - The file itself is accepted (200 for the requests, 204 for the proof), so the refused file stored no activation and
@@ -278,7 +287,8 @@ public sealed class ElmServiceOfflineTests
     public async Task Offline_FileWithoutAValidSignature_IsRefused(string kind, string form)
     {
         await using TestService test = TestService.Open("sqlite");
-        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
         string product = await ProductAsync(admin, "app", "core");
         (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
         using var device = TestDevice.Create(test, service);
@@ -298,16 +308,54 @@ public sealed class ElmServiceOfflineTests
         }
         else
         {
-            string detail =
+            string reason =
                 kind == "deactivation"
                     ? "The proof is not signed with the activation's installation key."
                     : "The request's signature does not verify with its key.";
-            AssertProblem(refused, HttpStatusCode.BadRequest, "ELM_PROOF_INVALID", detail);
+            AssertProofRefused(refused, HttpStatusCode.BadRequest, log, "POST /v1/offline", reason);
         }
 
         DeviceAnswer accepted = await device.OfflineAsync(file);
         Assert.True(accepted.Status == (kind == "deactivation" ? HttpStatusCode.NoContent : HttpStatusCode.OK), accepted.Text);
         Assert.Equal(kind == "deactivation" ? 0L : 1L, await test.ScalarAsync("SELECT COUNT(*) FROM activations"));
+    }
+
+    /// <summary>
+    /// A refused offline file gets the reason of the refusal in its detail through the administration API, whose caller is
+    /// the service's own administrator, and one sentence through the route of devices; both write the reason to the
+    /// operational log (design §12.1, V1d25 question 25-1a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a device; an owner key; the service's operational log recorded from Information up.
+    /// - An activation request whose signature is that of another request of the same device.
+    ///
+    /// Steps:
+    /// - Post the file to POST /v1/admin/offline with the owner key, then to POST /v1/offline.
+    ///
+    /// Expected:
+    /// - Both 400 ELM_PROOF_INVALID: through the administration API with the detail "The request's signature does not verify
+    ///   with its key.", through the route of devices with "The request proof is not valid.". The log has the line "A request
+    ///   proof was refused (POST /v1/admin/offline): The request's signature does not verify with its key." and the same for
+    ///   POST /v1/offline.
+    /// </remarks>
+    [Fact]
+    public async Task Offline_RefusedSignature_ReasonOnlyToTheAdministrator()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, string owner) = await StartAsync(test, log);
+        string product = await ProductAsync(admin, "app", "core");
+        (_, string key) = await LicenseAsync(admin, await TestService.PolicyAsync(admin, product, string.Empty));
+        using var device = TestDevice.Create(test, service);
+        string[] one = device.ActivationFile(key, TestDevice.Fingerprints()).Split('.');
+        string[] two = device.ActivationFile(key, TestDevice.Fingerprints()).Split('.');
+        string file = one[0] + "." + one[1] + "." + two[2];
+        const string Reason = "The request's signature does not verify with its key.";
+
+        AssertProblem(await device.OfflineAsync(file, owner), HttpStatusCode.BadRequest, "ELM_PROOF_INVALID", Reason);
+        Assert.Contains(log.Entries, e => e.Message == $"A request proof was refused (POST /v1/admin/offline): {Reason}");
+        AssertProofRefused(await device.OfflineAsync(file), HttpStatusCode.BadRequest, log, "POST /v1/offline", Reason);
     }
 
     /// <summary>

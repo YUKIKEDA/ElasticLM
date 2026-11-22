@@ -688,14 +688,16 @@ public sealed class ElmServiceTrialsTests
     ///
     /// Expected:
     /// - 400 ELM_MALFORMED "The request body is not a valid trial request." seven times; 401 ELM_PROOF_INVALID "The request
-    ///   proof payload is not valid." twice; then 201; one trial.
+    ///   proof is not valid." twice, each with the log line that names the check "The request proof payload is not valid."
+    ///   (design §12.1, V1d25); then 201; one trial.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
     public async Task Trial_ControlCharacterOrOtherJti_IsRefused(string provider)
     {
         await using TestService test = TestService.Open(provider);
-        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await ElmServiceActivationsTests.StartAsync(test, log);
         string product = await ElmServiceActivationsTests.ProductAsync(admin, "app", "core");
         string policy = await TestService.PolicyAsync(
             admin,
@@ -735,10 +737,11 @@ public sealed class ElmServiceTrialsTests
                 $$"""{"product":"app","fingerprints":["{{TestDevice.Fingerprints()[0]}}"]}""",
                 proof: made => device.Sign(TokenTypes.Proof, WithJti(made, jti))
             );
-            ElmServiceActivationsTests.AssertProblem(
+            ElmServiceActivationsTests.AssertProofRefused(
                 answer,
                 HttpStatusCode.Unauthorized,
-                "ELM_PROOF_INVALID",
+                log,
+                "POST /v1/trials",
                 "The request proof payload is not valid."
             );
         }

@@ -42,7 +42,9 @@ public sealed record LogEntry(string File, int Line, string Type, JsonElement Va
 /// <param name="LicenseId">The server license ID, or <see langword="null"/> for a log of <c>elm-service</c>, whose key is
 /// certified for <c>log</c> instead (decision 0.95).</param>
 /// <param name="KeyId">The thumbprint of the key: the server license's <c>cnf.jkt</c>, or the service's signing key.</param>
-public sealed record LogFileKey(string File, string? LicenseId, string KeyId)
+/// <param name="Lease">The lease duration (<c>lease</c>) of that server license, which the server's reclaim window after a
+/// restart also covers (design §13.4, V1d25), or <see langword="null"/> for a log of <c>elm-service</c>.</param>
+public sealed record LogFileKey(string File, string? LicenseId, string KeyId, TimeSpan? Lease)
 {
     /// <summary>
     /// Gets every server license whose key signed lines of the file, in the order they first signed, each once: the
@@ -353,7 +355,7 @@ public static class LogVerifier
             reader.Dispose();
             if (key is not null)
             {
-                state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId) { LicenseIds = [.. licenseIds] });
+                state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId, key.Lease) { LicenseIds = [.. licenseIds] });
             }
 
             key?.Dispose();
@@ -748,6 +750,8 @@ public static class LogVerifier
         public bool IsService => _server is null;
 
         public string? LicenseId => _server?.License.LicenseId;
+
+        public TimeSpan? Lease => _server?.License.LeaseDuration;
 
         // The key that signed last, or the first key that may sign.
         public string KeyId => _server?.KeyId ?? _signedBy ?? _keys[0].KeyId;

@@ -1280,12 +1280,14 @@ public sealed class SignedLogTests : IDisposable
     /// - Change to a license lic-new of the same key with takeOnFailure true or false (throws); append; close; verify.
     ///
     /// Expected:
-    /// - IOException; intact; the last file is reported with lic-new when the change is taken, and with lic-srv when not.
+    /// - IOException; intact; the last file is reported with lic-new and its lease of 30 minutes when the change is taken,
+    ///   and with lic-srv and its lease of 10 minutes when not (the lease is the one the server's reclaim window reads,
+    ///   design §13.4, V1d25).
     /// </remarks>
     [Theory]
-    [InlineData(true, "lic-new")]
-    [InlineData(false, "lic-srv")]
-    public void ChangeKey_FailedWrite_TakesTheNewLicenseOnlyWhenAsked(bool takeOnFailure, string expected)
+    [InlineData(true, "lic-new", 30)]
+    [InlineData(false, "lic-srv", 10)]
+    public void ChangeKey_FailedWrite_TakesTheNewLicenseOnlyWhenAsked(bool takeOnFailure, string expected, int leaseMinutes)
     {
         bool fail = false;
         string Access(Func<ECDsa, string> use) => fail ? throw new IOException("The disk is full.") : use(_server);
@@ -1303,7 +1305,7 @@ public sealed class SignedLogTests : IDisposable
         )
         {
             fail = true;
-            byte[] newLicense = LicenseFile(_server, "lic-new");
+            byte[] newLicense = LicenseFile(_server, "lic-new", TimeSpan.FromMinutes(30));
             Assert.Throws<IOException>(() => log.ChangeKey(newLicense, KeyFiles.ExportPublicJwk(_server), Access, takeOnFailure));
             fail = false;
             _time.Advance(TimeSpan.FromSeconds(1));
@@ -1312,7 +1314,54 @@ public sealed class SignedLogTests : IDisposable
 
         VerifiedLog report = Verify();
         Assert.True(report.Intact);
-        Assert.Equal(expected, report.Files[^1].LicenseId);
+        Assert.Equal((expected, TimeSpan.FromMinutes(leaseMinutes)), (report.Files[^1].LicenseId, report.Files[^1].Lease));
+    }
+
+    /// <summary>
+    /// The key at the end of a file carries the lease of its server license: the license of the first line, and after a
+    /// key change signed by the old key, the new license's (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log of lic-srv with a lease of 10 minutes.
+    ///
+    /// Steps:
+    /// - Verify it; change to lic-new of the same key with a lease of 30 minutes; append; close; verify again.
+    ///
+    /// Expected:
+    /// - First 10 minutes, then lic-new and 30 minutes, intact.
+    /// </remarks>
+    [Fact]
+    public void ChangeKey_Written_TheFileEndsWithTheNewLicensesLease()
+    {
+        using (
+            SignedLog log = SignedLog.Open(
+                _dir,
+                "usage",
+                "usage",
+                Access(_server),
+                LicenseFile(_server),
+                KeyFiles.ExportPublicJwk(_server),
+                _time,
+                sealEvery: 1
+            )
+        )
+        {
+            Append(log, 1);
+            log.Seal();
+            Assert.Equal(TimeSpan.FromMinutes(10), Verify().Files[^1].Lease);
+            log.ChangeKey(
+                LicenseFile(_server, "lic-new", TimeSpan.FromMinutes(30)),
+                KeyFiles.ExportPublicJwk(_server),
+                Access(_server),
+                takeOnFailure: false
+            );
+            Append(log, 1);
+        }
+
+        VerifiedLog report = Verify();
+        Assert.True(report.Intact);
+        Assert.Equal(("lic-new", TimeSpan.FromMinutes(30)), (report.Files[^1].LicenseId, report.Files[^1].Lease));
     }
 
     /// <summary>
@@ -1447,7 +1496,7 @@ public sealed class SignedLogTests : IDisposable
             VerifiedLog report = VerifiedLog.Of(files, _trust, product, "usage");
             Assert.Empty(report.Issues);
             Assert.Equal(5, report.Entries.Count(e => e.IsSigned));
-            Assert.All(report.Files, f => Assert.Equal((null, KeyFiles.KeyId(_signing)), (f.LicenseId, f.KeyId)));
+            Assert.All(report.Files, f => Assert.Equal((null, KeyFiles.KeyId(_signing), (TimeSpan?)null), (f.LicenseId, f.KeyId, f.Lease)));
         }
     }
 
@@ -2459,7 +2508,7 @@ public sealed class SignedLogTests : IDisposable
     private VerifiedLog Verify(IReadOnlyList<string>? files = null) =>
         VerifiedLog.Of(files ?? SignedLog.FindFiles(_dir, "usage"), _trust, "acme-cad", "usage");
 
-    private byte[] LicenseFile(ECDsa server, string licenseId = "lic-srv")
+    private byte[] LicenseFile(ECDsa server, string licenseId = "lic-srv", TimeSpan? lease = null)
     {
         string certificate = CertificateIssuer.Issue(_root, _signing, KeyUses.License, Now.AddDays(-1), TimeSpan.FromDays(365), _time);
         var spec = new LicenseSpec
@@ -2471,7 +2520,7 @@ public sealed class SignedLogTests : IDisposable
             ExpiresAt = Now.AddDays(30),
             GracePeriod = TimeSpan.FromDays(7),
             InstallationKeyThumbprint = KeyFiles.KeyId(server),
-            LeaseDuration = TimeSpan.FromMinutes(10),
+            LeaseDuration = lease ?? TimeSpan.FromMinutes(10),
             BorrowLimit = TimeSpan.FromDays(7),
             OveragePercent = 0,
             CloneStrategy = CloneStrategy.Deny,

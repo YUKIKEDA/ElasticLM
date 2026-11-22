@@ -301,6 +301,250 @@ public sealed class BorrowJournalTests : IAsyncDisposable
         Assert.Equal(["x", "y"], again.Returns.Select(r => r.LeaseId));
     }
 
+    /// <summary>
+    /// The start counts the leases of the run before from that run's stop when the newest file ends with its signed
+    /// server.stopped line, and otherwise from the start itself (design §13.4, V1d25 question 25-4b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T. Per case: "stopped" writes the stop and closes; "killed"
+    ///   closes without the stop; "after" writes the stop and then an early return, and closes; "unsigned" closes without
+    ///   the stop and then gets a server.stopped line of T after its last signature, as a stop cut while it wrote would leave.
+    ///
+    /// Steps:
+    /// - Move the clock an hour; load the record.
+    ///
+    /// Expected:
+    /// - The earliest time the earlier leases have ended: T + 10 min for "stopped"; T + 1 h + 10 min for "killed", "after", and
+    ///   "unsigned".
+    /// </remarks>
+    [Theory]
+    [InlineData("stopped")]
+    [InlineData("killed")]
+    [InlineData("after")]
+    [InlineData("unsigned")]
+    public void Load_StopLine_CountsTheEarlierLeasesFromIt(string shape)
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        DateTimeOffset t = clock.GetUtcNow();
+        BorrowJournal journal = Open(data, clock, NullLog(), own: false);
+        if (shape is "stopped" or "after")
+        {
+            journal.Stopped();
+        }
+
+        if (shape == "after")
+        {
+            journal.Returned(Return("x", clock));
+        }
+
+        journal.Dispose();
+        if (shape == "unsigned")
+        {
+            File.AppendAllText(Files(data)[^1], $"{{\"type\":\"server.stopped\",\"ts\":{t.ToUnixTimeSeconds()},\"at\":{t.ToUnixTimeSeconds()}}}\n");
+        }
+
+        clock.Advance(TimeSpan.FromHours(1));
+
+        DateTimeOffset expected = shape == "stopped" ? t + TimeSpan.FromMinutes(10) : clock.GetUtcNow() + TimeSpan.FromMinutes(10);
+        Assert.Equal(expected, Load(data, clock).EarlierLeasesUntil);
+    }
+
+    /// <summary>
+    /// A leases.until that is still ahead is carried into each new file, so the start reads it from the newest file alone;
+    /// one that has passed is not (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T on a day at noon.
+    ///
+    /// Steps:
+    /// - Record leases until T + 2 days; move to the next day and seal (a new file); stop and close; load at once. Then record
+    ///   leases until a later time in a new record that passes before the next day, seal on that day, and look at the new file.
+    ///
+    /// Expected:
+    /// - The new file of the next day holds a leases.until line; the load gives T + 2 days. The second new file holds none.
+    /// </remarks>
+    [Fact]
+    public void Seal_NewDay_CarriesTheLeasesUntilWhileAhead()
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        DateTimeOffset until = clock.GetUtcNow() + TimeSpan.FromDays(2);
+        BorrowJournal journal = Open(data, clock, NullLog(), own: false);
+        journal.LeasesIssuedUntil(until);
+        clock.Advance(TimeSpan.FromDays(1));
+        journal.Seal();
+        Assert.Equal(2, Files(data).Count);
+        Assert.Contains(BorrowJournal.LeasesUntil, Lines(Files(data)[1]).Select(Type));
+        journal.Stopped();
+        journal.Dispose();
+        Assert.Equal(until, Load(data, clock).EarlierLeasesUntil);
+
+        string other = NewServerFolder();
+        BorrowJournal second = Open(other, clock, NullLog(), own: false);
+        second.LeasesIssuedUntil(clock.GetUtcNow() + TimeSpan.FromHours(1));
+        clock.Advance(TimeSpan.FromDays(1));
+        second.Seal();
+        Assert.DoesNotContain(BorrowJournal.LeasesUntil, Lines(Files(other)[^1]).Select(Type));
+        second.Dispose();
+    }
+
+    /// <summary>
+    /// A leases.until or server.stopped line whose time is out of range or of another shape changes nothing, and a signed
+    /// leases.until after server.stopped makes the stop no longer the last line (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T. Per case, signed lines written and the record closed:
+    ///   leases.until with until -1, 253402300800, "x", or none, each then a stop; a stop with at -1 or none; a stop and then
+    ///   leases.until of T + 5 min.
+    ///
+    /// Steps:
+    /// - Move the clock an hour; load the record.
+    ///
+    /// Expected:
+    /// - T + 10 min for the cases with a bad leases.until (the stop counts, the line adds nothing); T + 1 h + 10 min for a stop
+    ///   whose at is bad (no stop time, so the start counts) and for leases.until after the stop.
+    /// </remarks>
+    [Theory]
+    [InlineData("until-negative")]
+    [InlineData("until-too-late")]
+    [InlineData("until-text")]
+    [InlineData("until-none")]
+    [InlineData("at-negative")]
+    [InlineData("at-none")]
+    [InlineData("until-after-stop")]
+    public void Load_TimeLineOfAnotherShape_ChangesNothing(string shape)
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        DateTimeOffset t = clock.GetUtcNow();
+        BorrowJournal journal = Open(data, clock, NullLog(), own: false);
+        switch (shape)
+        {
+            case "until-negative":
+                journal.AppendForTests(BorrowJournal.LeasesUntil, w => w.WriteNumber("until", -1));
+                break;
+            case "until-too-late":
+                journal.AppendForTests(BorrowJournal.LeasesUntil, w => w.WriteNumber("until", 253_402_300_800));
+                break;
+            case "until-text":
+                journal.AppendForTests(BorrowJournal.LeasesUntil, w => w.WriteString("until", "x"));
+                break;
+            case "until-none":
+                journal.AppendForTests(BorrowJournal.LeasesUntil, _ => { });
+                break;
+            case "at-negative":
+                journal.AppendForTests(BorrowJournal.ServerStopped, w => w.WriteNumber("at", -1));
+                break;
+            case "at-none":
+                journal.AppendForTests(BorrowJournal.ServerStopped, _ => { });
+                break;
+            default:
+                journal.Stopped();
+                journal.LeasesIssuedUntil(t + TimeSpan.FromMinutes(5));
+                break;
+        }
+
+        if (shape.StartsWith("until-", StringComparison.Ordinal) && shape != "until-after-stop")
+        {
+            journal.Stopped();
+        }
+
+        journal.Dispose();
+        clock.Advance(TimeSpan.FromHours(1));
+
+        DateTimeOffset expected =
+            shape.StartsWith("until-", StringComparison.Ordinal) && shape != "until-after-stop"
+                ? t + TimeSpan.FromMinutes(10)
+                : clock.GetUtcNow() + TimeSpan.FromMinutes(10);
+        Assert.Equal(expected, Load(data, clock).EarlierLeasesUntil);
+    }
+
+    /// <summary>
+    /// A stop that cannot write its server.stopped line reports it in the operational log with the cause, and the next start
+    /// counts from itself (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record of a license with a 10-minute lease, opened at T, whose signing fails while armed; a log the test records.
+    ///
+    /// Steps:
+    /// - Arm the failure; stop; close; move the clock an hour; load.
+    ///
+    /// Expected:
+    /// - One Error entry "The borrow record cannot be written; the borrow or the early return is refused." with an
+    ///   IOException; the load gives T + 1 h + 10 min.
+    /// </remarks>
+    [Fact]
+    public void Stopped_LineCannotBeWritten_IsLoggedAndCountsAsAKill()
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        using var provider = new RecordingLoggerProvider();
+        bool fail = false;
+        BorrowJournal journal = Open(data, clock, provider.CreateLogger("elm-server"), failWhen: () => fail, own: false);
+
+        fail = true;
+        journal.Stopped();
+        fail = false;
+        journal.Dispose();
+        clock.Advance(TimeSpan.FromHours(1));
+
+        const string Line = "The borrow record cannot be written; the borrow or the early return is refused.";
+        Assert.IsType<IOException>(provider.ExceptionOf(Line));
+        Assert.Equal(clock.GetUtcNow() + TimeSpan.FromMinutes(10), Load(data, clock).EarlierLeasesUntil);
+    }
+
+    /// <summary>
+    /// The new file that 1,000 lines start, and the one that a failed write starts, carry a leases.until that is still ahead
+    /// (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A record whose signing fails while armed, with leases.until of T + 2 days and a count of 2 lines for a new file.
+    ///
+    /// Steps:
+    /// - "count": write two returns and seal. "failure": arm the failure and write a return (it throws); disarm it and write
+    ///   another return.
+    ///
+    /// Expected:
+    /// - The newest file holds a leases.until line with until T + 2 days.
+    /// </remarks>
+    [Theory]
+    [InlineData("count")]
+    [InlineData("failure")]
+    public void NewFile_OfCountOrFailure_CarriesTheLeasesUntil(string shape)
+    {
+        string data = NewServerFolder();
+        var clock = new FakeTimeProvider(Deployment.Start.AddHours(12));
+        bool fail = false;
+        BorrowJournal journal = Open(data, clock, NullLog(), failWhen: () => fail);
+        DateTimeOffset until = clock.GetUtcNow() + TimeSpan.FromDays(2);
+        journal.LeasesIssuedUntil(until);
+        journal.CompactAfter = 2;
+        if (shape == "count")
+        {
+            journal.Returned(Return("x", clock));
+            journal.Returned(Return("y", clock));
+            journal.Seal();
+        }
+        else
+        {
+            fail = true;
+            Assert.Throws<IOException>(() => journal.Returned(Return("x", clock)));
+            fail = false;
+            journal.Returned(Return("y", clock));
+        }
+
+        IReadOnlyList<string> files = Files(data);
+        Assert.Equal(2, files.Count);
+        string carried = Assert.Single(Lines(files[1]), l => Type(l) == BorrowJournal.LeasesUntil);
+        Assert.Equal(until.ToUnixTimeSeconds(), JsonDocument.Parse(carried).RootElement.GetProperty("until").GetInt64());
+    }
+
     private static string Type(string line) => JsonDocument.Parse(line).RootElement.GetProperty("type").GetString()!;
 
     private static string Id(string line) => JsonDocument.Parse(line).RootElement.GetProperty("id").GetString()!;

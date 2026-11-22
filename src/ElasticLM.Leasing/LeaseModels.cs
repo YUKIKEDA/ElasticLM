@@ -128,6 +128,13 @@ public sealed class LeaseEngineOptions
     /// the limit and the time until which early returns stay refused at least. It is called at most once in 30 days.
     /// </summary>
     public Action<int, DateTimeOffset>? ServerReturnLimitReached { get; init; }
+
+    /// <summary>
+    /// Gets the latest time at which a lease that earlier runs of the server issued can still be valid, read from the borrow
+    /// record, or <see langword="null"/> when there is none. The reclaim window lasts until it when that is later than one
+    /// lease duration of the current license (design §13.4, V1d25).
+    /// </summary>
+    public DateTimeOffset? EarlierLeasesUntil { get; init; }
 }
 
 /// <summary>

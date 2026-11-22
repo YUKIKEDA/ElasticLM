@@ -113,4 +113,17 @@ internal static partial class ServiceLog
         Message = "The product {Code} ({ProductId}) reached its limit of {Limit} trials in 24 hours; new trials are refused at least until {Until}."
     )]
     public static partial void TrialLimitReached(ILogger log, string code, Guid productId, long limit, DateTimeOffset until);
+
+    // design §12.1 (V1d25): the check a request proof failed, which the answer no longer names.
+    [LoggerMessage(EventId = 23, Level = LogLevel.Information, Message = "A request proof was refused ({Route}): {Reason}")]
+    public static partial void ProofRefused(ILogger log, string route, string reason);
+
+    // design §18.3 (V1d25, Issue #413): a device's request body could not be read; one line, without the request and without
+    // a stack.
+    [LoggerMessage(
+        EventId = 24,
+        Level = LogLevel.Information,
+        Message = "A device request ({Route}) could not be read ({Status}); the connection was closed."
+    )]
+    public static partial void DeviceRequestUnreadable(ILogger log, string route, int status);
 }

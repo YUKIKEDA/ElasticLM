@@ -31,7 +31,7 @@ internal sealed partial class ElmService
         try
         {
             (ClientResult result, _, _) = await ProcessOfflineAsync(context, null).ConfigureAwait(false);
-            await WriteOfflineAsync(context, result).ConfigureAwait(false);
+            await WriteOfflineAsync(context, result, administrator: false).ConfigureAwait(false);
         }
         catch (DbException e)
         {
@@ -40,6 +40,10 @@ internal sealed partial class ElmService
             {
                 await ProblemAsync(context, ErrorCode.InternalError, "The database failed.").ConfigureAwait(false);
             }
+        }
+        catch (BadHttpRequestException e) when (IsUnreadableBody(e))
+        {
+            UnreadableDeviceRequest(context, e);
         }
     }
 
@@ -68,13 +72,14 @@ internal sealed partial class ElmService
         AdminProgress progress = Progress(context);
         progress.Target = id?.ToString("D");
         progress.Detail = detail;
-        await WriteOfflineAsync(context, result).ConfigureAwait(false);
+        await WriteOfflineAsync(context, result, administrator: true).ConfigureAwait(false);
         return new AdminOutcome(code, id?.ToString("D"), detail);
     }
 
     // A file's answer: an offline file is not a request proof, so a bad signature is 400 and a reused nonce 409 (design
-    // §12.8.4, §19). No ELM-Nonce header: the request carries its own nonce.
-    private static Task WriteOfflineAsync(HttpContext context, ClientResult result)
+    // §12.8.4, §19). No ELM-Nonce header: the request carries its own nonce. An administrator gets the reason of a refused
+    // file's signature or key; a device gets one sentence (design §12.1, V1d25 question 25-1a).
+    private static Task WriteOfflineAsync(HttpContext context, ClientResult result, bool administrator)
     {
         if (result.Error is ErrorCode code)
         {
@@ -84,7 +89,7 @@ internal sealed partial class ElmService
                 ErrorCode.Replayed => StatusCodes.Status409Conflict,
                 _ => null,
             };
-            return ProblemAsync(context, code, result.Message!, status);
+            return ProblemAsync(context, code, result.Message!, status, administrator: administrator);
         }
 
         if (result.Answer is byte[] stored)

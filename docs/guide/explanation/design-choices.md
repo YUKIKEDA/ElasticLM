@@ -112,13 +112,13 @@ See the [trust chain](trust-chain.md) for how rotation works.
 
 ## elm-server keeps leases in memory
 
-**Choice.** `elm-server` has no database. It keeps leases in memory. After a restart it refuses new leases during a reclaim window as long as one lease length (10 minutes by default), while clients hand their still-valid lease tokens back. See [floating licenses](floating-licenses.md).
+**Choice.** `elm-server` has no database. It keeps leases in memory. After a restart it refuses new leases during a reclaim window of one lease time (10 minutes by default), while clients hand their still-valid lease tokens back. After a restart that follows a replacement of the server license by one with a shorter lease time, the window stays open until the leases of the earlier license have ended. See [floating licenses](floating-licenses.md).
 
 **Reason.** A server with no database is one file to install and nothing to back up or repair. The lease tokens are signed by the server's installation key, so the clients hold everything needed to rebuild the state. Refusing new leases during the window stops the server from lending again seats that are still in use.
 
 **Rejected.** Accepting new leases right after a restart: together with the old leases, they would go over the seat count.
 
-**Cost.** For up to one lease length after a restart, a new user may have to wait (the response says how long). A longer lease length makes the server easier to restart without users noticing, and makes that wait longer by the same amount.
+**Cost.** For up to one lease time after a restart, a new user may have to wait; the response says how long. After a restart that follows a replacement of the server license by one with a shorter lease time, the wait can last until the earlier license's leases have ended, at most that license's lease time. A longer lease time makes the server easier to restart without users noticing, and makes that wait longer by the same amount.
 
 ## Borrowed seats on elm-server are written to a signed record
 
@@ -136,7 +136,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 
 **Choice.** v1 has no redundant `elm-server` setup. The operating system's service manager restarts the server.
 
-**Reason.** Clients renew every third of the lease length, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. `elm-server` aims to listen within 1 second of starting (on a Linux test machine it took about 0.1 s), and reclaim then restores the state. Only a machine that stays down for more than about 6 minutes 40 seconds stops the apps.
+**Reason.** Clients renew every third of the lease time, so when the server stops, every lease has at least two thirds of its length left: about 6 minutes 40 seconds with the default 10 minutes. `elm-server` aims to listen within 1 second of starting (on a Linux test machine it took about 0.1 s), and reclaim then restores the state. Only a machine that stays down for more than about 6 minutes 40 seconds stops the apps.
 
 **Rejected.** A cluster of servers that must agree, or independent servers that split the seats between them. Both are heavy for v1.
 
@@ -212,7 +212,7 @@ For the record's files, lines, and how to verify it, see [Logs](../reference/log
 | Certificates judged at `iat` | A leaked signing key can backdate tokens. | Keep the revoked key list in the trust store current, and ship app updates when a key leaks. |
 | Short-lived tokens | Revocation waits for the token's end; tokens without an expiry cannot be revoked. | Choose `tokenLifetime` and `gracePeriod` for how fast revocation must work; avoid tokens without an expiry. |
 | Installation key as identity | A copy made by a device administrator (or, with the default user scope, the device's user) is the same device. | Use `deny` where copying matters; know that offline-only copies are not found. |
-| Leases in memory on `elm-server` | New users can wait up to one lease length after a restart. | Run the server under a service manager; pick `leaseDuration` with both waits in mind. |
+| Leases in memory on `elm-server` | New users can wait up to one lease time after a restart, or, after a restart that follows a replacement by a server license with a shorter lease time, until the earlier license's leases have ended. | Run the server under a service manager; pick `leaseDuration` with both waits in mind. |
 | Server license with an expiry | A server that cannot refresh stops lending. | Let the server refresh online, or carry refresh files in time. |
 | No Authenticode or Developer ID signature in v1 | The operating system cannot name the publisher. | Check downloads against `SHA256SUMS` and their attestations. |
 
