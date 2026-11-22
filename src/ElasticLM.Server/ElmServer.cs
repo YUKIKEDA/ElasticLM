@@ -757,7 +757,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 return (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
             }
 
-            return (File.ReadAllBytes(settings.LicensePath), null);
+            // design §12.6.2 (V1d24a): elm server deactivate deletes the file, which this reader then does not refuse. A refresh
+            // that replaces it is refused on Windows whatever the sharing, and tries again.
+            return (FileReplacement.ReadShared(settings.LicensePath), null);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

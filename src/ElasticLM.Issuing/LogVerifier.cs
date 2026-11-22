@@ -663,7 +663,9 @@ public static class LogVerifier
         private int _start;
         private int _end;
 
-        public LineReader(string path) => _stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        // design §12.6.2 (V1d24a): the writer renames an unfinished file, removes one a failed start left, and elm-server
+        // moves a broken borrow record aside; on Windows a reader without Delete would refuse each (IOException 0x80070020).
+        public LineReader(string path) => _stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
         public bool Partial { get; private set; }
 

@@ -596,7 +596,8 @@ public sealed partial class SignedLog : IDisposable
         byte[] tail;
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            // design §12.6.2 (V1d24a): the writer of another process may rename or remove this file while it is read.
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             long start = Math.Max(0, stream.Length - TailSearchBytes);
             stream.Position = start;
             tail = new byte[stream.Length - start];
@@ -637,7 +638,7 @@ public sealed partial class SignedLog : IDisposable
         byte[] head;
         try
         {
-            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             head = new byte[(int)Math.Min(stream.Length, HeadSearchBytes)];
             stream.ReadExactly(head);
         }

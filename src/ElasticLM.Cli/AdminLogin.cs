@@ -129,12 +129,14 @@ internal static class AdminLoginFile
 
             string folder = Path.GetDirectoryName(Path.GetFullPath(path))!;
             ProtectedFiles.CreateDirectory(folder, KeyScope.User);
-            string temporary = path + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)) + ".tmp";
-            if (!ProtectedFiles.TryCreateSecret(temporary, bytes, KeyScope.User, Purpose))
-            {
-                throw new CliException($"The login file cannot be written: '{temporary}' exists.", ExitCodes.InvalidInput);
-            }
 
+            // design §12.6.2 (V1d24a): new files that earlier writes left are removed under the login's lock, and the new file
+            // stays open until it is in place.
+            FileReplacement.RemoveLeftovers(path);
+            string temporary = FileReplacement.TemporaryPath(Path.GetFullPath(path));
+            using FileStream held =
+                ProtectedFiles.TryCreateSecret(temporary, bytes, KeyScope.User, Purpose)
+                ?? throw new CliException($"The login file cannot be written: '{temporary}' exists.", ExitCodes.InvalidInput);
             try
             {
                 // design §12.6.2 (V1d2a): elm reads the saved URL without the lock, and on Windows that read refuses the move.
@@ -143,6 +145,7 @@ internal static class AdminLoginFile
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
                 // design §12.6.2 (V1d24): the new file holds the tokens; it does not stay behind.
+                held.Dispose();
                 FileReplacement.DeleteQuietly(temporary);
                 throw;
             }

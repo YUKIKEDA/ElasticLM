@@ -300,9 +300,13 @@ public sealed class FileReplacementTests : IDisposable
     /// - Write again on another thread. 3 times: wait for the next timer, then move the clock 100 milliseconds. Wait for the
     ///   4th timer; close the reader; move the clock 100 milliseconds.
     ///
+    /// - While the write waits, clean the leftovers of the file, as another writer does before it writes (design §12.6.2,
+    ///   V1d24a).
+    ///
     /// Expected:
-    /// - The write has not ended while the reader holds the file; after the last move of the clock it ends (the pin's write
-    ///   returns true), the file holds the second content, and exactly 4 timers were made.
+    /// - The write has not ended while the reader holds the file, and its one temporary file is still there after the clean:
+    ///   the writer holds it while it waits. After the last move of the clock the write ends (the pin's write returns true),
+    ///   the file holds the second content, no temporary file is left, and exactly 4 timers were made.
     /// </remarks>
     [Theory]
     [InlineData("license")]
@@ -337,11 +341,16 @@ public sealed class FileReplacementTests : IDisposable
 
             await clock.WaitForTimersAsync(4);
             Assert.False(write.IsCompleted);
+            string folder = Path.GetDirectoryName(target)!;
+            string temporary = Assert.Single(Directory.GetFiles(folder, Path.GetFileName(target) + ".*.tmp"));
+            FileReplacement.RemoveLeftovers(target);
+            Assert.True(File.Exists(temporary));
             reader.Dispose();
             clock.Advance(TimeSpan.FromMilliseconds(100));
 
             await write.WaitAsync(TimeSpan.FromSeconds(30), TestContext.Current.CancellationToken);
             Assert.Contains(writer == "license" ? "two" : "lic-2", File.ReadAllText(target), StringComparison.Ordinal);
+            Assert.Empty(Directory.GetFiles(folder, Path.GetFileName(target) + ".*.tmp"));
             Assert.Equal(4, clock.Timers);
         }
         finally
@@ -352,36 +361,41 @@ public sealed class FileReplacementTests : IDisposable
     }
 
     /// <summary>
-    /// A writer with a temporary file of a fixed name deletes a symbolic link it finds at that name and writes a file of its
-    /// own: the file the link points to is left alone (design §12.6.2, V1d24).
+    /// A writer removes a symbolic link that has the name of one of its temporary files, and leaves the file the link points
+    /// to alone (design §12.6.2, V1d24a; V1d24 for the fixed names before).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A file victim.txt ("victim") in another folder, and a symbolic link to it at the writer's temporary path:
-    ///   activation: activation.json.tmp beside the activation file that ActivationStore.Write writes;
-    ///   license: server.elmlic.tmp beside the server license file that LicenseFiles.Write writes.
+    /// - A file victim.txt ("victim") in another folder, and a symbolic link to it at a name of the writer's temporary
+    ///   files, &lt;file&gt;.0123456789abcdef.tmp:
+    ///   activation: beside the activation file that ActivationStore.Write writes;
+    ///   license: beside the server license file that LicenseFiles.Write writes;
+    ///   pin: in servers/, beside the pin that ServerPins.TryWrite writes.
     /// - Where the test cannot make a link (Windows without the right to), it is skipped and says so; GitHub's runners can.
     ///
     /// Steps:
     /// - Write.
     ///
     /// Expected:
-    /// - victim.txt still holds "victim"; the written file is a regular file, not a link, and holds what was written; the
-    ///   temporary path is gone.
+    /// - victim.txt still holds "victim"; the link is gone; the written file is a regular file, not a link, and holds what
+    ///   was written; no temporary file of it is left.
     /// </remarks>
     /// <param name="writer">The writer.</param>
     [Theory]
     [InlineData("activation")]
     [InlineData("license")]
-    public void Writers_LinkAtTheTemporaryPath_LeaveTheLinkTargetAlone(string writer)
+    [InlineData("pin")]
+    public void Writers_LinkWithATemporaryName_IsRemovedAndItsTargetLeftAlone(string writer)
     {
         string victim = Path.Combine(_dir, "elsewhere", "victim.txt");
         Directory.CreateDirectory(Path.GetDirectoryName(victim)!);
         File.WriteAllText(victim, "victim");
         (string target, Action write) = Writer(writer);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        string link = target + ".0123456789abcdef.tmp";
         try
         {
-            File.CreateSymbolicLink(target + ".tmp", victim);
+            File.CreateSymbolicLink(link, victim);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -392,49 +406,55 @@ public sealed class FileReplacementTests : IDisposable
         write();
 
         Assert.Equal("victim", File.ReadAllText(victim));
+        Assert.False(Path.Exists(link));
         Assert.Null(new FileInfo(target).LinkTarget);
-        Assert.Contains(writer == "activation" ? "\"retry\"" : "written", File.ReadAllText(target), StringComparison.Ordinal);
-        Assert.False(File.Exists(target + ".tmp"));
+        Assert.Contains(Written(writer), File.ReadAllText(target), StringComparison.Ordinal);
+        Assert.Empty(Temporaries(target));
     }
 
     /// <summary>
-    /// A writer with a temporary file of a fixed name does not open a file it finds at that name: the written file does not
-    /// keep that file's access, on Windows its access rules and on Linux and macOS its mode (design §12.6.2, V1d24).
+    /// A temporary file that an earlier write left, and that no writer holds, is removed by the next write; the written file
+    /// does not take its access (design §12.6.2, V1d24a).
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A file at the writer's temporary path (the two writers of the test before) that every user may read: on Windows
-    ///   with an explicit rule that allows Everyone to read, on Linux and macOS with mode 0666.
+    /// - A file at a name of the writer's temporary files (the three writers of the test before) that every user may read:
+    ///   on Windows with an explicit rule that allows Everyone to read, on Linux and macOS with mode 0666.
     ///
     /// Steps:
     /// - Write.
     ///
     /// Expected:
-    /// - The written file has no rule for Everyone on Windows, and mode 0600 on Linux and macOS; the temporary path is gone.
+    /// - The left file is gone and no temporary file of the target is left; the written file has no rule for Everyone on
+    ///   Windows, and mode 0600 on Linux and macOS.
     /// </remarks>
     /// <param name="writer">The writer.</param>
     [Theory]
     [InlineData("activation")]
     [InlineData("license")]
-    public void Writers_FileLeftAtTheTemporaryPath_IsNotOpened(string writer)
+    [InlineData("pin")]
+    public void Writers_TemporaryFileLeftBehind_IsRemoved(string writer)
     {
         (string target, Action write) = Writer(writer);
-        string temporary = target + ".tmp";
-        File.WriteAllText(temporary, "left");
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        string left = target + ".0123456789abcdef.tmp";
+        File.WriteAllText(left, "left");
         if (OperatingSystem.IsWindows())
         {
-            var file = new FileInfo(temporary);
+            var file = new FileInfo(left);
             FileSecurity rules = file.GetAccessControl();
             rules.AddAccessRule(new FileSystemAccessRule(Everyone, FileSystemRights.Read, AccessControlType.Allow));
             file.SetAccessControl(rules);
         }
         else
         {
-            File.SetUnixFileMode(temporary, (UnixFileMode)0b110_110_110);
+            File.SetUnixFileMode(left, (UnixFileMode)0b110_110_110);
         }
 
         write();
 
+        Assert.False(File.Exists(left));
+        Assert.Empty(Temporaries(target));
         if (OperatingSystem.IsWindows())
         {
             var named = new List<string>();
@@ -449,8 +469,167 @@ public sealed class FileReplacementTests : IDisposable
         {
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(target));
         }
+    }
 
-        Assert.False(File.Exists(temporary));
+    /// <summary>
+    /// A temporary file that another writer holds open (as a writer holds its own until it is in place) is not removed by a
+    /// write of the same file; once that writer has let it go, the next write removes it (design §12.6.2, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A file at a name of the writer's temporary files (the three writers of the tests before), made and held open by
+    ///   FileReplacement.OpenNew, as another process's writer holds it: on Windows its share mode, on Linux and macOS
+    ///   .NET's shared flock refuse an open with FileShare.None.
+    ///
+    /// Steps:
+    /// - Write; close the held file; write again.
+    ///
+    /// Expected:
+    /// - The first write puts its content in place and leaves the held file; after the second write the held file is gone and
+    ///   no temporary file of the target is left.
+    /// </remarks>
+    /// <param name="writer">The writer.</param>
+    [Theory]
+    [InlineData("activation")]
+    [InlineData("license")]
+    [InlineData("pin")]
+    public void Writers_TemporaryFileHeldByAnotherWriter_IsLeftAlone(string writer)
+    {
+        (string target, Action write) = Writer(writer);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        string held = target + ".0123456789abcdef.tmp";
+        using (FileStream other = FileReplacement.OpenNew(held))
+        {
+            other.Write("other"u8);
+            other.Flush();
+
+            write();
+
+            Assert.Contains(Written(writer), File.ReadAllText(target), StringComparison.Ordinal);
+            Assert.Equal(new[] { held }, Temporaries(target));
+        }
+
+        write();
+
+        Assert.Empty(Temporaries(target));
+    }
+
+    /// <summary>
+    /// A pin's write removes the left temporary files of every pin in servers/, not only of its own (design §12.6.2,
+    /// V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - In servers/: a left temporary file of another server's pin (&lt;64 hex&gt;.json.0123456789abcdef.tmp) that no one
+    ///   holds, and other.tmp.
+    ///
+    /// Steps:
+    /// - Write the pin of https://licenses.example/.
+    ///
+    /// Expected:
+    /// - The write returns true; the other pin's temporary file is gone; other.tmp stays.
+    /// </remarks>
+    [Fact]
+    public void ServerPins_TemporaryFileOfAnotherPin_IsRemoved()
+    {
+        string servers = Path.Combine(_dir, "servers");
+        Directory.CreateDirectory(servers);
+        string left = Path.Combine(servers, new string('a', 64) + ".json.0123456789abcdef.tmp");
+        string other = Path.Combine(servers, "other.tmp");
+        File.WriteAllText(left, "left");
+        File.WriteAllText(other, "other");
+
+        Assert.True(new ServerPins(_dir, new FakeTimeProvider(Start)).TryWrite(new Uri("https://licenses.example/"), "lic-1", "key-1"));
+
+        Assert.Equal((false, true), (File.Exists(left), File.Exists(other)));
+    }
+
+    /// <summary>
+    /// A clean removes only the names of the writer's own temporary files: &lt;file&gt;.&lt;16 lowercase hex digits&gt;.tmp
+    /// for one file, the pins' temporary files in servers/, and &lt;lease ID&gt;.json.tmp in borrows/ (design §12.6.2,
+    /// V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The names below, each a file no writer holds.
+    ///
+    /// Steps:
+    /// - Ask each predicate about each name.
+    ///
+    /// Expected:
+    /// - Only the names the theory marks as the writer's are taken. Not taken: uppercase or a character that is not a hex
+    ///   digit, 15 or 17 digits, another file's name, a name that starts with more, the --force output's uppercase name, a
+    ///   pin name of 63 digits or with an uppercase digit, a lease ID of 21 or 23 characters or with a character outside
+    ///   [A-Za-z0-9_-].
+    /// </remarks>
+    /// <param name="kind">Which predicate: file (for file.json), pin, or borrow.</param>
+    /// <param name="name">The file name.</param>
+    /// <param name="taken">Whether it is one of the writer's temporary files.</param>
+    [Theory]
+    [InlineData("file", "file.json.0123456789abcdef.tmp", true)]
+    [InlineData("file", "file.json.0123456789ABCDEF.tmp", false)]
+    [InlineData("file", "file.json.0123456789abcdeg.tmp", false)]
+    [InlineData("file", "file.json.0123456789abcde.tmp", false)]
+    [InlineData("file", "file.json.0123456789abcdef0.tmp", false)]
+    [InlineData("file", "file.json.0123456789abcdef.tmpx", false)]
+    [InlineData("file", "other.json.0123456789abcdef.tmp", false)]
+    [InlineData("file", "xfile.json.0123456789abcdef.tmp", false)]
+    [InlineData("file", "file.json.tmp", false)]
+    [InlineData("pin", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.json.0123456789abcdef.tmp", true)]
+    [InlineData("pin", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcde.json.0123456789abcdef.tmp", false)]
+    [InlineData("pin", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeF.json.0123456789abcdef.tmp", false)]
+    [InlineData("pin", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.jsox.0123456789abcdef.tmp", false)]
+    [InlineData("pin", "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.json.0123456789abcdeF.tmp", false)]
+    [InlineData("borrow", "AbCdEfGhIjKlMnOpQr_-09.json.tmp", true)]
+    [InlineData("borrow", "AbCdEfGhIjKlMnOpQr_-0.json.tmp", false)]
+    [InlineData("borrow", "AbCdEfGhIjKlMnOpQr_-099.json.tmp", false)]
+    [InlineData("borrow", "AbCdEfGhIjKlMnOpQr_.09.json.tmp", false)]
+    [InlineData("borrow", "AbCdEfGhIjKlMnOpQr_-09.json", false)]
+    public void Leftovers_OnlyTheWritersNames_AreTaken(string kind, string name, bool taken)
+    {
+        bool result = kind switch
+        {
+            "file" => FileReplacement.IsTemporaryOf(name, "file.json"),
+            "pin" => ServerPins.IsPinTemporary(name),
+            _ => LicenseClient.IsBorrowTemporary(name),
+        };
+
+        Assert.Equal(taken, result);
+    }
+
+    /// <summary>
+    /// A clean of one file removes its temporary files only, and looks at no more than 1,000 of them (design §12.6.2,
+    /// V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - 1,001 files file.json.&lt;16 hex&gt;.tmp that no writer holds; beside them file.json.&lt;16 HEX&gt;.tmp (the
+    ///   --force output's form) and other.json.0123456789abcdef.tmp.
+    ///
+    /// Steps:
+    /// - Clean the leftovers of file.json once, then once more.
+    ///
+    /// Expected:
+    /// - After the first clean, exactly 1 of the 1,001 is left; after the second, none; the two files of other forms stay.
+    /// </remarks>
+    [Fact]
+    public void RemoveLeftovers_MoreThanTheLimit_LooksAtTheLimit()
+    {
+        for (int i = 0; i < FileReplacement.MaxLeftovers + 1; i++)
+        {
+            File.WriteAllText(Path.Combine(_dir, $"file.json.{i:x16}.tmp"), "left");
+        }
+
+        string upper = Path.Combine(_dir, "file.json.0123456789ABCDEF.tmp");
+        string other = Path.Combine(_dir, "other.json.0123456789abcdef.tmp");
+        File.WriteAllText(upper, "force");
+        File.WriteAllText(other, "other");
+
+        FileReplacement.RemoveLeftovers(Old);
+        int afterFirst = Temporaries(Old).Length;
+        FileReplacement.RemoveLeftovers(Old);
+
+        Assert.Equal((1, 0, true, true), (afterFirst, Temporaries(Old).Length, File.Exists(upper), File.Exists(other)));
     }
 
     /// <summary>
@@ -462,10 +641,11 @@ public sealed class FileReplacementTests : IDisposable
     ///   is read and fires each timer at once, so the tries on Windows end without a wait.
     ///
     /// Steps:
-    /// - Write a file to that path through target.tmp beside it.
+    /// - Write a file to that path.
     ///
     /// Expected:
-    /// - IOException or UnauthorizedAccessException; target.tmp is gone; the folder and its file are still there.
+    /// - IOException or UnauthorizedAccessException; no temporary file of the target is left; the folder and its file are
+    ///   still there.
     /// </remarks>
     [Fact]
     public void Write_ReplacementFails_DeletesTheTemporaryFile()
@@ -474,11 +654,49 @@ public sealed class FileReplacementTests : IDisposable
         Directory.CreateDirectory(target);
         File.WriteAllText(Path.Combine(target, "inside.txt"), "inside");
 
-        Exception error = Assert.ThrowsAny<Exception>(() => FileReplacement.Write(target + ".tmp", target, "new"u8, new JumpingTime()));
+        Exception error = Assert.ThrowsAny<Exception>(() => FileReplacement.Write(target, "new"u8, new JumpingTime()));
 
         Assert.True(error is IOException or UnauthorizedAccessException, error.ToString());
-        Assert.False(File.Exists(target + ".tmp"));
+        Assert.Empty(Temporaries(target));
         Assert.Equal("inside", File.ReadAllText(Path.Combine(target, "inside.txt")));
+    }
+
+    /// <summary>
+    /// ReadShared opens a file with the sharing that lets a writer delete it on Windows while it reads: the test reads a file
+    /// through it while a writer holds it open for writing, and deletes the file while a handle with the same sharing is
+    /// open (design §12.6.2, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - file.json ("old") held open by FileReplacement.OpenNew's shape on another name moved in place: a writer that holds a
+    ///   new file it has just moved over file.json.
+    ///
+    /// Steps:
+    /// - Read file.json with ReadShared while the writer holds it; close the writer; open file.json with ReadShared's
+    ///   sharing (FileReplacement.ShareWithWriters) and delete it while that handle is open.
+    ///
+    /// Expected:
+    /// - The read returns the writer's content; the delete passes.
+    /// </remarks>
+    [Fact]
+    public void ReadShared_WriterHoldsTheNewFile_ReadsAndLetsADeletePass()
+    {
+        string fresh = Path.Combine(_dir, "file.json.0123456789abcdef.tmp");
+        using (FileStream writer = FileReplacement.OpenNew(fresh))
+        {
+            writer.Write("new"u8);
+            writer.Flush();
+            File.Move(fresh, Old, overwrite: true);
+
+            Assert.Equal("new", System.Text.Encoding.UTF8.GetString(FileReplacement.ReadShared(Old)));
+        }
+
+        using (new FileStream(Old, FileMode.Open, FileAccess.Read, FileReplacement.ShareWithWriters))
+        {
+            File.Delete(Old);
+        }
+
+        Assert.False(File.Exists(Old));
     }
 
     /// <summary>
@@ -514,7 +732,7 @@ public sealed class FileReplacementTests : IDisposable
     }
 
     /// <summary>
-    /// A file that a writer created but could not fill is deleted: the new file of CreateNew, a secret file, and the
+    /// A file that a writer created but could not fill is deleted: the temporary file of Write, a secret file, and the
     /// installation key (design §12.6.2, V1d24).
     /// </summary>
     /// <remarks>
@@ -523,7 +741,7 @@ public sealed class FileReplacementTests : IDisposable
     ///   the test fails without it, elsewhere it is skipped and says so. Other OSes have no tmpfs.
     /// - A tmpfs of 4 KiB mounted on a new folder and owned by this user; a key folder made in it; then a file of 4096
     ///   bytes, so no page is left for another file's content:
-    ///   create-new: FileReplacement.CreateNew of 64 bytes at file.tmp;
+    ///   create-new: FileReplacement.Write of 64 bytes to file, through its temporary file;
     ///   secret: ProtectedFiles.TryCreateSecret of 64 bytes at admin.token.new;
     ///   key: InstallationKeyStore.TryLoadOrCreate in the key folder (user scope).
     ///
@@ -532,7 +750,7 @@ public sealed class FileReplacementTests : IDisposable
     ///
     /// Expected:
     /// - create-new and secret throw IOException; key fails with ELM_INSTALLATION_KEY_UNREADABLE "The installation key
-    ///   cannot be created: …". In each case no file is left at the path.
+    ///   cannot be created: …". In each case no file is left at the path, and for create-new no temporary file of it.
     /// </remarks>
     /// <param name="writer">The writer.</param>
     [Theory]
@@ -559,7 +777,7 @@ public sealed class FileReplacementTests : IDisposable
             File.WriteAllBytes(Path.Combine(disk, "filler"), new byte[4096]);
             string path = writer switch
             {
-                "create-new" => Path.Combine(disk, "file.tmp"),
+                "create-new" => Path.Combine(disk, "file"),
                 "secret" => Path.Combine(disk, "admin.token.new"),
                 _ => Path.Combine(keys, "installation.key"),
             };
@@ -578,16 +796,17 @@ public sealed class FileReplacementTests : IDisposable
                 {
                     if (writer == "create-new")
                     {
-                        FileReplacement.CreateNew(path, new byte[64]);
+                        FileReplacement.Write(path, new byte[64], new FakeTimeProvider(Start));
                     }
                     else
                     {
-                        ProtectedFiles.TryCreateSecret(path, new byte[64], KeyScope.User, "test"u8.ToArray());
+                        ProtectedFiles.TryCreateSecret(path, new byte[64], KeyScope.User, "test"u8.ToArray())?.Dispose();
                     }
                 });
             }
 
             Assert.False(File.Exists(path));
+            Assert.Empty(Temporaries(path));
         }
         finally
         {
@@ -614,7 +833,7 @@ public sealed class FileReplacementTests : IDisposable
     [SupportedOSPlatform("windows")]
     private static SecurityIdentifier Everyone => new(WellKnownSidType.WorldSid, null);
 
-    // The target and the write of each writer whose temporary file has a fixed name.
+    // The target and the write of each writer that cleans the leftovers of its file.
     private (string Target, Action Write) Writer(string writer)
     {
         if (writer == "activation")
@@ -625,8 +844,38 @@ public sealed class FileReplacementTests : IDisposable
             return (Path.Combine(folder, "activation.json"), () => store.Write(new StoredActivation(null, 0, null, null, ["p"])));
         }
 
+        if (writer == "pin")
+        {
+            var url = new Uri("https://licenses.example/");
+            var pins = new ServerPins(_dir, new FakeTimeProvider(Start));
+            string hash = Convert.ToHexStringLower(
+                SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(ElasticLM.Licensing.HttpTargetUri.Normalize(url)))
+            );
+            string pin = Path.Combine(_dir, "servers", hash + ".json");
+            return (pin, () => Assert.True(pins.TryWrite(url, "lic-written", "key-1")));
+        }
+
         string license = Path.Combine(_dir, "server.elmlic");
         return (license, () => LicenseFiles.Write(license, "written"u8.ToArray(), new FakeTimeProvider(Start)));
+    }
+
+    // What each writer of Writer puts in its file.
+    private static string Written(string writer) =>
+        writer switch
+        {
+            "activation" => "\"retry\"",
+            "pin" => "lic-written",
+            _ => "written",
+        };
+
+    // The temporary files of a file beside it, by the writer's own form.
+    private static string[] Temporaries(string path)
+    {
+        string folder = Path.GetDirectoryName(path)!;
+        string name = Path.GetFileName(path);
+        return Directory.Exists(folder)
+            ? [.. Directory.GetFiles(folder, name + ".*.tmp").Where(f => FileReplacement.IsTemporaryOf(Path.GetFileName(f), name))]
+            : [];
     }
 
     private static Task MoveAsync(bool asynchronous, string temporary, string path, TimeProvider time)

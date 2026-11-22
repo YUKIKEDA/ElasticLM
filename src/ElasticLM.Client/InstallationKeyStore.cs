@@ -190,7 +190,8 @@ public sealed partial class InstallationKeyStore
                 return false;
             }
 
-            stored = File.ReadAllBytes(KeyPath);
+            // design §12.6.2 (V1d24a): Delete is not refused on Windows while this reads the key.
+            stored = FileReplacement.ReadShared(KeyPath);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -235,7 +236,8 @@ public sealed partial class InstallationKeyStore
     // design §12.6.
 
     /// <summary>
-    /// Deletes the key, as after a deactivation. Nothing happens when there is no key.
+    /// Deletes the key. Nothing happens when there is no key. A deactivation does not delete the key: borrows, server pins,
+    /// and the clock guard's state in the same folder belong to it.
     /// </summary>
     public void Delete()
     {
