@@ -195,6 +195,66 @@ public sealed class LeaseEngineTests : IDisposable
     }
 
     /// <summary>
+    /// A replacement of the server license first runs the step the server gives, with the latest time a lease of the license
+    /// in use can be valid (one lease from now, or the latest expiry of a lease the engine holds when that is later), and
+    /// keeps that license when the step throws (design §13.4, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An engine at T on a server license of a 10-minute lease.
+    ///
+    /// Steps:
+    /// - Replace with a license of a 30-minute lease and a step that notes its argument and throws IOException; replace with
+    ///   it and a step that notes its argument. Acquire a lease (it ends at T + 30 min) and borrow a seat for a day. Replace
+    ///   with a license of a 10-minute lease and a step that notes its argument, twice.
+    ///
+    /// Expected:
+    /// - The first replacement throws IOException, its step got T + 10 min, and the engine keeps the license it had. The
+    ///   second step got T + 10 min, and the engine then runs on the 30-minute license. The third step got T + 30 min. The
+    ///   fourth, on the 10-minute license, got T + 30 min too: the lease's end is later than one 10-minute lease from now,
+    ///   and the borrow's end does not count.
+    /// </remarks>
+    [Fact]
+    public void ReplaceLicense_StepBeforeTheSwitch_GetsTheLatestEndOfTheLeasesInUse()
+    {
+        using var server = new TestServer();
+        LeaseEngine engine = server.OpenEngine();
+        DateTimeOffset t = server.Time.GetUtcNow();
+        ServerIdentity before = engine.Server;
+        server.ReplaceServerLicense(spec => spec with { LeaseDuration = TimeSpan.FromMinutes(30) });
+        var seen = new List<DateTimeOffset>();
+
+        Assert.Throws<IOException>(() =>
+            engine.ReplaceLicense(
+                server.Identity,
+                until =>
+                {
+                    seen.Add(until);
+                    throw new IOException("The disk is full.");
+                }
+            )
+        );
+        Assert.Same(before, engine.Server);
+        engine.ReplaceLicense(server.Identity, seen.Add);
+        Assert.Equal(TimeSpan.FromMinutes(30), engine.Server.License.LeaseDuration);
+        TestClient client = server.Client();
+        Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
+        Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(server.Client().Borrow(TimeSpan.FromDays(1))));
+        server.ReplaceServerLicense(spec => spec with { LeaseDuration = TimeSpan.FromMinutes(10) });
+        engine.ReplaceLicense(server.Identity, seen.Add);
+        engine.ReplaceLicense(server.Identity, seen.Add);
+
+        DateTimeOffset[] expected =
+        [
+            t + TimeSpan.FromMinutes(10),
+            t + TimeSpan.FromMinutes(10),
+            t + TimeSpan.FromMinutes(30),
+            t + TimeSpan.FromMinutes(30),
+        ];
+        Assert.Equal(expected, seen);
+    }
+
+    /// <summary>
     /// A granted lease is a token the client accepts, for its key, with sequence number 1 and the license's lease duration.
     /// </summary>
     /// <remarks>

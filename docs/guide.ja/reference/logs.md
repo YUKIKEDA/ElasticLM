@@ -19,12 +19,12 @@ info: elm-server[2]
 
 | カテゴリ | メッセージ |
 | --- | --- |
-| `elm-server` | 起動（ポート、公開 URL、鍵 ID、サーバーライセンス ID、リースの再登録の期間の終わり）と停止。リースの取得、返却、再登録のそれぞれ。見つかったクローン。管理リクエスト。ライセンスの読み直しと、ライセンスの更新の失敗。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルや借用の記録の名前を持つが、実在する日時を表していないファイル。書き込めない借用の記録。借用の記録の退避。起動時に消した、書きかけの借用の記録のファイル。サーバーが 30 日間の早期返却の上限に達したこと（`The server reached its limit of <N> early returns in 30 days; early returns are refused at least until <time>.`。`<time>` は `2026-12-14T09:30:00.0000000+00:00` のような往復の形式。最初に拒否したときに書き、その後は前の警告から 30 日以上たって最初に拒否したときに書く。サーバーは前の警告の時刻をメモリーにだけ持つので、上限に達したまま再起動すると、再起動のあとの最初の拒否でもう一度書く）。片付けの処理の失敗。 |
-| `elm-service` | 起動（アドレス、データベース、署名鍵と、その証明書の期限）と停止。適用したデータベースのスキーマのバージョン。30 日以内に期限が切れる署名鍵の鍵証明書。利用ログの場所。削除した監査ログの行と管理画面のセッション。定期的な処理とデータベースへのリクエストの失敗。署名できなかったライセンスファイルやリース。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルの名前を持つが、実在する日時を表していないファイル。管理画面のサインインに使う鍵を作ったこと、または作らなかったこと。長くサインインしていない管理者の API キーを拒否したこと。製品が 24 時間のトライアルの上限に達したこと（警告 `The product <code> (<product ID>) reached its limit of <N> trials in 24 hours; new trials are refused at least until <time>.`。イベント 22。時刻は UTC で、`MM/dd/yyyy HH:mm:ss +00:00` の形。ノードごとに、最初に断ったときと、そのノードがその製品について前に警告してから 24 時間たったときに書く。その 24 時間のうちに製品がもう一度上限に達しても書かず、書いた時刻を過ぎても断られ続けることがある）。拒否した管理画面のサインインと、接続できない ID プロバイダー（どちらも警告。下を参照）。本文を読めなかった管理リクエスト（そのあと、レスポンスを返さずに接続を閉じる）。`Debug` レベルでは、アクセストークンを拒否した理由を `An access token was refused: <reason>` として書く（下を参照）。 |
+| `elm-server` | 起動（ポート、公開 URL、鍵 ID、サーバーライセンス ID、リースの再登録の期間の終わり）と停止。リースの取得、返却、再登録のそれぞれ。見つかったクローン。拒否したリクエストのプルーフと、失敗した確認（`A request proof was refused (<route>): <reason>`。ルートは、`POST /v1/leases/{id}/renew` のようなメソッドとルートのパターンで、理由は `The request proof is for another body.` のようなサーバー自身の文。クライアントへのレスポンスには、どの確認で失敗したかは書かれない）。リースのルートへのリクエストで、本文を読めなかったもの（チャンクが不正か、本文が届くのが遅すぎたとき。そのあと接続を閉じ、クライアントにはレスポンスが返らない。`A device request (<route>) could not be read (<status>); the connection was closed.`。`<status>` は、チャンクが不正なら `400`、本文が届くのが遅すぎたなら `408`）。管理リクエスト。ライセンスの読み直しと、ライセンスの更新の失敗。借用の記録に書けなかった新しいサーバーライセンス（エラー `The borrow record cannot record the new server license; the old license stays.` と、その例外。読み直しを頼んだときも、自動の更新のときも書く）。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルや借用の記録の名前を持つが、実在する日時を表していないファイル。書き込めない借用の記録。借用の記録の退避。起動時に消した、書きかけの借用の記録のファイル。サーバーが 30 日間の早期返却の上限に達したこと（`The server reached its limit of <N> early returns in 30 days; early returns are refused at least until <time>.`。`<time>` は `2026-12-14T09:30:00.0000000+00:00` のような往復の形式。最初に拒否したときに書き、その後は前の警告から 30 日以上たって最初に拒否したときに書く。サーバーは前の警告の時刻をメモリーにだけ持つので、上限に達したまま再起動すると、再起動のあとの最初の拒否でもう一度書く）。片付けの処理の失敗。 |
+| `elm-service` | 起動（アドレス、データベース、署名鍵と、その証明書の期限）と停止。適用したデータベースのスキーマのバージョン。30 日以内に期限が切れる署名鍵の鍵証明書。利用ログの場所。削除した監査ログの行と管理画面のセッション。定期的な処理とデータベースへのリクエストの失敗。署名できなかったライセンスファイルやリース。書き込めない利用ログと、起動時にチェーンを続けられなかった利用ログ。利用ログのファイルの名前を持つが、実在する日時を表していないファイル。管理画面のサインインに使う鍵を作ったこと、または作らなかったこと。長くサインインしていない管理者の API キーを拒否したこと。製品が 24 時間のトライアルの上限に達したこと（警告 `The product <code> (<product ID>) reached its limit of <N> trials in 24 hours; new trials are refused at least until <time>.`。イベント 22。時刻は UTC で、`MM/dd/yyyy HH:mm:ss +00:00` の形。ノードごとに、最初に断ったときと、そのノードがその製品について前に警告してから 24 時間たったときに書く。その 24 時間のうちに製品がもう一度上限に達しても書かず、書いた時刻を過ぎても断られ続けることがある）。拒否した管理画面のサインインと、接続できない ID プロバイダー（どちらも警告。下を参照）。本文を読めなかった管理リクエスト（`The request of an administration call (<action>) could not be read (<status>); the connection was closed.`。そのあと、レスポンスを返さずに接続を閉じる）。拒否したリクエストのプルーフと、失敗した確認（`elm-server` と同じ `A request proof was refused (<route>): <reason>`。デバイスのルート、`POST /v1/offline`、`POST /v1/admin/offline` で書く）。本文を読めなかった、デバイスのルートか `POST /v1/offline` へのリクエスト（`elm-server` と同じ `A device request (<route>) could not be read (<status>); the connection was closed.`）。`Debug` レベルでは、アクセストークンを拒否した理由を `An access token was refused: <reason>` として書く（下を参照）。 |
 | `Microsoft.Hosting.Lifetime` | Web ホストの起動と停止。待ち受けるアドレスとソケットのファイルのそれぞれ（`Now listening on: …`）、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、コンテンツのルートのパス、`Application is shutting down...`。 |
 | `Microsoft.Extensions.Hosting.Internal.Host` | プログラムが待ち受けられないときのエラー `Hosting failed to start` と、その例外。 |
 | `Microsoft.AspNetCore.Routing.EndpointMiddleware` | エンドポイントに届いたリクエストごとに、そのメソッドとルートのパターンを、処理の前とあとに書く。たとえば `Executing endpoint 'HTTP: GET /v1/nonce'` と `Executed endpoint 'HTTP: GET /v1/nonce'` だ。パスの中の値は、`HTTP: DELETE /admin/v1/leases/{id}` の `{id}` のように、プレースホルダーのまま書く。 |
-| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。 |
+| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文が届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。呼び出し側がリクエストの本文の途中で接続をリセットしたときも、このエラーは書かない。 |
 | `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | 管理画面のサインインを使う `elm-service` だけ。サインイン用の鍵を作る起動で、`Creating key {…} …` と、警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` を書く。[OIDC でサインインする](../how-to/sign-in-with-oidc.md)で説明しているとおり、サービスはこの鍵を保存する前に自分で暗号化する。 |
 
 リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。`Logging` の下の設定は、このカテゴリを指すものでも、このカテゴリに当たる `*` のパターンでも、プロバイダー `Console` のものでも、`Default` でも、これを下げられない。`None` のように `Warning` より上のレベルを求める設定は、このカテゴリにもそのまま効く。
@@ -234,6 +234,8 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 | --- | --- | --- |
 | `borrow.started` | 借用を貸し出す前と、新しいファイルに期限の切れていない借用を書き写すとき | `lease`、`lic`、`seats`、`borrow`、`fp` |
 | `borrow.returned` | 早期返却が反映される前と、新しいファイルに過去 30 日の返却を書き写すとき | `id`、`key`、`fp`、`at` |
+| `leases.until` | 新しいファイルを始めるときに、前のライセンスか前の起動で出したリースがまだ有効でありうるとき。読み直したサーバーライセンスが効く前 | `until` |
+| `server.stopped` | ふつうに止める（Ctrl+C、SIGTERM、サービスマネージャーによる停止）ときの最後。リクエストを受けなくなったあと。利用ログの `server.stopped`（`leases` を持つ）とは別の行 | `at` |
 
 | 項目 | 値 |
 | --- | --- |
@@ -244,7 +246,8 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 | `fp` | クライアントが送ったマシンフィンガープリント。最大 8 個の文字列の配列。それ以外の値は、フィンガープリントなしとして読む。 |
 | `id` | 返却した借用のリース ID。 |
 | `key` | その借用をしたクライアントのインストール鍵のサムプリント。 |
-| `at` | 返却した時刻。Unix 秒で表す。 |
+| `at` | 返却した時刻か、止めた時刻。Unix 秒で表す。 |
+| `until` | 前のライセンスか前の起動でこれまでに出したリースが有効でありうる、最後の時刻。Unix 秒で表す。次の起動のあとのリースの再登録の期間は、すべての機能のシートが先にふたたび埋まらなければ、少なくともこの時刻まで続く。 |
 
 たとえば、早期返却の行は次のようになる（値は架空のもの）。
 
@@ -258,7 +261,7 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 
 1. サーバーは、最新のファイルを `elm log verify` と同じ方法で検証する。ファイルの最後の鍵は、サーバー自身の鍵か、同じサーバーライセンスの鍵（サーバーを別のマシンに移した場合）でなければならない。別のサーバーの記録は、壊れているとみなす。
 2. 記録が壊れていると、サーバーは終了コード 1 で起動を止め、メッセージで問題を示す。`--set-aside-broken-records` を付けると、サーバーはファイルの名前を変えて退避し、その借用なしで起動し、ファイル名を入れた `records.set_aside` を利用ログに書く。
-3. 完全なファイルからは、サーバーが署名したリーストークンを持ち、期限の切れていない借用を、返却済みのものを除いて復元する。`borrow.started` や `borrow.returned` の行のうち、項目が上の表のとおりでないものと、Unicode として正しくない文字列を持つものは、読み飛ばす。
+3. 完全なファイルからは、サーバーが署名したリーストークンを持ち、期限の切れていない借用を、返却済みのものを除いて復元する。また、2 つの時刻を求める。1 つは、署名のある `leases.until` のうち、いちばん遅い時刻だ。もう 1 つは、ある時刻に、ファイルの終わりに署名したライセンスのリースの期間を足した時刻だ。その時刻は、ファイルの最後の行が署名のある `server.stopped` ならその `at`、そうでなければこの起動の時刻だ。2 つの遅いほうが、この起動から今のライセンスのリースの期間が過ぎた時刻より遅ければ、リースの再登録の期間はその時刻まで続く。`borrow.started` や `borrow.returned` の行のうち、項目が上の表のとおりでないものと、Unicode として正しくない文字列を持つものは、読み飛ばす。
 
 退避、削除、書き換えをされたファイルにある借用は、その借用が終わるまで数に入らない。データフォルダーに書き込める管理者は、この方法で借用中のシートを空けられる。痕跡として残るのは、ログの `records.set_aside` と `chain.reset`、または欠けたファイルだ。
 

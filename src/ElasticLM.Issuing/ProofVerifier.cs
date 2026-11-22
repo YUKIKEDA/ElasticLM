@@ -35,6 +35,13 @@ public abstract record ProofResult
 /// </summary>
 public sealed class ProofVerifier
 {
+    /// <summary>
+    /// The one sentence a server answers a remote caller with for <c>ELM_PROOF_INVALID</c>, whatever check failed (design §12.1,
+    /// V1d25). The message of <see cref="ProofResult.Invalid"/> says which check failed; servers write it to their operational
+    /// log only.
+    /// </summary>
+    public const string Refusal = "The request proof is not valid.";
+
     private const int MaxCachedKeys = 10_000;
 
     private readonly NonceService _nonces;

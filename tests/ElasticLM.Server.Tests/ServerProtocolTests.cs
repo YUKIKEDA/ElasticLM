@@ -574,12 +574,16 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// - Renew and release an unknown ID; B renews and releases A's lease; A releases it.
     ///
     /// Expected:
-    /// - 404 ELM_UNKNOWN_LEASE and 204; 401 ELM_PROOF_INVALID twice with the seat kept; 204 and no seat.
+    /// - 404 ELM_UNKNOWN_LEASE and 204; 401 ELM_PROOF_INVALID twice with the seat kept, each with the detail "The request
+    ///   proof is not valid.", and for each one line in the operational log, "A request proof was refused (POST
+    ///   /v1/leases/{id}/renew): The proof is not signed by the key the lease is bound to." and the same for DELETE
+    ///   /v1/leases/{id} (design §12.1, V1d25); 204 and no seat.
     /// </remarks>
     [Fact]
     public async Task Renewal_AndRelease_BelongToTheLeaseKey()
     {
-        await using Raw a = await Raw.StartAsync(_deployment);
+        using var log = new RecordingLoggerProvider();
+        await using Raw a = await Raw.StartAsync(_deployment, log: log);
         await using Raw b = await Raw.StartAsync(_deployment, a.Server);
         string id = await a.AcquireAsync();
 
@@ -595,9 +599,12 @@ public sealed class ServerProtocolTests : IAsyncDisposable
             Raw.Json("""{"seq":1}"""),
             includeKey: true
         );
-        await Raw.AssertCodeAsync(otherRenew, "ELM_PROOF_INVALID");
+        await Raw.AssertCodeAsync(otherRenew, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
         using HttpResponseMessage otherRelease = await b.SignedAsync(HttpMethod.Delete, $"v1/leases/{id}", [], includeKey: true);
-        await Raw.AssertCodeAsync(otherRelease, "ELM_PROOF_INVALID");
+        await Raw.AssertCodeAsync(otherRelease, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
+        const string WrongKey = "The proof is not signed by the key the lease is bound to.";
+        AssertProofRefused(log, "POST /v1/leases/{id}/renew", WrongKey);
+        AssertProofRefused(log, "DELETE /v1/leases/{id}", WrongKey);
         Assert.Equal(1, a.Server.Engine.SeatsInUse("pro"));
 
         using HttpResponseMessage released = await a.SignedAsync(HttpMethod.Delete, $"v1/leases/{id}", []);
@@ -623,8 +630,9 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// - Send the request with the changed proof, then with a good proof.
     ///
     /// Expected:
-    /// - 401 ELM_PROOF_INVALID: "The request proof signature does not verify." for the four signatures, "The request proof
-    ///   is missing or not a valid elm-proof+jws." for the two algs.
+    /// - 401 ELM_PROOF_INVALID with the detail "The request proof is not valid." (design §12.1, V1d25). The operational log
+    ///   has one line "A request proof was refused (POST {route}): " and the check: "The request proof signature does not
+    ///   verify." for the four signatures, "The request proof is missing or not a valid elm-proof+jws." for the two algs.
     /// - The good request succeeds (201 for the acquire, 200 for the renewal) and the server holds one lease, so the refused
     ///   request took no seat and moved no sequence number.
     /// </remarks>
@@ -632,7 +640,8 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     [MemberData(nameof(KeySourcesAndSignatureForms))]
     public async Task Proofs_WithoutAValidSignature_AreRefused(string keyFrom, string form)
     {
-        await using Raw raw = await Raw.StartAsync(_deployment);
+        using var log = new RecordingLoggerProvider();
+        await using Raw raw = await Raw.StartAsync(_deployment, log: log);
         bool embedded = keyFrom == "embedded";
         string path = "v1/leases";
         byte[] body = Raw.Json("""{"feature":"pro","count":1}""");
@@ -646,10 +655,12 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         using HttpResponseMessage refused = await raw.SendAsync(HttpMethod.Post, path, body, SignatureForms.Change(proof, form, raw.Sign));
 
         Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
-        string detail = SignatureForms.ChangesAlgorithm(form)
+        string reason = SignatureForms.ChangesAlgorithm(form)
             ? "The request proof is missing or not a valid elm-proof+jws."
             : "The request proof signature does not verify.";
-        await Raw.AssertCodeAsync(refused, "ELM_PROOF_INVALID", detail);
+        await Raw.AssertCodeAsync(refused, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
+        string route = embedded ? "/v1/leases" : "/v1/leases/{id}/renew";
+        AssertProofRefused(log, $"POST {route}", reason);
         using HttpResponseMessage accepted = await raw.SignedAsync(HttpMethod.Post, path, body, includeKey: embedded);
         Assert.Equal(embedded ? HttpStatusCode.Created : HttpStatusCode.OK, accepted.StatusCode);
         Assert.Equal(1, raw.Server.Engine.LeaseCount);
@@ -898,6 +909,204 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         };
 
     /// <summary>
+    /// A request proof that fails any check of the proof gets one answer, whatever check failed, and the check goes to the
+    /// operational log only (design §12.1, §12.2, V1d25).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its window, whose operational log the test records from Information up; an installation key.
+    ///
+    /// Steps:
+    /// - Send an acquire of one seat of pro: without ELM-Proof; with a proof of another path (/v1/leases/reclaim); with a
+    ///   proof of another body; with a proof of DELETE; with a proof that is not a JWS. Then send it with a good proof.
+    ///
+    /// Expected:
+    /// - Each refused acquire gets 401 ELM_PROOF_INVALID with the detail "The request proof is not valid.", and the log has
+    ///   one line "A request proof was refused (POST /v1/leases): " and the check: "The request proof is missing or not a
+    ///   valid elm-proof+jws." without a proof and for the text that is not one, "The request proof is for another method
+    ///   or URI." for the other path and for DELETE, "The request proof is for another body." for the other body.
+    /// - No line of the log holds the body, the path, or the proof of a request. The good acquire gets 201.
+    /// </remarks>
+    [Theory]
+    [InlineData("missing", "The request proof is missing or not a valid elm-proof+jws.")]
+    [InlineData("path", "The request proof is for another method or URI.")]
+    [InlineData("body", "The request proof is for another body.")]
+    [InlineData("method", "The request proof is for another method or URI.")]
+    [InlineData("text", "The request proof is missing or not a valid elm-proof+jws.")]
+    public async Task Proof_EachFailedCheck_GetsOneAnswerAndTheCheckIsLogged(string change, string reason)
+    {
+        using var log = new RecordingLoggerProvider();
+        await using Raw raw = await Raw.StartAsync(_deployment, log: log);
+        byte[] body = Raw.Json("""{"feature":"pro","count":1}""");
+        string nonce = await raw.NonceAsync();
+        string? proof = change switch
+        {
+            "missing" => null,
+            "path" => raw.Proof(HttpMethod.Post, "v1/leases/reclaim", body, nonce),
+            "body" => raw.Proof(HttpMethod.Post, "v1/leases", Raw.Json("""{"feature":"pro","count":2}"""), nonce),
+            "method" => raw.Proof(HttpMethod.Delete, "v1/leases", body, nonce),
+            _ => "not-a-proof",
+        };
+
+        using HttpResponseMessage refused = await raw.SendAsync(HttpMethod.Post, "v1/leases", body, proof);
+
+        Assert.Equal(HttpStatusCode.Unauthorized, refused.StatusCode);
+        await Raw.AssertCodeAsync(refused, "ELM_PROOF_INVALID", ProofVerifier.Refusal);
+        AssertProofRefused(log, "POST /v1/leases", reason);
+        Assert.DoesNotContain(
+            log.Entries,
+            e => e.Message.Contains("\"feature\"", StringComparison.Ordinal) || e.Message.Contains("not-a-proof", StringComparison.Ordinal)
+        );
+        using HttpResponseMessage accepted = await raw.SignedAsync(HttpMethod.Post, "v1/leases", body, includeKey: true);
+        Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+    }
+
+    /// <summary>
+    /// A lease request whose body Kestrel cannot read, a bad chunk or a body that comes too slowly, ends with one line of the
+    /// server's own and a closed connection, without an error entry (design §18.3, V1d25, Issue #413).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its window, whose operational log the test records from Information up. Kestrel's least body rate is
+    ///   its default, 240 bytes a second after 5 seconds, counted on the real clock.
+    ///
+    /// Steps:
+    /// - On a TLS connection of its own, POST /v1/leases: "chunk" with Transfer-Encoding: chunked and the chunk size "zz";
+    ///   "slow" with Content-Length 100 and 9 bytes of the body. Read until the server has closed the connection, for at most
+    ///   30 seconds, moving the server's clock a second every 50 ms, since the failed read waits up to a second on that clock
+    ///   for Kestrel to cancel the request.
+    ///
+    /// Expected:
+    /// - No byte of an answer. The log has one line "A device request (POST /v1/leases) could not be read (400); the
+    ///   connection was closed." for the chunk, with 408 for the slow body, and no entry at Error or above.
+    /// </remarks>
+    [Theory]
+    [InlineData("chunk", 400)]
+    [InlineData("slow", 408)]
+    public async Task Body_Unreadable_ClosesWithOneLine(string shape, int status)
+    {
+        using var log = new RecordingLoggerProvider();
+        await using Raw raw = await Raw.StartAsync(_deployment, log: log);
+        Uri url = raw.Server.PublicUrls[0];
+        string request =
+            $"POST /v1/leases HTTP/1.1\r\nHost: {url.Authority}\r\nContent-Type: application/json\r\n"
+            + (shape == "chunk" ? "Transfer-Encoding: chunked\r\n\r\nzz\r\n" : "Content-Length: 100\r\n\r\n{\"feature\"");
+
+        Assert.Equal(0, await SendRawTlsAsync(url, request, TimeSpan.FromSeconds(30), _deployment.Time));
+
+        string line = $"A device request (POST /v1/leases) could not be read ({status}); the connection was closed.";
+        await Deployment.WaitUntilAsync(() => log.Entries.Any(e => e.Message == line));
+        Assert.Single(
+            log.Entries,
+            e => e.Category == "elm-server" && e.Level == Microsoft.Extensions.Logging.LogLevel.Information && e.Message == line
+        );
+        Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error);
+    }
+
+    /// <summary>
+    /// A caller who resets the connection in the middle of a lease request's body leaves no error entry, every time: the read
+    /// of the body waits for Kestrel to cancel the request before it fails (design §18.3, V1d25 question 25-5a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server past its window, whose operational log the test records from Information up. Its clock is never moved, so
+    ///   the failed read's wait can only end by Kestrel's cancellation.
+    ///
+    /// Steps:
+    /// - 40 times: on a TLS connection of its own, POST /v1/leases with Content-Length 100 and 9 bytes of the body; wait 100
+    ///   ms; close the socket with a linger time of 0, which sends RST. Then acquire a lease with a good proof.
+    ///
+    /// Expected:
+    /// - No entry at Error or above in the log (before the wait, 5 runs of 20 wrote Kestrel[13] at Error). The acquire gets
+    ///   201.
+    /// </remarks>
+    [Fact]
+    public async Task Body_CallerResetsInTheMiddle_LeavesNoErrorEntry()
+    {
+        using var log = new RecordingLoggerProvider();
+        await using Raw raw = await Raw.StartAsync(_deployment, log: log);
+        Uri url = raw.Server.PublicUrls[0];
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        for (int i = 0; i < 40; i++)
+        {
+            using var tcp = new System.Net.Sockets.TcpClient();
+            await tcp.ConnectAsync(url.Host, url.Port, cancel);
+            var tls = new System.Net.Security.SslStream(tcp.GetStream(), false, (_, certificate, _, _) => certificate is not null);
+            await tls.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions { TargetHost = url.Host }, cancel);
+            await tls.WriteAsync(
+                Encoding.ASCII.GetBytes($"POST /v1/leases HTTP/1.1\r\nHost: {url.Authority}\r\nContent-Length: 100\r\n\r\n{{\"feature\""),
+                cancel
+            );
+            await tls.FlushAsync(cancel);
+            await Task.Delay(100, cancel);
+            tcp.Client.LingerState = new System.Net.Sockets.LingerOption(true, 0);
+            tcp.Client.Close();
+        }
+
+        using HttpResponseMessage accepted = await raw.SignedAsync(
+            HttpMethod.Post,
+            "v1/leases",
+            Raw.Json("""{"feature":"pro","count":1}"""),
+            includeKey: true
+        );
+        Assert.Equal(HttpStatusCode.Created, accepted.StatusCode);
+        await Task.Delay(500, cancel);
+        Assert.DoesNotContain(log.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Error);
+    }
+
+    // Sends a request as it is on a TLS connection of its own, then reads until the server closes or resets the connection,
+    // and returns the bytes of an answer that came. Meanwhile the server's clock moves a second every 50 ms, for a wait of
+    // the server that is counted on it.
+    private static async Task<int> SendRawTlsAsync(Uri url, string request, TimeSpan limit, Microsoft.Extensions.Time.Testing.FakeTimeProvider clock)
+    {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        bound.CancelAfter(limit);
+        using var tcp = new System.Net.Sockets.TcpClient();
+        await tcp.ConnectAsync(url.Host, url.Port, bound.Token);
+        await using var tls = new System.Net.Security.SslStream(tcp.GetStream(), false, (_, certificate, _, _) => certificate is not null);
+        await tls.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions { TargetHost = url.Host }, bound.Token);
+        await tls.WriteAsync(Encoding.ASCII.GetBytes(request), bound.Token);
+        await tls.FlushAsync(bound.Token);
+        using var moved = new CancellationTokenSource();
+        Task mover = Task.Run(async () =>
+        {
+            while (!moved.IsCancellationRequested)
+            {
+                clock.Advance(TimeSpan.FromSeconds(1));
+                await Task.Delay(50, CancellationToken.None);
+            }
+        });
+        byte[] buffer = new byte[1_024];
+        int total = 0;
+        try
+        {
+            int read;
+            while ((read = await tls.ReadAsync(buffer, bound.Token)) > 0)
+            {
+                total += read;
+            }
+        }
+        catch (IOException) { }
+        finally
+        {
+            await moved.CancelAsync();
+            await mover;
+        }
+
+        return total;
+    }
+
+    // The one line of the operational log for a refused proof (design §12.1, V1d25).
+    private static void AssertProofRefused(RecordingLoggerProvider log, string route, string reason) =>
+        Assert.Single(
+            log.Entries,
+            e =>
+                e.Category == "elm-server"
+                && e.Level == Microsoft.Extensions.Logging.LogLevel.Information
+                && e.Message == $"A request proof was refused ({route}): {reason}"
+        );
+
+    /// <summary>
     /// A raw protocol client: an installation key, a server past its window, and an HTTP client that skips the TLS check.
     /// </summary>
     private sealed class Raw : IAsyncDisposable
@@ -918,11 +1127,16 @@ public sealed class ServerProtocolTests : IAsyncDisposable
 
         public string KeyId => _key.Thumbprint;
 
-        public static async Task<Raw> StartAsync(Deployment deployment, ElmServer? server = null, string? keyFolder = null)
+        public static async Task<Raw> StartAsync(
+            Deployment deployment,
+            ElmServer? server = null,
+            string? keyFolder = null,
+            RecordingLoggerProvider? log = null
+        )
         {
             if (server is null)
             {
-                server = await deployment.StartServerAsync();
+                server = await deployment.StartServerAsync(log: log);
                 deployment.Time.Advance(TimeSpan.FromMinutes(10));
             }
 

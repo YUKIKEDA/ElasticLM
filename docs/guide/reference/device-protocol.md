@@ -85,6 +85,8 @@ The checks, in order:
 
 `elm-server` has no per-key rate limit. It checks that a proof is signed by the lease's key after the body is read, with the route's own checks.
 
+Every `ELM_PROOF_INVALID` answer has the same `detail`, `The request proof is not valid.`, whichever check failed, here or in a route's own checks. The same holds for the `400` `ELM_PROOF_INVALID` answers of `POST /v1/offline`; only `POST /v1/admin/offline`, which an administrator of `elm-service` calls, gives the reason in its `detail`. `elm-server` and `elm-service` write the check that failed to their operational log at the `Information` level, the default, as `A request proof was refused (<route>): <reason>` (see [Logs](logs.md#operational-log)); a level above `Information` leaves it out. To find out why the proofs of an app are refused, for example because `htu` does not match a `publicUrls` entry, read that line in the log of the program that refused them: the customer's administrator keeps the log of `elm-server`, and the vendor keeps the log of `elm-service`. [Handle errors](../how-to/handle-errors.md) says whom to ask.
+
 A client without a nonce, such as at its first request, gets one from `GET /v1/nonce` (see [Nonces](#nonces)). A refusal of the proof check carries a new nonce in `ELM-Nonce`, as every answer named in [Headers](#headers) does.
 
 `elm-service` records the `jti` in its database after the per-key rate limit and before it parses the body: a request refused after that point still uses up its `jti`. `elm-server` records the `jti` in memory.
@@ -529,7 +531,7 @@ The checks, in order: the rate limit for the source address; the form of `{jti}`
 
 `elm-server` has seven routes for clients. Every route can also answer `403` with `ELM_FORBIDDEN` for an address its IP rules refuse, and `429` with `ELM_RATE_LIMITED`. Every route with a proof can also answer the codes of the proof check (including `503` with `ELM_SERVER_BUSY`), `400` with `ELM_MALFORMED` for a body that breaks the rules, and `413` with `ELM_PAYLOAD_TOO_LARGE`. Each route below lists its other codes, in the order the server checks them.
 
-`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease period, while clients reclaim the leases they still hold; the window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
+`elm-server` lends the features of its server license. After every start, it refuses new leases for a reclaim window as long as the server license's lease time, while clients reclaim the leases they still hold. When the server's borrow record shows that leases an earlier run issued, under this or an earlier server license, can be valid after that window, the window lasts until they end. The window ends early once every feature's seats are taken again. See [Restarts and reclaim](../explanation/floating-licenses.md#restarts-and-reclaim).
 
 ### `GET /v1/nonce` on `elm-server`
 
@@ -594,7 +596,7 @@ Lends seats of a feature of the server license, or borrows them when the body ha
 | `client` | object | no | `{"host": <string>, "user": <string>}`, each optional and at most 255 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F); a control character gets `ELM_MALFORMED`. Checked against the `host:` and `user:` entries of `allow` and `deny` (see [Access rules](server-configuration.md#access-rules)). |
 | `app` | string | no | The app's version, at most 64 bytes, without control characters (U+0000 to U+001F, U+007F, and U+0080 to U+009F); a control character gets `ELM_MALFORMED`. It is written to the usage log. |
 
-`elm-server` does not read `licenseKey` or `product`. The lease lasts the server license's lease period, or the `borrow` period, and ends at the earlier of the server license's expiry plus its grace period and the feature's own expiry in the server license, which has no grace period. The answer holds the lease token, which the server signed with its installation key, and an empty `certificates`; the token is shortened to `eyJ…` here. The client checks the token with the key from `GET /v1/server/license`. As on `elm-service`, the claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim.
+`elm-server` does not read `licenseKey` or `product`. The lease lasts the server license's lease time, or the `borrow` period, and ends at the earlier of the server license's expiry plus its grace period and the feature's own expiry in the server license, which has no grace period. The answer holds the lease token, which the server signed with its installation key, and an empty `certificates`; the token is shortened to `eyJ…` here. The client checks the token with the key from `GET /v1/server/license`. As on `elm-service`, the claims a client needs are `lse`, the lease ID that `POST /v1/leases/{id}/renew` and `DELETE /v1/leases/{id}` name; `seq`, the sequence number that the next renewal sends; and `exp`, when the lease ends. [Token and file formats](formats.md#lease-token-elm-leasejws) lists every claim.
 
 ```json
 {
@@ -689,7 +691,7 @@ Gets a new lease token with a new expiry. `{id}` is the lease ID, the `lse` clai
 | `seq` | integer | yes | The `seq` of the last token the client received. Any whole number that fits 64 bits: a negative value is accepted and judged a clone (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
 | `retry` | array of strings | no | The `jti` of earlier renewals that got no answer or whose answer the client refused (see [Sequence numbers and `retry`](#sequence-numbers-and-retry)). |
 
-The new token lasts the server license's lease period, cut as on acquire.
+The new token lasts the server license's lease time, cut as on acquire.
 
 ```json
 {

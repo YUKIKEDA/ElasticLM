@@ -1,6 +1,7 @@
 using System.Net;
 using System.Text.Json;
 using ElasticLM.Licensing;
+using ElasticLM.Server.Tests;
 using static ElasticLM.Service.Tests.ElmServiceActivationsTests;
 
 namespace ElasticLM.Service.Tests;
@@ -262,7 +263,8 @@ public sealed class ElmServiceLeasesTests
     ///   proof, and release it; move the clock a minute and wait for the sweep.
     ///
     /// Expected:
-    /// - 401 ELM_PROOF_INVALID "The proof is not made with the lease's installation key." twice; 404 ELM_UNKNOWN_LEASE "No
+    /// - 401 ELM_PROOF_INVALID "The request proof is not valid." twice, each with the log line that names the check "The
+    ///   proof is not made with the lease's installation key." (design §12.1, V1d25); 404 ELM_UNKNOWN_LEASE "No
     ///   lease has this ID; acquire again." and 204 for each ID; after the expiry 404 twice (before the proof) and 204, and the list is empty; the
     ///   leases table becomes empty.
     /// </remarks>
@@ -271,7 +273,8 @@ public sealed class ElmServiceLeasesTests
     public async Task Renew_OtherKeyOrUnknownLease_IsRefused(string provider)
     {
         await using TestService test = TestService.Open(provider);
-        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
         (string licenseId, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
         using var device = TestDevice.Create(test, service);
         using var other = TestDevice.Create(test, service);
@@ -279,16 +282,18 @@ public sealed class ElmServiceLeasesTests
 
         const string WrongKey = "The proof is not made with the lease's installation key.";
         const string Unknown = "No lease has this ID; acquire again.";
-        AssertProblem(
+        AssertProofRefused(
             await device.PostAsync($"v1/leases/{id}/renew", "{\"seq\":1}", signer: other.Key),
             HttpStatusCode.Unauthorized,
-            "ELM_PROOF_INVALID",
+            log,
+            "POST /v1/leases/{id}/renew",
             WrongKey
         );
-        AssertProblem(
+        AssertProofRefused(
             await device.SendAsync(HttpMethod.Delete, $"v1/leases/{id}", string.Empty, signer: other.Key),
             HttpStatusCode.Unauthorized,
-            "ELM_PROOF_INVALID",
+            log,
+            "DELETE /v1/leases/{id}",
             WrongKey
         );
         foreach (string unknown in new[] { "x", "AAAAAAAAAAAAAAAAAAAAAA" })

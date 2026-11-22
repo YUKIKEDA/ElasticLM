@@ -88,6 +88,21 @@ internal sealed partial class ElmService
             ServiceLog.IssueFailed(_log, e.Message);
             await ProblemAsync(context, ErrorCode.InternalError, e.Reply).ConfigureAwait(false);
         }
+        catch (BadHttpRequestException e) when (IsUnreadableBody(e))
+        {
+            UnreadableDeviceRequest(context, e);
+        }
+    }
+
+    // design §18.3 (V1d25, Issue #413): Kestrel could not read the body a device sent (a bad chunk, a body too slow). That is
+    // the caller's doing, so it ends with one line and a closed connection, not with Kestrel's error entry and its stack, as an
+    // administration call does (design §18.2, V1d9a).
+    private void UnreadableDeviceRequest(HttpContext context, BadHttpRequestException exception)
+    {
+        string route = RouteOf(context);
+        ServiceLog.DeviceRequestUnreadable(_log, route, exception.StatusCode);
+
+        context.Abort();
     }
 
     // design §12.4: a new activation, or the same installation key again, judged by its sequence number (design §10.4).

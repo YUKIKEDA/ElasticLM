@@ -27,6 +27,12 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     public const string BorrowStarted = "borrow.started";
     public const string BorrowReturned = "borrow.returned";
 
+    /// <summary>The line that says until when the leases that earlier licenses and runs issued can live (design §13.4, V1d25).</summary>
+    public const string LeasesUntil = "leases.until";
+
+    /// <summary>The line a stop writes last, after the server stopped serving requests (design §13.4, V1d25).</summary>
+    public const string ServerStopped = "server.stopped";
+
     /// <summary>The borrows and returns written one at a time, each with its own signature, after which the next run of the
     /// timer starts a new file (design §13.4, V1d16).</summary>
     public const int DefaultCompactAfter = 1_000;
@@ -45,11 +51,19 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     // The lines written while a new file is being built, for that file; null otherwise. Under _lock.
     private List<LogLine>? _since;
 
+    // design §13.4 (V1d25): until when the leases issued under earlier licenses and by earlier runs can live; carried into
+    // every new file while it is ahead. Under _lock.
+    private DateTimeOffset? _leasesUntil;
+
     /// <summary>Gets or sets the borrows and returns written one at a time after which a new file starts; tests make it small.</summary>
     internal int CompactAfter { get; set; } = DefaultCompactAfter;
 
     /// <summary>Gets or sets a step run after the lines of a new file are built and before it is written, for tests.</summary>
     internal Action? Built { get; set; }
+
+    /// <summary>Gets or sets a test of the line types whose write fails with an IOException, as a full disk would, for tests:
+    /// <c>leases.until</c> and <c>key.changed</c>.</summary>
+    internal Func<string, bool>? FailsToWrite { get; set; }
 
     /// <summary>Gets a value indicating whether the calling thread holds the record's lock, for tests.</summary>
     internal bool IsLockHeld => _lock.IsHeldByCurrentThread;
@@ -68,6 +82,14 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
 
     /// <summary>Gets the file the operator set aside at this start, or <see langword="null"/>.</summary>
     public string? SetAside { get; private set; }
+
+    /// <summary>
+    /// Gets the latest time at which a lease that earlier runs issued can still be valid (design §13.4, V1d25): the latest
+    /// <c>leases.until</c> of the newest file, or one lease duration of the license that signed the end of that file, counted
+    /// from the stop the file records last (<c>server.stopped</c>) or, without one (a killed server), from this start, when
+    /// that is later. <see langword="null"/> when there is no file or it was set aside.
+    /// </summary>
+    public DateTimeOffset? EarlierLeasesUntil { get; private set; }
 
     /// <summary>
     /// Reads the newest file of the record and verifies it, and that its last key is this server's key or a key of the same
@@ -130,14 +152,33 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             return journal;
         }
 
+        DateTimeOffset? stoppedAt = null;
         foreach (LogEntry entry in entries)
         {
-            if (entry.IsSigned || entry.Type != BorrowReturned)
+            if (entry.IsSigned && entry.Type is LeasesUntil or ServerStopped)
             {
-                journal.Read(entry.Type, entry.Value);
+                // Only signed lines: a line after the last signature may be one the server never finished writing.
+                DateTimeOffset? at = journal.ReadTime(entry.Type, entry.Value);
+                stoppedAt = entry.Type == ServerStopped ? at : null;
+            }
+            else
+            {
+                stoppedAt = null;
+                if (entry.IsSigned || entry.Type != BorrowReturned)
+                {
+                    journal.Read(entry.Type, entry.Value);
+                }
             }
         }
 
+        // A stop that the file records as its last line counts from its time; otherwise the server may have issued leases up
+        // to this start.
+        if (report.Files[^1].Lease is TimeSpan lease)
+        {
+            journal.Later((stoppedAt ?? time.GetUtcNow()) + lease);
+        }
+
+        journal.EarlierLeasesUntil = journal._leasesUntil;
         return journal;
     }
 
@@ -194,15 +235,56 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
+    /// <summary>
+    /// Records, before a new license takes effect, until when the leases issued under the license in use can live (design
+    /// §13.4, V1d25), so that a start after it covers them whatever license it runs with.
+    /// </summary>
+    /// <exception cref="IOException">The line cannot be written; the license in use stays.</exception>
+    public void LeasesIssuedUntil(DateTimeOffset until)
+    {
+        lock (_lock)
+        {
+            Later(until);
+            DateTimeOffset value = _leasesUntil!.Value;
+            Recorded(() =>
+            {
+                FailFor(LeasesUntil);
+                _log!.Append(LeasesUntil, LeasesUntilFields(value));
+            });
+            _since?.Add(new LogLine(LeasesUntil, LeasesUntilFields(value)));
+        }
+    }
+
+    /// <summary>
+    /// Records the stop as the file's last line, after the server stopped serving requests (design §13.4, V1d25); the next
+    /// start counts the leases of this run from its time. A stop that cannot write it is reported in the operational log,
+    /// and the next start counts from its own time instead.
+    /// </summary>
+    public void Stopped()
+    {
+        lock (_lock)
+        {
+            try
+            {
+                Recorded(() => _log?.Append(ServerStopped, w => w.WriteNumber("at", _time.GetUtcNow().ToUnixTimeSeconds())));
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
+            {
+                // Reported by Recorded; the next start takes the stop for a kill.
+            }
+        }
+    }
+
     // Writes a borrow or a return. The engine refuses the request when the write throws, and the next file's chain.reset
-    // names only the file, so the cause is kept here, in the operational log.
+    // names only the file, so the cause is kept here, in the operational log; a record closed by the stop too, since the
+    // answer no longer carries the cause (design §13.4, V1d25).
     private void Recorded(Action write)
     {
         try
         {
             write();
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or ObjectDisposedException)
         {
             if (_operational is not null)
             {
@@ -219,6 +301,7 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     {
         lock (_lock)
         {
+            FailFor(LogLineTypes.KeyChanged);
             _log?.ChangeKey(licenseFile, keyJwk, key, takeOnFailure: false);
         }
     }
@@ -344,6 +427,8 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
             WriteFingerprints(w, borrow.Fingerprints);
         };
 
+    private static Action<Utf8JsonWriter> LeasesUntilFields(DateTimeOffset until) => w => w.WriteNumber("until", until.ToUnixTimeSeconds());
+
     private static Action<Utf8JsonWriter> ReturnFields(BorrowReturn returned) =>
         w =>
         {
@@ -414,11 +499,67 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
         }
     }
 
-    // The borrows that have expired and the early returns older than 30 days, which are not carried forward.
+    // The borrows that have expired, the early returns older than 30 days, and a leases.until that has passed, which are not
+    // carried forward.
     private void Drop(DateTimeOffset now)
     {
         _borrows.RemoveAll(b => b.Expires < now.ToUnixTimeSeconds());
         _returns.RemoveAll(r => now - r.At >= ReturnWindow);
+        if (_leasesUntil <= now)
+        {
+            _leasesUntil = null;
+        }
+    }
+
+    /// <summary>Writes an event line of any shape, signed as the record signs its lines, for tests of the reader.</summary>
+    internal void AppendForTests(string type, Action<Utf8JsonWriter> fields)
+    {
+        lock (_lock)
+        {
+            _log!.Append(type, fields);
+        }
+    }
+
+    // Throws as a full disk would when the test asks for it.
+    private void FailFor(string type)
+    {
+        if (FailsToWrite?.Invoke(type) == true)
+        {
+            throw new IOException("The disk is full.");
+        }
+    }
+
+    // Keeps the later of the time held and the given one.
+    private void Later(DateTimeOffset until)
+    {
+        if (_leasesUntil is not DateTimeOffset held || until > held)
+        {
+            _leasesUntil = until;
+        }
+    }
+
+    // The time of a leases.until line (its until) or a server.stopped line (its at), seconds within the range of a time; a
+    // leases.until is kept. Lines of another shape give null and change nothing.
+    private DateTimeOffset? ReadTime(string type, JsonElement line)
+    {
+        string member = type == LeasesUntil ? "until" : "at";
+        if (
+            line.TryGetProperty(member, out JsonElement value)
+            && value.ValueKind == JsonValueKind.Number
+            && value.TryGetInt64(out long seconds)
+            && seconds is >= 0 and <= 253_402_300_799
+        )
+        {
+            DateTimeOffset at = DateTimeOffset.FromUnixTimeSeconds(seconds);
+            if (type == LeasesUntil)
+            {
+                Later(at);
+            }
+
+            return at;
+        }
+
+        return null;
     }
 
     // A new file carries forward the borrows that have not expired and the early returns of the last 30 days: at a start,
@@ -438,5 +579,6 @@ internal sealed class BorrowJournal : IBorrowJournal, IDisposable
     private IEnumerable<LogLine> Lines() =>
         _borrows
             .Select(b => new LogLine(BorrowStarted, BorrowFields(b.Record)))
-            .Concat(_returns.Select(r => new LogLine(BorrowReturned, ReturnFields(r))));
+            .Concat(_returns.Select(r => new LogLine(BorrowReturned, ReturnFields(r))))
+            .Concat(_leasesUntil is DateTimeOffset until ? [new LogLine(LeasesUntil, LeasesUntilFields(until))] : []);
 }
