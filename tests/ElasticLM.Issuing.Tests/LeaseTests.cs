@@ -1155,13 +1155,16 @@ public sealed class LeaseTests : IDisposable
 
     /// <summary>
     /// When two adjacent steps of the on-premises check fail, the first one is reported (design §12.7.5 order: the
-    /// signature, the server license token ID, the product, the installation, the license, feature, and seats, the length,
-    /// the server license's expiry, then the issue time, the clock guard, and the expiry).
+    /// signature, the payload's form, the server license token ID, the product, the installation, the license, feature, and
+    /// seats, the length, the server license's expiry, the feature's expiry, then the issue time, the clock guard, and the
+    /// expiry). The pair of the server license's expiry and the feature's is in
+    /// <see cref="VerifyOnPremises_LeaseOutlivingLicenseAndFeature_FailsOnTheLicense"/>.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - The server identity of the valid case; each lease fails the two steps its case names, through the issuer's spec,
-    ///   the issue and verification times, the signing key, and a clock guard that rejects.
+    /// - The server identity of the valid case, or (feature-expiry+future) one whose pro expires 5 minutes from now; each
+    ///   lease fails the two steps its case names, through the issuer's spec, the issue and verification times, the signing
+    ///   key, a clock guard that rejects, or a payload without a seat signed again under the server's key ID.
     ///
     /// Steps:
     /// - Verify each lease.
@@ -1170,7 +1173,10 @@ public sealed class LeaseTests : IDisposable
     /// - The code and message of the earlier step.
     /// </remarks>
     [Theory]
+    [InlineData("signature+payload", "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.")]
+    [InlineData("payload+server-license", "ELM_MALFORMED: The lease payload is not valid.")]
     [InlineData("signature+server-license", "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.")]
+    [InlineData("feature-expiry+future", "ELM_LEASE_OUT_OF_BOUNDS: The lease outlives the feature of the server license.")]
     [InlineData(
         "server-license+product",
         "ELM_LEASE_OUT_OF_BOUNDS: The lease was issued under another server license; fetch the server license again."
@@ -1184,11 +1190,11 @@ public sealed class LeaseTests : IDisposable
     [InlineData("clock-guard+expired", "ELM_CLOCK_TAMPERED: The clock has been set back.")]
     public void VerifyOnPremises_TwoAdjacentStepsFail_ReportsTheFirst(string kind, string expected)
     {
-        ServerIdentity server = Server();
+        ServerIdentity server = kind == "feature-expiry+future" ? Server(featureExpiresAt: Now.AddMinutes(5)) : Server();
         using ECDsa other = KeyFiles.CreateKey();
         Func<LeaseSpec, LeaseSpec> change = kind switch
         {
-            "signature+server-license" => s => s with { ServerLicenseTokenId = "another" },
+            "signature+server-license" or "payload+server-license" => s => s with { ServerLicenseTokenId = "another" },
             "server-license+product" => s => s with { ServerLicenseTokenId = "another", ProductId = "acme-cam" },
             "product+installation" => s => s with { ProductId = "acme-cam", InstallationKeyThumbprint = "another" },
             "installation+seats" => s => s with { InstallationKeyThumbprint = "another", Seats = 6 },
@@ -1200,7 +1206,7 @@ public sealed class LeaseTests : IDisposable
         DateTimeOffset issueAt = kind switch
         {
             "length+outlives" or "outlives+future" => Now.AddDays(31),
-            "future+clock-guard" => Now.AddMinutes(6),
+            "future+clock-guard" or "feature-expiry+future" => Now.AddMinutes(6),
             _ => Now,
         };
         DateTimeOffset verifyAt = kind switch
@@ -1212,6 +1218,14 @@ public sealed class LeaseTests : IDisposable
         };
         IClockGuard guard = kind is "future+clock-guard" or "clock-guard+expired" ? new RejectingGuard() : StatelessClockGuard.Instance;
         string lease = LeaseIssuer.Issue(kind == "signature+server-license" ? other : _server, change(Spec(server)), new FakeTimeProvider(issueAt));
+        if (kind is "signature+payload" or "payload+server-license")
+        {
+            // A payload that the issuer does not write (no seat), signed again under the server's key ID.
+            var payload = JsonNode.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(lease.Split('.')[1]))!.AsObject();
+            payload["n"] = 0;
+            lease = SignJws(kind == "signature+payload" ? other : _server, KeyFiles.KeyId(_server), TokenTypes.Lease, payload.ToJsonString());
+        }
+
         _time.SetUtcNow(verifyAt);
 
         Assert.Equal(expected, Describe(Verifier(guard).VerifyOnPremises(lease, server, Expect())));

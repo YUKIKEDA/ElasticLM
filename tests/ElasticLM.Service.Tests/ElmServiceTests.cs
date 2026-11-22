@@ -23,7 +23,7 @@ public sealed class ElmServiceTests
     /// <remarks>
     /// Preconditions:
     /// - A started service on loopback http. The defaults are those of Kestrel's KestrelServerLimits (aspnetcore
-    ///   release/10.0): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100, MaxRequestHeadersTotalSize 32 KiB; the service
+    ///   v10.0.14): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100, MaxRequestHeadersTotalSize 32 KiB; the service
     ///   sets only MaxRequestBodySize. Kestrel counts the header section's bytes with their CRLFs and allows the limit plus
     ///   the 2 bytes of the empty line (Http1Connection.cs, MaxRequestHeadersTotalSize + 2).
     ///

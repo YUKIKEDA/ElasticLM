@@ -19,8 +19,10 @@ public sealed class EcKeysTests
     ///
     /// Expected:
     /// - The direct import of the off-curve point throws: <see cref="PlatformNotSupportedException"/> on Windows,
-    ///   <see cref="CryptographicException"/> on Linux and macOS (dotnet/runtime release/10.0: OpenSSL's
-    ///   <c>EC_KEY_check_key</c> in <c>pal_ecc_import_export.c</c>, Apple's <c>SecKeyCreateWithData</c> in <c>pal_seckey.c</c>).
+    ///   <see cref="CryptographicException"/> on Linux and macOS (dotnet/runtime v10.0.14: OpenSSL's
+    ///   <c>EC_KEY_set_public_key_affine_coordinates</c>, called in <c>pal_ecc_import_export.c</c>, refuses the point in
+    ///   <c>EC_POINT_set_affine_coordinates</c>; Apple's <c>SecKeyCreateWithData</c>, called in <c>pal_seckey.c</c>, returns no
+    ///   key).
     /// - Both makers return <see langword="false"/> and no key for it, and <see langword="true"/> with a key for the point on
     ///   the curve.
     /// </remarks>

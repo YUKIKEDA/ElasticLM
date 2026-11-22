@@ -6,7 +6,7 @@ namespace ElasticLM.Service.Tests;
 
 /// <summary>
 /// Requests at Kestrel's limits on the request line and the headers, sent over a raw connection, for the service and the
-/// on-premises server (design §5.3 T16). The limits are Kestrel's defaults (KestrelServerLimits, aspnetcore release/10.0),
+/// on-premises server (design §5.3 T16). The limits are Kestrel's defaults (KestrelServerLimits, aspnetcore v10.0.14),
 /// which neither host changes.
 /// </summary>
 internal static class KestrelLimits

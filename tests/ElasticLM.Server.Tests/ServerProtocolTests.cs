@@ -1062,7 +1062,7 @@ public sealed class ServerProtocolTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - A started server on loopback https. The defaults are those of Kestrel's KestrelServerLimits (aspnetcore
-    ///   release/10.0); the server sets only MaxRequestBodySize. Kestrel counts the header section's bytes with their CRLFs
+    ///   v10.0.14); the server sets only MaxRequestBodySize. Kestrel counts the header section's bytes with their CRLFs
     ///   and allows the limit plus the 2 bytes of the empty line (Http1Connection.cs, MaxRequestHeadersTotalSize + 2).
     ///
     /// Steps:
