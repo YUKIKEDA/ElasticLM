@@ -154,33 +154,72 @@ public sealed class FileClockGuard : IClockGuard
             state.Sig = Base64UrlCodec.Encode(signature);
         }
 
+        // A random name, so that processes writing the same state at once never touch each other's temporary file.
         string temp = _path + "." + Convert.ToHexString(RandomNumberGenerator.GetBytes(8)) + ".tmp";
         try
         {
-            File.WriteAllBytes(temp, JsonSerializer.SerializeToUtf8Bytes(state, LicensingJsonContext.Default.ClockState));
-            File.Move(temp, _path, overwrite: true);
+            CreateNew(temp, JsonSerializer.SerializeToUtf8Bytes(state, LicensingJsonContext.Default.ClockState));
+            try
+            {
+                File.Move(temp, _path, overwrite: true);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                TryDelete(temp);
+                throw;
+            }
+
             _lastWritten = lastSeen;
             _lastFailedWrite = null;
         }
-        catch (IOException)
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             _lastFailedWrite = lastSeen;
-            TryDelete(temp);
-        }
-        catch (UnauthorizedAccessException)
-        {
-            _lastFailedWrite = lastSeen;
-            TryDelete(temp);
         }
     }
 
+    // design §11.4 step 7 (V1d24d), the same way as FileReplacement.CreateNew in ElasticLM.Client (§12.6.2): File.WriteAllBytes
+    // opens what is at the path and on Linux and macOS takes the mode from the umask (0644 under umask 022, measured in V1d24d);
+    // CreateNew refuses anything at the path (O_EXCL) and the mode is 0600, which the state file keeps after the move.
+    private static void CreateNew(string path, byte[] content)
+    {
+        File.Delete(path);
+        var options = new FileStreamOptions
+        {
+            Mode = FileMode.CreateNew,
+            Access = FileAccess.Write,
+            Share = FileShare.None,
+        };
+        if (!OperatingSystem.IsWindows())
+        {
+            options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
+        }
+
+        bool created = false;
+        try
+        {
+            using var stream = new FileStream(path, options);
+            created = true;
+            stream.Write(content);
+        }
+        catch (Exception e) when (created && e is IOException or UnauthorizedAccessException)
+        {
+            TryDelete(path);
+            throw;
+        }
+    }
+
+    // A file that cannot be deleted stays, and nothing deletes it later: the state is read from its own path only, so it does
+    // not reach the guard (design §11.4 step 7, V1d24d).
     private static void TryDelete(string path)
     {
         try
         {
             File.Delete(path);
         }
-        catch (IOException) { }
-        catch (UnauthorizedAccessException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // It stays.
+        }
     }
 }

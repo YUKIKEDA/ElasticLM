@@ -283,4 +283,153 @@ public sealed class FileClockGuardTests : IDisposable
         Assert.True(guard.Observe(T0.AddSeconds(60), T0, Skew));
         Assert.Contains(seconds60, File.ReadAllText(StatePath), StringComparison.Ordinal);
     }
+
+    /// <summary>
+    /// On Linux and macOS the state is written for this user only (mode 0600), also over a state file that other users could
+    /// write, and no temporary file is left (design §11.4 step 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS; Windows has no modes and is skipped.
+    /// - A state file with the content {} and mode 0666.
+    ///
+    /// Steps:
+    /// - Observe T0 with a token issued at T0 (the file holds no state, so the guard writes); read the mode; observe T0 -
+    ///   301 s in a new guard.
+    ///
+    /// Expected:
+    /// - Accepted; the file has mode 0600; the folder holds no .tmp file; the new guard rejects T0 - 301 s, so the file holds
+    ///   the new state.
+    /// </remarks>
+    [Fact]
+    public void Observe_WritesTheStateForThisUserOnlyOnUnix()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Modes are Linux and macOS only.");
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        File.WriteAllText(StatePath, "{}");
+        File.SetUnixFileMode(StatePath, (UnixFileMode)0b110_110_110);
+
+        Assert.True(new FileClockGuard(StatePath).Observe(T0, T0, Skew));
+
+        Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, File.GetUnixFileMode(StatePath));
+        Assert.Empty(Directory.GetFiles(_directory, "*.tmp"));
+        Assert.False(new FileClockGuard(StatePath).Observe(T0.AddSeconds(-301), T0, Skew));
+    }
+
+    /// <summary>
+    /// When the new state cannot replace the old one, the guard deletes its temporary file, throws nothing, keeps going on
+    /// its in-memory value, and does not write again for 60 seconds (design §11.4 steps 6 and 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A folder with a file in it at the state path, so no file can replace it.
+    ///
+    /// Steps:
+    /// - Observe T0 + 1 day with a token issued at T0; list the .tmp files beside the state path; observe T0 + 1 day - 301 s;
+    ///   remove the folder; observe T0 + 1 day + 59 s; observe T0 + 1 day + 60 s.
+    ///
+    /// Expected:
+    /// - The first is accepted without an exception; no .tmp file; the folder and its file are still there. -301 s is
+    ///   rejected from the in-memory value. After +59 s no state file; after +60 s the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_ReplacementFails_DeletesTheTemporaryFileAndKeepsGoing()
+    {
+        Directory.CreateDirectory(StatePath);
+        File.WriteAllText(Path.Combine(StatePath, "inside.txt"), "inside");
+        var guard = new FileClockGuard(StatePath);
+        DateTimeOffset seen = T0.AddDays(1);
+
+        Assert.True(guard.Observe(seen, T0, Skew));
+
+        Assert.Empty(Directory.GetFiles(_directory, "*.tmp"));
+        Assert.Equal("inside", File.ReadAllText(Path.Combine(StatePath, "inside.txt")));
+        Assert.False(guard.Observe(seen.AddSeconds(-301), T0, Skew));
+        Directory.Delete(StatePath, recursive: true);
+        Assert.True(guard.Observe(seen.AddSeconds(59), T0, Skew));
+        Assert.False(File.Exists(StatePath));
+        Assert.True(guard.Observe(seen.AddSeconds(60), T0, Skew));
+        Assert.True(File.Exists(StatePath));
+    }
+
+    /// <summary>
+    /// When the temporary file was created but cannot be written, the guard deletes it, throws nothing, keeps going on its
+    /// in-memory value, and does not write again for 60 seconds (design §11.4 steps 6 and 7, V1d24d).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux, not as root, with sudo that lets this user mount without a password, as the CI runners do; on GitHub Actions
+    ///   the test fails without it, elsewhere it is skipped and says so. Other OSes have no tmpfs.
+    /// - A tmpfs of 4 KiB mounted on a new folder and owned by this user, holding a file of 4096 bytes, so a new file can be
+    ///   created and no page is left for its content.
+    ///
+    /// Steps:
+    /// - Observe T0 + 1 day with a token issued at T0 and the state path in that folder; list the folder; observe T0 + 1 day
+    ///   - 301 s; delete the 4096-byte file; observe T0 + 1 day + 59 s; observe T0 + 1 day + 60 s. Unmount at the end.
+    ///
+    /// Expected:
+    /// - The first is accepted without an exception, and the folder holds only the 4096-byte file. -301 s is rejected from
+    ///   the in-memory value. After +59 s no state file; after +60 s the state file exists.
+    /// </remarks>
+    [Fact]
+    public void Observe_DiskFullAfterCreating_DeletesTheTemporaryFileAndKeepsGoing()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "tmpfs is Linux only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "The test runs as a user that is not root.");
+        string disk = Path.Combine(_directory, "disk");
+        Directory.CreateDirectory(disk);
+        Sudo("mount", "-t", "tmpfs", "-o", $"size=4k,uid={UserId()},mode=0700", "tmpfs", disk);
+        try
+        {
+            string filler = Path.Combine(disk, "filler");
+            File.WriteAllBytes(filler, new byte[4096]);
+            string path = Path.Combine(disk, "clock.json");
+            var guard = new FileClockGuard(path);
+            DateTimeOffset seen = T0.AddDays(1);
+
+            Assert.True(guard.Observe(seen, T0, Skew));
+
+            Assert.Equal([filler], Directory.GetFileSystemEntries(disk));
+            Assert.False(guard.Observe(seen.AddSeconds(-301), T0, Skew));
+            File.Delete(filler);
+            Assert.True(guard.Observe(seen.AddSeconds(59), T0, Skew));
+            Assert.False(File.Exists(path));
+            Assert.True(guard.Observe(seen.AddSeconds(60), T0, Skew));
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            Sudo("umount", disk);
+        }
+    }
+
+    // The user ID of this process, read with id -u: .NET has no API for it.
+    private static string UserId()
+    {
+        using var id = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("id", "-u") { RedirectStandardOutput = true })!;
+        string output = id.StandardOutput.ReadToEnd().Trim();
+        id.WaitForExit();
+        Assert.Equal(0, id.ExitCode);
+        return output;
+    }
+
+    // Runs a command with sudo; skips the test where this user may not, except on GitHub Actions.
+    private static void Sudo(params string[] arguments)
+    {
+        using var sudo = System.Diagnostics.Process.Start(
+            new System.Diagnostics.ProcessStartInfo("sudo", ["-n", .. arguments]) { RedirectStandardError = true, RedirectStandardOutput = true }
+        )!;
+        string error = sudo.StandardError.ReadToEnd();
+        sudo.WaitForExit();
+        if (sudo.ExitCode != 0)
+        {
+            string why = $"sudo -n {arguments[0]} exited with {sudo.ExitCode}: {error.Trim()}";
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run. " + why);
+            Assert.Skip("This machine does not let the test run " + arguments[0] + " as root. " + why);
+        }
+    }
 }
