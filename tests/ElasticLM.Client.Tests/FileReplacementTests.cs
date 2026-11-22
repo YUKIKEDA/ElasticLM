@@ -557,6 +557,74 @@ public sealed class FileReplacementTests : IDisposable
     }
 
     /// <summary>
+    /// On Linux and macOS a file with a temporary file's name that the clean cannot open, and that is not a link, stays
+    /// (design §12.6.2, V1d24a, review of PR #474).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS, not as root; a file at server.elmlic.0123456789abcdef.tmp beside the server license file, with mode
+    ///   0000, so open(2) fails with EACCES.
+    ///
+    /// Steps:
+    /// - Write the server license file with LicenseFiles.Write.
+    ///
+    /// Expected:
+    /// - The file holds what was written; the file of mode 0000 stays.
+    /// </remarks>
+    [Fact]
+    public void Clean_FileThatCannotBeOpened_Stays()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "Modes are Linux and macOS only.");
+        Assert.SkipWhen(Environment.IsPrivilegedProcess, "Root opens a file of any mode.");
+        string license = Path.Combine(_dir, "server.elmlic");
+        string closed = license + ".0123456789abcdef.tmp";
+        File.WriteAllText(closed, "left");
+        if (!OperatingSystem.IsWindows())
+        {
+            File.SetUnixFileMode(closed, UnixFileMode.None);
+        }
+
+        LicenseFiles.Write(license, "written"u8.ToArray(), new FakeTimeProvider(Start));
+
+        Assert.Equal(("written", true), (File.ReadAllText(license), File.Exists(closed)));
+    }
+
+    /// <summary>
+    /// A link with a temporary file's name that points nowhere is removed itself, on every OS: the clean does not open it
+    /// (on Windows an open would fail, and the link would stay) (design §12.6.2, V1d24a, review of PR #474).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A symbolic link at server.elmlic.0123456789abcdef.tmp to a path where nothing is. Where the test cannot make a link
+    ///   (Windows without the right to), it is skipped and says so; GitHub's runners can.
+    ///
+    /// Steps:
+    /// - Write the server license file with LicenseFiles.Write.
+    ///
+    /// Expected:
+    /// - The file holds what was written; the link is gone.
+    /// </remarks>
+    [Fact]
+    public void Clean_LinkThatPointsNowhere_IsRemoved()
+    {
+        string license = Path.Combine(_dir, "server.elmlic");
+        string link = license + ".0123456789abcdef.tmp";
+        try
+        {
+            File.CreateSymbolicLink(link, Path.Combine(_dir, "nowhere"));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Assert.False(Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true", "On GitHub Actions this test must run: " + e.Message);
+            Assert.Skip("This user cannot make a symbolic link: " + e.Message);
+        }
+
+        LicenseFiles.Write(license, "written"u8.ToArray(), new FakeTimeProvider(Start));
+
+        Assert.Equal(("written", false), (File.ReadAllText(license), new FileInfo(link).LinkTarget is not null));
+    }
+
+    /// <summary>
     /// ReadShared reads a file that cannot seek (a pipe) to its end, and gives null when it holds more than the limit
     /// (review of PR #475: Length throws NotSupportedException on such a file, where File.ReadAllBytes reads it).
     /// </summary>

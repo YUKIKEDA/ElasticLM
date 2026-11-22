@@ -22,8 +22,10 @@ internal static unsafe partial class UnixLeftover
     private const string MacLibc = "/usr/lib/libSystem.B.dylib";
 
     // <fcntl.h>: O_RDONLY is 0 on both. Linux (asm-generic/fcntl.h, x64): O_NONBLOCK 04000, O_NOFOLLOW 0400000, O_CLOEXEC
-    // 02000000; arm64 (arch/arm64/include/uapi/asm/fcntl.h) moves O_NOFOLLOW to 0100000. macOS (sys/fcntl.h): O_NONBLOCK
-    // 0x4, O_NOFOLLOW 0x100, O_CLOEXEC 0x1000000.
+    // 02000000; arm64 (arch/arm64/include/uapi/asm/fcntl.h) moves O_NOFOLLOW to 0100000. 32-bit ARM and ppc64le also give
+    // O_NOFOLLOW 0100000, and there 0400000 is another flag (O_LARGEFILE, O_DIRECT), so only x64 and arm64 are known; on any
+    // other Linux architecture nothing is removed (review of PR #474). macOS (sys/fcntl.h): O_NONBLOCK 0x4, O_NOFOLLOW 0x100,
+    // O_CLOEXEC 0x1000000.
     private const int LinuxNonBlock = 0x800;
     private const int LinuxNoFollowX64 = 0x20000;
     private const int LinuxNoFollowArm64 = 0x8000;
@@ -53,11 +55,17 @@ internal static unsafe partial class UnixLeftover
 
     /// <summary>
     /// Removes a file if it is a regular file that no other open file holds a lock on, or a link itself. Anything else (a
-    /// FIFO, a socket, a device, a file a writer holds) stays, as does a file that cannot be opened. Nothing is thrown.
+    /// FIFO, a socket, a device, a file a writer holds) stays, as does a file that cannot be opened, and every file where
+    /// <see cref="IsSupported"/> is false. Nothing is thrown.
     /// </summary>
     /// <param name="path">The file.</param>
     public static void TryRemove(string path)
     {
+        if (!IsSupported)
+        {
+            return;
+        }
+
         try
         {
             int file = OperatingSystem.IsMacOS() ? MacOpen(path, MacNonBlock | MacNoFollow | MacCloseOnExec) : LinuxOpen(path, LinuxFlags);
@@ -89,6 +97,13 @@ internal static unsafe partial class UnixLeftover
             // A C library without one of the calls (statx: glibc before 2.28, musl before 1.2.5): the file stays.
         }
     }
+
+    /// <summary>
+    /// Gets a value indicating whether the open flags of this OS and architecture are known: Linux on x64 and arm64, and
+    /// macOS. Elsewhere <see cref="TryRemove"/> leaves every file.
+    /// </summary>
+    public static bool IsSupported =>
+        OperatingSystem.IsMacOS() || (OperatingSystem.IsLinux() && RuntimeInformation.ProcessArchitecture is Architecture.X64 or Architecture.Arm64);
 
     private static int LinuxFlags =>
         LinuxNonBlock | LinuxCloseOnExec | (RuntimeInformation.ProcessArchitecture == Architecture.Arm64 ? LinuxNoFollowArm64 : LinuxNoFollowX64);
