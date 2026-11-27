@@ -180,7 +180,7 @@ jobs:
       - name: Keycloak
         if: runner.os == 'Linux'
         run: |
-          docker run -d --name elm-keycloak -p 8180:8080 -v "${{ github.workspace }}/tests/keycloak:/opt/keycloak/data/import:ro" quay.io/keycloak/keycloak@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741 start-dev --import-realm
+          docker run -d --name elm-keycloak -p 8180:8080 -v "$env:GITHUB_WORKSPACE/tests/keycloak:/opt/keycloak/data/import:ro" quay.io/keycloak/keycloak@sha256:27b3230fbabb8c9ff3c66c864cf09dcd8a41aca82e5100679d109ef0eeb05741 start-dev --import-realm
           for ($i = 0; $i -lt 120; $i++) {
             try { Invoke-WebRequest -Uri http://127.0.0.1:8180/realms/elm/.well-known/openid-configuration -UseBasicParsing | Out-Null; $ready = $true; break } catch { Start-Sleep -Seconds 1 }
           }
@@ -207,6 +207,9 @@ jobs:
             rid: osx-arm64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    # security.mdc: the run: scripts read the matrix value from the environment, not from ${{ }} in their text.
+    env:
+      RID: ${{ matrix.rid }}
     defaults:
       run:
         shell: pwsh
@@ -246,12 +249,12 @@ jobs:
 
       - name: Publish
         # design §20.5: the same publish as release.yml, one folder for each of the four, with zero warnings.
-        run: ./eng/release/Publish-Rid.ps1 -Rid ${{ matrix.rid }} -OutDir publish -LogDir publish-logs
+        run: ./eng/release/Publish-Rid.ps1 -Rid $env:RID -OutDir publish -LogDir publish-logs
 
       - name: Check the publish folders
         # design §4.1, §4.2, §20.5: single binary, runtime dependencies, macOS signature, and sizes. CI builds Linux on the
         # runner's glibc, so the glibc version is recorded only; release.yml builds against glibc 2.28 and applies the limit.
-        run: ./eng/release/Test-Publish.ps1 -Rid ${{ matrix.rid }} -PublishDir publish -LogDir publish-logs -RecordGlibcOnly
+        run: ./eng/release/Test-Publish.ps1 -Rid $env:RID -PublishDir publish -LogDir publish-logs -RecordGlibcOnly
 
       - name: C test of libelasticlm
         # design §17.4: the exports against the header, the build-time link test (decision 0.118; the publish has no version
@@ -385,7 +388,7 @@ jobs:
             $asset = [regex]::Match($index.Content, '/assets/[A-Za-z0-9_.-]+\.js').Value
             $script = Invoke-WebRequest "http://127.0.0.1:18080$asset"
             if ($script.StatusCode -ne 200 -or [string]$script.Headers['Content-Type'] -ne 'text/javascript') { "::error::$asset was not served as text/javascript"; exit 1 }
-            "elm-service (${{ matrix.rid }}) served / and $asset" >> $env:GITHUB_STEP_SUMMARY
+            "elm-service ($env:RID) served / and $asset" >> $env:GITHUB_STEP_SUMMARY
           }
           finally {
             Stop-Process -Id $process.Id
