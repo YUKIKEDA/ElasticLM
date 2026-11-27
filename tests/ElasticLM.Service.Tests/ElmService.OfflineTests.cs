@@ -738,12 +738,13 @@ public sealed class ElmServiceOfflineTests
     ///   activated offline on both.
     ///
     /// Steps:
-    /// - After a second (the key's rate limit), post refresh files of both activations with one nonce at once; read each
-    ///   activation's seq; count the rows of offline_requests with the nonce.
+    /// - After a second (the key's rate limit), read both activations through the administration API and the rows of
+    ///   offline_requests; post refresh files of both activations with one nonce at once; read them again.
     ///
     /// Expected:
     /// - In every round one answer is 200 and the other 409 ELM_REPLAYED "Another request was made with this request's
-    ///   nonce."; the activation of the 200 has seq 2 and the other seq 1; one row with the nonce.
+    ///   nonce."; the activation of the 200 has seq 2; the other activation reads as before, and its row of offline_requests
+    ///   is the one of its activation request; two rows, one with the nonce.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -768,6 +769,8 @@ public sealed class ElmServiceOfflineTests
             }
 
             test.Time.Advance(TimeSpan.FromSeconds(1));
+            string[] before = [.. await Task.WhenAll(activations.Select(ReadAsync))];
+            IReadOnlyList<(Guid Activation, string? Nonce)> rowsBefore = await OfflineRowsAsync(test);
             string nonce = TestDevice.NewNonce();
             DeviceAnswer[] answers = await Task.WhenAll(
                 device.OfflineAsync(device.RefreshFile(activations[0], 1, nonce: nonce, iat: 1)),
@@ -776,16 +779,20 @@ public sealed class ElmServiceOfflineTests
             int taken = Array.FindIndex(answers, a => a.Status == HttpStatusCode.OK);
             Assert.True(taken >= 0, answers[0].Text + answers[1].Text);
             AssertNonceUsed(answers[1 - taken]);
+            Assert.Equal(2L, (await TestService.GetAsync(admin, $"v1/admin/activations/{activations[taken]}")).GetProperty("seq").GetInt64());
+            Assert.Equal(before[1 - taken], await ReadAsync(activations[1 - taken]));
+            Guid refused = Guid.Parse(activations[1 - taken]);
             Assert.Equal(
-                (2L, 1L, 1L),
-                (
-                    (await TestService.GetAsync(admin, $"v1/admin/activations/{activations[taken]}")).GetProperty("seq").GetInt64(),
-                    (await TestService.GetAsync(admin, $"v1/admin/activations/{activations[1 - taken]}")).GetProperty("seq").GetInt64(),
-                    await test.ScalarAsync($"SELECT COUNT(*) FROM offline_requests WHERE nonce = '{nonce}'")
-                )
+                [rowsBefore.Single(r => r.Activation == refused), (Guid.Parse(activations[taken]), nonce)],
+                (await OfflineRowsAsync(test)).OrderBy(r => r.Activation == refused ? 0 : 1)
             );
+
+            async Task<string> ReadAsync(string id) => (await TestService.GetAsync(admin, $"v1/admin/activations/{id}")).GetRawText();
         }
     }
+
+    private static async Task<IReadOnlyList<(Guid Activation, string? Nonce)>> OfflineRowsAsync(TestService test) =>
+        [.. (await test.TextRowsAsync("SELECT activation_id, nonce FROM offline_requests")).Select(r => (Guid.Parse(r[0]!), r[1]))];
 
     private static void AssertNonceUsed(DeviceAnswer answer) =>
         AssertProblem(answer, HttpStatusCode.Conflict, "ELM_REPLAYED", "Another request was made with this request's nonce.");
