@@ -1100,6 +1100,48 @@ public sealed class ServerProtocolTests : IAsyncDisposable
         Assert.Equal(status, answered);
     }
 
+    /// <summary>
+    /// Over HTTP/2, which the server accepts because it sets no Protocols, Kestrel's limits on the request line and the
+    /// headers hold as well, as in the service (design §5.3 T16): a request line of 8,192 bytes, 100 header fields, and
+    /// 32 KiB of names and values are read; a byte more of the line resets the stream, and a field or a byte more of the
+    /// headers gets 431; past twice either header limit, or with one value over 32 KiB, Kestrel ends the connection.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started server on loopback https. The server sets only MaxRequestBodySize; the other limits are Kestrel's defaults
+    ///   (aspnetcore v10.0.14): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100, and MaxRequestHeadersTotalSize 32 KiB of
+    ///   KestrelServerLimits, which HTTP/2 shares, and MaxRequestHeaderFieldSize 32 KiB of Http2Limits. Over HTTP/2 Kestrel
+    ///   takes the lengths of :method, :scheme, :authority, and :path together for the request line and resets the stream
+    ///   with PROTOCOL_ERROR past it (Http2Stream.cs TryValidatePseudoHeaders); it answers 431 past the header count or
+    ///   size up to twice each (Http2Stream.cs TryParseRequest) and ends the connection with PROTOCOL_ERROR beyond
+    ///   (Http2Connection.cs OnHeaderCore); its HPACK decoder ends the connection with COMPRESSION_ERROR for a string longer
+    ///   than MaxRequestHeaderFieldSize (HPackDecoder.cs OnStringLength).
+    ///
+    /// Steps:
+    /// - On a new TLS connection each time (ALPN h2), send GET /v1/nonce as HTTP/2 frames with a request line of the length
+    ///   given (made long with a query), or with the number of header fields given (the four pseudo-header fields among
+    ///   them), or with names and values of the given number of bytes in all, or with one value of the given length (past
+    ///   the limit, sent up to the value's length alone); read the answer's status, a RST_STREAM, or a GOAWAY. After an
+    ///   answer or a RST_STREAM, send a plain GET /v1/nonce on the same connection.
+    ///
+    /// Expected:
+    /// - Line 8,192, count 100, and size 32 KiB: 200. Line 8,193: RST_STREAM with PROTOCOL_ERROR. Count 101 and 200, size
+    ///   32 KiB + 1 and 64 KiB: 431. Count 201 and size 64 KiB + 1: GOAWAY with PROTOCOL_ERROR. A value of 32 KiB: 431 (the
+    ///   size is past its limit). A value of 32 KiB + 1: GOAWAY with COMPRESSION_ERROR. The plain request after an answer
+    ///   or a RST_STREAM gets 200.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The size of the request at or past it.</param>
+    /// <param name="outcome">The status code, or the frame and the HTTP/2 error code that ended the request.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.Http2AtAndPastEachLimit), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_Http2RequestLineAndHeaders_KeepTheirLimits(string kind, int size, string outcome)
+    {
+        ElmServer server = await _deployment.StartServerAsync();
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OutcomeAsync(server.PublicUrls[0], "/v1/nonce", kind, size));
+    }
+
     // Sends a request as it is on a TLS connection of its own, then reads until the server closes or resets the connection,
     // and returns the bytes of an answer that came. Meanwhile the server's clock moves a second every 50 ms, for a wait of
     // the server that is counted on it.
