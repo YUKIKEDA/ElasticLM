@@ -1696,11 +1696,14 @@ public sealed class LicenseClient : IAsyncDisposable
             LicenseError error = _pinFailed
                 ? new LicenseError(ErrorCode.ServerPinMismatch, "The server's TLS key is not the pinned server key.")
                 : new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: " + e.Message);
-            return Reply.Failure(error, unanswered: !_pinFailed);
+
+            // design §10.4 step 2, §12.7.7 (V1d24b): a request that never left this device names nothing and is not
+            // released. A key that is not the pinned one fails the TLS handshake, so such a request never left either.
+            return Reply.Failure(error, unanswered: !BoundedAnswer.NeverSent(e));
         }
     }
 
-    // Unanswered: the request was sent and no answer came back, so the server may have acted on it.
+    // Unanswered: the request may have left this device and got no answer it could read, so the server may have acted on it.
     private readonly record struct Reply(byte[] Body, LicenseError? Error, string? Nonce, string? ServerLicenseTokenId, TimeSpan? RetryAfter)
     {
         public bool Unanswered { get; init; }

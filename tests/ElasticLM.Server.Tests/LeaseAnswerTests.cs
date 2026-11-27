@@ -794,6 +794,173 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A relay that replaces the answers to a renewal and to its retries does not push the request that the server's token
+    /// answers out of the list that the retries name: the list keeps its first 16 requests and takes no more, so the retry
+    /// after the relay stops gets that token again (design §10.4 step 2, §12.7.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny, leases of an hour) past its reclaim window; a client holding a lease of pro
+    ///   (sequence 1), behind a relay that passes every renewal to the server and answers the next 16 or 17 renewals that
+    ///   the server answers with a success with its kept acquisition answer (sequence 1). The server renews the first of
+    ///   them to sequence 2; each retry after it names that request, and the server gives the same token again, which the
+    ///   relay replaces. A renewal whose nonce has expired is answered ELM_NONCE_REQUIRED, which the relay passes on, and the
+    ///   client sends it again with a new nonce.
+    ///
+    /// Steps:
+    /// - Move the clock to the renewal, then on until the lease is no longer Retrying (<see cref="RetryUntilSettledAsync"/>).
+    ///
+    /// Expected:
+    /// - The relay replaced 16 or 17 answers.
+    /// - The last renewal's body is {"seq":1,"retry":[the jti of the first 16 replaced renewals, in order]}: from the 17th
+    ///   on, the client adds none.
+    /// - The lease is Held with sequence 2, its token names the first replaced renewal's proof, and the server counts 1
+    ///   seat. Before V1d24b, with 17 the list dropped the first replaced renewal, and the lease was Lost with
+    ///   ELM_CLONE_DETECTED.
+    /// </remarks>
+    /// <param name="replaced">The number of answers the relay replaces.</param>
+    [Theory]
+    [InlineData(16)]
+    [InlineData(17)]
+    public async Task Renewal_RelayReplacesTheAnswers_RetryKeepsTheFirstRequest(int replaced)
+    {
+        ElmServer server = await StartHourServerAsync();
+        var relay = new Recorder { PassReplacedOn = true };
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        relay.ReplayToNextRenewal(Assert.Single(relay.Answers()), replaced);
+
+        await RetryUntilSettledAsync(lease);
+
+        string[] replacedIds = relay.ReplacedRenewals();
+        Assert.Equal(replaced, replacedIds.Length);
+        Assert.Equal(RetryBody(replacedIds.Take(16)), Renewals(relay)[^1].Body);
+        Assert.Equal((LeaseState.Held, 2L, replacedIds[0]), (lease.State, lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// After the answer to a renewal that the server handled is lost, 16 retries without an answer do not push that renewal
+    /// out of the list: the next retry names it and gets its token (design §10.4 step 2, §12.7.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny, leases of an hour) past its reclaim window; a client holding a lease of pro
+    ///   (sequence 1), behind a relay that throws away the answer to the next renewal that the server answers with a
+    ///   success, after the server renewed to sequence 2. A renewal whose nonce has expired is answered ELM_NONCE_REQUIRED,
+    ///   which the relay passes on, and the client sends it again with a new nonce.
+    ///
+    /// Steps:
+    /// - Move the clock to the renewal; once it is Retrying, make the relay fail the next 16 renewals with
+    ///   HttpRequestError.Unknown, as for a connection cut after the request was written; move the clock on until the lease
+    ///   is no longer Retrying (<see cref="RetryUntilSettledAsync"/>).
+    ///
+    /// Expected:
+    /// - The relay lost one answer and failed 16 renewals. The last renewal's body is {"seq":1,"retry":[the jti of the lost
+    ///   renewal and of the first 15 failed ones, in order]}.
+    /// - The lease is Held with sequence 2, its token names the lost renewal's proof, and the server counts 1 seat. Before
+    ///   V1d24b the list dropped the lost renewal, and the lease was Lost with ELM_CLONE_DETECTED.
+    /// </remarks>
+    [Fact]
+    public async Task Renewal_AnswerLostThenSixteenWithoutAnswer_RetryGetsTheLostRenewalsToken()
+    {
+        ElmServer server = await StartHourServerAsync();
+        var relay = new Recorder { LoseNextRenewalAnswer = true };
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        await RetryUntilSettledAsync(lease, () => relay.FailNextRenewals = 16);
+
+        string lost = Assert.Single(relay.LostRenewals());
+        string[] failed = relay.FailedRenewals();
+        Assert.Equal(16, failed.Length);
+        Assert.Equal(RetryBody([lost, .. failed.Take(15)]), Renewals(relay)[^1].Body);
+        Assert.Equal((LeaseState.Held, 2L, lost), (lease.State, lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// A renewal that never left the device is not one without an answer: its jti goes into no retry, so after 16 of them the
+    /// list still has room for a renewal whose answer is lost, and the next retry gets that renewal's token (design §10.4
+    /// step 2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny, leases of an hour) past its reclaim window; a client holding a lease of pro
+    ///   (sequence 1), behind a relay that fails the next 16 renewals before they are sent, with the case's
+    ///   HttpRequestError (NameResolutionError, ConnectionError, SecureConnectionError, ProxyTunnelError, as the HTTP client
+    ///   gives them), and then throws away the answer to the first renewal after them that the server answers with a
+    ///   success, after the server renewed to sequence 2. A renewal whose nonce has expired is answered ELM_NONCE_REQUIRED,
+    ///   which the relay passes on, and the client sends it again with a new nonce.
+    ///
+    /// Steps:
+    /// - Move the clock to the renewal, then on until the lease is no longer Retrying (<see cref="RetryUntilSettledAsync"/>).
+    ///
+    /// Expected:
+    /// - The relay failed 16 renewals and lost one answer. The last renewal's body is {"seq":1,"retry":[the jti of the lost
+    ///   renewal]}: none of the failed ones is named.
+    /// - The lease is Held with sequence 2, its token names the lost renewal's proof, and the server counts 1 seat. Before
+    ///   V1d24b the failed renewals were named too; a list that keeps its first 16 without this check leaves the lost renewal
+    ///   out, and the lease is Lost with ELM_CLONE_DETECTED.
+    /// </remarks>
+    /// <param name="failure">The kind of failure of the 16 renewals.</param>
+    [Theory]
+    [InlineData(HttpRequestError.NameResolutionError)]
+    [InlineData(HttpRequestError.ConnectionError)]
+    [InlineData(HttpRequestError.SecureConnectionError)]
+    [InlineData(HttpRequestError.ProxyTunnelError)]
+    public async Task Renewal_SixteenNeverSentThenAnswerLost_RetryNamesOnlyTheLostRenewal(HttpRequestError failure)
+    {
+        ElmServer server = await StartHourServerAsync();
+        var relay = new Recorder
+        {
+            FailNextRenewals = 16,
+            RenewalFailure = failure,
+            LoseNextRenewalAnswer = true,
+        };
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        await RetryUntilSettledAsync(lease);
+
+        string lost = Assert.Single(relay.LostRenewals());
+        Assert.Equal(16, relay.FailedRenewals().Length);
+        Assert.Equal(RetryBody([lost]), Renewals(relay)[^1].Body);
+        Assert.Equal((LeaseState.Held, 2L, lost), (lease.State, lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    // A server whose leases last an hour, past its reclaim window, which is as long as a lease. Its leases are renewed after
+    // 20 minutes, which leaves 40 minutes for the retries.
+    private async Task<ElmServer> StartHourServerAsync()
+    {
+        ElmServer server = await StartOpenServerAsync(s => s with { LeaseDuration = TimeSpan.FromHours(1) });
+        _deployment.Time.Advance(TimeSpan.FromHours(1) - Window);
+        return server;
+    }
+
+    // The body of a retry from sequence 1 that names the renewals of these jti.
+    private static string RetryBody(IEnumerable<string> named) => """{"seq":1,"retry":[""" + string.Join(",", named.Select(j => $"\"{j}\"")) + "]}";
+
+    // Moves the clock 20 minutes, to the first renewal of a lease of an hour, waits until the lease is Retrying, runs the
+    // given step, and then moves the clock 5 s at a time, waiting 20 ms of real time after each, until the lease is no
+    // longer Retrying. The retries come 15 s, 30 s, and then every 60 s after each failure, so a step wakes one at most; the
+    // 480 steps reach the lease's expiry, where it is Lost.
+    private async Task RetryUntilSettledAsync(Lease lease, Action? whenRetrying = null)
+    {
+        _deployment.Time.Advance(TimeSpan.FromMinutes(20));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        whenRetrying?.Invoke();
+        for (int i = 0; i < 480 && lease.State == LeaseState.Retrying; i++)
+        {
+            _deployment.Time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        Assert.NotEqual(LeaseState.Retrying, lease.State);
+    }
+
+    /// <summary>
     /// A server with clone strategy flag whose sequence number is behind the client's answers the client's renewal with a
     /// token later than the client's, which the client takes at once (design §10.4, §12.7.5 step 8).
     /// </summary>

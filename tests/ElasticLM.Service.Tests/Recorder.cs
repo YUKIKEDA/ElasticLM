@@ -26,7 +26,8 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 
 /// <summary>
 /// Sits between a client and the network (<c>LicenseClientOptions.WrapHandler</c>), for one client or for several that
-/// share it: records each request, can make the renewals fail as if the network were down, can lose the answer of a
+/// share it: records each request, can make the renewals, or the next acquisition, fail as if the network were down, with
+/// the kind of failure the HTTP client would give (design §10.4 step 2), can lose the answer of a
 /// renewal the server handled, can rewrite the answer to an acquisition, keeps the successful lease answers, can
 /// answer the next acquisition or renewal with an answer it is given, as a relay that replays genuine answers does, can
 /// answer the next acquisition with an answer it makes from the request, as a server that decides by other rules does, and
@@ -39,14 +40,20 @@ internal sealed class Recorder
 {
     private const string OversizeAfter = "after";
     private const string OversizeInstead = "instead";
+    private const string Failed = "failed";
+    private const string Lost = "lost";
+    private const string Replaced = "replaced";
 
     private readonly List<SentRequest> _sent = [];
     private readonly List<KeptAnswer> _answers = [];
+    private readonly List<(string What, string ProofId)> _marks = [];
     private volatile bool _failRenewals;
+    private int _failNextRenewals;
     private volatile bool _loseNextRenewalAnswer;
     private KeptAnswer? _acquisitionAnswer;
     private Func<SentRequest, KeptAnswer>? _acquisitionAnswerOf;
     private KeptAnswer? _renewalAnswer;
+    private int _renewalReplays;
     private volatile string _oversizeRenewal = string.Empty;
     private volatile bool _loseNextAcquisitionAnswer;
     private volatile bool _oversizeNextAcquisition;
@@ -59,15 +66,34 @@ internal sealed class Recorder
     private HttpStatusCode _nonceStatus;
     private int _replayed;
 
-    /// <summary>Gets or sets a value indicating whether renewals throw <see cref="HttpRequestException"/> before they are sent.</summary>
+    /// <summary>Gets or sets a value indicating whether renewals throw <see cref="HttpRequestException"/> with
+    /// <see cref="RenewalFailure"/> instead of passing them on.</summary>
     public bool FailRenewals
     {
         get => _failRenewals;
         set => _failRenewals = value;
     }
 
-    /// <summary>Gets or sets a value indicating whether the answer of the next renewal is thrown away after the server
-    /// handled it, as <see cref="HttpRequestException"/>.</summary>
+    /// <summary>Gets or sets the number of the next renewals that throw <see cref="HttpRequestException"/> with
+    /// <see cref="RenewalFailure"/> instead of passing them on.</summary>
+    public int FailNextRenewals
+    {
+        get => Volatile.Read(ref _failNextRenewals);
+        set => Volatile.Write(ref _failNextRenewals, value);
+    }
+
+    /// <summary>Gets or sets the <see cref="HttpRequestError"/> of the failed renewals: <see cref="HttpRequestError.Unknown"/>
+    /// (the default) as for a connection cut after the request was written, or a value the HTTP client gives to a request
+    /// that never left the device, such as <see cref="HttpRequestError.ConnectionError"/>.</summary>
+    public HttpRequestError RenewalFailure { get; set; }
+
+    /// <summary>Gets or sets the <see cref="HttpRequestError"/> with which the next acquisition or borrow throws
+    /// <see cref="HttpRequestException"/> without being passed on, once, or <see langword="null"/>.</summary>
+    public HttpRequestError? FailNextAcquisitionWith { get; set; }
+
+    /// <summary>Gets or sets a value indicating whether the answer of the next renewal that the server answers with a success
+    /// is thrown away, as <see cref="HttpRequestException"/>. An error answer, such as one that asks for a new nonce, is
+    /// passed on.</summary>
     public bool LoseNextRenewalAnswer
     {
         get => _loseNextRenewalAnswer;
@@ -163,8 +189,14 @@ internal sealed class Recorder
     /// </summary>
     public void AnswerNextAcquisition(Func<SentRequest, KeptAnswer> answer) => Volatile.Write(ref _acquisitionAnswerOf, answer);
 
-    /// <summary>Answers the next renewal with <paramref name="answer"/>, once.</summary>
-    public void ReplayToNextRenewal(KeptAnswer answer) => Volatile.Write(ref _renewalAnswer, answer);
+    /// <summary>Answers the next renewal, or the next <paramref name="times"/> renewals, with <paramref name="answer"/>. With
+    /// <see cref="PassReplacedOn"/>, only a renewal that the server answers with a success counts, and an error answer, such
+    /// as one that asks for a new nonce, is passed on.</summary>
+    public void ReplayToNextRenewal(KeptAnswer answer, int times = 1)
+    {
+        Volatile.Write(ref _renewalAnswer, answer);
+        Volatile.Write(ref _renewalReplays, times);
+    }
 
     /// <summary>
     /// Answers the next renewal, once, with a body of 256 KiB and a byte, which is over the client's limit (design §8.6).
@@ -181,6 +213,17 @@ internal sealed class Recorder
             return [.. _sent.Select(r => (r.Method, r.Path, r.Body))];
         }
     }
+
+    /// <summary>Returns the <c>jti</c> of the renewals failed so far by <see cref="FailRenewals"/> or
+    /// <see cref="FailNextRenewals"/>, in order.</summary>
+    public string[] FailedRenewals() => Marked(Failed);
+
+    /// <summary>Returns the <c>jti</c> of the renewals whose answer was thrown away by <see cref="LoseNextRenewalAnswer"/>,
+    /// in order.</summary>
+    public string[] LostRenewals() => Marked(Lost);
+
+    /// <summary>Returns the <c>jti</c> of the renewals answered with a replayed answer, in order.</summary>
+    public string[] ReplacedRenewals() => Marked(Replaced);
 
     /// <summary>Returns the requests sent so far, with the <c>jti</c> of their proofs.</summary>
     public SentRequest[] Requests()
@@ -210,6 +253,22 @@ internal sealed class Recorder
         return answer.Replace(token, changed, StringComparison.Ordinal);
     }
 
+    private void Mark(string what, SentRequest sent)
+    {
+        lock (_marks)
+        {
+            _marks.Add((what, sent.ProofId!));
+        }
+    }
+
+    private string[] Marked(string what)
+    {
+        lock (_marks)
+        {
+            return [.. _marks.Where(m => m.What == what).Select(m => m.ProofId)];
+        }
+    }
+
     private static string? ProofIdOf(HttpRequestMessage request)
     {
         if (!request.Headers.TryGetValues("ELM-Proof", out IEnumerable<string>? proofs))
@@ -235,9 +294,16 @@ internal sealed class Recorder
 
             bool renewal = request.Method == HttpMethod.Post && path.EndsWith("/renew", StringComparison.Ordinal);
             bool acquisition = request.Method == HttpMethod.Post && path == "/v1/leases";
-            if (recorder.FailRenewals && renewal)
+            if (renewal && (recorder.FailRenewals || Interlocked.Decrement(ref recorder._failNextRenewals) >= 0))
             {
-                throw new HttpRequestException("Renewals are made to fail.");
+                recorder.Mark(Failed, sent);
+                throw new HttpRequestException(recorder.RenewalFailure, "Renewals are made to fail.");
+            }
+
+            if (acquisition && recorder.FailNextAcquisitionWith is HttpRequestError failure)
+            {
+                recorder.FailNextAcquisitionWith = null;
+                throw new HttpRequestException(failure, "The acquisition is made to fail.");
             }
 
             if (
@@ -309,22 +375,23 @@ internal sealed class Recorder
 
             KeptAnswer? replay =
                 acquisition ? Interlocked.Exchange(ref recorder._acquisitionAnswer, null)
-                : renewal ? Interlocked.Exchange(ref recorder._renewalAnswer, null)
+                : renewal && Volatile.Read(ref recorder._renewalReplays) > 0 ? Volatile.Read(ref recorder._renewalAnswer)
                 : null;
             if (replay is not null && !recorder.PassReplacedOn)
             {
-                return Replayed(new HttpResponseMessage(replay.Status) { RequestMessage = request }, replay);
+                return Replayed(new HttpResponseMessage(replay.Status) { RequestMessage = request }, replay, renewal, sent);
             }
 
             HttpResponseMessage response = await base.SendAsync(request, cancellationToken);
-            if (replay is not null)
+            if (replay is not null && (acquisition || response.IsSuccessStatusCode))
             {
-                return Replayed(response, replay);
+                return Replayed(response, replay, renewal, sent);
             }
 
-            if (renewal && recorder.LoseNextRenewalAnswer)
+            if (renewal && recorder.LoseNextRenewalAnswer && response.IsSuccessStatusCode)
             {
                 recorder.LoseNextRenewalAnswer = false;
+                recorder.Mark(Lost, sent);
                 response.Dispose();
                 throw new HttpRequestException("The answer was lost on the way.");
             }
@@ -368,8 +435,14 @@ internal sealed class Recorder
 
         // The replayed answer in place of the server's: its status, body, and server license header. The other headers of an
         // answer the server gave, the next nonce among them, stay.
-        private HttpResponseMessage Replayed(HttpResponseMessage response, KeptAnswer replay)
+        private HttpResponseMessage Replayed(HttpResponseMessage response, KeptAnswer replay, bool renewal = false, SentRequest? sent = null)
         {
+            if (renewal)
+            {
+                Interlocked.Decrement(ref recorder._renewalReplays);
+                recorder.Mark(Replaced, sent!);
+            }
+
             response.StatusCode = replay.Status;
             response.Content?.Dispose();
             response.Content = new StringContent(replay.Body, Encoding.UTF8, "application/json");
