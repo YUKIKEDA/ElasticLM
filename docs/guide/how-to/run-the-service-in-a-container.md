@@ -151,7 +151,7 @@ Stop the service with `docker stop elm-service`. Docker sends SIGTERM, and the s
 - Keep the data in a named volume, as here. Without `-v elm-data:/data`, Docker makes an anonymous volume, and the data is gone when the container is made again.
 - To keep the data in a folder of the host instead, make the user ID 1654 its owner first.
 - With Kubernetes, a persistent volume claim does not take the owner of the image's `/data`: set `securityContext.fsGroup: 1654`.
-- The image also runs with a read-only root file system (`docker run --read-only`): `elm-service` writes only to `/data`, so nothing needs to be mounted on `/tmp`. The release workflow runs `setup` and starts the service this way in [`eng/container/Test-Image.ps1`](https://github.com/YUKIKEDA/ElasticLM/blob/main/eng/container/Test-Image.ps1); the commands of this guide leave the option out.
+- With the settings of this guide, `elm-service` writes only to `/data`, so the image also runs with a read-only root file system (`docker run --read-only`) and nothing mounted on `/tmp`. The release workflow tests the image this way: it runs `setup` and starts the service with this option (see [How it is built](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md#how-it-is-built) in `docs/container.md`). To use it, add `--read-only` to the `docker run` lines of `setup` and of the service; the commands of this guide leave it out.
 
 ## See also
 

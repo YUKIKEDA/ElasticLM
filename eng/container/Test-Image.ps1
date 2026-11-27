@@ -12,8 +12,9 @@
       the image index of -ExpectedDigest.
     - With keys, certificates, a root key, a nonce secret, and a passphrase made for this run and mounted as a settings file
       and secret files readable by UID 1654, a named volume on /data, ELM_PUBLICURLS, and a read-only root file system
-      with nothing on /tmp (docker run --read-only): setup prints a key; the service starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID 1654; docker stop ends
-      it with exit code 0.
+      with nothing on /tmp (docker run --read-only): setup prints a key; docker inspect reports ReadonlyRootfs true for
+      the service, which starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID
+      1654; docker stop ends it with exit code 0.
     It pushes nothing. Everything it makes is removed at the end (.cursor/rules/scratch.mdc).
 
 .PARAMETER ImageTar

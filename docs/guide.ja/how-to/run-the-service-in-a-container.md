@@ -151,7 +151,7 @@ docker cp elm-service:/data/backup-1.db backup-1.db
 - このガイドのように、データは名前付きボリュームに置く。`-v elm-data:/data` がないと、Docker は匿名ボリュームを作り、コンテナを作り直すとデータが消える。
 - 代わりにホストのフォルダーにデータを置くときは、先にユーザー ID 1654 をそのフォルダーの所有者にする。
 - Kubernetes では、PersistentVolumeClaim はイメージの `/data` の所有者を引き継がない。`securityContext.fsGroup: 1654` を設定する。
-- イメージは、ルートファイルシステムを読み取り専用にしても動く（`docker run --read-only`）。`elm-service` が書き込むのは `/data` だけなので、`/tmp` には何もマウントしなくてよい。リリースのワークフローは、[`eng/container/Test-Image.ps1`](https://github.com/YUKIKEDA/ElasticLM/blob/main/eng/container/Test-Image.ps1) で、この形で `setup` を実行し、サービスを起動している。このガイドのコマンドは、このオプションを使わない。
+- このガイドの設定では、`elm-service` が書き込むのは `/data` だけなので、イメージはルートファイルシステムを読み取り専用にしても動き（`docker run --read-only`）、`/tmp` には何もマウントしなくてよい。リリースのワークフローは、この形で `setup` を実行し、サービスを起動して確かめている（`docs/container.md` の [How it is built](https://github.com/YUKIKEDA/ElasticLM/blob/main/docs/container.md#how-it-is-built)）。このガイドのコマンドには、このオプションを付けていない。使うときは、`setup` とサービスの `docker run` の行に `--read-only` を足す。
 
 ## 関連するページ
 
