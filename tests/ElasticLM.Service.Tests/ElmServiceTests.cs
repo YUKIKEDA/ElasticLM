@@ -392,8 +392,9 @@ public sealed class ElmServiceTests
     /// <remarks>
     /// Preconditions:
     /// - Windows. A chain; a listener of the test that answers TLS handshakes with the chain's certificate alone, with the
-    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate. From
-    ///   then on Windows sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
+    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate, and
+    ///   whose connection stays open until the end of the test (TestCertificateChain.PrimeAloneAsync). From then on Windows
+    ///   sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
     /// - A PEM file with the certificate and then the intermediate, and the key; the usage log of the node n1; a recording log
     ///   provider.
     ///
@@ -416,14 +417,8 @@ public sealed class ElmServiceTests
         CancellationToken cancel = TestContext.Current.CancellationToken;
         await using TestService test = TestService.Open("sqlite");
         using var chain = new TestCertificateChain(sentByServer: true);
-        using (var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel))
-        {
-            (IPEndPoint alone, Task served) = chain.Listen(IPAddress.Loopback, [], stop.Token);
-            (bool primed, _, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{alone.Port}/"), cancel);
-            Assert.False(primed);
-            await stop.CancelAsync();
-            await served;
-        }
+        await using TestCertificateChain.PrimedHandshake primed = await chain.PrimeAloneAsync(cancel);
+        Assert.False(primed.Sent);
 
         (string certificate, string key) = chain.WritePem(test.FilePath("first.crt"), test.FilePath("first.key"), chain.Intermediate);
         var log = new RecordingLoggerProvider();

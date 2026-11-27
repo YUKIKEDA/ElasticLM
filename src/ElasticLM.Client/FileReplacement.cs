@@ -175,13 +175,13 @@ internal static class FileReplacement
 
     // design §12.6.2 (V1d24a): a writer holds its temporary file until it is in place, so an exclusive open fails while one
     // is at work. A link is not opened: File.Delete removes the link, not what it points to. On Linux and macOS a FileStream
-    // open of a FIFO waits for a writer, so UnixLeftover opens without waiting and leaves anything that is not a regular file
-    // (review of PR #475).
+    // open of a FIFO waits for a writer, so ElasticLM.Licensing's UnixLeftover, which the clock guard uses too, opens without
+    // waiting and leaves anything that is not a regular file (review of PR #475, V1d24d).
     private static void RemoveIfNotHeld(string path)
     {
         if (!OperatingSystem.IsWindows())
         {
-            UnixLeftover.TryRemove(path);
+            ElasticLM.Licensing.UnixLeftover.TryRemove(path);
             return;
         }
 

@@ -284,8 +284,9 @@ public sealed class TlsChainTests : IAsyncDisposable
     /// <remarks>
     /// Preconditions:
     /// - Windows. A chain; a listener of the test that answers TLS handshakes with the chain's certificate alone, with the
-    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate. From
-    ///   then on Windows sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
+    ///   options Kestrel uses, while the intermediate is in no store; one handshake with it, which sends no intermediate, and
+    ///   whose connection stays open until the end of the test (TestCertificateChain.PrimeAloneAsync). From then on Windows
+    ///   sends this certificate alone in this process, whatever the store holds (design §20.7, the V1d3a Grill).
     /// - A PEM file with the certificate and then the intermediate, and the key; or a PKCS#12 file with the certificate, its
     ///   key, and the intermediate; a recording log provider.
     ///
@@ -311,14 +312,8 @@ public sealed class TlsChainTests : IAsyncDisposable
         Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
         CancellationToken cancel = TestContext.Current.CancellationToken;
         TestCertificateChain chain = NewChain(sentByServer: true);
-        using (var stop = CancellationTokenSource.CreateLinkedTokenSource(cancel))
-        {
-            (IPEndPoint alone, Task served) = chain.Listen(IPAddress.Loopback, [], stop.Token);
-            (bool primed, _, _) = await chain.ConnectAsync(new Uri($"https://127.0.0.1:{alone.Port}/"), cancel);
-            Assert.False(primed);
-            await stop.CancelAsync();
-            await served;
-        }
+        await using TestCertificateChain.PrimedHandshake primed = await chain.PrimeAloneAsync(cancel);
+        Assert.False(primed.Sent);
 
         (string certificate, string? key) = pkcs12
             ? (chain.WritePkcs12(_deployment.FilePath("first.pfx"), [chain.Intermediate]), null)

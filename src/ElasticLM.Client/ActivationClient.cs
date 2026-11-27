@@ -1159,13 +1159,7 @@ public sealed class ActivationClient : IAsyncDisposable
             LicenseError? error = whole.IsSuccess ? null : LicenseClient.ProblemOf(whole.Status, content, keepDetail: true);
             return new Reply(content, error, LicenseClient.ValidNonce(nonce), whole.Headers.RetryAfter?.Delta);
         }
-        catch (HttpRequestException e)
-            when (e.HttpRequestError
-                    is HttpRequestError.NameResolutionError
-                        or HttpRequestError.ConnectionError
-                        or HttpRequestError.SecureConnectionError
-                        or HttpRequestError.ProxyTunnelError
-            )
+        catch (HttpRequestException e) when (BoundedAnswer.NeverSent(e))
         {
             // The request did not leave this device.
             return Reply.Failure(new LicenseError(ErrorCode.NetworkError, "The service cannot be reached: " + e.Message));

@@ -596,6 +596,61 @@ public sealed class HostedLeaseAnswerTests
         await client.DisposeAsync();
     }
 
+    /// <summary>
+    /// After the answer to a renewal that the service handled is lost, 16 retries without an answer do not push that renewal
+    /// out of the list: the next retry names it and gets its token (design §10.4 step 2, §12.7.3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A cloud-floating policy (cloneStrategy deny, leaseDuration 3600) and a license with seats of core; a client holding
+    ///   a lease of core (sequence 1), behind a relay that throws away the answer to the next renewal that the service
+    ///   answers with a success, after the service renewed to sequence 2. A renewal whose nonce has expired is answered
+    ///   ELM_NONCE_REQUIRED, which the relay passes on, and the client sends it again with a new nonce.
+    ///
+    /// Steps:
+    /// - Move the clock 1200 s (the renewal, a third of the hour); once it is Retrying, make the relay fail the next 16
+    ///   renewals with HttpRequestError.Unknown, as for a connection cut after the request was written; then move the clock
+    ///   5 s at a time until the lease is no longer Retrying. The retries come 15 s, 30 s, and then every 60 s after each
+    ///   failure, so a step wakes one at most.
+    ///
+    /// Expected:
+    /// - The relay lost one answer and failed 16 renewals. The last renewal's body is {"seq":1,"retry":[the jti of the lost
+    ///   renewal and of the first 15 failed ones, in order]}.
+    /// - The lease is Held with sequence 2, its token names the lost renewal's proof, and the service lists it, not stopped.
+    ///   Before V1d24b the list dropped the lost renewal, and the lease was Lost with ELM_CLONE_DETECTED.
+    /// </remarks>
+    [Fact]
+    public async Task Hosted_AnswerLostThenSixteenWithoutAnswer_RetryGetsTheLostRenewalsToken()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        (ElmService service, HttpClient admin, _) = await StartAsync(test);
+        string product = await ProductAsync(admin, "app", "core", "cam");
+        string policy = await TestService.PolicyAsync(admin, product, "\"floating\":\"cloud\",\"cloneStrategy\":\"deny\",\"leaseDuration\":3600");
+        (string licenseId, string key) = await LicenseAsync(admin, policy, Features);
+        var relay = new Recorder { LoseNextRenewalAnswer = true };
+        LicenseClient client = HostedLeaseClientTests.Client(test, service, key, test.FilePath("client"), wrap: relay.Over);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("core", cancellationToken: TestContext.Current.CancellationToken));
+
+        test.Time.Advance(TimeSpan.FromSeconds(1200));
+        await TestService.WaitForAsync(() => Task.FromResult(lease.State == LeaseState.Retrying));
+        relay.FailNextRenewals = 16;
+        for (int i = 0; i < 480 && lease.State == LeaseState.Retrying; i++)
+        {
+            test.Time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        string lost = Assert.Single(relay.LostRenewals());
+        string[] failed = relay.FailedRenewals();
+        Assert.Equal(16, failed.Length);
+        string[] named = [lost, .. failed.Take(15)];
+        Assert.Equal("""{"seq":1,"retry":[""" + string.Join(",", named.Select(j => $"\"{j}\"")) + "]}", Renewals(relay)[^1].Body);
+        Assert.Equal((LeaseState.Held, 2L, lost), (lease.State, lease.Token.Sequence, lease.Token.AnsweredProofId));
+        ListedLeases listed = await LeasesAsync(admin, licenseId);
+        Assert.Equal((lease.Id, false), (Assert.Single(listed.Ids), Assert.Single(listed.Stopped)));
+        await client.DisposeAsync();
+    }
+
     private static SentRequest[] Renewals(Recorder relay) =>
         [.. relay.Requests().Where(r => r.Method == "POST" && r.Path.EndsWith("/renew", StringComparison.Ordinal))];
 
