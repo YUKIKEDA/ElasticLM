@@ -43,12 +43,14 @@ internal sealed class Recorder
     private const string Failed = "failed";
     private const string Lost = "lost";
     private const string Replaced = "replaced";
+    private const string Held = "held";
 
     private readonly List<SentRequest> _sent = [];
     private readonly List<KeptAnswer> _answers = [];
     private readonly List<(string What, string ProofId)> _marks = [];
     private volatile bool _failRenewals;
     private int _failNextRenewals;
+    private int _holdNextRenewals;
     private volatile bool _loseNextRenewalAnswer;
     private KeptAnswer? _acquisitionAnswer;
     private Func<SentRequest, KeptAnswer>? _acquisitionAnswerOf;
@@ -80,6 +82,14 @@ internal sealed class Recorder
     {
         get => Volatile.Read(ref _failNextRenewals);
         set => Volatile.Write(ref _failNextRenewals, value);
+    }
+
+    /// <summary>Gets or sets the number of the next renewals that are held, without being passed on, until the client cancels
+    /// them or its time limit ends them, as when the connection is never made.</summary>
+    public int HoldNextRenewals
+    {
+        get => Volatile.Read(ref _holdNextRenewals);
+        set => Volatile.Write(ref _holdNextRenewals, value);
     }
 
     /// <summary>Gets or sets the <see cref="HttpRequestError"/> of the failed renewals: <see cref="HttpRequestError.Unknown"/>
@@ -225,6 +235,9 @@ internal sealed class Recorder
     /// <summary>Returns the <c>jti</c> of the renewals answered with a replayed answer, in order.</summary>
     public string[] ReplacedRenewals() => Marked(Replaced);
 
+    /// <summary>Returns the <c>jti</c> of the renewals held by <see cref="HoldNextRenewals"/>, in order.</summary>
+    public string[] HeldRenewals() => Marked(Held);
+
     /// <summary>Returns the requests sent so far, with the <c>jti</c> of their proofs.</summary>
     public SentRequest[] Requests()
     {
@@ -294,10 +307,22 @@ internal sealed class Recorder
 
             bool renewal = request.Method == HttpMethod.Post && path.EndsWith("/renew", StringComparison.Ordinal);
             bool acquisition = request.Method == HttpMethod.Post && path == "/v1/leases";
-            if (renewal && (recorder.FailRenewals || Interlocked.Decrement(ref recorder._failNextRenewals) >= 0))
+            if (
+                renewal
+                && (
+                    recorder.FailRenewals
+                    || (Volatile.Read(ref recorder._failNextRenewals) > 0 && Interlocked.Decrement(ref recorder._failNextRenewals) >= 0)
+                )
+            )
             {
                 recorder.Mark(Failed, sent);
                 throw new HttpRequestException(recorder.RenewalFailure, "Renewals are made to fail.");
+            }
+
+            if (renewal && Volatile.Read(ref recorder._holdNextRenewals) > 0 && Interlocked.Decrement(ref recorder._holdNextRenewals) >= 0)
+            {
+                recorder.Mark(Held, sent);
+                await Task.Delay(Timeout.Infinite, cancellationToken);
             }
 
             if (acquisition && recorder.FailNextAcquisitionWith is HttpRequestError failure)

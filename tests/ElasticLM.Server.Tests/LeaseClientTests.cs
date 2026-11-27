@@ -3,6 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using ElasticLM.Service.Tests;
 using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
@@ -292,7 +293,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
     {
         ElmServer before = await StartOpenServerAsync();
         int port = before.PublicUrls[0].Port;
-        var relay = new ElasticLM.Service.Tests.Recorder();
+        var relay = new Recorder();
         LicenseClient a = _deployment.Client(
             before.PublicUrls[0],
             change: o => new LicenseClientOptions

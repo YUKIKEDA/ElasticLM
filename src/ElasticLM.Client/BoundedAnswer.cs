@@ -97,9 +97,9 @@ internal abstract record BoundedAnswer
 
     // design §10.4 step 2 (V1d24b). In dotnet/runtime release/10.0 these four values are set only before the request is
     // written: ConnectHelper.CreateWrappedException (name resolution, connection) and EstablishSslConnectionAsync (TLS),
-    // HttpConnectionPool.EstablishProxyTunnelAsync, and the ALPN check of HttpConnectionPool.Http3. A failure on a connection
-    // that was made is Unknown or a read error (HttpConnection.cs), and a request with a body is not sent again on another
-    // connection there.
+    // HttpConnectionPool.EstablishProxyTunnelAsync and EstablishSocksTunnel, and the ALPN check of HttpConnectionPool.Http3. A
+    // failure on a connection that was made is Unknown or a read error (HttpConnection.cs), and a request with a body is sent
+    // again on another connection there only with Expect: 100-continue, which these clients do not set; they send HTTP/1.1.
 
     /// <summary>
     /// Returns whether a failed exchange never sent its request: the server's name was not resolved, or the connection, its

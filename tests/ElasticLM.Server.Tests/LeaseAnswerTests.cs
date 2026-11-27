@@ -930,6 +930,51 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
         Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
 
+    /// <summary>
+    /// A renewal that the 30-second time limit ends before it has an answer, also one whose connection may never have been
+    /// made, counts as one without an answer: the client cannot tell that it never left, so the retry names it (design §10.4
+    /// step 2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny) past its reclaim window; a client holding a lease of pro (sequence 1), behind a relay
+    ///   that holds the next renewal without passing it on, as a connection that is never made, until the client gives up.
+    ///
+    /// Steps:
+    /// - Move the clock 200 s (the renewal); once the relay holds it, move the clock 30 s (the time limit); then 15 s (the
+    ///   retry).
+    ///
+    /// Expected:
+    /// - Retrying with ELM_NETWORK_ERROR "The server cannot be reached: No whole answer came within 30 seconds.".
+    /// - The retry's body is {"seq":1,"retry":[the jti of the held renewal]}; the server, which never saw the held renewal,
+    ///   renews to sequence 2, and the lease is Held with a token that names the retry's proof.
+    /// </remarks>
+    [Fact]
+    public async Task Renewal_EndedByTheTimeLimit_IsNamedByTheRetry()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder { HoldNextRenewals = 1 };
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(200));
+        await Deployment.WaitUntilAsync(() => relay.HeldRenewals().Length == 1);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(30));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        Assert.Equal(
+            new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: No whole answer came within 30 seconds."),
+            lease.LastError
+        );
+        string held = Assert.Single(relay.HeldRenewals());
+
+        _deployment.Time.Advance(TimeSpan.FromSeconds(15));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Held);
+        SentRequest retry = Renewals(relay)[^1];
+        Assert.Equal(RetryBody([held]), retry.Body);
+        Assert.Equal((2L, retry.ProofId), (lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
     // A server whose leases last an hour, past its reclaim window, which is as long as a lease. Its leases are renewed after
     // 20 minutes, which leaves 40 minutes for the retries.
     private async Task<ElmServer> StartHourServerAsync()
