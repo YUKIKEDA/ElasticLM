@@ -5,9 +5,9 @@ using System.Text;
 namespace ElasticLM.Service.Tests;
 
 /// <summary>
-/// Requests at Kestrel's limits on the request line and the headers, over HTTP/1.1 on a raw connection and over HTTP/2
-/// with HttpClient, for the service and the on-premises server (design §5.3 T16). The limits are Kestrel's defaults
-/// (KestrelServerLimits and Http2Limits, aspnetcore v10.0.14), which neither host changes.
+/// Requests at Kestrel's limits on the request line and the headers, over HTTP/1.1 on a raw connection and over HTTP/2 as
+/// frames on a TLS connection (ALPN h2), for the service and the on-premises server (design §5.3 T16). The limits are
+/// Kestrel's defaults (KestrelServerLimits and Http2Limits, aspnetcore v10.0.14), which neither host changes.
 /// </summary>
 internal static class KestrelLimits
 {
@@ -16,6 +16,9 @@ internal static class KestrelLimits
     private const byte FrameSettings = 0x4;
     private const byte FrameGoAway = 0x7;
     private const byte FrameContinuation = 0x9;
+
+    // How long a read of the server's answer waits on the real clock; the answers came within 1 second in every run.
+    private static readonly TimeSpan AnswerLimit = TimeSpan.FromSeconds(10);
 
     /// <summary>Gets each kind of limit with the size at it and one past it, and the status each gets.</summary>
     public static TheoryData<string, int, int> AtAndPastEachLimit =>
@@ -115,9 +118,11 @@ internal static class KestrelLimits
                 }
 
                 break;
-            default:
+            case "field":
                 fields.Add(("x-pad", new string('p', size)));
                 break;
+            default:
+                throw new ArgumentOutOfRangeException(nameof(kind), kind, "The kind of limit is not known.");
         }
 
         List<byte> block = HeaderBlock(fields);
@@ -144,7 +149,7 @@ internal static class KestrelLimits
         await tls.WriteAsync(Frame(FrameSettings, 0, 0, []), cancel);
         await WriteHeadersAsync(tls, 1, block, endHeaders: !cut, cancel);
         string outcome = await ReadOutcomeAsync(tls, 1, cancel);
-        if (!outcome.StartsWith("goaway", StringComparison.Ordinal))
+        if (!outcome.StartsWith("goaway", StringComparison.Ordinal) && outcome != "no answer")
         {
             await WriteHeadersAsync(tls, 3, HeaderBlock(fields.Take(3).Append((":path", path)).ToList()), endHeaders: true, cancel);
             Assert.Equal("200", await ReadOutcomeAsync(tls, 3, cancel));
@@ -220,31 +225,42 @@ internal static class KestrelLimits
     // Reads frames until the answer's HEADERS, a RST_STREAM of the stream, or a GOAWAY, and writes nothing: Kestrel does not
     // wait for the acknowledgement of its SETTINGS (Http2Connection.cs ProcessSettingsFrameAsync), and a byte written after
     // the request that it no longer reads can make the connection reset before the GOAWAY arrives. An acknowledgement
-    // written here made the client read such a reset in 1 of 30 runs of the server's tests (docs/rows/V1d29f.md).
+    // written here made the client read such a reset in 1 of 30 runs of the server's tests (docs/rows/V1d29f.md). The reads
+    // end after AnswerLimit of the real clock with "no answer": a server that waits for more of the request (a limit raised
+    // past what the test sends) would otherwise hold the test until the server gives up on the request.
     private static async Task<string> ReadOutcomeAsync(Stream stream, int id, CancellationToken cancel)
     {
+        using var bound = CancellationTokenSource.CreateLinkedTokenSource(cancel);
+        bound.CancelAfter(AnswerLimit);
         byte[] head = new byte[9];
-        while (true)
+        try
         {
-            await stream.ReadExactlyAsync(head, cancel);
-            int length = (head[0] << 16) | (head[1] << 8) | head[2];
-            byte type = head[3];
-            byte flags = head[4];
-            int streamId = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(head.AsSpan(5)) & int.MaxValue;
-            byte[] payload = new byte[length];
-            await stream.ReadExactlyAsync(payload, cancel);
-            if (type == FrameGoAway)
+            while (true)
             {
-                return "goaway " + ErrorName(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(4)));
+                await stream.ReadExactlyAsync(head, bound.Token);
+                int length = (head[0] << 16) | (head[1] << 8) | head[2];
+                byte type = head[3];
+                byte flags = head[4];
+                int streamId = System.Buffers.Binary.BinaryPrimitives.ReadInt32BigEndian(head.AsSpan(5)) & int.MaxValue;
+                byte[] payload = new byte[length];
+                await stream.ReadExactlyAsync(payload, bound.Token);
+                if (type == FrameGoAway)
+                {
+                    return "goaway " + ErrorName(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(payload.AsSpan(4)));
+                }
+                else if (type == FrameRstStream && streamId == id)
+                {
+                    return "reset " + ErrorName(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(payload));
+                }
+                else if (type == FrameHeaders && streamId == id)
+                {
+                    return Status(payload, flags);
+                }
             }
-            else if (type == FrameRstStream && streamId == id)
-            {
-                return "reset " + ErrorName(System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(payload));
-            }
-            else if (type == FrameHeaders && streamId == id)
-            {
-                return Status(payload, flags);
-            }
+        }
+        catch (OperationCanceledException) when (!cancel.IsCancellationRequested)
+        {
+            return "no answer";
         }
     }
 
