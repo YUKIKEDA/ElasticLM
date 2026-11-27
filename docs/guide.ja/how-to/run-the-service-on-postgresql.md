@@ -82,7 +82,13 @@ Host=127.0.0.1;Port=5432;Database=elm;Username=elm;Password=try-only-elm
 }
 ```
 
-接続文字列は、[elm-service の設定](../reference/service-configuration.md#database)にあるとおり Npgsql の形式だ。ネットワーク越しに接続するサーバーでは、Npgsql の接続文字列のパラメーターの一覧（https://www.npgsql.org/doc/connection-string-parameters.html）にあるとおり、Npgsql の `SSL Mode` キーを足す。
+接続文字列は、[elm-service の設定](../reference/service-configuration.md#database)にあるとおり Npgsql の形式だ。試すためのサーバーはホストのループバックアドレスで待ち受けるので、接続に TLS は要らない。ネットワーク越しに接続するサーバーでは、`SSL Mode=VerifyFull` を設定し、`Root Certificate` にサーバーの証明書に署名した CA の PEM ファイルを指定する。たとえば次のように書く。
+
+```text
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
+```
+
+そのようなサーバーでは、`SSL Mode` が `VerifyFull`、`VerifyCA`、`Disable` のどれでもないときや、`Root Certificate` が存在しないファイルを指すときに、`setup` とサービスは終了コード 2 で止まる。モードごとに何を確かめるかと、`Root Certificate` がないときに Npgsql が CA をどこで探すかは、[ネットワーク越しの PostgreSQL](../reference/service-configuration.md#ネットワーク越しの-postgresql)にある。
 
 チュートリアルと同じように、新しいデータベースを準備し、最初の API キーを作る。
 

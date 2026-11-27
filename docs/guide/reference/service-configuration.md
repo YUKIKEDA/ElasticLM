@@ -112,8 +112,23 @@ The connection string is that of the database driver: Microsoft.Data.Sqlite for 
 
 ```text
 Data Source=/var/lib/elm-service/elm.db
-Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
 ```
+
+### PostgreSQL over a network
+
+`elm-service` reaches PostgreSQL over TLS when the server offers it. When a host of the connection string is not on this machine, `SSL Mode` must be one of these:
+
+- `VerifyFull`: TLS, and the server's certificate must come from a trusted CA and name the host. Use this one.
+- `VerifyCA`: TLS, and the server's certificate must come from a trusted CA. The name is not checked, so another server with a certificate from the same CA is taken too.
+- `Disable`: no TLS. Use it only on a network path that you protect in another way.
+
+`setup` and the service refuse the other modes for such a host and stop with exit code 2: `Prefer` (Npgsql's default when `SSL Mode` is not set), `Allow`, and `Require`. `Prefer` and `Allow` can connect without TLS, and none of the three checks the server's certificate. Npgsql's `Require` does not check it even when `Root Certificate` is set.
+
+- On this machine means a loopback IP address (`127.0.0.0/8` or `::1`), the name `localhost`, or a Unix socket (a path from the root, or a name that starts with `@`). Any other name counts as another machine, even when it resolves to a loopback address. With several hosts (`Host=db1,db2`), every host must be on this machine for the other modes to be taken.
+- The trusted CA is the PEM file that `Root Certificate` names. Without it, Npgsql reads the file that the `PGSSLROOTCERT` environment variable names, then `root.crt` in `%APPDATA%\postgresql\` on Windows or in `~/.postgresql/` on Linux and macOS, and without any of them it takes the operating system's trusted roots.
+- `Root Certificate`, `SSL Certificate`, and `SSL Key` must name files that exist, or `setup` and the service stop with exit code 2. A relative path is read from the folder that `elm-service` starts in.
+- When the TLS connection fails, as when the server's certificate does not come from the CA, the line `The database cannot be used: Exception while performing SSL handshake: …` gives Npgsql's reason after the colon.
 
 ## `signing`
 

@@ -112,8 +112,23 @@ CA が中間 CA でサービスの証明書に署名しているなら、中間 
 
 ```text
 Data Source=/var/lib/elm-service/elm.db
-Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
 ```
+
+### ネットワーク越しの PostgreSQL
+
+`elm-service` は、サーバーが TLS に対応していれば、PostgreSQL に TLS で接続する。接続文字列のホストがこのマシンの上にないときは、`SSL Mode` を次のどれかにしなければならない。
+
+- `VerifyFull`: TLS で接続し、サーバーの証明書が信頼する CA のもので、ホストの名前を含むことを確かめる。これを使うこと。
+- `VerifyCA`: TLS で接続し、サーバーの証明書が信頼する CA のものであることを確かめる。名前は確かめないので、同じ CA の証明書を持つ別のサーバーにも接続する。
+- `Disable`: TLS を使わない。別の方法で守ったネットワークの経路でだけ使うこと。
+
+そのようなホストに対して、`setup` とサービスは、ほかのモード、つまり `Prefer`（`SSL Mode` を書かないときの Npgsql の既定）、`Allow`、`Require` を断り、終了コード 2 で止まる。`Prefer` と `Allow` は TLS なしで接続することがあり、3 つのどれもサーバーの証明書を確かめない。Npgsql の `Require` は、`Root Certificate` を設定しても証明書を確かめない。
+
+- このマシンの上とは、ループバックの IP アドレス（`127.0.0.0/8` か `::1`）、名前 `localhost`、Unix ソケット（ルートからのパスか、`@` で始まる名前）のことだ。ほかの名前は、ループバックアドレスに解決されるとしても、別のマシンとして扱う。ホストが複数あるとき（`Host=db1,db2`）は、すべてのホストがこのマシンの上にあるときだけ、ほかのモードを受け付ける。
+- 信頼する CA は、`Root Certificate` が指す PEM ファイルだ。これがないと、Npgsql は環境変数 `PGSSLROOTCERT` が指すファイルを読み、次に Windows では `%APPDATA%\postgresql\`、Linux と macOS では `~/.postgresql/` の `root.crt` を読み、どれもなければ OS の信頼するルートを使う。
+- `Root Certificate`、`SSL Certificate`、`SSL Key` は、存在するファイルを指さなければならない。そうでなければ、`setup` とサービスは終了コード 2 で止まる。相対パスは、`elm-service` を起動したフォルダーから読む。
+- TLS での接続に失敗したとき（サーバーの証明書がその CA のものでないときなど）は、`The database cannot be used: Exception while performing SSL handshake: …` の行のコロンのあとに、Npgsql の理由が出る。
 
 ## `signing`
 

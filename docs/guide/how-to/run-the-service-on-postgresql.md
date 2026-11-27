@@ -82,7 +82,13 @@ In `service.json`, change `database.provider` to `postgres`:
 }
 ```
 
-The connection string is Npgsql's, as in [elm-service configuration](../reference/service-configuration.md#database). For a server you reach over a network, add Npgsql's `SSL Mode` key, as Npgsql's list of connection string parameters describes (https://www.npgsql.org/doc/connection-string-parameters.html).
+The connection string is Npgsql's, as in [elm-service configuration](../reference/service-configuration.md#database). The server to try listens on the host's loopback address, so the connection needs no TLS. For a server you reach over a network, set `SSL Mode=VerifyFull` and `Root Certificate` to the PEM file of the CA that signed the server's certificate, for example:
+
+```text
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
+```
+
+For such a server, `setup` and the service stop with exit code 2 when `SSL Mode` is not `VerifyFull`, `VerifyCA`, or `Disable`, or when `Root Certificate` names a file that does not exist. [PostgreSQL over a network](../reference/service-configuration.md#postgresql-over-a-network) says what each mode checks and where Npgsql looks for the CA without `Root Certificate`.
 
 Prepare the new database and make its first API key, as in the tutorial:
 
