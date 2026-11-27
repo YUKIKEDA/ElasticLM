@@ -159,7 +159,7 @@ public sealed class MachineFingerprintTests : IDisposable
     /// The filter keeps a 16-byte ID and leaves out a missing ID, an ID of another length, and an all-zero or all-one ID.
     /// </summary>
     /// <remarks>
-    /// Design §10.3 names the all-zero ID. It says nothing about the all-one ID or the length; this test pins what the code does.
+    /// Design §10.3: no fingerprint is made from an ID that is not 16 bytes, all zeros, or all ones.
     ///
     /// Preconditions:
     /// - null; 15 and 17 bytes; 16 bytes of 00 and of FF; 16 bytes of 00 with 01 first, of FF with FE first, and of 00 then FF;
@@ -204,8 +204,8 @@ public sealed class MachineFingerprintTests : IDisposable
     /// The machine-id reader reads a file of at most 64 bytes and leaves out a larger one.
     /// </summary>
     /// <remarks>
-    /// Design §10.3 does not state the size limit; this test pins what the code does. The parser removes any newlines at the
-    /// end, so the ID parses with each count of newlines below, and only the size decides.
+    /// Design §10.3: /etc/machine-id over 64 bytes is not read, and its trailing newlines are removed. The ID therefore
+    /// parses with each count of newlines below, and only the size decides.
     ///
     /// Preconditions:
     /// - A file in the test folder with the 32 hex characters of the ID and n newlines: 1 (33 bytes), 31 (63 bytes),
@@ -237,7 +237,8 @@ public sealed class MachineFingerprintTests : IDisposable
     /// The machine-id reader returns null when the file is missing, is a folder, or cannot be read.
     /// </summary>
     /// <remarks>
-    /// Design §10.3: no fingerprint is made from an OS ID that cannot be read, such as a missing file.
+    /// Design §10.3: no fingerprint is made from an OS ID that cannot be read: a missing file, a folder, a file held open, or a
+    /// file without the right to read.
     ///
     /// Preconditions:
     /// - "missing": nothing at the path. "folder": a folder at the path. "locked": a valid file held open with FileShare.None
@@ -282,7 +283,7 @@ public sealed class MachineFingerprintTests : IDisposable
     /// null for a structure whose length is under 4 or runs past the table.
     /// </summary>
     /// <remarks>
-    /// Design §10.3 names the SMBIOS UUID but not these rules; this test pins what the code does.
+    /// Design §10.3: the walk of the SMBIOS table and the cases in which the UUID cannot be read.
     ///
     /// Preconditions:
     /// - A type 1 structure of length 0x17 with UUID bytes AA, then a type 1 structure of length 0x1B with UUID 01..10.
