@@ -45,12 +45,12 @@ The error that stops a program before it starts is not part of this log: `elm-se
 
 When `elm-server` runs as a Windows service, its standard output and standard error reach nobody, so it writes to the Application log of Windows instead, with the source `elm-server`:
 
-- The operational log: each message becomes an entry whose event ID is the message's event number, such as 2 for `server.stopped: 0 leases were not returned`. By default only the entries from `Warning` up are written, because the `Information` entries of each request would fill the Application log; so the start and the stop of the server (`server.started: …` and `server.stopped: …`) are not there by default. To change the level of the event log, set it for the provider `EventLog`: `Logging__EventLog__LogLevel__Default=Information` changes every category, and `Logging__EventLog__LogLevel__elm-server=Information` changes only the server's own, leaving the others at `Warning`. A setting for all providers, such as `Logging__LogLevel__Default`, does not change the event log.
-- The line of a start that fails: the `error:` line that ends with exit code 1 or 2 is also written as an error with the event ID 50. When the server license is missing, this line gives the installation key's thumbprint and the machine fingerprints.
+- The operational log: each message becomes an entry whose event ID is the message's event number, such as 2 for `server.stopped: 0 leases were not returned`. By default only the entries from `Warning` up are written, because the `Information` entries of each request would fill the Application log; so the start and the stop of the server (`server.started: …` and `server.stopped: …`) are not there by default. To change the level of the event log, set it for the provider `EventLog`: `Logging__EventLog__LogLevel__Default=Information` changes every category except `Microsoft.AspNetCore.Hosting.Diagnostics`, which stays as described above, and `Logging__EventLog__LogLevel__elm-server=Information` changes only the server's own, leaving the others at `Warning`. A setting for all providers, such as `Logging__LogLevel__Default`, does not change the event log.
+- The line of a start that fails: the `error:` line that ends with exit code 1 or 2 is also written as an error with event ID 50. When the server license is missing, this line gives the installation key's thumbprint and the machine fingerprints.
 
 The first entry registers the source `elm-server`, which needs an administrator's rights; LocalSystem has them. Where the source cannot be registered, nothing is written to the event log: .NET then tries to write the one entry `Unable to log .NET application events.` with the source `Application`. For a service that runs as a normal user account, an administrator registers the source first.
 
-Every user who signs in to the machine can read the Application log, while standard output and standard error reached only the program that started the server.
+On Windows 11, every user who signs in to the machine can read the Application log, while standard output and standard error reach only the program that starts the server.
 
 ## Usage log
 
