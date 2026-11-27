@@ -157,6 +157,72 @@ public sealed class ElmServiceActivationsTests
     }
 
     /// <summary>
+    /// Two nodes of the service on one database act as one service (design §14.8, finding F46): a proof that one node took
+    /// is refused as a replay by the other, and activations sent to both at once never pass the license's limit.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Nodes a and b started on the same database, each engine, with the same public URL (https://elm.test/), as behind
+    ///   a load balancer; the nonce secret is the same, as design §14.8 asks of every node. A license with maxActivations 3.
+    ///
+    /// Steps:
+    /// - A device activates on node a with a proof for the public URL; the same proof header is sent to node b with the same
+    ///   body.
+    /// - Eight other devices activate at once, four on each node.
+    ///
+    /// Expected:
+    /// - Node a: 201. Node b: 401 ELM_REPLAYED "The request proof was already used.".
+    /// - Of the eight, two 201 (the limit of 3 less the first device) and six 409 ELM_ACTIVATION_LIMIT "The license has
+    ///   reached its limit of 3 activations."; the database holds 3 activations.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task TwoNodes_OneDatabase_ShareTheProofsAndTheLimit(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        var publicUrl = new Uri("https://elm.test/");
+        ElmService a = await test.StartAsync(s => s with { NodeName = "a", PublicUrls = [publicUrl] });
+        ElmService b = await test.StartAsync(s => s with { NodeName = "b", PublicUrls = [publicUrl] });
+        HttpClient admin = test.Http(a, owner);
+        string product = await ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, string.Empty);
+        (_, string key) = await LicenseAsync(admin, policy, more: ",\"maxActivations\":3");
+        string[] prints = TestDevice.Fingerprints();
+        string body = $$"""{"licenseKey":"{{key}}","product":"app","fingerprints":["{{prints[0]}}"]}""";
+        const string Signed = "https://elm.test/v1/activations";
+
+        string directory = Path.Combine(test.Directory, "device-first");
+        using var onA = TestDevice.Create(test, a, directory);
+        using var onB = TestDevice.Create(test, b, directory);
+        string? sent = null;
+        Assert.Equal(HttpStatusCode.Created, (await onA.PostAsync("v1/activations", body, signedPath: Signed, proof: p => sent = p)).Status);
+        AssertProblem(
+            await onB.PostAsync("v1/activations", body, signedPath: Signed, proof: _ => sent),
+            HttpStatusCode.Unauthorized,
+            "ELM_REPLAYED",
+            "The request proof was already used."
+        );
+
+        TestDevice[] devices = [.. Enumerable.Range(0, 8).Select(i => TestDevice.Create(test, i % 2 == 0 ? a : b))];
+        DeviceAnswer[] answers = await Task.WhenAll(
+            devices.Select(d =>
+                d.PostAsync("v1/activations", body.Replace(prints[0], TestDevice.Fingerprints()[0], StringComparison.Ordinal), signedPath: Signed)
+            )
+        );
+        Assert.Equal(2, answers.Count(x => x.Status == HttpStatusCode.Created));
+        Assert.All(
+            answers.Where(x => x.Status != HttpStatusCode.Created),
+            x => AssertProblem(x, HttpStatusCode.Conflict, "ELM_ACTIVATION_LIMIT", "The license has reached its limit of 3 activations.")
+        );
+        Assert.Equal(3L, await test.ScalarAsync("SELECT COUNT(*) FROM activations"));
+        foreach (TestDevice device in devices)
+        {
+            device.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Each branch of design §10.4 step 3 on a refresh and a reactivation, under Deny and under Flag: the current sequence
     /// number and a retry naming the lost request pass, on a deactivation too; one behind without it, two behind, ahead, and a
     /// reactivation without one are clones, which Deny stops for every later request but a deactivation with the last

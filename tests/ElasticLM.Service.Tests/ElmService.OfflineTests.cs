@@ -111,6 +111,91 @@ public sealed class ElmServiceOfflineTests
     }
 
     /// <summary>
+    /// Changing any single claim of an offline activation request or a deactivation proof while keeping its signature fails
+    /// the signature check (design §8.4.4, §8.4.5, §20.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license of app; device A, and its activation made from an offline request; device B, whose key gives another jwk.
+    ///
+    /// Steps:
+    /// - Make a valid activation request of A, or a valid deactivation proof of A's activation; change only the claim the
+    ///   case names in its payload (another value of its form: ver 2, op refresh, another key, product, fingerprints, B's
+    ///   jwk, nonce, iat and exp one second later; for the proof another act, seq 3 for 2, iat one second later); re-encode it and
+    ///   keep the header and the signature; post it to /v1/offline.
+    ///
+    /// Expected:
+    /// - 400 ELM_PROOF_INVALID "The request proof is not valid." for each, and the operational log's line on POST
+    ///   /v1/offline names the signature check: "The request's signature does not verify with its key." for the request,
+    ///   "The proof is not signed with the activation's installation key." for the proof.
+    /// - The proof's act, which names the activation whose key checks the signature and so is read before it: 404
+    ///   ELM_ACTIVATION_NOT_FOUND.
+    /// </remarks>
+    /// <param name="file">The kind of file: request or proof.</param>
+    /// <param name="claim">The claim changed.</param>
+    [Theory]
+    [InlineData("request", "ver")]
+    [InlineData("request", "op")]
+    [InlineData("request", "key")]
+    [InlineData("request", "prd")]
+    [InlineData("request", "fp")]
+    [InlineData("request", "jwk")]
+    [InlineData("request", "nonce")]
+    [InlineData("request", "iat")]
+    [InlineData("request", "exp")]
+    [InlineData("proof", "act")]
+    [InlineData("proof", "seq")]
+    [InlineData("proof", "iat")]
+    public async Task Offline_ClaimChangedWithTheSignatureKept_FailsTheSignature(string file, string claim)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        using var log = new RecordingLoggerProvider();
+        (ElmService service, HttpClient admin, _) = await StartAsync(test, log);
+        string product = await ProductAsync(admin, "app", "core");
+        string policy = await TestService.PolicyAsync(admin, product, "\"maxActivations\":10");
+        (_, string key) = await LicenseAsync(admin, policy);
+        (_, string otherKey) = await LicenseAsync(admin, policy);
+        using var a = TestDevice.Create(test, service);
+        using var b = TestDevice.Create(test, service);
+        string[] prints = TestDevice.Fingerprints();
+        DeviceAnswer activated = await a.OfflineAsync(a.ActivationFile(key, prints));
+        Assert.Equal(HttpStatusCode.OK, activated.Status);
+
+        string[] parts = (file == "request" ? a.ActivationFile(key, prints) : a.DeactivationFile(activated.ActivationId, 2)).Split('.');
+        var payload = System.Text.Json.Nodes.JsonNode.Parse(Base64Url.DecodeFromChars(parts[1]))!.AsObject();
+        payload[claim] = claim switch
+        {
+            "ver" => 2,
+            "op" => "refresh",
+            "key" => otherKey,
+            "prd" => "other",
+            "fp" => new System.Text.Json.Nodes.JsonArray(TestDevice.Fingerprints()[0]),
+            "jwk" => System.Text.Json.Nodes.JsonNode.Parse(Base64Url.DecodeFromChars(b.ActivationFile(key, prints).Split('.')[1]))![
+                "jwk"
+            ]!.DeepClone(),
+            "nonce" => TestDevice.NewNonce(),
+            "act" => Guid.CreateVersion7().ToString("D"),
+            "seq" => 3,
+            _ => payload[claim]!.GetValue<long>() + 1,
+        };
+        string tampered = parts[0] + "." + Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload.ToJsonString())) + "." + parts[2];
+
+        DeviceAnswer answer = await a.OfflineAsync(tampered);
+        if (claim == "act")
+        {
+            // act is the one claim read before the signature: it names the activation whose key checks it (design §8.2 rule 6).
+            AssertProblem(answer, HttpStatusCode.NotFound, "ELM_ACTIVATION_NOT_FOUND", NoActivation);
+            return;
+        }
+
+        string reason =
+            file == "request"
+                ? "The request's signature does not verify with its key."
+                : "The proof is not signed with the activation's installation key.";
+        AssertProofRefused(answer, HttpStatusCode.BadRequest, log, "POST /v1/offline", reason);
+    }
+
+    /// <summary>
     /// Each check of an offline file refuses only what it should, with the design's status and code, at both sides of its
     /// bounds.
     /// </summary>

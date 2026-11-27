@@ -80,10 +80,11 @@ public sealed class ElmServiceOidcTests
     ///   by the provider's key (which the library takes for that key, so only ValidAlgorithms refuses it), five parts, a
     ///   valid token longer than 8,192 characters (a large claim), without sub, with a sub of 256 characters, with the sub
     ///   the number 12345, with the sub the array ["alice"], with 101 role values; then one that expired 30 seconds ago,
-    ///   one with typ JWT, and one without kid.
+    ///   one with typ JWT, one with typ application/at+jwt, one with typ AT+JWT (a media type is compared without case,
+    ///   RFC 7515 §4.1.9), and one without kid.
     ///
     /// Expected:
-    /// - 401 ELM_UNAUTHORIZED with the token message for each refused one; 200 for the last three.
+    /// - 401 ELM_UNAUTHORIZED with the token message for each refused one; 200 for the last five.
     /// - The number 12345 is refused by the service: the library reads a numeric sub as the text "12345", and the service
     ///   reads the payload's JSON type. The array ["alice"] is refused by the library itself, which accepts only a string
     ///   or a number as sub while it parses the token; the service's own check of an array is in the IdentityOf tests.
@@ -134,6 +135,8 @@ public sealed class ElmServiceOidcTests
         [
             idp.Token(change: (_, p) => p["exp"] = now - 30),
             idp.Token(change: (h, _) => h["typ"] = "JWT"),
+            idp.Token(change: (h, _) => h["typ"] = "application/at+jwt"),
+            idp.Token(change: (h, _) => h["typ"] = "AT+JWT"),
             idp.Token(change: (h, _) => h.Remove("kid")),
         ];
         foreach (string token in accepted)

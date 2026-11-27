@@ -296,10 +296,12 @@ public sealed class LeaseEngineTests : IDisposable
     /// - A server license that expires 15 minutes after the start with 2 minutes of grace; the window (10 minutes) is over.
     ///
     /// Steps:
-    /// - Acquire at minute 10; renew at minute 16; acquire at minute 17 (exactly exp + grace) and renew.
+    /// - Acquire at minute 10; renew at minute 16; acquire at minute 17 less a second; acquire at minute 17 (exactly exp +
+    ///   grace) and renew.
     ///
     /// Expected:
-    /// - The first lease ends at minute 17, not 20; the renewal also ends at 17; at minute 17 both are ELM_EXPIRED.
+    /// - The first lease ends at minute 17, not 20; the renewal also ends at 17; the acquisition a second before gets a
+    ///   lease of one second that passes the client's check; at minute 17 both are ELM_EXPIRED.
     /// </remarks>
     [Fact]
     public void Lease_IsCappedAtTheServerLicenseExpiryAndGrace()
@@ -317,7 +319,11 @@ public sealed class LeaseEngineTests : IDisposable
         var renewed = Assert.IsType<LeaseOutcome.Granted>(engine.Renew(granted.LeaseId, 1, client.KeyId));
         Assert.Equal(limit, renewed.ExpiresAt);
 
-        server.Time.Advance(TimeSpan.FromMinutes(1));
+        server.Time.Advance(TimeSpan.FromSeconds(59));
+        var last = Assert.IsType<LeaseOutcome.Granted>(engine.Acquire(client.Request()));
+        Assert.Equal(TimeSpan.FromSeconds(1), Valid(last.Token, client, server).ExpiresAt - server.Time.GetUtcNow());
+
+        server.Time.Advance(TimeSpan.FromSeconds(1));
         AssertRefused(ErrorCode.Expired, engine.Acquire(client.Request()));
         AssertRefused(ErrorCode.Expired, engine.Renew(granted.LeaseId, 2, client.KeyId));
     }

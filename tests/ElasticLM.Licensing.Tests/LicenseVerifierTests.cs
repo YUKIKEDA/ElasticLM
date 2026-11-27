@@ -1445,6 +1445,229 @@ public sealed class LicenseVerifierTests : IDisposable
     }
 
     /// <summary>
+    /// When steps 2 and 3, 5 and 6, 6 and 7, or 7 and 8 fail together, the first one is reported (design §11.2 order).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - 2+3: the signing key ID is revoked, and the only certificate certifies the key for leases only.
+    /// - 5+6: the certificate ended a day before now, and the token's iat is now + 400 s.
+    /// - 6+7: the token's iat is now + 400 s, and the clock guard rejects.
+    /// - 7+8: the clock guard rejects, and the requirement asks for a trial license.
+    ///
+    /// Steps:
+    /// - Verify each.
+    ///
+    /// Expected:
+    /// - The earlier step's code and message: ELM_KEY_REVOKED, ELM_CERTIFICATE_EXPIRED, ELM_CLOCK_TAMPERED "The license is
+    ///   issued in the future.", and ELM_CLOCK_TAMPERED "The clock has been set back.".
+    /// </remarks>
+    [Theory]
+    [InlineData("2+3", ErrorCode.KeyRevoked, "The license was signed by a revoked key.")]
+    [InlineData("5+6", ErrorCode.CertificateExpired, "The license was issued outside the validity period of its key certificates.")]
+    [InlineData("6+7", ErrorCode.ClockTampered, "The license is issued in the future.")]
+    [InlineData("7+8", ErrorCode.ClockTampered, "The clock has been set back.")]
+    public void Verify_TwoMiddleStepsFail_ReportsFirst(string kind, ErrorCode expected, string message)
+    {
+        JsonObject license = _issuer.LicensePayload();
+        JsonObject cert = _issuer.CertificatePayload();
+        TrustStore trust = _issuer.TrustStore();
+        IClockGuard guard = StatelessClockGuard.Instance;
+        LicenseRequirement requirement = _issuer.Requirement();
+        switch (kind)
+        {
+            case "2+3":
+                trust = _issuer.TrustStore(_issuer.SigningKid);
+                cert["use"] = new JsonArray("lease");
+                break;
+            case "5+6":
+                cert["exp"] = TestIssuer.NowSeconds - 86400;
+                license["iat"] = TestIssuer.NowSeconds + 400;
+                break;
+            case "6+7":
+                license["iat"] = TestIssuer.NowSeconds + 400;
+                guard = new RecordingGuard(accept: false);
+                break;
+            default:
+                guard = new RecordingGuard(accept: false);
+                requirement = requirement with { Kind = LicenseKind.Trial };
+                break;
+        }
+
+        LicenseVerificationResult result = _issuer
+            .Verifier(guard, trust: trust)
+            .Verify(TestIssuer.File(_issuer.License(license), _issuer.Certificate(cert)), requirement);
+
+        Assert.Equal(new LicenseError(expected, message), Assert.IsType<LicenseVerificationResult.Invalid>(result).Error);
+    }
+
+    /// <summary>
+    /// A certificate whose payload has another version, or a time outside 0 to 9999-12-31T23:59:59Z, certifies no key, even
+    /// when the root signed it and its period holds the token's iat (design §8.3, §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - One certificate signed by the trusted root, with ver 2, or nbf, exp, or iat of -1 or 253402300800. Without the range
+    ///   check, a certificate whose nbf..exp no longer holds the token's iat would fail step 5 with ELM_CERTIFICATE_EXPIRED,
+    ///   and the others would verify.
+    ///
+    /// Steps:
+    /// - Verify a valid license token with only that certificate; then with the same certificate at its default values.
+    ///
+    /// Expected:
+    /// - ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for each changed certificate.
+    /// - Valid for the default certificate.
+    /// </remarks>
+    [Theory]
+    [InlineData("ver", 2L)]
+    [InlineData("nbf", -1L)]
+    [InlineData("nbf", 253_402_300_800L)]
+    [InlineData("exp", -1L)]
+    [InlineData("exp", 253_402_300_800L)]
+    [InlineData("iat", -1L)]
+    [InlineData("iat", 253_402_300_800L)]
+    public void Verify_CertificateOfAnotherVersionOrTimeOutOfRange_ReturnsUntrustedKey(string claim, long value)
+    {
+        JsonObject cert = _issuer.CertificatePayload();
+        cert[claim] = value;
+        LicenseVerificationResult result = _issuer
+            .Verifier()
+            .Verify(TestIssuer.File(_issuer.License(), _issuer.Certificate(cert)), _issuer.Requirement());
+
+        Assert.Equal(
+            new LicenseError(ErrorCode.UntrustedKey, "No trusted certificate certifies the license signing key."),
+            Assert.IsType<LicenseVerificationResult.Invalid>(result).Error
+        );
+        Assert.IsType<LicenseVerificationResult.Valid>(
+            _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(), _issuer.Certificate()), _issuer.Requirement())
+        );
+    }
+
+    /// <summary>
+    /// Step 3: changing any single claim of a key certificate while keeping the root's signature leaves no usable
+    /// certificate; so does the root's signature of another valid certificate.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid license token and its valid certificate. Each claim changes to a value a valid certificate could hold:
+    ///   iat and nbf one second earlier, exp one second later, another jti, the subject and key of another signing key, and
+    ///   the use license alone. ver has no other valid value; ver 2 is in
+    ///   <see cref="Verify_CertificateOfAnotherVersionOrTimeOutOfRange_ReturnsUntrustedKey"/>.
+    /// - "other-certificate": a second valid certificate of the same root for the same key, with another jti; its
+    ///   signature replaces the first one's.
+    ///
+    /// Steps:
+    /// - Re-encode the changed payload, keep the header and the signature, and verify the token with only that certificate.
+    ///
+    /// Expected:
+    /// - ELM_UNTRUSTED_KEY "No trusted certificate certifies the license signing key." for each. A changed sub or jwk is
+    ///   also refused by the subject check (the certified key must be the token's kid), so those two cases do not show the
+    ///   root's signature check alone; the other cases do.
+    /// </remarks>
+    [Theory]
+    [InlineData("iat")]
+    [InlineData("jti")]
+    [InlineData("sub")]
+    [InlineData("jwk")]
+    [InlineData("use")]
+    [InlineData("nbf")]
+    [InlineData("exp")]
+    [InlineData("other-certificate")]
+    public void Verify_CertificateClaimChangedWithTheSignatureKept_ReturnsUntrustedKey(string claim)
+    {
+        using var other = new TestIssuer();
+        string[] parts = _issuer.Certificate().Split('.');
+        JsonObject payload = _issuer.CertificatePayload();
+        string tampered;
+        if (claim == "other-certificate")
+        {
+            payload["jti"] = "cert-2";
+            tampered = parts[0] + "." + parts[1] + "." + _issuer.Certificate(payload).Split('.')[2];
+        }
+        else
+        {
+            payload[claim] = claim switch
+            {
+                "iat" or "nbf" => (JsonNode)(payload[claim]!.GetValue<long>() - 1),
+                "exp" => payload[claim]!.GetValue<long>() + 1,
+                "jti" => "cert-2",
+                "sub" => other.SigningKid,
+                "jwk" => TestIssuer.Jwk(other.Signing),
+                _ => new JsonArray("license"),
+            };
+            tampered = parts[0] + "." + TestIssuer.B64(payload.ToJsonString()) + "." + parts[2];
+        }
+
+        LicenseVerificationResult result = _issuer.Verifier().Verify(TestIssuer.File(_issuer.License(), tampered), _issuer.Requirement());
+
+        Assert.Equal(
+            new LicenseError(ErrorCode.UntrustedKey, "No trusted certificate certifies the license signing key."),
+            Assert.IsType<LicenseVerificationResult.Invalid>(result).Error
+        );
+    }
+
+    /// <summary>
+    /// Step 12: a feature is valid at exactly its own exp and expired one second later (design §11.2: expired when now is
+    /// past exp).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Feature pro with exp = now, or exp = now - 1.
+    ///
+    /// Steps:
+    /// - Verify for pro 2.5.
+    ///
+    /// Expected:
+    /// - exp = now: Valid. exp = now - 1: ELM_FEATURE_EXPIRED.
+    /// </remarks>
+    [Theory]
+    [InlineData(0L, true)]
+    [InlineData(-1L, false)]
+    public void Verify_FeatureAtItsExpiry_IsValidUntilThePastSecond(long offset, bool valid)
+    {
+        JsonObject license = _issuer.LicensePayload();
+        license["feat"] = new JsonArray(new JsonObject { ["id"] = "pro", ["exp"] = TestIssuer.NowSeconds + offset });
+
+        LicenseVerificationResult result = _issuer.Verifier().Verify(_issuer.File(license), _issuer.Requirement());
+
+        if (valid)
+        {
+            Assert.IsType<LicenseVerificationResult.Valid>(result);
+        }
+        else
+        {
+            AssertError(ErrorCode.FeatureExpired, result);
+        }
+    }
+
+    /// <summary>
+    /// Step 10 with the all strategy asks every fingerprint of the token to be on the device, not every fingerprint of the
+    /// device to be in the token: a token with one fingerprint passes on a device with that one and another.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license with fp [A] and fpm all.
+    ///
+    /// Steps:
+    /// - Verify on a device with fingerprints [B, A], and on one with [B].
+    ///
+    /// Expected:
+    /// - [B, A]: Valid. [B]: ELM_FINGERPRINT_MISMATCH.
+    /// </remarks>
+    [Fact]
+    public void Verify_AllStrategyWithOneFingerprint_PassesADeviceThatAlsoHasAnother()
+    {
+        const string A = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        const string B = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        JsonObject license = _issuer.LicensePayload();
+        license["fp"] = new JsonArray(A);
+        license["fpm"] = "all";
+        LicenseRequirement Device(params string[] prints) => _issuer.Requirement() with { Installation = new(_issuer.InstallationKid, prints) };
+
+        Assert.IsType<LicenseVerificationResult.Valid>(_issuer.Verifier().Verify(_issuer.File(license), Device(B, A)));
+        AssertError(ErrorCode.FingerprintMismatch, _issuer.Verifier().Verify(_issuer.File(license), Device(B)));
+    }
+
+    /// <summary>
     /// Reusing one verifier, with its certificate cache, gives the same results as a fresh verifier, also after the cache
     /// is cleared by more distinct certificates than it holds.
     /// </summary>
