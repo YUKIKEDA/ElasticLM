@@ -143,7 +143,7 @@ Every OS machine ID can repeat or be changed: a cloned virtual machine repeats `
 
 ### When no fingerprint can be made
 
-If the OS ID cannot be read (no file, `uninitialized`, or all zeros), that fingerprint is not made. If none can be made, every policy except `ignore` fails with `ELM_FINGERPRINT_UNAVAILABLE`, no trial is given, and no lease can be borrowed.
+If the OS ID cannot be read (no file, `uninitialized`, all zeros, or all `0xFF` bytes), that fingerprint is not made. An `/etc/machine-id` larger than 64 bytes is not read. If none can be made, every policy except `ignore` fails with `ELM_FINGERPRINT_UNAVAILABLE`, no trial is given, and no lease can be borrowed.
 
 This happens most often in containers: many images, especially `linux-musl-x64` ones, have no `/etc/machine-id`. For an app or `elm-server` in a container, do one of these:
 
