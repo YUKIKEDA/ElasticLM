@@ -290,17 +290,13 @@ internal sealed partial class ElmService
             return await work().ConfigureAwait(false);
         }
 
-        IReadOnlyList<OfflineRequestRow> kept = await scope
-            .FindOfflineRequestsAsync(device.KeyId, offline.Nonce, device.Aborted)
-            .ConfigureAwait(false);
-        if (kept.Count > 0)
+        if (await scope.FindOfflineRequestAsync(device.KeyId, offline.Nonce, device.Aborted).ConfigureAwait(false) is OfflineRequestRow row)
         {
-            if (kept.Any(r => !CryptographicOperations.FixedTimeEquals(r.RequestHash, offline.RequestHash)))
+            if (!CryptographicOperations.FixedTimeEquals(row.RequestHash, offline.RequestHash))
             {
-                return ClientResult.Fail(ErrorCode.Replayed, "Another request was made with this request's nonce.");
+                return NonceUsed;
             }
 
-            OfflineRequestRow row = kept[0];
             if (Refusal(scope.License, at) is ClientResult refused)
             {
                 return refused;
@@ -319,7 +315,7 @@ internal sealed partial class ElmService
         ClientResult result = await work().ConfigureAwait(false);
         if (result.Error is null && result.File is byte[] file)
         {
-            var row = new OfflineRequestRow(
+            var stored = new OfflineRequestRow(
                 result.ActivationId,
                 device.KeyId,
                 offline.Nonce,
@@ -328,9 +324,41 @@ internal sealed partial class ElmService
                 IssuedBody(result.ActivationId, file),
                 offline.ExpiresAt
             );
-            await scope.ReplaceOfflineRequestAsync(row, device.Aborted).ConfigureAwait(false);
+            if (!await scope.ReplaceOfflineRequestAsync(stored, device.Aborted).ConfigureAwait(false))
+            {
+                // design §12.8.4 step 11 (V1d29b): a request for another license stored the key and nonce first; everything this
+                // request wrote rolls back, and WithLicenseOfflineAwareAsync answers as step 9 does.
+                throw new NonceTakenException();
+            }
         }
 
         return result;
     }
+
+    // design §12.8.4 steps 9 and 11: the answer to a request whose key and nonce another request used, whether that one came
+    // before or at the same time for another license.
+    private static ClientResult NonceUsed => ClientResult.Fail(ErrorCode.Replayed, "Another request was made with this request's nonce.");
+
+    // The license's write transaction for an activation or a refresh, online or offline: a NonceTakenException that
+    // OfflineAwareAsync throws rolls it back and is answered as a nonce used (design §12.8.4 step 11, V1d29b).
+    private async Task<ClientResult> WithLicenseOfflineAwareAsync(
+        Guid licenseId,
+        Func<LicenseScope?, Task<ClientResult>> work,
+        DateTimeOffset now,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            return await Database.WithLicenseAsync(licenseId, work, now, cancellationToken).ConfigureAwait(false);
+        }
+        catch (NonceTakenException)
+        {
+            return NonceUsed;
+        }
+    }
+
+    // Stops a license's transaction when another activation's row holds the request's key and nonce, so everything the
+    // request wrote rolls back (design §12.8.4 step 11).
+    private sealed class NonceTakenException : Exception;
 }
