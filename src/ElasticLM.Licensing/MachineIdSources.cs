@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 
 namespace ElasticLM.Licensing;
@@ -33,7 +34,8 @@ internal static partial class MachineIdSources
     }
 
     /// <summary>
-    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters and an optional newline (machine-id(5)).
+    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters (machine-id(5)), with any line feeds at the
+    /// end removed. A carriage return is not removed, so a CRLF line end is refused.
     /// </summary>
     internal static byte[]? ParseLinuxMachineId(string content)
     {
@@ -92,9 +94,13 @@ internal static partial class MachineIdSources
         return null;
     }
 
-    private static void AddIfValid(List<byte[]> ids, byte[]? id)
+    /// <summary>
+    /// Adds <paramref name="id"/> to <paramref name="ids"/> unless it is <see langword="null"/>, all zeros, or all ones. Every
+    /// reader returns 16 bytes or null, and <see cref="MachineFingerprint.Derive"/> refuses any other length.
+    /// </summary>
+    internal static void AddIfValid(List<byte[]> ids, byte[]? id)
     {
-        if (id is null || id.Length != 16)
+        if (id is null)
         {
             return;
         }
@@ -113,12 +119,32 @@ internal static partial class MachineIdSources
         }
     }
 
-    private static byte[]? ReadLinuxMachineId(string path)
+    /// <summary>
+    /// Reads and parses the machine-id file at <paramref name="path"/>, skipping a UTF-8 byte order mark. Returns
+    /// <see langword="null"/> when the file is missing, a folder, larger than 64 bytes, unreadable, or not in the format of
+    /// <see cref="ParseLinuxMachineId"/>.
+    /// </summary>
+    internal static byte[]? ReadLinuxMachineId(string path)
     {
         try
         {
-            var info = new FileInfo(path);
-            return info.Exists && info.Length <= 64 ? ParseLinuxMachineId(File.ReadAllText(path)) : null;
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0);
+
+            // One byte past the limit tells a file of 64 bytes from a larger one without trusting FileStream.Length.
+            Span<byte> buffer = stackalloc byte[65];
+            int length = file.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            if (length > 64)
+            {
+                return null;
+            }
+
+            ReadOnlySpan<byte> content = buffer[..length];
+            if (content.StartsWith(Encoding.UTF8.Preamble))
+            {
+                content = content[Encoding.UTF8.Preamble.Length..];
+            }
+
+            return ParseLinuxMachineId(Encoding.UTF8.GetString(content));
         }
         catch (IOException)
         {
