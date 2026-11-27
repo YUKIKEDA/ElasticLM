@@ -30,12 +30,13 @@ public sealed partial class WindowsServiceTests
     /// Steps:
     /// - Start the service and wait for STOPPED; read the newest event 50 of the source elm-server that names the license
     ///   file.
-    /// - Issue the server license for the installation key that the event names; start the service, wait for RUNNING and for
-    ///   server.started in the usage log; stop it with sc stop and wait for STOPPED, timing the stop.
+    /// - Issue the server license for the installation key that the event names; start the service, wait for RUNNING and until elm
+    ///   server status --data answers on its socket, as an administrator; stop it with sc stop and wait for STOPPED, timing the stop.
     /// - Clean up: stop and delete the service, remove the source elm-server from the registry when this test added it,
     ///   and remove the folders.
     ///
     /// Expected:
+    /// - elm server status exits with 0 before the service stops.
     /// - The event is an error whose text starts with "error: The server license '{license}' does not exist." and names an
     ///   installation key.
     /// - After the stop, the service is STOPPED with WIN32_EXIT_CODE 0, the newest usage log file and the newest borrow record
@@ -141,11 +142,29 @@ public sealed partial class WindowsServiceTests
             (int started, string startOut, string startErr) = await Binaries.RunAsync(sc, ["start", name], vendor.Folder);
             Assert.True(started == 0, $"Step 2, sc start exited with {started}: {startOut}{startErr}");
             await WaitForStateAsync(sc, name, "RUNNING", vendor.Folder);
+
+            // The usage log being written has a name of its own until it is closed, and the operational log goes to the event
+            // log from Warning up only, so the server's answer on admin.sock tells that it has started; elm reads the token from
+            // the data folder that LocalSystem made, as an administrator does (design §10.2).
+            bool answered = false;
+            string statusError = string.Empty;
             await RealClock.WaitUntilAsync(
-                "server.started in the usage log",
-                () => Newest(data, "usage").Contains("\"type\":\"server.started\"", StringComparison.Ordinal),
+                "elm server status",
+                async () =>
+                {
+                    (int code, _, statusError) = await vendor.ElmAsync("server", "status", "--data", data);
+                    answered = code == 0;
+                    if (answered)
+                    {
+                        return true;
+                    }
+
+                    (_, string state, _) = await Binaries.RunAsync(sc, ["query", name], vendor.Folder);
+                    return Regex.IsMatch(state, @"STATE\s*:\s*\d+\s+STOPPED\b");
+                },
                 StateTimeout
             );
+            Assert.True(answered, $"Step 2, the service stopped before elm server status answered: {statusError}");
 
             long stopping = Stopwatch.GetTimestamp();
             (int stopped, string stopOut, string stopError) = await Binaries.RunAsync(sc, ["stop", name], vendor.Folder);
