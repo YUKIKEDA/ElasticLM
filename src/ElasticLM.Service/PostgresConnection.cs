@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using ElasticLM.Licensing;
 using Npgsql;
@@ -17,8 +18,12 @@ internal static class PostgresConnection
     /// <remarks>
     /// Npgsql 10.0.3 does not check the server's certificate under <c>Prefer</c> and <c>Require</c>, even when a root
     /// certificate is given (<c>src/Npgsql/Internal/NpgsqlConnector.cs</c>, <c>NegotiateEncryption</c>), and under
-    /// <c>Prefer</c>, its default, it goes on without TLS when the server says no. Npgsql reads the certificate and key files
-    /// at each connection, and a missing one fails inside the TLS handshake.
+    /// <c>Prefer</c>, its default, it goes on without TLS when the server says no. Npgsql reads the files at each TLS
+    /// connection, and not where the settings are read: a missing root certificate fails inside the TLS handshake, and a
+    /// missing or unreadable client certificate or key throws before it, as a bare <see cref="IOException"/> or
+    /// <see cref="System.Security.Cryptography.CryptographicException"/>. Checking them here names the key and stops with the
+    /// settings' exit code. Npgsql reads a port that is not a number and a missing host only when the data source is built,
+    /// with a <see cref="FormatException"/> and an <see cref="ArgumentException"/>; both are refused here too.
     /// </remarks>
     /// <param name="connectionString">The connection string.</param>
     /// <exception cref="ServiceStartException">The string is not valid, it would connect to another machine without checking
@@ -35,11 +40,25 @@ internal static class PostgresConnection
             throw new ServiceStartException("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
 
-        if (
-            builder.SslMode is not (SslMode.VerifyFull or SslMode.VerifyCA or SslMode.Disable)
-            && builder.Host is { Length: > 0 } host
-            && !host.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries).All(IsOnThisMachine)
-        )
+        string[] hosts = builder.Host?.Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries) ?? [];
+        if (hosts.Length == 0)
+        {
+            throw new ServiceStartException("The database connection string is not valid: Host is not set.");
+        }
+
+        foreach (string entry in hosts)
+        {
+            if (
+                !IsUnixSocket(entry)
+                && SplitPort(entry).Port is { } port
+                && !int.TryParse(port, NumberStyles.Integer, CultureInfo.InvariantCulture, out _)
+            )
+            {
+                throw new ServiceStartException($"The database connection string is not valid: the port of the host '{entry}' is not a number.");
+            }
+        }
+
+        if (builder.SslMode is not (SslMode.VerifyFull or SslMode.VerifyCA or SslMode.Disable) && !hosts.All(IsOnThisMachine))
         {
             throw new ServiceStartException(
                 $"The database connection string does not check the certificate of a server on another machine (SSL Mode is "
@@ -66,12 +85,12 @@ internal static class PostgresConnection
             return false;
         }
 
-        if (entry[0] == '@' || Path.IsPathRooted(entry))
+        if (IsUnixSocket(entry))
         {
             return true;
         }
 
-        string name = WithoutPort(entry);
+        string name = SplitPort(entry).Name;
         if (name.Length > 1 && name[0] == '[' && name[^1] == ']')
         {
             name = name[1..^1];
@@ -82,18 +101,21 @@ internal static class PostgresConnection
             : string.Equals(name, "localhost", StringComparison.OrdinalIgnoreCase);
     }
 
+    // As Npgsql's IsUnixSocket reads a host (src/Npgsql/NpgsqlConnectionStringBuilder.cs).
+    private static bool IsUnixSocket(string entry) => entry.Length > 0 && (entry[0] == '@' || Path.IsPathRooted(entry));
+
     // As Npgsql's TrySplitHostPort reads "host:port", "[v6]:port", and a bare IPv6 address (src/Npgsql/NpgsqlConnectionStringBuilder.cs).
-    private static string WithoutPort(string entry)
+    private static (string Name, string? Port) SplitPort(string entry)
     {
         int separator = entry.LastIndexOf(':');
         if (separator == -1)
         {
-            return entry;
+            return (entry, null);
         }
 
         int otherColon = entry.AsSpan(0, separator).LastIndexOf(':');
         int v6End = entry.LastIndexOf(']');
-        return otherColon == -1 || (separator > v6End && otherColon < v6End) ? entry[..separator] : entry;
+        return otherColon == -1 || (separator > v6End && otherColon < v6End) ? (entry[..separator], entry[(separator + 1)..]) : (entry, null);
     }
 
     private static void File(string? path, string key)

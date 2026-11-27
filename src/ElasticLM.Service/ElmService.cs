@@ -180,7 +180,7 @@ internal sealed partial class ElmService : IAsyncDisposable
             {
                 applied = await Migrator.RunAsync(database, Migrator.Embedded(settings.Database), host.Time, cancellationToken).ConfigureAwait(false);
             }
-            catch (System.Data.Common.DbException e)
+            catch (Exception e) when (Database.IsOpenFailure(e))
             {
                 throw new ServiceStartException("The database cannot be used: " + Database.Describe(e));
             }

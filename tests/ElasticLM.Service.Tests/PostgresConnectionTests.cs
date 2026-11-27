@@ -62,7 +62,6 @@ public sealed class PostgresConnectionTests : IDisposable
     [InlineData("Host=127.0.0.1.nip.io", true)]
     [InlineData("Host=localhost.example", true)]
     [InlineData("Host=[2001:db8::1]:5432", true)]
-    [InlineData("Database=elm", false)]
     public void Check_HostAndSslMode_RefusesAnUncheckedServerOnAnotherMachine(string connection, bool refused)
     {
         ServiceStartException? error = Record.Exception(() => PostgresConnection.Check(connection)) as ServiceStartException;
@@ -82,6 +81,32 @@ public sealed class PostgresConnectionTests : IDisposable
             Assert.Null(error);
         }
     }
+
+    /// <summary>
+    /// A connection string without a host, or with a port that is not a number, is refused as not valid before Npgsql would
+    /// throw when the data source is built.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - None.
+    ///
+    /// Steps:
+    /// - Check each connection string of the table.
+    ///
+    /// Expected:
+    /// - ServiceStartException with the message of the table.
+    /// </remarks>
+    [Theory]
+    [InlineData("Database=elm", "The database connection string is not valid: Host is not set.")]
+    [InlineData("Host= , ;SSL Mode=VerifyFull", "The database connection string is not valid: Host is not set.")]
+    [InlineData("Host=localhost:abc", "The database connection string is not valid: the port of the host 'localhost:abc' is not a number.")]
+    [InlineData(
+        "Host=db:5432,db2:x;SSL Mode=VerifyFull",
+        "The database connection string is not valid: the port of the host 'db2:x' is not a number."
+    )]
+    [InlineData("Host=[::1]:p", "The database connection string is not valid: the port of the host '[::1]:p' is not a number.")]
+    public void Check_NoHostOrBadPort_IsNotValid(string connection, string message) =>
+        Assert.Equal(message, Assert.Throws<ServiceStartException>(() => PostgresConnection.Check(connection)).Message);
 
     /// <summary>
     /// A Root Certificate, SSL Certificate, or SSL Key that names no file is refused with the key and the path; files that
@@ -239,5 +264,58 @@ public sealed class PostgresConnectionTests : IDisposable
         const string Prefix = "The database cannot be used: Exception while performing SSL handshake: ";
         Assert.StartsWith(Prefix, refusedError, StringComparison.Ordinal);
         Assert.True(refusedError.Length > Prefix.Length, refusedError);
+    }
+
+    /// <summary>
+    /// On a PostgreSQL server with TLS, a client certificate that Npgsql cannot read (a missing file, a file that is not a
+    /// certificate) ends setup with exit code 1 and the reason, and stops the start with the same line, instead of an
+    /// unhandled exception. The files are given through the connection string, which skips the settings' check, as a
+    /// missing PGSSLCERT file or a broken postgresql.crt would.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - As for <see cref="Setup_PostgresWithTls_ConnectsOrNamesTheReason"/>; a file "not a certificate" in the test's folder.
+    ///
+    /// Steps:
+    /// - Run setup with SSL Mode=Require and SSL Certificate naming a missing file; then naming the file that is not a
+    ///   certificate; start the service with the second string.
+    ///
+    /// Expected:
+    /// - Exit code 1 and "The database cannot be used: " with the file's path; exit code 1 and the same start; a
+    ///   ServiceStartException whose message starts the same way.
+    /// </remarks>
+    [Fact]
+    public async Task Open_ClientCertificateNpgsqlCannotRead_NamesTheReason()
+    {
+        string? root = Environment.GetEnvironmentVariable(RootVariable);
+        Assert.SkipUnless(root is { Length: > 0 }, $"Set {RootVariable} and {TestService.PostgresVariable} to a PostgreSQL server with TLS.");
+        await using TestService test = TestService.Open("postgres");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        string missing = Path.Combine(_folder, "missing-client.pem");
+        string broken = Path.Combine(_folder, "broken-client.pem");
+        File.WriteAllText(broken, "not a certificate\n");
+
+        string With(string certificate) =>
+            new NpgsqlConnectionStringBuilder(test.ConnectionString) { SslMode = SslMode.Require, SslCertificate = certificate }.ConnectionString;
+
+        const string Prefix = "The database cannot be used: ";
+        foreach (string certificate in new[] { missing, broken })
+        {
+            var error = new StringWriter();
+            int code = await Setup.RunAsync(
+                test.Settings(s => s with { ConnectionString = With(certificate) }),
+                test.Time,
+                new StringWriter(),
+                error,
+                cancel
+            );
+            string text = error.ToString().Trim();
+            Assert.Equal(1, code);
+            Assert.StartsWith(Prefix, text, StringComparison.Ordinal);
+            Assert.True(text.Length > Prefix.Length, text);
+        }
+
+        var started = await Assert.ThrowsAsync<ServiceStartException>(() => test.StartAsync(s => s with { ConnectionString = With(broken) }));
+        Assert.StartsWith(Prefix, started.Message, StringComparison.Ordinal);
     }
 }

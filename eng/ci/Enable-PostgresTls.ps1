@@ -31,6 +31,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$caKey = $serverKey = $ca = $server = $null
 $RootPath = [IO.Path]::GetFullPath($RootPath)
 $work = Join-Path ([IO.Path]::GetTempPath()) ('elm-postgres-tls-' + [Guid]::NewGuid().ToString('N'))
 $tls = Join-Path $work 'tls'
@@ -112,5 +113,9 @@ try {
     "PostgreSQL in $Container takes TLS; the root certificate is $RootPath."
 }
 finally {
+    foreach ($disposable in @($server, $ca, $serverKey, $caKey)) {
+        if ($null -ne $disposable) { $disposable.Dispose() }
+    }
+
     Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }

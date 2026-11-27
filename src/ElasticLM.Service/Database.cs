@@ -71,8 +71,9 @@ internal abstract partial class Database : IAsyncDisposable
     /// Npgsql reports a failed TLS handshake as "Exception while performing SSL handshake" and keeps the reason (a certificate
     /// that is not trusted, a name that does not match, a missing root certificate file) in the inner exception.
     /// </summary>
-    /// <param name="exception">The error.</param>
-    public static string Describe(DbException exception)
+    /// <param name="exception">The error: a <see cref="DbException"/>, or an <see cref="IOException"/> or a
+    /// <see cref="System.Security.Cryptography.CryptographicException"/> from Npgsql's reading of a client certificate.</param>
+    public static string Describe(Exception exception)
     {
         ArgumentNullException.ThrowIfNull(exception);
         var text = new System.Text.StringBuilder(exception.Message);
@@ -83,6 +84,18 @@ internal abstract partial class Database : IAsyncDisposable
 
         return text.ToString();
     }
+
+    /// <summary>
+    /// Returns whether an exception from the first opening of the database is one that <see cref="Describe"/> reports: a
+    /// <see cref="DbException"/>; or an <see cref="IOException"/> or a
+    /// <see cref="System.Security.Cryptography.CryptographicException"/>, which Npgsql 10.0.3 throws unwrapped when it
+    /// reads a client certificate or key at the start of the TLS negotiation (a missing file, one that is not a certificate,
+    /// a certificate without its key; <c>NegotiateEncryption</c> in <c>src/Npgsql/Internal/NpgsqlConnector.cs</c>) (design
+    /// §14.2).
+    /// </summary>
+    /// <param name="exception">The exception.</param>
+    public static bool IsOpenFailure(Exception exception) =>
+        exception is DbException or IOException or System.Security.Cryptography.CryptographicException;
 
     /// <summary>
     /// Opens a connection, for the migrations. SQLite connections wait up to 5 seconds for another writer and enforce foreign
