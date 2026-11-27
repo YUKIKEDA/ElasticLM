@@ -401,7 +401,7 @@ internal static class ServerLicenseCommands
         catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
         {
             // Something took the connection to the socket and gave no answer that can be read: the file is written all the same.
-            host.Error.WriteLine($"error: {e.Message} {Written}");
+            host.Error.WriteLine($"error: {CliText.Printable(e.Message)} {Written}");
             return ExitCodes.NetworkError;
         }
 
@@ -415,7 +415,7 @@ internal static class ServerLicenseCommands
         // nothing about the file, so the line names the answer and says that the file is written.
         if (answer.Status == HttpStatusCode.Conflict && answer.Text("code") is string refused)
         {
-            host.Error.WriteLine($"error: the server kept its license: {refused}: {answer.Text("detail")}");
+            host.Error.WriteLine($"error: the server kept its license: {CliText.Printable(refused)}: {CliText.Printable(answer.Text("detail"))}");
             return ExitCodes.VerificationFailed;
         }
 
@@ -522,7 +522,7 @@ internal static class ServerLicenseCommands
     // wording. Anything the service, the checks, or the kept state said is 1.
     private static int Refused(CliHost host, LicenseError error)
     {
-        host.Error.WriteLine($"error: {ErrorCodes.ToWireName(error.Code)}: {error.Message}");
+        host.Error.WriteLine($"error: {ErrorCodes.ToWireName(error.Code)}: {CliText.Printable(error.Message)}");
         return error.Code == ErrorCode.NetworkError || ReferenceEquals(error, ActivationClient.AnswerTooLarge)
             ? ExitCodes.NetworkError
             : ExitCodes.VerificationFailed;
@@ -561,7 +561,9 @@ internal static class ServerLicenseCommands
 
         try
         {
-            if (File.ReadAllBytes(licensePath).AsSpan().SequenceEqual(kept))
+            // design §12.6.2 (V1d24a): read as elm-server reads it, so neither reader refuses the other's delete.
+            // A file longer than the kept one is not it.
+            if (FileReplacement.ReadShared(licensePath, kept.Length) is byte[] read && read.AsSpan().SequenceEqual(kept))
             {
                 File.Delete(licensePath);
             }

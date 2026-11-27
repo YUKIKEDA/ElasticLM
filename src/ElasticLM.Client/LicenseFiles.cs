@@ -17,7 +17,8 @@ internal static class LicenseFiles
     /// <exception cref="UnauthorizedAccessException">Access is denied.</exception>
     public static void Write(string path, byte[] file, TimeProvider time)
     {
-        string full = Path.GetFullPath(path);
-        FileReplacement.Write(full + ".tmp", full, file, time);
+        // design §12.6.2 (V1d24a): elm-server and elm server activate, refresh, and import share no lock; each writes its
+        // own temporary file, and the clean skips one that another writer holds.
+        FileReplacement.Write(path, file, time);
     }
 }

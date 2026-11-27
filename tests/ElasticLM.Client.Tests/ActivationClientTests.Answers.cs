@@ -564,6 +564,74 @@ public sealed partial class ActivationClientTests
         Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
     }
 
+    /// <summary>
+    /// The clock guard takes the service's time only from an online answer that the client keeps: an answer whose license
+    /// file does not verify, that names another activation, or whose file cannot be written moves nothing (design §11.4
+    /// step 4, §5.3 T5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license; a client behind a relay that can rewrite the next answer, with a clock guard that records the server
+    ///   times it is given.
+    ///
+    /// Steps:
+    /// - Have the relay change one character of the signature of the next answer's license token; activate. Have it put
+    ///   another UUID in the next answer's activationId; activate. Activate.
+    /// - Have the relay, when the next answer arrives and before the client keeps it, replace activation.json with a folder
+    ///   of that name, so the file cannot be written on any OS; refresh, moving the clock until it ends (Windows tries the
+    ///   replacement again for 2 seconds of the clock).
+    ///
+    /// Expected:
+    /// - ELM_BAD_SIGNATURE, then ELM_REQUEST_MISMATCH, and the guard got no time; then Activated, and the guard got one time,
+    ///   the iat of the kept license.
+    /// - The refresh: ELM_INTERNAL_ERROR "The activation file cannot be written: …", and the guard still holds only that one
+    ///   time.
+    /// </remarks>
+    [Fact]
+    public async Task Answer_NotKept_LeavesTheClockGuard()
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var relay = new Relay();
+        var guard = new RecordingGuard();
+        await using ActivationClient client = vendor.Client("a", relay, guard: guard);
+
+        relay.ReplaceNext((body, _) => WithBrokenSignature(body));
+        Assert.Equal(ErrorCode.BadSignature, Failed(await client.ActivateAsync(key, Cancel)).Code);
+        relay.ReplaceNext((body, _) => WithActivationId(body, Guid.CreateVersion7().ToString("D")));
+        Assert.Equal((ErrorCode.RequestMismatch, AnotherActivation), Code(Failed(await client.ActivateAsync(key, Cancel))));
+        Assert.Empty(guard.Accepted);
+
+        VerifiedLicense kept = Activated(await client.ActivateAsync(key, Cancel));
+        Assert.Equal([kept.IssuedAt], guard.Accepted);
+
+        string file = Path.Combine(vendor.Folder("a"), "activation.json");
+        relay.ReplaceNext(
+            (body, _) =>
+            {
+                File.Delete(file);
+                Directory.CreateDirectory(file);
+                return body;
+            }
+        );
+        Task<ActivationResult> unwritable = Task.Run(() => client.RefreshAsync(Cancel), Cancel);
+        await vendor.AdvanceUntilAsync(unwritable);
+        LicenseError notWritten = Failed(await unwritable);
+        Assert.Equal(ErrorCode.InternalError, notWritten.Code);
+        Assert.StartsWith("The activation file cannot be written: ", notWritten.Message, StringComparison.Ordinal);
+        Assert.Equal([kept.IssuedAt], guard.Accepted);
+        Directory.Delete(file);
+    }
+
+    // The same answer with one character of its license token's signature changed.
+    private static string WithBrokenSignature(string answer)
+    {
+        using JsonDocument document = JsonDocument.Parse(answer);
+        string token = document.RootElement.GetProperty("license").GetProperty("license").GetString()!;
+        string changed = token[..^4] + (token[^4] == 'A' ? 'B' : 'A') + token[^3..];
+        return answer.Replace(token, changed, StringComparison.Ordinal);
+    }
+
     private static string Text(byte[]? file) => file is null ? string.Empty : Encoding.UTF8.GetString(file);
 
     // {activationId, license} as the service answers (design §12.6.1).

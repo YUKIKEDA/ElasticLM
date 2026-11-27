@@ -84,7 +84,25 @@ public sealed class ServiceLogCommandTests
 
         (int code, string output, string fault) = Run(test, ["log", "verify", folder, "--node", "n1"]);
         Assert.True(code == 0, output + fault);
-        Assert.Equal("intact: 1 file(s), 4 event line(s)", output.Trim());
+        string name = Path.GetFileName(SignedLog.FindFiles(folder, "usage-n1").Single());
+        Assert.Equal($"file: {name}: elm-service{Environment.NewLine}intact: 1 file(s), 4 event line(s)", output.Trim());
+
+        // design §18.1 (V1d27): a log of elm-service is no server license's log.
+        (code, output, _) = Run(test, ["log", "verify", folder, "--node", "n1", "--license", "lic-srv"]);
+        Assert.Equal(1, code);
+        Assert.Contains(
+            $"error: {name}:0: The file is a log of elm-service, not of server license lic-srv (--license).",
+            output,
+            StringComparison.Ordinal
+        );
+        Assert.Contains("NOT INTACT: 1 file(s), 4 event line(s)", output, StringComparison.Ordinal);
+        using (JsonDocument json = JsonDocument.Parse(Run(test, ["log", "verify", folder, "--node", "n1", "--json"]).Out))
+        {
+            JsonElement license = Assert.Single(json.RootElement.GetProperty("licenses").EnumerateArray());
+            Assert.Equal(name, license.GetProperty("file").GetString());
+            Assert.False(license.TryGetProperty("licenseIds", out _));
+        }
+
         (code, _, fault) = Run(test, ["log", "verify", folder]);
         Assert.Equal((2, "error: No usage log file was found; for elm-service's files, add --node <name>."), (code, fault.Trim()));
         const string NodeRule = "error: --node must be 1 to 64 characters of A-Z, a-z, 0-9, and '-', for the usage stream.";

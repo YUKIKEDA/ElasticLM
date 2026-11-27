@@ -579,7 +579,9 @@ public sealed class LeaseTests : IDisposable
     /// Malformed lease payloads, correctly signed, are refused without an exception: null members, zero seats, an expiry
     /// not after the issue time, a server ID other than the signer, an empty token, a lease ID that is not 22
     /// characters of base64url (design §8.4.3), since a client names a borrow's file after it, and an ID of the answered
-    /// proof (areq) that is missing, null, a number, an object, empty, or 65 characters long (design §8.4.3, V1d5).
+    /// proof (areq) that is missing, null, a number, an object, empty, or 65 characters long (design §8.4.3, V1d5). So are
+    /// a version other than 1, an issuer other than the signer's key ID, an empty prd, lic, feat, jti, or cnf.jkt, a
+    /// negative seq, an iat below 0, and an exp past 9999-12-31T23:59:59Z (design §8.4.3, §8.6).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -614,6 +616,16 @@ public sealed class LeaseTests : IDisposable
     [InlineData("lse-character")]
     [InlineData("lse-short")]
     [InlineData("lse-long")]
+    [InlineData("ver-two")]
+    [InlineData("iss-other")]
+    [InlineData("prd-empty")]
+    [InlineData("lic-empty")]
+    [InlineData("feat-empty")]
+    [InlineData("jti-empty")]
+    [InlineData("jkt-empty")]
+    [InlineData("seq-negative")]
+    [InlineData("iat-negative")]
+    [InlineData("exp-past-9999")]
     public void VerifyOnPremises_MalformedPayload_IsMalformed(string kind)
     {
         ServerIdentity server = Server();
@@ -693,6 +705,28 @@ public sealed class LeaseTests : IDisposable
                 break;
             case "lse-long":
                 payload["lse"] = "lease-1-AAAAAAAAAAAAAAA";
+                break;
+            case "ver-two":
+                payload["ver"] = 2;
+                break;
+            case "iss-other":
+                payload["iss"] = "other";
+                break;
+            case "prd-empty" or "lic-empty" or "feat-empty" or "jti-empty":
+                payload[kind[..^"-empty".Length]] = string.Empty;
+                break;
+            case "jkt-empty":
+                payload["cnf"] = new JsonObject { ["jkt"] = string.Empty };
+                break;
+            case "seq-negative":
+                payload["seq"] = -1;
+                break;
+            case "iat-negative":
+                // Without the range check, the lease would be longer than the server license allows (step 4), another error.
+                payload["iat"] = -1;
+                break;
+            case "exp-past-9999":
+                payload["exp"] = 253_402_300_800L;
                 break;
             default:
                 break;
@@ -967,6 +1001,271 @@ public sealed class LeaseTests : IDisposable
         IClockGuard guard = kind == "clock-guard" ? new RejectingGuard() : StatelessClockGuard.Instance;
 
         Assert.Equal(expected, Describe(Verifier(guard).VerifyHosted(lease, [certificate], Expect())));
+    }
+
+    /// <summary>
+    /// Changing any single claim of a lease while keeping its signature fails the signature check, on premises and on the
+    /// hosted path; so does the signature of another valid lease of the same key (design §20.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid on-premises lease signed by the server key, and a valid hosted lease signed by the signing key with its
+    ///   lease certificate.
+    ///
+    /// Steps:
+    /// - For each claim, change only that claim in the payload, or add it where the lease has none (the hosted lease has no
+    ///   slic), re-encode it, and keep the header and the signature; or
+    ///   ("other-lease") keep the header and payload and take the signature of a second lease with another lease ID.
+    /// - Verify on the path named.
+    ///
+    /// Expected:
+    /// - On premises: ELM_BAD_SIGNATURE "The lease is not signed by the server's key." for each.
+    /// - Hosted: ELM_BAD_SIGNATURE "The lease signature does not verify." for each.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(PathsAndLeaseClaims))]
+    public void Verify_OneClaimChangedWithTheSignatureKept_IsBadSignature(string path, string claim)
+    {
+        ServerIdentity server = Server();
+        bool hosted = path == "hosted";
+        string certificate = LeaseCertificate(Now.AddDays(-1), TimeSpan.FromDays(30));
+        string lease = hosted ? HostedLeaseAt(Now) : Lease(server);
+        string[] parts = lease.Split('.');
+        string tampered;
+        if (claim == "other-lease")
+        {
+            Func<LeaseSpec, LeaseSpec> other = s => s with { LeaseId = "lease-2-AAAAAAAAAAAAAA" };
+            string second = hosted ? HostedLeaseAt(Now, other) : Lease(server, other);
+            tampered = parts[0] + "." + parts[1] + "." + second.Split('.')[2];
+        }
+        else
+        {
+            var payload = JsonNode.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]))!.AsObject();
+            payload[claim] = payload[claim] switch
+            {
+                null => "x",
+                JsonValue v when v.TryGetValue(out bool b) => !b,
+                JsonValue v when v.TryGetValue(out long n) => n + 1,
+                JsonObject => new JsonObject { ["jkt"] = "another" },
+                JsonNode n => n.GetValue<string>() + "x",
+            };
+            tampered = parts[0] + "." + System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload.ToJsonString())) + "." + parts[2];
+        }
+
+        LeaseVerificationResult result = hosted
+            ? Verifier().VerifyHosted(tampered, [certificate], Expect())
+            : Verifier().VerifyOnPremises(tampered, server, Expect());
+
+        Assert.Equal(
+            hosted ? "ELM_BAD_SIGNATURE: The lease signature does not verify." : "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.",
+            Describe(result)
+        );
+    }
+
+    /// <summary>Gets each verification path with each claim of a lease, and the signature of another lease.</summary>
+    public static TheoryData<string, string> PathsAndLeaseClaims
+    {
+        get
+        {
+            var data = new TheoryData<string, string>();
+            string[] claims =
+            [
+                "ver",
+                "iss",
+                "iat",
+                "exp",
+                "jti",
+                "lse",
+                "prd",
+                "lic",
+                "feat",
+                "n",
+                "cnf",
+                "brw",
+                "srv",
+                "slic",
+                "seq",
+                "areq",
+                "other-lease",
+            ];
+            foreach (string path in new[] { "on-premises", "hosted" })
+            {
+                foreach (string claim in claims)
+                {
+                    data.Add(path, claim);
+                }
+            }
+
+            return data;
+        }
+    }
+
+    /// <summary>
+    /// The on-premises path takes a lease exactly at its exp, issued exactly the skew ahead, and for exactly the feature's
+    /// seats, and refuses it one second or one seat past (design §12.7.5 steps 3 and 6, and the expiry).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The server identity of the valid case: feature pro with 5 seats; the skew is the default 300 s.
+    /// - A 10-minute lease for 2 seats issued now, unless the case changes it.
+    ///
+    /// Steps:
+    /// - Verify at its exp and a second after; issue it 300 s and 301 s ahead of the verifier's clock; issue it for 5 and 6
+    ///   seats.
+    ///
+    /// Expected:
+    /// - At exp, 300 s ahead, and 5 seats: valid.
+    /// - A second after exp: ELM_EXPIRED "The lease has expired.".
+    /// - 301 s ahead: ELM_CLOCK_TAMPERED "The lease is issued in the future.".
+    /// - 6 seats: ELM_LEASE_OUT_OF_BOUNDS "The lease is outside the features or seats of the server license.".
+    /// </remarks>
+    [Theory]
+    [InlineData("at-exp", "valid")]
+    [InlineData("past-exp", "ELM_EXPIRED: The lease has expired.")]
+    [InlineData("future-at-skew", "valid")]
+    [InlineData("future-past-skew", "ELM_CLOCK_TAMPERED: The lease is issued in the future.")]
+    [InlineData("seats-at-limit", "valid")]
+    [InlineData("seats-past-limit", "ELM_LEASE_OUT_OF_BOUNDS: The lease is outside the features or seats of the server license.")]
+    public void VerifyOnPremises_AtAndPastEachBound_IsJudgedBySecondAndSeat(string kind, string expected)
+    {
+        ServerIdentity server = Server();
+        Func<LeaseSpec, LeaseSpec> change = kind switch
+        {
+            "seats-at-limit" => s => s with { Seats = 5 },
+            "seats-past-limit" => s => s with { Seats = 6 },
+            _ => s => s,
+        };
+        DateTimeOffset issueAt = kind switch
+        {
+            "future-at-skew" => Now.AddSeconds(300),
+            "future-past-skew" => Now.AddSeconds(301),
+            _ => Now,
+        };
+        string lease = LeaseIssuer.Issue(_server, change(Spec(server)), new FakeTimeProvider(issueAt));
+        _time.SetUtcNow(
+            kind switch
+            {
+                "at-exp" => Now.AddMinutes(10),
+                "past-exp" => Now.AddMinutes(10).AddSeconds(1),
+                _ => Now,
+            }
+        );
+
+        Assert.Equal(expected, Describe(Verifier().VerifyOnPremises(lease, server, Expect())));
+    }
+
+    /// <summary>
+    /// When two adjacent steps of the on-premises check fail, the first one is reported (design §12.7.5 order: the
+    /// signature, the payload's form, the server license token ID, the product, the installation, the license, feature, and
+    /// seats, the length, the server license's expiry, the feature's expiry, then step 6). The pair of the server license's
+    /// expiry and the feature's is in <see cref="VerifyOnPremises_LeaseOutlivingLicenseAndFeature_FailsOnTheLicense"/>.
+    /// </summary>
+    /// <remarks>
+    /// The design lists step 6 (not issued in the future, and the clock guard) without an order and the expiry after the
+    /// steps: the cases future+clock-guard and clock-guard+expired pin the order of LeaseVerifier.CheckTime (the issue time,
+    /// the clock guard, then the expiry), which is the code's order, not a design statement.
+    ///
+    /// Preconditions:
+    /// - The server identity of the valid case, or (feature-expiry+future) one whose pro expires 5 minutes from now; each
+    ///   lease fails the two steps its case names, through the issuer's spec, the issue and verification times, the signing
+    ///   key, a clock guard that rejects, or a payload without a seat signed again under the server's key ID.
+    ///
+    /// Steps:
+    /// - Verify each lease.
+    ///
+    /// Expected:
+    /// - The code and message of the earlier step.
+    /// </remarks>
+    [Theory]
+    [InlineData("signature+payload", "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.")]
+    [InlineData("payload+server-license", "ELM_MALFORMED: The lease payload is not valid.")]
+    [InlineData("signature+server-license", "ELM_BAD_SIGNATURE: The lease is not signed by the server's key.")]
+    [InlineData("feature-expiry+future", "ELM_LEASE_OUT_OF_BOUNDS: The lease outlives the feature of the server license.")]
+    [InlineData(
+        "server-license+product",
+        "ELM_LEASE_OUT_OF_BOUNDS: The lease was issued under another server license; fetch the server license again."
+    )]
+    [InlineData("product+installation", "ELM_WRONG_PRODUCT: The lease is for another product.")]
+    [InlineData("installation+seats", "ELM_WRONG_INSTALLATION: The lease is bound to another installation key.")]
+    [InlineData("seats+length", "ELM_LEASE_OUT_OF_BOUNDS: The lease is outside the features or seats of the server license.")]
+    [InlineData("length+outlives", "ELM_LEASE_OUT_OF_BOUNDS: The lease is longer than the server license allows.")]
+    [InlineData("outlives+future", "ELM_LEASE_OUT_OF_BOUNDS: The lease outlives the server license.")]
+    [InlineData("future+clock-guard", "ELM_CLOCK_TAMPERED: The lease is issued in the future.")]
+    [InlineData("clock-guard+expired", "ELM_CLOCK_TAMPERED: The clock has been set back.")]
+    public void VerifyOnPremises_TwoAdjacentStepsFail_ReportsTheFirst(string kind, string expected)
+    {
+        ServerIdentity server = kind == "feature-expiry+future" ? Server(featureExpiresAt: Now.AddMinutes(5)) : Server();
+        using ECDsa other = KeyFiles.CreateKey();
+        Func<LeaseSpec, LeaseSpec> change = kind switch
+        {
+            "signature+server-license" or "payload+server-license" => s => s with { ServerLicenseTokenId = "another" },
+            "server-license+product" => s => s with { ServerLicenseTokenId = "another", ProductId = "acme-cam" },
+            "product+installation" => s => s with { ProductId = "acme-cam", InstallationKeyThumbprint = "another" },
+            "installation+seats" => s => s with { InstallationKeyThumbprint = "another", Seats = 6 },
+            "seats+length" => s => s with { Seats = 6, Duration = TimeSpan.FromMinutes(10) + TimeSpan.FromSeconds(1) },
+            "length+outlives" => s => s with { IsBorrow = true, Duration = TimeSpan.FromDays(7) + TimeSpan.FromSeconds(1) },
+            "outlives+future" => s => s with { IsBorrow = true, Duration = TimeSpan.FromDays(7) },
+            _ => s => s,
+        };
+        DateTimeOffset issueAt = kind switch
+        {
+            "length+outlives" or "outlives+future" => Now.AddDays(31),
+            "future+clock-guard" or "feature-expiry+future" => Now.AddMinutes(6),
+            _ => Now,
+        };
+        DateTimeOffset verifyAt = kind switch
+        {
+            "length+outlives" => issueAt,
+            "outlives+future" => issueAt.AddMinutes(-6),
+            "clock-guard+expired" => Now.AddMinutes(10).AddSeconds(1),
+            _ => Now,
+        };
+        IClockGuard guard = kind is "future+clock-guard" or "clock-guard+expired" ? new RejectingGuard() : StatelessClockGuard.Instance;
+        string lease = LeaseIssuer.Issue(kind == "signature+server-license" ? other : _server, change(Spec(server)), new FakeTimeProvider(issueAt));
+        if (kind is "signature+payload" or "payload+server-license")
+        {
+            // A payload that the issuer does not write (no seat), signed again under the server's key ID.
+            var payload = JsonNode.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(lease.Split('.')[1]))!.AsObject();
+            payload["n"] = 0;
+            lease = SignJws(kind == "signature+payload" ? other : _server, KeyFiles.KeyId(_server), TokenTypes.Lease, payload.ToJsonString());
+        }
+
+        _time.SetUtcNow(verifyAt);
+
+        Assert.Equal(expected, Describe(Verifier(guard).VerifyOnPremises(lease, server, Expect())));
+    }
+
+    /// <summary>
+    /// A hosted lease comes with one to four certificates; none, five, or a null entry is refused before any certificate is
+    /// read (design §8.6, §12.7.5).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid hosted lease and its lease certificate.
+    ///
+    /// Steps:
+    /// - Verify with no certificate, with the certificate four times, five times, and with the certificate and a null entry.
+    ///
+    /// Expected:
+    /// - Four: valid. None, five, and the null entry: ELM_MALFORMED "Between one and four certificates are required.".
+    /// </remarks>
+    [Theory]
+    [InlineData("none", "ELM_MALFORMED: Between one and four certificates are required.")]
+    [InlineData("four", "valid")]
+    [InlineData("five", "ELM_MALFORMED: Between one and four certificates are required.")]
+    [InlineData("null", "ELM_MALFORMED: Between one and four certificates are required.")]
+    public void VerifyHosted_CertificateCount_IsOneToFour(string kind, string expected)
+    {
+        (string lease, string certificate) = HostedLease();
+        string[] certificates = kind switch
+        {
+            "none" => [],
+            "four" => [certificate, certificate, certificate, certificate],
+            "five" => [certificate, certificate, certificate, certificate, certificate],
+            _ => [certificate, null!],
+        };
+
+        Assert.Equal(expected, Describe(Verifier().VerifyHosted(lease, certificates, Expect())));
     }
 
     private static LicenseError Invalid(LeaseVerificationResult result) => Assert.IsType<LeaseVerificationResult.Invalid>(result).Error;

@@ -23,7 +23,9 @@ internal static class CommonOptions
     public static Option<bool> Json() => new("--json") { Description = "Write the result as JSON." };
 
     /// <summary>
-    /// Runs a command body and turns its failures into a message and an exit code (design §16).
+    /// Runs a command body and turns its failures into a message and an exit code (design §16). The message may hold text
+    /// of an answer or a file, so its control characters are replaced here, for every message at once (V1d27). Nothing else
+    /// is caught: another exception is a fault of elm, not a refusal or a network error (the V1d27 Grill, 27-1).
     /// </summary>
     public static int Run(CliHost host, Func<int> body)
     {
@@ -33,12 +35,12 @@ internal static class CommonOptions
         }
         catch (CliException e)
         {
-            host.Error.WriteLine("error: " + e.Message);
+            host.Error.WriteLine("error: " + CliText.Printable(e.Message));
             return e.ExitCode;
         }
         catch (ArgumentException e)
         {
-            host.Error.WriteLine("error: " + ArgumentMessages.WithoutParameterName(e));
+            host.Error.WriteLine("error: " + CliText.Printable(ArgumentMessages.WithoutParameterName(e)));
             return ExitCodes.InvalidInput;
         }
     }

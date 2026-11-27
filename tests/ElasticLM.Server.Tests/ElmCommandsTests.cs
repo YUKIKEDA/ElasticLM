@@ -381,7 +381,7 @@ public sealed class ElmCommandsTests : IAsyncDisposable
 
         (int code, string output, _) = Run(["log", "verify", data, "--product", "acme-cad"]);
         Assert.Equal(0, code);
-        Assert.StartsWith("intact", output.Trim(), StringComparison.Ordinal);
+        Assert.Contains("intact: ", output, StringComparison.Ordinal);
         Assert.Equal(0, Run(["log", "verify", data, "--product", "acme-cad", "--stream", "borrows"]).Code);
         using (JsonDocument json = JsonDocument.Parse(Run(["log", "verify", data, "--product", "acme-cad", "--json"]).Out))
         {
@@ -398,6 +398,76 @@ public sealed class ElmCommandsTests : IAsyncDisposable
         Assert.Contains("NOT INTACT", brokenOutput, StringComparison.Ordinal);
 
         Assert.Equal(2, Run(["log", "verify", data, "--product", "acme-cad", "--stream", "other"]).Code);
+    }
+
+    /// <summary>
+    /// elm log verify --stream borrows finds a changed or removed line of the borrow record, and a file of the record cut
+    /// before its last signature when a later file follows it (design §18.1, §20.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server that lent a borrow and stopped, then started again on the same data folder and stopped, so the record has
+    ///   two files, the second linked to the first's last signature. Both verify as intact.
+    ///
+    /// Steps:
+    /// - Change a digit of the borrow.started line; or remove that line; or remove the first file's last line, its last
+    ///   signature. Verify the data folder with --stream borrows.
+    ///
+    /// Expected:
+    /// - Exit 1 and "NOT INTACT" each time, with the error line of the check that found it: for a changed or removed line,
+    ///   "The lines before the signature were changed, added, or removed." at the first file's next signature; for the cut
+    ///   file, "The link to '(first file)' does not match its last signature: that file was cut or changed." on line 1 of
+    ///   the second file.
+    /// </remarks>
+    /// <param name="change">The change to the record.</param>
+    [Theory]
+    [InlineData("change")]
+    [InlineData("remove")]
+    [InlineData("cut")]
+    public async Task LogVerify_BrokenBorrowRecord_IsNotIntact(string change)
+    {
+        string data = _deployment.NewFolder();
+        ElmServer server = await _deployment.StartServerAsync(data);
+        _deployment.Time.Advance(TimeSpan.FromMinutes(10));
+        LicenseClient client = _deployment.Client(server.PublicUrls[0]);
+        Acquired(await client.BorrowLeaseAsync("pro", TimeSpan.FromDays(1), cancellationToken: TestContext.Current.CancellationToken));
+        await client.DisposeAsync();
+        await server.DisposeAsync();
+        _deployment.Time.Advance(TimeSpan.FromMinutes(1));
+        await (await _deployment.StartServerAsync(data)).DisposeAsync();
+
+        IReadOnlyList<string> files = SignedLog.FindFiles(data, BorrowJournal.BaseName);
+        Assert.Equal(2, files.Count);
+        string[] verify = ["log", "verify", data, "--product", "acme-cad", "--stream", "borrows"];
+        Assert.Equal(0, Run(verify).Code);
+
+        List<string> lines = [.. File.ReadAllLines(files[0])];
+        int started = lines.FindIndex(l => l.Contains("\"type\":\"" + BorrowJournal.BorrowStarted + "\"", StringComparison.Ordinal));
+        int nextAuth = lines.FindIndex(started, l => l.Contains("\"type\":\"auth\"", StringComparison.Ordinal));
+        string expected;
+        switch (change)
+        {
+            case "change":
+                lines[started] = System.Text.RegularExpressions.Regex.Replace(lines[started], "\"seats\":([0-9]+)", "\"seats\":9$1");
+                expected = $"error: {Path.GetFileName(files[0])}:{nextAuth + 1}: The lines before the signature were changed, added, or removed.";
+                break;
+            case "remove":
+                lines.RemoveAt(started);
+                expected = $"error: {Path.GetFileName(files[0])}:{nextAuth}: The lines before the signature were changed, added, or removed.";
+                break;
+            default:
+                lines.RemoveAt(lines.Count - 1);
+                expected =
+                    $"error: {Path.GetFileName(files[1])}:1: The link to '{Path.GetFileName(files[0])}' does not match its last signature: that file was cut or changed.";
+                break;
+        }
+
+        File.WriteAllText(files[0], string.Join('\n', lines) + "\n");
+        (int code, string output, _) = Run(verify);
+
+        Assert.Equal(1, code);
+        Assert.Contains(expected, output.Split('\n').Select(l => l.TrimEnd('\r')));
+        Assert.StartsWith("NOT INTACT", output.Split('\n').Last(l => l.Length > 0), StringComparison.Ordinal);
     }
 
     /// <summary>

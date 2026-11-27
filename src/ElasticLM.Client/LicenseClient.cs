@@ -34,11 +34,17 @@ public sealed class LicenseClient : IAsyncDisposable
     private const int MaxReclaimTokens = 64;
     private const int MaxBorrowFileLength = 256 * 1024;
     private const int MaxBorrowFiles = 1_000;
+    private const int LeaseIdLength = 22;
+    private const string BorrowTemporaryExtension = ".json.tmp";
     private const int MaxCertificates = 4; // design §8.6
     private const int MaxCertificateLength = 16 * 1024; // design §8.6: one token
     private const int MaxOwedReleases = 16; // design §8.6, §12.7.7
     private const string BorrowFolder = "borrows";
     private static readonly TimeSpan DisposeTimeout = TimeSpan.FromSeconds(5);
+
+    private static readonly System.Buffers.SearchValues<char> LeaseIdCharacters = System.Buffers.SearchValues.Create(
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    );
 
     private readonly LicenseClientOptions _options;
     private readonly Uri _server;
@@ -55,6 +61,9 @@ public sealed class LicenseClient : IAsyncDisposable
     private readonly bool _hosted;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly List<Lease> _leases = [];
+
+    // design §12.7.4 (V1d24a): returned borrows whose file could not be deleted; not listed, and deleted again later.
+    private readonly HashSet<string> _returnedBorrows = new(StringComparer.Ordinal);
 
     // design §12.7.7 (V1d5b): the proof IDs of acquisitions and borrows whose answer the client did not take and whose release
     // has not got through, oldest first; kept in memory only, under the lock.
@@ -271,8 +280,14 @@ public sealed class LicenseClient : IAsyncDisposable
                 return borrowed;
             }
 
+            TidyBorrows(folder);
             foreach (string path in Directory.EnumerateFiles(folder, "*.json").Take(MaxBorrowFiles))
             {
+                if (_returnedBorrows.Contains(Path.GetFileNameWithoutExtension(path)))
+                {
+                    continue;
+                }
+
                 if (LoadBorrow(path) is Lease lease)
                 {
                     Lease? known = _leases.Find(l => l.Id == lease.Id);
@@ -671,6 +686,7 @@ public sealed class LicenseClient : IAsyncDisposable
         try
         {
             ProtectedFiles.CreateDirectory(folder, _options.KeyScope);
+            TidyBorrows(folder);
             if (Directory.EnumerateFiles(folder, "*.json").Skip(MaxBorrowFiles - 1).Any())
             {
                 return new LicenseError(ErrorCode.InternalError, $"{MaxBorrowFiles} borrows are saved already; return or let some expire first.");
@@ -704,14 +720,20 @@ public sealed class LicenseClient : IAsyncDisposable
                 writer.WriteEndObject();
             }
 
-            FileReplacement.CreateNew(temporary, buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+            // design §12.6.2 (V1d24a): the temporary file stays open until it is in place, so another client's clean of the
+            // folder leaves it alone.
+            using FileStream held = FileReplacement.OpenNew(temporary);
             try
             {
+                held.Write(buffer.GetBuffer().AsSpan(0, (int)buffer.Length));
+                held.Flush();
+
                 // The lease ID is new, so no reader holds a file at this path (design §12.6.2).
                 File.Move(temporary, path, overwrite: true);
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
+                held.Dispose();
                 FileReplacement.DeleteQuietly(temporary);
                 throw;
             }
@@ -724,22 +746,53 @@ public sealed class LicenseClient : IAsyncDisposable
         }
     }
 
+    // design §12.7.4 (V1d24a): a returned borrow whose file cannot be deleted (a reader that does not allow it, an access
+    // rule) is remembered, so this client does not list it, and its delete is tried again by TidyBorrows.
     private void DeleteBorrow(string leaseId)
     {
         try
         {
             File.Delete(Path.Combine(_storeDirectory, BorrowFolder, leaseId + ".json"));
+            _returnedBorrows.Remove(leaseId);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // Left behind; it is skipped once it has expired, and deleted by the next GetBorrowedLeases.
+            _returnedBorrows.Add(leaseId);
         }
     }
+
+    // design §12.6.2, §12.7.4 (V1d24a): before the folder is listed or written, the returned borrows are deleted again and
+    // the temporary files that no writer holds are removed. A remembered ID is forgotten once its file is gone.
+    private void TidyBorrows(string folder)
+    {
+        foreach (string leaseId in _returnedBorrows.ToArray())
+        {
+            string path = Path.Combine(folder, leaseId + ".json");
+            try
+            {
+                File.Delete(path);
+                _returnedBorrows.Remove(leaseId);
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                // Still refused: it stays remembered.
+            }
+        }
+
+        FileReplacement.RemoveLeftovers(folder, "*" + BorrowTemporaryExtension, IsBorrowTemporary);
+    }
+
+    // A borrow's temporary file: <lease ID>.json.tmp, with a lease ID of its form (22 characters of [A-Za-z0-9_-], as the
+    // lease verifier requires before a borrow is saved).
+    internal static bool IsBorrowTemporary(string name) =>
+        name.Length == LeaseIdLength + BorrowTemporaryExtension.Length
+        && name.EndsWith(BorrowTemporaryExtension, StringComparison.Ordinal)
+        && !name.AsSpan(0, LeaseIdLength).ContainsAnyExcept(LeaseIdCharacters);
 
     // Reads and verifies one saved borrow of this server; null when it is of another server, damaged, or no longer valid.
     private Lease? LoadBorrow(string path)
     {
-        byte[] bytes;
+        byte[]? bytes;
         try
         {
             var info = new FileInfo(path);
@@ -748,9 +801,15 @@ public sealed class LicenseClient : IAsyncDisposable
                 return null;
             }
 
-            bytes = File.ReadAllBytes(path);
+            // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it.
+            bytes = FileReplacement.ReadShared(path, MaxBorrowFileLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (bytes is null)
         {
             return null;
         }

@@ -16,6 +16,37 @@ namespace ElasticLM.Service.Tests;
 public sealed class ElmServiceTests
 {
     /// <summary>
+    /// The service keeps Kestrel's limits on the request line and the headers (design §5.3 T16): a request line of 8,192
+    /// bytes, 100 headers, and a header section of 32 KiB and the empty line that ends it are read; a byte or a header
+    /// more is refused before any route runs.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback http. The defaults are those of Kestrel's KestrelServerLimits (aspnetcore
+    ///   v10.0.14): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100, MaxRequestHeadersTotalSize 32 KiB; the service
+    ///   sets only MaxRequestBodySize. Kestrel counts the header section's bytes with their CRLFs and allows the limit plus
+    ///   the 2 bytes of the empty line (Http1Connection.cs, MaxRequestHeadersTotalSize + 2).
+    ///
+    /// Steps:
+    /// - Over a new connection each time, send GET /health with a request line of the length given (with its CRLF), or with
+    ///   the given number of headers (Host among them), or with a header section (Host, one padding header, and the empty
+    ///   line) of the given number of bytes; read the status line of the answer.
+    ///
+    /// Expected:
+    /// - At each limit: 200. One past: 414 for the request line, 431 for the headers.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.AtAndPastEachLimit), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_RequestLineAndHeaders_KeepTheirLimits(string kind, int size, int status)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        ElmService service = await test.StartAsync();
+
+        Assert.Equal(status, await KestrelLimits.StatusAsync(service.Url, KestrelLimits.Request("/health", kind, size)));
+    }
+
+    /// <summary>
     /// The service starts only with a signing key whose certificates the trust store vouches for, for licenses and leases, at
     /// the start time; and with the right passphrase.
     /// </summary>

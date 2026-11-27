@@ -396,6 +396,172 @@ public sealed class ProofTests : IDisposable
     }
 
     /// <summary>
+    /// Changing any single claim of a proof while keeping its signature fails the signature check, also when the request is
+    /// made to match the changed claim; so does the signature of another valid proof of the same key (design §20.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid first proof with the embedded key, for POST to the target with the body and a fresh nonce.
+    ///
+    /// Steps:
+    /// - Change one claim, re-encode the payload, keep the header and the signature: htm to PUT, htu to another path, bdy to
+    ///   the digest of another body, nonce to another fresh nonce, jti to another ID, iat one second later. Verify the
+    ///   request that the changed claim names (PUT, the other path, the other body), so that every other check passes.
+    /// - "other-proof": keep the header and payload and take the signature of a second valid proof of the same key.
+    ///
+    /// Expected:
+    /// - ELM_PROOF_INVALID "The request proof signature does not verify." for each.
+    /// </remarks>
+    [Theory]
+    [InlineData("htm")]
+    [InlineData("htu")]
+    [InlineData("bdy")]
+    [InlineData("nonce")]
+    [InlineData("jti")]
+    [InlineData("iat")]
+    [InlineData("other-proof")]
+    public void Verify_OneClaimChangedWithTheSignatureKept_FailsTheSignature(string claim)
+    {
+        var otherTarget = new Uri("https://licenses.example.com/v1/leases/x/renew");
+        byte[] otherBody = Encoding.UTF8.GetBytes("{\"feature\":\"pro\",\"count\":2}");
+        string[] parts = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time).Split('.');
+        string method = "POST";
+        Uri target = Target;
+        byte[] body = Body;
+        string proof;
+        if (claim == "other-proof")
+        {
+            string second = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time);
+            proof = parts[0] + "." + parts[1] + "." + second.Split('.')[2];
+        }
+        else
+        {
+            var payload = System.Text.Json.Nodes.JsonNode.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]))!.AsObject();
+            switch (claim)
+            {
+                case "htm":
+                    payload["htm"] = method = "PUT";
+                    break;
+                case "htu":
+                    payload["htu"] = HttpTargetUri.Normalize(target = otherTarget);
+                    break;
+                case "bdy":
+                    payload["bdy"] = System.Buffers.Text.Base64Url.EncodeToString(SHA256.HashData(body = otherBody));
+                    break;
+                case "nonce":
+                    payload["nonce"] = _nonces.Issue();
+                    break;
+                case "jti":
+                    payload["jti"] = "another-proof-id";
+                    break;
+                default:
+                    payload["iat"] = payload["iat"]!.GetValue<long>() + 1;
+                    break;
+            }
+
+            proof = parts[0] + "." + System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(payload.ToJsonString())) + "." + parts[2];
+        }
+
+        var invalid = Assert.IsType<ProofResult.Invalid>(_verifier.Verify(proof, method, target, body));
+        Assert.Equal(new LicenseError(ErrorCode.ProofInvalid, "The request proof signature does not verify."), invalid.Error);
+    }
+
+    /// <summary>
+    /// A correctly signed proof whose payload has another version, a jti that is empty or longer than 64 characters, an iat
+    /// outside 0 to 9999-12-31T23:59:59Z, or a payload that is not an object is refused as not valid; a jti of exactly 64
+    /// characters is taken (design §12.2, §8.6).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A valid first proof with the embedded key, changed in one way and signed again with the same key.
+    ///
+    /// Steps:
+    /// - Verify each.
+    ///
+    /// Expected:
+    /// - A jti of 64 characters: valid. The others: ELM_PROOF_INVALID "The request proof payload is not valid.".
+    /// </remarks>
+    [Theory]
+    [InlineData("jti-64", true)]
+    [InlineData("ver-two", false)]
+    [InlineData("jti-empty", false)]
+    [InlineData("jti-65", false)]
+    [InlineData("iat-negative", false)]
+    [InlineData("iat-past-9999", false)]
+    [InlineData("null", false)]
+    public void Verify_SignedPayloadOutOfShape_IsNotValid(string kind, bool valid)
+    {
+        string[] parts = ProofBuilder.Create(_key, "POST", Target, _nonces.Issue(), Body, includePublicKey: true, _time).Split('.');
+        var payload = System.Text.Json.Nodes.JsonNode.Parse(System.Buffers.Text.Base64Url.DecodeFromChars(parts[1]))!.AsObject();
+        switch (kind)
+        {
+            case "jti-64":
+                payload["jti"] = new string('j', 64);
+                break;
+            case "ver-two":
+                payload["ver"] = 2;
+                break;
+            case "jti-empty":
+                payload["jti"] = string.Empty;
+                break;
+            case "jti-65":
+                payload["jti"] = new string('j', 65);
+                break;
+            case "iat-negative":
+                payload["iat"] = -1;
+                break;
+            case "iat-past-9999":
+                payload["iat"] = 253_402_300_800L;
+                break;
+            default:
+                break;
+        }
+
+        string text = kind == "null" ? "null" : payload.ToJsonString();
+        string signingInput = parts[0] + "." + System.Buffers.Text.Base64Url.EncodeToString(Encoding.UTF8.GetBytes(text));
+        string proof = signingInput + "." + System.Buffers.Text.Base64Url.EncodeToString(_key.Sign(Encoding.ASCII.GetBytes(signingInput)));
+
+        // A payload of null has no key in it; the verifier then needs the known key.
+        ProofResult result = _verifier.Verify(proof, "POST", Target, Body, kid => kid == _key.Thumbprint ? _key.PublicParameters() : null);
+
+        if (valid)
+        {
+            Assert.Equal(new string('j', 64), Assert.IsType<ProofResult.Valid>(result).ProofId);
+        }
+        else
+        {
+            Assert.Equal(
+                new LicenseError(ErrorCode.ProofInvalid, "The request proof payload is not valid."),
+                Assert.IsType<ProofResult.Invalid>(result).Error
+            );
+        }
+    }
+
+    /// <summary>
+    /// A nonce is not valid before the second it was issued in, as when the server's clock was set back after it issued
+    /// the nonce (design §12.2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Two nonce services with the same secret: one on a clock 10 s ahead of the other.
+    ///
+    /// Steps:
+    /// - Issue a nonce on the clock ahead; check it on the clock behind, then on the clock ahead.
+    ///
+    /// Expected:
+    /// - Behind: not valid. Ahead: valid.
+    /// </remarks>
+    [Fact]
+    public void NonceIsValid_BeforeItsIssueTime_ReturnsFalse()
+    {
+        var ahead = new NonceService(_secret, new FakeTimeProvider(_time.GetUtcNow().AddSeconds(10)));
+        string nonce = ahead.Issue();
+
+        Assert.False(_nonces.IsValid(nonce, out _));
+        Assert.True(ahead.IsValid(nonce, out _));
+    }
+
+    /// <summary>
     /// Malformed nonces are refused without an exception.
     /// </summary>
     /// <remarks>

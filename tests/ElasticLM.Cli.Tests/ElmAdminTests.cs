@@ -61,12 +61,12 @@ public sealed class ElmAdminTests
                 using var request = new HttpRequestMessage(HttpMethod.Get, listener.Url);
                 if (status == 200)
                 {
-                    CliException e = Assert.Throws<CliException>(() => OidcHttp.Send(http, request));
+                    CliException e = Assert.Throws<CliException>(() => OidcHttp.Send(http, request, TimeProvider.System));
                     Assert.Equal((1, $"The answer of {listener.Url} is not JSON."), (e.ExitCode, e.Message));
                 }
                 else
                 {
-                    (System.Net.HttpStatusCode answered, JsonDocument? body) = OidcHttp.Send(http, request);
+                    (System.Net.HttpStatusCode answered, JsonDocument? body) = OidcHttp.Send(http, request, TimeProvider.System);
                     Assert.Equal((System.Net.HttpStatusCode.BadRequest, null), (answered, body));
                 }
             }
@@ -560,6 +560,63 @@ public sealed class ElmAdminTests
         Assert.StartsWith($"The login file '{path}' cannot be written: ", error.Message, StringComparison.Ordinal);
         Assert.Empty(Directory.GetFiles(Path.GetDirectoryName(path)!, "*.tmp"));
         Assert.Equal("inside", File.ReadAllText(Path.Combine(path, "inside.txt")));
+    }
+
+    /// <summary>
+    /// A new file that an earlier write of the login left is removed by the next write, one that another writer holds is
+    /// left, and the --force output's form is not touched (design §12.6.2, §16, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Beside the login file's path: login.0123456789abcdef.tmp that no one holds; login.fedcba9876543210.tmp that the test
+    ///   holds as a writer does (FileReplacement.OpenNew); login.ABCDEF0123456789.tmp, the form of elm's --force output
+    ///   (another name than the two others also where the file system ignores case).
+    ///
+    /// Steps:
+    /// - Write a login; close the held file; write a login again.
+    ///
+    /// Expected:
+    /// - After the first write the login is read back, the left file is gone, and the held file stays; after the second the
+    ///   held file is gone too; the uppercase file stays through both.
+    /// </remarks>
+    [Fact]
+    public void LoginFile_LeftNewFiles_AreRemovedByTheNextWrite()
+    {
+        string folder = Path.Combine(
+            Path.GetTempPath(),
+            "elm-login-" + Convert.ToHexString(System.Security.Cryptography.RandomNumberGenerator.GetBytes(6))
+        );
+        Directory.CreateDirectory(folder);
+        using var cleanup = new FolderCleanup(folder);
+        var time = new Microsoft.Extensions.Time.Testing.FakeTimeProvider(DateTimeOffset.UnixEpoch);
+        string path = Path.Combine(folder, "login");
+        string left = path + ".0123456789abcdef.tmp";
+        string held = path + ".fedcba9876543210.tmp";
+        string upper = path + ".ABCDEF0123456789.tmp";
+        File.WriteAllText(left, "left");
+        File.WriteAllText(upper, "force");
+        var login = new AdminLogin("https://one.example/", "https://idp.example/", "elm", "access-1", null, 1);
+
+        bool leftAfterFirst;
+        bool heldAfterFirst;
+        using (ElasticLM.Client.FileReplacement.OpenNew(held))
+        {
+            AdminLoginFile.Write(path, login, time);
+            leftAfterFirst = File.Exists(left);
+            heldAfterFirst = File.Exists(held);
+        }
+
+        AdminLoginFile.Write(path, login, time);
+
+        Assert.Equal("https://one.example/", AdminLoginFile.Read(path)!.Url);
+        Assert.Equal((false, true), (leftAfterFirst, heldAfterFirst));
+        Assert.Equal((false, true), (File.Exists(held), File.Exists(upper)));
+    }
+
+    // Removes a folder of a test at its end.
+    private sealed class FolderCleanup(string folder) : IDisposable
+    {
+        public void Dispose() => Directory.Delete(folder, recursive: true);
     }
 
     private string SetLoginFile(TestService test)

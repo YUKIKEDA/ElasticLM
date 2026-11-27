@@ -35,7 +35,8 @@ public sealed class ElmCliTests : IDisposable
     ///   license verify with the matching installation, then with another product, then after one byte of the file changes.
     ///
     /// Expected:
-    /// - Exit 0 until the matching verify (valid); exit 1 for the other product (ELM_WRONG_PRODUCT) and for the changed file.
+    /// - Exit 0 until the matching verify (valid); exit 1 for the other product (ELM_WRONG_PRODUCT) and for the changed file,
+    ///   whose one line names the signature check: "invalid: ELM_BAD_SIGNATURE: The license signature does not verify.".
     ///   The private key files are encrypted.
     /// </remarks>
     [Fact]
@@ -67,7 +68,9 @@ public sealed class ElmCliTests : IDisposable
         int index = Array.IndexOf(bytes, (byte)'.') + 5;
         bytes[index] = bytes[index] == (byte)'A' ? (byte)'B' : (byte)'A';
         File.WriteAllBytes(licensePath, bytes);
-        Assert.Equal(1, Run([.. Verify(licensePath)]).Code);
+        (int changedCode, string changedOut, _) = Run([.. Verify(licensePath)]);
+        Assert.Equal(1, changedCode);
+        Assert.Equal("invalid: ELM_BAD_SIGNATURE: The license signature does not verify.", changedOut.Trim());
     }
 
     /// <summary>

@@ -247,7 +247,8 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
         }
 
         // design §12.6.2 (V1d2a): readers do not take the lock, and on Windows one of them refuses the move while it reads.
-        FileReplacement.Write(FilePath + ".tmp", FilePath, buffer.GetBuffer().AsSpan(0, (int)buffer.Length), time);
+        // design §12.6.2 (V1d24a): every write runs under the activation lock, so the clean of leftovers meets no other writer.
+        FileReplacement.Write(FilePath, buffer.GetBuffer().AsSpan(0, (int)buffer.Length), time);
     }
 
     /// <summary>Removes the activation file.</summary>

@@ -162,41 +162,49 @@ internal static class ProtectedFiles
     }
 
     /// <summary>
-    /// Writes a new secret file; an existing file is not replaced. A file that this call created but could not fill is deleted.
+    /// Writes a new secret file and keeps it open, so it can be moved into its place before it is closed; an existing file is
+    /// not replaced. A file that this call created but could not fill is deleted.
     /// </summary>
-    /// <returns><see langword="false"/> when the file exists already.</returns>
+    /// <returns>The open file, which the caller disposes once it is in place; <see langword="null"/> when the file exists
+    /// already.</returns>
     /// <exception cref="IOException">The file cannot be written (also <see cref="UnauthorizedAccessException"/>).</exception>
-    public static bool TryCreateSecret(string path, byte[] secret, KeyScope scope, byte[] purpose)
+    public static FileStream? TryCreateSecret(string path, byte[] secret, KeyScope scope, byte[] purpose)
     {
         byte[] stored = OperatingSystem.IsWindows() ? Dpapi.Protect(secret, scope == KeyScope.Machine, purpose) : [.. secret];
-        bool created = false;
+        FileStream? stream = null;
         try
         {
+            // design §12.6.2 (V1d24a): the same sharing as FileReplacement.OpenNew, so a clean of leftovers cannot open the
+            // file while it is held, and the holder can still move it.
             var options = new FileStreamOptions
             {
                 Mode = FileMode.CreateNew,
                 Access = FileAccess.Write,
-                Share = FileShare.None,
+                Share = FileShare.Read | FileShare.Delete,
+
+                // As in FileReplacement.OpenNew: a failed write throws from Write, not again from Dispose.
+                BufferSize = 0,
             };
             if (!OperatingSystem.IsWindows())
             {
                 options.UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite;
             }
 
-            using var stream = new FileStream(path, options);
-            created = true;
+            stream = new FileStream(path, options);
             stream.Write(stored);
-            return true;
+            stream.Flush();
+            return stream;
         }
-        catch (Exception e) when (created && e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (stream is not null && e is IOException or UnauthorizedAccessException)
         {
             // design §12.6.2 (V1d24): a file this call made but could not fill holds part of a secret; it does not stay.
+            stream.Dispose();
             FileReplacement.DeleteQuietly(path);
             throw;
         }
         catch (IOException) when (File.Exists(path))
         {
-            return false;
+            return null;
         }
         finally
         {
@@ -211,7 +219,7 @@ internal static class ProtectedFiles
     /// unreadable, or protected for another user, machine, or purpose.</returns>
     public static byte[]? TryReadSecret(string path, int maxLength, byte[] purpose)
     {
-        byte[] stored;
+        byte[]? stored;
         try
         {
             var info = new FileInfo(path);
@@ -220,9 +228,16 @@ internal static class ProtectedFiles
                 return null;
             }
 
-            stored = File.ReadAllBytes(path);
+            // design §12.6.2 (V1d24a): elm logout deletes the login file, which this reader then does not refuse. A replacement is
+            // refused on Windows whatever the sharing, and the writer tries again.
+            stored = FileReplacement.ReadShared(path, maxLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return null;
+        }
+
+        if (stored is null)
         {
             return null;
         }

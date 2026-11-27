@@ -110,7 +110,7 @@ internal static class OfflineCommands
         if (!whole.IsSuccess)
         {
             (string code, string detail) = Problem(body);
-            host.Error.WriteLine($"error: {code}: {detail}");
+            host.Error.WriteLine($"error: {CliText.Printable(code)}: {CliText.Printable(detail)}");
             return ExitCodes.VerificationFailed;
         }
 
@@ -125,7 +125,7 @@ internal static class OfflineCommands
         host.Out.WriteLine(
             json
                 ? Json(new OfflineOutput(false, activationId, licenseId, seq, output))
-                : $"activation {activationId}, license {licenseId}, seq {seq}: {output}"
+                : $"activation {CliText.Printable(activationId)}, license {CliText.Printable(licenseId)}, seq {seq}: {output}"
         );
         return ExitCodes.Success;
     }

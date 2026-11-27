@@ -145,6 +145,49 @@ public sealed class ElmServiceLeasesTests
     }
 
     /// <summary>
+    /// Two nodes of the service on one database count the seats of a license together (design §14.4, §14.8, finding F46):
+    /// acquisitions sent to both at once never pass the seats.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Nodes a and b started on the same database, each engine, with the same public URL (https://elm.test/), as behind
+    ///   a load balancer. A cloud-floating policy without overage; a license with 2 seats of core.
+    ///
+    /// Steps:
+    /// - Six devices acquire 1 seat at once, three on each node, each with a proof for the public URL.
+    ///
+    /// Expected:
+    /// - Two 201 and four 409 ELM_NO_SEATS "No seat of the feature is free."; the database holds 2 leases.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task TwoNodes_OneDatabase_StopAtTheSeats(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        string owner = await test.SetupAsync();
+        var publicUrl = new Uri("https://elm.test/");
+        ElmService a = await test.StartAsync(s => s with { NodeName = "a", PublicUrls = [publicUrl] });
+        ElmService b = await test.StartAsync(s => s with { NodeName = "b", PublicUrls = [publicUrl] });
+        HttpClient admin = test.Http(a, owner);
+        (_, string key) = await LicenseAsync(admin, await CloudPolicyAsync(admin, string.Empty), TwoSeats);
+        string body = $$"""{"licenseKey":"{{key}}","product":"app","feature":"core","count":1}""";
+        TestDevice[] devices = [.. Enumerable.Range(0, 6).Select(i => TestDevice.Create(test, i % 2 == 0 ? a : b))];
+
+        DeviceAnswer[] answers = await Task.WhenAll(devices.Select(d => d.PostAsync("v1/leases", body, signedPath: "https://elm.test/v1/leases")));
+
+        Assert.Equal(2, answers.Count(x => x.Status == HttpStatusCode.Created));
+        Assert.All(
+            answers.Where(x => x.Status != HttpStatusCode.Created),
+            x => AssertProblem(x, HttpStatusCode.Conflict, "ELM_NO_SEATS", "No seat of the feature is free.")
+        );
+        Assert.Equal(2L, await test.ScalarAsync("SELECT COUNT(*) FROM leases"));
+        foreach (TestDevice device in devices)
+        {
+            device.Dispose();
+        }
+    }
+
+    /// <summary>
     /// Each branch of design §10.4 step 3 on a renewal, under Deny and under Flag: the current sequence number gives the next
     /// token, a retry naming the lost request the last one again; a clone is recorded as lease.clone, and Deny stops the
     /// lease, which then holds its seat until it expires and refuses renewals and releases.
