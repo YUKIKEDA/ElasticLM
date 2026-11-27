@@ -11,8 +11,8 @@
       image store, the image it loads has the config of this architecture's manifest; in the containerd image store, it is
       the image index of -ExpectedDigest.
     - With keys, certificates, a root key, a nonce secret, and a passphrase made for this run and mounted as a settings file
-      and secret files readable by UID 1654, a named volume on /data, and ELM_PUBLICURLS: setup prints a key; the service
-      starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID 1654; docker stop ends
+      and secret files readable by UID 1654, a named volume on /data, ELM_PUBLICURLS, and a read-only root file system
+      with nothing on /tmp (docker run --read-only): setup prints a key; the service starts, answers /health with 200, logs no override of ASP.NET Core's addresses, and runs as UID 1654; docker stop ends
       it with exit code 0.
     It pushes nothing. Everything it makes is removed at the end (.cursor/rules/scratch.mdc).
 
@@ -163,12 +163,16 @@ try {
     & chmod 0644 (Get-ChildItem $config | ForEach-Object FullName)
 
     Invoke-Native 'docker volume create' { docker volume create $volume } | Out-Null
-    $common = @('-v', "${volume}:/data", '-v', "${config}:/config:ro", '-e', 'ELM_PUBLICURLS=https://elm.test/')
+    # Both run with a read-only root file system and nothing on /tmp: elm-service writes only to /data (design §20.6,
+    # V1d29c, question 29c-1).
+    $common = @('--read-only', '-v', "${volume}:/data", '-v', "${config}:/config:ro", '-e', 'ELM_PUBLICURLS=https://elm.test/')
     # setup prints the key on its own line; its log lines come with it through 2>&1.
     $setupOutput = @(Invoke-Native 'setup' { docker run --rm @common $tag setup --config /config/elm-service.json } | ForEach-Object { $_.ToString().Trim() })
     if (-not ($setupOutput | Where-Object { $_ -match '^elm_' })) { $setupOutput | Out-Host; $failures.Add('setup did not print a key.') }
 
     Invoke-Native 'docker run' { docker run -d --name $container @common -p '127.0.0.1:18090:8080' $tag --config /config/elm-service.json } | Out-Null
+    $readOnly = (Invoke-Native 'docker inspect' { docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' $container }).Trim()
+    if ($readOnly -ne 'true') { $failures.Add("The service's root file system is not read-only (ReadonlyRootfs $readOnly).") }
     $ok = $false
     for ($i = 0; $i -lt 30 -and -not $ok; $i++) {
         try { $ok = (Invoke-WebRequest 'http://127.0.0.1:18090/health' -SkipHttpErrorCheck).StatusCode -eq 200 } catch { }
@@ -190,7 +194,7 @@ try {
     # Size is the uncompressed size only in the classic image store. In the containerd image store it is "the total size of
     # the image's packed resources" (moby docker-v29.4.2, daemon/containerd/image_inspect.go, size), so the line names the
     # store.
-    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes as the Size of docker image inspect ($store); ran as UID 1654, /health 200, stopped with 0."
+    "linux/${Arch}: index $digest, $compressed bytes compressed, $size bytes as the Size of docker image inspect ($store); ran read-only as UID 1654, /health 200, stopped with 0."
 }
 finally {
     & docker rm -f $container 2>&1 | Out-Null

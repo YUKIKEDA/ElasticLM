@@ -21,8 +21,8 @@ in the user documentation.
 
 The release workflow's `image` job builds both platforms from the release archives with
 `eng/container/Build-Image.ps1` into an OCI layout, builds it a second time to compare the index digest, and
-`image-test` starts it on each platform with `eng/container/Test-Image.ps1`. The job that follows runs the steps of the
-container and PostgreSQL how-to guides on that image. To build one platform on your machine, follow
+`image-test` starts it on each platform with `eng/container/Test-Image.ps1`, with a read-only root file system and
+nothing on `/tmp`. The job that follows runs the steps of the container and PostgreSQL how-to guides on that image. To build one platform on your machine, follow
 [Build the container image](../CONTRIBUTING.md#build-the-container-image) in `CONTRIBUTING.md`.
 
 ## Checking the image
