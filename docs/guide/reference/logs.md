@@ -8,7 +8,7 @@ This page lists what ElasticLM's logs hold: the signed usage log of `elm-server`
 
 ## Operational log
 
-While they run, `elm-server` and `elm-service` write messages about their own work to standard output, with the .NET console logger. This log is not signed, and the programs do not keep it in a file: to keep it, capture standard output, for example with the service manager or the container runtime that starts the program.
+While they run, `elm-server` and `elm-service` write messages about their own work to standard output, with the .NET console logger. This log is not signed, and the programs do not keep it in a file: to keep it, capture standard output, for example with the service manager or the container runtime that starts the program. As a Windows service, `elm-server` writes to the Windows event log instead ([`elm-server` as a Windows service](#elm-server-as-a-windows-service)).
 
 Each message takes two lines: the level (`dbug`, `info`, `warn`, `fail`, or `crit`), the category, and the event number, then the message, indented. For example:
 
@@ -27,7 +27,7 @@ info: elm-server[2]
 | `Microsoft.AspNetCore.Server.Kestrel` | The error `An unhandled exception was thrown by the application.`, with the IDs of the connection and the request and the exception, when a request fails inside the program. The program does not write this error for a request body that came as a bad chunk or too slowly; it writes `A device request (<route>) could not be read …` or `The request of an administration call … could not be read …` instead (see the rows of `elm-server` and `elm-service`). Nor does it write the error when a caller resets the connection in the middle of a request body. |
 | `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | `elm-service` with the admin UI's sign-in only, at the start that makes a key for it: `Creating key {…} …` and the warning `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` The service encrypts these keys itself before it stores them, as [Sign in with OIDC](../how-to/sign-in-with-oidc.md) explains. |
 
-The web host's own entries for each request, `Request starting …` and `Request finished …`, are not written: they hold the request's path, query string, and `Host` header, so the programs never write their category, `Microsoft.AspNetCore.Hosting.Diagnostics`, below `Warning`. No setting under `Logging` lowers that, whether it names the category, a pattern with `*` that covers it, the provider `Console`, or `Default`; a setting that asks for a level above `Warning`, such as `None`, still applies to it.
+The web host's own entries for each request, `Request starting …` and `Request finished …`, are not written: they hold the request's path, query string, and `Host` header, so the programs never write their category, `Microsoft.AspNetCore.Hosting.Diagnostics`, below `Warning`. No setting under `Logging` lowers that, whether it names the category, a pattern with `*` that covers it, the provider `Console` or `EventLog`, or `Default`; a setting that asks for a level above `Warning`, such as `None`, still applies to it.
 
 The admin UI's sign-in is run by the OpenID Connect handler, a component of ASP.NET Core, whose entries have the category `Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler`. `elm-service` does not write these entries at any level: they quote the `error`, `error_description`, and `error_uri` of a return to `/auth/callback`, line breaks included, and the value of a cookie that the request sent. No setting under `Logging` brings them back, in any of the forms above.
 
@@ -39,8 +39,16 @@ At the default level, no entry holds the path, the query string, or a header of 
 
 The level is `Information` by default. To change it, set the environment variable `Logging__LogLevel__Default` to `Trace`, `Debug`, `Information`, `Warning`, `Error`, `Critical`, or `None`: for example, `Logging__LogLevel__Default=Warning` writes only warnings and errors.
 
-The error that stops a program before it starts is not part of this log: `elm-server` writes `error:` and the reason to standard error, and `elm-service` writes the reason to standard error. The exit codes are in [elm-server configuration](server-configuration.md#command-line-and-exit-codes) and [elm-service configuration](service-configuration.md#command-line-and-exit-codes).
+The error that stops a program before it starts is not part of this log: `elm-server` writes `error:` and the reason to standard error (as a Windows service, to the event log too), and `elm-service` writes the reason to standard error. The exit codes are in [elm-server configuration](server-configuration.md#command-line-and-exit-codes) and [elm-service configuration](service-configuration.md#command-line-and-exit-codes).
 
+### `elm-server` as a Windows service
+
+When `elm-server` runs as a Windows service, its standard output and standard error reach nobody, so it writes to the Application log of Windows instead, with the source `elm-server`:
+
+- The operational log: each message becomes an entry whose event ID is the message's event number, such as 2 for `server.stopped: 0 leases were not returned`. By default only the entries from `Warning` up are written, because the `Information` entries of each request would fill the Application log; so the start and the stop of the server (`server.started: …` and `server.stopped: …`) are not there by default. To change the level of the event log, set it for the provider `EventLog`, for example `Logging__EventLog__LogLevel__Default=Information`. A setting for all providers, such as `Logging__LogLevel__Default`, does not change it.
+- The line that stops the server before it starts: the `error:` line that ends with exit code 1 or 2 is also written as an error with the event ID 50. When the server license is missing, this line names the server's installation key and fingerprints.
+
+The first entry registers the source `elm-server`, which needs an administrator's rights; LocalSystem has them. Where the source cannot be registered, nothing is written to the event log: .NET then tries to write the one entry `Unable to log .NET application events.` with the source `Application`.
 ## Usage log
 
 The usage log records leases, borrows, refusals, and events of the program that writes it, such as its starts and stops. It is a record for audits and billing questions: the seat count does not depend on it, and a failure to write it goes to the operational log without failing the request.

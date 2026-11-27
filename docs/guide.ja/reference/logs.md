@@ -8,7 +8,7 @@ sidebar_position: 5
 
 ## 運用ログ
 
-`elm-server` と `elm-service` は、動いているあいだ、自分の処理についてのメッセージを .NET のコンソールロガーで標準出力に書く。このログには署名がなく、プログラムはこのログをファイルに残さない。残すには、プログラムを起動するサービスマネージャーやコンテナランタイムなどで、標準出力を記録する。
+`elm-server` と `elm-service` は、動いているあいだ、自分の処理についてのメッセージを .NET のコンソールロガーで標準出力に書く。このログには署名がなく、プログラムはこのログをファイルに残さない。残すには、プログラムを起動するサービスマネージャーやコンテナランタイムなどで、標準出力を記録する。Windows サービスとして動く `elm-server` は、代わりに Windows のイベントログに書く（[Windows サービスとしての `elm-server`](#windows-サービスとしての-elm-server)）。
 
 各メッセージは 2 行からなる。1 行目はレベル（`dbug`、`info`、`warn`、`fail`、`crit` のいずれか）、カテゴリ、イベント番号で、2 行目は字下げしたメッセージだ。たとえば次のようになる。
 
@@ -27,7 +27,7 @@ info: elm-server[2]
 | `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文が届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。クライアントがリクエストの本文の途中で接続をリセットしたときも、このエラーは書かない。 |
 | `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | 管理画面のサインインを使う `elm-service` だけ。サインイン用の鍵を作る起動で、`Creating key {…} …` と、警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` を書く。[OIDC でサインインする](../how-to/sign-in-with-oidc.md)で説明しているとおり、サービスはこの鍵を保存する前に自分で暗号化する。 |
 
-リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。`Logging` の下の設定は、このカテゴリを指すものでも、このカテゴリに当たる `*` のパターンでも、プロバイダー `Console` のものでも、`Default` でも、これを下げられない。`None` のように `Warning` より上のレベルを求める設定は、このカテゴリにもそのまま効く。
+リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。`Logging` の下の設定は、このカテゴリを指すものでも、このカテゴリに当たる `*` のパターンでも、プロバイダー `Console` や `EventLog` のものでも、`Default` でも、これを下げられない。`None` のように `Warning` より上のレベルを求める設定は、このカテゴリにもそのまま効く。
 
 管理画面のサインインは、ASP.NET Core の部品である OpenID Connect のハンドラーが処理する。`elm-service` は、このハンドラーのエントリー（カテゴリ `Microsoft.AspNetCore.Authentication.OpenIdConnect.OpenIdConnectHandler`）を、どのレベルでも書かない。これらは、`/auth/callback` への戻りのクエリの `error`、`error_description`、`error_uri` を改行も含めて引用し、リクエストが送った Cookie の値も引用する。`Logging` の下の設定は、上で挙げたどの形でも、これらを書くようにはできない。
 
@@ -39,8 +39,16 @@ info: elm-server[2]
 
 レベルの既定は `Information` だ。変えるには、環境変数 `Logging__LogLevel__Default` に `Trace`、`Debug`、`Information`、`Warning`、`Error`、`Critical`、`None` のどれかを設定する。たとえば `Logging__LogLevel__Default=Warning` にすると、警告とエラーだけを書く。
 
-起動する前にプログラムを止めたエラーは、このログには入らない。`elm-server` は `error:` と理由を、`elm-service` は理由を、標準エラー出力に書く。終了コードは [elm-server の設定](server-configuration.md#コマンドラインと終了コード)と [elm-service の設定](service-configuration.md#コマンドラインと終了コード)にある。
+起動する前にプログラムを止めたエラーは、このログには入らない。`elm-server` は `error:` と理由を、`elm-service` は理由を、標準エラー出力に書く（Windows サービスとして動く `elm-server` は、イベントログにも書く）。終了コードは [elm-server の設定](server-configuration.md#コマンドラインと終了コード)と [elm-service の設定](service-configuration.md#コマンドラインと終了コード)にある。
 
+### Windows サービスとしての `elm-server`
+
+Windows サービスとして動く `elm-server` の標準出力と標準エラー出力は、どこにも届かない。そのため、`elm-server` は代わりに、Windows の Application ログに、ソース `elm-server` で書く。
+
+- 運用ログ: 各メッセージは、そのイベント番号をイベント ID とするエントリーになる。たとえば `server.stopped: 0 leases were not returned` のイベント ID は 2 だ。既定では `Warning` 以上のエントリーだけを書く。リクエストごとの `Information` のエントリーが Application ログを埋めてしまうためだ。そのため、既定では、サーバーの起動と停止（`server.started: …` と `server.stopped: …`）はイベントログに出ない。イベントログのレベルを変えるには、プロバイダー `EventLog` に対して設定する。たとえば `Logging__EventLog__LogLevel__Default=Information` にする。`Logging__LogLevel__Default` のような、すべてのプロバイダーに対する設定では変わらない。
+- 起動する前にサーバーを止めた行: 終了コード 1 か 2 で終わる前の `error:` の行も、イベント ID 50 のエラーとして書く。サーバーライセンスがないときは、この行が、サーバーのインストール鍵のサムプリントと、マシンのフィンガープリントを示す。
+
+ソース `elm-server` は、最初のエントリーを書くときに登録される。登録には管理者の権限が要り、LocalSystem はこれを持つ。ソースを登録できないときは、イベントログには何も書かれない。そのとき .NET は、ソース `Application` で `Unable to log .NET application events.` のエントリーを 1 つだけ書こうとする。
 ## 利用ログ
 
 利用ログには、リース、借用、拒否と、書き込むプログラム自身のイベント（起動や停止など）を記録する。監査や課金の問い合わせのための記録で、シートの数え方はこのログに依存しない。書き込みに失敗しても、そのことを運用ログに書くだけで、リクエストは失敗させない。
