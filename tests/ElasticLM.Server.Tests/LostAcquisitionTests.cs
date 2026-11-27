@@ -103,6 +103,58 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// An acquisition or a borrow that never left the device is not released and owes no release: the server cannot have
+    /// issued a lease for it. A failure after the request may have left is released (design §12.7.7, §10.4 step 2).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 2 seats of pro, past its reclaim window; a client behind a relay that fails the next acquisition (or
+    ///   borrow of an hour) without passing it on, with the case's HttpRequestError: NameResolutionError, ConnectionError,
+    ///   SecureConnectionError, and ProxyTunnelError, as the HTTP client gives them before a request is written; ConnectionError
+    ///   for a borrow; Unknown, as for a connection cut after the request was written.
+    ///
+    /// Steps:
+    /// - Acquire pro (or borrow it); acquire pro again.
+    ///
+    /// Expected:
+    /// - The first call fails with ELM_NETWORK_ERROR "The server cannot be reached: The acquisition is made to fail.".
+    /// - The requests other than GET are the two POST /v1/leases; for Unknown, a DELETE /v1/leases/requests/ with the first
+    ///   acquisition's jti comes right after the first POST, and nothing more. The second acquisition gives a lease, and the
+    ///   server counts 1 seat.
+    /// </remarks>
+    /// <param name="failure">The kind of failure of the first call.</param>
+    /// <param name="borrow">Whether the first call is a borrow.</param>
+    /// <param name="released">Whether the first call is released.</param>
+    [Theory]
+    [InlineData(HttpRequestError.NameResolutionError, false, false)]
+    [InlineData(HttpRequestError.ConnectionError, false, false)]
+    [InlineData(HttpRequestError.SecureConnectionError, false, false)]
+    [InlineData(HttpRequestError.ProxyTunnelError, false, false)]
+    [InlineData(HttpRequestError.ConnectionError, true, false)]
+    [InlineData(HttpRequestError.Unknown, false, true)]
+    public async Task Acquire_NeverSent_IsNotReleased(HttpRequestError failure, bool borrow, bool released)
+    {
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder { FailNextAcquisitionWith = failure };
+        LicenseClient client = Client(server, relay);
+
+        LeaseResult result = borrow
+            ? await client.BorrowLeaseAsync("pro", TimeSpan.FromHours(1), cancellationToken: cancel)
+            : await client.AcquireLeaseAsync("pro", cancellationToken: cancel);
+        var failed = Assert.IsType<LeaseResult.Failed>(result);
+        Assert.Equal(new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: The acquisition is made to fail."), failed.Error);
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: cancel));
+
+        SentRequest[] sent = Requests(relay);
+        string[] expected = released
+            ? ["POST /v1/leases", "DELETE " + RequestReleases + sent[0].ProofId, "POST /v1/leases"]
+            : ["POST /v1/leases", "POST /v1/leases"];
+        Assert.Equal(expected, sent.Select(r => r.Method + " " + r.Path));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
     /// A release that does not get through is owed: it is sent before the next acquisition, before the next renewal, and
     /// when the client is disposed, and the seat is then free.
     /// </summary>

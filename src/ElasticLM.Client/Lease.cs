@@ -94,8 +94,8 @@ public sealed class Lease
 
     /// <summary>
     /// Gets the jti of the renewal attempts since the last token that got no answer or whose answer the client did not take,
-    /// newest last, at most 16. A retry names them, so the server can give the token one of them produced again without
-    /// taking the retry for a clone.
+    /// oldest first: the first 16 of them. A retry names them, so the server can give the token one of them produced again
+    /// without taking the retry for a clone.
     /// </summary>
     internal List<string> UnansweredProofIds { get; } = [];
 
@@ -106,14 +106,14 @@ public sealed class Lease
         UnansweredProofIds.Clear();
     }
 
+    // design §10.4 step 2 (V1d24b): the server's last token came from the first of these requests that reached it, so a full
+    // list keeps the oldest and takes no more.
     internal void AddUnanswered(string proofId)
     {
-        if (UnansweredProofIds.Count == 16)
+        if (UnansweredProofIds.Count < 16)
         {
-            UnansweredProofIds.RemoveAt(0);
+            UnansweredProofIds.Add(proofId);
         }
-
-        UnansweredProofIds.Add(proofId);
     }
 
     /// <summary>Returns the delay before the next retry and doubles it up to 60 seconds.</summary>

@@ -170,6 +170,9 @@ jobs:
     runs-on: ubuntu-latest
     # design §20.7: about 28 minutes (leases 20, starts 2, activations 2, the JIT elm-service 3, the self-test 1).
     timeout-minutes: 60
+    # security.mdc: the run: script reads the matrix value from the environment, not from ${{ }} in its text.
+    env:
+      RUN: ${{ matrix.run }}
     defaults:
       run:
         shell: pwsh
@@ -235,7 +238,7 @@ jobs:
           }
           if ($LASTEXITCODE -ne 0) { "::error::PostgreSQL did not start"; exit 1 }
           try {
-            ./tools/ElasticLM.Measure/run.ps1 -Bin measure/bin -VerifyLicense measure/verify/VerifyLicense -Out run-${{ matrix.run }}.json -Logs measure-logs `
+            ./tools/ElasticLM.Measure/run.ps1 -Bin measure/bin -VerifyLicense measure/verify/VerifyLicense -Out "run-$env:RUN.json" -Logs measure-logs `
               -Postgres 'Host=127.0.0.1;Port=5434;Username=postgres;Password=elm-measure;Database=postgres'
           }
           finally {
