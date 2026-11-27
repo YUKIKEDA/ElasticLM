@@ -165,7 +165,7 @@ A line is written after the request's change is committed. An expired lease is w
 ### Verifying the usage log
 
 ```text
-elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--json]
+elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--license <ID>] [--json]
 ```
 
 Every option is listed in [`elm log verify`](elm-cli.md#elm-log-verify). For the usage log:
@@ -173,9 +173,10 @@ Every option is listed in [`elm log verify`](elm-cli.md#elm-log-verify). For the
 - Give the log files, or folders of them. Files are verified in name order, oldest first. A folder stands for the files of the stream in it.
 - `--product` is needed for the log of `elm-server`, not for that of `elm-service`.
 - `--node` picks a node's `usage-<node>-*.jsonl` files in folders of `elm-service`'s usage logs. It is not allowed with file paths.
-- `--json` writes `intact`, `files`, `entries`, and `issues` (each with `file`, `line`, `severity`, `message`).
+- `--license` names the server license that must have signed each file. A file passes only when every server license whose key signed its lines is that one. A server that reloads a server license with another ID while it runs goes on in the same file with the new key, so such a file holds two IDs and passes with neither. A file that does not pass is an error. A file that holds one ID, another than the one given, gets `The file is signed by the key of server license <ID>, not of <expected ID> (--license).`. A file that holds several IDs gets `The file is signed by the keys of server licenses <ID>, <ID>, not only of <expected ID> (--license).`, also when one of them is the ID given. A file of `elm-service` gets `The file is a log of elm-service, not of server license <expected ID> (--license).`.
+- `--json` writes `intact`, `files`, `entries`, `issues` (each with `file`, `line`, `severity`, `message`), and `licenses` (each with `file` and, for a server's log, `licenseIds`: an array of every server license that signed the file, in the order they first signed).
 
-The command checks the key material of each first line against the trust store at the time of that line: a server license for `elm-server`, certificates for logs for `elm-service`. It then checks every `auth` line, the chain inside each file, and the chain from file to file. The text output gives one line per issue, `error: <file>:<line>: <message>` or `warning: ...`, then `intact: <files> file(s), <lines> event line(s)` or `NOT INTACT: ...`.
+The command checks the key material of each first line against the trust store at the time of that line: a server license for `elm-server`, certificates for logs for `elm-service`. It then checks every `auth` line, the chain inside each file, and the chain from file to file. The text output gives one line per issue, `error: <file>:<line>: <message>` or `warning: ...`, then one line per file whose first line verified, `file: <file>: server license <ID>` or `file: <file>: elm-service`, then `intact: <files> file(s), <lines> event line(s)` or `NOT INTACT: ...`. The `file:` line names every server license that signed the file, in the order they first signed, separated by a comma and a space, such as `file: usage-20260115T093000000Z.jsonl: server license lic-a, lic-b`. A file whose first line does not verify has an error and gets no `file:` line and no item in `licenses`. When every file of the stream in a folder has a name with no real date and time, so that there is no file to verify, the command writes their warnings to standard error before the error `No usage log file was found.` (`No borrows log file was found.` with `--stream borrows`), and exits with 2.
 
 | Exit code | Meaning |
 | --- | --- |

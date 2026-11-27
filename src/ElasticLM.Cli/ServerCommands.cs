@@ -167,12 +167,12 @@ internal static class ServerCommands
     private static void PrintStatus(AdminAnswer answer, TextWriter writer)
     {
         AdminStatus status = answer.Read(AdminJsonContext.Default.AdminStatus);
-        writer.WriteLine($"product: {status.Product}");
-        writer.WriteLine($"license: {status.License} (token {status.LicenseToken})");
+        writer.WriteLine($"product: {CliText.Printable(status.Product)}");
+        writer.WriteLine($"license: {CliText.Printable(status.License)} (token {CliText.Printable(status.LicenseToken)})");
 
         // elm-server leaves licenseExpires out when the server license has no expiry (design §13.7).
         writer.WriteLine("expires: " + (status.LicenseExpires is long expires ? Time(expires) : "never"));
-        writer.WriteLine($"key: {status.Key}");
+        writer.WriteLine($"key: {CliText.Printable(status.Key)}");
         writer.WriteLine(status.Recovering ? $"reclaiming leases until {Time(status.RecoveryEnds)}" : "serving");
         writer.WriteLine($"leases: {status.Leases}");
         answer.ReadEach(
@@ -180,7 +180,7 @@ internal static class ServerCommands
             AdminJsonContext.Default.AdminFeature,
             feature =>
                 writer.WriteLine(
-                    $"  {feature.Feature}: {feature.InUse} of {feature.Seats} seats in use "
+                    $"  {CliText.Printable(feature.Feature)}: {feature.InUse} of {feature.Seats} seats in use "
                         + $"({feature.Allowed} with overage, {feature.Borrowed} borrowed)"
                 )
         );
@@ -195,13 +195,15 @@ internal static class ServerCommands
             {
                 string kind = lease.Borrow ? "borrow" : "lease";
                 string stopped = lease.Stopped ? " stopped" : string.Empty;
-                writer.WriteLine($"{lease.Id} {kind}{stopped} {lease.Feature} x{lease.Seats} key {lease.Key} until {Time(lease.Expires)}");
+                writer.WriteLine(
+                    $"{CliText.Printable(lease.Id)} {kind}{stopped} {CliText.Printable(lease.Feature)} x{lease.Seats} key {CliText.Printable(lease.Key)} until {Time(lease.Expires)}"
+                );
             }
         );
 
     private static void PrintReload(AdminAnswer answer, TextWriter writer)
     {
         AdminReload reload = answer.Read(AdminJsonContext.Default.AdminReload);
-        writer.WriteLine($"reloaded: license {reload.License}, token {reload.LicenseToken}");
+        writer.WriteLine($"reloaded: license {CliText.Printable(reload.License)}, token {CliText.Printable(reload.LicenseToken)}");
     }
 }
