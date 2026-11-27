@@ -1317,11 +1317,11 @@ $$
 
 Windows では、2 つ目の指紋として SMBIOS の UUID（`GetSystemFirmwareTable('RSMB')`、管理者権限は不要）から同じ方法で作った値を加える。Linux の `/sys/class/dmi/id/product_uuid` は root しか読めないため使わない。
 
-Windows の MachineGuid と macOS の IOPlatformUUID は、UUID の文字列として読み、文字列に書かれた順の 16 バイトにする（`00112233-4455-6677-8899-aabbccddeeff` なら 00、11、22 … ff。.NET の `Guid.ToByteArray(bigEndian: true)`）。受け入れる文字列の形は、.NET の `Guid.TryParse` が受け入れるものすべてである。ハイフンで区切った 36 文字、32 桁の 16 進、`{}` か `()` で囲んだ形、`{0x…}` の形を受け入れ、大文字と小文字を問わず、前後の空白（改行を含む）は除く。Linux の `/etc/machine-id`（下の段落）より広いが、形は狭めない。読む ID を変えないためである（V1d29g の問 5）。MachineGuid は文字列の値（REG_SZ と、展開した REG_EXPAND_SZ）だけを読み、ほかの型の値は読めない ID とする。64 ビットのビューを名指すのは、32 ビットのプロセスが読む既定のビュー（`HKLM\SOFTWARE\WOW6432Node`）に MachineGuid がないからである（Windows 11 で `reg query … /reg:32` が値を見つけないことを測った）。IOPlatformUUID は UTF-8 で 63 バイトまでを読み、それより長い値は読めない ID とする。SMBIOS の UUID は、表に格納されたとおりの 16 バイトを使い、並べ替えない。SMBIOS 2.6 以降は先頭の 3 つのフィールドをリトルエンディアンで持つので、この 16 バイトは、OS のツールが表示する UUID の文字列の順とは違う（V1d29g、Issue #494。記録は [rows/V1d29g.md](./rows/V1d29g.md)）。
+Windows の MachineGuid と macOS の IOPlatformUUID は、UUID の文字列として読み、文字列に書かれた順の 16 バイトにする（`00112233-4455-6677-8899-aabbccddeeff` なら 00、11、22 … ff。.NET の `Guid.ToByteArray(bigEndian: true)`）。受け入れる文字列の形は、.NET の `Guid.TryParse` が受け入れるものすべてである（IOPlatformUUID は、下の 63 バイトの上限の中で）。たとえば、ハイフンで区切った 36 文字、32 桁の 16 進、`{}` か `()` で囲んだ形、`{0x…}` の形を受け入れ、大文字と小文字を問わず、前後の空白（改行を含む）は除く。互換のため、D の形の各フィールドの先頭の `+` や `0x`、X の形の中の空白や短い桁も受け入れる。Linux の `/etc/machine-id`（下の段落）より広いが、形は狭めない。読む ID を変えないためである（V1d29g の問 5）。MachineGuid は文字列の値（REG_SZ と、展開した REG_EXPAND_SZ）だけを読み、ほかの型の値は読めない ID とする。64 ビットのビューを名指すのは、32 ビットのプロセスが読む既定のビュー（`HKLM\SOFTWARE\WOW6432Node`）に MachineGuid がないからである（Windows 11 で `reg query … /reg:32` が値を見つけないことを測った）。IOPlatformUUID は UTF-8 で 63 バイトまでを読み、それより長い値は読めない ID とする。SMBIOS の UUID は、表に格納されたとおりの 16 バイトを使い、並べ替えない。SMBIOS 2.6 以降は先頭の 3 つのフィールドをリトルエンディアンで持つので、この 16 バイトは、OS のツールが表示する UUID の文字列の順とは違う（V1d29g、Issue #494。記録は [rows/V1d29g.md](./rows/V1d29g.md)）。
 
 `GetSystemFirmwareTable('RSMB')` は、まず大きさを問い、その大きさのバッファでもう一度呼ぶ。返るバッファ（`RawSMBIOSData`）は、8 バイトの頭（版の 4 バイトと、表の長さを表すリトルエンディアンの 32 ビットの `Length`）と、それに続く SMBIOS の表である。次のどれかに当たれば、UUID は読めない（V1d29g）。
 
-- 1 回目に返った大きさが 8 バイト以下か、1 MiB を超える。このときは 2 回目を呼ばない。1 MiB は、OS から得る値に置く読む量の上限である。
+- 1 回目に返った大きさが 8 バイト以下か、1 MiB を超える。このときは 2 回目を呼ばない。1 MiB は、この表を読む量の上限である。
 - 2 回目に返った大きさが、1 回目と違う（2 回の呼び出しの間に表が変わったときと、2 回目が失敗して 0 を返したとき）。
 - `Length` が、32 ビットの符号付きの数として 0 以下か、頭の後ろの大きさを超える。
 
