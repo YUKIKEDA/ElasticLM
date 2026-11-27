@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -480,7 +481,7 @@ public sealed class MachineFingerprintTests : IDisposable
     public void ReadSmbiosUuid_SecondCallOrTableLength_RefusesMismatch(uint second, int length, bool read)
     {
         byte[] data = RawSmbiosData(64);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), length);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), length);
         var firmware = new FakeFirmware(data, 64, second);
 
         byte[]? uuid = MachineIdSources.ReadSmbiosUuid(firmware.Read);
@@ -528,7 +529,7 @@ public sealed class MachineFingerprintTests : IDisposable
             table.CopyTo(data, 8);
         }
 
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), data.Length - 8);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), data.Length - 8);
         return data;
     }
 
