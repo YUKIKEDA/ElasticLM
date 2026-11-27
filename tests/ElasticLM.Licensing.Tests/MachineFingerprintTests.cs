@@ -327,14 +327,17 @@ public sealed class MachineFingerprintTests : IDisposable
     /// - The end-of-table structure, then the full type 1 structure.
     /// - A type 0 structure of length 2, then the full type 1 structure.
     /// - The full type 1 structure, then another of length 0x1B with UUID bytes BB.
-    /// - A type 0 structure alone, so the table ends before a type 1 structure; the same with 3 more bytes (1, 0x1B, 1).
+    /// - A type 0 structure alone, so the table ends before a type 1 structure; the same with 1 more byte (1) and with 3 more
+    ///   bytes (1, 0x1B, 1).
     /// - A type 0 structure whose string set has no two zero bytes before the table ends.
+    /// - The full type 1 structure, then a structure of length 2.
     ///
     /// Steps:
     /// - Parse each table.
     ///
     /// Expected:
-    /// - 01..10 for the first two and for the two type 1 structures (the first one counts); null for the others.
+    /// - 01..10 for the first two, for the two type 1 structures (the first one counts), and for the full type 1 structure
+    ///   before a broken one (nothing after it is read); null for the others.
     /// </remarks>
     [Fact]
     public void ParseSmbiosSystemUuid_ShortOrMalformedStructures_FollowTheirRules()
@@ -350,7 +353,9 @@ public sealed class MachineFingerprintTests : IDisposable
         Assert.Equal(uuid, MachineIdSources.ParseSmbiosSystemUuid([.. shortType1, .. full]));
         Assert.Equal(uuid, MachineIdSources.ParseSmbiosSystemUuid(full.AsSpan(0, 0x1B)));
         Assert.Equal(uuid, MachineIdSources.ParseSmbiosSystemUuid([.. full, .. second]));
+        Assert.Equal(uuid, MachineIdSources.ParseSmbiosSystemUuid([.. full, .. lengthUnderFour]));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid(type0));
+        Assert.Null(MachineIdSources.ParseSmbiosSystemUuid([.. type0, 1]));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid([.. type0, 1, 0x1B, 1]));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid([0, 4, 0, 0, (byte)'A', 0, (byte)'B']));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid(full.AsSpan(0, 0x1A)));

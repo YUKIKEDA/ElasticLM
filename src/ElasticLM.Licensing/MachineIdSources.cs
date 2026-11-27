@@ -96,7 +96,7 @@ internal static partial class MachineIdSources
 
     /// <summary>
     /// Adds <paramref name="id"/> to <paramref name="ids"/> unless it is <see langword="null"/>, all zeros, or all ones. Every
-    /// reader returns 16 bytes, and <see cref="MachineFingerprint.Derive"/> refuses any other length.
+    /// reader returns 16 bytes or null, and <see cref="MachineFingerprint.Derive"/> refuses any other length.
     /// </summary>
     internal static void AddIfValid(List<byte[]> ids, byte[]? id)
     {
@@ -128,7 +128,7 @@ internal static partial class MachineIdSources
     {
         try
         {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0);
 
             // One byte past the limit tells a file of 64 bytes from a larger one without trusting FileStream.Length.
             Span<byte> buffer = stackalloc byte[65];
