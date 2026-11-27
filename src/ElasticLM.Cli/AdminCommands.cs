@@ -21,6 +21,7 @@ internal static class AdminCommands
     private const int MaxInterval = 60;
     private const int MaxDeviceLifetime = 1800;
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(100);
+    private static readonly TimeSpan IdleTimeout = TimeSpan.FromSeconds(100);
     private static readonly string[] Methods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
 
     public static Command Create(CliHost host)
@@ -59,7 +60,7 @@ internal static class AdminCommands
         Uri service = ServiceUrl(urlText, "--url");
         using HttpClient http = OidcHttp.Create();
         using var infoRequest = new HttpRequestMessage(HttpMethod.Get, new Uri(service, "v1/admin/oidc"));
-        (HttpStatusCode infoStatus, JsonDocument? infoBody) = OidcHttp.Send(http, infoRequest);
+        (HttpStatusCode infoStatus, JsonDocument? infoBody) = OidcHttp.Send(http, infoRequest, host.Time);
         string issuer;
         string clientId;
         string scopes;
@@ -85,19 +86,20 @@ internal static class AdminCommands
 
         Uri deviceEndpoint;
         Uri tokenEndpoint;
-        using (JsonDocument discovery = OidcHttp.Discovery(http, issuer))
+        using (JsonDocument discovery = OidcHttp.Discovery(http, issuer, host.Time))
         {
             deviceEndpoint = OidcHttp.Url(discovery.RootElement, "device_authorization_endpoint", "discovery document");
             tokenEndpoint = OidcHttp.Url(discovery.RootElement, "token_endpoint", "discovery document");
         }
 
         // design §5.4: the person can check where they sign in before they approve.
-        host.Error.WriteLine($"Signing in to {service} with the identity provider {issuer}.");
+        host.Error.WriteLine($"Signing in to {service} with the identity provider {CliText.Printable(issuer)}.");
 
         (HttpStatusCode deviceStatus, JsonDocument? deviceBody) = OidcHttp.PostForm(
             http,
             deviceEndpoint,
-            [new("client_id", clientId), new("scope", scopes)]
+            [new("client_id", clientId), new("scope", scopes)],
+            host.Time
         );
         string deviceCode;
         int interval;
@@ -123,10 +125,10 @@ internal static class AdminCommands
 
             lifetime = Math.Min(seconds, MaxDeviceLifetime);
             interval = Math.Clamp(Number(device, "interval") ?? DefaultInterval, 1, MaxInterval);
-            host.Error.WriteLine($"Open {verification} and enter the code {userCode}.");
+            host.Error.WriteLine($"Open {CliText.Printable(verification)} and enter the code {CliText.Printable(userCode)}.");
             if (device.TryGetProperty("verification_uri_complete", out JsonElement complete) && complete.ValueKind == JsonValueKind.String)
             {
-                host.Error.WriteLine($"Or open {complete.GetString()}");
+                host.Error.WriteLine($"Or open {CliText.Printable(complete.GetString())}");
             }
         }
 
@@ -147,7 +149,8 @@ internal static class AdminCommands
                 (status, body) = OidcHttp.PostForm(
                     http,
                     tokenEndpoint,
-                    [new("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), new("device_code", deviceCode), new("client_id", clientId)]
+                    [new("grant_type", "urn:ietf:params:oauth:grant-type:device_code"), new("device_code", deviceCode), new("client_id", clientId)],
+                    host.Time
                 );
             }
             catch (CliException e) when (e.ExitCode == ExitCodes.NetworkError)
@@ -203,14 +206,15 @@ internal static class AdminCommands
             try
             {
                 using HttpClient http = OidcHttp.Create();
-                using JsonDocument discovery = OidcHttp.Discovery(http, login.Issuer);
+                using JsonDocument discovery = OidcHttp.Discovery(http, login.Issuer, host.Time);
                 if (discovery.RootElement.TryGetProperty("revocation_endpoint", out _))
                 {
                     Uri revocation = OidcHttp.Url(discovery.RootElement, "revocation_endpoint", "discovery document");
                     (HttpStatusCode status, JsonDocument? body) = OidcHttp.PostForm(
                         http,
                         revocation,
-                        [new("token", login.RefreshToken), new("token_type_hint", "refresh_token"), new("client_id", login.ClientId)]
+                        [new("token", login.RefreshToken), new("token_type_hint", "refresh_token"), new("client_id", login.ClientId)],
+                        host.Time
                     );
                     body?.Dispose();
                     if (status != HttpStatusCode.OK)
@@ -221,7 +225,7 @@ internal static class AdminCommands
             }
             catch (CliException e)
             {
-                host.Error.WriteLine("The refresh token was not revoked: " + e.Message);
+                host.Error.WriteLine("The refresh token was not revoked: " + CliText.Printable(e.Message));
             }
         }
 
@@ -270,15 +274,28 @@ internal static class AdminCommands
             using Stream stream = response.Content.ReadAsStream();
             if (response.IsSuccessStatusCode)
             {
-                // The body is written as it arrives, whatever its size: a usage log file can be large.
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                char[] chunk = new char[8192];
+                // The body is written as it arrives, whatever its size: a usage log file can be large. Its control
+                // characters other than line feeds and tabs are replaced (design §16, V1d27).
+                Decoder decoder = Encoding.UTF8.GetDecoder();
+                byte[] chunk = new byte[8192];
+                char[] text = new char[Encoding.UTF8.GetMaxCharCount(chunk.Length)];
                 int read;
                 char last = '\n';
-                while ((read = reader.Read(chunk)) > 0)
+                while ((read = ReadSome(host, stream, chunk, chunk.Length)) > 0)
                 {
-                    host.Out.Write(chunk, 0, read);
-                    last = chunk[read - 1];
+                    int count = decoder.GetChars(chunk, 0, read, text, 0, flush: false);
+                    if (count > 0)
+                    {
+                        host.Out.Write(CliText.Printable(new string(text, 0, count), keepLines: true));
+                        last = text[count - 1];
+                    }
+                }
+
+                int rest = decoder.GetChars([], 0, 0, text, 0, flush: true);
+                if (rest > 0)
+                {
+                    host.Out.Write(CliText.Printable(new string(text, 0, rest), keepLines: true));
+                    last = text[rest - 1];
                 }
 
                 // design §16: a body that does not end with a line break gets one, so that the shell's prompt or the next
@@ -294,18 +311,36 @@ internal static class AdminCommands
             byte[] error = new byte[MaxErrorBytes];
             int length = 0;
             int got;
-            while (length < error.Length && (got = stream.Read(error, length, error.Length - length)) > 0)
+            while (length < error.Length && (got = ReadSome(host, stream, error, error.Length - length, length)) > 0)
             {
                 length += got;
             }
 
             host.Error.WriteLine($"error: the service answered {(int)response.StatusCode}.");
-            host.Error.WriteLine(Encoding.UTF8.GetString(error, 0, length));
+            host.Error.WriteLine(CliText.Printable(Encoding.UTF8.GetString(error, 0, length), keepLines: true));
             return ExitCodes.VerificationFailed;
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
         {
             throw new CliException("The service cannot be reached: " + e.Message, ExitCodes.NetworkError);
+        }
+    }
+
+    // design §16 (V1d27, the Grill's 27-6): one read of the answer's body, which ends when no byte came within 100 seconds of
+    // the host's clock. The wait starts again with each read, so a long body that keeps coming is read to its end.
+    private static int ReadSome(CliHost host, Stream stream, byte[] buffer, int count, int offset = 0)
+    {
+        using var idle = new CancellationTokenSource(IdleTimeout, host.Time);
+        try
+        {
+            return stream.ReadAsync(buffer.AsMemory(offset, count), idle.Token).AsTask().GetAwaiter().GetResult();
+        }
+        catch (OperationCanceledException) when (idle.IsCancellationRequested)
+        {
+            throw new CliException(
+                $"The service cannot be reached: No byte of the answer came within {IdleTimeout.TotalSeconds:0} seconds.",
+                ExitCodes.NetworkError
+            );
         }
     }
 

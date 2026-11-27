@@ -24,7 +24,7 @@ info: elm-server[2]
 | `Microsoft.Hosting.Lifetime` | Web ホストの起動と停止。待ち受けるアドレスとソケットのファイルのそれぞれ（`Now listening on: …`）、`Application started. Press Ctrl+C to shut down.`、ホスティング環境、コンテンツのルートのパス、`Application is shutting down...`。 |
 | `Microsoft.Extensions.Hosting.Internal.Host` | プログラムが待ち受けられないときのエラー `Hosting failed to start` と、その例外。 |
 | `Microsoft.AspNetCore.Routing.EndpointMiddleware` | エンドポイントに届いたリクエストごとに、そのメソッドとルートのパターンを、処理の前とあとに書く。たとえば `Executing endpoint 'HTTP: GET /v1/nonce'` と `Executed endpoint 'HTTP: GET /v1/nonce'` だ。パスの中の値は、`HTTP: DELETE /admin/v1/leases/{id}` の `{id}` のように、プレースホルダーのまま書く。 |
-| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文が届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。呼び出し側がリクエストの本文の途中で接続をリセットしたときも、このエラーは書かない。 |
+| `Microsoft.AspNetCore.Server.Kestrel` | リクエストがプログラムの中で失敗したときのエラー `An unhandled exception was thrown by the application.`。接続とリクエストの ID と、例外を添える。リクエストの本文のチャンクが不正なときや、本文が届くのが遅すぎたときは、このエラーは書かない。代わりに、プログラムが `A device request (<route>) could not be read …` か `The request of an administration call … could not be read …` を書く（`elm-server` と `elm-service` の行を参照）。クライアントがリクエストの本文の途中で接続をリセットしたときも、このエラーは書かない。 |
 | `Microsoft.AspNetCore.DataProtection.KeyManagement.XmlKeyManager` | 管理画面のサインインを使う `elm-service` だけ。サインイン用の鍵を作る起動で、`Creating key {…} …` と、警告 `No XML encryptor configured. Key {…} may be persisted to storage in unencrypted form.` を書く。[OIDC でサインインする](../how-to/sign-in-with-oidc.md)で説明しているとおり、サービスはこの鍵を保存する前に自分で暗号化する。 |
 
 リクエストごとの Web ホスト自身のエントリー `Request starting …` と `Request finished …` は書かない。これらはリクエストのパス、クエリ文字列、`Host` ヘッダーを含むので、プログラムは、そのカテゴリ `Microsoft.AspNetCore.Hosting.Diagnostics` を `Warning` より下では書かない。`Logging` の下の設定は、このカテゴリを指すものでも、このカテゴリに当たる `*` のパターンでも、プロバイダー `Console` のものでも、`Default` でも、これを下げられない。`None` のように `Warning` より上のレベルを求める設定は、このカテゴリにもそのまま効く。
@@ -165,7 +165,7 @@ info: elm-server[2]
 ### 利用ログの検証
 
 ```text
-elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--json]
+elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream usage|borrows] [--trust <file>]... [--revoked <kid>]... [--license <ID>] [--json]
 ```
 
 すべてのオプションは [`elm log verify`](elm-cli.md#elm-log-verify) に載せている。利用ログについては次のとおり。
@@ -173,9 +173,10 @@ elm log verify <files or folders>... [--product <ID>] [--node <name>] [--stream 
 - ログのファイル、またはそれを入れたフォルダーを指定する。ファイルは名前の順に、古いものから検証する。フォルダーを指定すると、その中にあるそのストリームのファイルを指定したことになる。
 - `--product` は、`elm-server` のログでは必要で、`elm-service` のログでは要らない。
 - `--node` は、`elm-service` の利用ログのフォルダーから、そのノードの `usage-<node>-*.jsonl` のファイルを選ぶ。ファイルのパスと一緒には使えない。
-- `--json` は、`intact`、`files`、`entries`、`issues`（それぞれ `file`、`line`、`severity`、`message` を持つ）を書き出す。
+- `--license` は、各ファイルに署名しているはずのサーバーライセンスを指定する。ファイルが通るのは、その行に署名したサーバーライセンスがすべて、指定したものであるときだけだ。動いているあいだに別の ID のサーバーライセンスを読み込み直したサーバーは、同じファイルに新しい鍵で書き続けるので、そのファイルは 2 つの ID を持ち、どちらを指定しても通らない。通らないファイルはエラーになる。指定したものと違う ID を 1 つだけ持つファイルは `The file is signed by the key of server license <ID>, not of <expected ID> (--license).` になる。ID を 2 つ以上持つファイルは、そのうちの 1 つが指定した ID でも、`The file is signed by the keys of server licenses <ID>, <ID>, not only of <expected ID> (--license).` になる。`elm-service` のファイルは `The file is a log of elm-service, not of server license <expected ID> (--license).` になる。
+- `--json` は、`intact`、`files`、`entries`、`issues`（それぞれ `file`、`line`、`severity`、`message` を持つ）、`licenses`（それぞれ `file` と、サーバーのログなら `licenseIds` を持つ。`licenseIds` は、ファイルに署名したすべてのサーバーライセンスを、最初に署名した順に並べた配列だ）を書き出す。
 
-このコマンドは、各ファイルの最初の行にある鍵の情報を、その行の時刻でのトラストストアと照らし合わせる。`elm-server` ならサーバーライセンス、`elm-service` ならログ用の鍵証明書だ。次に、すべての `auth` 行、各ファイルの中のチェーン、ファイルからファイルへのチェーンを確かめる。テキストの出力は、問題ごとに `error: <file>:<line>: <message>` か `warning: ...` を 1 行ずつ出し、最後に `intact: <files> file(s), <lines> event line(s)` か `NOT INTACT: ...` を出す。
+このコマンドは、各ファイルの最初の行にある鍵の情報を、その行の時刻でのトラストストアと照らし合わせる。`elm-server` ならサーバーライセンス、`elm-service` ならログ用の鍵証明書だ。次に、すべての `auth` 行、各ファイルの中のチェーン、ファイルからファイルへのチェーンを確かめる。テキストの出力は、問題ごとに `error: <file>:<line>: <message>` か `warning: ...` を 1 行ずつ出し、次に、最初の行を確かめられたファイルごとに `file: <file>: server license <ID>` か `file: <file>: elm-service` を 1 行ずつ出し、最後に `intact: <files> file(s), <lines> event line(s)` か `NOT INTACT: ...` を出す。`file:` の行には、ファイルに署名したすべてのサーバーライセンスを、最初に署名した順に、コンマと空白で区切って出す（例: `file: usage-20260115T093000000Z.jsonl: server license lic-a, lic-b`）。最初の行を確かめられないファイルはエラーになり、`file:` の行にも `licenses` にも出ない。フォルダーにあるそのストリームのファイルが、どれも日時として読めない名前で、確かめるファイルがないときは、その警告を標準エラー出力に書いてから、エラー `No usage log file was found.`（`--stream borrows` では `No borrows log file was found.`）を書き、終了コード 2 で終わる。
 
 | 終了コード | 意味 |
 | --- | --- |

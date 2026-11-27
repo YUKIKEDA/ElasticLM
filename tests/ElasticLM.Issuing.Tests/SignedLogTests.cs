@@ -1365,6 +1365,52 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
+    /// The report names every server license whose key signed lines of a file, in the order they first signed, each once:
+    /// a key change to a license of another ID adds it, and a change back to the first adds nothing (design §18.1, V1d27).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log of lic-srv with one event line.
+    ///
+    /// Steps:
+    /// - Verify. Then, in a new log folder, change through the writer to lic-new of the same key, append, change back to
+    ///   lic-srv, append, and verify.
+    ///
+    /// Expected:
+    /// - The first file: LicenseIds [lic-srv]. The changed file: intact, LicenseIds [lic-srv, lic-new], and LicenseId (the
+    ///   license at the end) lic-srv.
+    /// </remarks>
+    [Fact]
+    public void Verify_KeyChangeToAnotherLicense_NamesEveryLicenseOfTheFile()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+        }
+
+        Assert.Equal(["lic-srv"], Verify().Files.Single().LicenseIds);
+        foreach (string file in Directory.GetFiles(_dir))
+        {
+            File.Delete(file);
+        }
+
+        using (SignedLog log = Open())
+        {
+            Append(log, 1);
+            log.ChangeKey(LicenseFile(_server, "lic-new"), KeyFiles.ExportPublicJwk(_server), Access(_server), takeOnFailure: true);
+            Append(log, 1);
+            log.ChangeKey(LicenseFile(_server), KeyFiles.ExportPublicJwk(_server), Access(_server), takeOnFailure: true);
+            Append(log, 1);
+        }
+
+        VerifiedLog report = Verify();
+        Assert.True(report.Intact, string.Join(" ", report.Issues.Select(i => i.Message)));
+        LogFileKey changed = Assert.Single(report.Files);
+        Assert.Equal(["lic-srv", "lic-new"], changed.LicenseIds);
+        Assert.Equal("lic-srv", changed.LicenseId);
+    }
+
+    /// <summary>
     /// A clock set back does not name a new file before the newest one, so the newest file stays the one with the latest
     /// records, and the chain links on.
     /// </summary>

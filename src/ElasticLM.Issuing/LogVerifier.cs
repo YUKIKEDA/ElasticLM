@@ -44,7 +44,14 @@ public sealed record LogEntry(string File, int Line, string Type, JsonElement Va
 /// <param name="KeyId">The thumbprint of the key: the server license's <c>cnf.jkt</c>, or the service's signing key.</param>
 /// <param name="Lease">The lease duration (<c>lease</c>) of that server license, which the server's reclaim window after a
 /// restart also covers (design §13.4, V1d25), or <see langword="null"/> for a log of <c>elm-service</c>.</param>
-public sealed record LogFileKey(string File, string? LicenseId, string KeyId, TimeSpan? Lease);
+public sealed record LogFileKey(string File, string? LicenseId, string KeyId, TimeSpan? Lease)
+{
+    /// <summary>
+    /// Gets every server license whose key signed lines of the file, in the order they first signed, each once: the
+    /// license of the first line, then each license a signed key change took. Empty for a log of <c>elm-service</c>.
+    /// </summary>
+    public IReadOnlyList<string> LicenseIds { get; init; } = [];
+}
 
 /// <summary>
 /// The result of <see cref="LogVerifier.Verify"/>.
@@ -143,6 +150,9 @@ public static class LogVerifier
         bool readToTheEnd = false;
         LogSigner? nextKey = null;
 
+        // design §18.1 (V1d27): every server license whose key signed the file, for the reader to compare with the one it expects.
+        var licenseIds = new List<string>();
+
         // design §18.1, 0.95: a service's file is compared with the previous file by the key that signs it, known at its
         // first signature.
         LogFileKey? previousKey = previousName is not null && state.Files.Count > 0 ? state.Files[^1] : null;
@@ -218,6 +228,11 @@ public static class LogVerifier
                     {
                         return;
                     }
+
+                    if (key!.LicenseId is string first)
+                    {
+                        licenseIds.Add(first);
+                    }
                 }
                 else if (type == LogLineTypes.ChainStart || type == LogLineTypes.ChainReset)
                 {
@@ -258,6 +273,10 @@ public static class LogVerifier
                         key!.Dispose();
                         key = nextKey;
                         nextKey = null;
+                        if (key.LicenseId is string changed && !licenseIds.Contains(changed, StringComparer.Ordinal))
+                        {
+                            licenseIds.Add(changed);
+                        }
                     }
 
                     continue;
@@ -336,7 +355,7 @@ public static class LogVerifier
             reader.Dispose();
             if (key is not null)
             {
-                state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId, key.Lease));
+                state.Files.Add(new LogFileKey(name, key.LicenseId, key.KeyId, key.Lease) { LicenseIds = [.. licenseIds] });
             }
 
             key?.Dispose();

@@ -1,23 +1,24 @@
 using System.Net;
 using System.Text.Json;
+using ElasticLM.Client;
 using ElasticLM.Issuing;
 
 namespace ElasticLM.Cli;
 
 /// <summary>
-/// The calls <c>elm</c> makes to an identity provider and to <c>GET /v1/admin/oidc</c> (design §16): 30 seconds each, answers
-/// up to 64 KiB, no redirects, and https URLs (http only on a loopback host).
+/// The calls <c>elm</c> makes to an identity provider and to <c>GET /v1/admin/oidc</c> (design §16): 30 seconds each on the
+/// host's clock, the body included, answers up to 256 KiB, no redirects, and https URLs (http only on a loopback host).
 /// </summary>
 internal static class OidcHttp
 {
-    /// <summary>The largest answer read from the identity provider or <c>/v1/admin/oidc</c>.</summary>
-    public const int MaxAnswerBytes = 64 * 1024;
+    /// <summary>
+    /// The largest answer read from the identity provider or <c>/v1/admin/oidc</c>: 256 KiB, as <c>elm-service</c> reads from
+    /// the same identity provider (design §14.6, V1d27).
+    /// </summary>
+    public const int MaxAnswerBytes = 256 * 1024;
 
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(30);
-
-    /// <summary>Creates the client for these calls.</summary>
-    public static HttpClient Create() =>
-        new(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = Timeout, MaxResponseContentBufferSize = MaxAnswerBytes };
+    /// <summary>Creates the client for these calls. Its own timeout is off: the time is counted by <see cref="BoundedAnswer"/>.</summary>
+    public static HttpClient Create() => BoundedAnswer.CreateClient(BoundedAnswer.CreateHandler());
 
     /// <summary>Returns whether a URL may be called: https, or http on a loopback host.</summary>
     public static bool IsAllowed(Uri? url) =>
@@ -33,60 +34,57 @@ internal static class OidcHttp
             ? url
             : throw new CliException($"The {what} has no https {member}.", ExitCodes.VerificationFailed);
 
-    /// <summary>Sends a request and reads its JSON answer; a status other than 2xx keeps its body for the caller to read.</summary>
-    /// <exception cref="CliException">The other side cannot be reached (exit code 3), or its answer is not JSON (1).</exception>
-    public static (HttpStatusCode Status, JsonDocument? Body) Send(HttpClient http, HttpRequestMessage request)
+    /// <summary>
+    /// Sends a request and reads its JSON answer, up to <see cref="MaxAnswerBytes"/> and within 30 seconds of
+    /// <paramref name="time"/> (design §12.1, §16, V1d27); a status other than 2xx keeps its body for the caller to read.
+    /// </summary>
+    /// <exception cref="CliException">The other side cannot be reached or gives no whole answer in time (exit code 3), its
+    /// answer is larger than the limit (ELM_MALFORMED, exit code 3), or its answer is not JSON (1).</exception>
+    public static (HttpStatusCode Status, JsonDocument? Body) Send(HttpClient http, HttpRequestMessage request, TimeProvider time)
     {
         ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+        BoundedAnswer answer;
         try
         {
-            using HttpResponseMessage response = http.Send(request);
-            byte[] bytes;
-            using (Stream stream = response.Content.ReadAsStream())
-            using (var buffer = new MemoryStream())
-            {
-                byte[] chunk = new byte[8192];
-                int read;
-                while ((read = stream.Read(chunk)) > 0)
-                {
-                    if (buffer.Length + read > MaxAnswerBytes)
-                    {
-                        throw new CliException($"The answer of {request.RequestUri} is larger than 64 KiB.", ExitCodes.VerificationFailed);
-                    }
-
-                    buffer.Write(chunk, 0, read);
-                }
-
-                bytes = buffer.ToArray();
-            }
-
-            JsonDocument? body = null;
-            try
-            {
-                body = bytes.Length == 0 ? null : Readable(JsonDocument.Parse(bytes));
-            }
-            catch (JsonException) when (!response.IsSuccessStatusCode)
-            {
-                body = null;
-            }
-            catch (JsonException)
-            {
-                throw new CliException($"The answer of {request.RequestUri} is not JSON.", ExitCodes.VerificationFailed);
-            }
-
-            return (response.StatusCode, body);
+            answer = BoundedAnswer.SendAsync(http, request, MaxAnswerBytes, time, CancellationToken.None).GetAwaiter().GetResult();
         }
-        catch (Exception e) when (e is HttpRequestException or TaskCanceledException or IOException)
+        catch (Exception e) when (e is HttpRequestException or TimeoutException)
         {
             throw new CliException($"{request.RequestUri} cannot be reached: {e.Message}", ExitCodes.NetworkError);
         }
+
+        // design §16 (V1d6, the V1d27 Grill's 27-7): nothing of an answer over the limit is read, whatever its status.
+        if (answer is not BoundedAnswer.Whole whole)
+        {
+            throw new CliException(
+                $"ELM_MALFORMED: The answer of {request.RequestUri} is larger than {MaxAnswerBytes} bytes.",
+                ExitCodes.NetworkError
+            );
+        }
+
+        JsonDocument? body = null;
+        try
+        {
+            body = whole.Body.IsEmpty ? null : Readable(JsonDocument.Parse(whole.Body));
+        }
+        catch (JsonException) when (!whole.IsSuccess)
+        {
+            body = null;
+        }
+        catch (JsonException)
+        {
+            throw new CliException($"The answer of {request.RequestUri} is not JSON.", ExitCodes.VerificationFailed);
+        }
+
+        return (whole.Status, body);
     }
 
     /// <summary>Gets a JSON document; a status other than 2xx is an error (exit code 1).</summary>
-    public static JsonDocument Get(HttpClient http, Uri url)
+    public static JsonDocument Get(HttpClient http, Uri url, TimeProvider time)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        (HttpStatusCode status, JsonDocument? body) = Send(http, request);
+        (HttpStatusCode status, JsonDocument? body) = Send(http, request, time);
         if ((int)status is < 200 or >= 300 || body is null)
         {
             body?.Dispose();
@@ -97,10 +95,15 @@ internal static class OidcHttp
     }
 
     /// <summary>Posts a form and returns the status and the JSON answer.</summary>
-    public static (HttpStatusCode Status, JsonDocument? Body) PostForm(HttpClient http, Uri url, IEnumerable<KeyValuePair<string, string>> form)
+    public static (HttpStatusCode Status, JsonDocument? Body) PostForm(
+        HttpClient http,
+        Uri url,
+        IEnumerable<KeyValuePair<string, string>> form,
+        TimeProvider time
+    )
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, url) { Content = new FormUrlEncodedContent(form) };
-        return Send(http, request);
+        return Send(http, request, time);
     }
 
     /// <summary>Returns the OAuth error code of an answer (RFC 6749 §5.2), or <see langword="null"/>.</summary>
@@ -115,14 +118,14 @@ internal static class OidcHttp
     /// Reads the discovery document of an issuer (design §14.6: the issuer without a terminating "/" and the well-known
     /// suffix), and checks that it names that issuer.
     /// </summary>
-    public static JsonDocument Discovery(HttpClient http, string issuer)
+    public static JsonDocument Discovery(HttpClient http, string issuer, TimeProvider time)
     {
         if (!Uri.TryCreate(issuer.TrimEnd('/') + "/.well-known/openid-configuration", UriKind.Absolute, out Uri? url) || !IsAllowed(url))
         {
             throw new CliException($"The issuer '{issuer}' is not an https URL.", ExitCodes.VerificationFailed);
         }
 
-        JsonDocument document = Get(http, url);
+        JsonDocument document = Get(http, url, time);
         if (
             document.RootElement.ValueKind != JsonValueKind.Object
             || !document.RootElement.TryGetProperty("issuer", out JsonElement named)
@@ -233,7 +236,7 @@ internal static class AdminCredentials
 
         using HttpClient http = OidcHttp.Create();
         Uri tokenEndpoint;
-        using (JsonDocument discovery = OidcHttp.Discovery(http, login.Issuer))
+        using (JsonDocument discovery = OidcHttp.Discovery(http, login.Issuer, host.Time))
         {
             tokenEndpoint = OidcHttp.Url(discovery.RootElement, "token_endpoint", "discovery document");
         }
@@ -241,7 +244,8 @@ internal static class AdminCredentials
         (HttpStatusCode status, JsonDocument? body) = OidcHttp.PostForm(
             http,
             tokenEndpoint,
-            [new("grant_type", "refresh_token"), new("refresh_token", login.RefreshToken), new("client_id", login.ClientId)]
+            [new("grant_type", "refresh_token"), new("refresh_token", login.RefreshToken), new("client_id", login.ClientId)],
+            host.Time
         );
         using (body)
         {
