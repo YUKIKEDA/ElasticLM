@@ -27,7 +27,7 @@ internal static class ServerService
     /// <summary>
     /// On Windows, lets the host run under the service control manager: <c>AddWindowsService</c> changes nothing unless the
     /// process was started by it, and then gives the host the service lifetime and the event log. The event log writes
-    /// from Warning up unless the settings name its provider.
+    /// from Warning up, except the categories that a setting of its provider names.
     /// </summary>
     public static void AddTo(IServiceCollection services, ILoggingBuilder logging)
     {
@@ -41,20 +41,16 @@ internal static class ServerService
     }
 
     /// <summary>
-    /// After the settings' rules, adds a rule of the event log's provider for every category at Warning, unless a rule names
-    /// that provider: the default builder of .NET does the same (<c>HostingHostBuilderExtensions.AddDefaultServices</c>),
-    /// and the slim builder does not. As a rule of the provider, it is not lowered by a setting for all providers.
+    /// After the settings' rules are read, puts a rule of the event log's provider for every category at Warning before them:
+    /// the default builder of .NET keeps the event log at Warning too (<c>HostingHostBuilderExtensions.AddDefaultServices</c>),
+    /// and the slim builder does not. A setting for all providers does not lower it: the selector takes a rule of a provider
+    /// over a rule of all providers. A setting of the event log's provider, by its alias <c>EventLog</c> or its full name, comes
+    /// after it and wins for the categories it names, as a later rule of the same length does; the others stay at Warning.
     /// </summary>
     public static void KeepEventLogAtWarning(ILoggingBuilder logging) =>
         logging
             .Services.AddOptions<LoggerFilterOptions>()
-            .PostConfigure(options =>
-            {
-                if (!options.Rules.Any(rule => HostRequestLog.ProviderOf(rule.ProviderName) == EventLogProvider))
-                {
-                    options.Rules.Add(new LoggerFilterRule(EventLogProvider, null, LogLevel.Warning, null));
-                }
-            });
+            .PostConfigure(options => options.Rules.Insert(0, new LoggerFilterRule(EventLogProvider, null, LogLevel.Warning, null)));
 
     /// <summary>
     /// Writes the line that the program prints before it ends with exit code 1 or 2 to the Application event log too, as an
@@ -71,10 +67,19 @@ internal static class ServerService
 
         try
         {
-            // Registers the source when it is missing, which an administrator's account, LocalSystem among them, may do.
+            // Registers the source when it is missing, which an administrator's account, LocalSystem among them, may do; another
+            // account is refused (SecurityException, or UnauthorizedAccessException from the registry key under HKLM).
             EventLog.WriteEntry(Name, line, EventLogEntryType.Error, StartErrorEventId);
         }
-        catch (Exception e) when (e is SecurityException or InvalidOperationException or Win32Exception or ArgumentException or IOException)
+        catch (Exception e)
+            when (e
+                    is SecurityException
+                        or UnauthorizedAccessException
+                        or InvalidOperationException
+                        or Win32Exception
+                        or ArgumentException
+                        or IOException
+            )
         {
             // Nothing else is left to tell: the line went to standard error already.
         }

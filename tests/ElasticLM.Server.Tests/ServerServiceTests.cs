@@ -14,7 +14,8 @@ public sealed class ServerServiceTests
 {
     /// <summary>
     /// The event log writes elm-server's own category from Warning up by default; a setting for all providers does not
-    /// change that, and a setting that names the event log's provider, by its alias or its full name, does.
+    /// change that, a setting of the event log's provider, by its alias or its full name, does for what it names, and a
+    /// setting of that provider for another category leaves this one at Warning.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -25,11 +26,13 @@ public sealed class ServerServiceTests
     /// Steps:
     /// - For each case of settings, ask a logger of the category elm-server whether it writes Debug, Information, and
     ///   Warning. The cases: no setting; Default Trace for all providers; Default Information for EventLog; Default
-    ///   Information for the full name; the category at Debug for EventLog; Default Error for EventLog.
+    ///   Information for the full name; the category at Debug for EventLog; another category at Debug for EventLog; Default
+    ///   Error for EventLog.
     ///
     /// Expected:
     /// - Warning only, with no setting and with Default Trace for all providers; Information and Warning for Default
-    ///   Information under either name; all three for the category at Debug; none for Default Error.
+    ///   Information under either name; all three for the category at Debug; Warning only when EventLog names another
+    ///   category, which leaves the rest at Warning; none for Default Error.
     /// </remarks>
     [Theory]
     [InlineData("", false, false, true)]
@@ -37,6 +40,7 @@ public sealed class ServerServiceTests
     [InlineData("EventLog:LogLevel:Default=Information", false, true, true)]
     [InlineData("{eventlog}:LogLevel:Default=Information", false, true, true)]
     [InlineData("EventLog:LogLevel:elm-server=Debug", true, true, true)]
+    [InlineData("EventLog:LogLevel:Other.Category=Debug", false, false, true)]
     [InlineData("EventLog:LogLevel:Default=Error", false, false, false)]
     public void KeepEventLogAtWarning_EachSetting_WritesFromWarningUnlessTheEventLogIsNamed(
         string settings,
