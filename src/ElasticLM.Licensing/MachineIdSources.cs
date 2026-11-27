@@ -33,7 +33,8 @@ internal static partial class MachineIdSources
     }
 
     /// <summary>
-    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters and an optional newline (machine-id(5)).
+    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters (machine-id(5)), with any newlines at the end
+    /// removed.
     /// </summary>
     internal static byte[]? ParseLinuxMachineId(string content)
     {
@@ -92,7 +93,11 @@ internal static partial class MachineIdSources
         return null;
     }
 
-    private static void AddIfValid(List<byte[]> ids, byte[]? id)
+    /// <summary>
+    /// Adds <paramref name="id"/> to <paramref name="ids"/> unless it is <see langword="null"/>, not 16 bytes, all zeros, or
+    /// all ones.
+    /// </summary>
+    internal static void AddIfValid(List<byte[]> ids, byte[]? id)
     {
         if (id is null || id.Length != 16)
         {
@@ -113,12 +118,16 @@ internal static partial class MachineIdSources
         }
     }
 
-    private static byte[]? ReadLinuxMachineId(string path)
+    /// <summary>
+    /// Reads and parses the machine-id file at <paramref name="path"/>. Returns <see langword="null"/> when the file is missing,
+    /// larger than 64 bytes, unreadable, or not in the format of <see cref="ParseLinuxMachineId"/>.
+    /// </summary>
+    internal static byte[]? ReadLinuxMachineId(string path)
     {
         try
         {
-            var info = new FileInfo(path);
-            return info.Exists && info.Length <= 64 ? ParseLinuxMachineId(File.ReadAllText(path)) : null;
+            // FileInfo.Length throws FileNotFoundException for a missing file and a folder.
+            return new FileInfo(path).Length <= 64 ? ParseLinuxMachineId(File.ReadAllText(path)) : null;
         }
         catch (IOException)
         {
