@@ -79,27 +79,54 @@ public sealed class ElmCliTests : IDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A license issued by the offline flow; the same license file written as UTF-16 with its byte order mark (FF FE).
+    /// - A license issued by the offline flow; copies of the same license file: with the UTF-8 byte order mark (EF BB BF)
+    ///   before it; with a byte that is not UTF-8 (FF) after it; written as UTF-16 with its byte order mark (FF FE).
     ///
     /// Steps:
-    /// - license verify the UTF-8 file; license verify the UTF-16 file.
+    /// - license verify the file and each copy; verify the bytes of each with LicenseVerifier and the same trust store,
+    ///   clock, and requirement as the command.
     ///
     /// Expected:
-    /// - Exit 0; exit 1 with "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file.". Before
-    ///   V1d24c the file was decoded as UTF-16 and given back as UTF-8, and the UTF-16 file verified.
+    /// - The file: exit 0. Each copy: exit 1 and "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license
+    ///   file.", the error LicenseVerifier gives for its bytes. Before V1d24c the file was decoded and given back as UTF-8:
+    ///   the mark was dropped, FF became EF BF BD, and the UTF-16 copy was read as the license, so the mark and UTF-16
+    ///   copies verified.
     /// </remarks>
     [Fact]
     public void Verify_FileOfOtherBytesThanTheLicense_IsVerifiedAsItsBytes()
     {
         string licensePath = IssueSample();
+        byte[] license = File.ReadAllBytes(licensePath);
+        string marked = P("marked.elmlic");
+        File.WriteAllBytes(marked, [0xEF, 0xBB, 0xBF, .. license]);
+        string invalid = P("invalid.elmlic");
+        File.WriteAllBytes(invalid, [.. license, 0xFF]);
         string utf16 = P("utf16.elmlic");
         File.WriteAllText(utf16, File.ReadAllText(licensePath), new System.Text.UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+        var verifier = new ElasticLM.Licensing.LicenseVerifier(
+            ElasticLM.Licensing.TrustStore.Create([File.ReadAllText(P("root.pub.pem"))], []),
+            _time,
+            ElasticLM.Licensing.StatelessClockGuard.Instance
+        );
+        var requirement = new ElasticLM.Licensing.LicenseRequirement(
+            "acme-cad",
+            ElasticLM.Licensing.LicenseKind.Standard,
+            "pro",
+            "2.5",
+            new ElasticLM.Licensing.InstallationIdentity("installation-key-thumbprint", ["2b9b86465b5d4fbda9c050845613fa89"])
+        );
 
-        (int code, _, _) = Run([.. Verify(licensePath)]);
-        (int utf16Code, string utf16Out, _) = Run([.. Verify(utf16)]);
+        Assert.Equal(0, Run([.. Verify(licensePath)]).Code);
+        foreach (string copy in new[] { marked, invalid, utf16 })
+        {
+            var expected = Assert.IsType<ElasticLM.Licensing.LicenseVerificationResult.Invalid>(
+                verifier.Verify(File.ReadAllBytes(copy), requirement)
+            );
+            (int code, string output, _) = Run([.. Verify(copy)]);
 
-        Assert.Equal(0, code);
-        Assert.Equal((1, "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file."), (utf16Code, utf16Out.Trim()));
+            Assert.Equal((1, "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file."), (code, output.Trim()));
+            Assert.Equal($"invalid: {expected.Error.WireName}: {expected.Error.Message}", output.Trim());
+        }
     }
 
     /// <summary>

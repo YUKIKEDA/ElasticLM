@@ -186,6 +186,76 @@ public sealed class BoundedFileTests : IDisposable
     }
 
     /// <summary>
+    /// A file that cannot seek gives up no byte past the one after the limit: the read takes 17 bytes from a pipe that holds
+    /// more (design §8.6, the reading of files).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS; a FIFO made with mkfifo, which the test holds open for reading and writing (so that neither its own
+    ///   open nor the reader's waits for the other end), and into which it writes 8,192 bytes of letters.
+    ///
+    /// Steps:
+    /// - Read the FIFO with a limit of 16 bytes; write the byte FF to it; read from the test's own handle up to the FF,
+    ///   counting the letters left.
+    ///
+    /// Expected:
+    /// - Null, and 8,175 letters left (8,192 - 17). A reader that asked the pipe for more than 17 bytes would leave fewer.
+    ///   FileStream's default buffer is not one such: it reads a file that cannot seek without the buffer
+    ///   (BufferedFileStreamStrategy.ReadSpan, dotnet/runtime release/10.0), so this test passes with it too.
+    /// </remarks>
+    [Fact]
+    public void Read_PipeThatHoldsMore_TakesOneBytePastTheLimitOnly()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "A FIFO that a path names is Linux and macOS only.");
+        string path = Path.Combine(_directory, "pipe");
+        MakeFifo(path);
+        using var pipe = new FileStream(path, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, bufferSize: 0);
+        pipe.Write(Content(8192));
+
+        byte[]? read = BoundedFile.Read(path, Limit, FileShare.ReadWrite);
+        pipe.Write([0xFF]);
+        int left = 0;
+        byte[] chunk = new byte[1024];
+        bool end = false;
+        while (!end)
+        {
+            int count = pipe.Read(chunk);
+            Assert.NotEqual(0, count);
+            int at = Array.IndexOf(chunk, (byte)0xFF, 0, count);
+            left += at < 0 ? count : at;
+            end = at >= 0;
+        }
+
+        Assert.Null(read);
+        Assert.Equal(8192 - (Limit + 1), left);
+    }
+
+    /// <summary>
+    /// A device that never ends (/dev/zero, and a link to it) is too large after one byte past the limit, where a reader to
+    /// the end would not stop (design §8.6, the reading of files).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Linux or macOS; /dev/zero, and a symbolic link to it in the test's folder.
+    ///
+    /// Steps:
+    /// - Read each with a limit of 16 bytes.
+    ///
+    /// Expected:
+    /// - Null for both.
+    /// </remarks>
+    [Fact]
+    public void Read_DeviceWithoutEnd_IsTooLarge()
+    {
+        Assert.SkipWhen(OperatingSystem.IsWindows(), "/dev/zero is Linux and macOS only.");
+        string link = Path.Combine(_directory, "zero");
+        File.CreateSymbolicLink(link, "/dev/zero");
+
+        Assert.Null(BoundedFile.Read("/dev/zero", Limit, FileShare.Read));
+        Assert.Null(BoundedFile.Read(link, Limit, FileShare.Read));
+    }
+
+    /// <summary>
     /// A missing file and a folder are errors of the file system, which the callers catch, not a result.
     /// </summary>
     /// <remarks>
@@ -235,18 +305,20 @@ public sealed class BoundedFileTests : IDisposable
     }
 
     /// <summary>
-    /// The text of a file is decoded as File.ReadAllText decodes it: UTF-8, a byte order mark of UTF-8 or UTF-16 left out
-    /// and naming the encoding, bytes that do not decode replaced; past the limit, null.
+    /// The text of a file is decoded as File.ReadAllText decodes it: UTF-8, a byte order mark of UTF-8, UTF-16, or UTF-32
+    /// left out and naming the encoding, bytes that do not decode replaced; past the limit, null.
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Files of the bytes "a"; EF BB BF "a"; FF FE "a" 00; "a" FF "b"; and 17 bytes of "a".
+    /// - Files of the bytes: none; "a"; EF BB BF "a"; FF FE "a" 00 (UTF-16 LE); FE FF 00 "a" (UTF-16 BE); FF FE 00 00 "a" 00
+    ///   00 00 (UTF-32 LE); 00 00 FE FF 00 00 00 "a" (UTF-32 BE); FF FE "a" (UTF-16 cut in a character); "a" FF "b"; and 17
+    ///   bytes of "a".
     ///
     /// Steps:
-    /// - Read each with ReadAllText and a limit of 16 bytes, and, for the first four, with File.ReadAllText.
+    /// - Read each with ReadAllText and a limit of 16 bytes, and, for all but the last, with File.ReadAllText.
     ///
     /// Expected:
-    /// - "a", "a", "a", "a\uFFFDb", each the same as File.ReadAllText; null for the 17 bytes.
+    /// - "", "a", "a", "a", "a", "a", "a", "\uFFFD", "a\uFFFDb", each the same as File.ReadAllText; null for the 17 bytes.
     /// </remarks>
     [Fact]
     public void ReadAllText_File_IsDecodedAsFileReadAllTextDoes()
@@ -255,9 +327,14 @@ public sealed class BoundedFileTests : IDisposable
         foreach (
             (byte[] bytes, string expected) in new (byte[], string)[]
             {
+                ([], string.Empty),
                 ("a"u8.ToArray(), "a"),
                 ([0xEF, 0xBB, 0xBF, (byte)'a'], "a"),
                 ([0xFF, 0xFE, (byte)'a', 0x00], "a"),
+                ([0xFE, 0xFF, 0x00, (byte)'a'], "a"),
+                ([0xFF, 0xFE, 0x00, 0x00, (byte)'a', 0x00, 0x00, 0x00], "a"),
+                ([0x00, 0x00, 0xFE, 0xFF, 0x00, 0x00, 0x00, (byte)'a'], "a"),
+                ([0xFF, 0xFE, (byte)'a'], "\uFFFD"),
                 ([(byte)'a', 0xFF, (byte)'b'], "a\uFFFDb"),
             }
         )
