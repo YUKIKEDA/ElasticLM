@@ -68,7 +68,7 @@ A Grill or a design review that decides what goes on a page checks it against th
 - Mermaid labels are translated; node, state, and participant IDs stay ASCII.
 - A link to a heading uses the Japanese page's own heading; the site build checks it.
 - A review that changes a term (one word for another) is applied by searching the whole page, and the other pages the change touches, for the old word, not by rewriting the lines the review named. In V1c14 the Japanese review (J1) changed 写し to コピー, the edit rewrote the named lines only, and the exit-code row of `backup` kept 写し until the owner's review (PR #273, S2).
-- Before a push, the lines added to a Japanese page are searched for the words the glossary avoids: the design's terms in its right column. In PR #377 an added line wrote 要求 where the glossary has リクエスト, and the owner's review found it (S1). The owner's review found 呼び出し側 in added lines three times (PR #447, PR #468, PR #470, fixed in PR #471 as クライアント), while the glossary had no row for "caller"; the row is there now.
+- Before a push, the lines added to a Japanese page are searched for the words the glossary avoids: the design's terms in its right column. In PR #377 an added line wrote 要求 where the glossary has リクエスト, and the owner's review found it (S1). The owner's review found 呼び出し側 in added lines three times (PR #447, PR #468, PR #470, fixed in PR #471 as クライアント), while the glossary had no row for "caller"; the row is there now. Known leftover: `docs/guide.ja/reference/c-api.md` still writes 呼び出し側 in lines 159 (`elm_activation_id`), 326, and 330 (`struct_size`); the next row that changes the C API page fixes them (the owner's decision of 2026-11-27, Issue #487).
 
 ## Japanese glossary
 
@@ -113,7 +113,7 @@ Reviewed by Gemini and decided by the owner in V1c1 (Issue #190). The design's t
 | hosted service (`elm-service`) | SaaS 型のサービス | SaaS 型のサービス |
 | copy (of a device or a server) | コピー | 写し |
 | container | コンテナ | コンテナー |
-| caller | クライアント（リクエストを送るプログラム） / 呼び出し元（管理 API を呼ぶ管理者） / .NET と C の API の頁では主語を書かない（「鍵は、使い終わったら破棄する」） | 呼び出し側 / 呼び出した側 |
+| caller | クライアント（リクエストを送るプログラム） / 呼び出し元（管理 API を呼ぶ管理者） / .NET と C の API の頁では主語を書かない（「鍵は、使い終わったら破棄する」）。残り: `reference/c-api.md` の 159、326、330 行（次に C API の頁を変える行が直す） | 呼び出し側 / 呼び出した側 |
 
 Phrases that read as translations, and what to write instead: "consume a seat" シートを使う (not 消費する), "release a seat" シートを返す, "bound to a machine" マシンに紐付ける (not 縛られる), "fail silently" what happens instead (not 静かに失敗する), "enforce" 制限する・確かめる (not 強制する).
 
