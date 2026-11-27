@@ -60,11 +60,15 @@ internal abstract class LicenseScope
     /// <summary>Writes the license's expiry when the first lease fixes it (design §9.3 FromFirstActivation, §12.7.6).</summary>
     public abstract Task SetExpiryAsync(long expiresAt, long at, CancellationToken cancellationToken);
 
-    /// <summary>Returns the stored answers to offline requests with an installation key and a nonce (design §12.8.4).</summary>
-    public abstract Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(string keyId, string nonce, CancellationToken cancellationToken);
+    /// <summary>Returns the stored answer to the offline request with an installation key and a nonce, of any license, or
+    /// <see langword="null"/> (design §12.8.4).</summary>
+    public abstract Task<OfflineRequestRow?> FindOfflineRequestAsync(string keyId, string nonce, CancellationToken cancellationToken);
 
     /// <summary>Stores the answer to an activation's offline request in the same transaction, in place of the one before.</summary>
-    public abstract Task ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken);
+    /// <returns><see langword="false"/> when another activation's row holds the request's key and nonce: a request for another
+    /// license, whose lock this transaction does not hold, stored it first (design §12.8.4 step 11). Nothing is written then,
+    /// and the caller rolls the transaction back.</returns>
+    public abstract Task<bool> ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken);
 }
 
 /// <summary>A trial with the fingerprints it holds (design §12.9).</summary>

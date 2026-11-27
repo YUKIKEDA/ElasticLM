@@ -3,6 +3,7 @@ using System.Security.Cryptography.X509Certificates;
 using ElasticLM.Client;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
+using ElasticLM.Service.Tests;
 using static ElasticLM.Server.Tests.LeaseResults;
 
 namespace ElasticLM.Server.Tests;
@@ -269,8 +270,9 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - Client A (first-connection pin) and client B (ExpectedServerLicenseId lic-srv) connected to a server on port P; that
-    ///   server stopped and a server with another installation key and lic-srv started on P, past its window.
+    /// - Client A (first-connection pin, behind a relay that records its requests) and client B (ExpectedServerLicenseId
+    ///   lic-srv) connected to a server on port P; that server stopped and a server with another installation key and lic-srv
+    ///   started on P, past its window.
     /// - The port is free for a moment before the next start on it: another program could take it then, and that start would
     ///   fail. The window stays (the V1d3b Grill, 3b-4): on Windows the port that a bind to port 0 gets moves on across the
     ///   machine, and in 2,000 binds none came back at once; the tests that start again on a port failed 0 times in 30 local
@@ -283,13 +285,28 @@ public sealed class LeaseClientTests : IAsyncDisposable
     /// - A: ELM_SERVER_PIN_MISMATCH from the TLS check ("The server's TLS key is not the pinned server key."), then from the
     ///   stored pin ("The server is not the one this client is pinned to."); after the reset a lease. B: the TLS check fails
     ///   once with the first message, then the new server is accepted.
+    /// - A sent no DELETE /v1/leases/requests/: the acquisition the TLS check refused never left the device, so nothing is
+    ///   released for it, then or after the reset (design §12.7.7).
     /// </remarks>
     [Fact]
     public async Task MovedServer_IsRefusedByThePinUntilReset()
     {
         ElmServer before = await StartOpenServerAsync();
         int port = before.PublicUrls[0].Port;
-        LicenseClient a = _deployment.Client(before.PublicUrls[0]);
+        var relay = new Recorder();
+        LicenseClient a = _deployment.Client(
+            before.PublicUrls[0],
+            change: o => new LicenseClientOptions
+            {
+                ProductId = o.ProductId,
+                ServerUrl = o.ServerUrl,
+                Trust = o.Trust,
+                DataDirectory = o.DataDirectory,
+                ClockGuard = o.ClockGuard,
+                TimeProvider = o.TimeProvider,
+                WrapHandler = relay.Over,
+            }
+        );
         LicenseClient b = _deployment.Client(before.PublicUrls[0], change: o => With(o, "lic-srv"));
 
         // Released before the move, so no renewal timer reconnects in the background while the clock advances.
@@ -314,6 +331,7 @@ public sealed class LeaseClientTests : IAsyncDisposable
         Failed(PinnedServer, await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Assert.True(a.ResetServerPin(before.PublicUrls[0]));
         Acquired(await a.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.DoesNotContain(relay.Requests(), r => r.Path.StartsWith("/v1/leases/requests/", StringComparison.Ordinal));
 
         Failed(PinnedTlsKey, await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
         Acquired(await b.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
