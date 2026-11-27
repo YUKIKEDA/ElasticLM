@@ -107,7 +107,7 @@ internal static class Setup
         }
         catch (DbException e)
         {
-            await error.WriteLineAsync("The database cannot be used: " + e.Message).ConfigureAwait(false);
+            await error.WriteLineAsync("The database cannot be used: " + Database.Describe(e)).ConfigureAwait(false);
             return ExitDatabase;
         }
         catch (JsonException e)

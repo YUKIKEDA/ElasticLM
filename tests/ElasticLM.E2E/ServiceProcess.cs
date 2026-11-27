@@ -106,6 +106,11 @@ internal sealed partial class ServiceProcess : IAsyncDisposable
             admin.BaseAddress = url;
             using var probe = new HttpClient { BaseAddress = url };
             await RealClock.WaitUntilAsync("elm-service /health", () => HealthyAsync(probe), StartTimeout);
+            if (created is not null)
+            {
+                await AssertEncryptedAsync(created);
+            }
+
             return service;
         }
         catch
@@ -263,6 +268,28 @@ internal sealed partial class ServiceProcess : IAsyncDisposable
         key = key.Trim();
         Assert.True(code == 0 && key.StartsWith("elm_", StringComparison.Ordinal), $"elm-service setup exited with {code}: {error}");
         return (environment, key, created, usageLog);
+    }
+
+    // design §20.7 (V1d26b): where the server is reached with a checked certificate, as on CI, every connection the service
+    // holds to its database is encrypted. /health has opened at least one.
+    private static async Task AssertEncryptedAsync(string database)
+    {
+        if (new NpgsqlConnectionStringBuilder(PostgresServer).SslMode is not (SslMode.VerifyFull or SslMode.VerifyCA))
+        {
+            return;
+        }
+
+        await using var connection = new NpgsqlConnection(PostgresServer);
+        await connection.OpenAsync(TestContext.Current.CancellationToken);
+        await using var query = new NpgsqlCommand(
+            "SELECT count(*), count(*) FILTER (WHERE s.ssl) FROM pg_stat_activity a JOIN pg_stat_ssl s ON s.pid = a.pid WHERE a.datname = @db",
+            connection
+        );
+        query.Parameters.AddWithValue("db", database);
+        await using NpgsqlDataReader reader = await query.ExecuteReaderAsync(TestContext.Current.CancellationToken);
+        await reader.ReadAsync(TestContext.Current.CancellationToken);
+        (long all, long encrypted) = (reader.GetInt64(0), reader.GetInt64(1));
+        Assert.True(all > 0 && encrypted == all, $"elm-service holds {all} connections to {database}, {encrypted} of them with TLS.");
     }
 
     private static async Task PostgresAsync(string command)

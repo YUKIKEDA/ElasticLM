@@ -56,13 +56,32 @@ internal abstract partial class Database : IAsyncDisposable
                 return new ServiceStore<SqliteDialect>(provider, new SqliteSource(builder.ToString()));
             }
 
-            // design §14.2: the slim builder keeps NativeAOT free of the reflection-based features.
-            return new ServiceStore<PostgreSqlDialect>(provider, new NpgsqlSlimDataSourceBuilder(connectionString).Build());
+            // design §14.2: the slim builder keeps NativeAOT free of the reflection-based features. Without transport security
+            // it negotiates no TLS: Prefer connects in plain text and Require and above throw NotSupportedException.
+            return new ServiceStore<PostgreSqlDialect>(provider, new NpgsqlSlimDataSourceBuilder(connectionString).EnableTransportSecurity().Build());
         }
         catch (ArgumentException e)
         {
             throw new ServiceStartException("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
+    }
+
+    /// <summary>
+    /// Returns the text of a database error with the text of each inner exception after it, joined with ": " (design §14.2).
+    /// Npgsql reports a failed TLS handshake as "Exception while performing SSL handshake" and keeps the reason (a certificate
+    /// that is not trusted, a name that does not match, a missing root certificate file) in the inner exception.
+    /// </summary>
+    /// <param name="exception">The error.</param>
+    public static string Describe(DbException exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        var text = new System.Text.StringBuilder(exception.Message);
+        for (Exception? inner = exception.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            text.Append(": ").Append(inner.Message);
+        }
+
+        return text.ToString();
     }
 
     /// <summary>
