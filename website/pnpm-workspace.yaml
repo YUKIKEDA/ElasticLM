@@ -17,16 +17,12 @@ overrides:
   # turned on (roadmap A-9).
   tinypool: 2.2.0
 # Advisories reviewed and accepted (design §5.4, V1c1): the affected function is never called. An ignored ID applies to
-# every package in the tree, so a lockfile diff that adds another user of these packages is checked again.
+# every package in the tree, so a lockfile diff that adds another user of this package is checked again. An ID that no
+# longer applies (its range changed or it was withdrawn) is removed (V1d29d).
 auditConfig:
   ignoreGhsas:
     # uuid 8.3.2 under sockjs: the advisory is about v3, v5, and v6 with a buffer; sockjs's lib/transport.js uses only v4.
     - GHSA-w5hq-g745-h8pq
-    # minimatch 3.1.5 under serve-handler: called only for glob patterns in serve-handler's options
-    # (src/index.js), and Docusaurus's serve.js passes none.
-    - GHSA-g3hv-75wg-m249
-    # deepmerge 4.3.1 under @svgr/plugin-svgo 8.1.0: no fixed version, and the plugin's dist/index.js never calls it.
-    - GHSA-gcqx-w48m-w2h4
 # Patches of shipped files (.cursor/rules/dependencies.mdc). The key keeps its version: raising the package then fails the
 # install with ERR_PNPM_UNUSED_PATCH, where a key without one would go on applying silently.
 patchedDependencies:
