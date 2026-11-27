@@ -120,7 +120,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` と `backup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル。64 KiB まで |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。各ファイルは 16,386 バイト（証明書 1 つとその改行）まで。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。各ファイルは 16,386 バイト（証明書 1 つとその改行）まで。16 KiB の証明書を UTF-8 の BOM 付きで保存すると、この上限を超えて断られる。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
 | `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` と `backup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `trust`

@@ -120,7 +120,7 @@ Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-passwor
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
 | `signing.key` | `ELM_SIGNING_KEY` | file path | none (required; `setup` and `backup` do not need it) | The signing key: an encrypted PKCS#8 PEM file of a P-256 key, at most 64 KiB. |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` and `backup` do not need it) | The signing key's key certificate files: 1 to 4, none empty, each at most 16,386 bytes (one certificate and its line break). The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` and `backup` do not need it) | The signing key's key certificate files: 1 to 4, none empty, each at most 16,386 bytes (one certificate and its line break; a certificate of 16 KiB saved with a UTF-8 byte order mark is larger, and is refused). The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
 | `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | file path | none (required when `ELM_SIGNING_PASSPHRASE` is not set; `setup` and `backup` do not need it) | The file that holds the signing key's passphrase. A secret: see [Secrets](#secrets). |
 
 ## `trust`
