@@ -17,14 +17,15 @@ internal sealed partial class ElmServer
     private bool AutoRefresh => _activation?.ActivationId is not null;
 
     // design §13.8: with service.url the license path must be writable, or every refresh would fail; known at the start. The
-    // probe is the temporary file a refresh writes, made the same way (design §12.6.2, V1d24), so a link there is deleted,
-    // not followed.
+    // probe is a file beside the license, made the way a refresh makes its temporary file (design §12.6.2, V1d24), so a link
+    // there is deleted, not followed. Its name is fixed (design §12.6.2, V1d24a): it is deleted before it is made and at once
+    // after, and the start holds the data folder's lock.
     private static void EnsureWritable(string licensePath)
     {
         string probe = Path.GetFullPath(licensePath) + ".tmp";
         try
         {
-            FileReplacement.CreateNew(probe, []);
+            FileReplacement.OpenNew(probe).Dispose();
             File.Delete(probe);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

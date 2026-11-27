@@ -561,7 +561,9 @@ internal static class ServerLicenseCommands
 
         try
         {
-            if (File.ReadAllBytes(licensePath).AsSpan().SequenceEqual(kept))
+            // design §12.6.2 (V1d24a): read as elm-server reads it, so neither reader refuses the other's delete.
+            // A file longer than the kept one is not it.
+            if (FileReplacement.ReadShared(licensePath, kept.Length) is byte[] read && read.AsSpan().SequenceEqual(kept))
             {
                 File.Delete(licensePath);
             }

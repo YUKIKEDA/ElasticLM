@@ -66,6 +66,57 @@ public sealed class SignedLogTests : IDisposable
     }
 
     /// <summary>
+    /// While the verifier reads a log file, another process may move it to another name or delete it: on Windows the
+    /// verifier's reader does not refuse either (design §12.6.2, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A log of one file with 3 events, written and closed.
+    ///
+    /// Steps:
+    /// - Verify the file; at the first event the verifier hands out, while its reader holds the file, move the file to
+    ///   another name (as elm-server sets a broken borrow record aside); at the second, delete the moved file.
+    ///
+    /// Expected:
+    /// - Both the move and the delete pass (on Windows a reader that shares only ReadWrite refuses both with an IOException);
+    ///   the verifier still hands out all 3 events; neither name is left in the folder.
+    /// </remarks>
+    [Fact]
+    public void Verify_FileMovedAndDeletedWhileRead_IsNotRefused()
+    {
+        using (SignedLog log = Open())
+        {
+            Append(log, 3);
+        }
+
+        string file = Assert.Single(SignedLog.FindFiles(_dir, "usage"));
+        string aside = file + ".aside";
+        var entries = new List<LogEntry>();
+        LogVerifier.Verify(
+            [file],
+            _trust,
+            "acme-cad",
+            "usage",
+            onEntry: e =>
+            {
+                entries.Add(e);
+                if (entries.Count == 1)
+                {
+                    File.Move(file, aside);
+                }
+                else if (entries.Count == 2)
+                {
+                    File.Delete(aside);
+                }
+            }
+        );
+
+        Assert.Equal(3, entries.Count);
+        Assert.False(File.Exists(file));
+        Assert.False(File.Exists(aside));
+    }
+
+    /// <summary>
     /// The chain continues across a new UTC day and across a restart; a missing file and a file cut after its last
     /// signature are found by the link of the next file.
     /// </summary>

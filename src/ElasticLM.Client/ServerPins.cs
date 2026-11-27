@@ -14,6 +14,10 @@ namespace ElasticLM.Client;
 internal sealed class ServerPins(string directory, TimeProvider time)
 {
     private const int MaxPinFileLength = 4 * 1024;
+    private const string PinExtension = ".json";
+
+    // The SHA-256 of the URL as 64 hex digits, and ".json".
+    private const int PinNameLength = 64 + 5;
 
     private string Folder => Path.Combine(directory, "servers");
 
@@ -39,7 +43,13 @@ internal sealed class ServerPins(string directory, TimeProvider time)
                 return false;
             }
 
-            pin = JsonSerializer.Deserialize(File.ReadAllBytes(path), ClientWireContext.Default.PinFile);
+            // design §12.6.2 (V1d24a): ResetServerPin deletes the file, and on Windows a reader without Delete would refuse it.
+            if (FileReplacement.ReadShared(path, MaxPinFileLength) is not byte[] bytes)
+            {
+                return false;
+            }
+
+            pin = JsonSerializer.Deserialize(bytes, ClientWireContext.Default.PinFile);
             return pin is not null && pin.Url == HttpTargetUri.Normalize(server);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException or JsonException)
@@ -62,7 +72,6 @@ internal sealed class ServerPins(string directory, TimeProvider time)
             Jkt = keyId,
         };
         string path = PathOf(server);
-        string temporary = path + "." + Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8)) + ".tmp";
         try
         {
             if (OperatingSystem.IsWindows())
@@ -74,7 +83,9 @@ internal sealed class ServerPins(string directory, TimeProvider time)
                 Directory.CreateDirectory(Folder, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             }
 
-            FileReplacement.Write(temporary, path, JsonSerializer.SerializeToUtf8Bytes(pin, ClientWireContext.Default.PinFile), time);
+            // design §12.6.2 (V1d24a): the temporary files of every pin are cleaned, not only this one's.
+            FileReplacement.RemoveLeftovers(Folder, "*.json.*.tmp", IsPinTemporary);
+            FileReplacement.Write(path, JsonSerializer.SerializeToUtf8Bytes(pin, ClientWireContext.Default.PinFile), time);
             return true;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -106,6 +117,13 @@ internal sealed class ServerPins(string directory, TimeProvider time)
             return false;
         }
     }
+
+    // A pin's temporary file: <64 lowercase hex digits>.json.<16 lowercase hex digits>.tmp.
+    internal static bool IsPinTemporary(string name) =>
+        name.Length > PinNameLength
+        && !name.AsSpan(0, PinNameLength - PinExtension.Length).ContainsAnyExcept(FileReplacement.LowerHex)
+        && FileReplacement.IsTemporaryOf(name, name[..PinNameLength])
+        && name.AsSpan(PinNameLength - PinExtension.Length, PinExtension.Length).SequenceEqual(PinExtension);
 
     private string PathOf(Uri server) =>
         Path.Combine(Folder, Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(HttpTargetUri.Normalize(server)))) + ".json");

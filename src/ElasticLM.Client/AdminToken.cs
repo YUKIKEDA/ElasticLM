@@ -39,7 +39,10 @@ internal static class AdminToken
 
             // A start that ended between the two steps left its new file.
             File.Delete(fresh);
-            if (!ProtectedFiles.TryCreateSecret(fresh, secret, KeyScope.Machine, Purpose))
+
+            // design §12.6.2 (V1d24a): the new file stays open until it is in place.
+            using FileStream? held = ProtectedFiles.TryCreateSecret(fresh, secret, KeyScope.Machine, Purpose);
+            if (held is null)
             {
                 return null;
             }
@@ -52,6 +55,7 @@ internal static class AdminToken
             catch (Exception e) when (e is IOException or UnauthorizedAccessException or OperationCanceledException)
             {
                 // The new file holds a token that no server takes; it does not stay behind.
+                held.Dispose();
                 FileReplacement.DeleteQuietly(fresh);
                 throw;
             }

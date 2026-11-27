@@ -373,6 +373,100 @@ public sealed class BorrowAndAdminTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// On Windows, a returned borrow whose file cannot be deleted (a reader holds it without allowing the delete) is not
+    /// listed by the client that returned it, and its delete is tried again; a client that did not return it lists it until
+    /// it expires (design §12.7.4, §5.4, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows; a server; a client that borrowed pro for one day; the borrow's file opened by the test for reading with
+    ///   FileShare.ReadWrite only, as a reader outside ElasticLM may hold it.
+    ///
+    /// Steps:
+    /// - Return the borrow early; list the client's borrows; list the borrows of a new client on the same folder; close the
+    ///   reader; list the first client's borrows again.
+    ///
+    /// Expected:
+    /// - The return succeeds and the server counts no seat; the file is still there and the first client lists nothing; the
+    ///   new client lists the borrow; after the reader is closed, the first client lists nothing and the file is gone.
+    /// </remarks>
+    [Fact]
+    public async Task ReturnedBorrow_FileHeldWithoutDelete_IsNotListedAndDeletedLater()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "Linux and macOS delete a file whatever its readers share.");
+        ElmServer server = await StartOpenServerAsync();
+        string data = _deployment.NewFolder();
+        LicenseClient client = _deployment.Client(server.PublicUrls[0], data);
+        Lease borrowed = Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
+        string file = Assert.Single(Directory.GetFiles(Path.Combine(data, "borrows")));
+
+        IReadOnlyList<Lease> whileHeld;
+        IReadOnlyList<Lease> another;
+        using (new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+        {
+            Assert.Null(await client.ReleaseLeaseAsync(borrowed, TestContext.Current.CancellationToken));
+            Assert.Equal(0, server.Engine.SeatsInUse("pro"));
+            Assert.True(File.Exists(file));
+            whileHeld = client.GetBorrowedLeases();
+            another = _deployment.Client(server.PublicUrls[0], data).GetBorrowedLeases();
+        }
+
+        IReadOnlyList<Lease> after = client.GetBorrowedLeases();
+
+        Assert.Empty(whileHeld);
+        Assert.Equal(borrowed.Id, Assert.Single(another).Id);
+        Assert.Empty(after);
+        Assert.False(File.Exists(file));
+    }
+
+    /// <summary>
+    /// Listing the borrows and saving a borrow remove the borrows' temporary files that no writer holds, and leave one that a
+    /// writer holds and names of another form (design §12.6.2, §12.7.4, V1d24a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server; a client of a new folder that borrowed pro for one day; in borrows/: a left temporary file with a lease
+    ///   ID's name (22 characters) that no one holds, one that the test holds as a writer does (FileReplacement.OpenNew), and
+    ///   notalease.json.tmp.
+    ///
+    /// Steps:
+    /// - List the borrows. Close the held file and put a left file at its name again; borrow pro once more.
+    ///
+    /// Expected:
+    /// - After the list, the left file is gone, the held file and notalease.json.tmp stay, and the borrow is listed; after the
+    ///   second borrow, the file left again is gone too, and notalease.json.tmp stays.
+    /// </remarks>
+    [Fact]
+    public async Task BorrowFolder_LeftTemporaryFiles_AreRemovedByTheListAndTheSave()
+    {
+        ElmServer server = await StartOpenServerAsync();
+        string data = _deployment.NewFolder();
+        LicenseClient client = _deployment.Client(server.PublicUrls[0], data);
+        Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
+        string borrows = Path.Combine(data, "borrows");
+        string left = Path.Combine(borrows, "AAAAAAAAAAAAAAAAAAAAAA.json.tmp");
+        string held = Path.Combine(borrows, "BBBBBBBBBBBBBBBBBBBBBB.json.tmp");
+        string other = Path.Combine(borrows, "notalease.json.tmp");
+        File.WriteAllText(left, "left");
+        File.WriteAllText(other, "other");
+
+        bool leftAfterList;
+        bool heldAfterList;
+        using (FileReplacement.OpenNew(held))
+        {
+            Assert.Single(client.GetBorrowedLeases());
+            leftAfterList = File.Exists(left);
+            heldAfterList = File.Exists(held);
+        }
+
+        File.WriteAllText(held, "left");
+        Acquired(await client.BorrowLeaseAsync("pro", Day, cancellationToken: TestContext.Current.CancellationToken));
+
+        Assert.Equal((false, true), (leftAfterList, heldAfterList));
+        Assert.Equal((false, true), (File.Exists(held), File.Exists(other)));
+    }
+
+    /// <summary>
     /// A broken borrow record stops the start; with --set-aside-broken-records the server moves it aside, starts without its
     /// borrows, and writes that to the usage log.
     /// </summary>

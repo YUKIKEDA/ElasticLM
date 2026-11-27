@@ -70,7 +70,11 @@ public sealed class LicenseClientOptions
     /// <summary>Gets the verifier options (clock skew).</summary>
     public LicenseVerifierOptions? VerifierOptions { get; init; }
 
-    /// <summary>Gets the time provider; tests pass a fake one.</summary>
+    /// <summary>
+    /// Gets the time provider; tests pass a fake one. It also counts the waits of the client: the 30 seconds a request may
+    /// take and, on Windows, the wait for a reader of a file the client replaces (a try every 100 milliseconds, for 2
+    /// seconds, on the calling thread). A fake clock must be moved for these waits to end.
+    /// </summary>
     public TimeProvider TimeProvider { get; init; } = TimeProvider.System;
 
     /// <summary>Gets a wrapper around the HTTP handler, so tests can lose an answer after the server acted on it.</summary>
