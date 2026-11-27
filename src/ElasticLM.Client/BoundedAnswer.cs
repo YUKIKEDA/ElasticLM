@@ -95,6 +95,28 @@ internal abstract record BoundedAnswer
         }
     }
 
+    // design §10.4 step 2 (V1d24b). In dotnet/runtime release/10.0 these four values are set only before the request is
+    // written: ConnectHelper.CreateWrappedException (name resolution, connection) and EstablishSslConnectionAsync (TLS),
+    // HttpConnectionPool.EstablishProxyTunnelAsync and EstablishSocksTunnel, and the ALPN check of HttpConnectionPool.Http3. A
+    // failure on a connection that was made is Unknown or a read error (HttpConnection.cs), and a request with a body is sent
+    // again on another connection there only with Expect: 100-continue, which these clients do not set; they send HTTP/1.1.
+
+    /// <summary>
+    /// Returns whether a failed exchange never sent its request: the server's name was not resolved, or the connection, its
+    /// TLS handshake, or a proxy's tunnel was not made. The server cannot have acted on such a request.
+    /// </summary>
+    /// <param name="failure">The exception of <see cref="SendAsync"/>.</param>
+    /// <returns><see langword="true"/> when the request did not leave this device.</returns>
+    public static bool NeverSent(Exception failure) =>
+        failure
+            is HttpRequestException
+            {
+                HttpRequestError: HttpRequestError.NameResolutionError
+                    or HttpRequestError.ConnectionError
+                    or HttpRequestError.SecureConnectionError
+                    or HttpRequestError.ProxyTunnelError,
+            };
+
     // Returns null for a body longer than the limit. A declared length is believed only to refuse or to size the buffer:
     // the HTTP client's stream ends at the declared length, and a body that ends before it throws. The body is not copied
     // once read: the caller gets the part of the buffer that holds it, so one answer holds at most 1.5 times the limit

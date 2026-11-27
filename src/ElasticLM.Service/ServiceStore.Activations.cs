@@ -504,38 +504,39 @@ internal sealed partial class ServiceStore<TDialect>
                 .Where(l => Eq(l.Id, license.Id))
                 .ExecuteAsync(cancellationToken);
 
-        public override async Task<IReadOnlyList<OfflineRequestRow>> FindOfflineRequestsAsync(
-            string keyId,
-            string nonce,
-            CancellationToken cancellationToken
-        ) =>
-            await tx.From(OfflineRequestRow.Table)
+        // design §12.8.4 step 9: (key_id, nonce) is unique (migration 0013), so one row at most, of any license.
+        public override Task<OfflineRequestRow?> FindOfflineRequestAsync(string keyId, string nonce, CancellationToken cancellationToken) =>
+            tx.From(OfflineRequestRow.Table)
                 .Where(r => And(Eq(r.KeyId, keyId), Eq(r.Nonce, nonce)))
                 .Select(r => r)
-                .ToListAsync(cancellationToken)
-                .ConfigureAwait(false);
+                .SingleOrDefaultAsync(cancellationToken);
 
-        public override async Task ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken)
+        // design §12.8.4 step 11 (V1d29b): the row of another activation with the key and nonce belongs to a request for another
+        // license, whose lock this transaction does not hold. On PostgreSQL the insert waits for that request's transaction and
+        // then does nothing if it committed; on SQLite the write lock lets no such request in between.
+        public override async Task<bool> ReplaceOfflineRequestAsync(OfflineRequestRow request, CancellationToken cancellationToken)
         {
             await tx.Delete(OfflineRequestRow.Table)
                 .Where(r => Eq(r.ActivationId, request.ActivationId))
                 .ExecuteAsync(cancellationToken)
                 .ConfigureAwait(false);
-            await tx.Insert(OfflineRequestRow.Table)
-                .Values(
-                    new OfflineRequestRow.Insert
-                    {
-                        ActivationId = request.ActivationId,
-                        KeyId = request.KeyId,
-                        Nonce = request.Nonce,
-                        RequestHash = request.RequestHash,
-                        LicenseId = request.LicenseId,
-                        Response = request.Response,
-                        ExpiresAt = request.ExpiresAt,
-                    }
-                )
-                .ExecuteAsync(cancellationToken)
-                .ConfigureAwait(false);
+            return await tx.Insert(OfflineRequestRow.Table)
+                    .Values(
+                        new OfflineRequestRow.Insert
+                        {
+                            ActivationId = request.ActivationId,
+                            KeyId = request.KeyId,
+                            Nonce = request.Nonce,
+                            RequestHash = request.RequestHash,
+                            LicenseId = request.LicenseId,
+                            Response = request.Response,
+                            ExpiresAt = request.ExpiresAt,
+                        }
+                    )
+                    .OnConflict(r => [r.KeyId, r.Nonce])
+                    .DoNothing()
+                    .ExecuteAsync(cancellationToken)
+                    .ConfigureAwait(false) == 1;
         }
     }
 }

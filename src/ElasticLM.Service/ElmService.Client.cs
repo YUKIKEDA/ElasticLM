@@ -170,8 +170,7 @@ internal sealed partial class ElmService
         DateTimeOffset now = Time.GetUtcNow();
         long at = now.ToUnixTimeSeconds();
         ClientInfo? client = policy.ClientInfoStrategy == "hostAndUser" ? request.Client : null;
-        return await Database
-            .WithLicenseAsync(
+        return await WithLicenseOfflineAwareAsync(
                 found.Id,
                 scope =>
                     scope is null
@@ -309,8 +308,7 @@ internal sealed partial class ElmService
         (PolicyRow policy, ProductRow product) = await PolicyAndProductAsync(found.LicenseId, device.Aborted).ConfigureAwait(false);
         DateTimeOffset now = Time.GetUtcNow();
         long at = now.ToUnixTimeSeconds();
-        return await Database
-            .WithLicenseAsync(
+        return await WithLicenseOfflineAwareAsync(
                 found.LicenseId,
                 scope =>
                     scope is null
