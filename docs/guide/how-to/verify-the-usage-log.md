@@ -39,10 +39,11 @@ elm log verify server-data --product acme-cad --trust root.pub.pem
 `elm` checks each file, oldest first, and the chain from each file to the next, and prints:
 
 ```text
+file: usage-20260115T093000000Z.jsonl: server license floating-server
 intact: 1 file(s), 9 event line(s)
 ```
 
-The numbers are those of your log: the server starts a new file at each start and at each UTC day. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
+The `file:` line names each file and the server licenses whose keys signed it. The names and numbers are those of your log: the server starts a new file at each start and at each UTC day. When you receive a log from someone else, add `--license <ID>`, where `<ID>` is the ID of the server license that the log should come from. The vendor finds it as `license ID:` in the output of `elm license issue`, and the customer's administrator as `license:` in the output of `elm server status`. A file with any line signed under another server license is then an error, and the result is `NOT INTACT:` with exit code 1. Exit code 0 means intact, also when the output has `warning:` lines. To get the result as JSON, for a script:
 
 <!-- steps:run -->
 ```shell
@@ -54,7 +55,7 @@ elm log verify server-data --product acme-cad --trust root.pub.pem --json
   "intact": true,
 ```
 
-The JSON also has `files` and `entries`, the numbers of files and of event lines, and `issues`, the list of issues, each with its `file`, `line`, `severity`, and `message`.
+The JSON also has `files` and `entries`, the numbers of files and of event lines, `issues`, the list of issues, each with its `file`, `line`, `severity`, and `message`, and `licenses`, each file with `licenseIds`, an array of the server licenses that signed it, in the order they first signed.
 
 The server also keeps a record of its borrows in the same folder, signed in the same way. Verify it with `--stream borrows`:
 

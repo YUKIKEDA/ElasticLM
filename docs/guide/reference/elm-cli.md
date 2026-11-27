@@ -24,6 +24,8 @@ A product ID (`--product`) is 1 to 64 lowercase letters, digits, and `-`, such a
 
 Errors are written to standard error as one line that starts with `error:`; warnings start with `warning:`. An unknown command or option, a missing required option, or a file or folder path option or argument that is empty or only white space is followed by `Run 'elm --help' for usage.` and exit code 2. `elm server activate` and `elm server activate-request` are the exception for an unknown word: see [The license key of a server license](#the-license-key-of-a-server-license).
 
+When `elm` writes text that came from outside it, it replaces each control character with `\uXXXX`, such as `\u001B` for ESC. This text is the text of the answers of a server, `elm-service`, and an identity provider, and the text of files and file names: the headers of a license file that `elm license inspect` shows, and the log files and their names that `elm log verify` reports. It also covers such text inside a message, for example the detail of an error answer or a file name in an issue. The characters replaced are U+0000 to U+001F, U+007F, and U+0080 to U+009F. Such characters could otherwise change what the terminal shows, such as its colors, a line already written, or the window's title. Other invisible characters, such as U+202E (right-to-left override) and U+2028 (line separator), are written as they are. In the body that `elm admin request` writes, line feeds (LF) and tabs are kept, and a carriage return (CR) is replaced. Text that already held the six characters `\u001B` looks the same in the output as a replaced ESC. `--json` output is not changed: it already writes these characters as JSON escapes.
+
 ### `--json`
 
 Writes the result to standard output as JSON instead of text. The commands that take it: `elm key root create`, `elm key signing create`, `elm key certify`, `elm license issue`, `elm license inspect`, `elm license verify`, `elm server status`, `elm server leases`, `elm server reload`, `elm server seal`, `elm server release`, `elm offline process`, `elm secret create`, and `elm log verify`. The `elm server` commands write the administration API's answer as it came.
@@ -74,9 +76,9 @@ The default login file is `%LOCALAPPDATA%\ElasticLM\elm\login` on Windows, `$XDG
 | `0` | Success | The command did what it was asked. `elm log verify` returns 0 when the log is intact, even with warnings. |
 | `1` | Verification failed | A license file or log did not verify, or a server, `elm-service`, or the identity provider refused the request or answered with an error. |
 | `2` | Invalid input | An argument, option, or value is wrong or missing; a file is missing, unreadable, too large, or exists without `--force`; no passphrase, license key, trust keys, or credentials were found. |
-| `3` | Network error | A server, `elm-service`, or the identity provider cannot be reached, the request timed out, or (for `elm server` and `elm offline process`) the answer cannot be read or is larger than `elm` reads. |
+| `3` | Network error | A server, `elm-service`, or the identity provider cannot be reached, the request timed out, or (for `elm server`, `elm offline process`, and `elm admin`) the answer cannot be read or is larger than `elm` reads. |
 
-When `elm` prints an [error code](error-codes.md), the exit code follows from it: `ELM_NETWORK_ERROR` gives `3`, and every other code, from a check `elm` runs or from the answer of a server or `elm-service`, gives `1`. `ELM_MALFORMED` also gives `3` when its message is one of these three, which say that an answer is larger than `elm` reads: `The service's answer is larger than the limit.` (the server license commands), `The service's answer is larger than 262144 bytes.` (`elm offline process`), and `The server's administration API answered with a body larger than 67108864 bytes.` (`elm server`). `elm` read nothing of that answer, so it cannot tell a refusal from a success. Every other `ELM_MALFORMED` gives `1`, also one whose message says that a file is larger than a limit. Exit code `2` comes from `elm`'s own checks of its input, before anything is verified or sent, and its message names the input instead of a code. The one exception is `elm license issue`: it verifies the license before writing it, and a code from that check gives `2`, because the input made the license.
+When `elm` prints an [error code](error-codes.md), the exit code follows from it: `ELM_NETWORK_ERROR` gives `3`, and every other code, from a check `elm` runs or from the answer of a server or `elm-service`, gives `1`. `ELM_MALFORMED` also gives `3` when its message is one of these four, which say that an answer is larger than `elm` reads: `The service's answer is larger than the limit.` (the server license commands), `The service's answer is larger than 262144 bytes.` (`elm offline process`), `The server's administration API answered with a body larger than 67108864 bytes.` (`elm server`), and `The answer of <URL> is larger than 262144 bytes.` (`elm admin login`, and the refresh of a saved login that `elm admin request` and `elm offline process` make). `elm` read nothing of that answer, so it cannot tell a refusal from a success. Every other `ELM_MALFORMED` gives `1`, also one whose message says that a file is larger than a limit. Exit code `2` comes from `elm`'s own checks of its input, before anything is verified or sent, and its message names the input instead of a code. The one exception is `elm license issue`: it verifies the license before writing it, and a code from that check gives `2`, because the input made the license.
 
 ## elm key
 
@@ -487,7 +489,7 @@ Forgets the kept deactivation proof once the service has it, so that the server 
 
 ## elm admin
 
-The `elm admin` commands sign in to `elm-service` and call its administration API. A service URL is `https`, or `http` on a loopback address. A saved login is used only for requests to the same origin (scheme, host, and port) as the URL it was made for, and its access token is refreshed when it expires within 60 seconds. Tokens and keys are never written to standard output or standard error.
+The `elm admin` commands sign in to `elm-service` and call its administration API. A service URL is `https`, or `http` on a loopback address. A saved login is used only for requests to the same origin (scheme, host, and port) as the URL it was made for, and its access token is refreshed when it expires within 60 seconds. Each answer of the identity provider, and of `GET /v1/admin/oidc`, must come whole, its body included, within 30 seconds of the request, and be at most 256 KiB. One that does not gives `error: <URL> cannot be reached: No whole answer came within 30 seconds.` or `error: ELM_MALFORMED: The answer of <URL> is larger than 262144 bytes.`, with exit code 3, in `elm admin login` and in the refresh of a saved login that `elm admin request` and `elm offline process` make. While `elm admin login` waits for the sign-in to be approved, such a failure of a token request counts as a network failure: it doubles the wait between requests, up to 60 seconds, and asks again, until the device code expires (`error: The device code expired before the sign-in was approved.`, exit code 1). `elm admin logout` writes one line to standard error, `The refresh token was not revoked: ` followed by that message without `error:`, then removes the login all the same, writes `Signed out.` to standard output, and exits with 0. Tokens and keys are never written to standard output or standard error.
 
 ### elm admin login
 
@@ -526,7 +528,7 @@ Calls the administration API once and writes the body of a successful answer to 
 | `--body` | File path | — | No | A JSON file to send as `application/json`, up to 64 KiB. |
 | `--url` | `https` URL, or `http` on a loopback address | `ELM_SERVICE_URL`, then the saved login's URL | No | The `elm-service` URL. |
 
-The request uses `ELM_API_KEY` when it is set, and the saved login otherwise; with neither, it stops with exit code 2. Redirects are not followed, and the request times out after 100 seconds.
+The request uses `ELM_API_KEY` when it is set, and the saved login otherwise; with neither, it stops with exit code 2. Redirects are not followed, and the request times out when its answer's headers have not come within 100 seconds. The body has no time limit as a whole, so a large file can be read to its end; when no byte of it comes for 100 seconds, the command stops with exit code 3 and `error: The service cannot be reached: No byte of the answer came within 100 seconds.`, after the part already written.
 
 ## elm offline
 
@@ -582,7 +584,10 @@ Verifies the signatures and the chain of a license server's usage log or borrow 
 | `--stream` | `usage`, `borrows` | `usage` | No | Which log to verify: the usage log or the borrow record. |
 | `--trust` | File path | `ELM_TRUST_ROOT_KEYS` | No | A root public key file to trust. Repeat for several. |
 | `--revoked` | Key ID | — | No | A revoked key ID. Repeat for several. |
+| `--license` | Server license ID | — | No | The server license that must have signed each file. A file with any line signed under another server license, and a file of `elm-service`, is an error. |
 | `--json` | — | Off | No | Write the result as JSON. |
+
+The output names, for each file, every server license whose key signed it, or `elm-service`. [Verifying the usage log](logs.md#verifying-the-usage-log) gives the form.
 
 ## Examples
 

@@ -34,6 +34,10 @@ internal static class LogCommands
             Description = $"A root public key file to trust. Repeat for several. Default: the PEM keys in {TrustKeys.EnvironmentVariable}.",
         }.AsPath();
         var revokedOption = new Option<string[]>("--revoked") { Description = "A revoked key ID. Repeat for several." };
+        var licenseOption = new Option<string?>("--license")
+        {
+            Description = "The server license ID that must have signed each file; a file signed under another one is an error.",
+        };
         Option<bool> jsonOption = CommonOptions.Json();
 
         var verify = new Command("verify", "Verify the signatures and the chain of a server's or elm-service's log files.")
@@ -44,6 +48,7 @@ internal static class LogCommands
             streamOption,
             trustOption,
             revokedOption,
+            licenseOption,
             jsonOption,
         };
         verify.SetAction(parse =>
@@ -70,20 +75,26 @@ internal static class LogCommands
                         throw new CliException("--node chooses a node's files in a folder; give folders, or files without --node.");
                     }
 
-                    string[] files = ExpandFiles(paths, node is null ? stream : $"{stream}-{node}", out IReadOnlyList<string> notLogFiles);
+                    string? expected = parse.GetValue(licenseOption) is string given ? CliParse.NotEmpty(given, "--license") : null;
+                    string[] files = ExpandFiles(host, paths, node is null ? stream : $"{stream}-{node}", out IReadOnlyList<string> notLogFiles);
                     LogReport report = LogVerifier.Verify(files, trust, parse.GetValue(productOption), stream, node);
 
                     // design §18.1: a file of a folder whose name has no real date and time is not verified. It is named in a
-                    // warning, so that a log file renamed to such a name does not leave the result without a trace.
+                    // warning, so that a log file renamed to such a name does not leave the result without a trace. With
+                    // --license, a file signed under another server license is an error (V1d27, T15-3).
                     LogIssue[] issues =
                     [
-                        .. notLogFiles.Select(name => new LogIssue(name, 0, LogIssueSeverity.Warning, NotVerified)),
+                        .. notLogFiles.Select(NotVerifiedIssue),
                         .. report.Issues,
+                        .. expected is null
+                            ? Enumerable.Empty<LogIssue>()
+                            : report.Files.Where(f => !SignedOnlyBy(f, expected)).Select(f => OtherLicense(f, expected)),
                     ];
+                    bool intact = !issues.Any(i => i.Severity == LogIssueSeverity.Error);
                     if (parse.GetValue(jsonOption))
                     {
                         var output = new LogVerifyOutput(
-                            report.Intact,
+                            intact,
                             files.Length,
                             report.EntryCount,
                             [
@@ -93,7 +104,8 @@ internal static class LogCommands
                                     i.Severity == LogIssueSeverity.Error ? "error" : "warning",
                                     i.Message
                                 )),
-                            ]
+                            ],
+                            [.. report.Files.Select(f => new LogLicenseOutput(f.File, f.LicenseIds.Count > 0 ? [.. f.LicenseIds] : null))]
                         );
                         host.Out.WriteLine(JsonSerializer.Serialize(output, CliJsonContext.Default.LogVerifyOutput));
                     }
@@ -101,16 +113,21 @@ internal static class LogCommands
                     {
                         foreach (LogIssue issue in issues)
                         {
-                            string severity = issue.Severity == LogIssueSeverity.Error ? "error" : "warning";
-                            host.Out.WriteLine($"{severity}: {issue.File}:{issue.Line}: {issue.Message}");
+                            host.Out.WriteLine(IssueLine(issue));
                         }
 
-                        host.Out.WriteLine(
-                            (report.Intact ? "intact" : "NOT INTACT") + $": {files.Length} file(s), {report.EntryCount} event line(s)"
-                        );
+                        // design §18.1 (V1d27): the server license whose key signed the end of each file.
+                        foreach (LogFileKey file in report.Files)
+                        {
+                            string signer =
+                                file.LicenseIds.Count > 0 ? "server license " + CliText.Printable(string.Join(", ", file.LicenseIds)) : "elm-service";
+                            host.Out.WriteLine($"file: {CliText.Printable(file.File)}: {signer}");
+                        }
+
+                        host.Out.WriteLine((intact ? "intact" : "NOT INTACT") + $": {files.Length} file(s), {report.EntryCount} event line(s)");
                     }
 
-                    return report.Intact ? ExitCodes.Success : ExitCodes.VerificationFailed;
+                    return intact ? ExitCodes.Success : ExitCodes.VerificationFailed;
                 }
             )
         );
@@ -122,9 +139,32 @@ internal static class LogCommands
     private static bool IsNodeName(string node) =>
         node.Length is >= 1 and <= 64 && node.All(c => c is (>= 'A' and <= 'Z') or (>= 'a' and <= 'z') or (>= '0' and <= '9') or '-');
 
+    private static LogIssue NotVerifiedIssue(string name) => new(name, 0, LogIssueSeverity.Warning, NotVerified);
+
+    // design §18.1 (V1d27): the file's name and the message come from the files, so their control characters are replaced.
+    private static string IssueLine(LogIssue issue) =>
+        $"{(issue.Severity == LogIssueSeverity.Error ? "error" : "warning")}: {CliText.Printable(issue.File)}:{issue.Line}: {CliText.Printable(issue.Message)}";
+
+    // design §18.1 (V1d27, T15-3): a file passes --license only when every server license whose key signed it is that one; a
+    // server license taken in the middle of the file (key.changed) counts as much as the first.
+    private static bool SignedOnlyBy(LogFileKey file, string expected) =>
+        file.LicenseIds.Count > 0 && file.LicenseIds.All(id => string.Equals(id, expected, StringComparison.Ordinal));
+
+    // design §18.1 (V1d27, T15-3): a file signed under another server license than --license, or by elm-service.
+    private static LogIssue OtherLicense(LogFileKey file, string expected)
+    {
+        string message = file.LicenseIds switch
+        {
+            [] => $"The file is a log of elm-service, not of server license {expected} (--license).",
+            [string id] => $"The file is signed by the key of server license {id}, not of {expected} (--license).",
+            _ => $"The file is signed by the keys of server licenses {string.Join(", ", file.LicenseIds)}, not only of {expected} (--license).",
+        };
+        return new LogIssue(file.File, 0, LogIssueSeverity.Error, message);
+    }
+
     // A folder stands for the files of the stream (or of one node's usage log) in it; files are taken in name order, which
     // is time order.
-    private static string[] ExpandFiles(string[] paths, string stream, out IReadOnlyList<string> notLogFiles)
+    private static string[] ExpandFiles(CliHost host, string[] paths, string stream, out IReadOnlyList<string> notLogFiles)
     {
         var files = new List<string>();
         var others = new List<string>();
@@ -148,6 +188,13 @@ internal static class LogCommands
 
         if (files.Count == 0)
         {
+            // design §18.1 (V1d27, Issue #404): the files that were not verified are named before the command stops. No
+            // result follows, so the warnings go where the error goes, before it.
+            foreach (string name in others)
+            {
+                host.Error.WriteLine(IssueLine(NotVerifiedIssue(name)));
+            }
+
             // design §16: a folder of elm-service's usage logs holds usage-<node>-*.jsonl, which need --node.
             bool nodes = stream == "usage" && paths.Any(p => Directory.Exists(p) && Directory.EnumerateFiles(p, "usage-*-*.jsonl").Any());
             throw new CliException(

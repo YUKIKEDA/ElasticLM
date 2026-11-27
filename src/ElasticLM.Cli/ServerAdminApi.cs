@@ -79,11 +79,14 @@ internal static class ServerAdminApi
 
     /// <summary>
     /// Returns the sentence for an answer of the administration API that is not the one asked for: its error code and
-    /// detail when it has a code, or else its status code.
+    /// detail when it has a code, or else its status code. The code and the detail come from whatever listens on the
+    /// socket, so their control characters are replaced (design §16, V1d27).
     /// </summary>
     /// <param name="answer">The answer.</param>
     public static string Unexpected(AdminAnswer answer) =>
-        answer.Text("code") is string code ? $"{code}: {answer.Text("detail")}" : $"The server's administration API answered {(int)answer.Status}.";
+        answer.Text("code") is string code
+            ? $"{CliText.Printable(code)}: {CliText.Printable(answer.Text("detail"))}"
+            : $"The server's administration API answered {(int)answer.Status}.";
 
     private static async ValueTask<Stream> ConnectAsync(UnixDomainSocketEndPoint endPoint, CancellationToken cancellationToken)
     {

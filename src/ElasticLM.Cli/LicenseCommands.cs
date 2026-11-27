@@ -210,12 +210,12 @@ internal static class LicenseCommands
                     }
 
                     host.Out.WriteLine("NOT VERIFIED: use 'elm license verify' to check the signatures.");
-                    host.Out.WriteLine("license header: " + output.License.Header.GetRawText());
+                    host.Out.WriteLine("license header: " + CliText.Printable(output.License.Header.GetRawText()));
                     host.Out.WriteLine("license payload:");
                     host.Out.WriteLine(Pretty(output.License.Payload));
                     for (int i = 0; i < output.Certificates.Length; i++)
                     {
-                        host.Out.WriteLine($"certificate {i + 1} header: " + output.Certificates[i].Header.GetRawText());
+                        host.Out.WriteLine($"certificate {i + 1} header: " + CliText.Printable(output.Certificates[i].Header.GetRawText()));
                         host.Out.WriteLine($"certificate {i + 1} payload:");
                         host.Out.WriteLine(Pretty(output.Certificates[i].Payload));
                     }
