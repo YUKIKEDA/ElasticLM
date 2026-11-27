@@ -411,7 +411,7 @@ The claims of a deactivation proof: `ver` (`1`), `act` (the activation ID), `seq
 | `404`, `400`, `409`, `403` | The codes of `POST /v1/activations` | For an activation request, checked in the same order. |
 | `404` | `ELM_ACTIVATION_NOT_FOUND` | A refresh request names no activation. |
 | `400` | `ELM_PROOF_INVALID` | A refresh request is signed by another key than the activation's. |
-| `409` | `ELM_REPLAYED` | Another request file used this request's installation key and `nonce`. For an activation request, checked after the license, its product, and its policy; for a refresh request, once the activation is found. In both, before the license's state. |
+| `409` | `ELM_REPLAYED` | Another request file used this request's installation key and `nonce`. For an activation request, checked after the license, its product, and its policy; for a refresh request, once the activation is found. In both, before the license's state. When two such files for different licenses reach the service at the same moment, the one stored second gets this code after its other checks have passed, and nothing it would have stored is kept. |
 | `403`, `409` | The codes of `POST /v1/activations/{id}/refresh` | For a refresh request. |
 | `409` | The codes of `POST /v1/activations/{id}/deactivate` | For a deactivation proof. |
 | `500` | `ELM_INTERNAL_ERROR` | The database failed, or the license file could not be signed. |

@@ -21,7 +21,7 @@ public sealed class MigratorTests
     ///   journal_mode.
     ///
     /// Expected:
-    /// - Between them the two runs applied versions 1 to 12 once each; the third applied nothing; twelve rows; wal.
+    /// - Between them the two runs applied versions 1 to 13 once each; the third applied nothing; thirteen rows; wal.
     /// </remarks>
     [Theory]
     [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
@@ -36,11 +36,11 @@ public sealed class MigratorTests
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel),
             Task.Run(() => Migrator.RunAsync(database, migrations, test.Time, cancel), cancel)
         );
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], runs.SelectMany(r => r).Order());
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], runs.SelectMany(r => r).Order());
         Assert.Empty(await Migrator.RunAsync(database, migrations, test.Time, cancel));
         await using DbConnection connection = await database.OpenAsync(cancel);
         await using DbCommand count = Database.Command(connection, null, "SELECT COUNT(*) FROM schema_migrations");
-        Assert.Equal(12L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
+        Assert.Equal(13L, Convert.ToInt64(await count.ExecuteScalarAsync(cancel), CultureInfo.InvariantCulture));
         if (test.Provider == DatabaseProvider.Sqlite)
         {
             await using DbCommand mode = Database.Command(connection, null, "PRAGMA journal_mode");
@@ -60,7 +60,7 @@ public sealed class MigratorTests
     ///   transaction; wait for the migrations.
     ///
     /// Expected:
-    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 12.
+    /// - The migrations have not ended after 7 seconds, and after the commit they apply versions 1 to 13.
     /// </remarks>
     [Fact]
     public async Task Run_WhileAnotherWriterHoldsTheLock_WaitsPastFiveSeconds()
@@ -77,7 +77,7 @@ public sealed class MigratorTests
         Assert.False(run.IsCompleted, run.Exception?.ToString());
         await held.CommitAsync(cancel);
 
-        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12], await run);
+        Assert.Equal([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], await run);
     }
 
     /// <summary>Gets each engine with each version a database may stand at before the last.</summary>
@@ -144,7 +144,7 @@ public sealed class MigratorTests
     ///   licenses without a key.
     ///
     /// Expected:
-    /// - Versions 4 to 12 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
+    /// - Versions 4 to 13 applied; the same values, deactivations 0; the policy's trialDailyLimit 1,000 (version 9's default,
     ///   design §9.3) and serverBorrowReturnLimit 10,000 (version 12's default); both inserts succeed.
     /// </remarks>
     [Theory]
@@ -172,7 +172,7 @@ public sealed class MigratorTests
                 + $"{hash}, 3, 100, 50, 60, '[]', '{{}}', 10, 20)"
         );
 
-        Assert.Equal([4, 5, 6, 7, 8, 9, 10, 11, 12], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([4, 5, 6, 7, 8, 9, 10, 11, 12, 13], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal(1_000L, await test.ScalarAsync("SELECT trial_daily_limit FROM policies"));
         Assert.Equal(10_000L, await test.ScalarAsync("SELECT server_borrow_return_limit FROM policies"));
         Assert.Equal(
@@ -213,7 +213,7 @@ public sealed class MigratorTests
     ///   lease a again; look for the index activations_by_key.
     ///
     /// Expected:
-    /// - Versions 11 and 12 applied; the old row has an empty lease_id; the two inserts succeed, three rows; the repeated insert fails
+    /// - Versions 11 to 13 applied; the old row has an empty lease_id; the two inserts succeed, three rows; the repeated insert fails
     ///   on the primary key and leaves three rows; the index is there.
     /// </remarks>
     [Theory]
@@ -241,7 +241,7 @@ public sealed class MigratorTests
         );
         await test.ExecuteAsync($"INSERT INTO lease_returns (license_id, counter, returned_at) VALUES ({License}, 'key:k', 100)");
 
-        Assert.Equal([11, 12], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal([11, 12, 13], await Migrator.RunAsync(database, migrations, test.Time, cancel));
         Assert.Equal(1L, await test.ScalarAsync("SELECT COUNT(*) FROM lease_returns WHERE lease_id = ''"));
         foreach (string lease in new[] { "a", "b" })
         {
@@ -260,6 +260,65 @@ public sealed class MigratorTests
                 ? "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'activations_by_key'"
                 : "SELECT COUNT(*) FROM pg_indexes WHERE schemaname = current_schema() AND indexname = 'activations_by_key'";
         Assert.Equal(1L, await test.ScalarAsync(index));
+    }
+
+    /// <summary>
+    /// Version 13 keeps one stored offline answer for each installation key and nonce, the one of the lowest activation ID,
+    /// and then refuses a second row with the pair (design §12.8.4 step 11, V1d29b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A database on the provider at version 12 with a product, a policy, a license, and offline_requests rows for
+    ///   activations 2 and 1 with key k and nonce n, and for activation 3 with key k and nonce m.
+    ///
+    /// Steps:
+    /// - Run the rest; list the activation IDs left; insert a row for activation 4 with key k and nonce n; insert one for
+    ///   activation 5 with key j and nonce n.
+    ///
+    /// Expected:
+    /// - Version 13 applied; activations 1 and 3 are left; the first insert fails and leaves two rows; the second succeeds.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Run_FromVersion12_KeepsOneOfflineAnswerForEachKeyAndNonce(string provider)
+    {
+        await using TestService test = TestService.Open(provider);
+        await using Database database = Database.Create(test.Provider, test.ConnectionString);
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        IReadOnlyList<Migration> migrations = Migrator.Embedded(test.Provider);
+        await Migrator.RunAsync(database, [.. migrations.Take(12)], test.Time, cancel);
+        const string Product = "'0196f3a0-0000-7000-8000-000000000001'";
+        const string Policy = "'0196f3a0-0000-7000-8000-000000000002'";
+        const string License = "'0196f3a0-0000-7000-8000-000000000003'";
+        await test.ExecuteAsync($"INSERT INTO products (id, code, name, created_at) VALUES ({Product}, 'app', 'App', 1)");
+        await test.ExecuteAsync(
+            "INSERT INTO policies (id, product_id, name, license_kind, binding, max_activations, expiration_basis, token_lifetime, "
+                + "refresh_window, grace_period, fingerprint_matching, clone_strategy, floating, lease_duration, borrow_return_limit, "
+                + $"client_info_strategy, trial_duration, created_at, updated_at) VALUES ({Policy}, {Product}, 'p', 'standard', "
+                + "'nodeLocked', 1, 'fromIssue', 3600, 0, 0, 'any', 'deny', 'none', 600, 2, 'none', 86400, 1, 1)"
+        );
+        await test.ExecuteAsync(
+            "INSERT INTO licenses (id, product_id, policy_id, name, features, meta, created_at, updated_at) "
+                + $"VALUES ({License}, {Product}, {Policy}, 'n', '[]', '{{}}', 1, 1)"
+        );
+        string bytes = test.Provider == DatabaseProvider.Sqlite ? "x'01'" : "decode('01', 'hex')";
+        string Row(int activation, string key, string nonce) =>
+            "INSERT INTO offline_requests (activation_id, key_id, nonce, request_hash, license_id, response, expires_at) "
+            + $"VALUES ('0196f3a0-0000-7000-8000-00000000010{activation}', '{key}', '{nonce}', {bytes}, {License}, {bytes}, 100)";
+        foreach ((int activation, string nonce) in new[] { (2, "n"), (1, "n"), (3, "m") })
+        {
+            await test.ExecuteAsync(Row(activation, "k", nonce));
+        }
+
+        Assert.Equal([13], await Migrator.RunAsync(database, migrations, test.Time, cancel));
+        Assert.Equal(
+            ["0196f3a0-0000-7000-8000-000000000101", "0196f3a0-0000-7000-8000-000000000103"],
+            (await test.TextRowsAsync("SELECT activation_id FROM offline_requests ORDER BY activation_id")).Select(r => r[0])
+        );
+        await Assert.ThrowsAnyAsync<DbException>(() => test.ExecuteAsync(Row(4, "k", "n")));
+        Assert.Equal(2L, await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"));
+        await test.ExecuteAsync(Row(5, "j", "n"));
+        Assert.Equal(3L, await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"));
     }
 
     /// <summary>

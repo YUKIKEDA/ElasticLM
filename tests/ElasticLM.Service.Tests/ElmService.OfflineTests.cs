@@ -674,6 +674,123 @@ public sealed class ElmServiceOfflineTests
     }
 
     /// <summary>
+    /// Two activation requests with one installation key and nonce for different licenses, sent at once, are not both taken:
+    /// the license locks do not meet, and the unique key and nonce refuses the later one as a request made in turn is
+    /// refused, with nothing of it kept (design §5.3 T10, §12.8.4 steps 9 and 11, V1d29b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Each engine; ten rounds, each on a new service with product app, a policy of maxActivations 10, two licenses of it,
+    ///   and one device.
+    ///
+    /// Steps:
+    /// - Post the device's activation files for both licenses with one nonce at once; count the rows of offline_requests and
+    ///   activations and the activation.activate rows of the audit log.
+    ///
+    /// Expected:
+    /// - In every round one answer is 200 and the other 409 ELM_REPLAYED "Another request was made with this request's
+    ///   nonce."; one row in each count, for the license of the 200.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Offline_OneKeyAndNonceForTwoLicensesAtOnce_TakesOne(string provider)
+    {
+        for (int round = 0; round < 10; round++)
+        {
+            await using TestService test = TestService.Open(provider);
+            (ElmService service, HttpClient admin, _) = await StartAsync(test);
+            string product = await ProductAsync(admin, "app", "core");
+            string policy = await TestService.PolicyAsync(admin, product, "\"maxActivations\":10");
+            (string first, string firstKey) = await LicenseAsync(admin, policy);
+            (string second, string secondKey) = await LicenseAsync(admin, policy);
+            using var device = TestDevice.Create(test, service);
+            string[] prints = TestDevice.Fingerprints();
+            string nonce = TestDevice.NewNonce();
+
+            DeviceAnswer[] answers = await Task.WhenAll(
+                device.OfflineAsync(device.ActivationFile(firstKey, prints, nonce)),
+                device.OfflineAsync(device.ActivationFile(secondKey, prints, nonce))
+            );
+            int taken = Array.FindIndex(answers, a => a.Status == HttpStatusCode.OK);
+            Assert.True(taken >= 0, answers[0].Text + answers[1].Text);
+            AssertNonceUsed(answers[1 - taken]);
+            string license = taken == 0 ? first : second;
+            Assert.Equal(
+                (1L, 1L),
+                (
+                    await test.ScalarAsync("SELECT COUNT(*) FROM offline_requests"),
+                    await test.ScalarAsync("SELECT COUNT(*) FROM audit_log WHERE action = 'activation.activate'")
+                )
+            );
+            IReadOnlyList<string?> activation = Assert.Single(await test.TextRowsAsync("SELECT license_id FROM activations"));
+            Assert.Equal(Guid.Parse(license), Guid.Parse(activation[0]!));
+        }
+    }
+
+    /// <summary>
+    /// Two refresh requests with one installation key and nonce for the key's activations of different licenses, sent at
+    /// once, are not both taken; the refused one leaves its activation as it was (design §5.3 T10, §12.8.4 steps 9 and 11,
+    /// V1d29b).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Each engine; ten rounds, each on a new service with product app, a policy, two licenses of it, and one device
+    ///   activated offline on both.
+    ///
+    /// Steps:
+    /// - After a second (the key's rate limit), post refresh files of both activations with one nonce at once; read each
+    ///   activation's seq; count the rows of offline_requests with the nonce.
+    ///
+    /// Expected:
+    /// - In every round one answer is 200 and the other 409 ELM_REPLAYED "Another request was made with this request's
+    ///   nonce."; the activation of the 200 has seq 2 and the other seq 1; one row with the nonce.
+    /// </remarks>
+    [Theory]
+    [MemberData(nameof(TestService.Providers), MemberType = typeof(TestService))]
+    public async Task Offline_OneKeyAndNonceForTwoRefreshesAtOnce_TakesOne(string provider)
+    {
+        for (int round = 0; round < 10; round++)
+        {
+            await using TestService test = TestService.Open(provider);
+            (ElmService service, HttpClient admin, _) = await StartAsync(test);
+            string product = await ProductAsync(admin, "app", "core");
+            string policy = await TestService.PolicyAsync(admin, product, string.Empty);
+            (_, string firstKey) = await LicenseAsync(admin, policy);
+            (_, string secondKey) = await LicenseAsync(admin, policy);
+            using var device = TestDevice.Create(test, service);
+            string[] prints = TestDevice.Fingerprints();
+            string[] activations = new string[2];
+            foreach ((string key, int i) in new[] { (firstKey, 0), (secondKey, 1) })
+            {
+                DeviceAnswer activated = await device.OfflineAsync(device.ActivationFile(key, prints));
+                Assert.True(activated.Status == HttpStatusCode.OK, activated.Text);
+                activations[i] = activated.ActivationId;
+            }
+
+            test.Time.Advance(TimeSpan.FromSeconds(1));
+            string nonce = TestDevice.NewNonce();
+            DeviceAnswer[] answers = await Task.WhenAll(
+                device.OfflineAsync(device.RefreshFile(activations[0], 1, nonce: nonce, iat: 1)),
+                device.OfflineAsync(device.RefreshFile(activations[1], 1, nonce: nonce, iat: 1))
+            );
+            int taken = Array.FindIndex(answers, a => a.Status == HttpStatusCode.OK);
+            Assert.True(taken >= 0, answers[0].Text + answers[1].Text);
+            AssertNonceUsed(answers[1 - taken]);
+            Assert.Equal(
+                (2L, 1L, 1L),
+                (
+                    (await TestService.GetAsync(admin, $"v1/admin/activations/{activations[taken]}")).GetProperty("seq").GetInt64(),
+                    (await TestService.GetAsync(admin, $"v1/admin/activations/{activations[1 - taken]}")).GetProperty("seq").GetInt64(),
+                    await test.ScalarAsync($"SELECT COUNT(*) FROM offline_requests WHERE nonce = '{nonce}'")
+                )
+            );
+        }
+    }
+
+    private static void AssertNonceUsed(DeviceAnswer answer) =>
+        AssertProblem(answer, HttpStatusCode.Conflict, "ELM_REPLAYED", "Another request was made with this request's nonce.");
+
+    /// <summary>
     /// The public entry is limited per address in the devices' bucket, apart from the administration API's.
     /// </summary>
     /// <remarks>
