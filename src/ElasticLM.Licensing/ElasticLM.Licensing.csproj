@@ -19,6 +19,9 @@
     <!-- The lease engine reads feature version ranges and encodes IDs with the same code as the verifier. -->
     <InternalsVisibleTo Include="ElasticLM.Leasing" />
     <InternalsVisibleTo Include="ElasticLM.Issuing.Tests" />
+    <!-- The client cleans its leftover temporary files with the same libc calls as the clock guard (UnixLeftover, design
+         §11.4 step 8 and §12.6.2, V1d24d). -->
+    <InternalsVisibleTo Include="ElasticLM.Client" />
     <!-- The C ABI tests make licenses with the same test issuer (tests/ElasticLM.Licensing.Tests/TestIssuer.cs). -->
     <InternalsVisibleTo Include="ElasticLM.Native.Tests" />
     <!-- elm, elm-server, elm-service, and libelasticlm show argument messages without the .NET parameter name

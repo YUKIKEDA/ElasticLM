@@ -2,15 +2,14 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Versioning;
 
-namespace ElasticLM.Client;
+namespace ElasticLM.Licensing;
 
-// design §12.6.2 (V1d24a, review of PR #475): the clean of leftover temporary files on Linux and macOS. A FileStream open
-// waits in open(2) for a writer when the path is a FIFO, .NET has no non-blocking open, and .NET 10 tells no FIFO from a
-// regular file, so libc is called: open with O_NONBLOCK and O_NOFOLLOW, the type of what was opened from that descriptor,
-// an exclusive flock that fails at once while a writer's FileStream holds its shared flock, and unlink. The same class is in
-// ElasticLM.Licensing for the clock guard (V1d24d, Issue #444); ElasticLM.Licensing gives this assembly no access to its
-// internals, so the two are kept the same by hand. The library names are UnixOwner's: libc.so.6 on Linux (musl answers that
-// name with itself), libSystem on macOS, where fstat with the 64-bit inode layout is fstat$INODE64 on x64.
+// design §11.4 step 8 (V1d24d, the owner's 24d-6 and 24d-6a): a FileStream open waits in open(2) for a writer when the path
+// is a FIFO, .NET has no non-blocking open, and .NET 10 tells no FIFO from a regular file (FileInfo.Attributes of a FIFO is
+// Normal: measured on Debian with .NET 10.0.14 in V1d24d). So libc is called: open with O_NONBLOCK and O_NOFOLLOW, the type of
+// what was opened from that descriptor, an exclusive flock that fails at once while a writer's FileStream holds its shared
+// flock, and unlink. The library names are UnixOwner's in ElasticLM.Client: libc.so.6 on Linux (musl answers that name with
+// itself), libSystem on macOS, where fstat with the 64-bit inode layout is fstat$INODE64 on x64.
 
 /// <summary>
 /// Removes a leftover temporary file on Linux and macOS without waiting and without following a link.

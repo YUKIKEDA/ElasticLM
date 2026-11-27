@@ -302,7 +302,7 @@ Passed to `elm_verifier_create`.
 | `revoked_key_ids` | `const char* const*` | Key IDs revoked by the vendor: 0 to 1024. |
 | `revoked_key_count` | `size_t` | The number of revoked key IDs. |
 | `installation` | `const elm_installation*` | `NULL`, or the installation whose key signs the clock guard's state. The verifier keeps its own copy. |
-| `clock_guard_path` | `const char*` | The clock guard's state file. `NULL`: `clock` in the installation's folder, or no state without an installation. Without an installation the state file is not signed, so whoever can write it can reset the guard. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. |
+| `clock_guard_path` | `const char*` | The clock guard's state file. `NULL`: `clock` in the installation's folder, or no state without an installation. Without an installation the state file is not signed, so whoever can write it can reset the guard. An empty value, or one of only white space, is `ELM_INVALID_ARGUMENT`. The file is written as [`FileClockGuard`](dotnet-api.md#fileclockguard) writes it. |
 | `clock_skew_seconds` | `int32_t` | `0` for the default, 300; otherwise 1 to 3600. |
 | `reject_trial_as_standard` | `int32_t` | `0` (default): a standard requirement also accepts a trial license. `1`: it does not. |
 

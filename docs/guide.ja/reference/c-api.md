@@ -302,7 +302,7 @@ void elm_string_free(char* text);
 | `revoked_key_ids` | `const char* const*` | ベンダーが失効させた鍵 ID。0 個から 1024 個。 |
 | `revoked_key_count` | `size_t` | 失効した鍵 ID の数。 |
 | `installation` | `const elm_installation*` | `NULL`、またはその鍵で時刻巻き戻し対策の状態に署名するインストール。検証器は自分用のコピーを持つ。 |
-| `clock_guard_path` | `const char*` | 時刻巻き戻し対策の状態ファイル。`NULL` なら、インストールのフォルダーの `clock`。インストールがなければ状態を持たない。インストールがないと状態ファイルに署名しないので、そのファイルに書き込める人は誰でも対策をリセットできる。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。 |
+| `clock_guard_path` | `const char*` | 時刻巻き戻し対策の状態ファイル。`NULL` なら、インストールのフォルダーの `clock`。インストールがなければ状態を持たない。インストールがないと状態ファイルに署名しないので、そのファイルに書き込める人は誰でも対策をリセットできる。空か空白だけの値は `ELM_INVALID_ARGUMENT` になる。ファイルの書き方は [`FileClockGuard`](dotnet-api.md#fileclockguard) と同じ。 |
 | `clock_skew_seconds` | `int32_t` | `0` なら既定の 300。それ以外は 1 から 3600。 |
 | `reject_trial_as_standard` | `int32_t` | `0`（既定）: 標準の要件でトライアルのライセンスも受け付ける。`1`: 受け付けない。 |
 
