@@ -331,17 +331,54 @@ internal sealed class TestCertificateChain : IDisposable
     /// </remarks>
     public async Task<(bool Sent, bool Builds, string? Presented)> ConnectAsync(Uri url, CancellationToken cancellationToken)
     {
-        (bool sent, bool builds, string? presented, _) = await HandshakeAsync(url, null, cancellationToken);
+        (bool sent, bool builds, string? presented, _, Connection connection) = await HandshakeAsync(url, null, cancellationToken);
+        await connection.DisposeAsync();
         return (sent, builds, presented);
+    }
+
+    /// <summary>
+    /// Makes the first handshake of this process with the server's certificate alone: listens as <see cref="Listen"/> does
+    /// without intermediates, connects once, and keeps that connection open until the returned object is disposed, which then
+    /// stops the listener.
+    /// </summary>
+    /// <remarks>
+    /// While the connection is open, the listener's end of it holds the TLS credential of the handshake, so a server started
+    /// later in this process with the same certificate gets that credential from .NET's cache, and SChannel sends what that
+    /// handshake sent. A credential that no connection holds is closed and dropped from the cache whenever the cache reaches a
+    /// multiple of 32 credentials (SslSessionsCache.ShrinkCredentialCache, dotnet/runtime v10.0.15), which the other tests of
+    /// the process bring about with certificates of their own. The server then makes a new credential, for which SChannel
+    /// builds the chain from the certificate stores again (Issue #435).
+    /// </remarks>
+    /// <param name="cancellationToken">Cancels the handshake.</param>
+    /// <returns>The open connection with its listener, and whether the intermediate was sent.</returns>
+    public async Task<PrimedHandshake> PrimeAloneAsync(CancellationToken cancellationToken)
+    {
+        var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        (IPEndPoint endPoint, Task served) = Listen(IPAddress.Loopback, [], stop.Token);
+        var primed = new PrimedHandshake(stop, served);
+        try
+        {
+            (primed.Sent, _, _, _, primed.Connection) = await HandshakeAsync(new Uri($"https://127.0.0.1:{endPoint.Port}/"), null, cancellationToken);
+            return primed;
+        }
+        catch
+        {
+            await primed.DisposeAsync();
+            throw;
+        }
     }
 
     /// <summary>
     /// Connects to the server over TLS and returns whether it sent the given certificate (by thumbprint).
     /// </summary>
-    public async Task<bool> SendsAsync(Uri url, X509Certificate2 certificate, CancellationToken cancellationToken) =>
-        (await HandshakeAsync(url, certificate, cancellationToken)).SentThat;
+    public async Task<bool> SendsAsync(Uri url, X509Certificate2 certificate, CancellationToken cancellationToken)
+    {
+        (_, _, _, bool sentThat, Connection connection) = await HandshakeAsync(url, certificate, cancellationToken);
+        await connection.DisposeAsync();
+        return sentThat;
+    }
 
-    private async Task<(bool Sent, bool Builds, string? Presented, bool SentThat)> HandshakeAsync(
+    private async Task<(bool Sent, bool Builds, string? Presented, bool SentThat, Connection Connection)> HandshakeAsync(
         Uri url,
         X509Certificate2? that,
         CancellationToken cancellationToken
@@ -351,32 +388,100 @@ internal sealed class TestCertificateChain : IDisposable
         bool sent = false;
         bool builds = false;
         string? thumbprint = null;
-        using var client = new TcpClient();
-        await client.ConnectAsync(IPAddress.Loopback, url.Port, cancellationToken);
-        await using var tls = new SslStream(client.GetStream());
-        await tls.AuthenticateAsClientAsync(
-            new SslClientAuthenticationOptions
-            {
-                TargetHost = "127.0.0.1",
-                RemoteCertificateValidationCallback = (_, presented, chain, _) =>
+        var client = new TcpClient();
+        SslStream? tls = null;
+        try
+        {
+            await client.ConnectAsync(IPAddress.Loopback, url.Port, cancellationToken);
+            tls = new SslStream(client.GetStream());
+            await tls.AuthenticateAsClientAsync(
+                new SslClientAuthenticationOptions
                 {
-                    X509Certificate2Collection received = chain?.ChainPolicy.ExtraStore ?? [];
-                    sent = received.Cast<X509Certificate2>().Any(c => c.Thumbprint == Intermediate.Thumbprint);
-                    sentThat = that is not null && received.Cast<X509Certificate2>().Any(c => c.Thumbprint == that.Thumbprint);
-                    using var check = new X509Chain();
-                    check.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
-                    check.ChainPolicy.CustomTrustStore.Add(Root);
-                    check.ChainPolicy.DisableCertificateDownloads = true;
-                    check.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
-                    check.ChainPolicy.ExtraStore.AddRange(received);
-                    thumbprint = (presented as X509Certificate2)?.Thumbprint;
-                    builds = presented is X509Certificate2 leaf && check.Build(leaf);
-                    return true;
+                    TargetHost = "127.0.0.1",
+                    RemoteCertificateValidationCallback = (_, presented, chain, _) =>
+                    {
+                        X509Certificate2Collection received = chain?.ChainPolicy.ExtraStore ?? [];
+                        sent = received.Cast<X509Certificate2>().Any(c => c.Thumbprint == Intermediate.Thumbprint);
+                        sentThat = that is not null && received.Cast<X509Certificate2>().Any(c => c.Thumbprint == that.Thumbprint);
+                        using var check = new X509Chain();
+                        check.ChainPolicy.TrustMode = X509ChainTrustMode.CustomRootTrust;
+                        check.ChainPolicy.CustomTrustStore.Add(Root);
+                        check.ChainPolicy.DisableCertificateDownloads = true;
+                        check.ChainPolicy.RevocationMode = X509RevocationMode.NoCheck;
+                        check.ChainPolicy.ExtraStore.AddRange(received);
+                        thumbprint = (presented as X509Certificate2)?.Thumbprint;
+                        builds = presented is X509Certificate2 leaf && check.Build(leaf);
+                        return true;
+                    },
                 },
-            },
-            cancellationToken
-        );
-        return (sent, builds, thumbprint, sentThat);
+                cancellationToken
+            );
+        }
+        catch
+        {
+            await new Connection(client, tls).DisposeAsync();
+            throw;
+        }
+
+        return (sent, builds, thumbprint, sentThat, new Connection(client, tls));
+    }
+
+    /// <summary>
+    /// The open connection of <see cref="PrimeAloneAsync"/> and its listener; disposing it closes the connection, then stops
+    /// the listener.
+    /// </summary>
+    public sealed class PrimedHandshake : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _stop;
+        private readonly Task _served;
+
+        internal PrimedHandshake(CancellationTokenSource stop, Task served)
+        {
+            _stop = stop;
+            _served = served;
+        }
+
+        /// <summary>Gets a value indicating whether the listener sent the intermediate.</summary>
+        public bool Sent { get; internal set; }
+
+        internal Connection? Connection { get; set; }
+
+        /// <inheritdoc/>
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                if (Connection is not null)
+                {
+                    await Connection.DisposeAsync();
+                }
+            }
+            finally
+            {
+                await _stop.CancelAsync();
+                await _served;
+                _stop.Dispose();
+            }
+        }
+    }
+
+    // A client's end of a TLS connection: the stream, then the socket.
+    internal sealed class Connection(TcpClient client, SslStream? tls) : IAsyncDisposable
+    {
+        public async ValueTask DisposeAsync()
+        {
+            try
+            {
+                if (tls is not null)
+                {
+                    await tls.DisposeAsync();
+                }
+            }
+            finally
+            {
+                client.Dispose();
+            }
+        }
     }
 
     /// <summary>
