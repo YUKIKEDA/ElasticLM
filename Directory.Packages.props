@@ -24,6 +24,10 @@
     <PackageVersion Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" Version="10.0.14" />
     <PackageVersion Include="Microsoft.Extensions.FileProviders.Embedded" Version="10.0.14" />
   </ItemGroup>
+  <ItemGroup Label="Server">
+    <!-- elm-server only: runs under the Windows service control manager (design §13.1, V1d29a; §21). MIT. NativeAOT: 0 warnings. -->
+    <PackageVersion Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.14" />
+  </ItemGroup>
   <ItemGroup Label="Tools">
     <!-- tools/ElasticLM.ActionPins only: reads the workflows as YAML (design §20.5, V1d22; §21). MIT, no dependency. -->
     <PackageVersion Include="YamlDotNet" Version="18.1.0" />
