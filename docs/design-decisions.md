@@ -2113,3 +2113,15 @@
 - **決定:** `checksums` の中で `release-assets` を上げたあとに取り直していた確かめ（`release-assets` と `release-notes` のダウンロード、`attest` と `draft` の確かめ、`publish` の 2 と 5 の確かめ）を、新しいジョブ `checksums-check`（`needs: [version, checksums]`）に移す。ハッシュは `checksums` と `version` の出力で受け、`attest` と `draft` は `checksums-check` を待つ（持ち主の決定。2026-11-14、Issue #451 のコメント、PR #452。[design.ja.md](./design.ja.md) §20.5 の「PR で走る場所」）。
 - **理由:** 同じジョブの中で、上げた 0.1〜0.3 秒後に名前で取ると、`actions/download-artifact` v8.0.2 がときどき「Artifact not found for name: release-assets」で落ちた（Issue #451 が挙げる 6 つのジョブ）。ジョブをまたいで取る artifact は、Issue #451 が見た範囲では、この誤りで落ちていない。別のジョブにすれば、ほかのジョブの間の受け渡しと同じ形になる。`attest` と `draft` が待つので、確かめが通らなければ、証明も下書きも作らない。
 - **却下した案:** 同じジョブのまま `artifact-ids` で取る（固定したコミットの `src/download-artifact.ts` は、ID のときも `listArtifacts` で一覧を引いてから ID で絞るので、一覧に載る前なら同じく見つからない。測ってはいない）。落ちたら待って取り直す（待つ長さの根拠になる測りがなく、測っていない待ちを足すことになる。`open-ends.mdc`）。
+
+### SHA で固定した actions の勧告を引く検査（V1d28 の Grill、Issue #347）
+
+- **決定:** V1d28 では、SHA で固定した actions に Dependabot の警告が出ないことを §5.4 に受け入れ、勧告を引く検査は足さない。版のコメント（`# vX.Y.Z`）から GitHub Advisory Database の勧告を引き、勧告のある版を固定していれば CI を落とす検査は、別の行の候補として、ここに残す。行にするかは、持ち主が別に決める（持ち主の決定、問 2 の推奨案。2026-11-27。記録は [rows/V1d28.md](./rows/V1d28.md)。[design.ja.md](./design.ja.md) §5.4 の「SHA で固定した GitHub Actions に、Dependabot の脆弱性の警告が出ない」）。
+- **理由:** 警告は semver の参照にだけ出るので（GitHub の文書 About Dependabot alerts の Limitations）、SHA で固定した actions の勧告は、週 1 回の版の更新の PR が、勧告を名指しせずに運んでくるだけである。検査を足せば、勧告が出た次の CI で見える。一方、検査は外の API（勧告のデータベース）に頼り、トークンか匿名の呼び出しの上限の扱い、版のコメントと勧告の版の範囲の照らし方、API が答えないときの扱いを決めることになる。この行は低の指摘の片付けで、その形を決める Grill を持たない。
+- **却下した案:** ない（候補として残す）。この行で検査を足す案は、選ばなかった（問 2 の推奨案でない案）。SHA の固定をやめてタグに戻す案は退けた（タグの付け替えによる乗っ取り、T25 を止められなくなる）。
+
+### `run:` の本文の `${{ }}` を断る検査（V1d28 の Grill、Issue #347）
+
+- **決定:** V1d28 では、`run:` の本文に書いてあった 5 か所の `${{ }}` を `env:` で渡す形に直すだけにし、検査は足さない。`tools/ElasticLM.ActionPins` に、`run:` の値に `${{` があれば断る規則を足す案は、別の行の候補として、ここに残す。行にするかは、持ち主が別に決める（持ち主の決定、問 5 の推奨案。2026-11-27。記録は [rows/V1d28.md](./rows/V1d28.md)。[design.ja.md](./design.ja.md) §20.5 の「ワークフローとリポジトリの設定」）。
+- **理由:** 検査があれば、同じ種類の書き方を毎回止められる（`persist-credentials` は、すでに同じ道具が確かめている）。一方、道具が読むキーに `run` を足すと、読めない形として断る規則（大文字と小文字だけが違うキー、複数行の値など、§20.5 の「アクションの固定の確かめ」）を `run` にも決め直すことになり、composite のアクションの定義の `run:`（上流のコード）をどう扱うかも決めることになる。今の 3 つのワークフローの `run:` の本文には `${{ }}` がない（V1d28 の PR の検索）。規則（`.cursor/rules/security.mdc` の Workflows）とレビューで守る。
+- **却下した案:** ない（候補として残す）。この行で検査を足す案は、選ばなかった（問 5 の推奨案でない案）。
