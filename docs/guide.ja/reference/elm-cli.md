@@ -34,6 +34,12 @@ elm <group> <command> [arguments] [options]
 
 出力先のファイルがすでにあれば上書きする。このオプションがないと、ファイルを上書きすることになるコマンドは終了コード 2 で止まり、何も書かない。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm server activate-request`、`elm server refresh-request`、`elm server deactivate-proof`、`elm offline process`、`elm secret create` だ。
 
+### 入力ファイル
+
+`elm` は、渡されたファイルを全部読む。読める大きさには、ファイルの種類ごとに上限がある。ライセンスファイル、鍵のファイル、鍵証明書のファイル、`--trust` のファイル、`elm offline process` のリクエストファイル、`elm admin request` の `--body` は 64 KiB まで、`elm server import` が読むサービスのレスポンスファイルは 256 KiB までだ。上限より大きいファイルでは `error: The file '<path>' is larger than <limit> bytes.` と出して、終了コード 2 で止まる。ファイルがないときは `error: The file '<path>' does not exist.` と出して、終了コード 2 で止まる。
+
+`elm license verify` は、ライセンスファイルのバイトをそのまま検証する。ライセンスファイルを UTF-8 の BOM（バイトオーダーマーク）付きや UTF-16 で保存し直すと、`invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file.` となり、終了コードは 1 になる。一方、UTF-8 の BOM 付きのファイルは、`elm license inspect` ではそのまま表示できる。`elm admin request` は、`--body` のバイトを BOM も含めてそのまま送る。それ以外のファイルは、UTF-8 のテキストとして読む。先頭の UTF-8 の BOM は除く。UTF-16 や UTF-32 で保存したファイルなど、UTF-8 として正しくないバイトを含むファイルでは、`error: The file '<path>' is not UTF-8 text.` と出して、終了コード 2 で止まる。UTF-8 で保存し直してから、もう一度コマンドを実行する。
+
 ### パスフレーズ
 
 `elm` が書く秘密鍵は、どれもパスフレーズで暗号化した PKCS#8 の PEM ファイルだ。Linux と macOS では、秘密鍵のファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、前のファイルに書き込まずに、新しいファイルで置き換える。そのため、前のファイルのモードやアクセス権は残らず、前のファイルを開いていたプログラムにも新しい中身は見えない。

@@ -38,7 +38,7 @@ Overwrites an output file that exists. Without it, a command that would overwrit
 
 `elm` reads each file it is given whole, up to a limit for its kind: 64 KiB for a license file, a key file, a key certificate file, a `--trust` file, the request file of `elm offline process`, and the `--body` of `elm admin request`, and 256 KiB for the answer file of `elm server import`. A larger file stops the command with `error: The file '<path>' is larger than <limit> bytes.` and exit code 2, and a file that does not exist with `error: The file '<path>' does not exist.` and exit code 2.
 
-`elm license verify` verifies the bytes of the license file as they are, and `elm admin request` sends the bytes of `--body` as they are. Every other file is read as UTF-8 text. A UTF-8 byte order mark at its start is left out. A file with bytes that are not UTF-8, such as a file saved as UTF-16 or UTF-32, stops the command with `error: The file '<path>' is not UTF-8 text.` and exit code 2: save it as UTF-8 and run the command again.
+`elm license verify` verifies the bytes of the license file as they are. A license file saved again with a UTF-8 byte order mark, or as UTF-16, is reported as `invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file.` with exit code 1, while `elm license inspect` still shows the file with a UTF-8 byte order mark. `elm admin request` sends the bytes of `--body` as they are, a byte order mark included. Every other file is read as UTF-8 text. A UTF-8 byte order mark at its start is left out. A file with bytes that are not UTF-8, such as a file saved as UTF-16 or UTF-32, stops the command with `error: The file '<path>' is not UTF-8 text.` and exit code 2: save it as UTF-8 and run the command again.
 
 ### Passphrases
 
