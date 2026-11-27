@@ -45,10 +45,13 @@ info: elm-server[2]
 
 Windows サービスとして動く `elm-server` の標準出力と標準エラー出力は、どこにも届かない。そのため、`elm-server` は代わりに、Windows の Application ログに、ソース `elm-server` で書く。
 
-- 運用ログ: 各メッセージは、そのイベント番号をイベント ID とするエントリーになる。たとえば `server.stopped: 0 leases were not returned` のイベント ID は 2 だ。既定では `Warning` 以上のエントリーだけを書く。リクエストごとの `Information` のエントリーが Application ログを埋めてしまうためだ。そのため、既定では、サーバーの起動と停止（`server.started: …` と `server.stopped: …`）はイベントログに出ない。イベントログのレベルを変えるには、プロバイダー `EventLog` に対して設定する。たとえば `Logging__EventLog__LogLevel__Default=Information` にする。`Logging__LogLevel__Default` のような、すべてのプロバイダーに対する設定では変わらない。
-- 起動する前にサーバーを止めた行: 終了コード 1 か 2 で終わる前の `error:` の行も、イベント ID 50 のエラーとして書く。サーバーライセンスがないときは、この行が、サーバーのインストール鍵のサムプリントと、マシンのフィンガープリントを示す。
+- 運用ログ: 各メッセージは、そのイベント番号をイベント ID とするエントリーになる。たとえば `server.stopped: 0 leases were not returned` のイベント ID は 2 だ。既定では `Warning` 以上のエントリーだけを書く。リクエストごとの `Information` のエントリーが Application ログを埋めてしまうためだ。そのため、既定では、サーバーの起動と停止（`server.started: …` と `server.stopped: …`）はイベントログに出ない。イベントログのレベルを変えるには、プロバイダー `EventLog` に対して設定する。`Logging__EventLog__LogLevel__Default=Information` はすべてのカテゴリを変え、`Logging__EventLog__LogLevel__elm-server=Information` はサーバー自身のカテゴリだけを変える。ほかのカテゴリは `Warning` のままだ。`Logging__LogLevel__Default` のような、すべてのプロバイダーに対する設定では、イベントログは変わらない。
+- 起動できずに止まるときの行: 終了コード 1 か 2 で終わる前の `error:` の行も、イベント ID 50 のエラーとして書く。サーバーライセンスがないときは、この行が、インストール鍵のサムプリントと、マシンのフィンガープリントを示す。
 
-ソース `elm-server` は、最初のエントリーを書くときに登録される。登録には管理者の権限が要り、LocalSystem はこれを持つ。ソースを登録できないときは、イベントログには何も書かれない。そのとき .NET は、ソース `Application` で `Unable to log .NET application events.` のエントリーを 1 つだけ書こうとする。
+ソース `elm-server` は、最初のエントリーを書くときに登録される。登録には管理者の権限が要り、LocalSystem はこれを持つ。ソースを登録できないときは、イベントログには何も書かれない。そのとき .NET は、ソース `Application` で `Unable to log .NET application events.` のエントリーを 1 つだけ書こうとする。通常のユーザーアカウントで動かすサービスでは、管理者が先にソースを登録しておく。
+
+Application ログは、そのマシンにサインインするどのユーザーも読める。標準出力と標準エラー出力は、サーバーを起動したプログラムにしか届かなかった。
+
 ## 利用ログ
 
 利用ログには、リース、借用、拒否と、書き込むプログラム自身のイベント（起動や停止など）を記録する。監査や課金の問い合わせのための記録で、シートの数え方はこのログに依存しない。書き込みに失敗しても、そのことを運用ログに書くだけで、リクエストは失敗させない。
