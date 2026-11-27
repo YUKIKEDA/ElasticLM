@@ -345,16 +345,28 @@ internal sealed class TestCertificateChain : IDisposable
     /// While the connection is open, the listener's end of it holds the TLS credential of the handshake, so a server started
     /// later in this process with the same certificate gets that credential from .NET's cache, and SChannel sends what that
     /// handshake sent. A credential that no connection holds is closed and dropped from the cache whenever the cache reaches a
-    /// multiple of 32 credentials (SslSessionsCache.ShrinkCredentialCache, dotnet/runtime v10.0.15), which the other tests of
-    /// the process bring about with certificates of their own. The server then makes a new credential, for which SChannel
-    /// builds the chain from the certificate stores again (Issue #435).
+    /// multiple of 32 credentials (SslSessionsCache.ShrinkCredentialCache, dotnet/runtime v10.0.15). Every credential the
+    /// process caches counts: the servers that the other tests start with certificates of their own, and the client ends of
+    /// TLS connections, which share one entry for each set of options (no client certificate, so an empty thumbprint). The
+    /// server then makes a new credential, for which SChannel builds the chain from the certificate stores again (Issue #435).
     /// </remarks>
     /// <param name="cancellationToken">Cancels the handshake.</param>
     /// <returns>The open connection with its listener, and whether the intermediate was sent.</returns>
     public async Task<PrimedHandshake> PrimeAloneAsync(CancellationToken cancellationToken)
     {
         var stop = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        (IPEndPoint endPoint, Task served) = Listen(IPAddress.Loopback, [], stop.Token);
+        IPEndPoint endPoint;
+        Task served;
+        try
+        {
+            (endPoint, served) = Listen(IPAddress.Loopback, [], stop.Token);
+        }
+        catch
+        {
+            stop.Dispose();
+            throw;
+        }
+
         var primed = new PrimedHandshake(stop, served);
         try
         {
@@ -458,9 +470,21 @@ internal sealed class TestCertificateChain : IDisposable
             }
             finally
             {
-                await _stop.CancelAsync();
-                await _served;
-                _stop.Dispose();
+                try
+                {
+                    await _stop.CancelAsync();
+                    await _served;
+                }
+                catch (Exception e)
+                {
+                    // Not thrown: under `await using`, an exception from here would replace the test's own failure. The
+                    // listener's end is not what the tests check, so it goes to the test's output.
+                    TestContext.Current.TestOutputHelper?.WriteLine($"The listener of the first handshake ended with {e}");
+                }
+                finally
+                {
+                    _stop.Dispose();
+                }
             }
         }
     }
