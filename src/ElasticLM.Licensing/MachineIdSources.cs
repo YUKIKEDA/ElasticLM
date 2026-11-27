@@ -128,17 +128,13 @@ internal static partial class MachineIdSources
     {
         try
         {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0);
-
-            // One byte past the limit tells a file of 64 bytes from a larger one without trusting FileStream.Length.
-            Span<byte> buffer = stackalloc byte[65];
-            int length = file.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-            if (length > 64)
+            // design §8.6 (V1d24c): the one reader of whole files, which reads one byte past the limit at most.
+            if (BoundedFile.Read(path, 64, FileShare.Read) is not byte[] bytes)
             {
                 return null;
             }
 
-            ReadOnlySpan<byte> content = buffer[..length];
+            ReadOnlySpan<byte> content = bytes;
             if (content.StartsWith(Encoding.UTF8.Preamble))
             {
                 content = content[Encoding.UTF8.Preamble.Length..];

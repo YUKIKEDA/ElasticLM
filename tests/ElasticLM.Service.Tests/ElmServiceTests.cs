@@ -15,6 +15,13 @@ namespace ElasticLM.Service.Tests;
 /// </summary>
 public sealed class ElmServiceTests
 {
+    // design §8.6 (V1d24c): the operator's files that elm-service reads at its start.
+    private const int RootKeyFileLimit = 16 * 1024;
+
+    private const int OperatorFileLimit = 64 * 1024;
+
+    private const int CertificateFileLimit = (16 * 1024) + 2;
+
     /// <summary>
     /// The service keeps Kestrel's limits on the request line and the headers (design §5.3 T16): a request line of 8,192
     /// bytes, 100 headers, and a header section of 32 KiB and the empty line that ends it are read; a byte or a header
@@ -822,5 +829,147 @@ public sealed class ElmServiceTests
         ];
 
         Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The operator's files are read up to their limits (design §8.6, V1d24c): a trust.rootKeys file of 16 KiB, the signing
+    /// key and the TLS certificate and key of 64 KiB each, and a signing certificate of 16 KiB and a CRLF start the service.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A vendor. A trust.rootKeys file with the vendor's root key and as many other P-256 public keys as fit, then line
+    ///   breaks up to 16,384 bytes; the signing key's PEM and line breaks up to 65,536 bytes; the signing certificate, spaces,
+    ///   and a CRLF, 16,386 bytes; a self-signed certificate for 127.0.0.1 and its key as PEM files, each with line breaks up
+    ///   to 65,536 bytes.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with those files; GET /health trusting only that certificate.
+    ///
+    /// Expected:
+    /// - The files have those lengths; 200, and the service signs with the signing key.
+    /// </remarks>
+    [Fact]
+    public async Task Start_OperatorFilesAtTheirLimits_Starts()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        OperatorFiles files = WriteOperatorFiles(test);
+
+        ElmService service = await test.StartAsync(files.Apply);
+        using var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, presented, _, _) => presented?.Thumbprint == files.Thumbprint,
+        };
+        using var http = new HttpClient(handler) { BaseAddress = service.Url };
+
+        Assert.Equal(
+            [RootKeyFileLimit, OperatorFileLimit, CertificateFileLimit, OperatorFileLimit, OperatorFileLimit],
+            new[] { files.Roots, files.Key, files.Certificate, files.TlsCertificate, files.TlsKey }.Select(p => new FileInfo(p).Length)
+        );
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("health", cancel)).StatusCode);
+        Assert.Equal(KeyFiles.KeyId(test.SigningKey), service.Signing.KeyId);
+    }
+
+    /// <summary>
+    /// An operator's file one byte past its limit stops the start with a sentence that names the file (design §8.6, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The files of Start_OperatorFilesAtTheirLimits_Starts, each at its limit; then one of them with one more line break.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with those files, for each file in turn: trust.rootKeys, the signing key, the signing
+    ///   certificate, the TLS certificate, the TLS key.
+    ///
+    /// Expected:
+    /// - ServiceStartException "trust.rootKeys file '{path}' is larger than 16 KiB.", "The signing key file '{path}' is larger
+    ///   than 64 KiB.", "The certificate file '{path}' is larger than 16386 bytes.", "The TLS certificate '{path}' is larger
+    ///   than 64 KiB.", and "The TLS key '{path}' is larger than 64 KiB.".
+    /// </remarks>
+    /// <param name="file">The file one byte past its limit.</param>
+    [Theory]
+    [InlineData("roots")]
+    [InlineData("key")]
+    [InlineData("certificate")]
+    [InlineData("tls-certificate")]
+    [InlineData("tls-key")]
+    public async Task Start_OperatorFileOneBytePastItsLimit_Throws(string file)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        OperatorFiles files = WriteOperatorFiles(test);
+        (string path, string expected) = file switch
+        {
+            "roots" => (files.Roots, $"trust.rootKeys file '{files.Roots}' is larger than 16 KiB."),
+            "key" => (files.Key, $"The signing key file '{files.Key}' is larger than 64 KiB."),
+            "certificate" => (files.Certificate, $"The certificate file '{files.Certificate}' is larger than 16386 bytes."),
+            "tls-certificate" => (files.TlsCertificate, $"The TLS certificate '{files.TlsCertificate}' is larger than 64 KiB."),
+            _ => (files.TlsKey, $"The TLS key '{files.TlsKey}' is larger than 64 KiB."),
+        };
+        File.AppendAllText(path, "\n");
+
+        var refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(test.Settings(files.Apply), test.HostOptions(), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(expected, refused.Message);
+    }
+
+    // Every operator's file that elm-service reads at its start, each at its limit (design §8.6, V1d24c).
+    private static OperatorFiles WriteOperatorFiles(TestService test)
+    {
+        string roots = test.FilePath("roots.pub.pem");
+        WriteRootKeysAtLimit(roots, File.ReadAllText(test.FilePath("root.pub.pem")), RootKeyFileLimit);
+        string key = test.FilePath("signing-limit.key.pem");
+        File.WriteAllText(key, PadWithLineBreaks(File.ReadAllText(test.FilePath("signing.key.pem")), OperatorFileLimit));
+        string certificate = test.FilePath("signing-limit.cert");
+        File.WriteAllText(certificate, PadCertificate(File.ReadAllText(test.FilePath("signing.cert")).Trim(), CertificateFileLimit));
+        using ECDsa tlsKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=elm-service-test", tlsKey, HashAlgorithmName.SHA256);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(names.Build());
+        using X509Certificate2 tls = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
+        File.WriteAllText(test.FilePath("tls-limit.crt"), PadWithLineBreaks(tls.ExportCertificatePem() + "\n", OperatorFileLimit));
+        File.WriteAllText(test.FilePath("tls-limit.key"), PadWithLineBreaks(tlsKey.ExportPkcs8PrivateKeyPem() + "\n", OperatorFileLimit));
+        return new OperatorFiles(roots, key, certificate, test.FilePath("tls-limit.crt"), test.FilePath("tls-limit.key"), tls.Thumbprint);
+    }
+
+    // The vendor's root key first, then other P-256 public keys while a whole one fits, then line breaks up to the length.
+    private static void WriteRootKeysAtLimit(string path, string rootPem, int length)
+    {
+        var text = new System.Text.StringBuilder(rootPem.TrimEnd() + "\n");
+        while (true)
+        {
+            using ECDsa other = KeyFiles.CreateKey();
+            string next = KeyFiles.ExportPublic(other) + "\n";
+            if (text.Length + next.Length > length)
+            {
+                break;
+            }
+
+            text.Append(next);
+        }
+
+        File.WriteAllText(path, PadWithLineBreaks(text.ToString(), length));
+    }
+
+    private static string PadWithLineBreaks(string text, int length) =>
+        text + new string('\n', length - System.Text.Encoding.UTF8.GetByteCount(text));
+
+    // As elm key certify writes it, with spaces between the certificate and the line break, and a CRLF.
+    private static string PadCertificate(string certificate, int length) => certificate + new string(' ', length - certificate.Length - 2) + "\r\n";
+
+    private sealed record OperatorFiles(string Roots, string Key, string Certificate, string TlsCertificate, string TlsKey, string Thumbprint)
+    {
+        public ServiceSettings Apply(ServiceSettings settings) =>
+            settings with
+            {
+                Listen = new Uri("https://127.0.0.1:0"),
+                TlsCertificate = TlsCertificate,
+                TlsKey = TlsKey,
+                TrustRootKeyFiles = [Roots],
+                SigningKeyFile = Key,
+                SigningCertificateFiles = [Certificate],
+            };
     }
 }

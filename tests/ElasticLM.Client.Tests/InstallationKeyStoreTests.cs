@@ -84,6 +84,37 @@ public sealed class InstallationKeyStoreTests : IDisposable
     }
 
     /// <summary>
+    /// A key file of 16 KiB is read, and one of a byte more is too large (design §8.6, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A created key; its file then overwritten with 16,384 zero bytes, or 16,385.
+    ///
+    /// Steps:
+    /// - TryLoad.
+    ///
+    /// Expected:
+    /// - Both false with ELM_INSTALLATION_KEY_UNREADABLE. 16,385 bytes: "The installation key does not exist or is too
+    ///   large."; 16,384 bytes: another message, from a check after the file was read.
+    /// </remarks>
+    /// <param name="length">The key file's length.</param>
+    [Theory]
+    [InlineData(16 * 1024)]
+    [InlineData((16 * 1024) + 1)]
+    public void TryLoad_FileAtItsLimitAndOnePast_IsReadThenTooLarge(int length)
+    {
+        var store = new InstallationKeyStore("acme-cad", KeyScope.User, _dir);
+        Assert.True(store.TryLoadOrCreate(out InstallationKey? created, out _));
+        created!.Dispose();
+        File.WriteAllBytes(Path.Combine(_dir, "installation.key"), new byte[length]);
+
+        Assert.False(store.TryLoad(out _, out LicenseError? error));
+
+        Assert.Equal(ErrorCode.InstallationKeyUnreadable, error!.Code);
+        Assert.Equal(length > 16 * 1024, error.Message == "The installation key does not exist or is too large.");
+    }
+
+    /// <summary>
     /// TryLoad without a key, and after Delete, reports unreadable; Delete without a key does nothing.
     /// </summary>
     /// <remarks>

@@ -183,6 +183,34 @@ public sealed class FileClockGuardTests : IDisposable
     }
 
     /// <summary>
+    /// A state file of 4,096 bytes is read, and one of a byte more is no state (design §8.6, §11.4, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A state at T0 + 30 days, with spaces after its JSON up to 4,096 bytes, or up to 4,097.
+    ///
+    /// Steps:
+    /// - Observe T0 + 10 days with a token issued at T0 in a new guard.
+    ///
+    /// Expected:
+    /// - 4,096 bytes: rejected, the state is honored. 4,097 bytes: accepted, the state is ignored and the floor is the token's
+    ///   iat.
+    /// </remarks>
+    /// <param name="length">The state file's length.</param>
+    [Theory]
+    [InlineData(4096)]
+    [InlineData(4097)]
+    public void Observe_StateAtItsLimitAndOnePast_IsReadThenIgnored(int length)
+    {
+        Assert.True(new FileClockGuard(StatePath).Observe(T0.AddDays(30), T0, Skew));
+        string state = File.ReadAllText(StatePath);
+        File.WriteAllText(StatePath, state + new string(' ', length - state.Length));
+
+        Assert.Equal(length, new FileInfo(StatePath).Length);
+        Assert.Equal(length > 4096, new FileClockGuard(StatePath).Observe(T0.AddDays(10), T0, Skew));
+    }
+
+    /// <summary>
     /// With an installation key, an untouched signed state is honored across guards.
     /// </summary>
     /// <remarks>

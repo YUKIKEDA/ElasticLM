@@ -795,13 +795,8 @@ public sealed class LicenseClient : IAsyncDisposable
         byte[]? bytes;
         try
         {
-            var info = new FileInfo(path);
-            if (info.Length > MaxBorrowFileLength)
-            {
-                return null;
-            }
-
-            // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it.
+            // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it. design §8.6
+            // (V1d24c): the limit is checked while the file is read.
             bytes = FileReplacement.ReadShared(path, MaxBorrowFileLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

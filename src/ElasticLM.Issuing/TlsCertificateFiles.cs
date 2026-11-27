@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Issuing;
 
@@ -9,6 +10,13 @@ namespace ElasticLM.Issuing;
 public static class TlsCertificateFiles
 {
     private const string ServerAuthenticationOid = "1.3.6.1.5.5.7.3.1";
+
+    // design §8.6 (V1d24c): a certificate file and a key file, PEM or PKCS#12, each read with the limit checked while it is
+    // read. The loaders of a path read the whole file first: X509Certificate2.CreateFromPemFile and
+    // X509Certificate2Collection.ImportFromPemFile through File.ReadAllText (X509Certificate2.cs and
+    // X509Certificate2Collection.cs), X509CertificateLoader.LoadPkcs12CollectionFromFile through its own read of the file into
+    // the same loader as LoadPkcs12Collection with the default limits (X509CertificateLoader.cs), dotnet/runtime release/10.0.
+    private const int MaxFileLength = 64 * 1024;
 
     /// <summary>
     /// Reads a PKCS#12 file (with its password), or a PEM certificate with its PEM key in <paramref name="keyPath"/>, with the
@@ -38,7 +46,22 @@ public static class TlsCertificateFiles
         {
             if (keyPath is null)
             {
-                X509Certificate2Collection all = X509CertificateLoader.LoadPkcs12CollectionFromFile(certificatePath, password);
+                if (BoundedFile.Read(certificatePath, MaxFileLength, FileShare.Read) is not byte[] pkcs12)
+                {
+                    problem = TooLarge("certificate", certificatePath);
+                    return false;
+                }
+
+                X509Certificate2Collection all;
+                try
+                {
+                    all = X509CertificateLoader.LoadPkcs12Collection(pkcs12, password);
+                }
+                finally
+                {
+                    CryptographicOperations.ZeroMemory(pkcs12);
+                }
+
                 for (int i = 0; i < all.Count; i++)
                 {
                     if (!all[i].HasPrivateKey)
@@ -63,13 +86,25 @@ public static class TlsCertificateFiles
             }
             else
             {
-                using (X509Certificate2 pem = X509Certificate2.CreateFromPemFile(certificatePath, keyPath))
+                if (BoundedFile.ReadAllText(certificatePath, MaxFileLength) is not string certificateText)
+                {
+                    problem = TooLarge("certificate", certificatePath);
+                    return false;
+                }
+
+                if (BoundedFile.ReadAllText(keyPath, MaxFileLength) is not string keyText)
+                {
+                    problem = TooLarge("key", keyPath);
+                    return false;
+                }
+
+                using (X509Certificate2 pem = X509Certificate2.CreateFromPem(certificateText, keyText))
                 {
                     server = ForKestrel(pem);
                 }
 
                 var all = new X509Certificate2Collection();
-                all.ImportFromPemFile(certificatePath);
+                all.ImportFromPem(certificateText);
                 all[0].Dispose();
                 for (int i = 1; i < all.Count; i++)
                 {
@@ -139,6 +174,8 @@ public static class TlsCertificateFiles
 
         return !hasUsage;
     }
+
+    private static string TooLarge(string what, string path) => $"The TLS {what} '{path}' is larger than 64 KiB.";
 
     private static string NotForServers(string certificatePath) =>
         $"The TLS certificate '{certificatePath}' cannot be used by a server: its Extended Key Usage does not include server "

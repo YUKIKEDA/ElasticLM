@@ -74,6 +74,73 @@ public sealed class ElmCliTests : IDisposable
     }
 
     /// <summary>
+    /// license verify verifies the bytes of the file as they are, not a text decoded from them (design §16, the reading of
+    /// file arguments, V1d24c, F30).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license issued by the offline flow; the same license file written as UTF-16 with its byte order mark (FF FE).
+    ///
+    /// Steps:
+    /// - license verify the UTF-8 file; license verify the UTF-16 file.
+    ///
+    /// Expected:
+    /// - Exit 0; exit 1 with "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file.". Before
+    ///   V1d24c the file was decoded as UTF-16 and given back as UTF-8, and the UTF-16 file verified.
+    /// </remarks>
+    [Fact]
+    public void Verify_FileOfOtherBytesThanTheLicense_IsVerifiedAsItsBytes()
+    {
+        string licensePath = IssueSample();
+        string utf16 = P("utf16.elmlic");
+        File.WriteAllText(utf16, File.ReadAllText(licensePath), new System.Text.UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+
+        (int code, _, _) = Run([.. Verify(licensePath)]);
+        (int utf16Code, string utf16Out, _) = Run([.. Verify(utf16)]);
+
+        Assert.Equal(0, code);
+        Assert.Equal((1, "invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file."), (utf16Code, utf16Out.Trim()));
+    }
+
+    /// <summary>
+    /// A text file argument is read as UTF-8: one UTF-8 byte order mark is left out, and a byte that is not UTF-8, the byte
+    /// order mark of UTF-16 among them, stops the command (design §16, the reading of file arguments, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A license issued by the offline flow; copies of it with EF BB BF before it, with FF before it, and written as UTF-16
+    ///   with its byte order mark.
+    ///
+    /// Steps:
+    /// - license inspect each copy.
+    ///
+    /// Expected:
+    /// - The copy with the UTF-8 mark: exit 0 and the payload. The other two: exit 2 and "error: The file '{path}' is not UTF-8
+    ///   text.".
+    /// </remarks>
+    [Fact]
+    public void Inspect_TextFileNotUtf8_StopsAndAUtf8MarkIsLeftOut()
+    {
+        string licensePath = IssueSample();
+        byte[] license = File.ReadAllBytes(licensePath);
+        string marked = P("marked.elmlic");
+        File.WriteAllBytes(marked, [0xEF, 0xBB, 0xBF, .. license]);
+        string invalid = P("invalid.elmlic");
+        File.WriteAllBytes(invalid, [0xFF, .. license]);
+        string utf16 = P("utf16.elmlic");
+        File.WriteAllText(utf16, File.ReadAllText(licensePath), new System.Text.UnicodeEncoding(bigEndian: false, byteOrderMark: true));
+
+        (int markedCode, string markedOut, _) = Run("license", "inspect", marked);
+        (int invalidCode, _, string invalidError) = Run("license", "inspect", invalid);
+        (int utf16Code, _, string utf16Error) = Run("license", "inspect", utf16);
+
+        Assert.Equal(0, markedCode);
+        Assert.Contains("\"lic\": \"lic-1\"", markedOut, StringComparison.Ordinal);
+        Assert.Equal((2, $"error: The file '{invalid}' is not UTF-8 text."), (invalidCode, invalidError.Trim()));
+        Assert.Equal((2, $"error: The file '{utf16}' is not UTF-8 text."), (utf16Code, utf16Error.Trim()));
+    }
+
+    /// <summary>
     /// A server license states what the server does with a clone (design §8.4.2): deny unless --clone says flag; and the
     /// early returns its server takes in 30 days: 10,000 unless --server-borrow-returns says otherwise, from 1 to 10,000
     /// (V1d16).

@@ -183,14 +183,14 @@ public sealed partial class InstallationKeyStore
         byte[] stored;
         try
         {
-            var info = new FileInfo(KeyPath);
-            if (!info.Exists || info.Length > MaxKeyFileLength)
+            if (!new FileInfo(KeyPath).Exists)
             {
                 error = Unreadable("The installation key does not exist or is too large.");
                 return false;
             }
 
-            // design §12.6.2 (V1d24a): Delete is not refused on Windows while this reads the key.
+            // design §12.6.2 (V1d24a): Delete is not refused on Windows while this reads the key. design §8.6 (V1d24c): the
+            // limit is checked while the file is read.
             if (FileReplacement.ReadShared(KeyPath, MaxKeyFileLength) is not byte[] read)
             {
                 error = Unreadable("The installation key does not exist or is too large.");
