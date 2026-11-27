@@ -36,6 +36,7 @@ Exit code 1 means, for example:
 - The path of the socket file, `admin.sock` in the data folder, is longer than the system allows. The message is `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` The server checks this before it reads the root keys or creates the data folder, so such a start leaves nothing. See [Data folder](#data-folder).
 - The system has no Unix domain sockets, as on a Windows older than the versions at the top of this page: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` The server checks this at the same point, after the length of the path.
 - No root public keys are given.
+- A `trust.rootKeys` file is larger than 16 KiB, or the file of `tls.certificate` or of `tls.key` is larger than 64 KiB: `error: trust.rootKeys file '<path>' is larger than 16 KiB.`, `error: The TLS certificate '<path>' is larger than 64 KiB.`, or `error: The TLS key '<path>' is larger than 64 KiB.`
 - Another `elm-server` runs on the same data folder: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` Stop that server, or give this one a `dataDirectory` of its own. On Windows the same line appears while another program, such as a backup or an antivirus scan, has `server.lock` open: start the server again, and exclude `server.lock` from that program ([Data folder](#data-folder) lists the files to exclude). Where the file lock does not hold (see [Data folder](#data-folder)), a second server stops instead with `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.`
 - The lock file `server.lock` cannot be opened, for a reason other than another program holding it: a missing permission, a full disk, or a read-only file system, for example. `error: The lock file '<path>' cannot be opened: <reason>`. The reason names the cause: check that the server's user may write in the data folder, and that `server.lock` is a file.
 - What is at the path of `admin.sock` can be neither used nor removed, such as a folder of that name: `error: The administration socket '<path>' cannot be used: <reason>`. Remove what is at that path, and start the server again.
@@ -175,15 +176,15 @@ An `allow` or `deny` entry is one of:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required) | PEM files of the vendor's root public keys, which the server license's key certificate is checked against. Instead of files, `ELM_TRUST_ROOT_KEYS` (note the second `_`) can hold the PEM text. Without either, the server does not start. |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required) | PEM files of the vendor's root public keys, which the server license's key certificate is checked against. Each file is at most 16 KiB, which holds about 90 keys. Instead of files, `ELM_TRUST_ROOT_KEYS` (note the second `_`) can hold the PEM text. Without either, the server does not start. |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | list of strings | none | Key IDs (`kid`) that the server no longer trusts. |
 
 ## `tls`
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
-| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`. |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The file is at most 64 KiB. The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
+| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`, at most 64 KiB. |
 
 Intermediate CA certificates:
 
