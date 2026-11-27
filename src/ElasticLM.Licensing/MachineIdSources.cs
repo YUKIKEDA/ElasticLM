@@ -1,5 +1,6 @@
 using System.Globalization;
 using System.Runtime.InteropServices;
+using System.Text;
 using Microsoft.Win32;
 
 namespace ElasticLM.Licensing;
@@ -33,8 +34,8 @@ internal static partial class MachineIdSources
     }
 
     /// <summary>
-    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters (machine-id(5)), with any newlines at the end
-    /// removed.
+    /// Parses the content of <c>/etc/machine-id</c>: 32 lowercase hex characters (machine-id(5)), with any line feeds at the
+    /// end removed. A carriage return is not removed, so a CRLF line end is refused.
     /// </summary>
     internal static byte[]? ParseLinuxMachineId(string content)
     {
@@ -94,12 +95,12 @@ internal static partial class MachineIdSources
     }
 
     /// <summary>
-    /// Adds <paramref name="id"/> to <paramref name="ids"/> unless it is <see langword="null"/>, not 16 bytes, all zeros, or
-    /// all ones.
+    /// Adds <paramref name="id"/> to <paramref name="ids"/> unless it is <see langword="null"/>, all zeros, or all ones. Every
+    /// reader returns 16 bytes, and <see cref="MachineFingerprint.Derive"/> refuses any other length.
     /// </summary>
     internal static void AddIfValid(List<byte[]> ids, byte[]? id)
     {
-        if (id is null || id.Length != 16)
+        if (id is null)
         {
             return;
         }
@@ -119,15 +120,31 @@ internal static partial class MachineIdSources
     }
 
     /// <summary>
-    /// Reads and parses the machine-id file at <paramref name="path"/>. Returns <see langword="null"/> when the file is missing,
-    /// larger than 64 bytes, unreadable, or not in the format of <see cref="ParseLinuxMachineId"/>.
+    /// Reads and parses the machine-id file at <paramref name="path"/>, skipping a UTF-8 byte order mark. Returns
+    /// <see langword="null"/> when the file is missing, a folder, larger than 64 bytes, unreadable, or not in the format of
+    /// <see cref="ParseLinuxMachineId"/>.
     /// </summary>
     internal static byte[]? ReadLinuxMachineId(string path)
     {
         try
         {
-            // FileInfo.Length throws FileNotFoundException for a missing file and a folder.
-            return new FileInfo(path).Length <= 64 ? ParseLinuxMachineId(File.ReadAllText(path)) : null;
+            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+
+            // One byte past the limit tells a file of 64 bytes from a larger one without trusting FileStream.Length.
+            Span<byte> buffer = stackalloc byte[65];
+            int length = file.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
+            if (length > 64)
+            {
+                return null;
+            }
+
+            ReadOnlySpan<byte> content = buffer[..length];
+            if (content.StartsWith(Encoding.UTF8.Preamble))
+            {
+                content = content[Encoding.UTF8.Preamble.Length..];
+            }
+
+            return ParseLinuxMachineId(Encoding.UTF8.GetString(content));
         }
         catch (IOException)
         {
