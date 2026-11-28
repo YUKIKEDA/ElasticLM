@@ -125,24 +125,24 @@ WantedBy=multi-user.target
 - `Restart=on-failure` と `RestartSec=5`: サーバーが 0 以外の終了コードで終わるか、`SIGKILL` などのシグナルで止められると、systemd は 5 秒後にもう一度起動する。`systemctl stop` による停止（`SIGTERM` を送る）は失敗に当たらない。
 - `TimeoutStopSec=60`: systemd は、サーバーが止まるのを 60 秒待ち、そのあとで強制終了する（[サーバーを止めて記録を確かめる](#サーバーを止めて記録を確かめる)）。この設定がないと、systemd は既定の時間だけ待つ。その時間はマシンの systemd の設定で決まる（Ubuntu 26.04 では 90 秒）。
 
-`TimeoutStopSec` より後の行は、サーバーの欠陥を突くなどして、サーバーのプロセスの中でコードを動かした者ができることを狭める（各行の説明は [systemd.exec(5)](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) にある）。効くのは、systemd がこのユニットから起動したプロセスだけだ。`sudo -u elm-server` で起動したものなど、同じユーザーのほかのプロセスには効かない。
+`TimeoutStopSec` より後の行は、サーバーの欠陥を突くなどして、サーバーのプロセスの中でコードを動かした人ができることを狭める（各行の説明は [systemd.exec(5)](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) にある）。効くのは、systemd がこのユニットから起動したプロセスだけだ。`sudo -u elm-server` で起動したものなど、同じユーザーのほかのプロセスには効かない。
 
 - `NoNewPrivileges=yes`、空の `CapabilityBoundingSet=`、`RestrictSUIDSGID=yes`: プロセスは Linux のケーパビリティを 1 つも持たず、set-user-ID のプログラムを実行しても特権を得られず、set-user-ID や set-group-ID のファイルも作れない。
 - `ProtectSystem=strict` と `ReadWritePaths=/var/lib/elm-server`: ファイルシステムは、プロセスからは読み取り専用になる。例外は、データフォルダーと、自分専用の `/tmp`（次の項目）だけだ。データフォルダー、ライセンス、利用ログをほかの場所に移さないかぎり（下で説明する）、サーバーが書くものはすべてデータフォルダーにある。`ProtectHome=yes`、`PrivateTmp=yes`、`PrivateDevices=yes`: ホームフォルダーは見えず、`/tmp` と `/var/tmp` は自分専用のものになり（ほかのプロセスとは共有せず、実行が終わると残らない）、ハードウェアのデバイスも見えない。
 - `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`: 開けるソケットの種類は、サーバーが使うもの、つまりデータフォルダーにあるローカルの管理用のソケットと、接続と名前解決に使う IPv4 と IPv6 だけになる。
-- `ProtectKernelTunables`、`ProtectKernelModules`、`ProtectKernelLogs`、`ProtectControlGroups`、`ProtectClock`、`ProtectHostname`、`RestrictNamespaces`、`RestrictRealtime`、`LockPersonality`、`MemoryDenyWriteExecute`: カーネルの設定を変えること、カーネルモジュールを読み込むこと、カーネルのログを読むこと、コントロールグループを変えること、時計やホスト名を設定すること、名前空間を作ること、リアルタイムのスケジューリングを使うこと、実行ドメインを変えること、書き込みと実行の両方ができるメモリを作ることができなくなる。
-- `SystemCallArchitectures=native`: プロセスが使えるのは、そのマシンのアーキテクチャのシステムコールだけになる。`SystemCallFilter=@system-service` と `SystemCallErrorNumber=EPERM`: systemd がサービス向けに挙げる組（`systemd-analyze syscall-filter @system-service` で表示できる）にないシステムコールは、エラー `EPERM` で失敗する。
+- `ProtectKernelTunables`、`ProtectKernelModules`、`ProtectKernelLogs`、`ProtectControlGroups`、`ProtectClock`、`ProtectHostname`、`RestrictNamespaces`、`RestrictRealtime`、`LockPersonality`、`MemoryDenyWriteExecute`: カーネルの設定を変える、カーネルモジュールを読み込む、カーネルのログを読む、コントロールグループを変える、時計やホスト名を設定する、名前空間を作る、リアルタイムのスケジューリングを使う、実行ドメインを変える、書き込みと実行の両方ができるメモリを作る、のどれもできなくなる。
+- `SystemCallArchitectures=native`: プロセスが使えるのは、そのマシンのアーキテクチャのシステムコールだけになる。`SystemCallFilter=@system-service` と `SystemCallErrorNumber=EPERM`: systemd がサービス向けにまとめたシステムコールの一覧（`systemd-analyze syscall-filter @system-service` で表示できる）にないシステムコールは、エラー `EPERM` で失敗する。
 
-これらの行で止められないこともある。プロセスはデータフォルダーを読み書きできるので、その中のコードは、上の規則のとおり、インストール鍵と管理者トークンを読み、リースに署名し、記録を変えられ、ローカルの管理用のソケットも使える。`/etc` の中のファイルなど、どのユーザーでも読めるファイルは読めるし、ネットワークのどのアドレスにも接続できる。macOS と Windows のサービスには、このような制限はない。
+これらの行でも、次のことは止められない。プロセスはデータフォルダーを読み書きできるので、その中のコードは、上の規則のとおり、インストール鍵と管理者トークンを読み、リースに署名し、記録を変えられ、ローカルの管理用のソケットも使える。`/etc` の中のファイルなど、どのユーザーでも読めるファイルは読めるし、ネットワークのどのアドレスにも接続できる。macOS と Windows のサービスには、このような制限はない。
 
-このユニットは、Ubuntu 26.04 の systemd 259 で試した。これらの行でいちばん新しい `ProtectClock=` は、systemd 245 で入った（行ごとの版は systemd.exec(5) にある）。systemd は、知らない行を無視し、ユニットのファイルと行を名指す警告をジャーナルに書いて（systemd 259 では `/etc/systemd/system/elm-server.service:<line>: Unknown key '<name>' in section [Service], ignoring.`。版によって書き方は違う）、その制限なしでサーバーを動かす。古い systemd では、`daemon-reload` のあとに `sudo journalctl -b | grep 'elm-server.service'` でこのような警告を探す。下の手順でユニットを置いたあと、`sudo systemd-analyze security elm-server` を実行すると、設定ごとの一覧が表示され、最後の行にユニットの露出の度合いが出る。この環境では `Overall exposure level for elm-server.service: 1.7 OK` だった。これらの行のないユニットでは 9.2（UNSAFE）だった。
+このユニットは、Ubuntu 26.04 の systemd 259 で試した。これらの行でいちばん新しい `ProtectClock=` は、systemd 245 で入った（行ごとの版は systemd.exec(5) にある）。systemd は、知らない行を無視し、ユニットのファイルと行を示す警告をジャーナルに書いて（systemd 259 では `/etc/systemd/system/elm-server.service:<line>: Unknown key '<name>' in section [Service], ignoring.`。版によって書き方は違う）、その制限なしでサーバーを動かす。古い systemd では、`daemon-reload` のあとに `sudo journalctl -b | grep 'elm-server.service'` でこのような警告を探す。下の手順でユニットを置いたあと、`sudo systemd-analyze security elm-server` を実行すると、設定ごとの一覧が表示され、最後の行にユニットの露出の度合いが出る。この環境では `Overall exposure level for elm-server.service: 1.7 OK` だった。これらの行のないユニットでは 9.2（UNSAFE）だった。
 
-ターミナルからは起動するのに、ユニットでは起動しないときは、`sudo journalctl -u elm-server` で理由を探す。次の設定をするときは、ユニットで許すものを変える。
+上のようにターミナルからは起動するのに、ユニットでは起動しないときは、`sudo journalctl -u elm-server` で理由を探す。次の設定をするときは、ユニットで許すものを変える。
 
 - **別のデータフォルダー。** `dataDirectory` を別のフォルダーにするなら、上のとおりにそのフォルダーを作り、`ReadWritePaths=` の `/var/lib/elm-server` をそのフォルダーに置き換える。
-- **サーバーが書く、データフォルダーの外のファイル。** サーバーライセンス（`license`）や利用ログ（`log.usage`。[elm-server の設定](../reference/server-configuration.md)）をデータフォルダーの外に置くなら、それぞれのフォルダーを、データフォルダーと同じように `elm-server` を持ち主にして作り、`ReadWritePaths=` に空白で区切って足す。`ReadWritePaths=` はそのフォルダーの書き込みの保護を外すだけで、持ち主とモードが許さない場所に書けるようにはしない。また、`ReadWritePaths=` に書いたフォルダーがないと、サーバーが動く前にユニットが止まり、`error:` の行は出ない。フォルダーを `ReadWritePaths=` に足さないと、サーバーは起動で止まる。利用ログなら `error: The usage log '…' cannot be written: Read-only file system …`、`service.url` があるときのライセンスなら `error: service.url is set, and the server license path '…' cannot be written: …` の行が出る。`service.url` がなければ、サーバーはライセンスを読むだけなので、そのフォルダーは足さなくてよい。
-- **サーバーが読むファイル。** プロセスからは `/home`、`/root`、`/run/user` の下のファイルが見えず、`/tmp` も自分専用のものになる。設定ファイル、サーバーライセンス、ルート鍵、TLS の証明書と鍵のファイルは、`/etc/elm-server` やデータフォルダーのような別のフォルダーに置く。
-- **1024 より小さいポート。** カーネルの既定（`net.ipv4.ip_unprivileged_port_start` が 1024）では、root でないユーザーは、そのようなポートで待ち受けられない。その権利をプロセスに渡す `AmbientCapabilities=CAP_NET_BIND_SERVICE` を足し、`CapabilityBoundingSet=` の行を、その権利を残す `CapabilityBoundingSet=CAP_NET_BIND_SERVICE` に変える。空の行のままだと、systemd はその権利を落とし、サーバーは権利がないときと同じく、起動で `error: elm-server cannot listen on … Permission denied` を出して止まる。そのうえで `listen` にポートを設定し、ファイアウォールでそのポートを通す。
+- **サーバーが書く、データフォルダーの外のファイル。** サーバーライセンス（`license`）や利用ログ（`log.usage`。[elm-server の設定](../reference/server-configuration.md)）をデータフォルダーの外に置くなら、それぞれのフォルダーを、データフォルダーと同じように `elm-server` を持ち主にして作り、`ReadWritePaths=` に空白で区切って足す。`ReadWritePaths=` はそのフォルダーの書き込みの保護を外すだけで、持ち主とモードが許さない場所に書けるようにはしない。また、`ReadWritePaths=` に書いたフォルダーがないと、サーバーが動く前にユニットが止まり、`error:` の行は出ない。フォルダーを `ReadWritePaths=` に足さないと、サーバーは起動の途中で止まる。利用ログなら `error: The usage log '…' cannot be written: Read-only file system …`、`service.url` があるときのライセンスなら `error: service.url is set, and the server license path '…' cannot be written: …` の行が出る。`service.url` がなければ、サーバーはライセンスを読むだけなので、そのフォルダーは足さなくてよい。
+- **サーバーが読むファイル。** プロセスからは `/home`、`/root`、`/run/user` の下のファイルが見えず、`/tmp` も自分専用のものになるので、設定ファイル、サーバーライセンス、ルート鍵と、使うなら TLS の証明書と鍵のファイルは、`/etc/elm-server` やデータフォルダーのような別のフォルダーに置く。
+- **1024 より小さいポート。** カーネルの既定（`net.ipv4.ip_unprivileged_port_start` が 1024）では、root でないユーザーは、そのようなポートで待ち受けられない。その権利をプロセスに渡す `AmbientCapabilities=CAP_NET_BIND_SERVICE` を足し、`CapabilityBoundingSet=` の行を、その権利を残す `CapabilityBoundingSet=CAP_NET_BIND_SERVICE` に変える。空の行のままだと、systemd はその権利を落とし、サーバーは権利がないときと同じく、起動の途中で `error: elm-server cannot listen on … Permission denied` を出して止まる。そのうえで `listen` にポートを設定し、ファイアウォールでそのポートを通す。
 
 ユニットを変えたら、下のとおりに置き直し、`sudo systemctl daemon-reload` と `sudo systemctl restart elm-server` を実行する。
 
@@ -332,11 +332,11 @@ macOS では、フォルダーは引用符で囲んだ `"/Library/Application Su
 
 ## 運用ログを回す
 
-サーバーは、動いているあいだずっと運用ログを書く（[ログ](../reference/logs.md)）。Linux と macOS では、`Information` 以上の段の項目を、リクエストごとの行も含めて標準出力に書き、それをサービスマネージャーが受け取る。macOS では、launchd がサーバーを起動するときにログのファイルを開き、次の起動まで、だれもそのファイルを開き直さない。Windows では、`Warning` 以上の項目を Application のイベントログに書く。ログが際限なく大きくならないようにする方法は、サービスマネージャーごとに違う。
+サーバーは、動いているあいだずっと運用ログを書く（[ログ](../reference/logs.md)）。Linux と macOS では、`Information` 以上のレベルのエントリーを、リクエストごとのエントリーも含めて標準出力に書き、それをサービスマネージャーが受け取る。macOS では、launchd がサーバーを起動するときにログのファイルを開き、次の起動まで、そのファイルが開き直されることはない。Windows では、`Warning` 以上のエントリーを Application のイベントログに書く。ログが際限なく大きくならないようにする方法は、サービスマネージャーごとに違う。
 
-**Linux。** ジャーナルは journald が持ち、回す。ユニットに足すものはない。ジャーナルが使う容量と、項目を残す期間は、`/etc/systemd/journald.conf` で設定する（[journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)）。既定では、ジャーナルが使うのはファイルシステムの 10% までで、4 GiB を超えない（`SystemMaxUse=`）。それに収めるため、古い閉じたファイルから消す。項目を残す期間に決まりはない（`MaxRetentionSec=0`）。journald は、1 つのサービスが一定の時間に書ける行の数も制限する。既定では 30 秒に 10,000 行（`RateLimitBurst=` と `RateLimitIntervalSec=`）で、ジャーナルに使える空き容量に応じて大きくなる係数を掛ける（その表は journald.conf(5) にある）。上限を超えた行は、30 秒が過ぎるまで捨てられ、捨てた行の数を書いた行が残る。ディストリビューションが既定を変えていることもある。`systemd-analyze cat-config systemd/journald.conf` で今効いている設定を、`sudo journalctl --disk-usage` で今ジャーナルが使っている容量を見られる。設定を変えたら、`sudo systemctl restart systemd-journald` を実行する。
+**Linux。** ジャーナルは journald が管理し、回す。ユニットに足すものはない。ジャーナルが使う容量と、エントリーを残す期間は、`/etc/systemd/journald.conf` で設定する（[journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)）。既定では、ジャーナルが使うのはファイルシステムの 10% までで、4 GiB を超えない（`SystemMaxUse=`）。それに収めるため、アーカイブ済みのファイルを古いものから消す。エントリーを残す期間に決まりはない（`MaxRetentionSec=0`）。journald は、1 つのサービスが一定の時間に書ける行の数も制限する。既定では 30 秒に 10,000 行（`RateLimitBurst=` と `RateLimitIntervalSec=`）で、ジャーナルに使える空き容量に応じて大きくなる係数を掛ける（その表は journald.conf(5) にある）。上限を超えた行は、30 秒が過ぎるまで捨てられ、捨てた行の数を書いた行が残る。ディストリビューションが既定を変えていることもある。`systemd-analyze cat-config systemd/journald.conf` で今効いている設定を、`sudo journalctl --disk-usage` で今ジャーナルが使っている容量を見られる。設定を変えたら、`sudo systemctl restart systemd-journald` を実行する。
 
-**macOS。** サーバーを動かしたまま、ログのファイルをコピーしてから空に切り詰める launchd のジョブを、もう 1 つ置いて回す。ファイルを別の場所に動かす回し方は、ここでは使えない。サーバーは、どこに動かされても開いているファイルに書き続け、それは起動し直すまで変わらない。そして起動し直すと、サーバーは、動いているアプリのリースを再登録するあいだ、新しいリースを断る。その期間は、サーバーライセンスのリースの長さ（既定のポリシーでは 10 分）で、前の実行のリースがまだ有効でありうるときはそれより長く、すべてのシートが再登録されれば短くなる（[フローティングライセンス](../explanation/floating-licenses.md)）。切り詰める形が使えるのは、launchd がログのファイルを追記で開くからだ。切り詰めたあと、サーバーの次の行はファイルの先頭に書かれる。ダウンロードしたファイルのあるフォルダーで、ジョブの plist `elm-server-log.plist` を作る。
+**macOS。** サーバーを動かしたまま、ログのファイルをコピーしてから空に切り詰める launchd のジョブを、もう 1 つ置いて回す。ファイルを別の場所に動かす回し方は、ここでは使えない。サーバーは、どこに動かされても開いているファイルに書き続け、それは起動し直すまで変わらない。そして起動し直すと、サーバーは、動いているアプリのリースを再登録するあいだ、新しいリースを断る。この期間（リースの再登録の期間）は、サーバーライセンスのリースの長さ（既定のポリシーでは 10 分）で、前の実行のリースがまだ有効でありうるときはそれより長く、すべてのシートのリースが再登録されれば短くなる（[フローティングライセンス](../explanation/floating-licenses.md)）。切り詰める形が使えるのは、launchd がログのファイルを追記で開くからだ。切り詰めたあと、サーバーの次の行はファイルの先頭に書かれる。ダウンロードしたファイルのあるフォルダーで、ジョブの plist `elm-server-log.plist` を作る。
 
 <!-- sample: samples/ElmServerService/macos/elm-server-log.plist -->
 ```xml
@@ -358,16 +358,16 @@ macOS では、フォルダーは引用符で囲んだ `"/Library/Application Su
 </plist>
 ```
 
-launchd は、600 秒ごとにこのコマンドを root で実行する。ログのファイルが 10,485,760 バイト（10 MiB）以上なら、コピーの `elm-server.log.0` から `.5` の番号を 1 つずつ上げ（いちばん古い `.6` は置き換わる）、ログのファイルを持ち主とモードごと `elm-server.log.0` にコピーし、ログのファイルを空に切り詰める。確かめるのは 600 秒に 1 回なので、ログのファイルと 7 つのコピーの 8 つのファイルは、それぞれ 10 MiB と 600 秒にサーバーが書く分まで大きくなりうる。ログが使うのは、およそ 80 MiB と、600 秒に書く分の 8 倍までだ。コピーしてから切り詰めるまでにサーバーが書いた行は失われる。macOS 26 で、1 ミリ秒ごとに 1 行を書くプログラムの小さなログのファイルを（待つ大きさを 1 バイトにして）20 回回すと、17 回は 1 行も失われず、3 回は 1 行が失われた。LOSS-10MIBplist を root だけが書き込める場所に置き、読み込む。
+launchd は、600 秒ごとにこのコマンドを root で実行する。ログのファイルが 10,485,760 バイト（10 MiB）以上なら、コピーの `elm-server.log.0` から `.5` の番号を 1 つずつ上げ（いちばん古い `.6` は置き換わる）、ログのファイルを持ち主とモードごと `elm-server.log.0` にコピーし、ログのファイルを空に切り詰める。確かめるのは 600 秒に 1 回なので、ログのファイルと 7 つのコピーの 8 つのファイルは、それぞれ、10 MiB に、サーバーが 600 秒に書く分を足した大きさまで大きくなりうる。ログが使うのは、およそ 80 MiB に、600 秒に書く分の 8 倍を足した大きさまでだ。コピーしてから切り詰めるまでにサーバーが書いた行は失われる。macOS 26 で、1 ミリ秒ごとに 1 行を書くプログラムの小さなログのファイルを（回す大きさを 1 バイトにして）20 回回すと、17 回は 1 行も失われず、3 回は 1 行が失われた。ジョブが回すときと同じ 10 MiB のログのファイルでは、10 回のうち 5 回は 1 行も失われず、3 回は 1 行か 2 行、2 回は 6 行が失われた。plist を root だけが書き込める場所に置き、読み込む。
 
 ```shell
 sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/
 sudo launchctl bootstrap system /Library/LaunchDaemons/elm-server-log.plist
 ```
 
-このジョブは、読み込んだときには動かず、そのあと 600 秒ごとに動く。今すぐ確かめさせるには、`sudo launchctl kickstart system/elm-server-log` を実行する。ファイルが 10 MiB 以上のときだけ回す。ログのファイルそのものは、動かしたり消したりしない。root だけが書き込めるフォルダーでは launchd がファイルを作り直せず、サーバーは次の起動で起動しない。そのとき `sudo launchctl print system/elm-server` には `last exit code = 78: EX_CONFIG` が出る。
+このジョブは、読み込んだときには動かず、そのあと 600 秒ごとに動く。今すぐジョブに確かめさせるには、`sudo launchctl kickstart system/elm-server-log` を実行する。このときも、ファイルが 10 MiB 以上のときだけ回す。ログのファイルそのものは、動かしたり消したりしない。root だけが書き込めるフォルダーでは launchd がファイルを作り直せないので、次にサーバーを起動しようとしても起動せず、`sudo launchctl print system/elm-server` には `last exit code = 78: EX_CONFIG` が出る。
 
-**Windows。** Application のイベントログの最大の大きさと、いっぱいになったときの扱いは、イベントログの設定で決まり、`wevtutil gl Application` が `maxSize`（バイト。ある Windows 11 のマシンでは 20,971,520）と `retention`（`false` なら新しいイベントがいちばん古いイベントを上書きし、`true` なら古いイベントを残して新しいイベントを捨てる。[wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)）として表示し、管理者は `wevtutil sl Application /ms:<bytes>` で大きさを変えられる。
+**Windows。** Application のイベントログの最大の大きさと、いっぱいになったときの扱いは、イベントログの設定で決まり、`wevtutil gl Application` が `maxSize`（バイト。ある Windows 11 のマシンでは 20,971,520）と `retention`（`false` なら新しいイベントがいちばん古いイベントを上書きし、`true` なら古いイベントを残して新しいイベントを捨てる。[wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)）として表示し、管理者は `wevtutil sl Application /ms:<bytes>` で最大の大きさを変えられる。
 
 ## サーバーが止まり続けるとき
 
