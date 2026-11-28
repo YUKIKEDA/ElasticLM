@@ -56,14 +56,46 @@ internal abstract partial class Database : IAsyncDisposable
                 return new ServiceStore<SqliteDialect>(provider, new SqliteSource(builder.ToString()));
             }
 
-            // design §14.2: the slim builder keeps NativeAOT free of the reflection-based features.
-            return new ServiceStore<PostgreSqlDialect>(provider, new NpgsqlSlimDataSourceBuilder(connectionString).Build());
+            // design §14.2: the slim builder keeps NativeAOT free of the reflection-based features. Without transport security
+            // it negotiates no TLS: Prefer connects in plain text and Require and above throw NotSupportedException.
+            return new ServiceStore<PostgreSqlDialect>(provider, new NpgsqlSlimDataSourceBuilder(connectionString).EnableTransportSecurity().Build());
         }
         catch (ArgumentException e)
         {
             throw new ServiceStartException("The database connection string is not valid: " + ArgumentMessages.WithoutParameterName(e));
         }
     }
+
+    /// <summary>
+    /// Returns the text of a database error with the text of each inner exception after it, joined with ": " (design §14.2).
+    /// Npgsql reports a failed TLS handshake as "Exception while performing SSL handshake" and keeps the reason (a certificate
+    /// that is not trusted, a name that does not match, a missing root certificate file) in the inner exception.
+    /// </summary>
+    /// <param name="exception">The error: a <see cref="DbException"/>, or an <see cref="IOException"/> or a
+    /// <see cref="System.Security.Cryptography.CryptographicException"/> from Npgsql's reading of a client certificate.</param>
+    public static string Describe(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        var text = new System.Text.StringBuilder(exception.Message);
+        for (Exception? inner = exception.InnerException; inner is not null; inner = inner.InnerException)
+        {
+            text.Append(": ").Append(inner.Message);
+        }
+
+        return text.ToString();
+    }
+
+    /// <summary>
+    /// Returns whether an exception from the first opening of the database is one that <see cref="Describe"/> reports: a
+    /// <see cref="DbException"/>; or an <see cref="IOException"/> or a
+    /// <see cref="System.Security.Cryptography.CryptographicException"/>, which Npgsql 10.0.3 throws unwrapped when it
+    /// reads a client certificate or key at the start of the TLS negotiation (a missing file, one that is not a certificate,
+    /// a certificate without its key; <c>NegotiateEncryption</c> in <c>src/Npgsql/Internal/NpgsqlConnector.cs</c>) (design
+    /// §14.2).
+    /// </summary>
+    /// <param name="exception">The exception.</param>
+    public static bool IsOpenFailure(Exception exception) =>
+        exception is DbException or IOException or System.Security.Cryptography.CryptographicException;
 
     /// <summary>
     /// Opens a connection, for the migrations. SQLite connections wait up to 5 seconds for another writer and enforce foreign
