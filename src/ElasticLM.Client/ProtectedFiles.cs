@@ -222,14 +222,14 @@ internal static class ProtectedFiles
         byte[]? stored;
         try
         {
-            var info = new FileInfo(path);
-            if (!info.Exists || info.Length > maxLength)
+            if (!new FileInfo(path).Exists)
             {
                 return null;
             }
 
             // design §12.6.2 (V1d24a): elm logout deletes the login file, which this reader then does not refuse. A replacement is
-            // refused on Windows whatever the sharing, and the writer tries again.
+            // refused on Windows whatever the sharing, and the writer tries again. design §8.6 (V1d24c): the limit is checked
+            // while the file is read.
             stored = FileReplacement.ReadShared(path, maxLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

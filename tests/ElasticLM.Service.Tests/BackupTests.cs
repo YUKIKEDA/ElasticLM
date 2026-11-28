@@ -112,7 +112,8 @@ public sealed class BackupTests
     /// </summary>
     /// <remarks>
     /// Preconditions:
-    /// - A migrated SQLite database; a file at the target with known content.
+    /// - A migrated SQLite database whose connections are closed, so that its WAL is in the file; a file at the target with
+    ///   known content.
     ///
     /// Steps:
     /// - Back up onto the existing file, onto the database itself, into a missing folder; back up a database path that does
@@ -134,7 +135,11 @@ public sealed class BackupTests
         await test.SetupAsync();
         string existing = test.FilePath("existing.db");
         await File.WriteAllTextAsync(existing, "kept", TestContext.Current.CancellationToken);
-        long databaseLength = new FileInfo(test.FilePath("elm.db")).Length;
+
+        // Setup's idle connections keep its writes in elm.db-wal. Whichever closes the last of them, this test or the
+        // ClearAllPools of another test's end, copies the WAL into elm.db; closing them here does that before elm.db is read.
+        SqliteConnection.ClearAllPools();
+        byte[] database = await File.ReadAllBytesAsync(test.FilePath("elm.db"), TestContext.Current.CancellationToken);
 
         Assert.Equal((1, string.Empty, $"The backup file '{existing}' exists."), await RunAsync(test.Settings(), existing));
         Assert.Equal("kept", await File.ReadAllTextAsync(existing, TestContext.Current.CancellationToken));
@@ -142,7 +147,7 @@ public sealed class BackupTests
             (1, string.Empty, $"The backup file '{test.FilePath("elm.db")}' exists."),
             await RunAsync(test.Settings(), test.FilePath("elm.db"))
         );
-        Assert.Equal(databaseLength, new FileInfo(test.FilePath("elm.db")).Length);
+        Assert.Equal(database, await File.ReadAllBytesAsync(test.FilePath("elm.db"), TestContext.Current.CancellationToken));
 
         string inMissing = Path.Combine(test.FilePath("missing"), "backup.db");
         (int code, string output, string error) = await RunAsync(test.Settings(), inMissing);

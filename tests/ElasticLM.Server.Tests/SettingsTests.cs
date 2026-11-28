@@ -150,6 +150,34 @@ public sealed class SettingsTests : IDisposable
     }
 
     /// <summary>
+    /// A settings file of 64 KiB is read, and one of a byte more stops the start (design §8.6, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A settings file of the product, with spaces after its JSON up to 65,536 bytes, or up to 65,537.
+    ///
+    /// Steps:
+    /// - Load each.
+    ///
+    /// Expected:
+    /// - 65,536 bytes: the settings of the product. 65,537 bytes: ServerStartException "The settings file '{path}' is larger
+    ///   than 64 KiB.".
+    /// </remarks>
+    [Fact]
+    public void Load_FileAtItsLimitAndOnePast_IsReadThenRefused()
+    {
+        const string Json = """{"product":"acme-cad"}""";
+        string atLimit = Write(Json + new string(' ', (64 * 1024) - Json.Length));
+        Assert.Equal("acme-cad", ServerSettings.Load(atLimit, _ => null).Product);
+
+        File.AppendAllText(atLimit, " ");
+        Assert.Equal(
+            $"The settings file '{atLimit}' is larger than 64 KiB.",
+            Assert.Throws<ServerStartException>(() => ServerSettings.Load(atLimit, _ => null)).Message
+        );
+    }
+
+    /// <summary>
     /// admin.listen is no longer a setting: a value that is left, in the file or in ELM_ADMIN_LISTEN, stops the start with the
     /// line that says where the administration API listens now, whatever the value is (design §13.8, V1d2).
     /// </summary>

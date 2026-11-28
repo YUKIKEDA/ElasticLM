@@ -60,6 +60,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     public const int MaxReplayEntries = 100_000;
 
     private const int MaxLicenseFileLength = 64 * 1024;
+
+    // design §8.6 (V1d24c): one trust.rootKeys file, about 90 P-256 public keys.
+    private const int MaxRootKeyFileLength = 16 * 1024;
     private const int MaxFingerprints = 8;
     private const int MaxClientNameBytes = 255;
     private const int MaxAppBytes = 64;
@@ -605,7 +608,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 string text;
                 try
                 {
-                    text = File.ReadAllText(path);
+                    // design §8.6 (V1d24c): 16 KiB, read with the limit checked while the file is read.
+                    text =
+                        BoundedFile.ReadAllText(path, MaxRootKeyFileLength)
+                        ?? throw new ServerStartException($"trust.rootKeys file '{path}' is larger than 16 KiB.");
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
@@ -752,13 +758,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 return (null, new LicenseError(ErrorCode.LicenseNotFound, missing));
             }
 
-            if (info.Length > MaxLicenseFileLength)
-            {
-                return (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
-            }
-
             // design §12.6.2 (V1d24a): elm server deactivate deletes the file, which this reader then does not refuse. A refresh
-            // that replaces it is refused on Windows whatever the sharing, and tries again.
+            // that replaces it is refused on Windows whatever the sharing, and tries again. design §8.6 (V1d24c): the limit is
+            // checked while the file is read.
             return FileReplacement.ReadShared(settings.LicensePath, MaxLicenseFileLength) is byte[] read
                 ? (read, null)
                 : (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
