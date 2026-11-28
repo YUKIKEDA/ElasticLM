@@ -1697,8 +1697,9 @@ public sealed class LicenseClient : IAsyncDisposable
                 ? new LicenseError(ErrorCode.ServerPinMismatch, "The server's TLS key is not the pinned server key.")
                 : new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: " + e.Message);
 
-            // design §10.4 step 2, §12.7.7 (V1d24b): a request that never left this device names nothing and is not
-            // released. A key that is not the pinned one fails the TLS handshake, so such a request never left either.
+            // design §10.4 step 2, §12.7.7 (V1d24b, V1d24e): a request that never left this device names nothing and is
+            // not released, also one that the time limit or the app's cancellation ended before any byte of it was written.
+            // A key that is not the pinned one fails the TLS handshake, so such a request never left either.
             return Reply.Failure(error, unanswered: !BoundedAnswer.NeverSent(e));
         }
     }

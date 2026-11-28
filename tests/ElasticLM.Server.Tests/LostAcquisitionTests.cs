@@ -436,6 +436,64 @@ public sealed class LostAcquisitionTests : IAsyncDisposable
         Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
 
+    /// <summary>
+    /// An acquisition that the app cancels, or that the 30-second time limit ends, before any byte of it was written never
+    /// left the device: it sends no release and owes none (design §12.7.7, the V1d24e Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server with 2 seats of pro, past its reclaim window; a client behind a relay that holds the next acquisition in
+    ///   front of the client's own handler, so that none of it is written.
+    ///
+    /// Steps:
+    /// - Acquire pro with a token; once the relay holds it, cancel the token (cancel) or move the clock 30 s (time-limit);
+    ///   then acquire pro again.
+    ///
+    /// Expected:
+    /// - Failed with ELM_NETWORK_ERROR ("The server cannot be reached: No whole answer came within 30 seconds." for the time
+    ///   limit), no seat held, and no release sent.
+    /// - The next acquisition sends only its POST, gives a lease, and 1 seat is held. Before V1d24e a release was sent (time
+    ///   limit) or owed and sent before the next POST (cancel).
+    /// </remarks>
+    /// <param name="end">What ends the held acquisition.</param>
+    [Theory]
+    [InlineData("cancel")]
+    [InlineData("time-limit")]
+    public async Task Acquire_EndedBeforeItWasWritten_IsNotReleased(string end)
+    {
+        ElmServer server = await StartOpenServerAsync();
+        var relay = new Recorder();
+        LicenseClient client = Client(server, relay);
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+
+        Task held = relay.HoldNextAcquisition();
+        Task<LeaseResult> acquiring = client.AcquireLeaseAsync("pro", cancellationToken: cancel.Token);
+        await held;
+        if (end == "cancel")
+        {
+            await cancel.CancelAsync();
+        }
+        else
+        {
+            _deployment.Time.Advance(TimeSpan.FromSeconds(30));
+        }
+
+        var failed = Assert.IsType<LeaseResult.Failed>(await acquiring);
+        Assert.Equal(ErrorCode.NetworkError, failed.Error.Code);
+        if (end == "time-limit")
+        {
+            Assert.Equal("The server cannot be reached: No whole answer came within 30 seconds.", failed.Error.Message);
+        }
+
+        Assert.Equal(["POST /v1/leases"], Requests(relay).Select(r => r.Method + " " + r.Path));
+        Assert.Equal(0, server.Engine.SeatsInUse("pro"));
+
+        int before = Requests(relay).Length;
+        Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+        Assert.Equal(["POST /v1/leases"], Requests(relay).Skip(before).Select(r => r.Method + " " + r.Path));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
     private static Lease Acquired(LeaseResult result) => Assert.IsType<LeaseResult.Acquired>(result).Lease;
 
     // The requests after an acquisition that lost its answer and the release that failed after it, as "METHOD path",

@@ -1,4 +1,6 @@
 using System.Net;
+using System.Net.Security;
+using System.Net.Sockets;
 using System.Text;
 using Microsoft.Extensions.Time.Testing;
 
@@ -339,10 +341,299 @@ public sealed class BoundedAnswerTests
         Assert.Equal((HttpRequestError.InvalidResponse, "The answer's body is not valid HTTP."), (failed.HttpRequestError, failed.Message));
     }
 
+    /// <summary>
+    /// A request that the time limit or the caller's cancellation ends before any byte of it was written never left the
+    /// device (design §10.4 step 2, V1d24e questions 24e-1, 24e-2, and 24e-4): while TLS is not made, and while a proxy does not answer
+    /// the CONNECT of its tunnel.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake clock. A client over a handler of CreateHandler that takes any server certificate, or over a delegating
+    ///   handler in front of one (wrapped).
+    /// - tls-not-made: a loopback listener that accepts the TCP connection and never sends a byte; the request goes to it
+    ///   over https.
+    /// - connect-not-answered: a proxy on loopback that reads the CONNECT of the tunnel and never answers; the request goes
+    ///   to https://elm-server.invalid/x through it.
+    ///
+    /// Steps:
+    /// - POST a body of 2 bytes; once the listener accepted the connection, or the proxy read the CONNECT, move the clock 30
+    ///   seconds (time-limit) or cancel the caller's token (cancel).
+    ///
+    /// Expected:
+    /// - time-limit: a TimeoutException with "No whole answer came within 30 seconds."; cancel: an
+    ///   OperationCanceledException. NeverSent is true for both. Before V1d24e it was false for every case.
+    /// </remarks>
+    /// <param name="stage">Where the exchange stops.</param>
+    /// <param name="end">What ends it.</param>
+    [Theory]
+    [InlineData("tls-not-made", "time-limit")]
+    [InlineData("tls-not-made", "cancel")]
+    [InlineData("tls-not-made-wrapped", "time-limit")]
+    [InlineData("connect-not-answered", "time-limit")]
+    [InlineData("connect-not-answered", "cancel")]
+    public async Task NeverSent_EndedBeforeAnyByteWasWritten_IsTrue(string stage, string end)
+    {
+        await using var mute = new MuteListener();
+        await using RawAnswerServer proxy = RawAnswerServer.Start(_ => RawAnswer.Silent);
+        SocketsHttpHandler handler = AnyCertificate(BoundedAnswer.CreateHandler());
+        Uri target = new(mute.HttpsUrl, "x");
+        Task reached = mute.Accepted;
+        if (stage == "connect-not-answered")
+        {
+            handler.Proxy = new WebProxy(proxy.Url);
+            handler.UseProxy = true;
+            target = new Uri("https://elm-server.invalid/x");
+            reached = proxy.Held;
+        }
+
+        using HttpClient http = BoundedAnswer.CreateClient(
+            stage.EndsWith("-wrapped", StringComparison.Ordinal) ? new HeadSeen { InnerHandler = handler } : handler
+        );
+
+        Exception failure = await EndAsync(http, target, reached, end);
+
+        Assert.True(BoundedAnswer.NeverSent(failure));
+        if (stage == "connect-not-answered")
+        {
+            Assert.Equal(["CONNECT elm-server.invalid:443"], proxy.Requests);
+        }
+    }
+
+    /// <summary>
+    /// A request that the time limit or the caller's cancellation ends after its bytes were written may have reached the
+    /// server, also through a proxy that is not a tunnel (design §10.4 step 2, V1d24e question 24e-4).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake clock. A client over a handler of CreateHandler that takes any server certificate.
+    /// - tls-no-answer: a server over https that makes TLS, reads the whole request, and never answers.
+    /// - proxy-no-answer: a server over http used as the client's proxy, which reads the whole request for
+    ///   http://elm-server.invalid/x and never answers.
+    /// - pooled: tls-no-answer, after a first request on the same connection that got a whole answer.
+    ///
+    /// Steps:
+    /// - POST a body of 2 bytes; once the server read the request, move the clock 30 seconds (time-limit) or cancel the
+    ///   caller's token (cancel).
+    ///
+    /// Expected:
+    /// - A TimeoutException or an OperationCanceledException, and NeverSent is false. A mark that is never set, or that
+    ///   the first request of a pooled connection keeps, would give true.
+    /// </remarks>
+    /// <param name="stage">Where the exchange stops.</param>
+    /// <param name="end">What ends it.</param>
+    [Theory]
+    [InlineData("tls-no-answer", "time-limit")]
+    [InlineData("tls-no-answer", "cancel")]
+    [InlineData("proxy-no-answer", "time-limit")]
+    [InlineData("proxy-no-answer", "cancel")]
+    [InlineData("pooled", "time-limit")]
+    public async Task NeverSent_EndedAfterTheRequestWasWritten_IsFalse(string stage, string end)
+    {
+        int requests = 0;
+        bool pooled = stage == "pooled";
+        await using RawAnswerServer server = RawAnswerServer.Start(
+            _ => pooled && Interlocked.Increment(ref requests) == 1 ? RawAnswer.Whole("{}") : RawAnswer.Silent,
+            tls: stage != "proxy-no-answer"
+        );
+        SocketsHttpHandler handler = AnyCertificate(BoundedAnswer.CreateHandler());
+        Uri target = new(server.Url, "x");
+        if (stage == "proxy-no-answer")
+        {
+            handler.Proxy = new WebProxy(server.Url);
+            handler.UseProxy = true;
+            target = new Uri("http://elm-server.invalid/x");
+        }
+
+        using HttpClient http = BoundedAnswer.CreateClient(handler);
+        if (pooled)
+        {
+            using var first = new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent("{}") };
+            Assert.IsType<BoundedAnswer.Whole>(
+                await BoundedAnswer.SendAsync(http, first, Limit, new FakeTimeProvider(Start), Cancel).WaitAsync(Hang, Cancel)
+            );
+        }
+
+        Exception failure = await EndAsync(http, target, server.Held, end);
+
+        Assert.False(BoundedAnswer.NeverSent(failure));
+        Assert.Equal(
+            stage == "proxy-no-answer" ? ["POST http://elm-server.invalid/x"]
+                : pooled ? ["POST /x", "POST /x"]
+                : ["POST /x"],
+            server.Requests
+        );
+    }
+
+    /// <summary>
+    /// A client whose handler does not set the mark never takes a time limit for a request that never left (design §10.4
+    /// step 2, V1d24e question 24e-5): without the mark, no write is seen, and every request would look as if it never left.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake clock. A loopback listener that accepts the TCP connection and never sends a byte; the request goes to it over
+    ///   https.
+    /// - plain: a SocketsHttpHandler of its own. replaced: a handler of CreateHandler whose PlaintextStreamFilter is replaced
+    ///   with one that returns the stream as it is.
+    ///
+    /// Steps:
+    /// - POST a body of 2 bytes; once the listener accepted the connection, move the clock 30 seconds.
+    ///
+    /// Expected:
+    /// - A TimeoutException with "No whole answer came within 30 seconds.", and NeverSent is false.
+    /// </remarks>
+    /// <param name="kind">The handler.</param>
+    [Theory]
+    [InlineData("plain")]
+    [InlineData("replaced")]
+    public async Task NeverSent_HandlerWithoutTheMark_IsFalseForATimeLimit(string kind)
+    {
+        await using var mute = new MuteListener();
+        SocketsHttpHandler handler = AnyCertificate(kind == "plain" ? new SocketsHttpHandler() : BoundedAnswer.CreateHandler());
+        if (kind == "replaced")
+        {
+            handler.PlaintextStreamFilter = (context, _) => ValueTask.FromResult(context.PlaintextStream);
+        }
+
+        using HttpClient http = BoundedAnswer.CreateClient(handler);
+
+        Exception failure = await EndAsync(http, new Uri(mute.HttpsUrl, "x"), mute.Accepted, "time-limit");
+
+        Assert.False(BoundedAnswer.NeverSent(failure));
+    }
+
+    /// <summary>
+    /// A request that may go out as HTTP/2 gets no mark, so a time limit before any byte of it was written is not taken for
+    /// one that never left (design §10.4 step 2): HTTP/2 writes on the connection's flow, where the mark would stay unset
+    /// and every time limit would read as never sent.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake clock. A client over a handler of CreateHandler; a loopback listener that accepts the TCP connection and
+    ///   never sends a byte; the request goes to it over https.
+    /// - 2.0: a request of version 2.0 with the default policy (RequestVersionOrLower). 1.1-or-higher: version 1.1 with
+    ///   RequestVersionOrHigher.
+    ///
+    /// Steps:
+    /// - POST a body of 2 bytes; once the listener accepted the connection, move the clock 30 seconds.
+    ///
+    /// Expected:
+    /// - A TimeoutException with "No whole answer came within 30 seconds.", and NeverSent is false. The same request of
+    ///   version 1.1 with the default policy gives true (NeverSent_EndedBeforeAnyByteWasWritten_IsTrue).
+    /// </remarks>
+    /// <param name="kind">The version and its policy.</param>
+    [Theory]
+    [InlineData("2.0")]
+    [InlineData("1.1-or-higher")]
+    public async Task NeverSent_RequestThatMayGoOutAsHttp2_IsFalseForATimeLimit(string kind)
+    {
+        await using var mute = new MuteListener();
+        using HttpClient http = BoundedAnswer.CreateClient(AnyCertificate(BoundedAnswer.CreateHandler()));
+        var target = new Uri(mute.HttpsUrl, "x");
+        var request = new HttpRequestMessage(HttpMethod.Post, target)
+        {
+            Content = new StringContent("{}"),
+            Version = kind == "2.0" ? HttpVersion.Version20 : HttpVersion.Version11,
+            VersionPolicy = kind == "2.0" ? HttpVersionPolicy.RequestVersionOrLower : HttpVersionPolicy.RequestVersionOrHigher,
+        };
+
+        Exception failure = await EndAsync(http, target, mute.Accepted, "time-limit", request);
+
+        Assert.False(BoundedAnswer.NeverSent(failure));
+    }
+
+    // Accepts any server certificate, as the client's first connection to a server does: the servers of these tests show a
+    // self-signed one.
+    private static SocketsHttpHandler AnyCertificate(SocketsHttpHandler handler)
+    {
+        handler.SslOptions = new SslClientAuthenticationOptions
+        {
+            RemoteCertificateValidationCallback = (_, certificate, _, _) => certificate is not null,
+        };
+        return handler;
+    }
+
+    // POSTs a body of 2 bytes to the target, waits until the exchange has reached the given point, ends it by the time
+    // limit or by the caller's cancellation, and returns the exception.
+    private static async Task<Exception> EndAsync(HttpClient http, Uri target, Task reached, string end, HttpRequestMessage? sent = null)
+    {
+        var time = new FakeTimeProvider(Start);
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+        using HttpRequestMessage request = sent ?? new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent("{}") };
+        Task<BoundedAnswer> sending = BoundedAnswer.SendAsync(http, request, Limit, time, caller.Token).WaitAsync(Hang, Cancel);
+        await reached.WaitAsync(Hang, Cancel);
+        if (end == "time-limit")
+        {
+            time.Advance(BoundedAnswer.Deadline);
+            TimeoutException timeout = await Assert.ThrowsAnyAsync<TimeoutException>(() => sending);
+            Assert.Equal("No whole answer came within 30 seconds.", timeout.Message);
+            return timeout;
+        }
+
+        await caller.CancelAsync();
+        return await Assert.ThrowsAnyAsync<OperationCanceledException>(() => sending);
+    }
+
     private static async Task<BoundedAnswer> SendAsync(HttpClient http, RawAnswerServer server, TimeProvider? time = null)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(server.Url, "x"));
         return await BoundedAnswer.SendAsync(http, request, Limit, time ?? new FakeTimeProvider(Start), Cancel).WaitAsync(Hang, Cancel);
+    }
+
+    // A loopback listener that accepts TCP connections and never sends or reads a byte, so a client's TLS handshake never
+    // ends: the connection of a request that never leaves the device.
+    private sealed class MuteListener : IAsyncDisposable
+    {
+        private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
+        private readonly List<Socket> _accepted = [];
+        private readonly TaskCompletionSource _first = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly Task _accepting;
+
+        public MuteListener()
+        {
+            _listener.Start();
+            HttpsUrl = new Uri($"https://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}/");
+            _accepting = AcceptAsync();
+        }
+
+        public Uri HttpsUrl { get; }
+
+        public Task Accepted => _first.Task;
+
+        public async ValueTask DisposeAsync()
+        {
+            _listener.Stop();
+            await _accepting;
+            lock (_accepted)
+            {
+                foreach (Socket socket in _accepted)
+                {
+                    socket.Dispose();
+                }
+            }
+        }
+
+        private async Task AcceptAsync()
+        {
+            while (true)
+            {
+                Socket socket;
+                try
+                {
+                    socket = await _listener.AcceptSocketAsync();
+                }
+                catch (Exception e) when (e is SocketException or ObjectDisposedException or InvalidOperationException)
+                {
+                    return;
+                }
+
+                lock (_accepted)
+                {
+                    _accepted.Add(socket);
+                }
+
+                _first.TrySetResult();
+            }
+        }
     }
 
     // Tells when the handler below has returned an answer: its head has been read, and its body has not.

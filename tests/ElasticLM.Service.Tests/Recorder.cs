@@ -33,7 +33,7 @@ internal sealed record KeptAnswer(string Path, HttpStatusCode Status, string Bod
 /// answer the next acquisition with an answer it makes from the request, as a server that decides by other rules does, and
 /// can answer the next renewal with a body over the client's limit. For the release of an acquisition whose answer was lost
 /// (design §12.7.7), it can lose the answer of the next acquisition, answer it over the limit, hold it until the client
-/// cancels, and make releases by a request's proof ID fail before they are sent. It can take the server license header out
+/// cancels, hold the next acquisition before any of it is written, and make releases by a request's proof ID fail before they are sent. It can take the server license header out
 /// of the answers to acquisitions and renewals.
 /// </summary>
 internal sealed class Recorder
@@ -60,6 +60,7 @@ internal sealed class Recorder
     private volatile bool _loseNextAcquisitionAnswer;
     private volatile bool _oversizeNextAcquisition;
     private volatile TaskCompletionSource? _holdNextAcquisition;
+    private volatile TaskCompletionSource? _holdNextAcquisitionRequest;
     private int _failRequestReleases;
     private int _refuseRequestReleases;
     private HttpStatusCode _refusalStatus;
@@ -166,6 +167,18 @@ internal sealed class Recorder
     {
         var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _holdNextAcquisition = held;
+        return held.Task;
+    }
+
+    /// <summary>
+    /// Holds the next acquisition or borrow without passing it on, so that none of it is written, until the client cancels
+    /// the request or its time limit ends it, as when the connection is never made.
+    /// </summary>
+    /// <returns>A task that completes when the acquisition is held.</returns>
+    public Task HoldNextAcquisition()
+    {
+        var held = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        _holdNextAcquisitionRequest = held;
         return held.Task;
     }
 
@@ -322,6 +335,12 @@ internal sealed class Recorder
             if (renewal && Volatile.Read(ref recorder._holdNextRenewals) > 0 && Interlocked.Decrement(ref recorder._holdNextRenewals) >= 0)
             {
                 recorder.Mark(Held, sent);
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            if (acquisition && Interlocked.Exchange(ref recorder._holdNextAcquisitionRequest, null) is TaskCompletionSource holding)
+            {
+                holding.SetResult();
                 await Task.Delay(Timeout.Infinite, cancellationToken);
             }
 
