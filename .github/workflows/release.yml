@@ -1,7 +1,7 @@
 # design §20.5 (decision 0.109) and the threats it holds against, §5.3 T22-T25 and T28 (the documentation site, §20.7).
 # A tag v<version> builds, checks, attests, and drafts a release; the owner's approval of the environment "release" pushes
 # the NuGet packages and publishes the release. workflow_dispatch and every pull request run the same build and checks
-# without publishing (workflow_dispatch also attests). Every action is pinned to a commit of its own repository's tag.
+# without publishing (workflow_dispatch also attests, once ci-passed passes). Every action is pinned to a commit of its own repository's tag.
 # design §20.5 ("出荷のゲート", Issue #552): attest, draft, publish, and pages wait for the ci-passed job, which passes
 # only when a ci.yml run for a push to main at this commit succeeded.
 #
@@ -976,7 +976,7 @@ jobs:
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&per_page=100" \
             --jq '.workflow_runs | sort_by(.created_at) | reverse | .[] | [(.id | tostring), .status, (.conclusion // "none"), .html_url] | join(" ")')
           if [ -z "$runs" ]; then
-            echo "::error::No ci.yml run for a push to main at $GITHUB_SHA ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml): tag a merge commit on main whose push ran ci.yml; a tag is never moved, so release the next version."
+            echo "::error::No ci.yml run for a push to main at $GITHUB_SHA ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml): if the push run has not appeared yet, wait for it to pass, then run gh run rerun $GITHUB_RUN_ID --failed; otherwise tag a merge commit on main whose push ran ci.yml (a tag is never moved, so release the next version)."
             exit 1
           fi
           if passed=$(grep -m 1 ' completed success ' <<< "$runs"); then
@@ -986,10 +986,11 @@ jobs:
           read -r id status conclusion url <<< "$(head -n 1 <<< "$runs")"
           if [ "$status" != "completed" ]; then
             echo "::error::ci.yml for $GITHUB_SHA is still $status ($url): wait for it to pass, then run gh run rerun $GITHUB_RUN_ID --failed."
-          elif [ "$conclusion" = "cancelled" ]; then
-            echo "::error::ci.yml for $GITHUB_SHA was cancelled ($url): run gh run rerun $id, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
+          elif [ "$conclusion" = "failure" ]; then
+            echo "::error::ci.yml for $GITHUB_SHA ended in failure ($url): run gh run rerun $id --failed, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
           else
-            echo "::error::ci.yml for $GITHUB_SHA ended in $conclusion ($url): run gh run rerun $id --failed, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
+            # cancelled, startup_failure, timed_out, and the like: --failed may find no failed job, so the whole run.
+            echo "::error::ci.yml for $GITHUB_SHA ended in $conclusion ($url): run gh run rerun $id, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
           fi
           exit 1
 

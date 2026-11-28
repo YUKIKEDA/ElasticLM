@@ -146,8 +146,9 @@ release is published (design §20.7, T28).
    `publish`, and `pages` wait for it (design §20.5, "出荷のゲート"). A commit of a pull request's branch has no such run,
    even when `main` reaches it. Push the tag after that run has passed (`gh run list --workflow ci.yml --branch main
    --event push --commit <sha>`). The job does not wait: if the run is still going, failed, or was cancelled, the job
-   fails with the run's URL. Re-run CI if it failed (`gh run rerun <CI run ID> --failed`; a cancelled run with
-   `gh run rerun <CI run ID>`), and once it passes, `gh run rerun <release run ID> --failed`. The build and check jobs
+   fails with the run's URL, and also when the tag came so soon after the merge that the push run does not exist yet.
+   Re-run CI if it failed (`gh run rerun <CI run ID> --failed`; a cancelled run, or one that ended in another way,
+   with `gh run rerun <CI run ID>`), and once it passes, `gh run rerun <release run ID> --failed`. The build and check jobs
    do not wait for `ci-passed`, so they have already run.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
