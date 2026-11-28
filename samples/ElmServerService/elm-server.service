@@ -1,0 +1,14 @@
+[Unit]
+Description=ElasticLM floating license server (elm-server)
+
+[Service]
+Type=exec
+User=elm-server
+Group=elm-server
+ExecStart=/opt/elm-server/elm-server --config /etc/elm-server/elm-server.json
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target
