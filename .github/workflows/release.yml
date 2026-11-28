@@ -12,10 +12,6 @@
 #
 # design §20.5 (V1d10): before it pushes or publishes anything, the publish job checks the draft's SHA256SUMS against
 # the checksums job's output, every file it lists, and that the draft holds exactly those files and SHA256SUMS.
-#
-# design §20.5 (V1d21): the main ruleset requires, by name, the checks its list names (the jobs that run on a pull
-# request, one check per matrix value). A pull request that renames a listed job, removes it, or changes its matrix
-# says so in its body (.cursor/rules/pull-requests.mdc).
 name: Release
 
 on:
@@ -97,9 +93,8 @@ jobs:
           retention-days: 7
 
   spa:
-    # The admin UI, built once with no secrets (design §15.2, T21). The name differs from the spa job of ci.yml: the
-    # main ruleset requires each check by its name, and two jobs of one name make the result ambiguous (design §20.5,
-    # V1d21).
+    # The admin UI, built once with no secrets (design §15.2, T21). The name differs from the spa job of ci.yml, so
+    # that the checks of a pull request name each job once (design §20.5, V1d21).
     name: Admin UI (web/admin, release)
     runs-on: ubuntu-latest
     timeout-minutes: 15
