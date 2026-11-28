@@ -33,6 +33,8 @@ A Linux NativeAOT binary runs only on the glibc of the machine that built it, or
 
 A size that grew is split by what added it before the PR says so: publish with `-p:IlcGenerateMapFile=true` and compare the map files.
 
+A size before and after a change is measured on a RID of each OS whose code changed, and a figure from another RID is given with a note that it cannot show the change. ILC removes a branch for another OS (`OperatingSystem.IsWindows()`, `IsMacOS()`), so a linux-x64 build does not hold a change to Windows or macOS code. In V1d29g the first comparison for the change to the Windows and macOS machine ID readers used only the linux-x64 sizes of `libelasticlm` and `VerifyLicense`. The independent review found it (4), and the two trees were published on win-x64, where the map files put the growth in `MachineIdSources`; the macOS change was not measured on osx-arm64 (PR #516). In PR #519 the Windows service support grew `elm-server` by 249,344 bytes on win-x64 and by 8,352 bytes on linux-x64 (0081e03, CI run 46052147649).
+
 `HttpClient` in an executable that had none adds about 0.76 MB on win-x64: `System.Net.Http` 420,419 bytes, the name resolution, socket, and primitives parts 61,766 bytes, and their type descriptors 275,180 bytes (M4c3, `elm-server`, PR #79). A design that gives an executable an HTTP client shows this size in its Grill.
 
 A `JsonElement` member in a type of a source-generated context adds size too. In V1d2 reading the value of the removed `admin.listen` setting as a `JsonElement` made `elm-server.exe` (win-x64) 13,795,328 bytes, 57,344 more than reading it as a string (13,737,984). The settings reader now skips the value, at 13,741,568 bytes (PR #355). A member that only needs to know whether a value is there skips it.
