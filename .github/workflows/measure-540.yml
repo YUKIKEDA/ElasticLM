@@ -97,8 +97,8 @@ jobs:
           cat "$ELM_E2E_NOTES"
           exit 0
 
-  journald:
-    name: journald facts
+  linux-facts:
+    name: Linux facts
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -106,24 +106,75 @@ jobs:
         shell: bash
         run: |
           set +e
-          echo "facts: systemd-analyze cat-config systemd/journald.conf"; systemd-analyze cat-config --no-pager systemd/journald.conf
-          echo "facts: journalctl --disk-usage: $(journalctl --disk-usage 2>&1)"
-          echo "facts: man journald.conf"; MANPAGER=cat man journald.conf | col -b
-          echo "facts: man exit code $?"
+          echo "facts: sysctl net.ipv4.ip_unprivileged_port_start: $(sysctl -n net.ipv4.ip_unprivileged_port_start 2>&1)"
+          echo "facts: man 7 capabilities, CAP_NET_BIND_SERVICE"; MANPAGER=cat man 7 capabilities | col -b | grep -A 4 'CAP_NET_BIND_SERVICE'
+          echo "facts: a unit with an unknown key"
+          printf '[Service]\nType=oneshot\nExecStart=/bin/true\nElmUnknownKey=yes\n' | sudo tee /etc/systemd/system/elm-e2e-unknown.service > /dev/null
+          sudo systemctl daemon-reload
+          sudo systemctl start elm-e2e-unknown.service; echo "facts: start exit code $?"
+          sudo journalctl -b --no-pager -o cat | grep -i 'ElmUnknownKey'
+          sudo rm -f /etc/systemd/system/elm-e2e-unknown.service; sudo systemctl daemon-reload
+          echo "facts: systemd.exec(5), the version that added each directive of the sample"
+          MANPAGER=cat man systemd.exec | col -b > "$RUNNER_TEMP/exec.txt"
+          grep -n -E '^       [A-Z][A-Za-z]+=|Added in version' "$RUNNER_TEMP/exec.txt"
+          echo "facts: systemd.unit(5) and systemd(1) on unknown settings"; MANPAGER=cat man systemd.unit | col -b | grep -i -B 2 -A 4 'unknown'
           exit 0
 
-  newsyslog:
-    name: newsyslog facts
+  launchd:
+    name: launchd log rotation
     runs-on: macos-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
-      - name: Read
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Measure
         shell: bash
         run: |
           set +e
           sw_vers
-          echo "facts: man newsyslog.conf"; MANPAGER=cat man newsyslog.conf | col -b
-          echo "facts: man exit code $?"
-          echo "facts: ls /etc/newsyslog.d"; ls -l /etc/newsyslog.d
-          echo "facts: launchctl print system/com.apple.newsyslog"; sudo launchctl print system/com.apple.newsyslog | grep -E 'path|program|StartCalendarInterval|interval|Minute|Hour' | head -20
+          echo "facts: launchd.plist(5), StartInterval and RunAtLoad"; MANPAGER=cat man launchd.plist | col -b | grep -A 8 -E '^ *(StartInterval|RunAtLoad) '
+          id=$(openssl rand -hex 4)
+          label="elm-e2e-loss-$id"
+          logs="/Library/Logs/$label"
+          log="$logs/elm-server.log"
+          plist="/Library/LaunchDaemons/$label.plist"
+          sudo install -d -m 0755 "$logs"
+          sudo install -m 0640 -o nobody -g nobody /dev/null "$log"
+          cat > "$RUNNER_TEMP/$label.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key><string>$label</string>
+            <key>ProgramArguments</key>
+            <array><string>/usr/bin/perl</string><string>-e</string><string>\$|=1; my \$i=0; while (1) { print ++\$i, "\\n"; select(undef, undef, undef, 0.001); }</string></array>
+            <key>UserName</key><string>nobody</string>
+            <key>GroupName</key><string>nobody</string>
+            <key>RunAtLoad</key><true/>
+            <key>StandardOutPath</key><string>$log</string>
+            <key>StandardErrorPath</key><string>$log</string>
+          </dict>
+          </plist>
+          EOF
+          sudo install -m 0644 -o root -g wheel "$RUNNER_TEMP/$label.plist" "$plist"
+          sudo launchctl bootstrap system "$plist"; echo "launchd-loss: bootstrap exit $?"
+          sleep 3
+          # The sample's own command, with this run's folder and a size of 1 byte to wait for.
+          cmd=$(plutil -extract ProgramArguments.2 raw samples/ElmServerService/macos/elm-server-log.plist)
+          cmd=$(printf '%s' "$cmd" | sed "s|/Library/Logs/elm-server/|$logs/|; s|-ge 10485760|-ge 1|")
+          echo "launchd-loss: command: $cmd"
+          for n in $(seq 1 20); do
+            start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+            sudo /bin/sh -c "$cmd"; code=$?
+            end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+            sleep 0.5
+            last=$(sudo tail -n 1 "$log.0"); first=$(sudo head -n 1 "$log")
+            nul=$(sudo head -c 64 "$log" | tr -cd '\000' | wc -c | tr -d ' ')
+            echo "launchd-loss: run $n exit $code took $(echo "$end - $start" | bc) s; last in .0 $last; first in the cut file $first; lost $((first - last - 1)); zero bytes at the start $nul; size of .0 $(stat -f %z "$log.0"), of the cut file $(stat -f %z "$log")"
+          done
+          echo "launchd-loss: files:"; ls -l "$logs"
+          sudo launchctl bootout "system/$label"; echo "launchd-loss: bootout exit $?"
+          sudo rm -f "$plist"; sudo rm -rf "${logs:?}"; rm -f "$RUNNER_TEMP/$label.plist"
           exit 0

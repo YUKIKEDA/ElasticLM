@@ -192,6 +192,40 @@ public sealed partial class HardeningMeasurementTests
                 }
             }
 
+            if (variant == "all")
+            {
+                // D7 of the design review: a usage log outside the data folder, and a port below 1024, under the directives.
+                string usage = data + "-usage";
+                await SystemService.SudoOkAsync("install", "-d", "-o", user, "-g", user, "-m", "0700", usage);
+                string[] server = ["timeout", "10", bin + "/elm-server", "--config", etc + "/elm-server.json"];
+                List<(string Label, string[] Extra)> probes =
+                [
+                    ("usage log outside, no ReadWritePaths", [$"Environment=ELM_LOG_USAGE={usage}/usage.jsonl"]),
+                    ("usage log outside, ReadWritePaths", [$"Environment=ELM_LOG_USAGE={usage}/usage.jsonl", "ReadWritePaths=" + usage]),
+                    ("port 443, no capability", ["Environment=ELM_LISTEN=https://127.0.0.1:443"]),
+                    ("port 443, ambient only", ["Environment=ELM_LISTEN=https://127.0.0.1:443", "AmbientCapabilities=CAP_NET_BIND_SERVICE"]),
+                    (
+                        "port 443, ambient and bounding",
+                        [
+                            "Environment=ELM_LISTEN=https://127.0.0.1:443",
+                            "AmbientCapabilities=CAP_NET_BIND_SERVICE",
+                            "CapabilityBoundingSet=CAP_NET_BIND_SERVICE",
+                        ]
+                    ),
+                ];
+                foreach ((string label, string[] extra) in probes)
+                {
+                    (int code, string output, string error) = await RunSandboxedAsync(user, [.. directives, .. extra], server);
+                    string text = output + error;
+                    Match started = Port().Match(text);
+                    Note(
+                        $"probe {label}: exit {code}; {(started.Success ? "listened on port " + started.Groups[1].Value : "did not listen")}; {Cut(text.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault(l => l.StartsWith("error:", StringComparison.Ordinal)) ?? "(no error line)")}"
+                    );
+                }
+
+                await SystemService.SudoOkAsync("rm", "-rf", usage);
+            }
+
             string unitText = SystemService.Sample(
                 "elm-server.service",
                 ("User=elm-server", "User=" + user),
