@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Server;
 
@@ -148,12 +149,11 @@ internal sealed partial record ServerSettings
                 throw new ServerStartException($"The settings file '{path}' does not exist.");
             }
 
-            if (info.Length > MaxSettingsFileLength)
-            {
-                throw new ServerStartException($"The settings file '{path}' is larger than 64 KiB.");
-            }
-
-            return JsonSerializer.Deserialize(File.ReadAllBytes(path), ServerJsonContext.Default.SettingsFile)
+            // design §8.6 (V1d24c): the limit is checked while the file is read.
+            byte[] bytes =
+                BoundedFile.Read(path, MaxSettingsFileLength, FileShare.Read)
+                ?? throw new ServerStartException($"The settings file '{path}' is larger than 64 KiB.");
+            return JsonSerializer.Deserialize(bytes, ServerJsonContext.Default.SettingsFile)
                 ?? throw new ServerStartException($"The settings file '{path}' is empty.");
         }
         catch (JsonException e)

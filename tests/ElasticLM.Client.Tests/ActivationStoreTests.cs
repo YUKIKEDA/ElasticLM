@@ -256,4 +256,33 @@ public sealed class ActivationStoreTests : IDisposable
         );
         Assert.True(Damaged("""{"activationId":null,"seq":0,"kind":null,"license":null,"retry":[],"deactivation":1}"""));
     }
+
+    /// <summary>
+    /// An activation file of 256 KiB is read, and one of a byte more is damaged (design §8.6, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An activation written by the store, with spaces after its JSON up to 262,144 bytes, or up to 262,145.
+    ///
+    /// Steps:
+    /// - Read it.
+    ///
+    /// Expected:
+    /// - 262,144 bytes: the activation, not damaged. 262,145 bytes: null and damaged.
+    /// </remarks>
+    /// <param name="length">The file's length.</param>
+    [Theory]
+    [InlineData(256 * 1024)]
+    [InlineData((256 * 1024) + 1)]
+    public void Read_FileAtItsLimitAndOnePast_IsReadThenDamaged(int length)
+    {
+        var store = new ActivationStore(_folder, new FakeTimeProvider());
+        store.Write(new StoredActivation(Id, 3, "standard", Encoding.UTF8.GetBytes("""{"format":"elasticlm-license"}"""), []));
+        string text = File.ReadAllText(Path.Combine(_folder, "activation.json"));
+        File.WriteAllText(Path.Combine(_folder, "activation.json"), text + new string(' ', length - text.Length));
+
+        StoredActivation? read = store.Read(out bool damaged);
+
+        Assert.Equal((length <= 256 * 1024, length > 256 * 1024), (read?.ActivationId == Id, damaged));
+    }
 }
