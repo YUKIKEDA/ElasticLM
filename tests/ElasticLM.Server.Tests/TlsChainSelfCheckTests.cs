@@ -265,9 +265,9 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     /// - The test's own callback on the token is registered after the check's, so it runs first when the token is cancelled:
     ///   CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered (dotnet/runtime
     ///   release/10.0; the public documentation does not promise the order). While it runs, the token reads as cancelled and
-    ///   the check's wait is not cancelled yet. The check then ends with an error of its own during the handshake, as it does
-    ///   after a cancelled connect that closes the socket once the system has finished the connect. That connect path itself
-    ///   is not taken here. Should the order change, the check's wait is cancelled first, the inner exception is missing, and
+    ///   the check's wait is not cancelled yet. The check then ends with an error of its own during the handshake, before the
+    ///   cancellation reaches its wait. A cancelled token does not close the socket (docs/rows/V1d3h.md), and which error the
+    ///   failure on CI met is not known. Should the order change, the check's wait is cancelled first, the inner exception is missing, and
     ///   the test fails.
     ///
     /// Steps:
