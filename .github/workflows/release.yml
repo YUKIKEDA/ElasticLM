@@ -17,7 +17,20 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # design §20.5 (Issue #550): a pull request that changes only files no check reads starts no run. The same list is in
+  # ci.yml. A path leaves this list in the PR that makes a check read it.
   pull_request:
+    paths-ignore:
+      - .cursor/**
+      - .agents/**
+      - .claude/**
+      - AGENTS.md
+      - CLAUDE.md
+      - CONTRIBUTING.md
+      - docs/rows/**
+      - docs/adr/**
+      - docs/design-decisions.md
+      - docs/releasing.md
   workflow_dispatch:
 
 # A pull request's run is cancelled by its next push; a tag's or a manual run is never cancelled.
