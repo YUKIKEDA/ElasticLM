@@ -12,7 +12,7 @@ This guide is for a customer's administrator, or an auditor, who checks that the
 
 Type the commands in the folder of the tutorial, with its `tools` folder on your `PATH`. The steps below use the server's data folder `server-data`, which holds the log, and the root public key `root.pub.pem`, which verifies the server license that the log starts with.
 
-To verify the log, the server does not need to run: `elm log verify` reads the files only. To sign the newest lines first, as below, it must run. If it is stopped, start it again in a second terminal, as in [Start the server](../tutorials/use-a-floating-license.md#start-the-server).
+To verify the log, the server does not need to run: `elm log verify` reads the files only. To sign the newest lines first, as below, it must run. If it is stopped, start it again in a second terminal, as in [Start the server](../tutorials/use-a-floating-license.md#start-the-server), or, for a server that runs as a service, with its service manager ([Run elm-server as a system service](run-elm-server-as-a-system-service.md#stop-the-server-and-check-its-records)).
 
 The examples use the values of the tutorial: the product `acme-cad` and the data folder `server-data`. Replace them with your own; the log is in the data folder unless the setting `log.usage` puts it elsewhere.
 

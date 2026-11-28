@@ -33,7 +33,7 @@ Each section below puts the files in these places. You may choose others, as lon
 - **Only the service's account may open the data folder, besides root on Linux and macOS and the Administrators group and SYSTEM on Windows.** It holds the server's installation key and its administrator token, and the server refuses a data folder that others may change ([Which folders the server accepts](../reference/server-configuration.md#which-folders-the-server-accepts)). Put the server license file there too.
 - **Give every path as an absolute path**, in the settings and in the service definition. The server reads a relative path from the folder it runs in, which the service manager chooses.
 - **Keep secrets out of the service definition.** Set no `ELM_` variable there. Type the license key when `elm server activate` asks for it. If you use your own TLS certificate ([Use your own TLS certificate](use-your-own-tls-certificate.md)), give it as a PEM certificate and key file (`tls.certificate` and `tls.key`), and let only the service's account read the key file. A PKCS#12 file with a password needs `ELM_TLS_PASSWORD`, so use PEM files here.
-- **Let the clients reach the port.** The server listens on port 7070 of every address. If a firewall runs on the machine, allow incoming TCP connections to that port.
+- **Let the clients reach the port.** The server listens on port 7070 of every IPv4 address. If a firewall runs on the machine, allow incoming TCP connections to that port.
 
 ## Linux (systemd)
 
@@ -66,15 +66,10 @@ sudo install -m 0644 elm-server.json root.pub.pem /etc/elm-server/
 sudo install -d -o elm-server -g elm-server -m 0700 /var/lib/elm-server
 ```
 
-Run `elm-server` and `elm` as the server's user from now on, not as root: the data folder belongs to that user, and `elm` refuses it for its license commands when another user runs them, root included ([elm server](../reference/elm-cli.md#elm-server)). Work from a folder that the user can read, such as `/`, since your own folder may be closed to it:
+Run `elm-server` and `elm` as the server's user from now on, not as root: the data folder belongs to that user, and `elm` refuses it for its license commands when another user runs them, root included ([elm server](../reference/elm-cli.md#elm-server)). Run those commands from a folder that the user can read, such as `/`, since your own folder may be closed to it. Go there, and start the server once from the terminal:
 
 ```shell
 cd /
-```
-
-Start the server once from the terminal:
-
-```shell
 sudo -u elm-server /opt/elm-server/elm-server --config /etc/elm-server/elm-server.json
 ```
 
@@ -84,7 +79,7 @@ It creates its installation key in the data folder, and stops with exit code 1, 
 sudo -u elm-server /opt/elm-server/elm server activate --product acme-cad --data /var/lib/elm-server --trust /etc/elm-server/root.pub.pem --service https://licensing.example.com --license /var/lib/elm-server/server.elmlic
 ```
 
-`elm` ends with exit code 0 and prints the license ID, the sequence number 1, and the path it wrote, and then `The server is not running; it reads the license when it starts.` Create the unit, `elm-server.service`:
+`elm` ends with exit code 0 and prints the license ID, the sequence number 1, and the path it wrote, and then `The server is not running; it reads the license when it starts.` Go back to the folder with the downloaded files (`cd -` goes back to the folder you came from), and create the unit, `elm-server.service`, there:
 
 <!-- sample: samples/ElmServerService/elm-server.service -->
 ```ini
@@ -115,13 +110,13 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now elm-server
 ```
 
-`enable` starts it with the machine from now on, and `--now` starts it now. The server's operational log goes to the journal: `sudo journalctl -u elm-server` shows it, with the line `server.started: listening on port 7070 …` once the server listens. Only root, and the groups that the machine's journal settings allow, can read the journal. To ask the server itself, run `sudo -u elm-server /opt/elm-server/elm server status --data /var/lib/elm-server`: it shows the server license, whether the server is still reclaiming leases after its start, and the seats in use.
+`enable` starts it with the machine from now on, and `--now` starts it now. The server's operational log goes to the journal: `sudo journalctl -u elm-server` shows it, with the line `server.started: listening on port 7070 …` once the server listens. Only root and the members of the groups that the distribution lets read the journal, often `systemd-journal` or `adm`, can read it. To ask the server itself, run `sudo -u elm-server /opt/elm-server/elm server status --data /var/lib/elm-server`: it shows the server license, whether the server is still reclaiming leases after its start (waiting for running apps to report the leases they hold, [Floating licenses](../explanation/floating-licenses.md)), and the seats in use.
 
 ## macOS (launchd)
 
-If a web browser downloaded the archives, remove the quarantine attribute from them after checking them, before you extract them: `xattr -d com.apple.quarantine <archive>`. macOS Gatekeeper does not open the programs otherwise ([Security model](../explanation/security-model.md#releases-and-this-site)).
+If a web browser downloaded the archives, remove the quarantine attribute from them after checking them, before you extract them: `xattr -d com.apple.quarantine <archive>`. An archive without the attribute makes `xattr` say so, and then there is nothing to remove. macOS Gatekeeper does not open the programs otherwise ([Security model](../explanation/security-model.md#releases-and-this-site)).
 
-Create a group and a role account for the server, both named `_elm-server`. `sysadminctl` makes a role account only with a user ID from 450 to 499 that no account has yet; without `-GID`, the account's group is `staff`, which every user of the Mac is in. List the IDs taken in that range by accounts and groups, and pick one that is free in both, 451 below:
+Create a group and a role account for the server, both named `_elm-server`. `sysadminctl` makes a role account only with a user ID from 450 to 499; without `-GID`, the account's group is `staff`, which every user of the Mac is in. List the IDs taken in that range by accounts and groups, and pick one that is free in both. The commands below use 451; put your ID in their place, and expect it in the output of `id`:
 
 ```shell
 dscl . -list /Users UniqueID | awk '$2 >= 450 && $2 < 500'
@@ -155,15 +150,16 @@ sudo install -d -o _elm-server -g _elm-server -m 0700 "/Library/Application Supp
 sudo install -m 0640 -o _elm-server -g _elm-server /dev/null /Library/Logs/elm-server/elm-server.log
 ```
 
-launchd opens the log file as the account. In a folder that only root may write, it cannot create the file, and the server does not start; so the file is created here. As on Linux, run `elm-server` and `elm` as the account from a folder it can read, start the server once, and activate it; `elm` asks for the license key:
+launchd opens the log file as the account. In a folder that only root may write, it cannot create the file, and the server does not start; so the file is created here. As on Linux, run `elm-server` and `elm` as the account from a folder it can read, start the server once, and activate it; `elm` asks for the license key. `cd -` then goes back to the folder with the downloaded files:
 
 ```shell
 cd /
 sudo -u _elm-server /usr/local/elm-server/elm-server --config /usr/local/elm-server/elm-server.json
 sudo -u _elm-server /usr/local/elm-server/elm server activate --product acme-cad --data "/Library/Application Support/elm-server" --trust /usr/local/elm-server/root.pub.pem --service https://licensing.example.com --license "/Library/Application Support/elm-server/server.elmlic"
+cd -
 ```
 
-The first command stops with exit code 1 and the line `error: The server license '/Library/Application Support/elm-server/server.elmlic' does not exist.`, after it has created the installation key. The second ends with exit code 0 and prints the license ID, the sequence number 1, and the path it wrote, and then that the server is not running. Create the plist, `elm-server.plist`:
+The first command stops with exit code 1 and the line `error: The server license '/Library/Application Support/elm-server/server.elmlic' does not exist.`, after it has created the installation key. The second ends with exit code 0 and prints the license ID, the sequence number 1, and the path it wrote, and then that the server is not running. In the folder with the downloaded files, create the plist, `elm-server.plist`:
 
 <!-- sample: samples/ElmServerService/elm-server.plist -->
 ```xml
@@ -202,7 +198,7 @@ The first command stops with exit code 1 and the line `error: The server license
 
 - `RunAtLoad`: launchd starts the server when it loads the plist, and so at each start of the machine.
 - `KeepAlive` with `SuccessfulExit` `false`: launchd starts the server again when it ends with an exit code other than 0, or a signal kills it, and not after a stop with exit code 0. It starts a program at most once every 10 seconds: a server that ran longer comes back within about a second, and one that stopped sooner, after the rest of the 10 seconds.
-- `ExitTimeOut` 60: launchd waits 60 seconds for the server to stop before it kills it. Without the key, launchd waits only its own default time, which was 5 seconds on macOS 26, less than a stop may take.
+- `ExitTimeOut` 60: launchd waits 60 seconds for the server to stop before it kills it. Without the key, launchd waits only its own default time, which was 5 seconds on macOS 26, less than a stop can take.
 - `StandardOutPath` and `StandardErrorPath`: the server's operational log, the file you created above.
 
 Install it, and start the server:
@@ -268,7 +264,7 @@ sc.exe failure elm-server reset= 86400 actions= restart/60000/restart/60000/rest
 Start-Service elm-server
 ```
 
-`sc.exe failure` restarts the service 60 seconds after each failure; after the third, it repeats the last action for each later failure, and it counts the failures from zero again after a day (86,400 seconds) without one. A failure is an end without a stop that the server reported; a server that reports its stop and then ends with an error code is not restarted. This guide sets it after the license, so that the first start, which is meant to stop, is not started again. `Get-Service elm-server` shows `Running` while the service runs. The operational log goes to the Application event log, from `Warning` up ([Logs](../reference/logs.md#elm-server-as-a-windows-service)), so the line `server.started` is not there by default. To ask the server itself, run `& 'C:\Program Files\elm-server\elm.exe' server status --data C:\ProgramData\elm-server`.
+`sc.exe failure` restarts the service 60 seconds after each failure; after the third, it repeats the last action for each later failure, and it counts the failures from zero again after a day (86,400 seconds) without one. A failure is an end without a stop that the server reported; a server that reports its stop and then ends with an error code is not restarted. This guide sets it only now, after the license. `Get-Service elm-server` shows `Running` while the service runs. The operational log goes to the Application event log, from `Warning` up ([Logs](../reference/logs.md#elm-server-as-a-windows-service)), so the line `server.started` is not there by default. To ask the server itself, run `& 'C:\Program Files\elm-server\elm.exe' server status --data C:\ProgramData\elm-server`.
 
 ## Stop the server and check its records
 
@@ -279,7 +275,7 @@ Stop and start the server with the service manager:
 | Stop | `sudo systemctl stop elm-server` | `sudo launchctl kill SIGTERM system/elm-server` | `Stop-Service elm-server` |
 | Start again | `sudo systemctl start elm-server` | `sudo launchctl kickstart system/elm-server` | `Start-Service elm-server` |
 
-The server stops listening, writes `server.stopped` to the usage log and the borrow record, signs them, and ends with exit code 0. With no request in progress, the stop takes as long as closing the records, well under a second. When requests are still being answered, the server waits for them for up to 30 seconds, then cuts them and waits up to 1 second more before it closes the records. The service manager ends a server that takes longer: systemd after its stop timeout (90 seconds by default), and launchd after the plist's `ExitTimeOut` (60 seconds). On Windows, a stop that takes more than 30 seconds is reported as finished at 30 seconds, and the process may end at any point after that; when Windows shuts down, it may end the service after the time in the registry value `WaitToKillServiceTimeout` under `HKLM\SYSTEM\CurrentControlSet\Control`, which `Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` shows in milliseconds ([elm-server configuration](../reference/server-configuration.md#windows-service)). A server ended in any of these ways has not written `server.stopped`, and its next start waits for the leases of the run before, as after a crash ([Floating licenses](../explanation/floating-licenses.md)); nothing needs repair.
+The server stops listening, writes `server.stopped` to the usage log and the borrow record, signs them, and ends with exit code 0. With no request in progress, the stop takes as long as closing the records, well under a second. When requests are still being answered, the server waits until they end, at most 30 seconds, then cuts those still open and waits up to 1 second more before it closes the records: at most about 31 seconds and the time to close them. The service manager ends a server that takes longer: systemd after its stop timeout (90 seconds by default), and launchd after the plist's `ExitTimeOut` (60 seconds). On Windows, a stop that takes more than 30 seconds is reported as finished at 30 seconds, and the process may end at any point after that; when Windows shuts down, it may end the service after the time in the registry value `WaitToKillServiceTimeout` under `HKLM\SYSTEM\CurrentControlSet\Control`, which `Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` shows in milliseconds ([elm-server configuration](../reference/server-configuration.md#windows-service)). A server ended in any of these ways may not have written `server.stopped`; then its next start waits for the leases of the run before, as after a crash ([Floating licenses](../explanation/floating-licenses.md)); nothing needs repair.
 
 To check that the records were closed, read the last two lines of the newest usage log file in the data folder, the last `usage-<UTC time>.jsonl` name in the list: the first is a `server.stopped` line, and the last is its signature, an `auth` line. If they are something else, the server was ended before it closed its records, as above.
 
@@ -288,11 +284,11 @@ sudo ls /var/lib/elm-server
 sudo tail -n 2 /var/lib/elm-server/usage-<UTC time>.jsonl
 ```
 
-On macOS, the folder is `"/Library/Application Support/elm-server"`, in quotes. On Windows, `Get-ChildItem C:\ProgramData\elm-server\usage-*.jsonl | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 2` prints them. [Verify the usage log](verify-the-usage-log.md) checks the whole log; run its `elm` commands as the service's account with the paths above. While the server is stopped, its newest file can be deleted or cut without a trace, so copy it too when you keep copies of the log ([Keep copies of the finished files](verify-the-usage-log.md#keep-copies-of-the-finished-files)).
+On macOS, the folder is `"/Library/Application Support/elm-server"`, in quotes. On Windows, `Get-ChildItem C:\ProgramData\elm-server\usage-*.jsonl | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 2` prints them. [Verify the usage log](verify-the-usage-log.md) checks the whole log; run its `elm` commands as the service's account (on Windows, in PowerShell opened with "Run as administrator") with the paths above. While the server is stopped, its newest files can be deleted, and the newest one cut right after a signature line, without a trace, so copy the newest file too when you keep copies of the log ([Keep copies of the finished files](verify-the-usage-log.md#keep-copies-of-the-finished-files)).
 
 ## When the server keeps stopping
 
-When the server cannot start, for example because its license expired or a setting is wrong, it ends with exit code 1 or 2 and one line that starts with `error:`. On Linux and macOS the service manager takes that as a failure and starts the server again, and it stops again: systemd every 5 seconds, and launchd every 10 seconds. On Windows, a start that stops before the server listens makes `Start-Service` report an error. A start that stops later, because the server cannot listen on its address or its check of the TLS certificate's intermediate CAs fails, shows the service as running and then ended. The `error:` line is in the journal (`sudo journalctl -u elm-server`), in `/Library/Logs/elm-server/elm-server.log`, or in event ID 50 of the Application event log. Stop the service, correct the cause, and start it again. For an expired license, see [Renew a server license](renew-a-server-license.md), or [Activate a server license with elm-service](activate-a-server-license-with-elm-service.md) for a license that renews from the vendor's service.
+When the server cannot start, for example because its license expired or a setting is wrong, it ends with exit code 1 or 2 and one line that starts with `error:`. On Linux and macOS the service manager takes that as a failure and starts the server again, and it stops again: systemd every 5 seconds, and launchd every 10 seconds. On Windows, a start that stops before the server listens makes `Start-Service` report an error. A start that stops later, because the server cannot listen on its address or its check of the TLS certificate's intermediate CAs fails, shows the service as running and then ended without a reported stop, which `sc.exe failure` takes as a failure. The `error:` line is in the journal (`sudo journalctl -u elm-server`), in `/Library/Logs/elm-server/elm-server.log`, or in event ID 50 of the Application event log. Stop the service, correct the cause, and start it again. For an expired license, see [Renew a server license](renew-a-server-license.md), or [Activate a server license with elm-service](activate-a-server-license-with-elm-service.md) for a license that renews from the vendor's service.
 
 ## Remove the service
 
@@ -300,4 +296,4 @@ When the server cannot start, for example because its license expired or a setti
 | --- | --- | --- |
 | `sudo systemctl disable --now elm-server`, then `sudo rm /etc/systemd/system/elm-server.service` and `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server`, then `sudo rm /Library/LaunchDaemons/elm-server.plist` | `Stop-Service elm-server`, then `sc.exe delete elm-server` |
 
-The data folder keeps the server's installation key and its license; delete it only when you no longer need the activation, and if the server was activated with `elm-service`, free its activation first with `elm server deactivate`, as the service's account ([Activate offline, and move a server](activate-a-server-license-with-elm-service.md#activate-offline-and-move-a-server)).
+The data folder keeps the server's installation key and its license; delete it only when you no longer need the activation, and if the server was activated with `elm-service`, free its activation first with `elm server deactivate`, as the service's account (on Windows, in PowerShell opened with "Run as administrator"; [Activate offline, and move a server](activate-a-server-license-with-elm-service.md#activate-offline-and-move-a-server)).
