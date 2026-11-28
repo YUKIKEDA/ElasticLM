@@ -2,6 +2,9 @@
 # hashes its files before the upload and gives the sha256sum lines as a job output, which the job's own runner sets. A
 # job that downloads the artifact checks the files against those lines and that the folder holds exactly the listed
 # files. The steps named "Hash …" and "Check … against …" carry the same commands as in release.yml.
+#
+# design §20.5 (V1d21): the main ruleset requires the check of every job here, by name. A pull request that renames a
+# job, removes it, or changes its matrix says so in its body (.cursor/rules/pull-requests.mdc).
 name: CI
 
 on:
