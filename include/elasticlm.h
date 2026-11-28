@@ -327,8 +327,9 @@ ELM_FUNCTION(int32_t, elm_client_create, (const elm_client_options* options, elm
  * an acquisition whose answer did not come or was not taken, and, after an acquisition or a borrow whose answer does not
  * come or is not taken, the release of the lease the server may have issued for it, which the call sends before it
  * returns that error; to a server that takes the connection and does not answer, a call can so take about 60 s. A
- * request that never left the device sends no release. retry_after_seconds may be NULL; otherwise it gets 0, or when to
- * try again after a refusal (seconds, rounded up), such as ELM_SERVER_RECOVERING after a server starts. On success *out is a new lease;
+ * request that never left the device sends no release, so a call whose connection is refused returns at once.
+ * retry_after_seconds may be NULL; otherwise it gets 0, or when to try again after a refusal (seconds, rounded up),
+ * such as ELM_SERVER_RECOVERING after a server starts. On success *out is a new lease;
  * free it with elm_lease_free. count is at least 1; the server refuses more seats than it has. An answer whose lease is
  * not the answer to this request (another feature or count, a borrow where a lease was asked for or the reverse, a
  * longer borrow, or another request) is ELM_REQUEST_MISMATCH: the lease in that answer is neither kept nor returned,
