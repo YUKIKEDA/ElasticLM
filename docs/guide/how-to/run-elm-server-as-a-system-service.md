@@ -6,7 +6,7 @@ sidebar_position: 23
 
 This guide is for the customer's administrator who runs `elm-server` for good: as a service of the operating system, so that it starts with the machine and starts again when it fails. It covers Linux with systemd, macOS with launchd, and Windows. You should already know how to set up a server, as in [Run a license server and lease a floating license in a .NET app](../tutorials/use-a-floating-license.md), and how it gets its license, as in [Activate a server license with elm-service](activate-a-server-license-with-elm-service.md).
 
-<!-- steps:e2e tests=SystemdServiceTests.Systemd_ThePageSteps_RunRestartAndStopTheServer,LaunchdServiceTests.Launchd_ThePageSteps_RunRestartAndStopTheServer,WindowsServiceTests.NewService_ThePageSteps_StartActivateAndStopTheServer -->
+<!-- steps:e2e tests=SystemdServiceTests.Systemd_ThePageSteps_RunRestartAndStopTheServer,SystemdServiceTests.Systemd_HardenedUnit_LendsAndTakesBackALease,LaunchdServiceTests.Launchd_ThePageSteps_RunRestartAndStopTheServer,WindowsServiceTests.NewService_ThePageSteps_StartActivateAndStopTheServer -->
 
 ## Before you start
 
@@ -94,6 +94,28 @@ ExecStart=/opt/elm-server/elm-server --config /etc/elm-server/elm-server.json
 Restart=on-failure
 RestartSec=5
 TimeoutStopSec=60
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/elm-server
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 
 [Install]
 WantedBy=multi-user.target
@@ -102,6 +124,27 @@ WantedBy=multi-user.target
 - `Type=exec`: systemd takes the service as started once `elm-server` runs.
 - `Restart=on-failure` and `RestartSec=5`: when the server ends with an exit code other than 0, or it is killed by a signal such as `SIGKILL`, systemd starts it again 5 seconds later. A stop with `systemctl stop`, which sends `SIGTERM`, is not a failure.
 - `TimeoutStopSec=60`: systemd waits 60 seconds for the server to stop, and then kills it ([Stop the server and check its records](#stop-the-server-and-check-its-records)). Without the setting, systemd waits its default time, which the machine's systemd settings decide (90 seconds on Ubuntu 26.04).
+
+The lines after `TimeoutStopSec` narrow what someone who runs code inside the server's process, for example through a flaw in the server, can do ([systemd.exec(5)](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) describes each). They apply only to the process that systemd starts from this unit, not to other processes of the same user, such as one started with `sudo -u elm-server`:
+
+- `NoNewPrivileges=yes`, an empty `CapabilityBoundingSet=`, and `RestrictSUIDSGID=yes`: the process holds no Linux capability, gains no privilege, not even by running a set-user-ID program, and cannot make a set-user-ID or set-group-ID file.
+- `ProtectSystem=strict` with `ReadWritePaths=/var/lib/elm-server`: the file system is read-only to the process, except the data folder, where the server keeps everything it writes unless you move the data folder, the license, or the usage log (below), and its own `/tmp` (next item). `ProtectHome=yes`, `PrivateTmp=yes`, and `PrivateDevices=yes`: it sees no home folder, gets a `/tmp` and `/var/tmp` of its own, which no other process shares and which do not outlast the run, and sees no hardware device.
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`: it can open only the kinds of socket the server uses: the local administration socket in the data folder, and IPv4 and IPv6 for its connections and name lookups.
+- `ProtectKernelTunables`, `ProtectKernelModules`, `ProtectKernelLogs`, `ProtectControlGroups`, `ProtectClock`, `ProtectHostname`, `RestrictNamespaces`, `RestrictRealtime`, `LockPersonality`, and `MemoryDenyWriteExecute`: it cannot change the kernel's settings, load kernel modules, read the kernel's log, change control groups, set the clock or the host name, create namespaces, take real-time scheduling, change its execution domain, or make memory both writable and executable.
+- `SystemCallArchitectures=native`: the process may make only the system calls of the machine's own architecture. `SystemCallFilter=@system-service` and `SystemCallErrorNumber=EPERM`: a system call outside the set that systemd lists for services (`systemd-analyze syscall-filter @system-service` prints it) fails with the error `EPERM`.
+
+What these lines do not stop: the process still reads and writes the data folder, so code inside it can still read the installation key and the administrator token, sign leases, and change the records, as the rules above say, and use the local administration socket. It can still read the files that every user may read, such as those in `/etc`, and still connect to any address over the network. On macOS and Windows, the service gets no such limits.
+
+The unit was tried with systemd 259 on Ubuntu 26.04. The newest of these lines, `ProtectClock=`, came with systemd 245 (systemd.exec(5) gives the version of each). systemd ignores a line it does not know, writes a warning that names the unit file and the line to the journal (systemd 259 writes `/etc/systemd/system/elm-server.service:<line>: Unknown key '<name>' in section [Service], ignoring.`; other versions word it differently), and runs the server without that limit. On an older systemd, look for such warnings after `daemon-reload` with `sudo journalctl -b | grep 'elm-server.service'`. After you install the unit (below), `sudo systemd-analyze security elm-server` lists each setting, and its last line rates the unit's exposure: `Overall exposure level for elm-server.service: 1.7 OK` there, against 9.2 (UNSAFE) for the unit without these lines.
+
+If the server starts from the terminal, as above, but not under the unit, look for the reason in `sudo journalctl -u elm-server`. The settings below change what the unit must allow:
+
+- **Another data folder.** If you set `dataDirectory` to another folder, create it as above and replace `/var/lib/elm-server` in `ReadWritePaths=` with it.
+- **Files outside the data folder that the server writes.** If you put the server license (`license`) or the usage log (`log.usage`, [elm-server configuration](../reference/server-configuration.md)) outside the data folder, create each of their folders owned by `elm-server`, as for the data folder, and add it to `ReadWritePaths=`, separated by a space. `ReadWritePaths=` lifts the write protection for a folder, but does not let the user write where its owner and mode do not, and a folder it names that does not exist stops the unit before the server runs, with no `error:` line. Without the folder in `ReadWritePaths=`, the server stops at its start, with `error: The usage log '…' cannot be written: Read-only file system …` for the usage log, or for the license when `service.url` is set, `error: service.url is set, and the server license path '…' cannot be written: …`. Without `service.url`, the server only reads the license, and its folder needs no change.
+- **Files the server reads.** The process cannot see files under `/home`, `/root`, or `/run/user`, and has a `/tmp` of its own, so keep the settings file, the server license, the root keys, and any TLS certificate and key file in other folders, such as `/etc/elm-server` and the data folder.
+- **A port below 1024.** With the kernel's default (`net.ipv4.ip_unprivileged_port_start` 1024), a user other than root cannot listen on such a port. Add `AmbientCapabilities=CAP_NET_BIND_SERVICE`, which gives the process that right, and change the line `CapabilityBoundingSet=` to `CapabilityBoundingSet=CAP_NET_BIND_SERVICE`, which keeps it. With the empty line, systemd drops the right, and the server stops at its start with `error: elm-server cannot listen on … Permission denied`, as it does without the right. Then set the port in `listen`, and let it through the firewall.
+
+After you change the unit, install it again as below, and run `sudo systemctl daemon-reload` and `sudo systemctl restart elm-server`.
 
 Install it, and start the server:
 
@@ -287,6 +330,45 @@ sudo tail -n 2 /var/lib/elm-server/usage-<UTC time>.jsonl
 
 On macOS, the folder is `"/Library/Application Support/elm-server"`, in quotes. On Windows, `Get-ChildItem C:\ProgramData\elm-server\usage-*.jsonl | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 2` prints them. [Verify the usage log](verify-the-usage-log.md) checks the whole log; run its `elm` commands as the service's account (on Windows, in PowerShell opened with "Run as administrator") with the paths above. While the server is stopped, its newest files can be deleted, and the newest one cut right after a signature line, without a trace, so copy the newest file too when you keep copies of the log ([Keep copies of the finished files](verify-the-usage-log.md#keep-copies-of-the-finished-files)).
 
+## Rotate the operational log
+
+The server writes its operational log as long as it runs ([Logs](../reference/logs.md)). On Linux and macOS, it writes the entries from the level `Information` up, with lines for each request, to its standard output, which the service manager takes: on macOS, launchd opens the log file when it starts the server, and nothing opens the file again until the next start. On Windows, it writes the entries from `Warning` up to the Application event log. Each service manager keeps the log from growing without end in its own way.
+
+**Linux.** journald keeps the journal and rotates it, and the unit needs nothing for it. How much space the journal takes and how long it keeps entries are set in `/etc/systemd/journald.conf` ([journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)). By default it takes at most 10% of its file system and no more than 4 GiB (`SystemMaxUse=`), deleting the oldest archived files to stay within that, and keeps entries for no fixed time (`MaxRetentionSec=0`). journald also limits how many lines one service may write in a time: by default 10,000 lines in 30 seconds (`RateLimitBurst=` and `RateLimitIntervalSec=`), multiplied by a factor that grows with the disk space free for the journal (journald.conf(5) has a table of it). It drops the lines over the limit until the 30 seconds are over, and writes a line with the number it dropped. A distribution may change these defaults: `systemd-analyze cat-config systemd/journald.conf` shows the settings in force, and `sudo journalctl --disk-usage` the space the journal takes now. After you change a setting, run `sudo systemctl restart systemd-journald`.
+
+**macOS.** Rotate the log file with a second launchd job that copies it and then cuts it to nothing, while the server goes on running. A rotation that moves the file away does not work here: the server keeps writing to the file it has open, wherever it is moved, until it starts again, and after a start it refuses new leases while it reclaims the leases of running apps: for the server license's lease time (10 minutes with the default policy), longer when leases of the run before can still be valid, and shorter when every seat is reclaimed ([Floating licenses](../explanation/floating-licenses.md)). Cutting the file works because launchd opens the log file for appending: after the cut, the server's next line goes to the start of the file. In the folder with the downloaded files, create the job's plist, `elm-server-log.plist`:
+
+<!-- sample: samples/ElmServerService/macos/elm-server-log.plist -->
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>elm-server-log</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>log=/Library/Logs/elm-server/elm-server.log; [ "$(stat -f %z "$log")" -ge 10485760 ] || exit 0; for i in 5 4 3 2 1 0; do [ ! -f "$log.$i" ] || mv -f "$log.$i" "$log.$((i + 1))"; done; cp -p "$log" "$log.0" &amp;&amp; : &gt; "$log"</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>600</integer>
+</dict>
+</plist>
+```
+
+Every 600 seconds, launchd runs the command as root: when the log file holds 10,485,760 bytes (10 MiB) or more, it renames the copies `elm-server.log.0` to `.5` one number up, so the oldest, `.6`, is replaced, copies the log file to `elm-server.log.0` with its owner and mode, and cuts the log file to nothing. Since the job checks only every 600 seconds, each of the eight files, the log file and its seven copies, can grow to 10 MiB plus what the server writes in 600 seconds: the log takes at most about 80 MiB plus eight times that. The lines that the server writes between the copy and the cut are lost: in 20 rotations of a small log file on macOS 26 (the size at which the job rotates set to 1 byte), with a program that wrote a line every millisecond, none was lost in 17 and one in 3. With a log file of 10 MiB, the size at which the job rotates it, 10 rotations lost no line in 5, one or two in 3, and six in 2. Install the plist where only root may write, and load it:
+
+```shell
+sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/
+sudo launchctl bootstrap system /Library/LaunchDaemons/elm-server-log.plist
+```
+
+The job does not run when it is loaded, only every 600 seconds after. To check now, run `sudo launchctl kickstart system/elm-server-log`; it rotates the file only when it holds 10 MiB or more. Do not move or delete the log file itself: launchd cannot create it again in a folder that only root may write, and at its next start the server does not start, with `last exit code = 78: EX_CONFIG` in `sudo launchctl print system/elm-server`.
+
+**Windows.** The event log's settings decide the Application log's maximum size and what happens when it is full, which `wevtutil gl Application` shows as `maxSize` in bytes (20,971,520 on a Windows 11 machine) and `retention`, with which `false` lets new events overwrite the oldest ones and `true` keeps the old events and discards the new ones ([wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)), and whose maximum size an administrator changes with `wevtutil sl Application /ms:<bytes>`.
+
 ## When the server keeps stopping
 
 When the server cannot start, for example because its license expired or a setting is wrong, it ends with exit code 1 or 2 and one line that starts with `error:`. On Linux and macOS the service manager takes that as a failure and starts the server again, and it stops again: systemd every 5 seconds, and launchd every 10 seconds. On Windows, a start that stops before the server listens makes `Start-Service` report an error. A start that stops later, because the server cannot listen on its address or its check of the TLS certificate's intermediate CAs fails, shows the service as running and then ended without a reported stop, which `sc.exe failure` takes as a failure. The `error:` line is in the journal (`sudo journalctl -u elm-server`), in `/Library/Logs/elm-server/elm-server.log`, or in event ID 50 of the Application event log. Stop the service, correct the cause, and start it again. For an expired license, see [Renew a server license](renew-a-server-license.md), or [Activate a server license with elm-service](activate-a-server-license-with-elm-service.md) for a license that renews from the vendor's service.
@@ -295,6 +377,6 @@ When the server cannot start, for example because its license expired or a setti
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| `sudo systemctl disable --now elm-server`, then `sudo rm /etc/systemd/system/elm-server.service` and `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server`, then `sudo rm /Library/LaunchDaemons/elm-server.plist` | `Stop-Service elm-server`, then `sc.exe delete elm-server` |
+| `sudo systemctl disable --now elm-server`, then `sudo rm /etc/systemd/system/elm-server.service` and `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` and `sudo launchctl bootout system/elm-server-log`, then `sudo rm /Library/LaunchDaemons/elm-server.plist /Library/LaunchDaemons/elm-server-log.plist` | `Stop-Service elm-server`, then `sc.exe delete elm-server` |
 
 The data folder keeps the server's installation key and its license; delete it only when you no longer need the activation, and if the server was activated with `elm-service`, free its activation first with `elm server deactivate`, as the service's account (on Windows, in PowerShell opened with "Run as administrator"; [Activate offline, and move a server](activate-a-server-license-with-elm-service.md#activate-offline-and-move-a-server)).

@@ -1,6 +1,9 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
+using ElasticLM.Client;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.E2E;
 
@@ -31,7 +34,8 @@ public sealed partial class SystemdServiceTests
     ///   -m 0700 the data folder.
     /// - Run elm-server once as the user from the terminal (sudo -u); elm server activate as the user, with the key in
     ///   ELM_LICENSE_KEY since the test has no terminal to type it in.
-    /// - Install the unit of the sample (0644), daemon-reload, enable --now; wait until elm server status answers as the user.
+    /// - Install the unit of the sample (0644), daemon-reload, enable --now; read with systemctl show the values systemd uses
+    ///   for the unit's stop timeout and its hardening directives; wait until elm server status answers as the user.
     /// - Kill the main process with SIGKILL and time until elm server status answers again from a new main process.
     /// - systemctl stop --no-block, timed until the unit is inactive; read the unit's exit status and result, the newest usage
     ///   log and borrow record, and the unit's journal.
@@ -44,6 +48,9 @@ public sealed partial class SystemdServiceTests
     ///   activate exits with 0.
     /// - The unit's TimeoutStopUSec is 1min (the sample's TimeoutStopSec=60), longer than the stop's upper bound of 30 seconds,
     ///   up to 1 second, and the time to close the records (design §13.1).
+    /// - systemctl show gives each hardening directive of the sample the value the sample writes, in the form it prints
+    ///   (the address families sorted, the error number EPERM as 1), with the data folder of this run as the only path that
+    ///   ReadWritePaths opens; SystemCallFilter names read and write and not reboot (design §13.1, V1d30a).
     /// - After the kill a new main process answers, at least RestartSec (5 seconds) after the kill.
     /// - After the stop the unit is inactive with ExecMainCode 1 (exited), ExecMainStatus 0, and Result success; the newest
     ///   usage log ends with server.stopped and its signature, and the newest borrow record holds server.stopped; the journal holds the server.started and server.stopped lines of the operational log.
@@ -138,15 +145,7 @@ public sealed partial class SystemdServiceTests
             Assert.True(activated == 0, $"elm server activate exited with {activated}: {activateError}");
 
             // Step 4: the unit of the sample.
-            string unitText = SystemService.Sample(
-                "elm-server.service",
-                ("User=elm-server", "User=" + user),
-                ("Group=elm-server", "Group=" + user),
-                ("/opt/elm-server/", bin + "/"),
-                ("/etc/elm-server/", etc + "/")
-            );
-            await SystemService.InstallTextAsync(vendor, unitText, unitFile, "0644");
-            await SystemService.SudoOkAsync("systemctl", "daemon-reload");
+            await InstallUnitAsync(vendor, user, bin, etc, data, unit, unitFile);
             await SystemService.SudoOkAsync("systemctl", "enable", "--now", unit);
 
             string timeout = await ShowAsync(unit, "TimeoutStopUSec");
@@ -156,6 +155,7 @@ public sealed partial class SystemdServiceTests
             // The unit writes TimeoutStopSec=60 rather than leaning on DefaultTimeoutStopSec, which the machine's settings can
             // change (design §13.1); systemctl show prints it as 1min.
             Assert.Equal("1min", timeout);
+            await AssertHardenedAsync(unit, data);
 
             await WaitForStatusAsync(user, elm, data, unit);
             string firstPid = await ShowAsync(unit, "MainPID");
@@ -214,20 +214,286 @@ public sealed partial class SystemdServiceTests
         }
         finally
         {
-            List<string> problems = [];
-            await SystemService.CleanUpAsync(problems, "systemctl disable", () => SystemService.SudoTryAsync("systemctl", "disable", "--now", unit));
-            await SystemService.CleanUpAsync(problems, "the unit file", () => SystemService.SudoCleanUpAsync("rm", "-f", unitFile));
-            await SystemService.CleanUpAsync(problems, "daemon-reload", () => SystemService.SudoCleanUpAsync("systemctl", "daemon-reload"));
-            await SystemService.CleanUpAsync(problems, "reset-failed", () => SystemService.SudoTryAsync("systemctl", "reset-failed", unit));
-            await SystemService.CleanUpAsync(problems, "the user's processes", () => SystemService.KillProcessesOfAsync(user, bin));
-            await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoCleanUpAsync("rm", "-rf", bin, etc, data));
-
-            // --force: a container's processes may run as the same UID (999 on the runner), and userdel refuses a user with
-            // processes otherwise.
-            await SystemService.CleanUpAsync(problems, "userdel", () => SystemService.SudoTryAsync("userdel", "--force", user));
-            await SystemService.CleanUpAsync(problems, "the user", () => SystemService.AssertNoAccountAsync(user));
-            Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
+            await CleanUpAsync(passed, user, unit, unitFile, bin, etc, data);
         }
+    }
+
+    /// <summary>
+    /// Under the page's unit, with its hardening, elm-server lends a lease to an app and takes it back, and then stops with
+    /// its records closed (V1d30a, question 30a-3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - As for <see cref="Systemd_ThePageSteps_RunRestartAndStopTheServer"/>, but without the vendor's elm-service: the
+    ///   server license is issued by elm with 15-second leases, bound to the key of the first start, and installed owned by
+    ///   the user with mode 0600, as the page says for a license file the vendor issues by hand. A license that elm-service
+    ///   issues has leases of at least 2 minutes (the policy's leaseDuration, design §14.5), and every start refuses new
+    ///   leases for at least the server license's lease (design §13.4 step 3), longer than the run's real-clock budget of 2
+    ///   minutes (design §20.7).
+    /// - The settings keep the sample's service.url: the server checks at its start that the license path can be written,
+    ///   and, with no activation kept, never contacts the service.
+    ///
+    /// Steps:
+    /// - useradd, install the programs, the settings, the root key, and the data folder as the other test does; run
+    ///   elm-server once as the user; elm license issue with --bind-key of the key its line names and --lease-minutes 0.25;
+    ///   install the file as the license.
+    /// - Install the unit of the sample, enable --now, and wait until elm server status answers as the user.
+    /// - Read the port from the server.started line of the journal; acquire pro with ElasticLM.Client, waiting each
+    ///   Retry-After while the server answers ELM_SERVER_RECOVERING; elm server leases as the user; release the lease;
+    ///   elm server leases again.
+    /// - systemctl stop --no-block, timed until the unit is inactive; read the unit's exit status and result, the newest
+    ///   usage log, and the newest borrow record.
+    /// - Clean up as the other test does.
+    ///
+    /// Expected:
+    /// - The lease is held with 1 seat, and elm server leases names it; after the release, elm server leases no longer
+    ///   names it.
+    /// - After the stop the unit is inactive with ExecMainStatus 0 and Result success; the newest usage log holds the lease's
+    ///   lease.acquired and lease.released lines and ends with server.stopped and its signature, and the newest borrow
+    ///   record holds server.stopped.
+    /// - The time from the start to the lease goes to the job's log (RunReport.Note).
+    /// </remarks>
+    [Fact]
+    public async Task Systemd_HardenedUnit_LendsAndTakesBackALease()
+    {
+        Assert.SkipUnless(OperatingSystem.IsLinux(), "systemd runs on Linux only.");
+        bool onActions = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+        if (!Directory.Exists("/run/systemd/system"))
+        {
+            Assert.False(onActions, "On GitHub Actions this test must run, and systemd is not the service manager here.");
+            Assert.Skip("systemd is not the service manager of this machine (/run/systemd/system does not exist).");
+        }
+
+        await SystemService.RequireSudoAsync();
+
+        string id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
+        string user = "elme2e" + id;
+        string unit = "elm-e2e-" + id;
+        string bin = "/opt/elm-e2e-" + id;
+        string etc = "/etc/elm-e2e-" + id;
+        string data = "/var/lib/elm-e2e-" + id;
+        string license = data + "/server.elmlic";
+        string unitFile = $"/etc/systemd/system/{unit}.service";
+        string elm = bin + "/elm";
+
+        await using Vendor vendor = await Vendor.CreateAsync("license", "lease");
+        bool passed = false;
+        try
+        {
+            await SystemService.SudoOkAsync("useradd", "--system", "--user-group", "--shell", "/usr/sbin/nologin", user);
+            await SystemService.SudoOkAsync("install", "-d", "-m", "0755", bin);
+            await SystemService.SudoOkAsync("install", "-m", "0755", Binaries.Server, Binaries.Elm, bin);
+            await SystemService.SudoOkAsync("install", "-d", "-m", "0755", etc);
+            await SystemService.SudoOkAsync("install", "-m", "0644", vendor.RootPublicKey, etc + "/root.pub.pem");
+            string settings = SystemService.Sample(
+                "linux/elm-server.json",
+                ("https://0.0.0.0:7070", "https://127.0.0.1:0"),
+                ("/var/lib/elm-server", data),
+                ("/etc/elm-server", etc)
+            );
+            await SystemService.InstallTextAsync(vendor, settings, etc + "/elm-server.json", "0644");
+            await SystemService.SudoOkAsync("install", "-d", "-o", user, "-g", user, "-m", "0700", data);
+
+            (int first, string firstOut, string firstError) = await SystemService.SudoAsync([
+                "-u",
+                user,
+                bin + "/elm-server",
+                "--config",
+                etc + "/elm-server.json",
+            ]);
+            Assert.True(first == 1, $"The first start exited with {first}: {firstError}{firstOut}");
+            Match key = InstallationKey().Match(firstError);
+            Assert.True(key.Success, $"The first start named no installation key: {firstError}");
+
+            string issued = vendor.File("server.elmlic");
+            string expires = DateTimeOffset.UtcNow.AddDays(30).ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture);
+            await vendor.ElmOkAsync(
+                "license",
+                "issue",
+                "--signing-key",
+                vendor.SigningKey,
+                "--certificate",
+                vendor.Certificate,
+                "--product",
+                SystemService.Product,
+                "--license-id",
+                "e2e-systemd-lease",
+                "--kind",
+                "server",
+                "--feature",
+                "pro;seats=3",
+                "--expires",
+                expires,
+                "--bind-key",
+                key.Groups[1].Value,
+                "--lease-minutes",
+                "0.25",
+                "--trust",
+                vendor.RootPublicKey,
+                "--out",
+                issued
+            );
+            await SystemService.SudoOkAsync("install", "-m", "0600", "-o", user, "-g", user, issued, license);
+
+            long starting = Stopwatch.GetTimestamp();
+            await InstallUnitAsync(vendor, user, bin, etc, data, unit, unitFile);
+            await SystemService.SudoOkAsync("systemctl", "enable", "--now", unit);
+            await WaitForStatusAsync(user, elm, data, unit);
+
+            Match port = Match.Empty;
+            await RealClock.WaitUntilAsync(
+                "the server.started line in the journal",
+                async () =>
+                    (port = ListeningPort().Match(await SystemService.SudoOkAsync("journalctl", "-u", unit, "--no-pager", "-o", "cat"))).Success,
+                SystemService.StateTimeout
+            );
+            var options = new LicenseClientOptions
+            {
+                ProductId = SystemService.Product,
+                ServerUrl = new Uri($"https://127.0.0.1:{port.Groups[1].Value}"),
+                Trust = TrustStore.Create([await File.ReadAllTextAsync(vendor.RootPublicKey, TestContext.Current.CancellationToken)], []),
+                DataDirectory = vendor.File("client"),
+            };
+            Assert.True(LicenseClient.TryCreate(options, out LicenseClient? created, out LicenseError? error), error?.Message);
+            string leaseId;
+            await using (LicenseClient client = created!)
+            {
+                Lease lease = await AcquireAfterRecoveryAsync(client);
+                RunReport.Note(
+                    $"elm-server under systemd: the start to a lease from the hardened unit took {Stopwatch.GetElapsedTime(starting).TotalMilliseconds:F0} ms."
+                );
+                Assert.Equal((LeaseState.Held, 1), (lease.State, lease.Seats));
+                leaseId = lease.Id;
+                Assert.Contains(leaseId, await LeasesAsync(user, elm, data), StringComparison.Ordinal);
+                Assert.Null(await client.ReleaseLeaseAsync(lease, TestContext.Current.CancellationToken));
+                Assert.DoesNotContain(leaseId, await LeasesAsync(user, elm, data), StringComparison.Ordinal);
+            }
+
+            await SystemService.SudoOkAsync("systemctl", "stop", "--no-block", unit);
+            await RealClock.WaitUntilAsync(
+                "the stop under systemd",
+                async () => await ShowAsync(unit, "ActiveState") == "inactive",
+                SystemService.StateTimeout
+            );
+            Assert.Equal("0", await ShowAsync(unit, "ExecMainStatus"));
+            Assert.Equal("success", await ShowAsync(unit, "Result"));
+            string usage = await SystemService.NewestAsync(data, "usage");
+            Assert.Contains($"\"type\":\"lease.acquired\"", usage, StringComparison.Ordinal);
+            Assert.Contains($"\"lease\":\"{leaseId}\"", usage, StringComparison.Ordinal);
+            Assert.Contains($"\"type\":\"lease.released\"", usage, StringComparison.Ordinal);
+            await SystemService.AssertRecordsClosedAsync(data);
+            passed = true;
+        }
+        finally
+        {
+            await CleanUpAsync(passed, user, unit, unitFile, bin, etc, data);
+        }
+    }
+
+    // The unit of the sample with the names of this run, installed and loaded.
+    private static async Task InstallUnitAsync(Vendor vendor, string user, string bin, string etc, string data, string unit, string unitFile)
+    {
+        string unitText = SystemService.Sample(
+            "elm-server.service",
+            ("User=elm-server", "User=" + user),
+            ("Group=elm-server", "Group=" + user),
+            ("/opt/elm-server/", bin + "/"),
+            ("/etc/elm-server/", etc + "/"),
+            ("ReadWritePaths=/var/lib/elm-server", "ReadWritePaths=" + data)
+        );
+        await SystemService.InstallTextAsync(vendor, unitText, unitFile, "0644");
+        await SystemService.SudoOkAsync("systemctl", "daemon-reload");
+    }
+
+    // The values systemd uses for the hardening directives of the sample (design §13.1, V1d30a), read with systemctl show.
+    // systemctl show prints them in its own form: systemd 259 on the runner (run 46159240509 of PR #546) printed the
+    // address families sorted (AF_INET AF_INET6 AF_UNIX) and the error number as its value (1 for EPERM).
+    private static async Task AssertHardenedAsync(string unit, string data)
+    {
+        (string Property, string Value)[] expected =
+        [
+            ("NoNewPrivileges", "yes"),
+            ("ProtectSystem", "strict"),
+            ("ReadWritePaths", data),
+            ("ProtectHome", "yes"),
+            ("PrivateTmp", "yes"),
+            ("PrivateDevices", "yes"),
+            ("CapabilityBoundingSet", string.Empty),
+            ("RestrictAddressFamilies", "AF_INET AF_INET6 AF_UNIX"),
+            ("ProtectKernelTunables", "yes"),
+            ("ProtectKernelModules", "yes"),
+            ("ProtectKernelLogs", "yes"),
+            ("ProtectControlGroups", "yes"),
+            ("ProtectClock", "yes"),
+            ("ProtectHostname", "yes"),
+            ("RestrictNamespaces", "yes"),
+            ("RestrictRealtime", "yes"),
+            ("RestrictSUIDSGID", "yes"),
+            ("LockPersonality", "yes"),
+            ("MemoryDenyWriteExecute", "yes"),
+            ("SystemCallArchitectures", "native"),
+            ("SystemCallErrorNumber", "1"),
+        ];
+        List<string> read = [];
+        foreach ((string property, string value) in expected)
+        {
+            read.Add($"{property}={await ShowAsync(unit, property)}");
+        }
+
+        RunReport.Note("elm-server under systemd: " + string.Join(", ", read) + ".");
+        Assert.Equal(expected.Select(e => $"{e.Property}={e.Value}"), read);
+
+        // An allow list prints as the system calls it names: the sample's @system-service holds read and write, and leaves
+        // out reboot, which @reboot holds.
+        string[] calls = (await ShowAsync(unit, "SystemCallFilter")).Split(' ', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("read", calls);
+        Assert.Contains("write", calls);
+        Assert.DoesNotContain("reboot", calls);
+    }
+
+    // Every step runs whatever the one before it did (testing.mdc).
+    private static async Task CleanUpAsync(bool passed, string user, string unit, string unitFile, string bin, string etc, string data)
+    {
+        List<string> problems = [];
+        await SystemService.CleanUpAsync(problems, "systemctl disable", () => SystemService.SudoTryAsync("systemctl", "disable", "--now", unit));
+        await SystemService.CleanUpAsync(problems, "the unit file", () => SystemService.SudoCleanUpAsync("rm", "-f", unitFile));
+        await SystemService.CleanUpAsync(problems, "daemon-reload", () => SystemService.SudoCleanUpAsync("systemctl", "daemon-reload"));
+        await SystemService.CleanUpAsync(problems, "reset-failed", () => SystemService.SudoTryAsync("systemctl", "reset-failed", unit));
+        await SystemService.CleanUpAsync(problems, "the user's processes", () => SystemService.KillProcessesOfAsync(user, bin));
+        await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoCleanUpAsync("rm", "-rf", bin, etc, data));
+
+        // --force: a container's processes may run as the same UID (999 on the runner), and userdel refuses a user with
+        // processes otherwise.
+        await SystemService.CleanUpAsync(problems, "userdel", () => SystemService.SudoTryAsync("userdel", "--force", user));
+        await SystemService.CleanUpAsync(problems, "the user", () => SystemService.AssertNoAccountAsync(user));
+        Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
+    }
+
+    // A server just started refuses acquisitions for a lease's length (design §13.4), and says how long with Retry-After.
+    private static async Task<Lease> AcquireAfterRecoveryAsync(LicenseClient client)
+    {
+        for (int i = 0; i < 10; i++)
+        {
+            LeaseResult result = await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken);
+            if (result is LeaseResult.Acquired acquired)
+            {
+                return acquired.Lease;
+            }
+
+            var failed = (LeaseResult.Failed)result;
+            Assert.True(failed.Error.Code == ErrorCode.ServerRecovering, failed.Error.Message);
+            await RealClock.DelayAsync("the server's reclaim time", failed.RetryAfter ?? TimeSpan.FromSeconds(1));
+        }
+
+        Assert.Fail("The server did not give a lease after its reclaim time.");
+        return null!;
+    }
+
+    private static async Task<string> LeasesAsync(string user, string elm, string data)
+    {
+        (int code, string output, string error) = await SystemService.SudoAsync(["-u", user, elm, "server", "leases", "--data", data]);
+        Assert.True(code == 0, $"elm server leases exited with {code}: {error}");
+        return output;
     }
 
     private static async Task<string> ShowAsync(string unit, string property) =>
@@ -253,4 +519,7 @@ public sealed partial class SystemdServiceTests
 
     [GeneratedRegex("installation key ([A-Za-z0-9_-]{43})")]
     private static partial Regex InstallationKey();
+
+    [GeneratedRegex(@"server\.started: listening on port (\d+)")]
+    private static partial Regex ListeningPort();
 }
