@@ -210,6 +210,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// <exception cref="ServerStartException">The server cannot start, including when another server runs on the data
     /// folder, when it cannot listen on <c>listen</c> or on the administration socket, and when Windows does not send an
     /// intermediate of the TLS certificate file; the message says why.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled. The probe of a socket
+    /// file that is left throws this exception when it finds the token cancelled as it reads the connect's result, with the
+    /// connect's error, if any, as its inner exception, and then deletes nothing; the check of the intermediates throws it when
+    /// it ends with another exception after the token is cancelled, with that exception inside (design §13.5, §13.7).</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
@@ -736,6 +740,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     // design §13.7 (V1d2, Q4 and question D): the second guard, for where the file lock does not hold. A socket file that is
     // left is tried with a connection that sends nothing: no request and no token go to a peer that is not verified. Only a
     // file whose connection is refused, as a killed server leaves it, is deleted; Kestrel does not delete it before it binds.
+    // design §13.7 (V1d3h): the caller's token acts only in the check before the connect, which ends inside the call, so a
+    // cancellation that comes after that check is read where the result is read. Then the step throws the cancellation, with
+    // the connect's error inside it, and neither deletes the file nor throws a sentence.
     private static async Task RemoveLeftSocketAsync(
         string directory,
         string path,
@@ -755,17 +762,22 @@ internal sealed partial class ElmServer : IAsyncDisposable
             {
                 await socket.ConnectAsync(endPoint, cancellationToken).ConfigureAwait(false);
             }
-            catch (SocketException e) when (e.SocketErrorCode == SocketError.ConnectionRefused)
+            catch (SocketException e) when (e.SocketErrorCode == SocketError.ConnectionRefused && !cancellationToken.IsCancellationRequested)
             {
                 File.Delete(path);
                 return;
             }
+        }
+        catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
+        {
+            throw new OperationCanceledException("The start was cancelled.", e, cancellationToken);
         }
         catch (Exception e) when (e is SocketException or IOException or UnauthorizedAccessException)
         {
             throw new ServerStartException($"The administration socket '{path}' cannot be used: {e.Message}");
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
         throw new ServerStartException(
             $"Another elm-server is running on the data folder '{directory}': its administration socket '{path}' accepts connections."
         );

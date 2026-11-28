@@ -123,16 +123,18 @@ public static class TlsChainSelfCheck
                     && e is OperationCanceledException or IOException or SocketException
                 )
             {
-                // The limit cancels the connect the same way as the caller does, so when the limit ends the check, the check can
-                // fail with an IO or socket error of the closed socket instead of the cancellation; it still ran out of time
-                // (design §13.5).
+                // The limit cancels through the linked token the same way as the caller does, so when the limit has run out,
+                // the check can end with an IO or socket error that came before the cancellation reached its wait; it still ran
+                // out of time (design §13.5).
                 unfinished = $"did not finish within {Limit.TotalSeconds:0} seconds";
             }
             catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
             {
-                // The caller's cancellation can end the check with another error: a cancelled connect closes the socket
-                // (SocketAsyncEventArgs.CancelConnectAsync, dotnet/runtime release/10.0), and when the connect had already
-                // succeeded the next step fails on the closed socket. Such an error says nothing about the server (design §13.5).
+                // The caller's cancellation can end the check with another error: a token cancels only a wait it reaches, and
+                // does not close the socket (CancelIoEx on Windows; SocketAsyncEventArgs.CancelConnectAsync, which closes it, is
+                // called only by the static Socket.CancelConnectAsync, dotnet/runtime v10.0.15), so an error that comes before
+                // the cancellation reaches a wait ends the check first. Such an error says nothing about the server (design
+                // §13.5, docs/rows/V1d3h.md).
                 throw new OperationCanceledException("The check was cancelled.", e, cancellationToken);
             }
             catch (SocketException e)
