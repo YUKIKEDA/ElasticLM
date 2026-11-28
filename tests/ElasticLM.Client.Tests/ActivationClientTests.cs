@@ -335,6 +335,73 @@ public sealed partial class ActivationClientTests
     }
 
     /// <summary>
+    /// A refresh that the 30-second time limit or the app's cancellation ends before any byte of it was written never left
+    /// the device: its error says the service cannot be reached, and its jti is not kept for a retry. One that ends after the
+    /// service handled it did not get an answer, and its jti is kept (design §10.4 step 2, §12.1, §12.6.2, V1d24e question
+    /// 24e-3).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - An activated client whose HTTP handler holds the next POST: before, in front of the client's own handler, so that
+    ///   none of it is written; after, once the service handled it.
+    ///
+    /// Steps:
+    /// - Refresh with a token; once the handler holds the POST, move the clock 30 s (time-limit) or cancel the token
+    ///   (cancel). Then refresh again.
+    ///
+    /// Expected:
+    /// - before, time-limit: ELM_NETWORK_ERROR "The service cannot be reached: No whole answer came within 30 seconds.", and
+    ///   no jti kept. before, cancel: ELM_NETWORK_ERROR whose message starts with "The service cannot be reached: ", and no
+    ///   jti kept. after, time-limit: ELM_NETWORK_ERROR "The service did not answer: No whole answer came within 30
+    ///   seconds.", and the held refresh's jti kept. Before V1d24e every case gave "did not answer" and kept the jti.
+    /// - The next refresh gives sequence 2 (after: the file the service issued for the held refresh, which the retry names),
+    ///   state Active, and no jti kept.
+    /// </remarks>
+    /// <param name="when">Where the POST is held.</param>
+    /// <param name="end">What ends it.</param>
+    [Theory]
+    [InlineData(HoldNextPost.Before, "time-limit")]
+    [InlineData(HoldNextPost.Before, "cancel")]
+    [InlineData(HoldNextPost.After, "time-limit")]
+    public async Task Refresh_EndedBeforeOrAfterItWasWritten_IsUnreachableOrUnanswered(string when, string end)
+    {
+        await using Vendor vendor = await Vendor.StartAsync();
+        string key = await vendor.LicenseAsync(string.Empty);
+        var hold = new HoldNextPost();
+        await using ActivationClient client = vendor.Client("a", hold);
+        Assert.Equal(1L, Activated(await client.ActivateAsync(key, Cancel)).Sequence);
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
+
+        hold.Arm(when);
+        Task<ActivationResult> refreshing = client.RefreshAsync(caller.Token);
+        await hold.Held.WaitAsync(TimeSpan.FromSeconds(20), Cancel);
+        if (end == "cancel")
+        {
+            await caller.CancelAsync();
+        }
+        else
+        {
+            vendor.Test.Time.Advance(TimeSpan.FromSeconds(30));
+        }
+
+        LicenseError error = Failed(await refreshing);
+        Assert.Equal(ErrorCode.NetworkError, error.Code);
+        if (end == "cancel")
+        {
+            Assert.StartsWith("The service cannot be reached: ", error.Message, StringComparison.Ordinal);
+        }
+        else
+        {
+            string start = when == HoldNextPost.Before ? "The service cannot be reached: " : "The service did not answer: ";
+            Assert.Equal(start + "No whole answer came within 30 seconds.", error.Message);
+        }
+
+        Assert.Equal(when == HoldNextPost.After ? 1 : 0, vendor.Kept("a").Retry.Count);
+        Assert.Equal(2L, Activated(await client.RefreshAsync(Cancel)).Sequence);
+        Assert.Equal((ActivationState.Active, 0), (client.State, vendor.Kept("a").Retry.Count));
+    }
+
+    /// <summary>
     /// An answer lost after the service acted is recovered by sending again with the lost request in retry (design §10.4,
     /// §12.6.1): the first activation, a refresh, and a trial get the same file; a deactivation counts as done.
     /// </summary>
@@ -1348,6 +1415,38 @@ public sealed partial class ActivationClientTests
             }
 
             return response;
+        }
+    }
+
+    // Holds the next POST until the client's time limit or its caller's cancellation ends it: in front of the client's own
+    // handler, so that none of it is written (Before), or after the service handled it (After).
+    private sealed class HoldNextPost : DelegatingHandler
+    {
+        public const string Before = "before";
+        public const string After = "after";
+
+        private readonly TaskCompletionSource _held = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private volatile string _armed = string.Empty;
+
+        public Task Held => _held.Task;
+
+        public void Arm(string when) => _armed = when;
+
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            string when = request.Method == HttpMethod.Post ? Interlocked.Exchange(ref _armed, string.Empty) : string.Empty;
+            if (when == After)
+            {
+                (await base.SendAsync(request, cancellationToken)).Dispose();
+            }
+
+            if (when.Length > 0)
+            {
+                _held.TrySetResult();
+                await Task.Delay(Timeout.Infinite, cancellationToken);
+            }
+
+            return await base.SendAsync(request, cancellationToken);
         }
     }
 

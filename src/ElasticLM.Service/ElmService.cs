@@ -180,9 +180,9 @@ internal sealed partial class ElmService : IAsyncDisposable
             {
                 applied = await Migrator.RunAsync(database, Migrator.Embedded(settings.Database), host.Time, cancellationToken).ConfigureAwait(false);
             }
-            catch (System.Data.Common.DbException e)
+            catch (Exception e) when (Database.IsOpenFailure(e))
             {
-                throw new ServiceStartException("The database cannot be used: " + e.Message);
+                throw new ServiceStartException("The database cannot be used: " + Database.Describe(e));
             }
 
             if (settings.Listen.Scheme == Uri.UriSchemeHttps)
@@ -591,7 +591,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
         catch (System.Data.Common.DbException e)
         {
-            throw new ServiceStartException("The Data Protection keys cannot be read or written: " + e.Message);
+            throw new ServiceStartException("The Data Protection keys cannot be read or written: " + Database.Describe(e));
         }
     }
 
