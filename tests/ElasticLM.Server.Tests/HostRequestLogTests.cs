@@ -196,9 +196,50 @@ public sealed class HostRequestLogTests : IAsyncDisposable
     public void Raise_ConsoleSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error) =>
         Assert.Equal((information, warning, error), Levels(settings, logging => logging.AddConsole()));
 
+    /// <summary>
+    /// For the event log, which elm-server writes to as a Windows service, a rule named by the provider's alias EventLog and
+    /// one named by its full type name are one provider's rules too: the rule for the web host's request lines keeps them at
+    /// Warning or above, and keeps a higher level that those rules give together (design §18.3, V1d29a).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows, where the event log's provider runs.
+    /// - A logging builder as the host of a Windows service makes it: the settings' rules, the minimum level Information,
+    ///   the event log, the event log's default rule (ServerService.KeepEventLogAtWarning), then the rule.
+    ///
+    /// Steps:
+    /// - For each case of settings, ask a logger of the category whether it writes Information, Warning, and Error. The
+    ///   cases, where EventLog is the alias and the full name is Microsoft.Extensions.Logging.EventLog.EventLogLoggerProvider:
+    ///   no setting; Default Trace for EventLog; Default None for EventLog; the category at None for EventLog beside Default
+    ///   Trace for the full name; the category at None for the full name beside Default Trace for EventLog; Default Trace for
+    ///   EventLog beside the category at Error for the full name.
+    ///
+    /// Expected:
+    /// - Information is never written. Warning and Error with no setting and for Default Trace; nothing for Default None
+    ///   and for the category at None under either name; Error only for the category at Error.
+    /// </remarks>
+    [Theory]
+    [InlineData("", false, true, true)]
+    [InlineData("EventLog:LogLevel:Default=Trace", false, true, true)]
+    [InlineData("EventLog:LogLevel:Default=None", false, false, false)]
+    [InlineData("EventLog:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;{eventlog}:LogLevel:Default=Trace", false, false, false)]
+    [InlineData("{eventlog}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=None;EventLog:LogLevel:Default=Trace", false, false, false)]
+    [InlineData("EventLog:LogLevel:Default=Trace;{eventlog}:LogLevel:Microsoft.AspNetCore.Hosting.Diagnostics=Error", false, false, true)]
+    public void Raise_EventLogSettings_KeepsTheRequestLinesOut(string settings, bool information, bool warning, bool error)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "The event log's provider runs on Windows only.");
+        if (!OperatingSystem.IsWindows())
+        {
+            // CA1416 does not read SkipUnless as a platform check.
+            return;
+        }
+
+        Assert.Equal((information, warning, error), Levels(settings, ServerServiceTests.AddEventLog));
+    }
+
     // Whether a logger of the web host's category writes Information, Warning, and Error, under settings of the form
-    // "key=value;…" below Logging, where {provider} and {console} stand for the full type names of the test's provider and
-    // the console's.
+    // "key=value;…" below Logging, where {provider}, {console}, and {eventlog} stand for the full type names of the test's
+    // provider, the console's, and the event log's.
     private static (bool Information, bool Warning, bool Error) Levels(string settings, Action<ILoggingBuilder> addProvider)
     {
         var values = new Dictionary<string, string?>(StringComparer.Ordinal);
@@ -207,7 +248,8 @@ public sealed class HostRequestLogTests : IAsyncDisposable
             string[] parts = pair.Split('=');
             string key = parts[0]
                 .Replace("{provider}", typeof(RecordingLoggerProvider).FullName, StringComparison.Ordinal)
-                .Replace("{console}", typeof(ConsoleLoggerProvider).FullName, StringComparison.Ordinal);
+                .Replace("{console}", typeof(ConsoleLoggerProvider).FullName, StringComparison.Ordinal)
+                .Replace("{eventlog}", ServerService.EventLogProvider, StringComparison.Ordinal);
             values["Logging:" + key] = parts[1];
         }
 

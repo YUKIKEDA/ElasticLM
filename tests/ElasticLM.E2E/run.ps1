@@ -9,6 +9,8 @@
       PostgreSQL runs of the service's flows.
     - Prints the time the tests took and their real-clock waits (at most 2 minutes, which the tests check), and adds both to
       the job summary on GitHub Actions.
+    - Prints the lines that tests measured (ELM_E2E_NOTES, such as the stop of elm-server as a Windows service) after it,
+      and adds them to the job summary too.
     Everything it makes goes in a temporary folder that it removes at the end (.cursor/rules/scratch.mdc); the tests remove
     their own folders, processes, and databases.
 
@@ -34,6 +36,7 @@ $work = Join-Path ([IO.Path]::GetTempPath()) ('elm-e2e-run-' + [Convert]::ToHexS
 New-Item -ItemType Directory $work | Out-Null
 $savedBin = $env:ELM_E2E_BIN
 $savedWaited = $env:ELM_E2E_WAITED
+$savedNotes = $env:ELM_E2E_NOTES
 
 try {
     if ($Publish) {
@@ -53,6 +56,7 @@ try {
 
     $env:ELM_E2E_BIN = (Resolve-Path $Bin).Path
     $env:ELM_E2E_WAITED = Join-Path $work 'waited.txt'
+    $env:ELM_E2E_NOTES = Join-Path $work 'notes.txt'
     $started = [DateTimeOffset]::UtcNow
     dotnet test --project (Join-Path $PSScriptRoot 'ElasticLM.E2E.csproj') -c $Configuration | Out-Host
     $code = $LASTEXITCODE
@@ -62,10 +66,18 @@ try {
     $line = "End-to-end tests ($engines): $([Math]::Round($took.TotalSeconds)) s, of which real-clock waits $waited s (budget 120 s)."
     $line
     if ($env:GITHUB_STEP_SUMMARY) { "- $line" | Add-Content $env:GITHUB_STEP_SUMMARY }
+    # design §13.4 (V1d29a): the lines that tests measured, such as the stop of elm-server as a Windows service.
+    if (Test-Path $env:ELM_E2E_NOTES) {
+        foreach ($note in Get-Content $env:ELM_E2E_NOTES) {
+            $note
+            if ($env:GITHUB_STEP_SUMMARY) { "- $note" | Add-Content $env:GITHUB_STEP_SUMMARY }
+        }
+    }
     if ($code -ne 0) { throw "The end-to-end tests failed with exit code $code." }
 }
 finally {
     $env:ELM_E2E_BIN = $savedBin
     $env:ELM_E2E_WAITED = $savedWaited
+    $env:ELM_E2E_NOTES = $savedNotes
     Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

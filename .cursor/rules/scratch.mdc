@@ -10,6 +10,7 @@ Remove, in the turn that made them: extra worktrees and checkouts, throwaway pro
 - The checkout that is already open is where edits go.
 - The only paths allowed to stay: build output (`bin/`, `obj/`, `artifacts/`), `BenchmarkDotNet.Artifacts/`, and `.dev/` for the owner's local notes. All are gitignored.
 - What is fetched for an investigation is scratch too: a clone for reading upstream code goes under `.repos/` (gitignored) and is removed in the turn that made it. In V1d29 a subagent of the row's agent cloned an outside repository into `.repos/` to read a dependency's source and left it there (PR #476).
+- A throwaway program for a measurement is a project in the agent's own scratch folder, run and then removed with that folder. A file-based program (`dotnet run x.cs`) leaves its build under `%TEMP%\dotnet\runfile`, outside the scratchpad; if one was run anyway, its folder there is removed in the same turn. In V1d29g a measurement run that way left such a cache (PR #516).
 - A script that writes scratch stops at its first failed command (`$ErrorActionPreference = 'Stop'`) and names its targets by absolute path.
 - Long text for `gh` goes through a temporary UTF-8 file that is deleted after the call.
 - A removal names its targets with a literal absolute path, or with `"${DIR:?}"` in Bash. `rm -rf "$DIR"/*` is refused by the agent's safety check and stops the whole command.

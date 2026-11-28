@@ -15,7 +15,7 @@ Check each point and write the result in the PR's `## Verification`:
 
 1. **AOT**: the package declares `IsAotCompatible` or `IsTrimmable`, and a NativeAOT publish of a sample that calls it has zero trim / AOT warnings. No reflection or dynamic code generation on the path we call.
 2. **Single binary**: it adds no file to distribute beside the executable.
-3. **Size and speed**: the NativeAOT size before and after, and its time on any measured path. Its types do not appear in our public API, so it can be replaced without a breaking change.
+3. **Size and speed**: the NativeAOT size before and after, on a RID of each OS that uses the package (`.cursor/rules/aot.mdc`), and its time on any measured path. Its types do not appear in our public API, so it can be replaced without a breaking change.
 4. **Cryptography**: a package that implements cryptography is not added; use `System.Security.Cryptography`. A package that only wraps the OS's or the BCL's cryptography may be considered through a `design` Issue.
 5. **License and upkeep**: MIT-compatible, maintained, a version pinned in `Directory.Packages.props`, and its own dependencies listed.
 
