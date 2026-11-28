@@ -93,13 +93,19 @@ public sealed class FileClockGuard : IClockGuard
         byte[] bytes;
         try
         {
-            var info = new FileInfo(_path);
-            if (!info.Exists || info.Length > MaxStateLength)
+            if (!new FileInfo(_path).Exists)
             {
                 return null;
             }
 
-            bytes = File.ReadAllBytes(_path);
+            // design §11.4 step 9 (V1d24d): FileShare.Read, as File.ReadAllBytes. design §8.6 (V1d24c): the limit is checked
+            // while the file is read.
+            if (BoundedFile.Read(_path, MaxStateLength, FileShare.Read) is not byte[] read)
+            {
+                return null;
+            }
+
+            bytes = read;
         }
         catch (IOException)
         {

@@ -795,13 +795,8 @@ public sealed class LicenseClient : IAsyncDisposable
         byte[]? bytes;
         try
         {
-            var info = new FileInfo(path);
-            if (info.Length > MaxBorrowFileLength)
-            {
-                return null;
-            }
-
-            // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it.
+            // design §12.6.2 (V1d24a): a release or an expiry deletes the file, also while another client reads it. design §8.6
+            // (V1d24c): the limit is checked while the file is read.
             bytes = FileReplacement.ReadShared(path, MaxBorrowFileLength);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -1697,8 +1692,9 @@ public sealed class LicenseClient : IAsyncDisposable
                 ? new LicenseError(ErrorCode.ServerPinMismatch, "The server's TLS key is not the pinned server key.")
                 : new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: " + e.Message);
 
-            // design §10.4 step 2, §12.7.7 (V1d24b): a request that never left this device names nothing and is not
-            // released. A key that is not the pinned one fails the TLS handshake, so such a request never left either.
+            // design §10.4 step 2, §12.7.7 (V1d24b, V1d24e): a request that never left this device names nothing and is
+            // not released, also one that the time limit or the app's cancellation ended before any byte of it was written.
+            // A key that is not the pinned one fails the TLS handshake, so such a request never left either.
             return Reply.Failure(error, unanswered: !BoundedAnswer.NeverSent(e));
         }
     }

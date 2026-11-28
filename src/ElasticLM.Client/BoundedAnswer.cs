@@ -23,6 +23,13 @@ internal abstract record BoundedAnswer
     // lease request allocated 15 KiB less with this one (measured on Windows 11, JIT Release).
     private const int FirstBufferLength = 1024;
 
+    // design §10.4 step 2 (V1d24e): the mark of the exchange that runs on this asynchronous flow. SendAsync sets a new one
+    // for each request; a connection's plaintext stream sets it when the request's bytes are written.
+    private static readonly AsyncLocal<WriteMark?> CurrentMark = new();
+
+    // The filter is kept in one field so that CreateClient can tell a handler of CreateHandler by reference.
+    private static readonly Func<SocketsHttpPlaintextStreamFilterContext, CancellationToken, ValueTask<Stream>> MarkingFilter = Mark;
+
     private BoundedAnswer(HttpStatusCode status) => Status = status;
 
     /// <summary>Gets the answer's status.</summary>
@@ -33,18 +40,23 @@ internal abstract record BoundedAnswer
 
     /// <summary>
     /// Creates the handler that every bounded exchange uses. It follows no redirect: the answer of another address is not
-    /// the answer asked for, and a request's body would go there.
+    /// the answer asked for, and a request's body would go there. It notes whether any byte of a request was written, so
+    /// that <see cref="NeverSent"/> can tell a request that timed out or was cancelled before it left this device. The
+    /// caller does not replace its <see cref="SocketsHttpHandler.PlaintextStreamFilter"/>.
     /// </summary>
     /// <returns>The handler, which the caller may set up further and owns.</returns>
-    public static SocketsHttpHandler CreateHandler() => new() { AllowAutoRedirect = false };
+    public static SocketsHttpHandler CreateHandler() => new() { AllowAutoRedirect = false, PlaintextStreamFilter = MarkingFilter };
 
     /// <summary>
     /// Creates an HTTP client for <see cref="SendAsync"/>. Its own timeout is off: it runs on real timers and does not
     /// cover a body that is read after the headers.
     /// </summary>
-    /// <param name="handler">The handler, which the client disposes.</param>
+    /// <param name="handler">The handler, which the client disposes. When it is a handler of <see cref="CreateHandler"/>,
+    /// or delegating handlers in front of one, <see cref="NeverSent"/> also tells the requests that timed out or were
+    /// cancelled before any byte was written.</param>
     /// <returns>The client.</returns>
-    public static HttpClient CreateClient(HttpMessageHandler handler) => new(handler) { Timeout = Timeout.InfiniteTimeSpan };
+    public static HttpClient CreateClient(HttpMessageHandler handler) =>
+        new MarkingClient(handler, Marks(handler)) { Timeout = Timeout.InfiniteTimeSpan };
 
     /// <summary>
     /// Sends a request and reads its answer.
@@ -69,6 +81,17 @@ internal abstract record BoundedAnswer
     {
         using var deadline = new CancellationTokenSource(Deadline, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken);
+
+        // Set on this method's own flow, so the caller's flow keeps its value; the request's bytes are written on this flow.
+        // Only HTTP/1.x writes a request on the request's own flow: HTTP/2 writes on the connection's, where the mark would
+        // stay unset and every timeout would read as never sent. A request that may go out as HTTP/2 gets no mark.
+        WriteMark? mark =
+            http is MarkingClient { MarksWrites: true }
+            && request.Version.Major == 1
+            && request.VersionPolicy != HttpVersionPolicy.RequestVersionOrHigher
+                ? new WriteMark()
+                : null;
+        CurrentMark.Value = mark;
         try
         {
             using HttpResponseMessage response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, linked.Token)
@@ -78,7 +101,12 @@ internal abstract record BoundedAnswer
         }
         catch (Exception e) when (e is OperationCanceledException or IOException && deadline.IsCancellationRequested)
         {
-            throw new TimeoutException($"No whole answer came within {Deadline.TotalSeconds:0} seconds.", e);
+            string message = $"No whole answer came within {Deadline.TotalSeconds:0} seconds.";
+            throw mark is { Written: false } ? new UnwrittenTimeoutException(message, e) : new TimeoutException(message, e);
+        }
+        catch (OperationCanceledException e) when (mark is { Written: false })
+        {
+            throw new UnwrittenCancellationException(e.Message, e, e.CancellationToken);
         }
         catch (IOException e)
         {
@@ -100,22 +128,52 @@ internal abstract record BoundedAnswer
     // HttpConnectionPool.EstablishProxyTunnelAsync and EstablishSocksTunnel, and the ALPN check of HttpConnectionPool.Http3. A
     // failure on a connection that was made is Unknown or a read error (HttpConnection.cs), and a request with a body is sent
     // again on another connection there only with Expect: 100-continue, which these clients do not set; they send HTTP/1.1.
+    // A timeout or a cancellation has no HttpRequestError at any stage (V1d24e, measured on SDK 10.0.404): it is told by the
+    // mark of the plaintext stream instead, and only on a client whose handler sets the mark.
 
     /// <summary>
-    /// Returns whether a failed exchange never sent its request: the server's name was not resolved, or the connection, its
-    /// TLS handshake, or a proxy's tunnel was not made. The server cannot have acted on such a request.
+    /// Returns whether a failed exchange never sent its request: the server's name was not resolved; the connection, its
+    /// TLS handshake, or a proxy's tunnel was not made; or, for an HTTP/1.x request on a client over a handler of
+    /// <see cref="CreateHandler"/>, the time limit or the caller's cancellation ended the exchange before any byte of the
+    /// request was written. The server
+    /// cannot have acted on such a request.
     /// </summary>
     /// <param name="failure">The exception of <see cref="SendAsync"/>.</param>
     /// <returns><see langword="true"/> when the request did not leave this device.</returns>
     public static bool NeverSent(Exception failure) =>
         failure
-            is HttpRequestException
-            {
-                HttpRequestError: HttpRequestError.NameResolutionError
-                    or HttpRequestError.ConnectionError
-                    or HttpRequestError.SecureConnectionError
-                    or HttpRequestError.ProxyTunnelError,
-            };
+            is UnwrittenTimeoutException
+                or UnwrittenCancellationException
+                or HttpRequestException
+                {
+                    HttpRequestError: HttpRequestError.NameResolutionError
+                        or HttpRequestError.ConnectionError
+                        or HttpRequestError.SecureConnectionError
+                        or HttpRequestError.ProxyTunnelError,
+                };
+
+    // Whether the handler, or the last inner handler of a chain of delegating handlers in front of it, sets the mark.
+    private static bool Marks(HttpMessageHandler handler)
+    {
+        HttpMessageHandler? inner = handler;
+        while (inner is DelegatingHandler delegating)
+        {
+            inner = delegating.InnerHandler;
+        }
+
+        return inner is SocketsHttpHandler sockets && ReferenceEquals(sockets.PlaintextStreamFilter, MarkingFilter);
+    }
+
+    // design §10.4 step 2 (V1d24e, question 24e-4): the connection to a proxy that carries a CONNECT tunnel is not marked. Its
+    // bytes are the CONNECT request and, once the tunnel is made, the TLS handshake to the server, neither of which is the
+    // request. The connection inside the tunnel gets its own filter and is marked. In dotnet/runtime release/10.0 the filter
+    // runs once a connection, after TLS (HttpConnectionPool.ApplyPlaintextFilterAsync); measured on SDK 10.0.404, the
+    // connection of the tunnel gets the CONNECT request as its InitialRequestMessage. CreateClient looks for this filter once,
+    // when it makes the client (Marks): a filter replaced on the handler after that is not seen.
+    private static ValueTask<Stream> Mark(SocketsHttpPlaintextStreamFilterContext context, CancellationToken cancellationToken) =>
+        ValueTask.FromResult(
+            context.InitialRequestMessage.Method == HttpMethod.Connect ? context.PlaintextStream : new MarkingStream(context.PlaintextStream)
+        );
 
     // Returns null for a body longer than the limit. A declared length is believed only to refuse or to size the buffer:
     // the HTTP client's stream ends at the declared length, and a body that ends before it throws. The body is not copied
@@ -186,4 +244,115 @@ internal abstract record BoundedAnswer
     /// </summary>
     /// <param name="Status">The answer's status.</param>
     public sealed record TooLarge(HttpStatusCode Status) : BoundedAnswer(Status);
+
+    // Whether any byte of one request was written to a connection's plaintext stream. The bytes are written on the stream's
+    // thread, which need not be the one that reads the mark.
+    private sealed class WriteMark
+    {
+        private volatile bool _written;
+
+        public bool Written => _written;
+
+        public void Set() => _written = true;
+    }
+
+    // A client that knows whether its handler sets the mark.
+    private sealed class MarkingClient(HttpMessageHandler handler, bool marksWrites) : HttpClient(handler)
+    {
+        public bool MarksWrites { get; } = marksWrites;
+    }
+
+    // A time limit that ended an exchange before any byte of its request was written.
+    private sealed class UnwrittenTimeoutException(string message, Exception inner) : TimeoutException(message, inner);
+
+    // A cancellation that ended an exchange before any byte of its request was written.
+    private sealed class UnwrittenCancellationException(string message, Exception inner, CancellationToken token)
+        : OperationCanceledException(message, inner, token);
+
+    // A connection's plaintext stream that sets the mark of the exchange whose flow writes to it. HTTP/1.1 writes a request
+    // on the flow of the request that the connection serves (HttpConnection.SendAsync), also on a pooled connection.
+    private sealed class MarkingStream(Stream inner) : Stream
+    {
+        public override bool CanRead => inner.CanRead;
+
+        public override bool CanSeek => false;
+
+        public override bool CanWrite => inner.CanWrite;
+
+        public override bool CanTimeout => inner.CanTimeout;
+
+        public override int ReadTimeout
+        {
+            get => inner.ReadTimeout;
+            set => inner.ReadTimeout = value;
+        }
+
+        public override int WriteTimeout
+        {
+            get => inner.WriteTimeout;
+            set => inner.WriteTimeout = value;
+        }
+
+        public override long Length => throw new NotSupportedException();
+
+        public override long Position
+        {
+            get => throw new NotSupportedException();
+            set => throw new NotSupportedException();
+        }
+
+        public override int Read(byte[] buffer, int offset, int count) => inner.Read(buffer, offset, count);
+
+        public override int Read(Span<byte> buffer) => inner.Read(buffer);
+
+        public override Task<int> ReadAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken) =>
+            inner.ReadAsync(buffer, offset, count, cancellationToken);
+
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken cancellationToken = default) =>
+            inner.ReadAsync(buffer, cancellationToken);
+
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            Written();
+            inner.Write(buffer, offset, count);
+        }
+
+        public override void Write(ReadOnlySpan<byte> buffer)
+        {
+            Written();
+            inner.Write(buffer);
+        }
+
+        public override Task WriteAsync(byte[] buffer, int offset, int count, CancellationToken cancellationToken)
+        {
+            Written();
+            return inner.WriteAsync(buffer, offset, count, cancellationToken);
+        }
+
+        public override ValueTask WriteAsync(ReadOnlyMemory<byte> buffer, CancellationToken cancellationToken = default)
+        {
+            Written();
+            return inner.WriteAsync(buffer, cancellationToken);
+        }
+
+        public override void Flush() => inner.Flush();
+
+        public override Task FlushAsync(CancellationToken cancellationToken) => inner.FlushAsync(cancellationToken);
+
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                inner.Dispose();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private static void Written() => CurrentMark.Value?.Set();
+    }
 }

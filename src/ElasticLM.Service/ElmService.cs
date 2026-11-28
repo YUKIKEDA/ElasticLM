@@ -48,6 +48,12 @@ internal sealed partial class ElmService : IAsyncDisposable
     // The category of the service's own operational log lines (design §18.3).
     private const string LogCategory = "elm-service";
 
+    // design §8.6 (V1d24c): the operator's files read at the start. One trust.rootKeys file holds about 90 P-256 public keys;
+    // a certificate file holds one token and the line break after it, CRLF included.
+    private const int MaxRootKeyFileLength = 16 * 1024;
+    private const int MaxSigningKeyFileLength = 64 * 1024;
+    private const int MaxCertificateFileLength = Limits.MaxTokenLength + 2;
+
     private static readonly TimeSpan PurgeInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan ProofPurgeInterval = TimeSpan.FromMinutes(1);
     private static readonly TimeSpan DenialInterval = TimeSpan.FromMinutes(1);
@@ -180,9 +186,9 @@ internal sealed partial class ElmService : IAsyncDisposable
             {
                 applied = await Migrator.RunAsync(database, Migrator.Embedded(settings.Database), host.Time, cancellationToken).ConfigureAwait(false);
             }
-            catch (System.Data.Common.DbException e)
+            catch (Exception e) when (Database.IsOpenFailure(e))
             {
-                throw new ServiceStartException("The database cannot be used: " + e.Message);
+                throw new ServiceStartException("The database cannot be used: " + Database.Describe(e));
             }
 
             if (settings.Listen.Scheme == Uri.UriSchemeHttps)
@@ -366,7 +372,13 @@ internal sealed partial class ElmService : IAsyncDisposable
         {
             try
             {
-                keys.AddRange(KeyFiles.SplitPem(File.ReadAllText(path)));
+                // design §8.6 (V1d24c): 16 KiB, read with the limit checked while the file is read.
+                keys.AddRange(
+                    KeyFiles.SplitPem(
+                        BoundedFile.ReadAllText(path, MaxRootKeyFileLength)
+                            ?? throw new ServiceStartException($"trust.rootKeys file '{path}' is larger than 16 KiB.")
+                    )
+                );
             }
             catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
@@ -406,14 +418,20 @@ internal sealed partial class ElmService : IAsyncDisposable
         var certificates = new List<string>();
         try
         {
-            pem = File.ReadAllText(
-                settings.SigningKeyFile ?? throw new ServiceStartException("Set signing.key to the signing key file (PKCS#8 PEM).")
-            );
+            // design §8.6 (V1d24c): the signing key 64 KiB, a certificate file one token (16 KiB) and a CRLF, each read with the
+            // limit checked while the file is read.
+            string keyFile = settings.SigningKeyFile ?? throw new ServiceStartException("Set signing.key to the signing key file (PKCS#8 PEM).");
+            pem =
+                BoundedFile.ReadAllText(keyFile, MaxSigningKeyFileLength)
+                ?? throw new ServiceStartException($"The signing key file '{keyFile}' is larger than 64 KiB.");
             foreach (string path in settings.SigningCertificateFiles)
             {
                 // A certificate file ends with a line break (elm key certify); the certificate is the text without it, as it
                 // goes into license files, lease answers, and the usage log, where a stray line break fails verification.
-                certificates.Add(File.ReadAllText(path).Trim());
+                string certificate =
+                    BoundedFile.ReadAllText(path, MaxCertificateFileLength)
+                    ?? throw new ServiceStartException($"The certificate file '{path}' is larger than {MaxCertificateFileLength} bytes.");
+                certificates.Add(certificate.Trim());
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -591,7 +609,7 @@ internal sealed partial class ElmService : IAsyncDisposable
         }
         catch (System.Data.Common.DbException e)
         {
-            throw new ServiceStartException("The Data Protection keys cannot be read or written: " + e.Message);
+            throw new ServiceStartException("The Data Protection keys cannot be read or written: " + Database.Describe(e));
         }
     }
 

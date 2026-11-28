@@ -14,7 +14,7 @@ public sealed class ServiceSettingsTests : IDisposable
     public ServiceSettingsTests()
     {
         Directory.CreateDirectory(_folder);
-        File.WriteAllText(ConnectionFile, "Host=db;Database=elm\n");
+        File.WriteAllText(ConnectionFile, "Host=db;Database=elm;SSL Mode=VerifyFull\n");
         File.WriteAllText(NonceFile, Convert.ToBase64String(new byte[32]) + "\n");
     }
 
@@ -50,7 +50,7 @@ public sealed class ServiceSettingsTests : IDisposable
         );
         ServiceSettings file = ServiceSettings.Load(path, _ => null);
         Assert.Equal(
-            "http://0.0.0.0:9000/ | Postgres | Host=db;Database=elm | k.pem | c | r.pem | k1 | AdminIdentity { Issuer = i, Subject = s } | 7 | 3 | 30 | "
+            "http://0.0.0.0:9000/ | Postgres | Host=db;Database=elm;SSL Mode=VerifyFull | k.pem | c | r.pem | k1 | AdminIdentity { Issuer = i, Subject = s } | 7 | 3 | 30 | "
                 + "https://elm.example/ | 9 | 5 | 32",
             Shape(file)
         );
@@ -136,9 +136,11 @@ public sealed class ServiceSettingsTests : IDisposable
 
         string full = Base();
         full += new string(' ', (64 * 1024) - full.Length);
-        Assert.Equal("Host=db;Database=elm", ServiceSettings.Load(Write(full), _ => null).ConnectionString);
+        Assert.Equal("Host=db;Database=elm;SSL Mode=VerifyFull", ServiceSettings.Load(Write(full), _ => null).ConnectionString);
 
-        File.WriteAllText(ConnectionFile, new string('x', 16 * 1024));
+        // A PostgreSQL connection string is parsed and checked (design §14.2), so the longest one is a valid one.
+        const string Prefix = "Host=db;SSL Mode=VerifyFull;Application Name=";
+        File.WriteAllText(ConnectionFile, Prefix + new string('x', (16 * 1024) - Prefix.Length));
         Assert.Equal(16 * 1024, ServiceSettings.Load(Write(Base()), _ => null).ConnectionString.Length);
 
         ServiceSettings setup = ServiceSettings.Load(

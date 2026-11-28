@@ -15,6 +15,13 @@ namespace ElasticLM.Service.Tests;
 /// </summary>
 public sealed class ElmServiceTests
 {
+    // design §8.6 (V1d24c): the operator's files that elm-service reads at its start.
+    private const int RootKeyFileLimit = 16 * 1024;
+
+    private const int OperatorFileLimit = 64 * 1024;
+
+    private const int CertificateFileLimit = (16 * 1024) + 2;
+
     /// <summary>
     /// The service keeps Kestrel's limits on the request line and the headers (design §5.3 T16): a request line of 8,192
     /// bytes, 100 headers, and a header section of 32 KiB and the empty line that ends it are read; a byte or a header
@@ -44,6 +51,151 @@ public sealed class ElmServiceTests
         ElmService service = await test.StartAsync();
 
         Assert.Equal(status, await KestrelLimits.StatusAsync(service.Url, KestrelLimits.Request("/health", kind, size)));
+    }
+
+    /// <summary>
+    /// Over HTTP/2, which the service accepts on https because it sets no Protocols, Kestrel's limits on the request line
+    /// and the headers hold as well (design §5.3 T16): a request line of 8,192 bytes, 100 header fields, and 32 KiB of
+    /// names and values are read; a byte more of the line resets the stream, and a field or a byte more of the headers
+    /// gets 431; past twice either header limit, or with one value over 32 KiB, Kestrel ends the connection.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate. The service sets only MaxRequestBodySize; the
+    ///   other limits are Kestrel's defaults (aspnetcore v10.0.14): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100,
+    ///   and MaxRequestHeadersTotalSize 32 KiB of KestrelServerLimits, which HTTP/2 shares, and MaxRequestHeaderFieldSize
+    ///   32 KiB of Http2Limits. Over HTTP/2 Kestrel
+    ///   takes the lengths of :method, :scheme, :authority, and :path together for the request line and resets the stream
+    ///   with PROTOCOL_ERROR past it (Http2Stream.cs TryValidatePseudoHeaders); it answers 431 past the header count or
+    ///   size up to twice each (Http2Stream.cs TryParseRequest) and ends the connection with PROTOCOL_ERROR beyond
+    ///   (Http2Connection.cs OnHeaderCore); its HPACK decoder ends the connection with COMPRESSION_ERROR for a string longer
+    ///   than MaxRequestHeaderFieldSize (HPackDecoder.cs OnStringLength).
+    ///
+    /// Steps:
+    /// - On a new TLS connection each time (ALPN h2), send GET /health as HTTP/2 frames with a request line of the length
+    ///   given (made long with a query), or with the number of header fields given (the four pseudo-header fields among
+    ///   them), or with names and values of the given number of bytes in all, or with one value of the given length (past
+    ///   the limit, sent up to the value's length alone); read the answer's status, a RST_STREAM, or a GOAWAY. After an
+    ///   answer or a RST_STREAM, send a plain GET /health on the same connection.
+    ///
+    /// Expected:
+    /// - Line 8,192, count 100, and size 32 KiB: 200. Line 8,193: RST_STREAM with PROTOCOL_ERROR. Count 101 and 200, size
+    ///   32 KiB + 1 and 64 KiB: 431. Count 201 and size 64 KiB + 1: GOAWAY with PROTOCOL_ERROR. A value of 32 KiB: 431 (the
+    ///   size is past its limit). A value of 32 KiB + 1: GOAWAY with COMPRESSION_ERROR. The plain request after an answer
+    ///   or a RST_STREAM gets 200.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The size of the request at or past it.</param>
+    /// <param name="outcome">The status code, or the frame and the HTTP/2 error code that ended the request.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.Http2AtAndPastEachLimit), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_Http2RequestLineAndHeaders_KeepTheirLimits(string kind, int size, string outcome)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OutcomeAsync(service.Url, "/health", kind, size));
+    }
+
+    /// <summary>
+    /// Over HTTP/2, Kestrel's other defaults hold on the service too (design §5.3 T16): 100 streams open at once, frames of
+    /// 16,384 bytes, an HPACK table of 4,096 bytes, and receive windows of 786,432 bytes for a stream and 1,048,576 for the
+    /// connection. A stream more is reset and the connection stays; a byte more of any other limit ends the connection.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate. The service sets only MaxRequestBodySize; the
+    ///   rest are Kestrel's defaults (Http2Limits.cs, aspnetcore v10.0.14): MaxStreamsPerConnection 100, MaxFrameSize 16 KiB,
+    ///   HeaderTableSize 4 KiB, InitialStreamWindowSize 768 KiB, InitialConnectionWindowSize 1 MiB. Kestrel resets a stream
+    ///   past the first limit with REFUSED_STREAM (Http2Connection.cs StartStream), ends the connection with
+    ///   FRAME_SIZE_ERROR for a longer frame (Http2FrameReader.cs TryReadFrame) and with COMPRESSION_ERROR for a larger
+    ///   table size update (HPackDecoder.cs SetDynamicHeaderTableSize), and ends it with FLOW_CONTROL_ERROR for DATA past
+    ///   either window, the stream's included (InputFlowControl.cs TryAdvance).
+    /// - The test settings raise the rate limits of one address (RateLimitPerIp, RateLimitClientPerIp) to 1,000, above the
+    ///   102 GETs of the case of 101 streams.
+    ///
+    /// Steps:
+    /// - On a new TLS connection each time (ALPN h2), send GET /v1/nonce as HTTP/2 frames (KestrelLimits.Http2OtherOutcomeAsync):
+    ///   with the client window set to 0, the number of streams given at once, each with END_STREAM, then, after the answer
+    ///   (200 or reset) of the last, a RST_STREAM (CANCEL) of the first and one more stream; one HEADERS frame of the length given (past the
+    ///   limit, its frame header alone); a header block that starts with a dynamic table size update of the value given;
+    ///   with the client window set to 0, one stream or two without END_STREAM, and after their 200, DATA of the given
+    ///   number of bytes on the stream or split over the two, and a PING. Read the answers' status, RST_STREAM, PING ACK,
+    ///   or GOAWAY. After a 200 of the frame or table request, send a plain GET /v1/nonce on the same connection.
+    ///
+    /// Expected:
+    /// - Streams 100: 200 on every stream. Streams 101: 200 on the first 100 and RST_STREAM with REFUSED_STREAM on the
+    ///   101st. In both, after the first stream's reset, the next stream gets 200. Frame 16,384 and table 4,096: 200, and the
+    ///   plain request gets 200. Frame 16,385: GOAWAY with FRAME_SIZE_ERROR. Table 4,097: GOAWAY with COMPRESSION_ERROR.
+    ///   Stream window 786,432 and connection window 1,048,576: the PING ACK. A byte more of either: GOAWAY with
+    ///   FLOW_CONTROL_ERROR.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The streams, the frame length, the table size, or the bytes of DATA at or past it.</param>
+    /// <param name="outcome">The status code, the RST_STREAM, the PING ACK, or the GOAWAY that ended the requests.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.Http2AtAndPastOtherLimits), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_Http2StreamsFramesTableAndWindows_KeepTheirLimits(string kind, int size, string outcome)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OtherOutcomeAsync(service.Url, "/v1/nonce", kind, size));
+    }
+
+    /// <summary>
+    /// The service's first HTTP/2 SETTINGS states Kestrel's limits (design §5.3 T16): 100 concurrent streams, a stream
+    /// window of 786,432 bytes, and a header list of 32,768 bytes; the table size and the frame size are the protocol's
+    /// defaults and are not sent; a WINDOW_UPDATE raises the connection window to 1,048,576 bytes.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate, with Kestrel's HTTP/2 defaults (aspnetcore
+    ///   v10.0.14). Kestrel sends only the values that differ from the protocol's defaults (Http2PeerSettings.cs
+    ///   GetNonProtocolDefaults), then a WINDOW_UPDATE of the connection by InitialConnectionWindowSize less 65,535
+    ///   (Http2Connection.cs ProcessRequestsAsync).
+    ///
+    /// Steps:
+    /// - On a new TLS connection (ALPN h2), send the preface, an empty SETTINGS, and a PING; read until the PING ACK.
+    ///
+    /// Expected:
+    /// - The SETTINGS, SETTINGS_ENABLE_CONNECT_PROTOCOL left out, are SETTINGS_MAX_CONCURRENT_STREAMS (3) 100,
+    ///   SETTINGS_INITIAL_WINDOW_SIZE (4) 786,432, and SETTINGS_MAX_HEADER_LIST_SIZE (6) 32,768, and nothing else. The
+    ///   connection's WINDOW_UPDATE increments add up to 983,041.
+    /// </remarks>
+    [Fact]
+    public async Task Kestrel_Http2Settings_StateTheLimits()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        (string settings, long increment) = await KestrelLimits.Http2ServerSettingsAsync(service.Url);
+
+        Assert.Equal("3=100, 4=786432, 6=32768", settings);
+        Assert.Equal(983_041, increment);
+    }
+
+    // Starts the service on loopback https with a self-signed certificate for 127.0.0.1 that the test makes, its PEM files
+    // ending with a line break as the product's tools write them.
+    private static async Task<ElmService> StartOnHttpsAsync(TestService test)
+    {
+        await test.SetupAsync();
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=elm-service-test", key, HashAlgorithmName.SHA256);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(names.Build());
+        using X509Certificate2 certificate = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
+        File.WriteAllText(test.FilePath("tls.crt"), certificate.ExportCertificatePem() + "\n");
+        File.WriteAllText(test.FilePath("tls.key"), key.ExportPkcs8PrivateKeyPem() + "\n");
+        return await test.StartAsync(s =>
+            s with
+            {
+                Listen = new Uri("https://127.0.0.1:0"),
+                TlsCertificate = test.FilePath("tls.crt"),
+                TlsKey = test.FilePath("tls.key"),
+            }
+        );
     }
 
     /// <summary>
@@ -822,5 +974,147 @@ public sealed class ElmServiceTests
         ];
 
         Assert.True(missing.Count == 0, ReferencePages.Message(missing));
+    }
+
+    /// <summary>
+    /// The operator's files are read up to their limits (design §8.6, V1d24c): a trust.rootKeys file of 16 KiB, the signing
+    /// key and the TLS certificate and key of 64 KiB each, and a signing certificate of 16 KiB and a CRLF start the service.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A vendor. A trust.rootKeys file with the vendor's root key and as many other P-256 public keys as fit, then line
+    ///   breaks up to 16,384 bytes; the signing key's PEM and line breaks up to 65,536 bytes; the signing certificate, spaces,
+    ///   and a CRLF, 16,386 bytes; a self-signed certificate for 127.0.0.1 and its key as PEM files, each with line breaks up
+    ///   to 65,536 bytes.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with those files; GET /health trusting only that certificate.
+    ///
+    /// Expected:
+    /// - The files have those lengths; 200, and the service signs with the signing key.
+    /// </remarks>
+    [Fact]
+    public async Task Start_OperatorFilesAtTheirLimits_Starts()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        CancellationToken cancel = TestContext.Current.CancellationToken;
+        OperatorFiles files = WriteOperatorFiles(test);
+
+        ElmService service = await test.StartAsync(files.Apply);
+        using var handler = new HttpClientHandler
+        {
+            ServerCertificateCustomValidationCallback = (_, presented, _, _) => presented?.Thumbprint == files.Thumbprint,
+        };
+        using var http = new HttpClient(handler) { BaseAddress = service.Url };
+
+        Assert.Equal(
+            [RootKeyFileLimit, OperatorFileLimit, CertificateFileLimit, OperatorFileLimit, OperatorFileLimit],
+            new[] { files.Roots, files.Key, files.Certificate, files.TlsCertificate, files.TlsKey }.Select(p => new FileInfo(p).Length)
+        );
+        Assert.Equal(HttpStatusCode.OK, (await http.GetAsync("health", cancel)).StatusCode);
+        Assert.Equal(KeyFiles.KeyId(test.SigningKey), service.Signing.KeyId);
+    }
+
+    /// <summary>
+    /// An operator's file one byte past its limit stops the start with a sentence that names the file (design §8.6, V1d24c).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - The files of Start_OperatorFilesAtTheirLimits_Starts, each at its limit; then one of them with one more line break.
+    ///
+    /// Steps:
+    /// - Start on https://127.0.0.1:0 with those files, for each file in turn: trust.rootKeys, the signing key, the signing
+    ///   certificate, the TLS certificate, the TLS key.
+    ///
+    /// Expected:
+    /// - ServiceStartException "trust.rootKeys file '{path}' is larger than 16 KiB.", "The signing key file '{path}' is larger
+    ///   than 64 KiB.", "The certificate file '{path}' is larger than 16386 bytes.", "The TLS certificate '{path}' is larger
+    ///   than 64 KiB.", and "The TLS key '{path}' is larger than 64 KiB.".
+    /// </remarks>
+    /// <param name="file">The file one byte past its limit.</param>
+    [Theory]
+    [InlineData("roots")]
+    [InlineData("key")]
+    [InlineData("certificate")]
+    [InlineData("tls-certificate")]
+    [InlineData("tls-key")]
+    public async Task Start_OperatorFileOneBytePastItsLimit_Throws(string file)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        OperatorFiles files = WriteOperatorFiles(test);
+        (string path, string expected) = file switch
+        {
+            "roots" => (files.Roots, $"trust.rootKeys file '{files.Roots}' is larger than 16 KiB."),
+            "key" => (files.Key, $"The signing key file '{files.Key}' is larger than 64 KiB."),
+            "certificate" => (files.Certificate, $"The certificate file '{files.Certificate}' is larger than 16386 bytes."),
+            "tls-certificate" => (files.TlsCertificate, $"The TLS certificate '{files.TlsCertificate}' is larger than 64 KiB."),
+            _ => (files.TlsKey, $"The TLS key '{files.TlsKey}' is larger than 64 KiB."),
+        };
+        File.AppendAllText(path, "\n");
+
+        var refused = await Assert.ThrowsAsync<ServiceStartException>(() =>
+            ElmService.StartAsync(test.Settings(files.Apply), test.HostOptions(), TestContext.Current.CancellationToken)
+        );
+
+        Assert.Equal(expected, refused.Message);
+    }
+
+    // Every operator's file that elm-service reads at its start, each at its limit (design §8.6, V1d24c).
+    private static OperatorFiles WriteOperatorFiles(TestService test)
+    {
+        string roots = test.FilePath("roots.pub.pem");
+        WriteRootKeysAtLimit(roots, File.ReadAllText(test.FilePath("root.pub.pem")), RootKeyFileLimit);
+        string key = test.FilePath("signing-limit.key.pem");
+        File.WriteAllText(key, PadWithLineBreaks(File.ReadAllText(test.FilePath("signing.key.pem")), OperatorFileLimit));
+        string certificate = test.FilePath("signing-limit.cert");
+        File.WriteAllText(certificate, PadCertificate(File.ReadAllText(test.FilePath("signing.cert")).Trim(), CertificateFileLimit));
+        using ECDsa tlsKey = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=elm-service-test", tlsKey, HashAlgorithmName.SHA256);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(names.Build());
+        using X509Certificate2 tls = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
+        File.WriteAllText(test.FilePath("tls-limit.crt"), PadWithLineBreaks(tls.ExportCertificatePem() + "\n", OperatorFileLimit));
+        File.WriteAllText(test.FilePath("tls-limit.key"), PadWithLineBreaks(tlsKey.ExportPkcs8PrivateKeyPem() + "\n", OperatorFileLimit));
+        return new OperatorFiles(roots, key, certificate, test.FilePath("tls-limit.crt"), test.FilePath("tls-limit.key"), tls.Thumbprint);
+    }
+
+    // The vendor's root key first, then other P-256 public keys while a whole one fits, then line breaks up to the length.
+    private static void WriteRootKeysAtLimit(string path, string rootPem, int length)
+    {
+        var text = new System.Text.StringBuilder(rootPem.TrimEnd() + "\n");
+        while (true)
+        {
+            using ECDsa other = KeyFiles.CreateKey();
+            string next = KeyFiles.ExportPublic(other) + "\n";
+            if (text.Length + next.Length > length)
+            {
+                break;
+            }
+
+            text.Append(next);
+        }
+
+        File.WriteAllText(path, PadWithLineBreaks(text.ToString(), length));
+    }
+
+    private static string PadWithLineBreaks(string text, int length) =>
+        text + new string('\n', length - System.Text.Encoding.UTF8.GetByteCount(text));
+
+    // As elm key certify writes it, with spaces between the certificate and the line break, and a CRLF.
+    private static string PadCertificate(string certificate, int length) => certificate + new string(' ', length - certificate.Length - 2) + "\r\n";
+
+    private sealed record OperatorFiles(string Roots, string Key, string Certificate, string TlsCertificate, string TlsKey, string Thumbprint)
+    {
+        public ServiceSettings Apply(ServiceSettings settings) =>
+            settings with
+            {
+                Listen = new Uri("https://127.0.0.1:0"),
+                TlsCertificate = TlsCertificate,
+                TlsKey = TlsKey,
+                TrustRootKeyFiles = [Roots],
+                SigningKeyFile = Key,
+                SigningCertificateFiles = [Certificate],
+            };
     }
 }

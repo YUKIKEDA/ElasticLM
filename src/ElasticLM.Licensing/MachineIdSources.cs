@@ -13,6 +13,12 @@ namespace ElasticLM.Licensing;
 /// </summary>
 internal static partial class MachineIdSources
 {
+    /// <summary>
+    /// Copies the raw SMBIOS data into <paramref name="buffer"/> and returns its size. Given an empty buffer, returns the
+    /// size only.
+    /// </summary>
+    internal delegate uint FirmwareTableReader(Span<byte> buffer);
+
     public static IReadOnlyList<byte[]> ReadAll()
     {
         var ids = new List<byte[]>(2);
@@ -128,17 +134,13 @@ internal static partial class MachineIdSources
     {
         try
         {
-            using var file = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 0);
-
-            // One byte past the limit tells a file of 64 bytes from a larger one without trusting FileStream.Length.
-            Span<byte> buffer = stackalloc byte[65];
-            int length = file.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-            if (length > 64)
+            // design §8.6 (V1d24c): the one reader of whole files, which reads one byte past the limit at most.
+            if (BoundedFile.Read(path, 64, FileShare.Read) is not byte[] bytes)
             {
                 return null;
             }
 
-            ReadOnlySpan<byte> content = buffer[..length];
+            ReadOnlySpan<byte> content = bytes;
             if (content.StartsWith(Encoding.UTF8.Preamble))
             {
                 content = content[Encoding.UTF8.Preamble.Length..];
@@ -156,17 +158,56 @@ internal static partial class MachineIdSources
         }
     }
 
+    /// <summary>
+    /// Parses a UUID string into its 16 bytes in the order they are written. Accepts every form that
+    /// <see cref="Guid.TryParse(string?, IFormatProvider?, out Guid)"/> accepts, and returns <see langword="null"/> for
+    /// <see langword="null"/> and for any other text.
+    /// </summary>
+    internal static byte[]? ParseGuid(string? text) =>
+        Guid.TryParse(text, CultureInfo.InvariantCulture, out Guid guid) ? guid.ToByteArray(bigEndian: true) : null;
+
+    /// <summary>
+    /// Reads the raw SMBIOS data (<c>RawSMBIOSData</c>) through <paramref name="read"/> and returns the System Information
+    /// UUID. Returns <see langword="null"/> when the size first returned is 8 bytes or less or over 1 MiB, when the second
+    /// call returns another size, or when the table length in the header is not positive or exceeds the bytes after it.
+    /// </summary>
+    internal static byte[]? ReadSmbiosUuid(FirmwareTableReader read)
+    {
+        const int HeaderLength = 8; // RawSMBIOSData: four bytes of version fields, then a DWORD length.
+        uint size = read([]);
+        if (size is <= HeaderLength or > 1024 * 1024)
+        {
+            return null;
+        }
+
+        byte[] buffer = new byte[size];
+        if (read(buffer) != size)
+        {
+            return null;
+        }
+
+        int tableLength = BitConverter.ToInt32(buffer, 4);
+        if (tableLength <= 0 || tableLength > buffer.Length - HeaderLength)
+        {
+            return null;
+        }
+
+        return ParseSmbiosSystemUuid(buffer.AsSpan(HeaderLength, tableLength));
+    }
+
+    /// <summary>
+    /// Reads the MachineGuid value of the 64-bit registry view. Returns <see langword="null"/> when the key or the value is
+    /// missing, the value is not a string, the string is not a UUID, or the registry cannot be read.
+    /// </summary>
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static byte[]? ReadWindowsMachineGuid()
+    internal static byte[]? ReadWindowsMachineGuid()
     {
         try
         {
             // A 32-bit process reads a redirected view of HKLM\SOFTWARE, so the 64-bit view is named explicitly.
             using RegistryKey baseKey = RegistryKey.OpenBaseKey(RegistryHive.LocalMachine, RegistryView.Registry64);
             using RegistryKey? key = baseKey.OpenSubKey(@"SOFTWARE\Microsoft\Cryptography");
-            return key?.GetValue("MachineGuid") is string text && Guid.TryParse(text, CultureInfo.InvariantCulture, out Guid guid)
-                ? guid.ToByteArray(bigEndian: true)
-                : null;
+            return ParseGuid(key?.GetValue("MachineGuid") as string);
         }
         catch (System.Security.SecurityException)
         {
@@ -183,32 +224,18 @@ internal static partial class MachineIdSources
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("windows")]
-    private static unsafe byte[]? ReadWindowsSmbiosUuid()
+    private static byte[]? ReadWindowsSmbiosUuid() => ReadSmbiosUuid(ReadRawSmbiosData);
+
+    [System.Runtime.Versioning.SupportedOSPlatform("windows")]
+    private static unsafe uint ReadRawSmbiosData(Span<byte> buffer)
     {
         const uint Rsmb = 0x52534D42; // 'RSMB'
-        const int HeaderLength = 8; // RawSMBIOSData: four bytes of version fields, then a DWORD length.
-        uint size = GetSystemFirmwareTable(Rsmb, 0, null, 0);
-        if (size is <= HeaderLength or > 1024 * 1024)
-        {
-            return null;
-        }
 
-        byte[] buffer = new byte[size];
+        // An empty span pins to a null pointer, so the first call asks for the size.
         fixed (byte* p = buffer)
         {
-            if (GetSystemFirmwareTable(Rsmb, 0, p, size) != size)
-            {
-                return null;
-            }
+            return GetSystemFirmwareTable(Rsmb, 0, p, (uint)buffer.Length);
         }
-
-        int tableLength = BitConverter.ToInt32(buffer, 4);
-        if (tableLength <= 0 || tableLength > buffer.Length - HeaderLength)
-        {
-            return null;
-        }
-
-        return ParseSmbiosSystemUuid(buffer.AsSpan(HeaderLength, tableLength));
     }
 
     [System.Runtime.Versioning.SupportedOSPlatform("macos")]
@@ -250,8 +277,7 @@ internal static partial class MachineIdSources
                 return null;
             }
 
-            string uuid = Marshal.PtrToStringUTF8((nint)text) ?? string.Empty;
-            return Guid.TryParse(uuid, CultureInfo.InvariantCulture, out Guid guid) ? guid.ToByteArray(bigEndian: true) : null;
+            return ParseGuid(Marshal.PtrToStringUTF8((nint)text));
         }
         finally
         {

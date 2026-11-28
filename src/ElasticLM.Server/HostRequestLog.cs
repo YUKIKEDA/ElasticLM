@@ -14,12 +14,13 @@ internal static class HostRequestLog
     /// <summary>The category of the web host's "Request starting" and "Request finished" lines.</summary>
     public const string Category = "Microsoft.AspNetCore.Hosting.Diagnostics";
 
-    // The alias that the ProviderAlias attribute of ConsoleLoggerProvider gives it. The selector takes a rule named by a
-    // provider's alias as one named by its full type name, so both names are one provider here. The console is the only
-    // provider with an alias that the programs register; a program that registers another provider with an alias adds it
-    // here: with a rule under each name, the rule added for the later name wins, and a None set under the other can come
-    // out as the floor.
+    // The aliases that the ProviderAlias attributes of ConsoleLoggerProvider and EventLogLoggerProvider give them. The
+    // selector takes a rule named by a provider's alias as one named by its full type name, so both names are one provider
+    // here. These are the providers with an alias that the program registers: the console always, and the event log as a
+    // Windows service (design §18.3, V1d29a). A program that registers another provider with an alias adds it here: with a
+    // rule under each name, the rule added for the later name wins, and a None set under the other can come out as the floor.
     private const string ConsoleAlias = "Console";
+    private const string EventLogAlias = "EventLog";
 
     private static readonly string ConsoleProvider = typeof(ConsoleLoggerProvider).FullName!;
 
@@ -76,7 +77,14 @@ internal static class HostRequestLog
         }
     }
 
-    private static string? ProviderOf(string? name) => name == ConsoleAlias ? ConsoleProvider : name;
+    /// <summary>Gets the full type name of the provider that a rule names, by its alias or by that name.</summary>
+    internal static string? ProviderOf(string? name) =>
+        name switch
+        {
+            ConsoleAlias => ConsoleProvider,
+            EventLogAlias => ServerService.EventLogProvider,
+            _ => name,
+        };
 
     // A rule's name covers a category when it is absent, or when the category starts with the part before its one '*' and
     // ends with the part after it, ignoring case.

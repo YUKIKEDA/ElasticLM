@@ -1,4 +1,6 @@
+using System.Diagnostics.Tracing;
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using ElasticLM.Cli;
@@ -462,6 +464,131 @@ public sealed class AdminSocketTests : IAsyncDisposable
     }
 
     /// <summary>
+    /// A cancellation by the caller that comes right after the connect of the probe ends the start with the cancellation,
+    /// whatever the connect gave: the start neither deletes admin.sock nor throws a start error, and admin.token stays as it
+    /// was (design §13.7, V1d3h).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder in which a server ran and stopped; the bytes of its admin.token. At admin.sock, by case:
+    ///   - "accepting": a listener of the test that accepts, so the connect succeeds;
+    ///   - "refused": a socket file that nobody listens on, so the connect is refused;
+    ///   - "full queue": a listener of the test with a queue of 1 that accepts nothing, filled by connects of the test until
+    ///     one fails, so the connect gives what this system gives then (Windows NoBufferSpaceAvailable, Linux WouldBlock,
+    ///     macOS ConnectionRefused as read in XNU and not run before CI). The test's output names it.
+    /// - A listener of the sockets' telemetry that cancels the start's token when it gets ConnectStop or ConnectFailed of a
+    ///   connect in the start's own flow. The connect of an AF_UNIX socket ends inside ConnectAsync on every system (Windows
+    ///   connects synchronously, Linux gives EAGAIN for a full queue, macOS ECONNREFUSED as read in XNU; the sources and the
+    ///   measurements are in docs/rows/V1d3h.md), so the token passes the check before the connect, and the cancellation
+    ///   comes before the product reads the result.
+    ///
+    /// Steps:
+    /// - Start the server with that token.
+    ///
+    /// Expected:
+    /// - OperationCanceledException for the start's token; the listener saw exactly one connect of the start, and cancelled
+    ///   at it.
+    /// - The connect's error is inside it: none where the connect succeeded ("accepting"), otherwise a SocketException with
+    ///   the code the telemetry gave ("refused": ConnectionRefused).
+    /// - admin.sock is still there, and admin.token has the same bytes.
+    /// </remarks>
+    [Theory]
+    [InlineData("accepting")]
+    [InlineData("refused")]
+    [InlineData("full queue")]
+    public async Task Start_CancelledRightAfterTheProbesConnect_ThrowsTheCancellationAndKeepsTheFiles(string peer)
+    {
+        string data = await StoppedServerFolderAsync();
+        string socket = Path.Combine(data, "admin.sock");
+        byte[] token = File.ReadAllBytes(Path.Combine(data, AdminToken.FileName));
+        using FakeAdminSocket? accepting = peer == "accepting" ? new FakeAdminSocket(data) : null;
+        using FullQueue? full = peer == "full queue" ? await FullQueue.FillAsync(socket) : null;
+        if (peer == "refused")
+        {
+            FakeAdminSocket.LeaveFile(data);
+        }
+
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        using var afterConnect = new CancelAfterConnect(cancel);
+
+        var cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            afterConnect.RunAsync(() => ElmServer.StartAsync(_deployment.Settings(data), _deployment.HostOptions(), cancel.Token))
+        );
+
+        TestContext.Current.TestOutputHelper?.WriteLine(
+            $"The probe's connect ({peer}) on {System.Runtime.InteropServices.RuntimeInformation.OSDescription}: {afterConnect.Result}"
+        );
+        Assert.Equal(cancel.Token, cancelled.CancellationToken);
+        Assert.Equal(1, afterConnect.Connects);
+        if (peer != "full queue")
+        {
+            Assert.Equal(peer == "refused" ? SocketError.ConnectionRefused : SocketError.Success, afterConnect.Result);
+        }
+
+        if (afterConnect.Result == SocketError.Success)
+        {
+            Assert.Null(cancelled.InnerException);
+        }
+        else
+        {
+            Assert.Equal(afterConnect.Result, Assert.IsType<SocketException>(cancelled.InnerException).SocketErrorCode);
+        }
+
+        Assert.True(Path.Exists(socket));
+        Assert.Equal(token, File.ReadAllBytes(Path.Combine(data, AdminToken.FileName)));
+    }
+
+    /// <summary>
+    /// A token that can be cancelled and is not changes nothing in the probe: an accepting socket file stops the start with
+    /// its line, and a refused one is deleted and the server listens.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A data folder in which a server ran and stopped. At admin.sock, by case: "accepting", a listener of the test that
+    ///   accepts; "refused", a socket file that nobody listens on.
+    /// - A token of the test's own source, which can be cancelled and is not cancelled during the start.
+    ///
+    /// Steps:
+    /// - Start the server with that token.
+    ///
+    /// Expected:
+    /// - "accepting": ServerStartException "Another elm-server is running on the data folder '{folder}': its administration
+    ///   socket '{path}' accepts connections.".
+    /// - "refused": a running server that answers 200 on admin.sock.
+    /// </remarks>
+    [Theory]
+    [InlineData("accepting")]
+    [InlineData("refused")]
+    public async Task Start_TokenThatCanBeCancelledAndIsNot_KeepsTheProbesResults(string peer)
+    {
+        string data = await StoppedServerFolderAsync();
+        using FakeAdminSocket? accepting = peer == "accepting" ? new FakeAdminSocket(data) : null;
+        if (peer == "refused")
+        {
+            FakeAdminSocket.LeaveFile(data);
+        }
+
+        using var cancel = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        Task<ElmServer> start = ElmServer.StartAsync(_deployment.Settings(data), _deployment.HostOptions(), cancel.Token);
+
+        if (accepting is not null)
+        {
+            var refused = await Assert.ThrowsAsync<ServerStartException>(() => start);
+            Assert.Equal(
+                $"Another elm-server is running on the data folder '{data}': its administration socket '{accepting.Path}' accepts connections.",
+                refused.Message
+            );
+            return;
+        }
+
+        ElmServer server = await start;
+        _owned.Add(server);
+        using HttpClient admin = Deployment.AdminHttp(server);
+        using HttpResponseMessage status = await admin.GetAsync("admin/v1/status", TestContext.Current.CancellationToken);
+        Assert.Equal(HttpStatusCode.OK, status.StatusCode);
+    }
+
+    /// <summary>
     /// A lock file that cannot be opened, a folder of that name, stops the start with its own line.
     /// </summary>
     /// <remarks>
@@ -900,6 +1027,116 @@ public sealed class AdminSocketTests : IAsyncDisposable
         };
         int code = ElmApp.Run(args, host);
         return (code, output.ToString(), error.ToString());
+    }
+
+    // Cancels a token right after a connect of one flow, the flow that RunAsync starts. The sockets' telemetry writes
+    // ConnectFailed and then ConnectStop when a connect ends, in the flow that connects: a connect that ends inside
+    // ConnectAsync writes them before ConnectAsync returns (SocketAsyncEventArgs.FinishOperationSync and
+    // SocketsTelemetry.AfterConnect, dotnet/runtime v10.0.15), so the AsyncLocal mark of that flow is set there, and an
+    // EventListener is called on the thread that writes the event (EventSource.DispatchToAllListeners calls OnEventWritten
+    // in the writer's call, EventSource.cs lines 2187 to 2215 of v10.0.15; docs/rows/V1d3h.md has the lines). Connects of
+    // other flows (other tests) carry no mark.
+    private sealed class CancelAfterConnect(CancellationTokenSource cancel) : EventListener
+    {
+        private readonly AsyncLocal<bool> _marked = new();
+        private int _connects;
+        private int _error;
+
+        // The number of connects of the marked flow that ended.
+        public int Connects => Volatile.Read(ref _connects);
+
+        // What the first connect of the marked flow gave.
+        public SocketError Result => (SocketError)Volatile.Read(ref _error);
+
+        public async Task<T> RunAsync<T>(Func<Task<T>> run)
+        {
+            // Set inside this async method, the mark flows into run and does not flow back to the caller.
+            _marked.Value = true;
+            return await run();
+        }
+
+        protected override void OnEventSourceCreated(EventSource eventSource)
+        {
+            // Called from the base constructor too, for the sources that exist already: nothing here reads this class's state.
+            if (eventSource.Name == "System.Net.Sockets")
+            {
+                EnableEvents(eventSource, EventLevel.Informational);
+            }
+        }
+
+        protected override void OnEventWritten(EventWrittenEventArgs eventData)
+        {
+            if (!_marked.Value)
+            {
+                return;
+            }
+
+            if (eventData.EventName == "ConnectFailed" && Connects == 0)
+            {
+                Volatile.Write(ref _error, (int)eventData.Payload![0]!);
+                cancel.Cancel();
+            }
+            else if (eventData.EventName == "ConnectStop")
+            {
+                Interlocked.Increment(ref _connects);
+                cancel.Cancel();
+            }
+        }
+    }
+
+    // A listener at a socket path with a queue of one that accepts nothing, and the connects that fill its queue: the test
+    // connects until a connect fails, at most 1,000 times. A full queue ends the connect at once with an error on each
+    // system: Windows connects an AF_UNIX socket synchronously and gives NoBufferSpaceAvailable (measured); on Linux
+    // SocketAsyncContext.ConnectAsync makes the socket non-blocking and the kernel gives EAGAIN (WouldBlock); macOS gives
+    // ECONNREFUSED (read in XNU, not run). docs/rows/V1d3h.md has the source lines and the measurements.
+    private sealed class FullQueue : IDisposable
+    {
+        private readonly Socket _listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+        private readonly List<Socket> _clients = [];
+
+        private FullQueue() { }
+
+        public static async Task<FullQueue> FillAsync(string path)
+        {
+            var full = new FullQueue();
+            try
+            {
+                var endPoint = new UnixDomainSocketEndPoint(path);
+                full._listener.Bind(endPoint);
+                full._listener.Listen(1);
+                for (int i = 0; i < 1_000; i++)
+                {
+                    var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    full._clients.Add(client);
+                    try
+                    {
+                        await client.ConnectAsync(endPoint, CancellationToken.None);
+                    }
+                    catch (SocketException)
+                    {
+                        return full;
+                    }
+                }
+
+                Assert.Fail("1,000 connects to a listener with a queue of one that accepts nothing all succeeded.");
+                return full;
+            }
+            catch
+            {
+                full.Dispose();
+                throw;
+            }
+        }
+
+        public void Dispose()
+        {
+            foreach (Socket client in _clients)
+            {
+                client.Dispose();
+            }
+
+            _listener.Dispose();
+        }
     }
 
     // A fake clock that counts the timers due in 100 milliseconds, which is how the start waits between two tries to

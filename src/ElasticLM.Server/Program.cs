@@ -12,7 +12,7 @@ for (int i = 0; i < args.Length; i++)
             configPath = args[++i];
             break;
         case "--config":
-            Console.Error.WriteLine("error: --config needs the path of a settings file.");
+            Fail("--config needs the path of a settings file.");
             return 2;
         case "--set-aside-broken-records":
             setAside = true;
@@ -24,7 +24,7 @@ for (int i = 0; i < args.Length; i++)
             Console.WriteLine("Settings: the JSON file given with --config; each key can also be set as ELM_<KEY>, for example ELM_PRODUCT.");
             return 0;
         default:
-            Console.Error.WriteLine($"error: unknown argument '{args[i]}'. Usage: elm-server [--config <settings.json>]");
+            Fail($"unknown argument '{args[i]}'. Usage: elm-server [--config <settings.json>]");
             return 2;
     }
 }
@@ -36,7 +36,7 @@ try
 }
 catch (ServerStartException e)
 {
-    Console.Error.WriteLine("error: " + e.Message);
+    Fail(e.Message);
     return 2;
 }
 
@@ -47,7 +47,7 @@ try
 }
 catch (ServerStartException e)
 {
-    Console.Error.WriteLine("error: " + e.Message);
+    Fail(e.Message);
     return 1;
 }
 
@@ -57,3 +57,12 @@ await using (server)
 }
 
 return 0;
+
+// design §13.1 (V1d29a): the last line before exit code 1 or 2, also in the event log when the process runs as a Windows
+// service, whose standard error reaches nobody.
+static void Fail(string message)
+{
+    string line = "error: " + message;
+    Console.Error.WriteLine(line);
+    ServerService.ReportStartError(line);
+}

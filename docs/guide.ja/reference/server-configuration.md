@@ -28,7 +28,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | 1 | サーバーを起動できない。理由は表の下に挙げる |
 | 2 | 不明な引数、パスのない `--config`、または設定のエラー。設定ファイルがない、読めない、64 KiB より大きい、または有効でない。値が有効でない。`product` がない。設定ではない [`admin.listen`](#admin) に値がある |
 
-終了コード 1 か 2 で終わる前に、`elm-server` は `error:` と理由を標準エラー出力に表示する。
+終了コード 1 か 2 で終わる前に、`elm-server` は `error:` と理由を標準エラー出力に表示する。Windows サービスとして動くときは、その行を、Application のイベントログにも、イベント ID 50 のエラーとして書く（[Windows サービス](#windows-サービス)）。
 
 終了コード 1 になるのは、たとえば次のときだ。
 
@@ -36,6 +36,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - ソケットのファイル（データフォルダーの `admin.sock`）のパスが、システムの上限より長い。メッセージは `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` になる。サーバーは、ルート鍵を読む前、データフォルダーを作る前にこれを確かめるので、この起動は何も残さない。[データフォルダー](#データフォルダー)を参照。
 - システムに Unix ドメインソケットがない。このページの冒頭に挙げたバージョンより古い Windows などだ: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` サーバーは、パスの長さを確かめたあと、同じ時点でこれを確かめる。
 - ルート公開鍵が指定されていない。
+- `trust.rootKeys` のファイルが 16 KiB より大きいか、`tls.certificate` か `tls.key` のファイルが 64 KiB より大きい。メッセージは `error: trust.rootKeys file '<path>' is larger than 16 KiB.`、`error: The TLS certificate '<path>' is larger than 64 KiB.`、`error: The TLS key '<path>' is larger than 64 KiB.` のどれかになる。
 - 同じデータフォルダーで、別の `elm-server` が動いている: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` そのサーバーを止めるか、このサーバーに専用の `dataDirectory` を指定する。Windows では、バックアップやウイルス対策のスキャンなど、ほかのプログラムが `server.lock` を開いているあいだも、同じ行になる。そのときは、サーバーをもう一度起動し、そのプログラムの対象から `server.lock` を外す（対象から外すファイルは、[データフォルダー](#データフォルダー)に挙げている）。ファイルのロックが効かない場所（[データフォルダー](#データフォルダー)を参照）では、2 つ目のサーバーは代わりに `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.` で止まる。
 - ロックファイル `server.lock` を開けない。ほかのプログラムがファイルを開いているとき（上の項目）は除く。権限がない、ディスクがいっぱい、ファイルシステムが読み取り専用、といったときだ: `error: The lock file '<path>' cannot be opened: <reason>` 原因は、行の最後の理由に出る。サーバーのユーザーがデータフォルダーに書き込めることと、`server.lock` がファイルであることを確かめる。
 - `admin.sock` のパスにあるものを、使うことも消すこともできない。その名前のフォルダーがある場合などだ: `error: The administration socket '<path>' cannot be used: <reason>` そのパスにあるものを消して、サーバーをもう一度起動する。
@@ -61,7 +62,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - `--config` がなければ、`elm-server` は環境変数だけを読む。
 - 環境変数は、ファイルにある同じ設定より優先する。空の値を設定した環境変数は、設定されていないものとして扱う。ただ 1 つの例外は `ELM_TLS_PASSWORD` で、空の値は空のパスワードとして使う。
 - ファイルは 64 KiB までだ。ファイルが知らないキー（たとえばつづりを間違えたキー）はエラーになる。キーの名前は大文字と小文字を区別する。
-- `--config` や設定（`license`、`dataDirectory`、`trust.rootKeys`、`tls.certificate`、`tls.key`）に書いた相対パスは、`elm-server` のプロセスの作業フォルダー、つまりサーバーを起動したフォルダーからの相対パスだ。設定ファイルのフォルダーや実行ファイルのフォルダーからの相対パスではない。ただ 1 つの例外は `log.usage` で、その相対パスは `dataDirectory` の下を指す。
+- `--config` や設定（`license`、`dataDirectory`、`trust.rootKeys`、`tls.certificate`、`tls.key`）に書いた相対パスは、`elm-server` のプロセスの作業フォルダー、つまりサーバーを起動したフォルダーからの相対パスだ。設定ファイルのフォルダーや実行ファイルのフォルダーからの相対パスではない。ただ 1 つの例外は `log.usage` で、その相対パスは `dataDirectory` の下を指す。サービスの作業フォルダーは運用者が選べない。そのため、サービスでは、`--config` とこれらの設定を絶対パスで書く（[Windows サービス](#windows-サービス)）。
 - 設定にエラーがあると、`elm-server` は起動する前に止まり、`error:` と理由を表示する。終了コードは[コマンドラインと終了コード](#コマンドラインと終了コード)にある。
 - サーバーが設定を読むのは、起動するときだけだ。[`elm server reload`](elm-cli.md#elm-server-reload) は、動いているサーバーに、同じ `license` のパスからサーバーライセンスのファイルを読み直させる。それ以外のものは読み直さない。どの設定の変更も、次の起動から反映される。
 - `borrow.maxDuration` などの期間は、`d.hh:mm:ss` の形で書く。日数、ドット、時、分、秒の順だ。`7.00:00:00` は 7 日、`0.12:00:00` は 12 時間を表す。日数は省略できるので、`12:00:00` も 12 時間になる。
@@ -175,15 +176,15 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須） | ベンダーのルート公開鍵の PEM ファイル。サーバーライセンスの鍵証明書を、この鍵で確かめる。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS`（2 つ目の `_` に注意）に PEM テキストを入れてもよい。どちらもなければ、サーバーは起動しない |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須） | ベンダーのルート公開鍵の PEM ファイル。サーバーライセンスの鍵証明書を、この鍵で確かめる。各ファイルは 16 KiB までで、鍵がおよそ 90 個入る。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS`（2 つ目の `_` に注意）に PEM テキストを入れてもよい。どちらもなければ、サーバーは起動しない |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | 文字列のリスト | なし | サーバーがもう信頼しない鍵 ID（`kid`） |
 
 ## `tls`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。証明書には秘密鍵が含まれていなければならない。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
-| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | PEM の `tls.certificate` に対応する PEM の秘密鍵 |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。ファイルは 64 KiB まで。証明書には秘密鍵が含まれていなければならない。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
+| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | PEM の `tls.certificate` に対応する PEM の秘密鍵。64 KiB まで |
 
 中間 CA の証明書:
 
@@ -217,6 +218,18 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
 | `service.url` | `ELM_SERVICE_URL` | URL | なし。サーバーライセンスのトークンの更新を自動では行わない | サーバーライセンスのトークンの更新をする `elm-service`。`https` の URL、またはループバックアドレスの `http` の URL。設定したときは、サーバーは起動時に、`license` のファイルの隣にファイルを作れるかを確かめる |
+
+## Windows サービス
+
+`elm-server` は Windows サービスとして動ける。サービスコントロールマネージャーから起動されると、起動と停止をそこに知らせる。それ以外は、ターミナルで起動したときと同じように動く。
+
+- 起動: サーバーは、待ち受けを始める前に、サービスが動いていることを知らせる。そのあとで起動が失敗すると（待ち受けられない、中間 CA の証明書を送るかの確かめで止まる）、サービスは、動いたあとで終わったように見える。理由は、イベントログのイベント ID 50 にある（[ログ](logs.md#windows-サービスとしての-elm-server)）。
+- 停止: サービスの停止は、終了コード 0 のふつうの停止だ。サーバーは待ち受けをやめ、利用ログと借用の記録に `server.stopped` を書いて署名し、そのあとで、サービスが止まったことを知らせる。これに 30 秒より長くかかると、サーバーは 30 秒で停止を知らせ、閉じる処理を続けるが、プロセスはそのあといつ終わってもおかしくない。Windows のシャットダウンのときは、`HKLM\SYSTEM\CurrentControlSet\Control` の下のレジストリの値 `WaitToKillServiceTimeout` の時間のうちに止まらないサービスを、Windows が終わらせることがある。そのように終わらされたサーバーは `server.stopped` を書いていないので、次の起動は、クラッシュのあとと同じく、前の実行のリースを待つ（[フローティングライセンス](../explanation/floating-licenses.md)）。
+- アカウント: サービスは、アカウントを指定しないときに使われる LocalSystem か、通常のユーザーアカウントで動かす。仮想サービスアカウント（`NT SERVICE\<name>`）や LocalService で動くサーバーは、そのアカウントをデータフォルダーのアクセス制御リストに入れる。そのアカウントでサインインして `elm` の[サーバーライセンスのコマンド](elm-cli.md#サーバーライセンスのコマンド)を実行することは、誰にもできない（[elm server](elm-cli.md#elm-server)）。
+- LocalSystem での最初の起動: データフォルダーは、サービスに作らせる。そのフォルダーのアクセス制御リストにあるのは、Administrators グループと SYSTEM だけだ。そのため、管理者は「管理者として実行」で開いたターミナルから、そのフォルダーに対してサーバーライセンスのコマンドを実行できる。`elm server` のコマンドや、ターミナルで起動した `elm-server` のように、管理者が実行して先に作ったフォルダーは、アクセス制御リストに、代わりにその管理者を入れるので、サーバーはそのフォルダーを断る（[サーバーが受け付けるフォルダー](#サーバーが受け付けるフォルダー)）。サーバーライセンスがないとき、最初の起動はフォルダーとインストール鍵を作り、終了コード 1 で止まる。鍵のサムプリントとマシンフィンガープリントを示す行は、イベントログにある。そのあとでサーバーライセンスを手に入れ（たとえば「管理者として実行」で開いたターミナルで `elm server activate` を実行する）、サービスをもう一度起動する。
+- 通常のユーザーアカウントで動かすとき: そのアカウントに「サービスとしてログオン」の権利が要る。そのアカウントはイベントソース `elm-server` を登録できないので、管理者が先に登録しておく。サービスが作るデータフォルダーは、アクセス制御リストにそのアカウントを入れるので、サーバーライセンスのコマンドは、管理者のターミナルからではなく、そのアカウントで実行する。この形は CI で確かめていない。CI は、サービスを LocalSystem でだけ動かす。
+- パス: `--config` と、設定に書くすべてのパスを、絶対パスで書く。
+- ログ: 運用ログと起動のエラーは、Application のイベントログに、ソース `elm-server` で書く（[ログ](logs.md#windows-サービスとしての-elm-server)）。
 
 ## 例
 

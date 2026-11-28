@@ -254,6 +254,71 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     }
 
     /// <summary>
+    /// A check whose handshake fails with another error after the caller's token is cancelled, before the cancellation reaches
+    /// the check's own wait, ends with the cancellation, not with the sentence of a failed handshake: for an IO error and for
+    /// an authentication error (design §13.5, V1d3g).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test
+    ///   that accepts the connection.
+    /// - The test's own callback on the token is registered after the check's, so it runs first when the token is cancelled:
+    ///   CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered (dotnet/runtime
+    ///   release/10.0; the public documentation does not promise the order). While it runs, the token reads as cancelled and
+    ///   the check's wait is not cancelled yet. The check then ends with an error of its own during the handshake, before the
+    ///   cancellation reaches its wait. A cancelled token does not close the socket (docs/rows/V1d3h.md), and which error the
+    ///   failure on CI met is not known. Should the order change, the check's wait is cancelled first, the inner exception is missing, and
+    ///   the test fails.
+    ///
+    /// Steps:
+    /// - Start the check with a token of the test; read the first byte of its handshake on the accepted connection. Register a
+    ///   callback on the token that, as the case says, resets that connection or answers with bytes that are not TLS
+    ///   ("HTTP/1.1 400 Bad Request" and an empty line), and waits until the check has ended; cancel the token.
+    ///
+    /// Expected:
+    /// - The check throws OperationCanceledException, whose inner exception is the error of the handshake: IOException for the
+    ///   reset connection, AuthenticationException for the answer that is not TLS.
+    /// </remarks>
+    [Theory]
+    [InlineData("reset", typeof(IOException))]
+    [InlineData("not TLS", typeof(AuthenticationException))]
+    public async Task Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation(string answer, Type error)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, (IPEndPoint)listener.LocalEndpoint, _time, caller.Token);
+        using TcpClient accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+        NetworkStream stream = accepted.GetStream();
+        Assert.Equal(1, await stream.ReadAsync(new byte[1], _stop.Token));
+        using CancellationTokenRegistration failFirst = caller.Token.Register(() =>
+        {
+            if (answer == "reset")
+            {
+                accepted.Client.LingerState = new LingerOption(true, 0);
+                accepted.Client.Close();
+            }
+            else
+            {
+                stream.Write("HTTP/1.1 400 Bad Request\r\n\r\n"u8);
+            }
+
+            // The bound of the real clock only ends a run in which the check does not end.
+            _ = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
+        });
+        await caller.CancelAsync();
+
+        OperationCanceledException cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token)
+        );
+        Assert.IsType(error, cancelled.InnerException);
+    }
+
+    /// <summary>
     /// A certificate without an intermediate in its chain is not checked, and no connection is made: a file with the
     /// certificate alone, with the root after it, and with a CA certificate of another chain after it.
     /// </summary>
@@ -355,6 +420,89 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     }
 
     /// <summary>
+    /// A check whose connection fails with an IO error or a socket error after its 10 seconds have run out, before the end of
+    /// the limit reaches the check's own wait, gives the sentence of the time limit, not of a failed handshake (design §13.5,
+    /// V1d3g).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a fake clock behind a
+    ///   clock of the test that keeps the state of the timer the check creates for its limit: the limit's
+    ///   CancellationTokenSource (dotnet/runtime release/10.0 passes the source as the state of its timer).
+    /// - "reset": a TCP listener of the test that accepts the connection and sends nothing. "refused": a port where a listener
+    ///   of the test listened and stopped; Windows retries a refused connection on loopback for about 2 seconds before it
+    ///   fails, so the connect is still waiting when the clock moves.
+    /// - The test's own callback on the limit's token is registered after the check's, so it runs first when the limit ends
+    ///   (CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered; the public
+    ///   documentation does not promise the order). While it runs, the limit reads as ended and the check's wait is not
+    ///   cancelled yet: the check then fails as it does after the limit closes a socket whose connect the system had finished.
+    ///   Should the order change, the check's wait is cancelled before this callback runs and the test passes without a failed
+    ///   connection; the mutation check of V1d3g (M4) shows that the order holds.
+    ///
+    /// Steps:
+    /// - Start the check; for "reset", read the first byte of its handshake on the accepted connection. Register a callback on
+    ///   the limit's token that, for "reset", resets that connection, and waits until the check has ended. Move the clock 10
+    ///   seconds.
+    ///
+    /// Expected:
+    /// - The check ends while the callback waits, and returns "… did not get an answer: the TLS handshake with
+    ///   127.0.0.1:{port} did not finish within 10 seconds." in both cases.
+    /// </remarks>
+    [Theory]
+    [InlineData("reset")]
+    [InlineData("refused")]
+    public async Task Run_ConnectionFailsAfterTheLimit_SaysItDidNotFinish(string how)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        var time = new LimitKeepingTime(_time);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endPoint = (IPEndPoint)listener.LocalEndpoint;
+        if (how == "refused")
+        {
+            listener.Dispose();
+        }
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, time, _stop.Token);
+        TcpClient? accepted = null;
+        try
+        {
+            if (how == "reset")
+            {
+                accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+                Assert.Equal(1, await accepted.GetStream().ReadAsync(new byte[1], _stop.Token));
+            }
+
+            Assert.NotNull(time.Limit);
+            bool endedInside = false;
+            using CancellationTokenRegistration failFirst = time.Limit.Token.Register(() =>
+            {
+                if (accepted is not null)
+                {
+                    accepted.Client.LingerState = new LingerOption(true, 0);
+                    accepted.Client.Close();
+                }
+
+                // The bound of the real clock only ends a run in which the check does not end; the assertion below fails it.
+                endedInside = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
+            });
+            Assert.False(check.IsCompleted, "The check ended before the clock moved.");
+            _time.Advance(TlsChainSelfCheck.Limit);
+
+            Assert.True(endedInside, "The check did not end while the limit's callbacks ran.");
+
+            Assert.Equal(NoAnswer(endPoint, "did not finish within 10 seconds"), await check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token));
+        }
+        finally
+        {
+            accepted?.Dispose();
+            listener.Dispose();
+        }
+    }
+
+    /// <summary>
     /// A listener that closes the connection without a TLS answer, and a port where nothing listens, each give the sentence of
     /// a handshake without an answer.
     /// </summary>
@@ -444,5 +592,26 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     {
         _owned.Add(owned);
         return owned;
+    }
+
+    // A clock that reads and counts as the fake clock does, and keeps the CancellationTokenSource whose timer it created last:
+    // the limit of the check.
+    private sealed class LimitKeepingTime(FakeTimeProvider inner) : TimeProvider
+    {
+        public CancellationTokenSource? Limit { get; private set; }
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Limit = state as CancellationTokenSource;
+            return inner.CreateTimer(callback, state, dueTime, period);
+        }
     }
 }

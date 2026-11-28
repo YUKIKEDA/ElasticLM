@@ -9,6 +9,8 @@
   <ItemGroup>
     <!-- design §21: the ASP.NET Core shared framework, with the slim builder. -->
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <!-- design §13.1, §21 (V1d29a): the Windows service lifetime and its event log. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\ElasticLM.Leasing\ElasticLM.Leasing.csproj" />

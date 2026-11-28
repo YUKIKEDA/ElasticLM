@@ -27,7 +27,7 @@ elm-service backup --out <path> [--config <settings.json>]
 | 終了コード | 意味 |
 | --- | --- |
 | 0 | サービスが正常に止まった |
-| 1 | サービスを起動できない。たとえば、ルート公開鍵が指定されていない、署名鍵のパスフレーズが指定されていない、署名鍵やその証明書を読めない、署名鍵と証明書が対応していない、TLS 証明書を読めない、TLS 証明書の拡張キー使用法（証明書を使ってよい用途の一覧）にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication`、日本語の Windows では「サーバー認証」と表示される）が含まれていない、TLS 証明書のファイルで最初の証明書のあとにある証明書が CA の証明書ではない、Windows でサービスが TLS 証明書のファイルの中間 CA の証明書を送らなかったか、送っているかを確かめられなかった、データベースでエラーが起きた、利用ログを書き込めない、`listen` で待ち受けられない |
+| 1 | サービスを起動できない。たとえば、ルート公開鍵が指定されていない、署名鍵のパスフレーズが指定されていない、署名鍵やその証明書を読めない、ファイルが上限より大きい（`trust.rootKeys`、`signing.key`、`signing.certificates`、`tls.certificate`、`tls.key`。上限は下の表のとおり）、署名鍵と証明書が対応していない、TLS 証明書を読めない、TLS 証明書の拡張キー使用法（証明書を使ってよい用途の一覧）にサーバー認証（`1.3.6.1.5.5.7.3.1`。OpenSSL では `TLS Web Server Authentication`、Windows では `Server Authentication`、日本語の Windows では「サーバー認証」と表示される）が含まれていない、TLS 証明書のファイルで最初の証明書のあとにある証明書が CA の証明書ではない、Windows でサービスが TLS 証明書のファイルの中間 CA の証明書を送らなかったか、送っているかを確かめられなかった、データベースでエラーが起きた、利用ログを書き込めない、`listen` で待ち受けられない |
 | 2 | 引数が有効でない。または設定のエラー（設定ファイルや値が有効でない、必須の値がない） |
 
 `listen` で待ち受けられないとき（ほかのプログラムがそのポートを使っている、そこで待ち受ける権限がない、このマシンにそのアドレスがない）、最後の行は `elm-service cannot listen on <listen>: <reason>` になる。URL は、サービスが読んだとおりに、`/` で終わる形で示す。
@@ -96,8 +96,8 @@ elm-service backup --out <path> [--config <settings.json>]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし | `https` の `listen` に使う PEM の証明書。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
-| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | `tls.certificate` の PEM の秘密鍵 |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし | `https` の `listen` に使う PEM の証明書。64 KiB まで。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
+| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | `tls.certificate` の PEM の秘密鍵。64 KiB まで |
 
 CA が中間 CA でサービスの証明書に署名しているなら、中間 CA の証明書を、同じ PEM ファイルのサービスの証明書のあとに入れる。サービスは自分の証明書と一緒にそれを送る。サービスは `tls.key` を最初の証明書と組み合わせる。ルート CA は要らない。最初の証明書のあとにある証明書は、どれも CA の証明書でなければならない。そうでなければサービスは起動しない（終了コード 1）。サービスは `elm-server` と同じようにチェーンを組んで送る。足りない証明書のダウンロード、Linux の OCSP ステープリング、Windows の中間証明機関の証明書ストアも同じだ。Windows では、中間 CA が送られているかを、起動のたびに同じように確認する。送られていないか、この確認で答えが得られなければ、同じメッセージ（前に `error:` は付かない）を出して終了コード 1 で止まる。確認の間のリクエストには答えない。起動のたびに止まるときに確かめることも、`elm-server` と同じだ。`elm-server` の設定の[中間 CA の証明書](server-configuration.md#tls)を参照。
 
@@ -112,22 +112,37 @@ CA が中間 CA でサービスの証明書に署名しているなら、中間 
 
 ```text
 Data Source=/var/lib/elm-service/elm.db
-Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
 ```
+
+### ネットワーク越しの PostgreSQL
+
+`elm-service` は、サーバーが TLS に対応していれば、PostgreSQL に TLS で接続する。接続文字列のホストがこのマシン上にないときは、`SSL Mode` を次のどれかにしなければならない。
+
+- `VerifyFull`: TLS で接続し、サーバーの証明書が信頼する CA のもので、ホストの名前を含むことを確かめる。これを使うこと。
+- `VerifyCA`: TLS で接続し、サーバーの証明書が信頼する CA のものであることを確かめる。名前は確かめないので、同じ CA の証明書を持つ別のサーバーにも接続する。
+- `Disable`: TLS を使わない。別の方法で守ったネットワークの経路でだけ使うこと。
+
+そのようなホストに対して、`setup` とサービスは、ほかのモード、つまり `Prefer`（`SSL Mode` を書かないときの Npgsql の既定）、`Allow`、`Require` を断り、終了コード 2 で止まる。`Prefer` と `Allow` は TLS なしで接続することがあり、3 つのどれもサーバーの証明書を確かめない。Npgsql の `Require` は、`Root Certificate` を設定しても証明書を確かめない。
+
+- このマシン上とは、ループバックの IP アドレス（`127.0.0.0/8` か `::1`）、名前 `localhost`、Unix ソケット（ルートからのパスか、`@` で始まる名前）のことだ。ほかの名前は、ループバックアドレスに解決されるとしても、別のマシンとして扱う。ホストが複数あるとき（`Host=db1,db2`）は、すべてのホストがこのマシン上にあるときだけ、ほかのモードを受け付ける。
+- 信頼する CA は、`Root Certificate` が指す PEM ファイルだ。これがないと、Npgsql は環境変数 `PGSSLROOTCERT` が指すファイルを読み、次に Windows では `%APPDATA%\postgresql\`、Linux と macOS では `~/.postgresql/` の `root.crt` を読み、どれもなければ、OS が信頼するルートにつながる証明書でなければならない。
+- `Root Certificate`、`SSL Certificate`、`SSL Key` は、存在するファイルを指さなければならない。そうでなければ、`setup` とサービスは終了コード 2 で止まる。相対パスは、`elm-service` を起動したフォルダーから読む。
+- TLS での接続に失敗したとき（サーバーの証明書がその CA のものでないときなど）は、`The database cannot be used: Exception while performing SSL handshake: …` の行のコロンのあとに、Npgsql の理由が出る。
 
 ## `signing`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` と `backup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
+| `signing.key` | `ELM_SIGNING_KEY` | ファイルのパス | なし（必須。`setup` と `backup` には不要） | 署名鍵。P-256 の鍵を暗号化した PKCS#8 の PEM ファイル。64 KiB まで |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | 署名鍵の鍵証明書のファイル。1 から 4 個で、空のものがあってはならない。各ファイルは 16,386 バイト（証明書 1 つとその改行）まで。16 KiB の証明書を UTF-8 の BOM 付きで保存すると、この上限を超えて断られる。証明書は現在有効で、ライセンスとリースへの署名を許可していなければならない。`usageLog.directory` を設定したときは、ログへの署名も許可していなければならない |
 | `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | ファイルのパス | なし（`ELM_SIGNING_PASSPHRASE` が設定されていなければ必須。`setup` と `backup` には不要） | 署名鍵のパスフレーズを入れたファイル。シークレットだ。[シークレット](#シークレット)を参照 |
 
 ## `trust`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | ベンダーのルート公開鍵の PEM ファイル。署名鍵の証明書を、この鍵で確かめる。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS` に PEM テキストを入れてもよい。どちらもなければ、サービスは起動しない |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須。`setup` と `backup` には不要） | ベンダーのルート公開鍵の PEM ファイル。署名鍵の証明書を、この鍵で確かめる。各ファイルは 16 KiB までで、鍵がおよそ 90 個入る。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS` に PEM テキストを入れてもよい。どちらもなければ、サービスは起動しない |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | 文字列のリスト | なし | サービスがもう信頼しない鍵 ID（`kid`） |
 
 ## `bootstrapOwner`

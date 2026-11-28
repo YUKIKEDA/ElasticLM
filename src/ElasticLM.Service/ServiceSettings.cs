@@ -1,6 +1,7 @@
 using System.Globalization;
 using System.Net;
 using System.Text.Json;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Service;
 
@@ -169,6 +170,11 @@ internal sealed record ServiceSettings
             Env(ConnectionVariable)
             ?? (file.Database?.ConnectionFile is string connectionFile ? ReadSecret(connectionFile, "database.connectionFile") : null)
             ?? throw new ServiceStartException($"Set {ConnectionVariable} or database.connectionFile to the database connection string.");
+        if (provider == DatabaseProvider.Postgres)
+        {
+            // design §14.2, T30: refused here, so that setup and the service both stop with the settings' exit code.
+            PostgresConnection.Check(connection);
+        }
 
         IReadOnlyList<string> certificates = EnvList("ELM_SIGNING_CERTIFICATES") ?? file.Signing?.Certificates ?? [];
         if (requireSigning && signingKey is null)
@@ -409,12 +415,11 @@ internal sealed record ServiceSettings
                 throw new ServiceStartException($"The settings file '{path}' does not exist.");
             }
 
-            if (info.Length > MaxSettingsFileLength)
-            {
-                throw new ServiceStartException($"The settings file '{path}' is larger than 64 KiB.");
-            }
-
-            return JsonSerializer.Deserialize(File.ReadAllBytes(path), ServiceJsonContext.Default.SettingsFile)
+            // design §8.6 (V1d24c): the limit is checked while the file is read.
+            byte[] bytes =
+                BoundedFile.Read(path, MaxSettingsFileLength, FileShare.Read)
+                ?? throw new ServiceStartException($"The settings file '{path}' is larger than 64 KiB.");
+            return JsonSerializer.Deserialize(bytes, ServiceJsonContext.Default.SettingsFile)
                 ?? throw new ServiceStartException($"The settings file '{path}' is empty.");
         }
         catch (JsonException e)
@@ -438,13 +443,10 @@ internal sealed record ServiceSettings
     {
         try
         {
-            var info = new FileInfo(path);
-            if (!info.Exists || info.Length > MaxSecretFileLength)
-            {
-                throw new ServiceStartException($"{key} '{path}' does not exist or is larger than 16 KiB.");
-            }
-
-            string text = File.ReadAllText(path).TrimEnd('\r', '\n');
+            // design §8.6 (V1d24c): the limit is checked while the file is read; the text is decoded as File.ReadAllText does.
+            string text =
+                (new FileInfo(path).Exists ? BoundedFile.ReadAllText(path, MaxSecretFileLength) : null)?.TrimEnd('\r', '\n')
+                ?? throw new ServiceStartException($"{key} '{path}' does not exist or is larger than 16 KiB.");
             return text.Length > 0 ? text : throw new ServiceStartException($"{key} '{path}' is empty.");
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)

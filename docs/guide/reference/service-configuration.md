@@ -27,7 +27,7 @@ Exit codes of the service:
 | Exit code | Meaning |
 | --- | --- |
 | 0 | The service stopped normally. |
-| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or its certificates cannot be read, the signing key and its certificates do not match, the TLS certificate cannot be read or has an Extended Key Usage (the list of purposes the certificate may be used for) that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`), a certificate after the first in the TLS certificate file is not a CA certificate, on Windows the service did not send an intermediate CA certificate of the TLS certificate file or could not check that it sends them, the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
+| 1 | The service cannot start, for example: no root public keys are given, the signing key's passphrase is not given, the signing key or its certificates cannot be read, a file is larger than its limit (`trust.rootKeys`, `signing.key`, `signing.certificates`, `tls.certificate`, and `tls.key`, with the limits in the tables below), the signing key and its certificates do not match, the TLS certificate cannot be read or has an Extended Key Usage (the list of purposes the certificate may be used for) that does not include server authentication (`1.3.6.1.5.5.7.3.1`; OpenSSL shows it as `TLS Web Server Authentication`, Windows as `Server Authentication`), a certificate after the first in the TLS certificate file is not a CA certificate, on Windows the service did not send an intermediate CA certificate of the TLS certificate file or could not check that it sends them, the database fails, the usage log cannot be written, or the service cannot listen on `listen`. |
 | 2 | The arguments are not valid, or a setting error: the configuration file or a value is not valid, or a required value is missing. |
 
 When the service cannot listen on `listen` (another program uses the port, the service has no permission to listen there, or this machine does not have the address), the last line is `elm-service cannot listen on <listen>: <reason>`. It gives the URL as the service reads it, ending in `/`.
@@ -96,8 +96,8 @@ These settings do not follow the rule:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none | The PEM certificate for an `https` `listen`. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
-| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of `tls.certificate`. |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none | The PEM certificate for an `https` `listen`, at most 64 KiB. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
+| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of `tls.certificate`, at most 64 KiB. |
 
 If your CA signs the service's certificate with an intermediate CA, put the intermediate's certificate in the same PEM file after the service's certificate, and the service sends it with its own; `tls.key` goes with the first certificate. The root CA is not needed. Every certificate after the first must be a CA certificate, or the service does not start (exit code 1). The service builds and sends the chain as `elm-server` does, with the same downloads of missing certificates, the same OCSP stapling on Linux, and the same certificate store of intermediate CAs on Windows. On Windows it also makes the same check at each start that the intermediates are sent, answers no request until the check ends, and stops with exit code 1 and the same messages, without `error:` before them, when one is not sent or the check gets no answer. What to check when every start stops this way is the same as for `elm-server`. See [Intermediate CA certificates](server-configuration.md#tls) in the `elm-server` configuration.
 
@@ -112,22 +112,37 @@ The connection string is that of the database driver: Microsoft.Data.Sqlite for 
 
 ```text
 Data Source=/var/lib/elm-service/elm.db
-Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password
+Host=db.example.com;Port=5432;Database=elm;Username=elm;Password=example-password;SSL Mode=VerifyFull;Root Certificate=/etc/elm-service/db-ca.pem
 ```
+
+### PostgreSQL over a network
+
+`elm-service` reaches PostgreSQL over TLS when the server offers it. When a host of the connection string is not on this machine, `SSL Mode` must be one of these:
+
+- `VerifyFull`: TLS, and the server's certificate must come from a trusted CA and name the host. Use this one.
+- `VerifyCA`: TLS, and the server's certificate must come from a trusted CA. The name is not checked, so another server with a certificate from the same CA is taken too.
+- `Disable`: no TLS. Use it only on a network path that you protect in another way.
+
+`setup` and the service refuse the other modes for such a host and stop with exit code 2: `Prefer` (Npgsql's default when `SSL Mode` is not set), `Allow`, and `Require`. `Prefer` and `Allow` can connect without TLS, and none of the three checks the server's certificate. Npgsql's `Require` does not check it even when `Root Certificate` is set.
+
+- On this machine means a loopback IP address (`127.0.0.0/8` or `::1`), the name `localhost`, or a Unix socket (a path from the root, or a name that starts with `@`). Any other name counts as another machine, even when it resolves to a loopback address. With several hosts (`Host=db1,db2`), every host must be on this machine for the other modes to be taken.
+- The trusted CA is the PEM file that `Root Certificate` names. Without it, Npgsql reads the file that the `PGSSLROOTCERT` environment variable names, then `root.crt` in `%APPDATA%\postgresql\` on Windows or in `~/.postgresql/` on Linux and macOS, and without any of them, the certificate must chain to a root that the operating system trusts.
+- `Root Certificate`, `SSL Certificate`, and `SSL Key` must name files that exist, or `setup` and the service stop with exit code 2. A relative path is read from the folder that `elm-service` starts in.
+- When the TLS connection fails, as when the server's certificate does not come from the CA, the line `The database cannot be used: Exception while performing SSL handshake: …` gives Npgsql's reason after the colon.
 
 ## `signing`
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `signing.key` | `ELM_SIGNING_KEY` | file path | none (required; `setup` and `backup` do not need it) | The signing key: an encrypted PKCS#8 PEM file of a P-256 key. |
-| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` and `backup` do not need it) | The signing key's key certificate files: 1 to 4, none empty. The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
+| `signing.key` | `ELM_SIGNING_KEY` | file path | none (required; `setup` and `backup` do not need it) | The signing key: an encrypted PKCS#8 PEM file of a P-256 key, at most 64 KiB. |
+| `signing.certificates` | `ELM_SIGNING_CERTIFICATES` | list of file paths | none (required; `setup` and `backup` do not need it) | The signing key's key certificate files: 1 to 4, none empty, each at most 16,386 bytes (one certificate and its line break; a certificate of 16 KiB saved with a UTF-8 byte order mark is larger, and is refused). The certificates must be valid now and allow signing licenses and leases, and logs too when `usageLog.directory` is set. |
 | `signing.passphraseFile` | `ELM_SIGNING_PASSPHRASE` | file path | none (required when `ELM_SIGNING_PASSPHRASE` is not set; `setup` and `backup` do not need it) | The file that holds the signing key's passphrase. A secret: see [Secrets](#secrets). |
 
 ## `trust`
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required; `setup` and `backup` do not need it) | PEM files of the vendor's root public keys, which the signing key's certificates are checked against. Instead of files, `ELM_TRUST_ROOT_KEYS` can hold the PEM text. Without either, the service does not start. |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required; `setup` and `backup` do not need it) | PEM files of the vendor's root public keys, which the signing key's certificates are checked against. Each file is at most 16 KiB, which holds about 90 keys. Instead of files, `ELM_TRUST_ROOT_KEYS` can hold the PEM text. Without either, the service does not start. |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | list of strings | none | Key IDs (`kid`) that the service no longer trusts. |
 
 ## `bootstrapOwner`
