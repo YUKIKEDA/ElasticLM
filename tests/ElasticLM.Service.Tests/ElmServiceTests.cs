@@ -54,6 +54,66 @@ public sealed class ElmServiceTests
     }
 
     /// <summary>
+    /// Over HTTP/2, which the service accepts on https because it sets no Protocols, Kestrel's limits on the request line
+    /// and the headers hold as well (design §5.3 T16): a request line of 8,192 bytes, 100 header fields, and 32 KiB of
+    /// names and values are read; a byte more of the line resets the stream, and a field or a byte more of the headers
+    /// gets 431; past twice either header limit, or with one value over 32 KiB, Kestrel ends the connection.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate. The service sets only MaxRequestBodySize; the
+    ///   other limits are Kestrel's defaults (aspnetcore v10.0.14): MaxRequestLineSize 8 KiB, MaxRequestHeaderCount 100,
+    ///   and MaxRequestHeadersTotalSize 32 KiB of KestrelServerLimits, which HTTP/2 shares, and MaxRequestHeaderFieldSize
+    ///   32 KiB of Http2Limits. Over HTTP/2 Kestrel
+    ///   takes the lengths of :method, :scheme, :authority, and :path together for the request line and resets the stream
+    ///   with PROTOCOL_ERROR past it (Http2Stream.cs TryValidatePseudoHeaders); it answers 431 past the header count or
+    ///   size up to twice each (Http2Stream.cs TryParseRequest) and ends the connection with PROTOCOL_ERROR beyond
+    ///   (Http2Connection.cs OnHeaderCore); its HPACK decoder ends the connection with COMPRESSION_ERROR for a string longer
+    ///   than MaxRequestHeaderFieldSize (HPackDecoder.cs OnStringLength).
+    ///
+    /// Steps:
+    /// - On a new TLS connection each time (ALPN h2), send GET /health as HTTP/2 frames with a request line of the length
+    ///   given (made long with a query), or with the number of header fields given (the four pseudo-header fields among
+    ///   them), or with names and values of the given number of bytes in all, or with one value of the given length (past
+    ///   the limit, sent up to the value's length alone); read the answer's status, a RST_STREAM, or a GOAWAY. After an
+    ///   answer or a RST_STREAM, send a plain GET /health on the same connection.
+    ///
+    /// Expected:
+    /// - Line 8,192, count 100, and size 32 KiB: 200. Line 8,193: RST_STREAM with PROTOCOL_ERROR. Count 101 and 200, size
+    ///   32 KiB + 1 and 64 KiB: 431. Count 201 and size 64 KiB + 1: GOAWAY with PROTOCOL_ERROR. A value of 32 KiB: 431 (the
+    ///   size is past its limit). A value of 32 KiB + 1: GOAWAY with COMPRESSION_ERROR. The plain request after an answer
+    ///   or a RST_STREAM gets 200.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The size of the request at or past it.</param>
+    /// <param name="outcome">The status code, or the frame and the HTTP/2 error code that ended the request.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.Http2AtAndPastEachLimit), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_Http2RequestLineAndHeaders_KeepTheirLimits(string kind, int size, string outcome)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        await test.SetupAsync();
+        using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
+        var request = new CertificateRequest("CN=elm-service-test", key, HashAlgorithmName.SHA256);
+        var names = new SubjectAlternativeNameBuilder();
+        names.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(names.Build());
+        using X509Certificate2 certificate = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
+        File.WriteAllText(test.FilePath("tls.crt"), certificate.ExportCertificatePem() + "\n");
+        File.WriteAllText(test.FilePath("tls.key"), key.ExportPkcs8PrivateKeyPem() + "\n");
+        ElmService service = await test.StartAsync(s =>
+            s with
+            {
+                Listen = new Uri("https://127.0.0.1:0"),
+                TlsCertificate = test.FilePath("tls.crt"),
+                TlsKey = test.FilePath("tls.key"),
+            }
+        );
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OutcomeAsync(service.Url, "/health", kind, size));
+    }
+
+    /// <summary>
     /// The service starts only with a signing key whose certificates the trust store vouches for, for licenses and leases, at
     /// the start time; and with the right passphrase.
     /// </summary>
