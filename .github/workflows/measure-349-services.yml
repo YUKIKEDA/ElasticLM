@@ -1,5 +1,5 @@
-# Temporary (V1d30, Issue #349; open-ends.mdc): measures how systemd and launchd treat a service on the runners, before
-# the end-to-end tests are written. Removed before the PR is ready.
+# Temporary (V1d30, Issue #349; open-ends.mdc): measures how launchd treats a service on the runners, before the
+# end-to-end tests are written. Removed before the PR is ready. Round 2: the account, and why the first job ended 78.
 name: measure-349-services
 
 on:
@@ -11,42 +11,6 @@ permissions:
   contents: read
 
 jobs:
-  linux:
-    runs-on: ubuntu-latest
-    steps:
-      - name: systemd
-        shell: bash
-        run: |
-          set +e
-          set -x
-          systemctl --version | head -1
-          cat /etc/os-release | head -3
-          systemctl show -p DefaultTimeoutStopUSec
-          systemctl show -p DefaultRestartUSec
-          ls -ld / /opt /etc /var /var/lib /usr/local /usr/local/bin /usr/sbin/nologin /sbin/nologin
-          sudo useradd --system --shell /usr/sbin/nologin elmmeasure; echo "useradd=$?"
-          getent passwd elmmeasure; getent group elmmeasure
-          sudo install -d -o elmmeasure -g elmmeasure -m 0700 /var/lib/elmmeasure; echo "install=$?"
-          ls -ld /var/lib/elmmeasure
-          printf '#!/bin/sh\necho started; trap "echo got-term; exit 0" TERM; while true; do sleep 1; done\n' | sudo tee /opt/elmmeasure.sh >/dev/null
-          sudo chmod 0755 /opt/elmmeasure.sh
-          printf '[Unit]\nDescription=measure\n\n[Service]\nType=exec\nUser=elmmeasure\nGroup=elmmeasure\nExecStart=/opt/elmmeasure.sh\nRestart=on-failure\nRestartSec=5\n\n[Install]\nWantedBy=multi-user.target\n' | sudo tee /etc/systemd/system/elmmeasure.service >/dev/null
-          sudo systemctl daemon-reload
-          systemctl show elmmeasure -p TimeoutStopUSec -p TimeoutStopFailureMode -p KillMode -p KillSignal -p StartLimitBurst -p StartLimitIntervalUSec -p StandardOutput -p WorkingDirectory
-          sudo systemctl enable --now elmmeasure; echo "enable=$?"
-          sleep 2
-          systemctl show elmmeasure -p ActiveState -p SubState -p MainPID -p ExecMainStatus -p Result -p NRestarts
-          pid=$(systemctl show elmmeasure -p MainPID --value); ps -o user=,pid=,cmd= -p $pid; sudo readlink /proc/$pid/cwd
-          sudo kill -9 $pid; sleep 1
-          systemctl show elmmeasure -p ActiveState -p SubState -p Result -p NRestarts
-          sleep 6
-          systemctl show elmmeasure -p ActiveState -p SubState -p Result -p NRestarts -p MainPID
-          sudo systemctl stop elmmeasure; echo "stop=$?"
-          systemctl show elmmeasure -p ActiveState -p Result -p ExecMainStatus -p ExecMainCode
-          journalctl -u elmmeasure --no-pager | tail -20
-          sudo systemctl disable elmmeasure
-          exit 0
-
   macos:
     runs-on: macos-latest
     steps:
@@ -56,52 +20,38 @@ jobs:
           set +e
           set -x
           sw_vers
-          ls -ld / /Library "/Library/Application Support" /Library/Logs /Library/LaunchDaemons /usr/local /usr/local/bin /opt /private/var /var/db /usr/bin/false
-          ls -ld "/Library/Application Support/ElasticLM" 2>&1
-          dscl . -list /Users UniqueID | sort -n -k2 | awk '$2 >= 200 && $2 < 600' | tail -15
-          dscl . -list /Groups PrimaryGroupID | sort -n -k2 | awk '$2 >= 200 && $2 < 600' | tail -15
-          sudo sysadminctl -addUser _elmmeasure -fullName "elm measure" -UID 441 -roleAccount; echo "sysadminctl=$?"
-          dscl . -read /Users/_elmmeasure 2>&1
+          launchctl version
+          sudo sysadminctl -addUser _elmmeasure -fullName "elm measure" -UID 451 -roleAccount; echo "sysadminctl=$?"
+          dscl . -read /Users/_elmmeasure UniqueID PrimaryGroupID UserShell NFSHomeDirectory RealName IsHidden 2>&1
           id _elmmeasure
-          sudo sysadminctl -addUser _elmmeasure2 -roleAccount; echo "sysadminctl-nouid=$?"
-          dscl . -read /Users/_elmmeasure2 UniqueID PrimaryGroupID UserShell NFSHomeDirectory 2>&1
-          sudo dscl . -create /Groups/_elmmeasure3 PrimaryGroupID 443; echo "g=$?"
-          sudo dscl . -create /Users/_elmmeasure3; sudo dscl . -create /Users/_elmmeasure3 UniqueID 443; sudo dscl . -create /Users/_elmmeasure3 PrimaryGroupID 443; sudo dscl . -create /Users/_elmmeasure3 UserShell /usr/bin/false; sudo dscl . -create /Users/_elmmeasure3 NFSHomeDirectory /var/empty; echo "dscl=$?"
-          id _elmmeasure3
-          man launchd.plist | col -b | grep -n -A6 -E 'ExitTimeOut|ThrottleInterval|SuccessfulExit|StandardOutPath|UserName|GroupName' | head -80
-          sudo install -d -o _elmmeasure3 -g _elmmeasure3 -m 0700 "/Library/Application Support/elmmeasure"; echo "install=$?"
-          ls -ld "/Library/Application Support/elmmeasure"
+          dscl . -read /Groups/_elmmeasure 2>&1 | head -5
+          dscl . -list /Groups PrimaryGroupID | awk '$2 == 451 || $2 == 20'
           printf '#!/bin/sh\necho started; id; pwd; trap "echo got-term; exit 0" TERM; while true; do sleep 1; done\n' | sudo tee /usr/local/elmmeasure.sh >/dev/null
           sudo chmod 0755 /usr/local/elmmeasure.sh
-          cat > /tmp/m.plist <<'PLIST'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>Label</key><string>com.example.elmmeasure</string>
-            <key>ProgramArguments</key><array><string>/usr/local/elmmeasure.sh</string></array>
-            <key>UserName</key><string>_elmmeasure3</string>
-            <key>GroupName</key><string>_elmmeasure3</string>
-            <key>RunAtLoad</key><true/>
-            <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
-            <key>StandardOutPath</key><string>/Library/Logs/elmmeasure.log</string>
-            <key>StandardErrorPath</key><string>/Library/Logs/elmmeasure.log</string>
-          </dict>
-          </plist>
-          PLIST
-          sed -i '' 's/^          //' /tmp/m.plist
-          sudo install -m 0644 -o root -g wheel /tmp/m.plist /Library/LaunchDaemons/com.example.elmmeasure.plist
-          plutil -lint /Library/LaunchDaemons/com.example.elmmeasure.plist
-          sudo launchctl bootstrap system /Library/LaunchDaemons/com.example.elmmeasure.plist; echo "bootstrap=$?"
-          sleep 2
-          sudo launchctl print system/com.example.elmmeasure | head -60
-          ls -l /Library/Logs/elmmeasure.log; cat /Library/Logs/elmmeasure.log
-          pid=$(sudo launchctl print system/com.example.elmmeasure | awk '/pid =/{print $3}')
+          sudo install -d -o root -g wheel -m 0755 /Library/Logs/elmmeasure
+          for variant in a b; do
+            label=com.example.elmmeasure.$variant
+            if [ $variant = a ]; then group=$(id -gn _elmmeasure); out='<key>StandardOutPath</key><string>/Library/Logs/elmmeasure/a.log</string><key>StandardErrorPath</key><string>/Library/Logs/elmmeasure/a.log</string>'; else group=$(id -gn _elmmeasure); out=''; fi
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n<key>Label</key><string>%s</string>\n<key>ProgramArguments</key><array><string>/usr/local/elmmeasure.sh</string></array>\n<key>UserName</key><string>_elmmeasure</string>\n<key>GroupName</key><string>%s</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n<key>ExitTimeOut</key><integer>60</integer>\n%s\n</dict>\n</plist>\n' "$label" "$group" "$out" > /tmp/$variant.plist
+            cat /tmp/$variant.plist
+            sudo install -m 0644 -o root -g wheel /tmp/$variant.plist /Library/LaunchDaemons/$label.plist
+            sudo launchctl bootstrap system /Library/LaunchDaemons/$label.plist; echo "bootstrap=$?"
+            sleep 3
+            sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs|exit timeout|minimum runtime|username|group'
+          done
+          ls -l /Library/Logs/elmmeasure; cat /Library/Logs/elmmeasure/a.log
+          log show --last 2m --predicate 'process == "launchd" AND eventMessage CONTAINS "elmmeasure"' --style compact 2>&1 | tail -40
+          label=com.example.elmmeasure.a
+          pid=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}')
+          echo "pid=$pid"
           sudo kill -9 $pid; t0=$(date +%s)
-          for i in $(seq 1 30); do sleep 1; p=$(sudo launchctl print system/com.example.elmmeasure | awk '/pid =/{print $3}'); if [ -n "$p" ] && [ "$p" != "$pid" ]; then echo "relaunched after $(( $(date +%s) - t0 )) s as $p"; break; fi; done
-          sudo launchctl print system/com.example.elmmeasure | grep -E 'state|pid|last exit|runs|exit timeout|throttle'
-          sudo launchctl kill SIGTERM system/com.example.elmmeasure; sleep 3
-          sudo launchctl print system/com.example.elmmeasure | grep -E 'state|pid|last exit|runs'
-          sudo launchctl bootout system/com.example.elmmeasure; echo "bootout=$?"
-          cat /Library/Logs/elmmeasure.log
+          for i in $(seq 1 40); do sleep 1; p=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}'); if [ -n "$p" ] && [ "$p" != "$pid" ]; then echo "relaunched after $(( $(date +%s) - t0 )) s as $p"; break; fi; done
+          sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
+          sudo launchctl kill SIGTERM system/$label; sleep 3
+          sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
+          sudo launchctl kickstart system/$label; echo "kickstart=$?"; sleep 2
+          sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
+          t0=$(date +%s); sudo launchctl bootout system/$label; echo "bootout=$? after $(( $(date +%s) - t0 )) s"
+          sudo launchctl bootout system/com.example.elmmeasure.b
+          ls -l /Library/Logs/elmmeasure; cat /Library/Logs/elmmeasure/a.log
           exit 0
