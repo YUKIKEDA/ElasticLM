@@ -50,8 +50,8 @@ public sealed partial class LaunchdServiceTests
     /// - launchctl print shows the exit timeout of 60 seconds.
     /// - After the kill a new process answers.
     /// - After the rotation the old file, the same inode, is the .0 file, and the new log file belongs to the account with
-    ///   mode 640. The request's lines go to the .0 file while the new file keeps its size; after kickstart -k the new file
-    ///   holds the server.started line and the server answers.
+    ///   mode 640. The request's lines go to the .0 file while the new file keeps its size; after kickstart -k the .0 file
+    ///   holds the server.stopped line of the stop, the new file holds the server.started line, and the server answers.
     /// - After SIGTERM the job runs no process and its last exit code is 0; the newest usage log ends with server.stopped and
     ///   its signature, and the newest borrow record holds server.stopped; the log file holds the server.started and server.stopped lines of the operational log.
     /// - launchctl kickstart brings the server back.
@@ -218,6 +218,9 @@ public sealed partial class LaunchdServiceTests
                 SystemService.StateTimeout
             );
             await WaitForStatusAsync(account, elm, data);
+
+            // kickstart -k stops the server with SIGTERM, as launchctl kill does: the moved file ends with its stop.
+            Assert.Contains("server.stopped: ", await SystemService.SudoOkAsync("cat", logFile + ".0"), StringComparison.Ordinal);
             RunReport.Note(
                 $"elm-server under launchd: after newsyslog, the moved file grew from {moved} bytes and the new one stayed at {fresh} bytes until kickstart -k."
             );

@@ -48,8 +48,9 @@ public sealed partial class SystemdServiceTests
     ///   activate exits with 0.
     /// - The unit's TimeoutStopUSec is 1min (the sample's TimeoutStopSec=60), longer than the stop's upper bound of 30 seconds,
     ///   up to 1 second, and the time to close the records (design §13.1).
-    /// - systemctl show gives each hardening directive of the sample the value the sample writes, the data folder of this run
-    ///   as the only path that ReadWritePaths opens (design §13.1, V1d30a).
+    /// - systemctl show gives each hardening directive of the sample the value the sample writes, in the form it prints
+    ///   (the address families sorted, the error number EPERM as 1), with the data folder of this run as the only path that
+    ///   ReadWritePaths opens; SystemCallFilter names read and write and not reboot (design §13.1, V1d30a).
     /// - After the kill a new main process answers, at least RestartSec (5 seconds) after the kill.
     /// - After the stop the unit is inactive with ExecMainCode 1 (exited), ExecMainStatus 0, and Result success; the newest
     ///   usage log ends with server.stopped and its signature, and the newest borrow record holds server.stopped; the journal holds the server.started and server.stopped lines of the operational log.
@@ -226,9 +227,9 @@ public sealed partial class SystemdServiceTests
     /// - As for <see cref="Systemd_ThePageSteps_RunRestartAndStopTheServer"/>, but without the vendor's elm-service: the
     ///   server license is issued by elm with 15-second leases, bound to the key of the first start, and installed owned by
     ///   the user with mode 0600, as the page says for a license file the vendor issues by hand. A license that elm-service
-    ///   issues has leases of at least 2 minutes (the policy's leaseDuration, design §14.5), and a start without records
-    ///   refuses new leases for a lease's length (design §13.4), longer than the run's real-clock budget of 2 minutes
-    ///   (design §20.7).
+    ///   issues has leases of at least 2 minutes (the policy's leaseDuration, design §14.5), and every start refuses new
+    ///   leases for at least the server license's lease (design §13.4 step 3), longer than the run's real-clock budget of 2
+    ///   minutes (design §20.7).
     /// - The settings keep the sample's service.url: the server checks at its start that the license path can be written,
     ///   and, with no activation kept, never contacts the service.
     ///
@@ -405,6 +406,8 @@ public sealed partial class SystemdServiceTests
     }
 
     // The values systemd uses for the hardening directives of the sample (design §13.1, V1d30a), read with systemctl show.
+    // systemctl show prints them in its own form: systemd 259 on the runner (run 46159240509 of PR #546) printed the
+    // address families sorted (AF_INET AF_INET6 AF_UNIX) and the error number as its value (1 for EPERM).
     private static async Task AssertHardenedAsync(string unit, string data)
     {
         (string Property, string Value)[] expected =
@@ -416,7 +419,7 @@ public sealed partial class SystemdServiceTests
             ("PrivateTmp", "yes"),
             ("PrivateDevices", "yes"),
             ("CapabilityBoundingSet", string.Empty),
-            ("RestrictAddressFamilies", "AF_UNIX AF_INET AF_INET6"),
+            ("RestrictAddressFamilies", "AF_INET AF_INET6 AF_UNIX"),
             ("ProtectKernelTunables", "yes"),
             ("ProtectKernelModules", "yes"),
             ("ProtectKernelLogs", "yes"),
@@ -429,7 +432,7 @@ public sealed partial class SystemdServiceTests
             ("LockPersonality", "yes"),
             ("MemoryDenyWriteExecute", "yes"),
             ("SystemCallArchitectures", "native"),
-            ("SystemCallErrorNumber", "EPERM"),
+            ("SystemCallErrorNumber", "1"),
         ];
         List<string> read = [];
         foreach ((string property, string value) in expected)
