@@ -42,4 +42,3 @@ N/A
 - [ ] Corrections from the owner written into the file they belong to (`.cursor/rules/record-corrections.mdc`) — or N/A
 - [ ] `docs/roadmap.md`: this row is `done` with its Issue, and **今** points at the next row — or N/A (`.cursor/rules/workflow.mdc`)
 - [ ] Every Done when of the Issue it closes is met in this PR, or moved to a named row first (`github-closing`)
-- [ ] A required check renamed, removed, or with a changed matrix (names before and after), a `paths` filter or an `if` added to a required job or its workflow, or a new job of a required name is stated at the top of the body — or N/A (`pull-requests`)
