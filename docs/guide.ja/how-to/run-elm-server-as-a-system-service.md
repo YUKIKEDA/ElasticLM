@@ -6,7 +6,7 @@ sidebar_position: 23
 
 このガイドは、`elm-server` を常時動かす顧客の管理者向けだ。OS のサービスとして動かし、マシンの起動と一緒に起動し、失敗したときは起動し直すようにする。対象は、systemd の Linux、launchd の macOS、Windows だ。[ライセンスサーバーを動かして .NET のアプリでフローティングライセンスのリースを受ける](../tutorials/use-a-floating-license.md)のようにサーバーを準備する方法と、[elm-service でサーバーライセンスをアクティベーションする](activate-a-server-license-with-elm-service.md)のようにサーバーがライセンスを受け取る方法を、先に知っておくこと。
 
-<!-- steps:e2e tests=SystemdServiceTests.Systemd_ThePageSteps_RunRestartAndStopTheServer,LaunchdServiceTests.Launchd_ThePageSteps_RunRestartAndStopTheServer,WindowsServiceTests.NewService_ThePageSteps_StartActivateAndStopTheServer -->
+<!-- steps:e2e tests=SystemdServiceTests.Systemd_ThePageSteps_RunRestartAndStopTheServer,SystemdServiceTests.Systemd_HardenedUnit_LendsAndTakesBackALease,LaunchdServiceTests.Launchd_ThePageSteps_RunRestartAndStopTheServer,WindowsServiceTests.NewService_ThePageSteps_StartActivateAndStopTheServer -->
 
 ## 始める前に
 
@@ -124,6 +124,26 @@ WantedBy=multi-user.target
 - `Type=exec`: `elm-server` が動き出した時点で、systemd はサービスが起動したとみなす。
 - `Restart=on-failure` と `RestartSec=5`: サーバーが 0 以外の終了コードで終わるか、`SIGKILL` などのシグナルで止められると、systemd は 5 秒後にもう一度起動する。`systemctl stop` による停止（`SIGTERM` を送る）は失敗に当たらない。
 - `TimeoutStopSec=60`: systemd は、サーバーが止まるのを 60 秒待ち、そのあとで強制終了する（[サーバーを止めて記録を確かめる](#サーバーを止めて記録を確かめる)）。この設定がないと、systemd は既定の時間だけ待つ。その時間はマシンの systemd の設定で決まる（Ubuntu 26.04 では 90 秒）。
+
+`TimeoutStopSec` より後の行は、サーバーの欠陥を突くなどして、サーバーのプロセスの中でコードを動かした者ができることを狭める（各行の説明は [systemd.exec(5)](https://www.freedesktop.org/software/systemd/man/latest/systemd.exec.html) にある）。効くのは、systemd がこのユニットから起動したプロセスだけだ。`sudo -u elm-server` で起動したものなど、同じユーザーのほかのプロセスには効かない。
+
+- `NoNewPrivileges=yes`、空の `CapabilityBoundingSet=`、`RestrictSUIDSGID=yes`: プロセスは Linux のケーパビリティを 1 つも持たず、set-user-ID のプログラムを実行しても特権を得られない。
+- `ProtectSystem=strict` と `ReadWritePaths=/var/lib/elm-server`: プロセスが書き込めるのはデータフォルダーだけになる。ライセンスや利用ログを外に移さないかぎり（下で説明する）、サーバーが書くものはすべてここにある。ほかのファイルは、プロセスからは読み取り専用になる。`ProtectHome=yes`、`PrivateTmp=yes`、`PrivateDevices=yes`: ホームフォルダーは見えず、`/tmp` は自分専用のものになり、ハードウェアのデバイスも見えない。
+- `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6`: 開けるソケットの種類は、サーバーが使うもの、つまりデータフォルダーにあるローカルの管理用のソケットと、IPv4 と IPv6 の TCP だけになる。
+- `ProtectKernelTunables`、`ProtectKernelModules`、`ProtectKernelLogs`、`ProtectControlGroups`、`ProtectClock`、`ProtectHostname`、`RestrictNamespaces`、`RestrictRealtime`、`LockPersonality`、`MemoryDenyWriteExecute`: カーネルの設定を変えること、カーネルモジュールを読み込むこと、カーネルのログを読むこと、コントロールグループを変えること、時計やホスト名を設定すること、名前空間を作ること、リアルタイムのスケジューリングを使うこと、実行ドメインを変えること、書き込みと実行の両方ができるメモリを作ることができなくなる。
+- `SystemCallArchitectures=native`、`SystemCallFilter=@system-service`、`SystemCallErrorNumber=EPERM`: systemd がサービス向けに挙げる組（`systemd-analyze syscall-filter @system-service` で表示できる）にないシステムコールは、エラー `EPERM` で失敗する。
+
+これらの行で止められないこともある。プロセスはデータフォルダーを読み書きできるので、その中のコードは、上の規則のとおりインストール鍵を読み、リースに署名でき、ローカルの管理用のソケットも使える。`/etc` の中のファイルなど、どのユーザーでも読めるファイルは読めるし、ネットワークのどのアドレスにも接続できる。macOS と Windows のサービスには、このような制限はない。
+
+このユニットは、Ubuntu 26.04 の systemd 259 で試した。下の手順でユニットを置いたあと、`sudo systemd-analyze security elm-server` を実行すると、設定ごとの一覧が表示され、最後の行にユニットの露出の度合いが出る。この環境では `Overall exposure level for elm-server.service: 1.7 OK` だった。これらの行のないユニットでは 9.2（UNSAFE）だった。
+
+ターミナルからは起動するのに、ユニットでは起動しないときは、`sudo journalctl -u elm-server` で理由を探す。次の設定をするときは、ユニットで許すものを変える。
+
+- **サーバーが書く、データフォルダーの外のファイル。** サーバーライセンス（`license`）や利用ログ（`log.usage`。[elm-server の設定](../reference/server-configuration.md)）をデータフォルダーの外に置くなら、それぞれのフォルダーを、データフォルダーと同じように `elm-server` を持ち主にして作り、`ReadWritePaths=` に空白で区切って足す。`ReadWritePaths=` はそのフォルダーの書き込みの保護を外すだけで、持ち主とモードが許さない場所に書けるようにはしない。足さないと、サーバーは起動で止まる。利用ログなら `error: The usage log '…' cannot be written: …`、`service.url` があるときのライセンスなら `error: service.url is set, and the server license path '…' cannot be written: …` の行が出る。`service.url` がなければ、サーバーはライセンスを読むだけなので、そのフォルダーは足さなくてよい。
+- **サーバーが読むファイル。** プロセスからは `/home`、`/root`、`/run/user` の下のファイルが見えず、`/tmp` も自分専用のものになる。設定ファイル、ルート鍵、TLS の証明書と鍵のファイルは、`/etc/elm-server` のような別のフォルダーに置く。
+- **1024 より小さいポート。** root でないユーザーは、そのようなポートで待ち受けられない。その権利をプロセスに渡す `AmbientCapabilities=CAP_NET_BIND_SERVICE` を足し、`CapabilityBoundingSet=` の行を、その権利を残す `CapabilityBoundingSet=CAP_NET_BIND_SERVICE` に変える。空の行のままだと、systemd はその権利を落とす。そのうえで `listen` にポートを設定し、ファイアウォールでそのポートを通す。
+
+ユニットを変えたら、下のとおりに置き直し、`sudo systemctl daemon-reload` と `sudo systemctl restart elm-server` を実行する。
 
 ユニットを置き、サーバーを起動する。
 
@@ -309,6 +329,36 @@ sudo tail -n 2 /var/lib/elm-server/usage-<UTC time>.jsonl
 
 macOS では、フォルダーは引用符で囲んだ `"/Library/Application Support/elm-server"` になる。Windows では、`Get-ChildItem C:\ProgramData\elm-server\usage-*.jsonl | Sort-Object Name | Select-Object -Last 1 | Get-Content -Tail 2` で表示できる。ログ全体は、[利用ログを検証する](verify-the-usage-log.md)の手順で確かめる。そのページの `elm` のコマンドは、上のパスで、サービスのアカウント（Windows では「管理者として実行」で開いた PowerShell）で実行する。サーバーが止まっているあいだは、新しいほうのファイルを削除したり、最新のファイルを署名の行の直後で切り詰めたりしても跡が残らないので、ログのコピーを取っておくなら、最新のファイルもコピーする（[書き終えたファイルのコピーを取っておく](verify-the-usage-log.md#書き終えたファイルのコピーを取っておく)）。
 
+## 運用ログを回す
+
+サーバーは、動いているあいだずっと運用ログを書く。Linux と macOS では、`Information` 以上の段で、リクエストごとの行も書く（[ログ](../reference/logs.md)）。サーバーは運用ログを標準出力に書き、それをサービスマネージャーが受け取る。macOS では、launchd がサーバーを起動するときにログのファイルを開き、次の起動まで、だれもそのファイルを開き直さない。ログが際限なく大きくならないようにする方法は、サービスマネージャーごとに違う。
+
+**Linux。** ジャーナルは journald が持ち、回す。ユニットに足すものはない。ジャーナルが使う容量と、項目を残す期間は、`/etc/systemd/journald.conf` で設定する（[journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)）。既定では、ジャーナルが使うのはファイルシステムの 10% までで、4 GB を超えない（`SystemMaxUse=`）。それに収めるため、古い閉じたファイルから消す。項目を残す期間に決まりはない（`MaxRetentionSec=0`）。journald は、1 つのサービスが一定の時間に書ける行の数も制限する。既定では 30 秒に 10,000 行（`RateLimitBurst=` と `RateLimitIntervalSec=`）で、ジャーナルに使える空き容量に応じて大きくなる係数を掛ける（その表は journald.conf(5) にある）。上限を超えた行は、30 秒が過ぎるまで捨てられ、捨てた行の数を書いた行が残る。ディストリビューションが既定を変えていることもある。`systemd-analyze cat-config systemd/journald.conf` で今効いている設定を、`journalctl --disk-usage` で今ジャーナルが使っている容量を見られる。設定を変えたら、`sudo systemctl restart systemd-journald` を実行する。
+
+**macOS。** ログのファイルは `newsyslog` に回させる。ダウンロードしたファイルのあるフォルダーで、`elm-server.conf` を作る。
+
+<!-- sample: samples/ElmServerService/macos/elm-server.conf -->
+```text
+# logfilename                            [owner:group]            mode count size  when  flags
+/Library/Logs/elm-server/elm-server.log  _elm-server:_elm-server  640  7     10240 *     N
+```
+
+ファイルが 10,240 KB を超えると、`newsyslog` はそれを `elm-server.log.0` に名前を変え（それより古いものは `.1` から `.6` までずれ、いちばん古いものは消える）、アカウントを持ち主にしたモード 640 の新しい `elm-server.log` を作る。新しいファイルには、いつ回したかを書いた 1 行が入る。`N` は、知らせるプロセスがないことを表す。`J` や `Z` の印がないので、古いファイルは圧縮しない（各欄の説明は `man newsyslog.conf` にある）。plist と同じように、root だけが書き込める場所に置く。
+
+```shell
+sudo install -m 0644 elm-server.conf /etc/newsyslog.d/
+```
+
+回したあとも、サーバーは開いているファイル、つまり `elm-server.log.0` に書き続ける。新しい `elm-server.log` にあるのは、`newsyslog` のその 1 行だけだ。サーバーを起動し直すまで新しいファイルは大きくならないので、`newsyslog` は次に回さず、`elm-server.log.0` は際限なく大きくなる。新しいファイルに書かせるには、サーバーを起動し直す。
+
+```shell
+sudo launchctl kickstart -k system/elm-server
+```
+
+`-k` は、停止と同じく `SIGTERM` で動いているサーバーを止め、launchd がすぐにもう一度起動する。起動のあとは、ほかの再起動と同じく、サーバーは動いているアプリのリースを再登録してから新しいリースを渡す（[フローティングライセンス](../explanation/floating-licenses.md)）。ログのファイルを動かしたり消したりするときは、必ずアカウントを持ち主にした新しいファイルをその場所に作る。root だけが書き込めるフォルダーでは launchd がファイルを作れず、サーバーが起動しない。そのとき `sudo launchctl print system/elm-server` には `last exit code = 78: EX_CONFIG` が出る。
+
+**Windows。** Application のイベントログの最大の大きさと、いっぱいになったときの扱いは、イベントログの設定で決まり、`wevtutil gl Application` が `maxSize`（バイト。ある Windows 11 のマシンでは 20,971,520）と `retention`（`false` なら新しいイベントがいちばん古いイベントを上書きし、`true` なら古いイベントを残して新しいイベントを捨てる。[wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)）として表示し、管理者は `wevtutil sl Application /ms:<bytes>` で大きさを変えられる。
+
 ## サーバーが止まり続けるとき
 
 ライセンスの期限が切れた、設定が間違っているなど、サーバーが起動できないときは、`error:` で始まる 1 行を書いて、終了コード 1 か 2 で終わる。Linux と macOS では、サービスマネージャーはこれを失敗とみなしてサーバーをもう一度起動し、サーバーはまた止まる。systemd は 5 秒ごと、launchd は 10 秒ごとに繰り返す。Windows では、サーバーが待ち受けを始める前に止まる起動では、`Start-Service` がエラーを報告する。そのあとで止まる起動（サーバーがアドレスで待ち受けられないときや、TLS 証明書の中間 CA の確認に失敗したとき）では、サービスはいったん実行中になってから、停止を報告せずに終わる。`sc.exe failure` は、これを失敗とみなす。`error:` の行は、ジャーナル（`sudo journalctl -u elm-server`）、`/Library/Logs/elm-server/elm-server.log`、Application のイベントログのイベント ID 50 にある。サービスを止めて原因を直し、もう一度起動する。ライセンスの期限が切れたときは、[サーバーライセンスを更新する](renew-a-server-license.md)を、ベンダーのサービスから更新するライセンスなら[elm-service でサーバーライセンスをアクティベーションする](activate-a-server-license-with-elm-service.md)を参照する。
@@ -317,6 +367,6 @@ macOS では、フォルダーは引用符で囲んだ `"/Library/Application Su
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| `sudo systemctl disable --now elm-server` のあと、`sudo rm /etc/systemd/system/elm-server.service` と `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` のあと、`sudo rm /Library/LaunchDaemons/elm-server.plist` | `Stop-Service elm-server` のあと、`sc.exe delete elm-server` |
+| `sudo systemctl disable --now elm-server` のあと、`sudo rm /etc/systemd/system/elm-server.service` と `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` のあと、`sudo rm /Library/LaunchDaemons/elm-server.plist /etc/newsyslog.d/elm-server.conf` | `Stop-Service elm-server` のあと、`sc.exe delete elm-server` |
 
 データフォルダーには、サーバーのインストール鍵とライセンスが残っている。アクティベーションが要らなくなったときだけ削除する。サーバーを `elm-service` でアクティベーションしたなら、先に、サービスのアカウント（Windows では「管理者として実行」で開いた PowerShell）で `elm server deactivate` を実行して、アクティベーションを解除する（[オフラインでアクティベーションし、サーバーを移す](activate-a-server-license-with-elm-service.md#オフラインでアクティベーションしサーバーを移す)）。
