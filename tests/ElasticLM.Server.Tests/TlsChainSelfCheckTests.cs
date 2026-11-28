@@ -420,6 +420,85 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     }
 
     /// <summary>
+    /// A check whose connection fails with an IO error or a socket error after its 10 seconds have run out, before the end of
+    /// the limit reaches the check's own wait, gives the sentence of the time limit, not of a failed handshake (design §13.5,
+    /// V1d3g).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a fake clock behind a
+    ///   clock of the test that keeps the state of the timer the check creates for its limit: the limit's
+    ///   CancellationTokenSource (dotnet/runtime release/10.0 passes the source as the state of its timer).
+    /// - "reset": a TCP listener of the test that accepts the connection and sends nothing. "refused": a port where a listener
+    ///   of the test listened and stopped; Windows retries a refused connection on loopback for about 2 seconds before it
+    ///   fails, so the connect is still waiting when the clock moves.
+    /// - The test's own callback on the limit's token is registered after the check's, so it runs first when the limit ends
+    ///   (CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered; the public
+    ///   documentation does not promise the order). While it runs, the limit reads as ended and the check's wait is not
+    ///   cancelled yet: the check then fails as it does after the limit closes a socket whose connect the system had finished.
+    ///   Should the order change, the check's wait is cancelled first and the test still passes; the mutation check of V1d3g
+    ///   shows that the order holds.
+    ///
+    /// Steps:
+    /// - Start the check; for "reset", read the first byte of its handshake on the accepted connection. Register a callback on
+    ///   the limit's token that, for "reset", resets that connection, and waits until the check has ended. Move the clock 10
+    ///   seconds.
+    ///
+    /// Expected:
+    /// - "… did not get an answer: the TLS handshake with 127.0.0.1:{port} did not finish within 10 seconds." in both cases.
+    /// </remarks>
+    [Theory]
+    [InlineData("reset")]
+    [InlineData("refused")]
+    public async Task Run_ConnectionFailsAfterTheLimit_SaysItDidNotFinish(string how)
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        var time = new LimitKeepingTime(_time);
+        var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        var endPoint = (IPEndPoint)listener.LocalEndpoint;
+        if (how == "refused")
+        {
+            listener.Dispose();
+        }
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, endPoint, time, _stop.Token);
+        TcpClient? accepted = null;
+        try
+        {
+            if (how == "reset")
+            {
+                accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+                Assert.Equal(1, await accepted.GetStream().ReadAsync(new byte[1], _stop.Token));
+            }
+
+            Assert.NotNull(time.Limit);
+            using CancellationTokenRegistration failFirst = time.Limit.Token.Register(() =>
+            {
+                if (accepted is not null)
+                {
+                    accepted.Client.LingerState = new LingerOption(true, 0);
+                    accepted.Client.Close();
+                }
+
+                // The bound of the real clock only ends a run in which the check does not end.
+                _ = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
+            });
+            Assert.False(check.IsCompleted, "The check ended before the clock moved.");
+            _time.Advance(TlsChainSelfCheck.Limit);
+
+            Assert.Equal(NoAnswer(endPoint, "did not finish within 10 seconds"), await check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token));
+        }
+        finally
+        {
+            accepted?.Dispose();
+            listener.Dispose();
+        }
+    }
+
+    /// <summary>
     /// A listener that closes the connection without a TLS answer, and a port where nothing listens, each give the sentence of
     /// a handshake without an answer.
     /// </summary>
@@ -509,5 +588,26 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     {
         _owned.Add(owned);
         return owned;
+    }
+
+    // A clock that reads and counts as the fake clock does, and keeps the CancellationTokenSource whose timer it created last:
+    // the limit of the check.
+    private sealed class LimitKeepingTime(FakeTimeProvider inner) : TimeProvider
+    {
+        public CancellationTokenSource? Limit { get; private set; }
+
+        public override TimeZoneInfo LocalTimeZone => inner.LocalTimeZone;
+
+        public override long TimestampFrequency => inner.TimestampFrequency;
+
+        public override DateTimeOffset GetUtcNow() => inner.GetUtcNow();
+
+        public override long GetTimestamp() => inner.GetTimestamp();
+
+        public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+        {
+            Limit = state as CancellationTokenSource;
+            return inner.CreateTimer(callback, state, dueTime, period);
+        }
     }
 }

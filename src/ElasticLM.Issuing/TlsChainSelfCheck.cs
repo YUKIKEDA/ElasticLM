@@ -117,8 +117,14 @@ public static class TlsChainSelfCheck
                         .ConfigureAwait(false);
                 }
             }
-            catch (OperationCanceledException) when (limit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            catch (Exception e)
+                when (limit.IsCancellationRequested
+                    && !cancellationToken.IsCancellationRequested
+                    && e is OperationCanceledException or IOException or SocketException
+                )
             {
+                // The limit cancels the connect the same way as the caller, so a check that it ended can fail with an IO or
+                // socket error of the closed socket instead of the cancellation; the check still ran out of time (design §13.5).
                 unfinished = $"did not finish within {Limit.TotalSeconds:0} seconds";
             }
             catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
