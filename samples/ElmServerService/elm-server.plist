@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>elm-server</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/elm-server/elm-server</string>
+    <string>--config</string>
+    <string>/usr/local/elm-server/elm-server.json</string>
+  </array>
+  <key>UserName</key>
+  <string>_elm-server</string>
+  <key>GroupName</key>
+  <string>_elm-server</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+  </dict>
+  <key>ExitTimeOut</key>
+  <integer>60</integer>
+  <key>StandardOutPath</key>
+  <string>/Library/Logs/elm-server/elm-server.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Library/Logs/elm-server/elm-server.log</string>
+</dict>
+</plist>

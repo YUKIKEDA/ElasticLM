@@ -1,0 +1,7 @@
+{
+  "product": "acme-cad",
+  "listen": "https://0.0.0.0:7070",
+  "license": "/Library/Application Support/elm-server/server.elmlic",
+  "dataDirectory": "/Library/Application Support/elm-server",
+  "trust": { "rootKeys": ["/usr/local/elm-server/root.pub.pem"] }
+}

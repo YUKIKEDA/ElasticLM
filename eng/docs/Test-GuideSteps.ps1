@@ -394,7 +394,7 @@ function Get-Page([string]$path) {
 
 # The kind and the key=value attributes of a marker; $at names its page and line.
 function Read-Marker([string]$at, [string]$text) {
-    $marker = [regex]::Match($text, '^<!--\s*steps:(?<kind>[a-z]+)(?<rest>.*?)\s*-->$')
+    $marker = [regex]::Match($text, '^<!--\s*steps:(?<kind>[a-z][a-z0-9]*)(?<rest>.*?)\s*-->$')
     $kind = $marker.Groups['kind'].Value
     if (-not $marker.Success -or -not $markerKeys.ContainsKey($kind)) {
         throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, steps:prebuilt, steps:after, or steps:e2e."
