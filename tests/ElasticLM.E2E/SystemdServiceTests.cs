@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -43,7 +42,8 @@ public sealed partial class SystemdServiceTests
     /// Expected:
     /// - The first start exits with 1, and its line starts with the missing server license and names an installation key;
     ///   activate exits with 0.
-    /// - The unit's TimeoutStopUSec is longer than 30 seconds (the host's ShutdownTimeout, design §13.1).
+    /// - The unit's TimeoutStopUSec is 1min (the sample's TimeoutStopSec=60), longer than the stop's upper bound of 30 seconds,
+    ///   up to 1 second, and the time to close the records (design §13.1).
     /// - After the kill a new main process answers, at least RestartSec (5 seconds) after the kill.
     /// - After the stop the unit is inactive with ExecMainCode 1 (exited), ExecMainStatus 0, and Result success; the newest
     ///   usage log ends with server.stopped and its signature, and the newest borrow record holds server.stopped; the journal holds the server.started and server.stopped lines of the operational log.
@@ -152,7 +152,10 @@ public sealed partial class SystemdServiceTests
             string timeout = await ShowAsync(unit, "TimeoutStopUSec");
             string limits = $"{await ShowAsync(unit, "StartLimitBurst")} starts in {await ShowAsync(unit, "StartLimitIntervalUSec")}";
             RunReport.Note($"elm-server under systemd: TimeoutStopUSec={timeout}, start limit {limits}.");
-            Assert.True(ParseSpan(timeout) > TimeSpan.FromSeconds(30), $"TimeoutStopUSec is {timeout}, not longer than 30 seconds.");
+
+            // The unit writes TimeoutStopSec=60 rather than leaning on DefaultTimeoutStopSec, which the machine's settings can
+            // change (design §13.1); systemctl show prints it as 1min.
+            Assert.Equal("1min", timeout);
 
             await WaitForStatusAsync(user, elm, data, unit);
             string firstPid = await ShowAsync(unit, "MainPID");
@@ -248,37 +251,6 @@ public sealed partial class SystemdServiceTests
         Assert.True(answered, $"The unit failed before elm server status answered: {error}");
     }
 
-    // A time span as systemctl show prints it, such as "1min 30s", "90s", or "500ms".
-    private static TimeSpan ParseSpan(string text)
-    {
-        if (text == "infinity")
-        {
-            return TimeSpan.MaxValue;
-        }
-
-        TimeSpan total = TimeSpan.Zero;
-        MatchCollection parts = SpanPart().Matches(text);
-        Assert.True(parts.Count > 0, $"'{text}' is not a time span of systemd.");
-        foreach (Match part in parts)
-        {
-            double value = double.Parse(part.Groups["value"].Value, CultureInfo.InvariantCulture);
-            total += part.Groups["unit"].Value switch
-            {
-                "h" => TimeSpan.FromHours(value),
-                "min" => TimeSpan.FromMinutes(value),
-                "s" => TimeSpan.FromSeconds(value),
-                "ms" => TimeSpan.FromMilliseconds(value),
-                "us" => TimeSpan.FromMicroseconds(value),
-                _ => throw new InvalidOperationException($"'{text}' has a unit this test does not read."),
-            };
-        }
-
-        return total;
-    }
-
     [GeneratedRegex("installation key ([A-Za-z0-9_-]{43})")]
     private static partial Regex InstallationKey();
-
-    [GeneratedRegex(@"(?<value>[0-9]+(?:\.[0-9]+)?)(?<unit>h|min|ms|us|s)\b")]
-    private static partial Regex SpanPart();
 }

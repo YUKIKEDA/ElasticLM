@@ -93,6 +93,7 @@ Group=elm-server
 ExecStart=/opt/elm-server/elm-server --config /etc/elm-server/elm-server.json
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
@@ -100,7 +101,7 @@ WantedBy=multi-user.target
 
 - `Type=exec`: `elm-server` が動き出した時点で、systemd はサービスが起動したとみなす。
 - `Restart=on-failure` と `RestartSec=5`: サーバーが 0 以外の終了コードで終わるか、`SIGKILL` などのシグナルで止められると、systemd は 5 秒後にもう一度起動する。`systemctl stop` による停止（`SIGTERM` を送る）は失敗に当たらない。
-- `TimeoutStopSec` は書かない。systemd は、サーバーが止まるのを既定の時間だけ待ち、そのあとで強制終了する。既定は 90 秒で、マシンの systemd の設定で変わることがある（[サーバーを止めて記録を確かめる](#サーバーを止めて記録を確かめる)）。
+- `TimeoutStopSec=60`: systemd は、サーバーが止まるのを 60 秒待ち、そのあとで強制終了する（[サーバーを止めて記録を確かめる](#サーバーを止めて記録を確かめる)）。この設定がないと、systemd は既定の時間だけ待つ。その時間はマシンの systemd の設定で決まる（Ubuntu 26.04 では 90 秒）。
 
 ユニットを置き、サーバーを起動する。
 
@@ -275,7 +276,7 @@ Start-Service elm-server
 | 止める | `sudo systemctl stop elm-server` | `sudo launchctl kill SIGTERM system/elm-server` | `Stop-Service elm-server` |
 | 起動し直す | `sudo systemctl start elm-server` | `sudo launchctl kickstart system/elm-server` | `Start-Service elm-server` |
 
-サーバーは待ち受けをやめ、利用ログと借用の記録に `server.stopped` を書いて署名し、終了コード 0 で終わる。処理中のリクエストがなければ、止まるまでの時間は記録を閉じる時間だけで、1 秒よりずっと短い。まだ答えているリクエストがあれば、サーバーはそれが終わるのを最長 30 秒待ち、まだ開いている接続を切って、さらに最長 1 秒待ってから記録を閉じる。合わせて、最長でおよそ 31 秒と、記録を閉じる時間になる。それより長くかかるサーバーは、サービスマネージャーが終わらせる。systemd は停止のタイムアウト（既定は 90 秒）のあとで、launchd は plist の `ExitTimeOut`（60 秒）のあとで終わらせる。Windows では、30 秒を超える停止は 30 秒の時点で終わったと報告され、そのあとはいつプロセスが終わってもおかしくない。Windows のシャットダウンでは、`HKLM\SYSTEM\CurrentControlSet\Control` のレジストリ値 `WaitToKillServiceTimeout` の時間が過ぎると、サービスが終わらされることがある。その値は、`Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` でミリ秒の単位で表示できる（[elm-server の設定](../reference/server-configuration.md#windows-サービス)）。こうして終わらされたサーバーは、`server.stopped` を書いていないことがある。そのときは次の起動が、クラッシュのあとと同じく、前の実行のリースを待つ（[フローティングライセンス](../explanation/floating-licenses.md)）。直すものはない。
+サーバーは待ち受けをやめ、利用ログと借用の記録に `server.stopped` を書いて署名し、終了コード 0 で終わる。処理中のリクエストがなければ、止まるまでの時間は記録を閉じる時間だけで、1 秒よりずっと短い。まだ答えているリクエストがあれば、サーバーはそれが終わるのを最長 30 秒待ち、まだ開いている接続を切って、さらに最長 1 秒待ってから記録を閉じる。合わせて、最長でおよそ 31 秒と、記録を閉じる時間になる。それより長くかかるサーバーは、サービスマネージャーが終わらせる。systemd はユニットの `TimeoutStopSec`（60 秒）のあとで、launchd は plist の `ExitTimeOut`（60 秒）のあとで終わらせる。Windows では、30 秒を超える停止は 30 秒の時点で終わったと報告され、そのあとはいつプロセスが終わってもおかしくない。Windows のシャットダウンでは、`HKLM\SYSTEM\CurrentControlSet\Control` のレジストリ値 `WaitToKillServiceTimeout` の時間が過ぎると、サービスが終わらされることがある。その値は、`Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` でミリ秒の単位で表示できる（[elm-server の設定](../reference/server-configuration.md#windows-サービス)）。こうして終わらされたサーバーは、`server.stopped` を書いていないことがある。そのときは次の起動が、クラッシュのあとと同じく、前の実行のリースを待つ（[フローティングライセンス](../explanation/floating-licenses.md)）。直すものはない。
 
 記録を閉じたことを確かめるには、データフォルダーの最新の利用ログのファイル（一覧で最後の `usage-<UTC time>.jsonl` の名前）の、最後の 2 行を読む。1 行目は `server.stopped` の行、最後の行はその署名である `auth` の行になる。そうでなければ、上のとおり、サーバーは記録を閉じる前に終わらされている。
 

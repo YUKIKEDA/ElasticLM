@@ -93,6 +93,7 @@ Group=elm-server
 ExecStart=/opt/elm-server/elm-server --config /etc/elm-server/elm-server.json
 Restart=on-failure
 RestartSec=5
+TimeoutStopSec=60
 
 [Install]
 WantedBy=multi-user.target
@@ -100,7 +101,7 @@ WantedBy=multi-user.target
 
 - `Type=exec`: systemd takes the service as started once `elm-server` runs.
 - `Restart=on-failure` and `RestartSec=5`: when the server ends with an exit code other than 0, or it is killed by a signal such as `SIGKILL`, systemd starts it again 5 seconds later. A stop with `systemctl stop`, which sends `SIGTERM`, is not a failure.
-- No `TimeoutStopSec`: systemd waits for the server to stop for its default time, 90 seconds unless the machine's systemd settings change it, and then kills it ([Stop the server and check its records](#stop-the-server-and-check-its-records)).
+- `TimeoutStopSec=60`: systemd waits 60 seconds for the server to stop, and then kills it ([Stop the server and check its records](#stop-the-server-and-check-its-records)). Without the setting, systemd waits its default time, which the machine's systemd settings decide (90 seconds on Ubuntu 26.04).
 
 Install it, and start the server:
 
@@ -275,7 +276,7 @@ Stop and start the server with the service manager:
 | Stop | `sudo systemctl stop elm-server` | `sudo launchctl kill SIGTERM system/elm-server` | `Stop-Service elm-server` |
 | Start again | `sudo systemctl start elm-server` | `sudo launchctl kickstart system/elm-server` | `Start-Service elm-server` |
 
-The server stops listening, writes `server.stopped` to the usage log and the borrow record, signs them, and ends with exit code 0. With no request in progress, the stop takes as long as closing the records, well under a second. When requests are still being answered, the server waits until they end, at most 30 seconds, then cuts those still open and waits up to 1 second more before it closes the records: at most about 31 seconds and the time to close them. The service manager ends a server that takes longer: systemd after its stop timeout (90 seconds by default), and launchd after the plist's `ExitTimeOut` (60 seconds). On Windows, a stop that takes more than 30 seconds is reported as finished at 30 seconds, and the process may end at any point after that; when Windows shuts down, it may end the service after the time in the registry value `WaitToKillServiceTimeout` under `HKLM\SYSTEM\CurrentControlSet\Control`, which `Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` shows in milliseconds ([elm-server configuration](../reference/server-configuration.md#windows-service)). A server ended in any of these ways may not have written `server.stopped`; then its next start waits for the leases of the run before, as after a crash ([Floating licenses](../explanation/floating-licenses.md)); nothing needs repair.
+The server stops listening, writes `server.stopped` to the usage log and the borrow record, signs them, and ends with exit code 0. With no request in progress, the stop takes as long as closing the records, well under a second. When requests are still being answered, the server waits until they end, at most 30 seconds, then cuts those still open and waits up to 1 second more before it closes the records: at most about 31 seconds and the time to close them. The service manager ends a server that takes longer: systemd after the unit's `TimeoutStopSec` (60 seconds), and launchd after the plist's `ExitTimeOut` (60 seconds). On Windows, a stop that takes more than 30 seconds is reported as finished at 30 seconds, and the process may end at any point after that; when Windows shuts down, it may end the service after the time in the registry value `WaitToKillServiceTimeout` under `HKLM\SYSTEM\CurrentControlSet\Control`, which `Get-ItemProperty HKLM:\SYSTEM\CurrentControlSet\Control -Name WaitToKillServiceTimeout` shows in milliseconds ([elm-server configuration](../reference/server-configuration.md#windows-service)). A server ended in any of these ways may not have written `server.stopped`; then its next start waits for the leases of the run before, as after a crash ([Floating licenses](../explanation/floating-licenses.md)); nothing needs repair.
 
 To check that the records were closed, read the last two lines of the newest usage log file in the data folder, the last `usage-<UTC time>.jsonl` name in the list: the first is a `server.stopped` line, and the last is its signature, an `auth` line. If they are something else, the server was ended before it closed its records, as above.
 
