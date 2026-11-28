@@ -335,27 +335,36 @@ The server writes its operational log as long as it runs, from the level `Inform
 
 **Linux.** journald keeps the journal and rotates it, and the unit needs nothing for it. How much space the journal takes and how long it keeps entries are set in `/etc/systemd/journald.conf` ([journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)). By default it takes at most 10% of its file system and no more than 4 GB (`SystemMaxUse=`), deleting the oldest archived files to stay within that, and keeps entries for no fixed time (`MaxRetentionSec=0`). journald also limits how many lines one service may write in a time: by default 10,000 lines in 30 seconds (`RateLimitBurst=` and `RateLimitIntervalSec=`), multiplied by a factor that grows with the disk space free for the journal (journald.conf(5) has a table of it). It drops the lines over the limit until the 30 seconds are over, and writes a line with the number it dropped. A distribution may change these defaults: `systemd-analyze cat-config systemd/journald.conf` shows the settings in force, and `journalctl --disk-usage` the space the journal takes now. After you change a setting, run `sudo systemctl restart systemd-journald`.
 
-**macOS.** Let `newsyslog` rotate the log file. Create `elm-server.conf` in the folder with the downloaded files:
+**macOS.** Rotate the log file with a second launchd job that copies it and then cuts it to nothing, while the server goes on running. A rotation that moves the file away does not work here: the server keeps writing to the file it has open, wherever it is moved, until it starts again, and a start makes it wait to take back leases before it lends new ones ([Floating licenses](../explanation/floating-licenses.md)). Cutting the file works because launchd opens the log file for appending: after the cut, the server's next line goes to the start of the file. In the folder with the downloaded files, create the job's plist, `elm-server-log.plist`:
 
-<!-- sample: samples/ElmServerService/macos/elm-server.conf -->
-```text
-# logfilename                            [owner:group]            mode count size  when  flags
-/Library/Logs/elm-server/elm-server.log  _elm-server:_elm-server  640  7     10240 *     N
+<!-- sample: samples/ElmServerService/macos/elm-server-log.plist -->
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>elm-server-log</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>log=/Library/Logs/elm-server/elm-server.log; [ "$(stat -f %z "$log")" -ge 10485760 ] || exit 0; for i in 5 4 3 2 1 0; do [ ! -f "$log.$i" ] || mv -f "$log.$i" "$log.$((i + 1))"; done; cp -p "$log" "$log.0" &amp;&amp; : &gt; "$log"</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>600</integer>
+</dict>
+</plist>
 ```
 
-When the file is larger than 10,240 KB, `newsyslog` renames it `elm-server.log.0` (the older ones move on to `.1` and up to `.6`, and the oldest is deleted), and creates a new `elm-server.log` owned by the account with mode 640, with one line in it that says when the file was turned over. `N` tells it that no process is to be signaled, and with no `J` or `Z` flag it does not compress the old files (`man newsyslog.conf` describes each field). Install it where only root may write, as for the plist:
+Every 600 seconds, launchd runs the command as root: when the log file holds 10,485,760 bytes (10 MiB) or more, it renames the copies `elm-server.log.0` to `.5` one number up, so the oldest, `.6`, is replaced, copies the log file to `elm-server.log.0` with its owner and mode, and cuts the log file to nothing. The log thus takes at most about 80 MiB with its seven copies, plus what the server writes in the 600 seconds before the next check. The lines that the server writes between the copy and the cut are lost (MEASURED-LOSS). Install the plist where only root may write, and load it:
 
 ```shell
-sudo install -m 0644 elm-server.conf /etc/newsyslog.d/
+sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/
+sudo launchctl bootstrap system /Library/LaunchDaemons/elm-server-log.plist
 ```
 
-After a rotation, the server keeps writing to `elm-server.log.0`, the file it has open, and the new `elm-server.log` holds only that line of `newsyslog`. Until the server starts again, the new file does not grow, so `newsyslog` does not rotate again, and `elm-server.log.0` grows without a limit. Start the server again to have it write to the new file:
-
-```shell
-sudo launchctl kickstart -k system/elm-server
-```
-
-`-k` stops the running server with `SIGTERM`, as a stop does, and launchd starts it again at once. After it starts, as after any restart, the server takes back the leases of running apps before it lends new ones ([Floating licenses](../explanation/floating-licenses.md)). Do not move or delete the log file without creating a new one, owned by the account, in its place: launchd cannot create it in a folder that only root may write, and the server then does not start, with `last exit code = 78: EX_CONFIG` in `sudo launchctl print system/elm-server`.
+The job does not run when it is loaded, only every 600 seconds after. To rotate the file now, run `sudo launchctl kickstart system/elm-server-log`. Do not move or delete the log file itself: launchd cannot create it again in a folder that only root may write, and at its next start the server does not start, with `last exit code = 78: EX_CONFIG` in `sudo launchctl print system/elm-server`.
 
 **Windows.** The event log's settings decide the Application log's maximum size and what happens when it is full, which `wevtutil gl Application` shows as `maxSize` in bytes (20,971,520 on a Windows 11 machine) and `retention`, with which `false` lets new events overwrite the oldest ones and `true` keeps the old events and discards the new ones ([wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)), and which an administrator changes with `wevtutil sl Application /ms:<bytes>`.
 
@@ -367,6 +376,6 @@ When the server cannot start, for example because its license expired or a setti
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| `sudo systemctl disable --now elm-server`, then `sudo rm /etc/systemd/system/elm-server.service` and `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server`, then `sudo rm /Library/LaunchDaemons/elm-server.plist /etc/newsyslog.d/elm-server.conf` | `Stop-Service elm-server`, then `sc.exe delete elm-server` |
+| `sudo systemctl disable --now elm-server`, then `sudo rm /etc/systemd/system/elm-server.service` and `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` and `sudo launchctl bootout system/elm-server-log`, then `sudo rm /Library/LaunchDaemons/elm-server.plist /Library/LaunchDaemons/elm-server-log.plist` | `Stop-Service elm-server`, then `sc.exe delete elm-server` |
 
 The data folder keeps the server's installation key and its license; delete it only when you no longer need the activation, and if the server was activated with `elm-service`, free its activation first with `elm server deactivate`, as the service's account (on Windows, in PowerShell opened with "Run as administrator"; [Activate offline, and move a server](activate-a-server-license-with-elm-service.md#activate-offline-and-move-a-server)).

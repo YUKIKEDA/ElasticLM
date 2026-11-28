@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>elm-server-log</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>log=/Library/Logs/elm-server/elm-server.log; [ "$(stat -f %z "$log")" -ge 10485760 ] || exit 0; for i in 5 4 3 2 1 0; do [ ! -f "$log.$i" ] || mv -f "$log.$i" "$log.$((i + 1))"; done; cp -p "$log" "$log.0" &amp;&amp; : &gt; "$log"</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>600</integer>
+</dict>
+</plist>

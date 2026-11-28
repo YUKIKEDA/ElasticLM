@@ -335,27 +335,36 @@ macOS では、フォルダーは引用符で囲んだ `"/Library/Application Su
 
 **Linux。** ジャーナルは journald が持ち、回す。ユニットに足すものはない。ジャーナルが使う容量と、項目を残す期間は、`/etc/systemd/journald.conf` で設定する（[journald.conf(5)](https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html)）。既定では、ジャーナルが使うのはファイルシステムの 10% までで、4 GB を超えない（`SystemMaxUse=`）。それに収めるため、古い閉じたファイルから消す。項目を残す期間に決まりはない（`MaxRetentionSec=0`）。journald は、1 つのサービスが一定の時間に書ける行の数も制限する。既定では 30 秒に 10,000 行（`RateLimitBurst=` と `RateLimitIntervalSec=`）で、ジャーナルに使える空き容量に応じて大きくなる係数を掛ける（その表は journald.conf(5) にある）。上限を超えた行は、30 秒が過ぎるまで捨てられ、捨てた行の数を書いた行が残る。ディストリビューションが既定を変えていることもある。`systemd-analyze cat-config systemd/journald.conf` で今効いている設定を、`journalctl --disk-usage` で今ジャーナルが使っている容量を見られる。設定を変えたら、`sudo systemctl restart systemd-journald` を実行する。
 
-**macOS。** ログのファイルは `newsyslog` に回させる。ダウンロードしたファイルのあるフォルダーで、`elm-server.conf` を作る。
+**macOS。** サーバーを動かしたまま、ログのファイルをコピーしてから空に切り詰める launchd のジョブを、もう 1 つ置いて回す。ファイルを別の場所に動かす回し方は、ここでは使えない。サーバーは、どこに動かされても開いているファイルに書き続け、それは起動し直すまで変わらない。そして起動し直すと、サーバーはリースを再登録してからでないと新しいリースを渡さない（[フローティングライセンス](../explanation/floating-licenses.md)）。切り詰める形が使えるのは、launchd がログのファイルを追記で開くからだ。切り詰めたあと、サーバーの次の行はファイルの先頭に書かれる。ダウンロードしたファイルのあるフォルダーで、ジョブの plist `elm-server-log.plist` を作る。
 
-<!-- sample: samples/ElmServerService/macos/elm-server.conf -->
-```text
-# logfilename                            [owner:group]            mode count size  when  flags
-/Library/Logs/elm-server/elm-server.log  _elm-server:_elm-server  640  7     10240 *     N
+<!-- sample: samples/ElmServerService/macos/elm-server-log.plist -->
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>elm-server-log</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>log=/Library/Logs/elm-server/elm-server.log; [ "$(stat -f %z "$log")" -ge 10485760 ] || exit 0; for i in 5 4 3 2 1 0; do [ ! -f "$log.$i" ] || mv -f "$log.$i" "$log.$((i + 1))"; done; cp -p "$log" "$log.0" &amp;&amp; : &gt; "$log"</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>600</integer>
+</dict>
+</plist>
 ```
 
-ファイルが 10,240 KB を超えると、`newsyslog` はそれを `elm-server.log.0` に名前を変え（それより古いものは `.1` から `.6` までずれ、いちばん古いものは消える）、アカウントを持ち主にしたモード 640 の新しい `elm-server.log` を作る。新しいファイルには、いつ回したかを書いた 1 行が入る。`N` は、知らせるプロセスがないことを表す。`J` や `Z` の印がないので、古いファイルは圧縮しない（各欄の説明は `man newsyslog.conf` にある）。plist と同じように、root だけが書き込める場所に置く。
+launchd は、600 秒ごとにこのコマンドを root で実行する。ログのファイルが 10,485,760 バイト（10 MiB）以上なら、コピーの `elm-server.log.0` から `.5` の番号を 1 つずつ上げ（いちばん古い `.6` は置き換わる）、ログのファイルを持ち主とモードごと `elm-server.log.0` にコピーし、ログのファイルを空に切り詰める。そのため、ログが使うのは、7 つのコピーと合わせておよそ 80 MiB までと、次に確かめるまでの 600 秒にサーバーが書く分になる。コピーしてから切り詰めるまでにサーバーが書いた行は失われる（MEASURED-LOSS）。plist を root だけが書き込める場所に置き、読み込む。
 
 ```shell
-sudo install -m 0644 elm-server.conf /etc/newsyslog.d/
+sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/
+sudo launchctl bootstrap system /Library/LaunchDaemons/elm-server-log.plist
 ```
 
-回したあとも、サーバーは開いているファイル、つまり `elm-server.log.0` に書き続ける。新しい `elm-server.log` にあるのは、`newsyslog` のその 1 行だけだ。サーバーを起動し直すまで新しいファイルは大きくならないので、`newsyslog` は次に回さず、`elm-server.log.0` は際限なく大きくなる。新しいファイルに書かせるには、サーバーを起動し直す。
-
-```shell
-sudo launchctl kickstart -k system/elm-server
-```
-
-`-k` は、停止と同じく `SIGTERM` で動いているサーバーを止め、launchd がすぐにもう一度起動する。起動のあとは、ほかの再起動と同じく、サーバーは動いているアプリのリースを再登録してから新しいリースを渡す（[フローティングライセンス](../explanation/floating-licenses.md)）。ログのファイルを動かしたり消したりするときは、必ずアカウントを持ち主にした新しいファイルをその場所に作る。root だけが書き込めるフォルダーでは launchd がファイルを作れず、サーバーが起動しない。そのとき `sudo launchctl print system/elm-server` には `last exit code = 78: EX_CONFIG` が出る。
+このジョブは、読み込んだときには動かず、そのあと 600 秒ごとに動く。今すぐ回すには、`sudo launchctl kickstart system/elm-server-log` を実行する。ログのファイルそのものは、動かしたり消したりしない。root だけが書き込めるフォルダーでは launchd がファイルを作り直せず、サーバーは次の起動で起動しない。そのとき `sudo launchctl print system/elm-server` には `last exit code = 78: EX_CONFIG` が出る。
 
 **Windows。** Application のイベントログの最大の大きさと、いっぱいになったときの扱いは、イベントログの設定で決まり、`wevtutil gl Application` が `maxSize`（バイト。ある Windows 11 のマシンでは 20,971,520）と `retention`（`false` なら新しいイベントがいちばん古いイベントを上書きし、`true` なら古いイベントを残して新しいイベントを捨てる。[wevtutil](https://learn.microsoft.com/windows-server/administration/windows-commands/wevtutil)）として表示し、管理者は `wevtutil sl Application /ms:<bytes>` で大きさを変えられる。
 
@@ -367,6 +376,6 @@ sudo launchctl kickstart -k system/elm-server
 
 | Linux | macOS | Windows |
 | --- | --- | --- |
-| `sudo systemctl disable --now elm-server` のあと、`sudo rm /etc/systemd/system/elm-server.service` と `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` のあと、`sudo rm /Library/LaunchDaemons/elm-server.plist /etc/newsyslog.d/elm-server.conf` | `Stop-Service elm-server` のあと、`sc.exe delete elm-server` |
+| `sudo systemctl disable --now elm-server` のあと、`sudo rm /etc/systemd/system/elm-server.service` と `sudo systemctl daemon-reload` | `sudo launchctl bootout system/elm-server` と `sudo launchctl bootout system/elm-server-log` のあと、`sudo rm /Library/LaunchDaemons/elm-server.plist /Library/LaunchDaemons/elm-server-log.plist` | `Stop-Service elm-server` のあと、`sc.exe delete elm-server` |
 
 データフォルダーには、サーバーのインストール鍵とライセンスが残っている。アクティベーションが要らなくなったときだけ削除する。サーバーを `elm-service` でアクティベーションしたなら、先に、サービスのアカウント（Windows では「管理者として実行」で開いた PowerShell）で `elm server deactivate` を実行して、アクティベーションを解除する（[オフラインでアクティベーションし、サーバーを移す](activate-a-server-license-with-elm-service.md#オフラインでアクティベーションしサーバーを移す)）。
