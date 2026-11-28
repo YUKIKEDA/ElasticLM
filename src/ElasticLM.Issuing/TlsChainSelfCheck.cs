@@ -45,6 +45,9 @@ public static class TlsChainSelfCheck
     /// <see langword="null"/> when every such intermediate was sent or nothing was checked; otherwise why the server must not go
     /// on: the intermediates that were not sent, or that the handshake did not get as far as the server's certificates.
     /// </returns>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled. When the check ends with
+    /// another exception and the token is cancelled by then, whatever that exception is, it becomes the inner exception of
+    /// this one, and no sentence is returned.</exception>
     public static async Task<string?> RunAsync(
         string certificatePath,
         TlsServerCertificate certificate,
@@ -114,6 +117,13 @@ public static class TlsChainSelfCheck
         catch (OperationCanceledException) when (limit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
         {
             unfinished = $"did not finish within {Limit.TotalSeconds:0} seconds";
+        }
+        catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
+        {
+            // The caller's cancellation can end the check with another error: a cancelled connect closes the socket
+            // (SocketAsyncEventArgs.CancelConnectAsync, dotnet/runtime release/10.0), and when the connect had already
+            // succeeded the next step fails on the closed socket. Such an error says nothing about the server (design §13.5).
+            throw new OperationCanceledException("The check was cancelled.", e, cancellationToken);
         }
         catch (SocketException e)
         {

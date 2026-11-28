@@ -254,6 +254,60 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     }
 
     /// <summary>
+    /// A check whose handshake fails with another error after the caller's token is cancelled, before the cancellation reaches
+    /// the check's own wait, ends with the cancellation, not with the sentence of a failed handshake (design §13.5, V1d3g).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test
+    ///   that accepts the connection and sends nothing.
+    /// - The test's own callback on the token is registered after the check's, so it runs first when the token is cancelled:
+    ///   CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered (dotnet/runtime
+    ///   release/10.0; the public documentation does not promise the order). While it runs, the token reads as cancelled and
+    ///   the check's wait is not cancelled yet. The check then ends with an error of its own during the handshake, as it does
+    ///   after a cancelled connect that closes the socket once the system has finished the connect. That connect path itself
+    ///   is not taken here. Should the order change, the check's wait is cancelled first, the inner exception is missing, and
+    ///   the test fails.
+    ///
+    /// Steps:
+    /// - Start the check with a token of the test; read the first byte of its handshake on the accepted connection. Register a
+    ///   callback on the token that resets that connection and waits until the check has ended; cancel the token.
+    ///
+    /// Expected:
+    /// - The check throws OperationCanceledException, whose inner exception is the IOException or SocketException of the reset
+    ///   connection.
+    /// </remarks>
+    [Fact]
+    public async Task Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
+        TestCertificateChain chain = Own(new TestCertificateChain());
+        TlsServerCertificate certificate = Own(chain.ServerWith(chain.Intermediate));
+        using var listener = new TcpListener(IPAddress.Loopback, 0);
+        listener.Start();
+        using var caller = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+
+        Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, (IPEndPoint)listener.LocalEndpoint, _time, caller.Token);
+        using TcpClient accepted = await listener.AcceptTcpClientAsync(_stop.Token);
+        Assert.Equal(1, await accepted.GetStream().ReadAsync(new byte[1], _stop.Token));
+        using CancellationTokenRegistration failFirst = caller.Token.Register(() =>
+        {
+            accepted.Client.LingerState = new LingerOption(true, 0);
+            accepted.Client.Close();
+            _ = SpinWait.SpinUntil(() => check.IsCompleted, TimeSpan.FromSeconds(30));
+        });
+        await caller.CancelAsync();
+
+        OperationCanceledException cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token)
+        );
+        Assert.True(
+            cancelled.InnerException is IOException or SocketException,
+            $"The check ended with {cancelled.InnerException?.GetType().Name ?? "no inner exception"}, not with the reset connection."
+        );
+    }
+
+    /// <summary>
     /// A certificate without an intermediate in its chain is not checked, and no connection is made: a file with the
     /// certificate alone, with the root after it, and with a CA certificate of another chain after it.
     /// </summary>
