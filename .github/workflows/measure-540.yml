@@ -1,0 +1,228 @@
+# A temporary measurement for V1d30a (Issue #540, questions 30a-1, 30a-2, and 30a-5), removed before the pull request is
+# ready (.cursor/rules/open-ends.mdc): the systemd hardening directives one by one and together, name resolution under
+# RestrictAddressFamilies, and how launchd writes StandardOutPath across a newsyslog rotation.
+name: Measure V1d30a (temporary)
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/measure-540.yml
+      - tests/ElasticLM.E2E/HardeningMeasurementTests.cs
+
+concurrency:
+  group: measure-540-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
+
+jobs:
+  publish:
+    name: Publish linux-x64
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: web/admin/.node-version
+          package-manager-cache: false
+
+      - name: Build the admin UI
+        shell: pwsh
+        working-directory: web/admin
+        run: |
+          corepack pnpm install --frozen-lockfile
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          corepack pnpm run build
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - name: Publish
+        shell: pwsh
+        run: ./eng/release/Publish-Rid.ps1 -Rid linux-x64 -OutDir publish -LogDir publish-logs
+
+      # A tar keeps the executable bits, which the artifact's zip does not.
+      - name: Pack
+        run: tar -cf publish.tar publish
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: linux-publish
+          path: publish.tar
+          retention-days: 1
+          if-no-files-found: error
+
+  systemd:
+    name: systemd (${{ matrix.variant }})
+    needs: publish
+    strategy:
+      fail-fast: false
+      matrix:
+        variant:
+          - baseline
+          - localhost
+          - no-new-privileges
+          - protect-system
+          - protect-home
+          - private-tmp
+          - private-devices
+          - capability-bounding-set
+          - restrict-address-families
+          - protect-kernel-tunables
+          - protect-kernel-modules
+          - protect-kernel-logs
+          - protect-control-groups
+          - protect-clock
+          - protect-hostname
+          - restrict-namespaces
+          - restrict-realtime
+          - restrict-suid-sgid
+          - lock-personality
+          - memory-deny-write-execute
+          - system-call-architectures
+          - system-call-filter
+          - all
+          - all-localhost
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VARIANT: ${{ matrix.variant }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          global-json-file: global.json
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: linux-publish
+
+      - name: Measure
+        shell: bash
+        run: |
+          set +e
+          tar -xf publish.tar
+          export ELM_E2E_BIN="$PWD/publish"
+          export ELM_E2E_NOTES="$RUNNER_TEMP/notes.txt"
+          export ELM_E2E_HARDENING_VARIANT="$VARIANT"
+          export ELM_E2E_HARDENING_OUT="$RUNNER_TEMP"
+          dotnet test --project tests/ElasticLM.E2E/ElasticLM.E2E.csproj -c Release -- --filter-class "*HardeningMeasurementTests"
+          echo "measure: dotnet test exit code $?"
+          cat "$ELM_E2E_NOTES"
+          if [ "$VARIANT" = baseline ] || [ "$VARIANT" = all ]; then
+            echo "measure: systemd-analyze security --offline=yes of the unit"
+            sed 's/^User=.*/User=root/; s/^Group=.*/Group=root/' "$RUNNER_TEMP/unit.service" > "$RUNNER_TEMP/offline.service"
+            systemd-analyze security --offline=yes --no-pager "$RUNNER_TEMP/offline.service"
+            echo "measure: offline exit code $?"
+          fi
+          exit 0
+
+  systemd-facts:
+    name: systemd facts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Read
+        shell: bash
+        run: |
+          set +e
+          echo "facts: uname -r: $(uname -r)"
+          echo "facts: systemd-analyze --version"; systemd-analyze --version
+          echo "facts: systemd-analyze syscall-filter @system-service"; systemd-analyze syscall-filter --no-pager @system-service
+          echo "facts: exit code $?"
+          echo "facts: hosts line of /etc/nsswitch.conf: $(grep '^hosts' /etc/nsswitch.conf)"
+          echo "facts: /etc/resolv.conf nameserver: $(grep '^nameserver' /etc/resolv.conf)"
+          echo "facts: AppArmor: $(cat /sys/module/apparmor/parameters/enabled 2>&1)"
+          echo "facts: kernel.unprivileged_userns_clone / apparmor_restrict_unprivileged_userns: $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>&1)"
+          exit 0
+
+  launchd:
+    name: launchd log rotation
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Measure
+        shell: bash
+        run: |
+          set +e
+          sw_vers
+          id=$(openssl rand -hex 4)
+          label="elm-e2e-log-$id"
+          logs="/Library/Logs/$label"
+          log="$logs/elm-server.log"
+          plist="/Library/LaunchDaemons/$label.plist"
+          conf="$RUNNER_TEMP/newsyslog-$id.conf"
+          st() { for f in "$@"; do if [ -e "$f" ]; then echo "  $f: inode $(stat -f %i "$f") size $(stat -f %z "$f") $(stat -f '%Su:%Sg %Lp' "$f")"; else echo "  $f: missing"; fi; done; }
+          pid() { sudo launchctl print "system/$label" | awk '$1 == "pid" && $2 == "=" { print $3; exit }'; }
+          sudo install -d -m 0755 "$logs"
+          sudo install -m 0640 -o nobody -g nobody /dev/null "$log"
+          cat > "$RUNNER_TEMP/$label.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>Label</key><string>$label</string>
+            <key>ProgramArguments</key>
+            <array><string>/bin/sh</string><string>-c</string><string>i=0; while :; do i=\$((i+1)); echo "line \$i \$(date +%s)"; sleep 0.5; done</string></array>
+            <key>UserName</key><string>nobody</string>
+            <key>GroupName</key><string>nobody</string>
+            <key>RunAtLoad</key><true/>
+            <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+            <key>StandardOutPath</key><string>$log</string>
+            <key>StandardErrorPath</key><string>$log</string>
+          </dict>
+          </plist>
+          EOF
+          sudo install -m 0644 -o root -g wheel "$RUNNER_TEMP/$label.plist" "$plist"
+          sudo launchctl bootstrap system "$plist"; echo "launchd-log: bootstrap exit $?"
+          sleep 3
+          p=$(pid); echo "launchd-log: pid $p"
+          echo "launchd-log: lsof +fg of fd 1 and 2:"; sudo lsof +fg -a -p "$p" -d 1,2
+          echo "launchd-log: after 3 s:"; st "$log"
+          # O_APPEND: truncate the file while the job writes, and see where the next writes land.
+          before=$(stat -f %z "$log")
+          sudo sh -c ": > '$log'"
+          sleep 2
+          after=$(stat -f %z "$log")
+          echo "launchd-log: truncate: size before $before, 2 s after the truncation $after; first bytes:"
+          sudo head -c 32 "$log" | od -c | head -3
+          # newsyslog with the flags of decision 30a-5: owner the account, mode 640, N (no signal), no compression.
+          echo "$log nobody:nobody 640 5 * * N" > "$conf"
+          echo "launchd-log: newsyslog -nvF (dry run):"; sudo newsyslog -nvF -f "$conf"
+          ino0=$(stat -f %i "$log")
+          echo "launchd-log: newsyslog -vF:"; sudo newsyslog -vF -f "$conf"; echo "launchd-log: newsyslog exit $?"
+          echo "launchd-log: right after the rotation (original inode $ino0):"; st "$log" "$log.0"
+          sleep 3
+          echo "launchd-log: 3 s after the rotation:"; st "$log" "$log.0"
+          echo "launchd-log: last line of each:"; sudo tail -n 1 "$log.0"; sudo tail -n 1 "$log"
+          sudo launchctl kickstart -k "system/$label"; echo "launchd-log: kickstart -k exit $?"
+          sleep 3
+          echo "launchd-log: pid after kickstart -k $(pid)"
+          echo "launchd-log: 3 s after kickstart -k:"; st "$log" "$log.0"
+          echo "launchd-log: last line of each:"; sudo tail -n 1 "$log.0"; sudo tail -n 1 "$log"
+          # A move without a new file: launchd's next open of the path after a restart.
+          sudo mv "$log" "$log.moved"
+          sleep 2
+          echo "launchd-log: plain mv, 2 s later:"; st "$log" "$log.moved"
+          sudo launchctl kickstart -k "system/$label"; sleep 3
+          echo "launchd-log: plain mv, then kickstart -k, 3 s later:"; st "$log" "$log.moved"
+          sudo launchctl print "system/$label" | grep -E 'state =|last exit code|stdout path|stderr path'
+          sudo launchctl bootout "system/$label"; echo "launchd-log: bootout exit $?"
+          sudo rm -f "$plist"; sudo rm -rf "${logs:?}"; rm -f "$conf" "$RUNNER_TEMP/$label.plist"
+          echo "launchd-log: cleanup: $(ls -d "$logs" "$plist" 2>&1 | tr '\n' ' ')"
+          exit 0
