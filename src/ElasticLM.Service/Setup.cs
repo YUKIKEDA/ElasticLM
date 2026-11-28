@@ -67,7 +67,17 @@ internal static class Setup
     {
         try
         {
-            await Migrator.RunAsync(database, Migrator.Embedded(provider), time, cancellationToken).ConfigureAwait(false);
+            try
+            {
+                await Migrator.RunAsync(database, Migrator.Embedded(provider), time, cancellationToken).ConfigureAwait(false);
+            }
+            catch (Exception e) when (e is not DbException && Database.IsOpenFailure(e))
+            {
+                // design §14.2: the first opening of the database; a client certificate Npgsql cannot read.
+                await error.WriteLineAsync("The database cannot be used: " + Database.Describe(e)).ConfigureAwait(false);
+                return ExitDatabase;
+            }
+
             DateTimeOffset now = time.GetUtcNow();
             string key = ApiKeys.NewKey();
             ApiKeyRecord record = await database
@@ -107,7 +117,7 @@ internal static class Setup
         }
         catch (DbException e)
         {
-            await error.WriteLineAsync("The database cannot be used: " + e.Message).ConfigureAwait(false);
+            await error.WriteLineAsync("The database cannot be used: " + Database.Describe(e)).ConfigureAwait(false);
             return ExitDatabase;
         }
         catch (JsonException e)
