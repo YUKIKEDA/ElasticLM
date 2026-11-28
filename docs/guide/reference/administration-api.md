@@ -281,7 +281,7 @@ Every member is present, the defaults included. What each setting decides is in 
 | `revokedAt` | time or `null` | When it was revoked; `null` when it is not. |
 | `meta` | object | String values that are copied into license files. |
 | `deactivations` | number | Deactivations by devices so far, counted against the policy's `deactivationLimit`. Deactivations by an administrator are not counted. |
-| `key` | string | The license key, such as `ELM-A1B2C-3D4E5-F6G7H-J8K9M`. Only in the answer to `POST /v1/admin/licenses`: the service keeps only its hash and cannot show it again. |
+| `key` | string | The license key, such as `ELM-FAKE4-FAKE5-FAKE6-FAKE7`. Only in the answer to `POST /v1/admin/licenses`: the service keeps only its hash and cannot show it again. |
 
 A trial is also a license, named `trial`, without a key.
 
@@ -1103,7 +1103,7 @@ It sent no `expiresAt`, so the expiry in the answer is `createdAt` plus 366 days
     "customer": "C-1042"
   },
   "deactivations": 0,
-  "key": "ELM-A1B2C-3D4E5-F6G7H-J8K9M"
+  "key": "ELM-FAKE4-FAKE5-FAKE6-FAKE7"
 }
 ```
 
@@ -1126,7 +1126,7 @@ Permission: `license.read`.
 | `policyId` | Only licenses of this policy. |
 | `state` | Only licenses in this state: `active`, `suspended`, `expired`, or `revoked`. |
 | `q` | Only licenses whose name contains this text: 1 to 100 characters without control characters. ASCII letters match in either case; `%` and `_` match only themselves. |
-| `keyHash` | Only the license of this license key: the SHA-256 of the key in base64url (43 characters), where the key is first written in upper case without `-` (`ELMA1B2C3D4E5F6G7HJ8K9M`). For the key `ELM-A1B2C-3D4E5-F6G7H-J8K9M`, it is `gT9XDOHEzUlMi2gDHAs39ChMHVRb1Nwvg1k0tupdFaY`. The key itself is not sent, so that it does not appear in logs of URLs. |
+| `keyHash` | Only the license of this license key: the SHA-256 of the key in base64url (43 characters), where the key is first written in upper case without `-` (`ELMFAKE4FAKE5FAKE6FAKE7`). For the key `ELM-FAKE4-FAKE5-FAKE6-FAKE7`, it is `oYdcWPx_sVE-VHsyx0EfvsDNJ2SGPsIeiTRQFPQ33L0`. The key itself is not sent, so that it does not appear in logs of URLs. |
 
 Answers `200` with a page of [licenses](#license), without `key`. This example is the answer to `GET /v1/admin/licenses?limit=1&q=fabrikam`; it has no `next` because no other license matches. The license was created with `{"policyId": "01960000-0000-7000-8000-000000000403", "name": "Fabrikam server", "features": [{"code": "pro", "seats": 5}]}` under a policy sent as `{"productId": "01960000-0000-7000-8000-000000000201", "name": "Server", "licenseKind": "server", "floating": "onPremises"}`, whose `duration` is `null`:
 

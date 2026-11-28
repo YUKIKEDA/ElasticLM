@@ -16,7 +16,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 
 ## 今
 
-- **フェーズ:** V1d3b（テストの助け `ProblemServer` が、ときどき、片づけのときに例外を出して、関係のないテストを落とす原因を調べて直す。design.ja.md §20.7 の表の V1d3b の行）
+- **フェーズ:** V1d の残りの 2 行。V1d21（`main` のルールセットに必須の検査を足し、§5.4 の持ち主のアカウントの行に、持ち主の `gh` のトークンを書く）と V1d30（利用者の文書と設計の文の、V1d の低の指摘を片付け、`elm-server` をサービスとして動かす how-to を書く）。どちらも design.ja.md §20.7 の表のその行。そのあとは V1e（v1 の公開）
 
 ## v1 まで
 
@@ -120,7 +120,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1d17 | `POST /v1/trials` が、消えない行を上限なしに書くことを直す（V1d の指摘 R4-1、F08）（PR #334 の問 2 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d17 の行） | done | [#336](https://github.com/YUKIKEDA/ElasticLM/issues/336) |
 | V1d18 | リースの検証で、サーバーライセンスの機能そのものの有効期限を確かめる（V1d の指摘 R1-3、F12）（PR #334 の問 3 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d18 の行） | done | [#337](https://github.com/YUKIKEDA/ElasticLM/issues/337) |
 | V1d19 | サーバーのライセンスキーを、コマンドラインの引数に残さずに渡せるようにする（V1d の指摘 R6-2、F13、R8-D11）（PR #334 の問 4 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d19 の行） | done | [#338](https://github.com/YUKIKEDA/ElasticLM/issues/338) |
-| V1d20 | 環境 `release` と `v*` のタグのルールセットを、V1e を待たずに作る（持ち主の設定。V1d の指摘 R7-5、F10）（PR #334 の問 6 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d20 の行） | not-started | [#339](https://github.com/YUKIKEDA/ElasticLM/issues/339) |
+| V1d20 | 環境 `release` と `v*` のタグのルールセットを、V1e を待たずに作る（持ち主の設定。V1d の指摘 R7-5、F10）（PR #334 の問 6 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d20 の行。記録は [rows/V1d20.md](./rows/V1d20.md)） | done | [#339](https://github.com/YUKIKEDA/ElasticLM/issues/339) |
 | V1d21 | `main` のルールセットに必須の検査を足し（持ち主の設定）、§5.4 の持ち主のアカウントの行に、持ち主の `gh` のトークンを書く（V1d の指摘 R7-6、F11）（PR #334 の問 7 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d21 の行） | in-progress | [#340](https://github.com/YUKIKEDA/ElasticLM/issues/340) |
 | V1d22 | `ci.yml` の actions を、コミットの SHA で固定する（V1d の指摘 R7-3、R5-6、R8-D9、F22）（PR #334 の問 5 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d22 の行） | done | [#341](https://github.com/YUKIKEDA/ElasticLM/issues/341) |
 | V1d23 | 検証と発行（`ElasticLM.Licensing`、`ElasticLM.Issuing`）の、V1d の低の指摘を片付ける（F19、F20 のうちクライアントの読み手の分、F28、F36、F37、T15-1、T15 の疑い 2 件。F20 のうちログの読み手の分は V1d8 に移した）（PR #334 の問 11 の持ち主の決定で足した行。V1d のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d23 の行） | done | [#342](https://github.com/YUKIKEDA/ElasticLM/issues/342) |
@@ -145,7 +145,7 @@ GitHub Issue は着手する作業単位だけ切る。完了条件の詳細は 
 | V1d29f | Kestrel の上限が HTTP/2 でも効くことを、`elm-service` と `elm-server` の両方のテストで確かめる（§5.3 T16）（V1d29 の作業（PR #476）が見つけ、持ち主の決定（2026-11-22、Issue #348）で足した行。V1d29 のあと、V1e の前。決めた形は design.ja.md §20.7 の表の V1d29f の行） | done | [#481](https://github.com/YUKIKEDA/ElasticLM/issues/481) |
 | V1d29g | `MachineIdSources` の Windows と macOS の読み手（`ReadWindowsMachineGuid`、`ReadWindowsSmbiosUuid`、`ReadMacPlatformUuid`）から、OS の API から得たバイトや文字列を解く部分を `internal` に分け、テストを足す（§10.3）（V1d29e の作業（PR #493）が見つけ、持ち主の決定（2026-11-27、Issue #480）で足した行。V1d29e のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d29g の行。記録は [rows/V1d29g.md](./rows/V1d29g.md)） | done | [#494](https://github.com/YUKIKEDA/ElasticLM/issues/494) |
 | V1d29h | Kestrel の HTTP/2 のほかの既定の上限（同時に開けるストリーム 100 を超えたストリームの `REFUSED_STREAM`、フレーム 16 KiB、HPACK の表 4 KiB、受信の窓）を、`elm-service` と `elm-server` の両方のテストで確かめる（§5.3 T16）（V1d29f の作業（PR #505、問 29f-1）が見つけ、持ち主の決定（2026-11-28、Issue #481、案 A）で足した行。V1d29f のあと、V1e の前。決めた形は design.ja.md §20.7 の表の V1d29h の行。記録は [rows/V1d29h.md](./rows/V1d29h.md)） | done | [#506](https://github.com/YUKIKEDA/ElasticLM/issues/506) |
-| V1d30 | 利用者の文書と設計の文の、V1d の低の指摘を片付ける（R8-D4、R8-D10、F47、T15-2。英語と日本語）。`elm-server` をサービスとして動かす how-to を、3 つの OS について書く（問 30-5）（PR #334 の問 11 の持ち主の決定で足した行。V1d29a のあと（how-to がこの行を待つ）、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d30 の行） | not-started | [#349](https://github.com/YUKIKEDA/ElasticLM/issues/349) |
+| V1d30 | 利用者の文書と設計の文の、V1d の低の指摘を片付ける（R8-D4、R8-D10、F47、T15-2。英語と日本語）。`elm-server` をサービスとして動かす how-to を、3 つの OS について書く（問 30-5）（PR #334 の問 11 の持ち主の決定で足した行。V1d29a のあと（how-to がこの行を待つ）、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d30 の行。記録は [rows/V1d30.md](./rows/V1d30.md)） | done | [#349](https://github.com/YUKIKEDA/ElasticLM/issues/349) |
 | V1d31 | 測定のワークフロー `Measure` の Report が、ディスクの遅いランナーに当たったジョブをどう扱うかを決めて、そのとおりにする（V1d2 の作業で見つけ、持ち主の決定（2026-11-12、Issue #361）で足した行。V1d30 のあと、V1e の前。Grill で決める点は design.ja.md §20.7 の表の V1d31 の行） | done | [#357](https://github.com/YUKIKEDA/ElasticLM/issues/357) |
 | V1e | v1 の公開（`1.0.0-rc.N` から `1.0.0`、rc のタグは GitHub のプレリリースだけを出し nuget.org と GHCR には正式版だけを push する `release.yml` の変更と `docs/releasing.md` の rc の試しの手順、rc が通さない nuget.org と GHCR への push の段を正式版のタグの前にどう確かめるか、持ち主の作業（GitHub Pages の有効化と environment `github-pages` の規則の確かめを含む）、イメージの確かめ方の試しと文書、公開のあとの `PackageValidationBaselineVersion`、rc の版にする PR での `SECURITY.md` と `CONTRIBUTING.md` の「まだ出していない」の文の書き換え、rc のプレリリースで Tutorial を 3 つの OS で手で一度ずつ流して OS ごとに記録する、正式版のタグの前に利用者の文書を nuget.org の形に切り替えて README の Status の 1 行を外す 1 つの PR とその前の ID の接頭辞の扱いの決定、`1.0.0` の公開のあとに nuget.org の形の頁を手で一度流す。Grill で決める点は design.ja.md §20.7） | not-started | —     |
 | V1e1 | 前のリリースの `elm-service` から版を更新する CI の段と、版の更新の How-to の頁をその段で流すこと（手順を流す仕組みで 2 つの版を流す変更を含む。V1c4d1 の Grill の Q3 で足した。V1e のあと。Grill で決める点は design.ja.md §20.7 の表の V1e1 の行） | not-started | — |

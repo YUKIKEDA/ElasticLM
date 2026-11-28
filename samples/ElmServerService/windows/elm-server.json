@@ -1,0 +1,8 @@
+{
+  "product": "acme-cad",
+  "listen": "https://0.0.0.0:7070",
+  "license": "C:\\ProgramData\\elm-server\\server.elmlic",
+  "dataDirectory": "C:\\ProgramData\\elm-server",
+  "service": { "url": "https://licensing.example.com" },
+  "trust": { "rootKeys": ["C:\\Program Files\\elm-server\\root.pub.pem"] }
+}

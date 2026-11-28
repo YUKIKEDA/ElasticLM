@@ -8,16 +8,54 @@ owner's approval. Nothing has been published yet: the first release is roadmap r
 
 Do these once, before the first tag. Each step closes a gap the threat model names.
 
+Some of them are done. While `release.yml` is on `main`, a `v*` tag must not start the `publish` job without the
+owner's approval, so the owner set the environment `release` and the tag rulesets before V1e (roadmap row V1d20,
+Issue #339). The owner then turned on immutable releases as well, so that a release published before V1e cannot
+change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
+
+| Step | State |
+| --- | --- |
+| Repository, steps 1 to 4 | Done. The owner is the only collaborator, the default workflow permissions are `read`, both tag rulesets are active, and immutable releases are on |
+| Environment `release` | Done. It has no secrets and no variables |
+| Repository, step 5 (`NUGET_USER`) | In V1e |
+| Repository, steps 6 to 8 (required checks of `main`, auto-merge) | After the pull request of V1d21 merges (Issue #340) |
+| nuget.org | In V1e |
+| Documentation site (Pages, environment `github-pages`) | In V1e |
+
 ### Repository
 
 1. Keep write access to the owner alone: add no collaborators (T22). Anyone with write access could push a tag.
 2. Settings → Actions → General → Workflow permissions: **Read repository contents and packages permissions**. Each job of
    `release.yml` asks for what it needs.
-3. Settings → Rules → Rulesets → New tag ruleset:
-   - Target: tags matching `v*`.
-   - Bypass list: empty.
-   - Rules: **Restrict creations** with the owner as the only actor allowed to create, **Restrict updates**, and
-     **Restrict deletions**. A tag that ran a release is never moved or removed; a failed release gets the next version.
+3. Settings → Rules → Rulesets → New tag ruleset, twice. Both target tags matching `v*` and are **Active**:
+   - `release`: **Restrict updates**, **Restrict deletions**, and **Block force pushes**. Bypass list: empty. While
+     this ruleset is active, no push or deletion moves or removes a `v*` tag, not even the owner's; a failed release
+     gets the next version.
+   - `release-create`: **Restrict creations** and **Block force pushes**. Bypass list: **Repository admin**, mode
+     **Always**. Only a repository admin, and so only the owner (step 1), can create a `v*` tag; the workflows'
+     `GITHUB_TOKEN` cannot.
+
+   One ruleset cannot do both. The page on the rules
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+   says of **Restrict creations**: "If selected, only users with bypass permissions can create branches or tags whose
+   name matches the pattern you specify." So a ruleset with an empty bypass list lets nobody create a tag, and a ruleset whose bypass list names the owner lets
+   the owner move and remove tags too. With two rulesets, "the rules in each of these rulesets are aggregated", and a
+   ruleset can "allow certain users to bypass the rules in the ruleset"
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets).
+   The page does not say that a bypass leaves the rules of another ruleset in force. What shows it is the reading of
+   `current_user_can_bypass` with `gh api`: `always` for `release-create` and `never` for `release`. Moving or removing
+   a tag as the owner has not been tried: no `v*` tag exists, and pushing one starts `release.yml`.
+
+   The rulesets do not hold against the owner's own account. "You can edit, monitor, and delete existing rulesets in a
+   repository"
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/managing-rulesets-for-a-repository),
+   so the owner, as the repository admin, can change or delete either ruleset and then move the tag (read there, not
+   tried). Anything that holds the owner's credentials can create a `v*` tag, including the owner's `gh`
+   login and any agent that uses it. Publishing still waits for the approval of the environment `release`, but the
+   owner is its required reviewer, so the owner's token can give that approval through the REST API too, and the same
+   token can change the environment's rules
+   (https://docs.github.com/en/rest/actions/workflow-runs, https://docs.github.com/en/rest/deployments/environments).
+   The same holds for the environment `github-pages`. See design §5.3 T22, and §5.4 for the owner's account.
 4. Turn on **Immutable releases** in the repository settings
    (https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases). A published release's tag
    and files cannot change, even for the owner; a draft still can (T24).

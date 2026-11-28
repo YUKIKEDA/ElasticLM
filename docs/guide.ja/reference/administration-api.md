@@ -281,7 +281,7 @@ sidebar_position: 6
 | `revokedAt` | 時刻または `null` | 失効させた時刻。失効していなければ `null`。 |
 | `meta` | オブジェクト | ライセンスファイルにコピーされる文字列の値。 |
 | `deactivations` | 数値 | これまでのデバイスによるアクティベーション解除の回数。ポリシーの `deactivationLimit` に対して数える。管理者によるアクティベーション解除は数えない。 |
-| `key` | 文字列 | `ELM-A1B2C-3D4E5-F6G7H-J8K9M` のようなライセンスキー。`POST /v1/admin/licenses` のレスポンスにだけ入る。サービスはキーのハッシュしか保存しないので、もう一度表示できない。 |
+| `key` | 文字列 | `ELM-FAKE4-FAKE5-FAKE6-FAKE7` のようなライセンスキー。`POST /v1/admin/licenses` のレスポンスにだけ入る。サービスはキーのハッシュしか保存しないので、もう一度表示できない。 |
 
 トライアルもライセンスの 1 つだ。名前は `trial` で、キーはない。
 
@@ -1103,7 +1103,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
     "customer": "C-1042"
   },
   "deactivations": 0,
-  "key": "ELM-A1B2C-3D4E5-F6G7H-J8K9M"
+  "key": "ELM-FAKE4-FAKE5-FAKE6-FAKE7"
 }
 ```
 
@@ -1126,7 +1126,7 @@ API キーを失効させる。キーはすぐに使えなくなり、`revokedAt
 | `policyId` | このポリシーのライセンスだけ。 |
 | `state` | この状態のライセンスだけ。`active`、`suspended`、`expired`、`revoked` のいずれか。 |
 | `q` | 名前がこのテキストを含むライセンスだけ。制御文字を含まない 1 から 100 文字。ASCII の英字は大文字と小文字を区別せずに照合する。`%` と `_` は、その文字そのものとだけ一致する。 |
-| `keyHash` | このライセンスキーのライセンスだけ。キーを大文字にして `-` を除いた形（`ELMA1B2C3D4E5F6G7HJ8K9M`）にしてから計算した SHA-256 を、base64url（43 文字）で書いたもの。キーが `ELM-A1B2C-3D4E5-F6G7H-J8K9M` なら `gT9XDOHEzUlMi2gDHAs39ChMHVRb1Nwvg1k0tupdFaY` になる。キーそのものは送らないので、URL のログにキーが残らない。 |
+| `keyHash` | このライセンスキーのライセンスだけ。キーを大文字にして `-` を除いた形（`ELMFAKE4FAKE5FAKE6FAKE7`）にしてから計算した SHA-256 を、base64url（43 文字）で書いたもの。キーが `ELM-FAKE4-FAKE5-FAKE6-FAKE7` なら `oYdcWPx_sVE-VHsyx0EfvsDNJ2SGPsIeiTRQFPQ33L0` になる。キーそのものは送らないので、URL のログにキーが残らない。 |
 
 `200` で、`key` を含まない[ライセンス](#ライセンス)のページを返す。この例は `GET /v1/admin/licenses?limit=1&q=fabrikam` のレスポンスで、ほかに一致するライセンスがないので `next` はない。このライセンスは、`{"productId": "01960000-0000-7000-8000-000000000201", "name": "Server", "licenseKind": "server", "floating": "onPremises"}` で作った `duration` が `null` のポリシーのもとで、`{"policyId": "01960000-0000-7000-8000-000000000403", "name": "Fabrikam server", "features": [{"code": "pro", "seats": 5}]}` で作った。
 

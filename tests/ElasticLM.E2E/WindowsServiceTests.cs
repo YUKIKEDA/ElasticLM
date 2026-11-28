@@ -219,16 +219,235 @@ public sealed partial class WindowsServiceTests
         }
     }
 
-    private static async Task CleanUpAsync(List<string> problems, string step, Func<Task> action)
+    /// <summary>
+    /// The steps of the How-to guide "Run elm-server as a system service" for Windows (design §13.1, V1d30): New-Service,
+    /// one start that stops for want of the server license and leaves it in the event log, elm server activate in the
+    /// elevated terminal, sc.exe failure, Start-Service, and Stop-Service with the records closed.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - Windows, in an elevated administrator's process, as the runner's user of GitHub Actions is. On GitHub Actions the test
+    ///   fails when it is not one; elsewhere it is skipped and says so.
+    /// - The vendor's elm-service with the product acme-cad, a server policy, and a license of 3 seats.
+    /// - The names of the page with the digits of this run: the service elm-e2e-{8 hex digits}, the folder
+    ///   %ProgramFiles%\elm-e2e-{digits} for the executables, the settings file of samples/ElmServerService/windows (listen on
+    ///   127.0.0.1 port 0), and the root key, and the data folder %ProgramData%\elm-e2e-{digits}.
+    ///
+    /// Steps:
+    /// - Copy elm-server.exe, elm.exe, the settings file, and the root key into the folder; run the page's PowerShell lines
+    ///   in pwsh: New-Service with the absolute paths, Start-Service, which fails, and Get-WinEvent for the newest event 50 of
+    ///   elm-server.
+    /// - elm server activate with the key in ELM_LICENSE_KEY (the test has no terminal to type it in); sc.exe failure as the
+    ///   page writes it; Start-Service; wait until elm server status answers; Stop-Service, timed in pwsh; sc.exe qfailure and
+    ///   sc.exe query.
+    /// - Clean up: stop and delete the service, remove the source elm-server when this test added it, remove the folders.
+    ///
+    /// Expected:
+    /// - The event names the missing server license and an installation key; activate exits with 0.
+    /// - sc.exe qfailure lists three restarts after 60000 ms and a reset of 86400 seconds.
+    /// - The first Start-Service exits with an error.
+    /// - After Stop-Service the service is STOPPED with WIN32_EXIT_CODE 0, the newest usage log ends with server.stopped
+    ///   and its signature, and the newest borrow record holds server.stopped. The stop's time goes to the job's log (RunReport.Note).
+    /// </remarks>
+    [Fact]
+    public async Task NewService_ThePageSteps_StartActivateAndStopTheServer()
     {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "A Windows service runs on Windows only.");
+        if (!OperatingSystem.IsWindows())
+        {
+            // CA1416 does not read SkipUnless as a platform check.
+            return;
+        }
+
+        bool onActions = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+        using (var identity = System.Security.Principal.WindowsIdentity.GetCurrent())
+        {
+            if (!new System.Security.Principal.WindowsPrincipal(identity).IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator))
+            {
+                Assert.False(onActions, "On GitHub Actions this test must run, and the runner's user is not an elevated administrator.");
+                Assert.Skip("Registering a service needs an elevated administrator; this process is not one.");
+            }
+        }
+
+        string id = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(4));
+        string name = "elm-e2e-" + id;
+        string bin = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), name);
+        string data = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), name);
+        string license = Path.Combine(data, "server.elmlic");
+        string settings = Path.Combine(bin, "elm-server.json");
+        string trust = Path.Combine(bin, "root.pub.pem");
+        string elm = Path.Combine(bin, "elm.exe");
+        string sc = Path.Combine(Environment.SystemDirectory, "sc.exe");
+        string reg = Path.Combine(Environment.SystemDirectory, "reg.exe");
+        const string Source = @"HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\elm-server";
+
+        await using Vendor vendor = await Vendor.CreateAsync("license", "lease", "log");
+        (ServiceProcess started, string key) = await SystemService.StartVendorServiceAsync(vendor);
+        await using ServiceProcess service = started;
+        bool hadSource = (await Binaries.RunAsync(reg, ["query", Source], vendor.Folder)).Code == 0;
+        bool passed = false;
         try
         {
-            await action();
+            // The page's step 1: the files in a folder that only administrators may write.
+            Directory.CreateDirectory(bin);
+            File.Copy(Binaries.Server, Path.Combine(bin, "elm-server.exe"));
+            File.Copy(Binaries.Elm, elm);
+            File.Copy(vendor.RootPublicKey, trust);
+            static string Json(string path) => path.Replace(@"\", @"\\", StringComparison.Ordinal);
+            await File.WriteAllTextAsync(
+                settings,
+                SystemService.Sample(
+                    "windows/elm-server.json",
+                    ("https://0.0.0.0:7070", "https://127.0.0.1:0"),
+                    (@"C:\\ProgramData\\elm-server", Json(data)),
+                    (@"C:\\Program Files\\elm-server", Json(bin)),
+                    ("https://licensing.example.com", service.Url.ToString().TrimEnd('/'))
+                ),
+                TestContext.Current.CancellationToken
+            );
+
+            // Step 2: New-Service and one start, which stops for want of the license and leaves the reason in the event log.
+            string exe = Path.Combine(bin, "elm-server.exe");
+            await PowerShellOkAsync(
+                vendor.Folder,
+                $"New-Service -Name '{name}' -BinaryPathName '\"{exe}\" --config \"{settings}\"' -StartupType Automatic | Out-Null"
+            );
+            (int firstStart, _, string firstStartError) = await PowerShellAsync(vendor.Folder, $"Start-Service -Name '{name}'");
+            Assert.True(firstStart != 0, "The first Start-Service did not report a failure.");
+            RunReport.Note(
+                $"elm-server as a Windows service: the first Start-Service said: {firstStartError.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()}"
+            );
+            await WaitForStateAsync(sc, name, "STOPPED", vendor.Folder);
+            string startError = string.Empty;
+            await RealClock.WaitUntilAsync(
+                "event 50 of elm-server from Get-WinEvent",
+                async () =>
+                {
+                    (int code, string output, _) = await PowerShellAsync(
+                        vendor.Folder,
+                        "Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'elm-server'; Id = 50 } -MaxEvents 1 | Select-Object -ExpandProperty Message"
+                    );
+                    startError = output.Trim();
+                    return code == 0 && startError.Contains(license, StringComparison.Ordinal);
+                },
+                StateTimeout
+            );
+            Assert.StartsWith($"error: The server license '{license}' does not exist.", startError, StringComparison.Ordinal);
+            Assert.Matches(InstallationKey(), startError);
+
+            // Step 3: elm server activate in the elevated terminal (design §10.2).
+            (int activated, _, string activateError) = await Binaries.RunAsync(
+                elm,
+                [
+                    "server",
+                    "activate",
+                    "--product",
+                    SystemService.Product,
+                    "--data",
+                    data,
+                    "--service",
+                    service.Url.ToString(),
+                    "--license",
+                    license,
+                    "--trust",
+                    trust,
+                ],
+                vendor.Folder,
+                new Dictionary<string, string?> { ["ELM_LICENSE_KEY"] = key }
+            );
+            Assert.True(activated == 0, $"elm server activate exited with {activated}: {activateError}");
+
+            // Step 4: the restarts, after the license, and the start.
+            (int failure, string failureOut, string failureError) = await Binaries.RunAsync(
+                sc,
+                ["failure", name, "reset=", "86400", "actions=", "restart/60000/restart/60000/restart/60000"],
+                vendor.Folder
+            );
+            Assert.True(failure == 0, $"sc.exe failure exited with {failure}: {failureOut}{failureError}");
+            (_, string actions, _) = await Binaries.RunAsync(sc, ["qfailure", name], vendor.Folder);
+            Assert.Matches(@"RESET_PERIOD \(in seconds\)\s*:\s*86400", actions);
+            Assert.Equal(3, Regex.Count(actions, @"RESTART -- Delay = 60000 milliseconds"));
+            await PowerShellOkAsync(vendor.Folder, $"Start-Service -Name '{name}'");
+            bool answered = false;
+            string statusError = string.Empty;
+            await RealClock.WaitUntilAsync(
+                "elm server status of the service",
+                async () =>
+                {
+                    (int code, _, statusError) = await Binaries.RunAsync(elm, ["server", "status", "--data", data], vendor.Folder);
+                    answered = code == 0;
+                    return answered;
+                },
+                StateTimeout
+            );
+            Assert.True(answered, statusError);
+
+            // Step 5: the stop, timed in pwsh around Stop-Service, which returns once the service has stopped.
+            string took = await PowerShellOkAsync(
+                vendor.Folder,
+                $"$watch = [Diagnostics.Stopwatch]::StartNew(); Stop-Service -Name '{name}'; $watch.ElapsedMilliseconds"
+            );
+            RunReport.Note(
+                $"elm-server as a Windows service: Stop-Service took {took.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1].Trim()} ms."
+            );
+            (_, string query, _) = await Binaries.RunAsync(sc, ["query", name], vendor.Folder);
+            Assert.Matches(@"STATE\s*:\s*\d+\s+STOPPED\b", query);
+            Assert.Matches(@"WIN32_EXIT_CODE\s*:\s*0\s", query);
+            string[] usageLines = Newest(data, "usage").Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            Assert.Contains("\"type\":\"server.stopped\"", usageLines[^2], StringComparison.Ordinal);
+            Assert.Contains("\"type\":\"auth\"", usageLines[^1], StringComparison.Ordinal);
+            Assert.Contains("\"type\":\"server.stopped\"", Newest(data, "borrows"), StringComparison.Ordinal);
+            passed = true;
         }
-        catch (Exception e)
+        finally
         {
-            problems.Add($"{step}: {e.GetType().Name}: {e.Message}");
+            List<string> problems = [];
+            await SystemService.CleanUpAsync(problems, "sc stop", () => StopIfRunningAsync(sc, name, vendor.Folder));
+            await SystemService.CleanUpAsync(problems, "sc delete", () => RunOkAsync(sc, ["delete", name], vendor.Folder));
+            if (!hadSource)
+            {
+                await SystemService.CleanUpAsync(problems, "reg delete", () => RunOkAsync(reg, ["delete", Source, "/f"], vendor.Folder));
+            }
+
+            foreach (string folder in (string[])[bin, data])
+            {
+                await SystemService.CleanUpAsync(
+                    problems,
+                    folder,
+                    () =>
+                    {
+                        if (Directory.Exists(folder))
+                        {
+                            Directory.Delete(folder, recursive: true);
+                        }
+
+                        return Task.CompletedTask;
+                    }
+                );
+            }
+
+            Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
         }
+    }
+
+    private static Task CleanUpAsync(List<string> problems, string step, Func<Task> action) => SystemService.CleanUpAsync(problems, step, action);
+
+    // A cleanup step that runs also when the test run is canceled, and fails unless it exits with 0.
+    private static async Task RunOkAsync(string executable, string[] arguments, string folder)
+    {
+        (int code, string output, string error) = await Binaries.RunAsync(executable, arguments, folder, cleanup: true);
+        Assert.True(code == 0, $"{Path.GetFileName(executable)} {arguments[0]} exited with {code}: {output}{error}");
+    }
+
+    // Runs a line of the page in PowerShell 7, as the administrator's terminal does.
+    private static Task<(int Code, string Out, string Error)> PowerShellAsync(string folder, string command) =>
+        Binaries.RunAsync("pwsh", ["-NoProfile", "-NonInteractive", "-Command", command], folder);
+
+    private static async Task<string> PowerShellOkAsync(string folder, string command)
+    {
+        (int code, string output, string error) = await PowerShellAsync(folder, command);
+        Assert.True(code == 0, $"pwsh exited with {code} for '{command.Split(' ')[0]}': {error}");
+        return output;
     }
 
     // Stops the service when it runs and waits until it has stopped, so that its process no longer holds the data folder.
