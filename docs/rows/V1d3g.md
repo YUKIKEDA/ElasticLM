@@ -97,7 +97,7 @@ da72eee と 6dd62f4（時間の上限を直す前）でも、変異なし、M1�
   - 接続が成功で返れば「Another elm-server is running …」。
   - `OperationAborted` 以外のソケットの誤りなら「The administration socket … cannot be used」。
   - 今の製品は取り消せるトークンを渡さないので起きない。
-  - 上の 3 つ目の測り（Windows 11 で 21 回）では、`AF_UNIX` の接続がどれも `ConnectAsync` から返る前に終わり、取り消しを接続の途中に入れるテストは組めなかった。Linux と macOS では測っていない。問 3g-2 の決定のとおり、これはこの PR では直さず、名前のある行に移す。行の ID と順は、持ち主の決定を待っている。その行の Grill では、Linux と macOS でテストが組めるか（OS を限ったテストでもよいか）を決める。
+  - 上の 3 つ目の測り（Windows 11 で 21 回）では、`AF_UNIX` の接続がどれも `ConnectAsync` から返る前に終わり、取り消しを接続の途中に入れるテストは組めなかった。Linux と macOS では測っていない。問 3g-2 の決定のとおり、これはこの PR では直さず、行 V1d3h（Issue #533、V1d3g のあと、V1e の前。行を足したのは PR #534）に移した。その行の Grill では、Linux と macOS でテストが組めるか（OS を限ったテストでもよいか）を決める。
 - `TlsChainSelfCheck` の時間の上限も同じ種類だった（D4、PR #531 のレビューの R2）。10 秒の上限もリンクしたトークンで接続を取り消すので、上限が接続の窓に入ると、文は `did not finish within 10 seconds` ではなく `failed` になっていた。テスト `Run_ListenerNeverAnswers_EndsAtTheLimit` は、接続を受けた直後に偽の時計で上限を切れさせるので、同じ窓を持ち、`Assert.Equal` の文の比べで同じようにゆれえた（このテストの名前を挙げた Issue はない。`gh issue list --state all --search` で探した）。問 3g-2 の決定のとおり、この PR で直した（上の「直したこと」）。
 - `ServerAdminApi.ConnectAsync`（`src/ElasticLM.Cli/ServerAdminApi.cs`）は、ハンドラーの 30 秒の上限で接続を取り消す。上限が接続の窓に入ると、`TimeoutException` ではなく `HttpRequestException` になる。呼ぶ側（`ServerCommands` など）は両方を同じ誤りとして扱うので、出力は変わらない。
 - `ActivationClient` と `LicenseClient` の、`OperationCanceledException` を `HttpRequestException` と一緒に受ける `catch` は、取り消しも通信の誤り（`NetworkError`）として返すことを、もともと決めている。誤りの種類によって取り消しが文に変わる形ではない。
@@ -111,6 +111,6 @@ da72eee と 6dd62f4（時間の上限を直す前）でも、変異なし、M1�
 - **理由:** §13.5 と `cancellationToken` の約束に製品を合わせる、小さな直しである。振る舞いが変わるのは呼び出し側が取り消したときだけで、時間の上限の文と答えが得られないときの文は変わらない。
 - **却下した案:** テストだけを直す（案 B）。待ち受けがクライアントの最初のバイトを読んでから取り消す形にすれば、テストのゆれは消える。しかし、接続の段の取り消しで文を返す製品の振る舞いが、§13.5 に反したまま残る。
 - **却下した案:** 案 A に加えて、案 B の形のテストを足す（案 C）。今のテスト `Run_CallerCancels_ThrowsTheCancellation` は、直したあとは、ハンドシェイクの途中の取り消しをもう確かめている。取り消しのあとに確かめがほかの誤りで終わる場合は、足したテストがハンドシェイクの段で決まって確かめる。
-- **決定:** 同じ種類の 2 か所も、この PR で直す。`RemoveLeftSocketAsync` は、決まって起こすテストが組めなければ名前のある行に移す（問 3g-2）。
+- **決定:** 同じ種類の 2 か所も、この PR で直す。`RemoveLeftSocketAsync` は、決まって起こすテストが組めなければ名前のある行に移す（問 3g-2）。組めなかったので、行 V1d3h（Issue #533）に移した。
 - **理由:** `similar-findings` の「一緒に直す」に合い、時間の上限の直しは数行で、変わるのは上限が接続の窓に入ったときの文だけである。
 - **却下した案:** 2 か所とも新しい行に移し、この PR は呼び出し側の取り消しだけを直す。同じファイルの同じ形が、別の行まで残る。
