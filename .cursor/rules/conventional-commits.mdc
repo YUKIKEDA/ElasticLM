@@ -19,6 +19,7 @@ optional footer
 - Breaking change: `type(scope)!: subject` and/or a `BREAKING CHANGE:` footer.
 - A closing keyword (`Closes #N`) never goes in a commit body; the squash message concatenates commit bodies (`.cursor/rules/github-closing.mdc`). Write `Refs #N` or `Part of #N`.
 - Every commit takes one of the types above, the ones in the middle of a row too. There is no `wip`.
+- A commit's type is the kind of change it makes, read from its own files, not the kind of the row: `feat` and `fix` change the product's code (`src/`, `web/admin/`, `include/`), and a commit that changes only documents, samples, and tests is `docs` or `test`. A PR merged with a merge commit keeps every commit of its branch on `main`. In V1d30 5845edb, which wrote `TimeoutStopSec=60` into the sample unit, the how-to pages, the design, the roadmap, the row's record, and an end-to-end test, took `feat(server)`; PR #532 was merged with the merge commit f122102, so it stays on `main` with that type.
 
 ```text
 feat(verify): reject a token whose key ID is not in the trust store

@@ -46,6 +46,8 @@ An answer the owner gave in a Grill that the work shows to be wrong is put to th
 
 An outward-facing action (creating a GitHub repository, publishing a package, posting outside this repository, registering a domain or a cloud resource) needs an order that names it. The steps of the workflow in this repository are not such actions: creating the Issue for a row, pushing its branch, opening its PR, and recording results on the Issue are done without asking (`.cursor/rules/git.mdc`).
 
+An option put to the owner whose effect reaches outside this repository (the user's global git configuration, stored credentials, other repositories on the machine, the settings of the owner's account) says that reach first, in its own sentence. It is offered only when no option that stays inside the repository or only reads can answer the question, and then after that option. In V1d21 the answers to D4 and D9 (Issue #340) proposed `gh auth setup-git` and deleting the Windows credential `git:https://github.com` without saying that both change user-wide settings that every repository on the machine uses. The owner corrected it on 2026-11-28: 「そのような影響範囲の大きな変更を気軽に提示しないでください」 (PR #539's retrospective). The decision became a check that only reads: the owner looked at the account's personal access tokens and authorized OAuth apps on GitHub (Issue #340, PR #539).
+
 A decision rests on the figures it was given. When a later change moves those figures (a verification time, a binary size, a dependency count), report the new ones beside the old before the PR that carries the change is merged, and let the owner decide again.
 
 ```text
