@@ -25,7 +25,7 @@ Read the rules that match the work before changing anything. `alwaysApply` rules
 
 | Rule | One line |
 | --- | --- |
-| `workflow` | Grill, Issue, branch, PR, human squash merge, retrospective; labels; gates |
+| `workflow` | Grill, Issue, branch, PR, human merge with a merge commit, retrospective; labels; gates |
 | `consent` | A question is not a decision; options need a recommendation; outward actions need an order |
 | `git` | Finished work goes to a PR on its branch without asking; destructive git needs a named order; never `main` |
 | `scope` | Requirements decide scope; no half-shipped capability or security property |

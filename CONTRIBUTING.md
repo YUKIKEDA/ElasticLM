@@ -9,7 +9,7 @@ ElasticLM is being redesigned from its requirements. The design is `docs/design.
 3. Branch from `main` as `type/<issue-number>-<slug>`.
 4. Run `./build.ps1` (PowerShell 7) before opening a pull request. It builds the admin UI (`web/admin/`: type check, Vitest, Vite), checks formatting (CSharpier), builds with warnings as errors in Release and Debug, and runs every test project. `elm-service` embeds `web/admin/dist`; without it the .NET build stops.
 5. Open the pull request with the template. Put `Closes #N` alone on a line under `## Related`.
-6. A maintainer reviews and squash-merges.
+6. A maintainer reviews and merges with a merge commit, so every commit of the pull request stays in the history of `main`: each commit message follows Conventional Commits (below).
 
 Security problems are not reported in Issues or pull requests. See `SECURITY.md`.
 
