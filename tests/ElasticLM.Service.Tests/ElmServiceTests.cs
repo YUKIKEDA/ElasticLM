@@ -92,6 +92,93 @@ public sealed class ElmServiceTests
     public async Task Kestrel_Http2RequestLineAndHeaders_KeepTheirLimits(string kind, int size, string outcome)
     {
         await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OutcomeAsync(service.Url, "/health", kind, size));
+    }
+
+    /// <summary>
+    /// Over HTTP/2, Kestrel's other defaults hold on the service too (design §5.3 T16): 100 streams open at once, frames of
+    /// 16,384 bytes, an HPACK table of 4,096 bytes, and receive windows of 786,432 bytes for a stream and 1,048,576 for the
+    /// connection. A stream more is reset and the connection stays; a byte more of any other limit ends the connection.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate. The service sets only MaxRequestBodySize; the
+    ///   rest are Kestrel's defaults (Http2Limits.cs, aspnetcore v10.0.14): MaxStreamsPerConnection 100, MaxFrameSize 16 KiB,
+    ///   HeaderTableSize 4 KiB, InitialStreamWindowSize 768 KiB, InitialConnectionWindowSize 1 MiB. Kestrel resets a stream
+    ///   past the first limit with REFUSED_STREAM (Http2Connection.cs StartStream), ends the connection with
+    ///   FRAME_SIZE_ERROR for a longer frame (Http2FrameReader.cs TryReadFrame) and with COMPRESSION_ERROR for a larger
+    ///   table size update (HPackDecoder.cs SetDynamicHeaderTableSize), and ends it with FLOW_CONTROL_ERROR for DATA past
+    ///   either window, the stream's included (InputFlowControl.cs TryAdvance).
+    /// - The test settings raise the rate limits of one address (RateLimitPerIp, RateLimitClientPerIp) to 1,000, above the
+    ///   102 GETs of the case of 101 streams.
+    ///
+    /// Steps:
+    /// - On a new TLS connection each time (ALPN h2), send GET /v1/nonce as HTTP/2 frames (KestrelLimits.Http2OtherOutcomeAsync):
+    ///   with the client window set to 0, the number of streams given at once, each with END_STREAM, then, after the answer
+    ///   (200 or reset) of the last, a RST_STREAM (CANCEL) of the first and one more stream; one HEADERS frame of the length given (past the
+    ///   limit, its frame header alone); a header block that starts with a dynamic table size update of the value given;
+    ///   with the client window set to 0, one stream or two without END_STREAM, and after their 200, DATA of the given
+    ///   number of bytes on the stream or split over the two, and a PING. Read the answers' status, RST_STREAM, PING ACK,
+    ///   or GOAWAY. After a 200 of the frame or table request, send a plain GET /v1/nonce on the same connection.
+    ///
+    /// Expected:
+    /// - Streams 100: 200 on every stream. Streams 101: 200 on the first 100 and RST_STREAM with REFUSED_STREAM on the
+    ///   101st. In both, after the first stream's reset, the next stream gets 200. Frame 16,384 and table 4,096: 200, and the
+    ///   plain request gets 200. Frame 16,385: GOAWAY with FRAME_SIZE_ERROR. Table 4,097: GOAWAY with COMPRESSION_ERROR.
+    ///   Stream window 786,432 and connection window 1,048,576: the PING ACK. A byte more of either: GOAWAY with
+    ///   FLOW_CONTROL_ERROR.
+    /// </remarks>
+    /// <param name="kind">The limit.</param>
+    /// <param name="size">The streams, the frame length, the table size, or the bytes of DATA at or past it.</param>
+    /// <param name="outcome">The status code, the RST_STREAM, the PING ACK, or the GOAWAY that ended the requests.</param>
+    [Theory]
+    [MemberData(nameof(KestrelLimits.Http2AtAndPastOtherLimits), MemberType = typeof(KestrelLimits))]
+    public async Task Kestrel_Http2StreamsFramesTableAndWindows_KeepTheirLimits(string kind, int size, string outcome)
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        Assert.Equal(outcome, await KestrelLimits.Http2OtherOutcomeAsync(service.Url, "/v1/nonce", kind, size));
+    }
+
+    /// <summary>
+    /// The service's first HTTP/2 SETTINGS states Kestrel's limits (design §5.3 T16): 100 concurrent streams, a stream
+    /// window of 786,432 bytes, and a header list of 32,768 bytes; the table size and the frame size are the protocol's
+    /// defaults and are not sent; a WINDOW_UPDATE raises the connection window to 1,048,576 bytes.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A started service on loopback https with a self-signed certificate, with Kestrel's HTTP/2 defaults (aspnetcore
+    ///   v10.0.14). Kestrel sends only the values that differ from the protocol's defaults (Http2PeerSettings.cs
+    ///   GetNonProtocolDefaults), then a WINDOW_UPDATE of the connection by InitialConnectionWindowSize less 65,535
+    ///   (Http2Connection.cs ProcessRequestsAsync).
+    ///
+    /// Steps:
+    /// - On a new TLS connection (ALPN h2), send the preface, an empty SETTINGS, and a PING; read until the PING ACK.
+    ///
+    /// Expected:
+    /// - The SETTINGS, SETTINGS_ENABLE_CONNECT_PROTOCOL left out, are SETTINGS_MAX_CONCURRENT_STREAMS (3) 100,
+    ///   SETTINGS_INITIAL_WINDOW_SIZE (4) 786,432, and SETTINGS_MAX_HEADER_LIST_SIZE (6) 32,768, and nothing else. The
+    ///   connection's WINDOW_UPDATE increments add up to 983,041.
+    /// </remarks>
+    [Fact]
+    public async Task Kestrel_Http2Settings_StateTheLimits()
+    {
+        await using TestService test = TestService.Open("sqlite");
+        ElmService service = await StartOnHttpsAsync(test);
+
+        (string settings, long increment) = await KestrelLimits.Http2ServerSettingsAsync(service.Url);
+
+        Assert.Equal("3=100, 4=786432, 6=32768", settings);
+        Assert.Equal(983_041, increment);
+    }
+
+    // Starts the service on loopback https with a self-signed certificate for 127.0.0.1 that the test makes, its PEM files
+    // ending with a line break as the product's tools write them.
+    private static async Task<ElmService> StartOnHttpsAsync(TestService test)
+    {
         await test.SetupAsync();
         using ECDsa key = ECDsa.Create(ECCurve.NamedCurves.nistP256);
         var request = new CertificateRequest("CN=elm-service-test", key, HashAlgorithmName.SHA256);
@@ -101,7 +188,7 @@ public sealed class ElmServiceTests
         using X509Certificate2 certificate = request.CreateSelfSigned(TestService.Start.AddDays(-1), TestService.Start.AddDays(30));
         File.WriteAllText(test.FilePath("tls.crt"), certificate.ExportCertificatePem() + "\n");
         File.WriteAllText(test.FilePath("tls.key"), key.ExportPkcs8PrivateKeyPem() + "\n");
-        ElmService service = await test.StartAsync(s =>
+        return await test.StartAsync(s =>
             s with
             {
                 Listen = new Uri("https://127.0.0.1:0"),
@@ -109,8 +196,6 @@ public sealed class ElmServiceTests
                 TlsKey = test.FilePath("tls.key"),
             }
         );
-
-        Assert.Equal(outcome, await KestrelLimits.Http2OutcomeAsync(service.Url, "/health", kind, size));
     }
 
     /// <summary>
