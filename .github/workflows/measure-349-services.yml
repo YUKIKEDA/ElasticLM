@@ -1,5 +1,6 @@
 # Temporary (V1d30, Issue #349; open-ends.mdc): measures how launchd treats a service on the runners, before the
-# end-to-end tests are written. Removed before the PR is ready. Round 2: the account, and why the first job ended 78.
+# end-to-end tests are written. Removed before the PR is ready. Round 3: a group of its own for the role account, a log
+# file that the account owns in a folder that root owns, the restart after a kill, and the stop.
 name: measure-349-services
 
 on:
@@ -20,38 +21,41 @@ jobs:
           set +e
           set -x
           sw_vers
-          launchctl version
-          sudo sysadminctl -addUser _elmmeasure -fullName "elm measure" -UID 451 -roleAccount; echo "sysadminctl=$?"
-          dscl . -read /Users/_elmmeasure UniqueID PrimaryGroupID UserShell NFSHomeDirectory RealName IsHidden 2>&1
+          dscl . -list /Groups PrimaryGroupID | awk '$2 >= 450 && $2 < 500'
+          sudo dseditgroup -o create -r "elm measure" -i 452 _elmmeasure; echo "dseditgroup=$?"
+          dscl . -read /Groups/_elmmeasure PrimaryGroupID RealName 2>&1
+          sudo sysadminctl -addUser _elmmeasure -fullName "elm measure" -UID 452 -GID 452 -roleAccount; echo "sysadminctl=$?"
           id _elmmeasure
-          dscl . -read /Groups/_elmmeasure 2>&1 | head -5
-          dscl . -list /Groups PrimaryGroupID | awk '$2 == 451 || $2 == 20'
+          dscl . -read /Users/_elmmeasure UniqueID PrimaryGroupID UserShell NFSHomeDirectory IsHidden 2>&1
           printf '#!/bin/sh\necho started; id; pwd; trap "echo got-term; exit 0" TERM; while true; do sleep 1; done\n' | sudo tee /usr/local/elmmeasure.sh >/dev/null
           sudo chmod 0755 /usr/local/elmmeasure.sh
           sudo install -d -o root -g wheel -m 0755 /Library/Logs/elmmeasure
-          for variant in a b; do
-            label=com.example.elmmeasure.$variant
-            if [ $variant = a ]; then group=$(id -gn _elmmeasure); out='<key>StandardOutPath</key><string>/Library/Logs/elmmeasure/a.log</string><key>StandardErrorPath</key><string>/Library/Logs/elmmeasure/a.log</string>'; else group=$(id -gn _elmmeasure); out=''; fi
-          printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n<key>Label</key><string>%s</string>\n<key>ProgramArguments</key><array><string>/usr/local/elmmeasure.sh</string></array>\n<key>UserName</key><string>_elmmeasure</string>\n<key>GroupName</key><string>%s</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n<key>ExitTimeOut</key><integer>60</integer>\n%s\n</dict>\n</plist>\n' "$label" "$group" "$out" > /tmp/$variant.plist
-            cat /tmp/$variant.plist
-            sudo install -m 0644 -o root -g wheel /tmp/$variant.plist /Library/LaunchDaemons/$label.plist
-            sudo launchctl bootstrap system /Library/LaunchDaemons/$label.plist; echo "bootstrap=$?"
-            sleep 3
-            sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs|exit timeout|minimum runtime|username|group'
-          done
+          sudo install -m 0640 -o _elmmeasure -g _elmmeasure /dev/null /Library/Logs/elmmeasure/a.log; echo "logfile=$?"
+          ls -l /Library/Logs/elmmeasure
+          label=com.example.elmmeasure
+          printf '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n<key>Label</key><string>%s</string>\n<key>ProgramArguments</key><array><string>/usr/local/elmmeasure.sh</string></array>\n<key>UserName</key><string>_elmmeasure</string>\n<key>GroupName</key><string>_elmmeasure</string>\n<key>RunAtLoad</key><true/>\n<key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>\n<key>ExitTimeOut</key><integer>60</integer>\n<key>StandardOutPath</key><string>/Library/Logs/elmmeasure/a.log</string><key>StandardErrorPath</key><string>/Library/Logs/elmmeasure/a.log</string>\n</dict>\n</plist>\n' "$label" > /tmp/a.plist
+          sudo install -m 0644 -o root -g wheel /tmp/a.plist /Library/LaunchDaemons/$label.plist
+          sudo launchctl bootstrap system /Library/LaunchDaemons/$label.plist; echo "bootstrap=$?"
+          sleep 3
+          sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs|exit timeout|minimum runtime|username|group'
           ls -l /Library/Logs/elmmeasure; cat /Library/Logs/elmmeasure/a.log
-          log show --last 2m --predicate 'process == "launchd" AND eventMessage CONTAINS "elmmeasure"' --style compact 2>&1 | tail -40
-          label=com.example.elmmeasure.a
+          log show --last 1m --predicate 'process == "launchd" AND eventMessage CONTAINS "elmmeasure"' --style compact 2>&1 | tail -10
+          sleep 12
           pid=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}')
           echo "pid=$pid"
           sudo kill -9 $pid; t0=$(date +%s)
-          for i in $(seq 1 40); do sleep 1; p=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}'); if [ -n "$p" ] && [ "$p" != "$pid" ]; then echo "relaunched after $(( $(date +%s) - t0 )) s as $p"; break; fi; done
+          for i in $(seq 1 40); do sleep 1; p=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}'); if [ -n "$p" ] && [ "$p" != "$pid" ]; then echo "relaunched after $(( $(date +%s) - t0 )) s as $p (ran 15 s first)"; break; fi; done
+          pid=$p
+          sudo kill -9 $pid; t0=$(date +%s)
+          for i in $(seq 1 40); do sleep 1; p=$(sudo launchctl print system/$label | awk '$1 == "pid" {print $3}'); if [ -n "$p" ] && [ "$p" != "$pid" ]; then echo "relaunched after $(( $(date +%s) - t0 )) s as $p (ran about 1 s first)"; break; fi; done
           sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
+          sleep 2
           sudo launchctl kill SIGTERM system/$label; sleep 3
           sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
           sudo launchctl kickstart system/$label; echo "kickstart=$?"; sleep 2
           sudo launchctl print system/$label | grep -E 'state|pid =|last exit|runs'
           t0=$(date +%s); sudo launchctl bootout system/$label; echo "bootout=$? after $(( $(date +%s) - t0 )) s"
-          sudo launchctl bootout system/com.example.elmmeasure.b
           ls -l /Library/Logs/elmmeasure; cat /Library/Logs/elmmeasure/a.log
+          sudo sysadminctl -deleteUser _elmmeasure; echo "delete=$?"; id _elmmeasure
+          sudo dseditgroup -o delete _elmmeasure; echo "groupdelete=$?"
           exit 0
