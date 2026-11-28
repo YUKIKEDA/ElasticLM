@@ -34,6 +34,7 @@ N/A
 ## Checklist
 
 - [ ] Title follows Conventional Commits (`type(scope): subject`)
+- [ ] Every commit message follows Conventional Commits and holds no closing keyword (`Refs #N`, not `Closes #N`)
 - [ ] CSharpier applied (`dotnet csharpier format .`)
 - [ ] New public API has XML docs; new tests have `summary` + `remarks` (Preconditions / Steps / Expected)
 - [ ] No key material, real license token, or secret in the diff, tests, or logs (`.cursor/rules/security.mdc`)

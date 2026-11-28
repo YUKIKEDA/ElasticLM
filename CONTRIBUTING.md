@@ -15,7 +15,7 @@ Security problems are not reported in Issues or pull requests. See `SECURITY.md`
 
 ## Commits and pull requests
 
-Titles follow Conventional Commits: `type(scope): subject`, in English. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `ci`.
+Commit messages and pull request titles follow Conventional Commits: `type(scope): subject`, in English. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `ci`. Every commit of a pull request stays in the history of `main`, so this holds for each commit. A commit message never holds a closing keyword such as `Closes #N`, in its subject or its body: GitHub closes that Issue when the commit reaches `main`. Write `Refs #N`; only the pull request body closes an Issue.
 
 A change on a measured path (license verification, server startup, checkout and renewal, binary size) reports its numbers before and after under `## Measurements`.
 
