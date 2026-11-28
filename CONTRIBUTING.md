@@ -9,13 +9,13 @@ ElasticLM is being redesigned from its requirements. The design is `docs/design.
 3. Branch from `main` as `type/<issue-number>-<slug>`.
 4. Run `./build.ps1` (PowerShell 7) before opening a pull request. It builds the admin UI (`web/admin/`: type check, Vitest, Vite), checks formatting (CSharpier), builds with warnings as errors in Release and Debug, and runs every test project. `elm-service` embeds `web/admin/dist`; without it the .NET build stops.
 5. Open the pull request with the template. Put `Closes #N` alone on a line under `## Related`.
-6. A maintainer reviews and squash-merges.
+6. A maintainer reviews and merges with a merge commit, so every commit of the pull request stays in the history of `main`: each commit message follows Conventional Commits (below).
 
 Security problems are not reported in Issues or pull requests. See `SECURITY.md`.
 
 ## Commits and pull requests
 
-Titles follow Conventional Commits: `type(scope): subject`, in English. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `ci`.
+Commit messages and pull request titles follow Conventional Commits: `type(scope): subject`, in English. Types: `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`, `build`, `ci`. Every commit of a pull request stays in the history of `main`, so this holds for each commit. A commit message never holds a closing keyword such as `Closes #N`, in its subject or its body: GitHub closes that Issue when the commit reaches `main`. Write `Refs #N`; only the pull request body closes an Issue.
 
 A change on a measured path (license verification, server startup, checkout and renewal, binary size) reports its numbers before and after under `## Measurements`.
 
