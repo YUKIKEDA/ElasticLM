@@ -23,6 +23,62 @@ Do these once, before the first tag. Each step closes a gap the threat model nam
    and files cannot change, even for the owner; a draft still can (T24).
 5. Settings → Secrets and variables → Actions → Variables: add `NUGET_USER` with the owner's nuget.org profile name. It is
    not a secret; `NuGet/login` sends it with the OIDC token.
+6. Require the checks of `ci.yml` and `release.yml` on `main` (design §20.5, "`main` の必須の検査"; Issue #340). Do this
+   only after the pull request of V1d21 has merged: it renames the job `Admin UI (web/admin)` of `release.yml`, and a
+   required name that a pull request's run does not report stays "Pending" and blocks the merge.
+   1. Settings → Rules → Rulesets → **Protect main branch**. Keep the bypass list empty and the rules already there.
+   2. Turn on **Require status checks to pass**. Leave **Require branches to be up to date before merging** off and
+      **Do not require status checks on creation** off.
+   3. Under **Add checks**, add each of these 29 names exactly, and set the source of each to **GitHub Actions**:
+
+      ```text
+      Action pins
+      Admin UI (web/admin)
+      build.ps1 (windows-latest)
+      build.ps1 (ubuntu-latest)
+      build.ps1 (macos-latest)
+      NativeAOT elm-server, elm, elm-service, and libelasticlm (windows-latest)
+      NativeAOT elm-server, elm, elm-service, and libelasticlm (ubuntu-latest)
+      NativeAOT elm-server, elm, elm-service, and libelasticlm (macos-latest)
+      Version and release notes
+      Admin UI (web/admin, release)
+      Build win-x64
+      Build win-arm64
+      Build linux-x64
+      Build linux-arm64
+      Build linux-musl-x64
+      Build osx-arm64
+      Build osx-x64
+      NuGet packages
+      Use the packages (win-x64)
+      Use the packages (linux-x64)
+      Use the packages (osx-arm64)
+      SBOM
+      Container image
+      Container image (linux/amd64)
+      Container image (linux/arm64)
+      Guide steps with containers
+      SHA256SUMS
+      Check the release files
+      Documentation site (website)
+      ```
+
+      Do not add `Measure`, `Attest`, `Draft the release`, `Publish`, `Publish the documentation site`, or CodeQL's
+      `Analyze (…)`: they do not run on every pull request, and a required check that does not run blocks the merge.
+   4. Save the ruleset.
+7. Settings → General → Pull Requests: turn on **Allow auto-merge**
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-auto-merge-for-pull-requests-in-your-repository).
+8. Check steps 6 and 7. The agent reads the same values and writes them on Issue #340.
+   - This prints `[]`, `false`, `false` (or `null`), `29`, and the 29 names of step 6, each after `15368` (the ID of
+     GitHub Actions):
+
+     ```sh
+     gh api repos/YUKIKEDA/ElasticLM/rulesets/25864892 --jq '.bypass_actors, (.rules[] | select(.type == "required_status_checks") | .parameters | .strict_required_status_checks_policy, .do_not_enforce_on_create, (.required_status_checks | length), (.required_status_checks[] | "\(.integration_id) \(.context)"))'
+     ```
+
+   - `gh api repos/YUKIKEDA/ElasticLM --jq .allow_auto_merge` prints `true`.
+9. When a pull request says that it renames a required job, removes one, or changes its matrix, change the list of step
+   6 to the names its body gives when you merge it (`.cursor/rules/pull-requests.mdc`).
 
 ### Environment `release`
 
