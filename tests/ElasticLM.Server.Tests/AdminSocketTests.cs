@@ -477,8 +477,10 @@ public sealed class AdminSocketTests : IAsyncDisposable
     ///     one fails, so the connect gives what this system gives then (Windows NoBufferSpaceAvailable, Linux WouldBlock,
     ///     macOS ConnectionRefused as read in XNU and not run before CI). The test's output names it.
     /// - A listener of the sockets' telemetry that cancels the start's token when it gets ConnectStop or ConnectFailed of a
-    ///   connect in the start's own flow. The connect of an AF_UNIX socket ends inside ConnectAsync on every system, so the
-    ///   token passes the check before the connect, and the cancellation comes before the product reads the result.
+    ///   connect in the start's own flow. The connect of an AF_UNIX socket ends inside ConnectAsync on every system (Windows
+    ///   connects synchronously, Linux gives EAGAIN for a full queue, macOS ECONNREFUSED as read in XNU; the sources and the
+    ///   measurements are in docs/rows/V1d3h.md), so the token passes the check before the connect, and the cancellation
+    ///   comes before the product reads the result.
     ///
     /// Steps:
     /// - Start the server with that token.
@@ -486,6 +488,8 @@ public sealed class AdminSocketTests : IAsyncDisposable
     /// Expected:
     /// - OperationCanceledException for the start's token; the listener saw exactly one connect of the start, and cancelled
     ///   at it.
+    /// - The connect's error is inside it: none where the connect succeeded ("accepting"), otherwise a SocketException with
+    ///   the code the telemetry gave ("refused": ConnectionRefused).
     /// - admin.sock is still there, and admin.token has the same bytes.
     /// </remarks>
     [Theory]
@@ -516,6 +520,20 @@ public sealed class AdminSocketTests : IAsyncDisposable
         );
         Assert.Equal(cancel.Token, cancelled.CancellationToken);
         Assert.Equal(1, afterConnect.Connects);
+        if (peer != "full queue")
+        {
+            Assert.Equal(peer == "refused" ? SocketError.ConnectionRefused : SocketError.Success, afterConnect.Result);
+        }
+
+        if (afterConnect.Result == SocketError.Success)
+        {
+            Assert.Null(cancelled.InnerException);
+        }
+        else
+        {
+            Assert.Equal(afterConnect.Result, Assert.IsType<SocketException>(cancelled.InnerException).SocketErrorCode);
+        }
+
         Assert.True(Path.Exists(socket));
         Assert.Equal(token, File.ReadAllBytes(Path.Combine(data, AdminToken.FileName)));
     }
@@ -1015,7 +1033,9 @@ public sealed class AdminSocketTests : IAsyncDisposable
     // ConnectFailed and then ConnectStop when a connect ends, in the flow that connects: a connect that ends inside
     // ConnectAsync writes them before ConnectAsync returns (SocketAsyncEventArgs.FinishOperationSync and
     // SocketsTelemetry.AfterConnect, dotnet/runtime v10.0.15), so the AsyncLocal mark of that flow is set there, and an
-    // EventListener is called on the thread that writes the event. Connects of other flows (other tests) carry no mark.
+    // EventListener is called on the thread that writes the event (EventSource.DispatchToAllListeners calls OnEventWritten
+    // in the writer's call, EventSource.cs lines 2187 to 2215 of v10.0.15; docs/rows/V1d3h.md has the lines). Connects of
+    // other flows (other tests) carry no mark.
     private sealed class CancelAfterConnect(CancellationTokenSource cancel) : EventListener
     {
         private readonly AsyncLocal<bool> _marked = new();
@@ -1065,8 +1085,10 @@ public sealed class AdminSocketTests : IAsyncDisposable
     }
 
     // A listener at a socket path with a queue of one that accepts nothing, and the connects that fill its queue: the test
-    // connects until a connect fails, at most 1,000 times. ConnectAsync puts the socket into non-blocking mode, so a full
-    // queue ends the connect at once with an error instead of waiting.
+    // connects until a connect fails, at most 1,000 times. A full queue ends the connect at once with an error on each
+    // system: Windows connects an AF_UNIX socket synchronously and gives NoBufferSpaceAvailable (measured); on Linux
+    // SocketAsyncContext.ConnectAsync makes the socket non-blocking and the kernel gives EAGAIN (WouldBlock); macOS gives
+    // ECONNREFUSED (read in XNU, not run). docs/rows/V1d3h.md has the source lines and the measurements.
     private sealed class FullQueue : IDisposable
     {
         private readonly Socket _listener = new(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
@@ -1077,26 +1099,33 @@ public sealed class AdminSocketTests : IAsyncDisposable
         public static async Task<FullQueue> FillAsync(string path)
         {
             var full = new FullQueue();
-            var endPoint = new UnixDomainSocketEndPoint(path);
-            full._listener.Bind(endPoint);
-            full._listener.Listen(1);
-            for (int i = 0; i < 1_000; i++)
+            try
             {
-                var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
-                full._clients.Add(client);
-                try
+                var endPoint = new UnixDomainSocketEndPoint(path);
+                full._listener.Bind(endPoint);
+                full._listener.Listen(1);
+                for (int i = 0; i < 1_000; i++)
                 {
-                    await client.ConnectAsync(endPoint, CancellationToken.None);
+                    var client = new Socket(AddressFamily.Unix, SocketType.Stream, ProtocolType.Unspecified);
+                    full._clients.Add(client);
+                    try
+                    {
+                        await client.ConnectAsync(endPoint, CancellationToken.None);
+                    }
+                    catch (SocketException)
+                    {
+                        return full;
+                    }
                 }
-                catch (SocketException)
-                {
-                    return full;
-                }
-            }
 
-            full.Dispose();
-            Assert.Fail("1,000 connects to a listener with a queue of one that accepts nothing all succeeded.");
-            return full;
+                Assert.Fail("1,000 connects to a listener with a queue of one that accepts nothing all succeeded.");
+                return full;
+            }
+            catch
+            {
+                full.Dispose();
+                throw;
+            }
         }
 
         public void Dispose()

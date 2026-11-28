@@ -2,7 +2,7 @@
 
 ## Grill の記録
 
-持ち主の決定（2026-11-28、Issue #529 のコメント）で行を足し（PR #530）、すぐ始めた。原因は製品の側にあり、直し方は持ち主に聞いた（問 3g-1）。設計の独立レビューの指摘は D1〜D9、PR #531 の独立レビューの指摘は R1〜R7、問 3g-2 のあとの追加分の独立レビューの指摘は S1〜S7 で、D1、D4、R1、R2 は問 3g-2 として持ち主に聞いた（下の「持ち主の決定」と「同じ種類を探した範囲」）。
+持ち主の決定（2026-11-28、Issue #529 のコメント）で行を足し（PR #530）、すぐ始めた。直す前の製品が §13.5 に反していたので、直し方は持ち主に聞いた（問 3g-1）。設計の独立レビューの指摘は D1〜D9、PR #531 の独立レビューの指摘は R1〜R7、問 3g-2 のあとの追加分の独立レビューの指摘は S1〜S7 で、D1、D4、R1、R2 は問 3g-2 として持ち主に聞いた（下の「持ち主の決定」と「同じ種類を探した範囲」）。
 
 ### 落ち方
 
@@ -16,10 +16,10 @@ dotnet/runtime release/10.0 の次のソースを読んだ（ファイルと関�
 
 - `src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.Tasks.cs`: `ConnectAsync(EndPoint, CancellationToken)`、`AwaitableSocketAsyncEventArgs.ConnectAsync`、`ThrowException`、`CreateException`。
 - `src/libraries/System.Net.Sockets/src/System/Net/Sockets/SocketAsyncEventArgs.cs`: `CancelConnectAsync`。
-
-V1d3h（Issue #533、PR の記録は [V1d3h.md](./V1d3h.md)）で、トークンの登録から実際に呼ばれる関数を dotnet/runtime v10.0.15 で追い直し、下の 1 つ目と 2 つ目の読みが誤りだと分かった（持ち主の決定 3h-4 で直した）。`CancelConnectAsync` を呼ぶのは公開の静的な `Socket.CancelConnectAsync` だけで、トークンで取り消すときには呼ばれない。トークンの取り消しは、待ちになった接続にだけ届き、Windows は `CancelIoEx`、Unix は `TryCancel` を使う。どちらもソケットを閉じない。下の箇条は、PR #531 のときの読みのまま残し、誤りの所に印を付けた。
 - `src/libraries/System.Net.Sockets/src/System/Net/Sockets/NetworkStream.cs`: コンストラクターと `WrapException`。
 - `src/libraries/System.Net.Sockets/src/System/Net/Sockets/Socket.cs`: `Dispose(bool)`、`SetToDisconnected`、`Connected`。
+
+V1d3h（Issue #533、PR の記録は [V1d3h.md](./V1d3h.md)）で、トークンの登録から実際に呼ばれる関数を dotnet/runtime v10.0.15 で追い直し、下の「読んで分かったこと」の 1 つ目と 2 つ目の読みが誤りだと分かった（持ち主の決定 3h-4 で直した）。`CancelConnectAsync` を呼ぶのは公開の静的な `Socket.CancelConnectAsync` だけで、トークンで取り消すときには呼ばれない。トークンの取り消しは、待ちになった接続にだけ届き、Windows は `CancelIoEx`、Unix は `TryCancel` を使う。どちらもソケットを閉じない。下の箇条は、PR #531 のときの読みのまま残し、誤りの所に印を付けた。
 
 読んで分かったこと:
 
@@ -30,7 +30,7 @@ V1d3h（Issue #533、PR の記録は [V1d3h.md](./V1d3h.md)）で、トークン
 
 これは、§13.5 の「呼び出し側の取り消し（`StartAsync` の `CancellationToken`）は、この文にせず、取り消しの例外のまま上げる」に反する。PR #530 の §20.7 の行は「§13.5 は取り消しの振る舞いを書いていない」と書いたが、誤りだった（§13.5 の「答えが得られないとき」の項に書いてある）。この PR で §20.7 の行を直した。
 
-原因は、ソースの読みと、下の決まって起こした再現で特定した。そのままの競合は、手元では 9,000 回で 1 回も起きなかった（下の測った事実）。CI で落ちた 1 回がどの誤りの道を通ったかは、記録が残っていないので分からない（PR #531 のときは、閉じたソケットの道のどれかと読んだが、V1d3h で、トークンの取り消しはソケットを閉じないと分かった）。直しは誤りの種類によらないので、どの道でも同じに働く。
+直す前の catch がトークンを読まないことは、ソースの読みと、下の決まって起こした再現で確かめた。CI の 1 回をどの誤りが起こしたかは分からない（決定 3h-4）。そのままの競合は、手元では 9,000 回で 1 回も起きなかった（下の測った事実）。CI で落ちた 1 回がどの誤りの道を通ったかは、記録が残っていないので分からない（PR #531 のときは、閉じたソケットの道のどれかと読んだが、V1d3h で、トークンの取り消しはソケットを閉じないと分かった）。直しは誤りの種類によらないので、どの道でも同じに働く。
 
 今の製品では起きない。`elm-server` と `elm-service` の `Program.cs` は、`StartAsync` に取り消せるトークンを渡していない（PR #519 の Windows サービスのマージのあとも同じ）。
 

@@ -211,8 +211,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     /// folder, when it cannot listen on <c>listen</c> or on the administration socket, and when Windows does not send an
     /// intermediate of the TLS certificate file; the message says why.</exception>
     /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled. The probe of a socket
-    /// file that is left and the check of the intermediates throw this exception when they find the token cancelled as they
-    /// read their result, with the error they got, if any, as its inner exception; the probe then deletes nothing.</exception>
+    /// file that is left throws this exception when it finds the token cancelled as it reads the connect's result, with the
+    /// connect's error, if any, as its inner exception, and then deletes nothing; the check of the intermediates throws it when
+    /// it ends with another exception after the token is cancelled, with that exception inside (design §13.5, §13.7).</exception>
     public static async Task<ElmServer> StartAsync(ServerSettings settings, ServerHostOptions host, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(settings);
