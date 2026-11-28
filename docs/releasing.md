@@ -19,6 +19,7 @@ change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
 | Environment `release` | Done. It has no secrets and no variables |
 | Repository, step 5 (`NUGET_USER`) | In V1e |
 | Repository, steps 6 to 8 (required checks of `main`, auto-merge) | After the pull request of V1d21 merges (Issue #340) |
+| Repository, step 10 (the tokens) | Read by the owner on GitHub's pages on 2026-11-28: no personal access token, and GitHub CLI as the only authorized OAuth app |
 | nuget.org | In V1e |
 | Documentation site (Pages, environment `github-pages`) | In V1e |
 
@@ -122,7 +123,19 @@ change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
    - `gh api repos/YUKIKEDA/ElasticLM --jq .allow_auto_merge` prints `true`.
 9. When you merge a pull request that says it renames a required job, removes one, or changes its matrix, change the
    required checks of the ruleset (step 6) to the names its body gives (`.cursor/rules/pull-requests.mdc`). Open pull
-   requests then need a new run, as in step 6.
+   requests then need a new run, as in step 6. A pull request may also say that it adds a `paths` filter to a required
+   job's workflow (its checks would stay "Pending"), adds an `if` to a required job (a skipped job reports "Success",
+   so its check would pass without checking anything), or adds a job of a required name (the result would be
+   ambiguous). Do not merge it until the body says how the required checks stay whole.
+10. Check, by reading only, that the GitHub CLI token is the only GitHub credential with the `repo` scope (design T28
+    and §5.4). Change no setting of the machine and no other repository.
+    1. Settings (of your account) → Developer settings → Personal access tokens → **Tokens (classic)** and
+       **Fine-grained tokens**: note each token and its scopes. No token other than GitHub CLI's may have `repo`.
+    2. Settings (of your account) → Applications → **Authorized OAuth Apps**: note the apps.
+    3. Write what you saw on Issue #340, or tell the agent, who writes it there and in `docs/rows/V1d21.md`. If a token
+       with `repo` is there, design §5.4 gets it in the row of the owner's account.
+    On 2026-11-28 the owner saw no personal access token of either kind, and GitHub CLI as the only authorized OAuth
+    app.
 
 ### Environment `release`
 
