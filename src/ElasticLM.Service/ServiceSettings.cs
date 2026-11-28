@@ -170,6 +170,11 @@ internal sealed record ServiceSettings
             Env(ConnectionVariable)
             ?? (file.Database?.ConnectionFile is string connectionFile ? ReadSecret(connectionFile, "database.connectionFile") : null)
             ?? throw new ServiceStartException($"Set {ConnectionVariable} or database.connectionFile to the database connection string.");
+        if (provider == DatabaseProvider.Postgres)
+        {
+            // design §14.2, T30: refused here, so that setup and the service both stop with the settings' exit code.
+            PostgresConnection.Check(connection);
+        }
 
         IReadOnlyList<string> certificates = EnvList("ELM_SIGNING_CERTIFICATES") ?? file.Signing?.Certificates ?? [];
         if (requireSigning && signingKey is null)

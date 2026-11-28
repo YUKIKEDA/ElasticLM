@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Security.AccessControl;
 using System.Security.Cryptography;
 using System.Security.Principal;
@@ -10,6 +11,8 @@ namespace ElasticLM.Licensing.Tests;
 public sealed class MachineFingerprintTests : IDisposable
 {
     private const string Id = "00112233445566778899aabbccddeeff";
+
+    private static readonly byte[] SmbiosUuid = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
 
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "elm-machine-id-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(6)));
 
@@ -361,6 +364,191 @@ public sealed class MachineFingerprintTests : IDisposable
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid(full.AsSpan(0, 0x1A)));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid([.. end, .. full]));
         Assert.Null(MachineIdSources.ParseSmbiosSystemUuid([.. lengthUnderFour, .. full]));
+    }
+
+    /// <summary>
+    /// The UUID parser reads every form that Guid.TryParse accepts into the bytes in the order they are written, and returns
+    /// null for any other text.
+    /// </summary>
+    /// <remarks>
+    /// Design §10.3: the Windows MachineGuid and the macOS IOPlatformUUID are read as UUID strings, in every form
+    /// Guid.TryParse accepts, into the 16 bytes in the order they are written.
+    ///
+    /// Preconditions:
+    /// - The UUID 00112233-4455-6677-8899-aabbccddeeff, whose bytes differ in each of its first three fields, written
+    ///   hyphenated in lowercase and in uppercase, as 32 hex digits, in braces, in parentheses, in the {0x…} form, and with
+    ///   spaces and a line feed around it.
+    /// - Text that is not a UUID: one digit short, one character too many, "uninitialized", an empty string, and null.
+    ///
+    /// Steps:
+    /// - Parse each.
+    ///
+    /// Expected:
+    /// - The bytes 00 11 22 … ff for each form of the UUID; null for the others.
+    /// </remarks>
+    /// <param name="text">The text to parse.</param>
+    /// <param name="hex">The expected bytes in hex, or null when the text is not read.</param>
+    [Theory]
+    [InlineData("00112233-4455-6677-8899-aabbccddeeff", Id)]
+    [InlineData("00112233-4455-6677-8899-AABBCCDDEEFF", Id)]
+    [InlineData("00112233445566778899aabbccddeeff", Id)]
+    [InlineData("{00112233-4455-6677-8899-aabbccddeeff}", Id)]
+    [InlineData("(00112233-4455-6677-8899-aabbccddeeff)", Id)]
+    [InlineData("{0x00112233,0x4455,0x6677,{0x88,0x99,0xaa,0xbb,0xcc,0xdd,0xee,0xff}}", Id)]
+    [InlineData(" 00112233-4455-6677-8899-aabbccddeeff \n", Id)]
+    [InlineData("00112233-4455-6677-8899-aabbccddeef", null)]
+    [InlineData("00112233-4455-6677-8899-aabbccddeeff0", null)]
+    [InlineData("uninitialized", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void ParseGuid_Text_AcceptsGuidFormsInTextByteOrder(string? text, string? hex)
+    {
+        Assert.Equal(hex is null ? null : Convert.FromHexString(hex), MachineIdSources.ParseGuid(text));
+    }
+
+    /// <summary>
+    /// The SMBIOS reader reads the firmware table only when the size first returned is from 9 bytes to 1 MiB.
+    /// </summary>
+    /// <remarks>
+    /// Design §10.3: when the first call of GetSystemFirmwareTable('RSMB') returns 8 bytes or less, or more than 1 MiB, the
+    /// UUID cannot be read and the second call is not made.
+    ///
+    /// Preconditions:
+    /// - A fake firmware table reader that returns the given size for the empty buffer, and for the second call fills the
+    ///   buffer with an 8-byte header, whose Length covers a type 1 structure with UUID 01..10 and the end-of-table
+    ///   structure, followed by them and zeros, and returns the size. Sizes 0, 8, 9, 1 MiB, and 1 MiB + 1; at 9 bytes the
+    ///   Length is 1 and the table is one byte.
+    ///
+    /// Steps:
+    /// - Read the UUID through the fake.
+    ///
+    /// Expected:
+    /// - 0 and 8: null, and only the first call. 9: null after both calls (the one-byte table holds no structure).
+    ///   1 MiB: the UUID 01..10 after both calls. 1 MiB + 1: null, and only the first call.
+    /// </remarks>
+    /// <param name="size">The size the first call returns.</param>
+    /// <param name="calls">The number of calls expected.</param>
+    /// <param name="read">Whether the UUID is read.</param>
+    [Theory]
+    [InlineData(0u, 1, false)]
+    [InlineData(8u, 1, false)]
+    [InlineData(9u, 2, false)]
+    [InlineData(1024u * 1024, 2, true)]
+    [InlineData((1024u * 1024) + 1, 1, false)]
+    public void ReadSmbiosUuid_FirmwareTableSize_ReadsOnlyFrom9BytesTo1MiB(uint size, int calls, bool read)
+    {
+        var firmware = new FakeFirmware(RawSmbiosData(Math.Max(size, 9)), size, size);
+
+        byte[]? uuid = MachineIdSources.ReadSmbiosUuid(firmware.Read);
+
+        Assert.Equal(read ? SmbiosUuid : null, uuid);
+        Assert.Equal(calls, firmware.Calls);
+    }
+
+    /// <summary>
+    /// The SMBIOS reader refuses a second call that returns another size and a header Length that is not positive or runs past
+    /// the buffer.
+    /// </summary>
+    /// <remarks>
+    /// Design §10.3: the UUID cannot be read when the second call returns a size other than the first, or when Length, read as
+    /// a signed 32-bit number, is 0 or less or exceeds the bytes after the header.
+    ///
+    /// Preconditions:
+    /// - The raw SMBIOS data of 64 bytes: the header, a type 1 structure with UUID 01..10, the end-of-table structure, and
+    ///   zeros. A fake reader returns 64 for the empty buffer and fills the buffer on the second call.
+    /// - The second call returns 64, 65, 63, or 0 with Length 56 (the bytes after the header).
+    /// - The second call returns 64 with Length 1, 0, -1 (FFFFFFFF), int.MinValue (80000000), or 57.
+    ///
+    /// Steps:
+    /// - Read the UUID through the fake.
+    ///
+    /// Expected:
+    /// - The UUID 01..10 when the second call returns 64 with Length 56; null for each other case, with no exception.
+    /// </remarks>
+    /// <param name="second">The size the second call returns.</param>
+    /// <param name="length">The Length in the header.</param>
+    /// <param name="read">Whether the UUID is read.</param>
+    [Theory]
+    [InlineData(64u, 56, true)]
+    [InlineData(65u, 56, false)]
+    [InlineData(63u, 56, false)]
+    [InlineData(0u, 56, false)]
+    [InlineData(64u, 1, false)]
+    [InlineData(64u, 0, false)]
+    [InlineData(64u, -1, false)]
+    [InlineData(64u, int.MinValue, false)]
+    [InlineData(64u, 57, false)]
+    public void ReadSmbiosUuid_SecondCallOrTableLength_RefusesMismatch(uint second, int length, bool read)
+    {
+        byte[] data = RawSmbiosData(64);
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), length);
+        var firmware = new FakeFirmware(data, 64, second);
+
+        byte[]? uuid = MachineIdSources.ReadSmbiosUuid(firmware.Read);
+
+        Assert.Equal(read ? SmbiosUuid : null, uuid);
+    }
+
+    /// <summary>
+    /// The Windows reader reads this machine's MachineGuid from the 64-bit registry view.
+    /// </summary>
+    /// <remarks>
+    /// Design §10.3: Windows reads MachineGuid in the 64-bit registry view; the default view of a 32-bit process has no
+    /// MachineGuid. Run in a 32-bit process, this test therefore fails if the reader opens the default view.
+    ///
+    /// Preconditions:
+    /// - A Windows machine, which has HKLM\SOFTWARE\Microsoft\Cryptography\MachineGuid. Skipped on Linux and macOS.
+    ///
+    /// Steps:
+    /// - Read the MachineGuid with ReadWindowsMachineGuid.
+    ///
+    /// Expected:
+    /// - 16 bytes.
+    /// </remarks>
+    [Fact]
+    public void ReadWindowsMachineGuid_ThisMachine_ReadsTheValue()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            Assert.Skip("MachineGuid is a value of the Windows registry.");
+            return;
+        }
+
+        Assert.Equal(16, MachineIdSources.ReadWindowsMachineGuid()?.Length);
+    }
+
+    // The raw SMBIOS data of the given size: the header, then a type 1 structure and the end-of-table structure, and zeros.
+    // Length covers the bytes after the header. A buffer too small for the structures holds zeros after the header.
+    private static byte[] RawSmbiosData(uint size)
+    {
+        byte[] table = [1, 0x1B, 1, 0, 0, 0, 0, 0, .. SmbiosUuid, 0, 0, 0, 0, 0, 127, 4, 2, 0, 0, 0];
+        byte[] data = new byte[size];
+        data[1] = 3;
+        if (data.Length - 8 >= table.Length)
+        {
+            table.CopyTo(data, 8);
+        }
+
+        BinaryPrimitives.WriteInt32LittleEndian(data.AsSpan(4), data.Length - 8);
+        return data;
+    }
+
+    // Returns first for the empty buffer, and fills any other buffer with data and returns second.
+    private sealed class FakeFirmware(byte[] data, uint first, uint second)
+    {
+        public int Calls { get; private set; }
+
+        public uint Read(Span<byte> buffer)
+        {
+            Calls++;
+            if (buffer.IsEmpty)
+            {
+                return first;
+            }
+
+            data.AsSpan(0, Math.Min(data.Length, buffer.Length)).CopyTo(buffer);
+            return second;
+        }
     }
 
     private static void Deny(string path)
