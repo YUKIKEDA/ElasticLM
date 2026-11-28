@@ -10,13 +10,14 @@ Do these once, before the first tag. Each step closes a gap the threat model nam
 
 Some of them are done. While `release.yml` is on `main`, a `v*` tag must not start the `publish` job without the
 owner's approval, so the owner set the environment `release` and the tag rulesets before V1e (roadmap row V1d20,
-Issue #339). Read with `gh api` on 2026-11-28 between 11:14Z and 11:26Z (UTC):
+Issue #339). The owner turned on immutable releases at the same time, so that a release published before V1e cannot
+change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
 
 | Step | State |
 | --- | --- |
-| Repository, steps 1 to 3 | Done. The owner is the only collaborator, the default workflow permissions are `read`, and both tag rulesets are active |
+| Repository, steps 1 to 4 | Done. The owner is the only collaborator, the default workflow permissions are `read`, both tag rulesets are active, and immutable releases are on |
 | Environment `release` | Done. It has no secrets and no variables |
-| Repository, steps 4 and 5 (immutable releases, `NUGET_USER`) | In V1e |
+| Repository, step 5 (`NUGET_USER`) | In V1e |
 | nuget.org | In V1e |
 | Documentation site (Pages, environment `github-pages`) | In V1e |
 
