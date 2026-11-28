@@ -34,6 +34,12 @@ elm <group> <command> [arguments] [options]
 
 出力先のファイルがすでにあれば上書きする。このオプションがないと、ファイルを上書きすることになるコマンドは終了コード 2 で止まり、何も書かない。このオプションを受け付けるのは `elm key root create`、`elm key signing create`、`elm key certify`、`elm license issue`、`elm server activate-request`、`elm server refresh-request`、`elm server deactivate-proof`、`elm offline process`、`elm secret create` だ。
 
+### 入力ファイル
+
+次のファイルは全部読み、読める大きさにはファイルごとに上限がある。ライセンスファイル、鍵のファイル、鍵証明書のファイル、`--trust` のファイル、`elm offline process` の `--in` のファイル、`elm admin request` の `--body` は 64 KiB まで、`elm server import` が読むサービスのレスポンスファイルは 256 KiB までだ。上限より大きいファイルでは `error: The file '<path>' is larger than <limit> bytes.` と、ファイルがないときは `error: The file '<path>' does not exist.` と出して、終了コード 2 で止まる。`elm log verify` のログファイルは、このように読まない。1 行ずつ読み、1 行は 1 MiB までだ。
+
+`elm license verify` は、ライセンスファイルのバイトをそのまま検証する。ライセンスファイルを BOM（バイトオーダーマーク）付きの UTF-8 や UTF-16 で保存し直すと、`invalid: ELM_MALFORMED: The license file is not a valid ElasticLM license file.` と出し、終了コードは 1 になる。一方、UTF-8 の BOM 付きで保存したファイルも、`elm license inspect` では表示できる。`elm admin request` は、`--body` のバイトを BOM も含めてそのまま送る。これらのほかのファイルは、UTF-8 のテキストとして読む。先頭に UTF-8 の BOM があれば、除いて読む。UTF-16 や UTF-32 で保存したファイルなど、UTF-8 として正しくないバイトを含むファイルでは、`error: The file '<path>' is not UTF-8 text.` と出して、終了コード 2 で止まる。UTF-8 で保存し直してから、もう一度コマンドを実行する。
+
 ### パスフレーズ
 
 `elm` が書く秘密鍵は、どれもパスフレーズで暗号化した PKCS#8 の PEM ファイルだ。Linux と macOS では、秘密鍵のファイルをモード `0600` で書く。Windows では、ファイルは置いたフォルダーのアクセス権を引き継ぐ。`--force` のときは、前のファイルに書き込まずに、新しいファイルで置き換える。そのため、前のファイルのモードやアクセス権は残らず、前のファイルを開いていたプログラムにも新しい中身は見えない。
@@ -75,7 +81,7 @@ elm <group> <command> [arguments] [options]
 | --- | --- | --- |
 | `0` | 成功 | コマンドが求められたことをした。`elm log verify` は、ログが壊れていなければ、警告があっても 0 を返す |
 | `1` | 検証の失敗 | ライセンスファイルやログの検証に失敗した。または、サーバー、`elm-service`、ID プロバイダーがリクエストを拒否したか、エラーを返した |
-| `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、または `--force` なしで出力先がすでにある。パスフレーズ、ライセンスキー、信頼する鍵、資格情報のどれかが見つからない |
+| `2` | 不正な入力 | 引数、オプション、値が間違っているか足りない。ファイルがない、読めない、大きすぎる、UTF-8 のテキストでない、または `--force` なしで出力先がすでにある。パスフレーズ、ライセンスキー、信頼する鍵、資格情報のどれかが見つからない |
 | `3` | ネットワークのエラー | サーバー、`elm-service`、ID プロバイダーに接続できない、リクエストがタイムアウトした、または（`elm server`、`elm offline process`、`elm admin` では）レスポンスを読めないか、レスポンスが `elm` の読むサイズより大きい |
 
 `elm` が[エラーコード](error-codes.md)を表示したときは、終了コードはそのエラーコードで決まる。`ELM_NETWORK_ERROR` なら `3` で、それ以外のコードは、`elm` が自分で行った検証によるものでも、サーバーや `elm-service` のレスポンスによるものでも `1` になる。メッセージが、レスポンスが `elm` の読むサイズより大きいことを示す次の 4 つのときは、`ELM_MALFORMED` でも `3` になる。`The service's answer is larger than the limit.`（サーバーライセンスのコマンド）、`The service's answer is larger than 262144 bytes.`（`elm offline process`）、`The server's administration API answered with a body larger than 67108864 bytes.`（`elm server`）、`The answer of <URL> is larger than 262144 bytes.`（`elm admin login` と、`elm admin request` と `elm offline process` が行う保存したログインの更新）だ。`elm` はそのレスポンスを何も読んでいないので、拒否だったのか成功だったのかを判断できないからだ。ほかの `ELM_MALFORMED` は、ファイルが上限より大きいことを示すメッセージのものも含めて、`1` になる。終了コード `2` は、何かを検証したり送ったりする前に `elm` が自分の入力を確かめた結果で、メッセージにはコードではなく、問題のある入力の名前が出る。唯一の例外は `elm license issue` だ。このコマンドはライセンスを書き出す前に検証し、その検証で出たコードは `2` になる。そのライセンスは入力から作ったものだからだ。

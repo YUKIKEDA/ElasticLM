@@ -2,6 +2,7 @@ using System.CommandLine;
 using System.CommandLine.Parsing;
 using System.Globalization;
 using System.Security.Cryptography;
+using System.Text;
 using ElasticLM.Issuing;
 using ElasticLM.Licensing;
 
@@ -32,22 +33,39 @@ internal sealed class CliException(string message, int exitCode = ExitCodes.Inva
 /// </summary>
 internal static class CliFiles
 {
-    public static string ReadText(string path, int maxBytes = 1024 * 1024)
+    // design §16 (V1d24c): the file is read as UTF-8 text; one UTF-8 byte order mark is left out, and a byte that is not
+    // UTF-8 (the byte order marks of UTF-16 and UTF-32 among them) stops the command.
+    private static readonly UTF8Encoding StrictUtf8 = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    public static string ReadText(string path, int maxBytes)
+    {
+        ReadOnlySpan<byte> bytes = ReadBytes(path, maxBytes);
+        if (bytes.StartsWith(Encoding.UTF8.Preamble))
+        {
+            bytes = bytes[Encoding.UTF8.Preamble.Length..];
+        }
+
+        try
+        {
+            return StrictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            throw new CliException($"The file '{path}' is not UTF-8 text.");
+        }
+    }
+
+    // design §16 (V1d24c, F30): the bytes of the file as they are, read with the limit checked while they are read.
+    public static byte[] ReadBytes(string path, int maxBytes)
     {
         try
         {
-            var info = new FileInfo(path);
-            if (!info.Exists)
+            if (!new FileInfo(path).Exists)
             {
                 throw new CliException($"The file '{path}' does not exist.");
             }
 
-            if (info.Length > maxBytes)
-            {
-                throw new CliException($"The file '{path}' is larger than {maxBytes} bytes.");
-            }
-
-            return File.ReadAllText(path);
+            return BoundedFile.Read(path, maxBytes, FileShare.Read) ?? throw new CliException($"The file '{path}' is larger than {maxBytes} bytes.");
         }
         catch (IOException e)
         {
@@ -58,8 +76,6 @@ internal static class CliFiles
             throw new CliException($"The file '{path}' cannot be read: access is denied.");
         }
     }
-
-    public static byte[] ReadBytes(string path, int maxBytes) => System.Text.Encoding.UTF8.GetBytes(ReadText(path, maxBytes));
 
     public static void EnsureWritable(string path, bool force)
     {

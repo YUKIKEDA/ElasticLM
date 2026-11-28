@@ -36,6 +36,7 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 - ソケットのファイル（データフォルダーの `admin.sock`）のパスが、システムの上限より長い。メッセージは `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` になる。サーバーは、ルート鍵を読む前、データフォルダーを作る前にこれを確かめるので、この起動は何も残さない。[データフォルダー](#データフォルダー)を参照。
 - システムに Unix ドメインソケットがない。このページの冒頭に挙げたバージョンより古い Windows などだ: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` サーバーは、パスの長さを確かめたあと、同じ時点でこれを確かめる。
 - ルート公開鍵が指定されていない。
+- `trust.rootKeys` のファイルが 16 KiB より大きいか、`tls.certificate` か `tls.key` のファイルが 64 KiB より大きい。メッセージは `error: trust.rootKeys file '<path>' is larger than 16 KiB.`、`error: The TLS certificate '<path>' is larger than 64 KiB.`、`error: The TLS key '<path>' is larger than 64 KiB.` のどれかになる。
 - 同じデータフォルダーで、別の `elm-server` が動いている: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` そのサーバーを止めるか、このサーバーに専用の `dataDirectory` を指定する。Windows では、バックアップやウイルス対策のスキャンなど、ほかのプログラムが `server.lock` を開いているあいだも、同じ行になる。そのときは、サーバーをもう一度起動し、そのプログラムの対象から `server.lock` を外す（対象から外すファイルは、[データフォルダー](#データフォルダー)に挙げている）。ファイルのロックが効かない場所（[データフォルダー](#データフォルダー)を参照）では、2 つ目のサーバーは代わりに `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.` で止まる。
 - ロックファイル `server.lock` を開けない。ほかのプログラムがファイルを開いているとき（上の項目）は除く。権限がない、ディスクがいっぱい、ファイルシステムが読み取り専用、といったときだ: `error: The lock file '<path>' cannot be opened: <reason>` 原因は、行の最後の理由に出る。サーバーのユーザーがデータフォルダーに書き込めることと、`server.lock` がファイルであることを確かめる。
 - `admin.sock` のパスにあるものを、使うことも消すこともできない。その名前のフォルダーがある場合などだ: `error: The administration socket '<path>' cannot be used: <reason>` そのパスにあるものを消して、サーバーをもう一度起動する。
@@ -175,15 +176,15 @@ elm-server [--config <settings.json>] [--set-aside-broken-records]
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須） | ベンダーのルート公開鍵の PEM ファイル。サーバーライセンスの鍵証明書を、この鍵で確かめる。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS`（2 つ目の `_` に注意）に PEM テキストを入れてもよい。どちらもなければ、サーバーは起動しない |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | ファイルのパスのリスト | なし（必須） | ベンダーのルート公開鍵の PEM ファイル。サーバーライセンスの鍵証明書を、この鍵で確かめる。各ファイルは 16 KiB までで、鍵がおよそ 90 個入る。ファイルの代わりに、`ELM_TRUST_ROOT_KEYS`（2 つ目の `_` に注意）に PEM テキストを入れてもよい。どちらもなければ、サーバーは起動しない |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | 文字列のリスト | なし | サーバーがもう信頼しない鍵 ID（`kid`） |
 
 ## `tls`
 
 | 設定 | 環境変数 | 型 | 既定 | 範囲と注意 |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。証明書には秘密鍵が含まれていなければならない。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
-| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | PEM の `tls.certificate` に対応する PEM の秘密鍵 |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | ファイルのパス | なし。サーバーが起動のたびに、インストール鍵で自己署名証明書を作る | サーバーの TLS 証明書。`tls.key` を設定したときは PEM の証明書、設定しないときは PKCS#12 ファイルで、そのパスワードは `ELM_TLS_PASSWORD` に入れる（設定しなければパスワードなし）。ファイルは 64 KiB まで。証明書には秘密鍵が含まれていなければならない。拡張キー使用法があるときは、その中にサーバー認証（`1.3.6.1.5.5.7.3.1`）が含まれていなければならない |
+| `tls.key` | `ELM_TLS_KEY` | ファイルのパス | なし | PEM の `tls.certificate` に対応する PEM の秘密鍵。64 KiB まで |
 
 中間 CA の証明書:
 
