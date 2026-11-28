@@ -8,7 +8,7 @@ This page is for vendors who run the hosted activation service (`elm-service`), 
 
 ## What activation is for
 
-A vendor sells a license with a limit, for example "this customer may use the product on three devices". The customer gets a license key, a secret string such as `ELM-7Q2KX-M9D4R-HV0T8-3NPWZ`. Activation turns that key into a license file the app can verify offline, and counts the device against the limit:
+A vendor sells a license with a limit, for example "this customer may use the product on three devices". The customer gets a license key, a secret string such as `ELM-FAKE0-FAKE1-FAKE2-FAKE3`. Activation turns that key into a license file the app can verify offline, and counts the device against the limit:
 
 - An **activation** is the link between a license and one installation key. It uses one of the license's activations.
 - The **license file** the service returns is bound to that installation key and to the device's machine fingerprints, so it verifies only on that device.
