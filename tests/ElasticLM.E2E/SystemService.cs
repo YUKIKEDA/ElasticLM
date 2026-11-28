@@ -10,6 +10,15 @@ internal static class SystemService
     /// <summary>The product of the samples' settings files, which the tests' service also makes.</summary>
     public const string Product = "acme-cad";
 
+    /// <summary>
+    /// The variable that lets these tests run outside GitHub Actions: they create system users, groups, units, and launch
+    /// daemons with sudo, so a developer's machine runs them only when asked to, even where sudo needs no password.
+    /// </summary>
+    public const string OptInVariable = "ELM_E2E_SYSTEM_SERVICES";
+
+    /// <summary>The longest wait for a service's state, as the tests of elm-server as a system service poll it.</summary>
+    public static readonly TimeSpan StateTimeout = TimeSpan.FromSeconds(30);
+
     private static readonly Lazy<string> Root = new(FindRoot);
 
     /// <summary>
@@ -55,15 +64,17 @@ internal static class SystemService
     }
 
     /// <summary>
-    /// Runs a command with <c>sudo -n</c> in the folder <c>/</c>, as an administrator's terminal does, and returns its exit
-    /// code and output.
+    /// Runs a command with <c>sudo -n</c> in the folder <c>/</c>, as an administrator's terminal does after <c>cd /</c>, and
+    /// returns its exit code and output.
     /// </summary>
     /// <param name="arguments">The arguments of sudo.</param>
     /// <param name="environment">Variables for sudo, which passes only those that <c>--preserve-env</c> names.</param>
+    /// <param name="cleanup">Whether the command is a cleanup step, which runs also when the test run is canceled.</param>
     public static Task<(int Code, string Out, string Error)> SudoAsync(
         IEnumerable<string> arguments,
-        IReadOnlyDictionary<string, string?>? environment = null
-    ) => Binaries.RunAsync("sudo", ["-n", .. arguments], "/", environment);
+        IReadOnlyDictionary<string, string?>? environment = null,
+        bool cleanup = false
+    ) => Binaries.RunAsync("sudo", ["-n", .. arguments], "/", environment, cleanup);
 
     /// <summary>Runs a command with sudo and returns its output, failing the test unless it exits with 0.</summary>
     /// <param name="arguments">The arguments of sudo.</param>
@@ -76,13 +87,54 @@ internal static class SystemService
         return output;
     }
 
+    /// <summary>Runs a cleanup step with sudo, also when the test run is canceled, and fails unless it exits with 0.</summary>
+    /// <param name="arguments">The arguments of sudo.</param>
+    public static async Task SudoCleanUpAsync(params string[] arguments)
+    {
+        (int code, string output, string error) = await SudoAsync(arguments, cleanup: true);
+        Assert.True(code == 0, $"sudo {string.Join(' ', arguments.Take(3))} exited with {code}: {error}{output}");
+    }
+
+    /// <summary>Runs a cleanup step with sudo whose target may not exist, when the test failed before it made it.</summary>
+    /// <param name="arguments">The arguments of sudo.</param>
+    public static async Task SudoTryAsync(params string[] arguments) => await SudoAsync(arguments, cleanup: true);
+
     /// <summary>
-    /// Whether this process may run commands with sudo without a password, as the runners of GitHub Actions can. On GitHub
-    /// Actions the test fails when it cannot; elsewhere it is skipped and says so.
+    /// Ends every process of an account with SIGKILL and waits until none is left, so that the account can be deleted and
+    /// no server keeps running as it after a test that failed half-way (testing.mdc).
+    /// </summary>
+    /// <param name="account">The account.</param>
+    public static async Task KillProcessesOfAsync(string account)
+    {
+        await SudoTryAsync("pkill", "-KILL", "-u", account);
+        await RealClock.WaitUntilAsync(
+            $"the processes of {account} to end",
+            async () => (await SudoAsync(["pgrep", "-u", account], cleanup: true)).Code == 1,
+            StateTimeout
+        );
+    }
+
+    /// <summary>Fails when the account still exists after the cleanup deleted it.</summary>
+    /// <param name="account">The account.</param>
+    public static async Task AssertNoAccountAsync(string account)
+    {
+        (int code, string output, _) = await Binaries.RunAsync("id", [account], "/", cleanup: true);
+        Assert.True(code != 0, $"The account {account} is still there: {output}");
+    }
+
+    /// <summary>
+    /// Requires sudo without a password, as the runners of GitHub Actions have, and outside GitHub Actions also
+    /// <see cref="OptInVariable"/> set to 1. On GitHub Actions the test fails without sudo; elsewhere it is skipped and says
+    /// why.
     /// </summary>
     public static async Task RequireSudoAsync()
     {
         bool onActions = Environment.GetEnvironmentVariable("GITHUB_ACTIONS") == "true";
+        if (!onActions && Environment.GetEnvironmentVariable(OptInVariable) != "1")
+        {
+            Assert.Skip($"This test creates system users and services with sudo; set {OptInVariable}=1 to run it here.");
+        }
+
         (int code, _, _) = await SudoAsync(["true"]);
         if (code != 0)
         {
@@ -104,19 +156,17 @@ internal static class SystemService
     }
 
     /// <summary>
-    /// Checks that the newest usage log file of the folder, read as root, ends with server.stopped and its signature: the
-    /// records were closed before the process ended (design §13.1, V1d30, Q30-g).
+    /// Checks, as root, that the newest usage log file of the data folder ends with server.stopped and its signature, and
+    /// that the newest borrow record holds server.stopped: the records were closed before the process ended (design §13.1,
+    /// V1d30, Q30-g).
     /// </summary>
-    /// <param name="data">The data folder, which holds the usage log by default.</param>
-    public static async Task AssertUsageLogClosedAsync(string data)
+    /// <param name="data">The data folder, which holds the usage log and the borrow record by default.</param>
+    public static async Task AssertRecordsClosedAsync(string data)
     {
-        string list = await SudoOkAsync("find", data, "-maxdepth", "1", "-name", "usage-*.jsonl");
-        string[] files = list.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-        Array.Sort(files, StringComparer.Ordinal);
-        Assert.NotEmpty(files);
-        string[] lines = (await SudoOkAsync("cat", files[^1])).Split('\n', StringSplitOptions.RemoveEmptyEntries);
-        Assert.Contains("\"type\":\"server.stopped\"", lines[^2], StringComparison.Ordinal);
-        Assert.Contains("\"type\":\"auth\"", lines[^1], StringComparison.Ordinal);
+        string[] usage = (await NewestAsync(data, "usage")).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("\"type\":\"server.stopped\"", usage[^2], StringComparison.Ordinal);
+        Assert.Contains("\"type\":\"auth\"", usage[^1], StringComparison.Ordinal);
+        Assert.Contains("\"type\":\"server.stopped\"", await NewestAsync(data, "borrows"), StringComparison.Ordinal);
     }
 
     /// <summary>
@@ -136,6 +186,16 @@ internal static class SystemService
         {
             problems.Add($"{step}: {e.GetType().Name}: {e.Message}");
         }
+    }
+
+    // The text of the newest file of a signed log in the folder (usage-….jsonl, borrows-….jsonl), read as root.
+    private static async Task<string> NewestAsync(string data, string name)
+    {
+        string list = await SudoOkAsync("find", data, "-maxdepth", "1", "-name", name + "-*.jsonl");
+        string[] files = list.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        Array.Sort(files, StringComparer.Ordinal);
+        Assert.True(files.Length > 0, $"{data} holds no {name} file.");
+        return await SudoOkAsync("cat", files[^1]);
     }
 
     private static string FindRoot()

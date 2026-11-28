@@ -32,17 +32,23 @@ internal static class Binaries
     /// <param name="arguments">Its arguments.</param>
     /// <param name="workingDirectory">The folder it runs in.</param>
     /// <param name="environment">Variables to set for it; a <see langword="null"/> value removes one.</param>
+    /// <param name="cleanup">
+    /// Whether the command is a step of a test's cleanup, which runs to its end also when the test run is canceled, within the
+    /// same time limit: a canceled cleanup would leave behind what it removes (a system service, an account, a folder).
+    /// </param>
     public static async Task<(int Code, string Out, string Error)> RunAsync(
         string executable,
         IEnumerable<string> arguments,
         string workingDirectory,
-        IReadOnlyDictionary<string, string?>? environment = null
+        IReadOnlyDictionary<string, string?>? environment = null,
+        bool cleanup = false
     )
     {
+        CancellationToken canceled = cleanup ? CancellationToken.None : TestContext.Current.CancellationToken;
         using Process process = Start(executable, arguments, workingDirectory, environment);
-        Task<string> output = process.StandardOutput.ReadToEndAsync(TestContext.Current.CancellationToken);
-        Task<string> error = process.StandardError.ReadToEndAsync(TestContext.Current.CancellationToken);
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
+        Task<string> output = process.StandardOutput.ReadToEndAsync(canceled);
+        Task<string> error = process.StandardError.ReadToEndAsync(canceled);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(canceled);
         timeout.CancelAfter(CommandTimeout);
         try
         {

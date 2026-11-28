@@ -245,8 +245,9 @@ public sealed partial class WindowsServiceTests
     /// Expected:
     /// - The event names the missing server license and an installation key; activate exits with 0.
     /// - sc.exe qfailure lists three restarts after 60000 ms and a reset of 86400 seconds.
-    /// - After Stop-Service the service is STOPPED with WIN32_EXIT_CODE 0, and the newest usage log ends with server.stopped
-    ///   and its signature. The stop's time goes to the job's log (RunReport.Note).
+    /// - The first Start-Service exits with an error.
+    /// - After Stop-Service the service is STOPPED with WIN32_EXIT_CODE 0, the newest usage log ends with server.stopped
+    ///   and its signature, and the newest borrow record holds server.stopped. The stop's time goes to the job's log (RunReport.Note).
     /// </remarks>
     [Fact]
     public async Task NewService_ThePageSteps_StartActivateAndStopTheServer()
@@ -299,7 +300,8 @@ public sealed partial class WindowsServiceTests
                     "windows/elm-server.json",
                     ("https://0.0.0.0:7070", "https://127.0.0.1:0"),
                     (@"C:\\ProgramData\\elm-server", Json(data)),
-                    (@"C:\\Program Files\\elm-server", Json(bin))
+                    (@"C:\\Program Files\\elm-server", Json(bin)),
+                    ("https://licensing.example.com", service.Url.ToString().TrimEnd('/'))
                 ),
                 TestContext.Current.CancellationToken
             );
@@ -310,7 +312,11 @@ public sealed partial class WindowsServiceTests
                 vendor.Folder,
                 $"New-Service -Name '{name}' -BinaryPathName '\"{exe}\" --config \"{settings}\"' -StartupType Automatic | Out-Null"
             );
-            await PowerShellAsync(vendor.Folder, $"Start-Service -Name '{name}'");
+            (int firstStart, _, string firstStartError) = await PowerShellAsync(vendor.Folder, $"Start-Service -Name '{name}'");
+            Assert.True(firstStart != 0, "The first Start-Service did not report a failure.");
+            RunReport.Note(
+                $"elm-server as a Windows service: the first Start-Service said: {firstStartError.Split('\n', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim()}"
+            );
             await WaitForStateAsync(sc, name, "STOPPED", vendor.Folder);
             string startError = string.Empty;
             await RealClock.WaitUntilAsync(
@@ -381,23 +387,26 @@ public sealed partial class WindowsServiceTests
                 vendor.Folder,
                 $"$watch = [Diagnostics.Stopwatch]::StartNew(); Stop-Service -Name '{name}'; $watch.ElapsedMilliseconds"
             );
-            RunReport.Note($"elm-server as a Windows service: Stop-Service took {took.Trim()} ms.");
+            RunReport.Note(
+                $"elm-server as a Windows service: Stop-Service took {took.Split('\n', StringSplitOptions.RemoveEmptyEntries)[^1].Trim()} ms."
+            );
             (_, string query, _) = await Binaries.RunAsync(sc, ["query", name], vendor.Folder);
             Assert.Matches(@"STATE\s*:\s*\d+\s+STOPPED\b", query);
             Assert.Matches(@"WIN32_EXIT_CODE\s*:\s*0\s", query);
             string[] usageLines = Newest(data, "usage").Split('\n', StringSplitOptions.RemoveEmptyEntries);
             Assert.Contains("\"type\":\"server.stopped\"", usageLines[^2], StringComparison.Ordinal);
             Assert.Contains("\"type\":\"auth\"", usageLines[^1], StringComparison.Ordinal);
+            Assert.Contains("\"type\":\"server.stopped\"", Newest(data, "borrows"), StringComparison.Ordinal);
             passed = true;
         }
         finally
         {
             List<string> problems = [];
             await SystemService.CleanUpAsync(problems, "sc stop", () => StopIfRunningAsync(sc, name, vendor.Folder));
-            await SystemService.CleanUpAsync(problems, "sc delete", () => Binaries.RunAsync(sc, ["delete", name], vendor.Folder));
+            await SystemService.CleanUpAsync(problems, "sc delete", () => RunOkAsync(sc, ["delete", name], vendor.Folder));
             if (!hadSource)
             {
-                await SystemService.CleanUpAsync(problems, "reg delete", () => Binaries.RunAsync(reg, ["delete", Source, "/f"], vendor.Folder));
+                await SystemService.CleanUpAsync(problems, "reg delete", () => RunOkAsync(reg, ["delete", Source, "/f"], vendor.Folder));
             }
 
             foreach (string folder in (string[])[bin, data])
@@ -422,6 +431,13 @@ public sealed partial class WindowsServiceTests
     }
 
     private static Task CleanUpAsync(List<string> problems, string step, Func<Task> action) => SystemService.CleanUpAsync(problems, step, action);
+
+    // A cleanup step that runs also when the test run is canceled, and fails unless it exits with 0.
+    private static async Task RunOkAsync(string executable, string[] arguments, string folder)
+    {
+        (int code, string output, string error) = await Binaries.RunAsync(executable, arguments, folder, cleanup: true);
+        Assert.True(code == 0, $"{Path.GetFileName(executable)} {arguments[0]} exited with {code}: {output}{error}");
+    }
 
     // Runs a line of the page in PowerShell 7, as the administrator's terminal does.
     private static Task<(int Code, string Out, string Error)> PowerShellAsync(string folder, string command) =>

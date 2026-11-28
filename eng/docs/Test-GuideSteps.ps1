@@ -140,7 +140,9 @@
     <!-- steps:e2e tests=<class>.<method>,... --> stands on a line of its own, from the start of the line, on a How-to page
     whose steps need privileges that this script never takes, such as registering a system service (design §13.1, V1d30,
     Q30-i). The end-to-end tests it names (tests/ElasticLM.E2E, a [Fact] or [Theory] of that class) run the page's steps on
-    CI, and this script checks the marker, that each named test exists, and the page's translation, and then skips the page
+    CI, and this script checks the marker, that each named test exists (outside comments, in the body of that class, and
+    not skipped by its attribute), and that the translation holds the marker and every code block of the page, in the same
+    order, and then skips the page
     (skip: <page>: its steps run in the end-to-end tests ...) instead of failing it as a page with no steps. It is the only
     steps marker of its page. It fails when it is indented, when the next line that is not blank opens a code block, without
     tests, and with a name that is not <class>.<method> or that names no such test.
@@ -323,13 +325,34 @@ function Get-PageName([string]$path) {
 
 # Whether tests/ElasticLM.E2E has a test method of that name, a [Fact] or a [Theory] (with any other attributes after it), in a
 # file that declares the class (design §13.1, V1d30, Q30-i).
+# The comments are taken out first, the method is looked for from the class's declaration to the next class's, and a test
+# that an attribute skips (Skip =) does not count.
 function Test-EndToEndTest([string]$class, [string]$method) {
-    $test = '\[(?:Fact|Theory)\b[^\]]*\]\s*(?:\[[^\]]*\]\s*)*public\s+(?:async\s+)?\w+\s+' + [regex]::Escape($method) + '\s*\('
+    $test = '\[(?:Fact|Theory)\b(?<attribute>[^\]]*)\]\s*(?:\[[^\]]*\]\s*)*public\s+(?:async\s+)?\w+\s+' + [regex]::Escape($method) + '\s*\('
     foreach ($file in Get-ChildItem -LiteralPath $endToEndFolder -Filter '*.cs' -File) {
-        $text = [IO.File]::ReadAllText($file.FullName)
-        if ($text -cmatch ('\bclass\s+' + [regex]::Escape($class) + '\b') -and $text -cmatch $test) { return $true }
+        $text = [regex]::Replace([IO.File]::ReadAllText($file.FullName), '/\*[\s\S]*?\*/|//[^\n]*', '')
+        $declared = [regex]::Match($text, '\bclass\s+' + [regex]::Escape($class) + '\b')
+        if (-not $declared.Success) { continue }
+        $next = [regex]::Match($text.Substring($declared.Index + $declared.Length), '\bclass\s+\w+')
+        $body = $next.Success ? $text.Substring($declared.Index, $declared.Length + $next.Index) : $text.Substring($declared.Index)
+        $found = [regex]::Match($body, $test)
+        if ($found.Success -and $found.Groups['attribute'].Value -cnotmatch '\bSkip\s*=') { return $true }
     }
     return $false
+}
+
+# A page whose steps run in the end-to-end tests has no marked block, so its translation is held to every code block of
+# the English page, in the same order (design §13.1, V1d30, Q30-i).
+function Test-TranslationBlocks([string]$path, [object]$parsed) {
+    $translated = Get-TranslationName $path
+    $theirs = @((Get-Page (Join-Path $repoRoot $translated)).Blocks | ForEach-Object { $_.Lines -join "`n" })
+    $next = 0
+    foreach ($block in $parsed.Blocks) {
+        $content = $block.Lines -join "`n"
+        while ($next -lt $theirs.Count -and $theirs[$next] -cne $content) { $next++ }
+        if ($next -ge $theirs.Count) { throw "$($translated): the code block of $(Get-PageName $path):$($block.Line) is missing, changed, or out of order." }
+        $next++
+    }
 }
 
 $fenceOpen = '^ {0,3}(?<fence>`{3,}|~{3,})'
@@ -1447,6 +1470,7 @@ function Invoke-Page([string]$path) {
     # A page with steps:e2e runs in the end-to-end tests it names, not here (design §13.1, V1d30, Q30-i).
     $endToEnd = @($plan.Steps | Where-Object Kind -CEQ 'e2e')
     if ($endToEnd) {
+        Test-TranslationBlocks $path $parsed
         "skip: $($name): its steps run in the end-to-end tests $($endToEnd[0].Tests -join ', ')"
         $script:ran.Add($name) | Out-Null
         return

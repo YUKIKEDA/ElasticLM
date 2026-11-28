@@ -3,5 +3,6 @@
   "listen": "https://0.0.0.0:7070",
   "license": "/var/lib/elm-server/server.elmlic",
   "dataDirectory": "/var/lib/elm-server",
+  "service": { "url": "https://licensing.example.com" },
   "trust": { "rootKeys": ["/etc/elm-server/root.pub.pem"] }
 }
