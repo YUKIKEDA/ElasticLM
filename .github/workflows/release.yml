@@ -94,7 +94,7 @@ jobs:
 
   spa:
     # The admin UI, built once with no secrets (design §15.2, T21). The name differs from the spa job of ci.yml, so
-    # that the checks of a pull request name each job once (design §20.5, V1d21).
+    # that each check of a pull request names one job (design §20.5, V1d21).
     name: Admin UI (web/admin, release)
     runs-on: ubuntu-latest
     timeout-minutes: 15
