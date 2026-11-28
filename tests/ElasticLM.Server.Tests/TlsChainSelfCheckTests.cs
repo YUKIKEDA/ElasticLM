@@ -436,8 +436,8 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     ///   (CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered; the public
     ///   documentation does not promise the order). While it runs, the limit reads as ended and the check's wait is not
     ///   cancelled yet: the check then fails as it does after the limit closes a socket whose connect the system had finished.
-    ///   Should the order change, the check's wait is cancelled first and the test still passes; the mutation check of V1d3g
-    ///   shows that the order holds.
+    ///   Should the order change, the check's wait is cancelled before this callback runs and the test passes without a failed
+    ///   connection; the mutation check of V1d3g (M4) shows that the order holds.
     ///
     /// Steps:
     /// - Start the check; for "reset", read the first byte of its handshake on the accepted connection. Register a callback on
@@ -445,7 +445,8 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     ///   seconds.
     ///
     /// Expected:
-    /// - "… did not get an answer: the TLS handshake with 127.0.0.1:{port} did not finish within 10 seconds." in both cases.
+    /// - The check ends while the callback waits, and returns "… did not get an answer: the TLS handshake with
+    ///   127.0.0.1:{port} did not finish within 10 seconds." in both cases.
     /// </remarks>
     [Theory]
     [InlineData("reset")]
@@ -475,6 +476,7 @@ public sealed class TlsChainSelfCheckTests : IDisposable
             }
 
             Assert.NotNull(time.Limit);
+            bool endedInside = false;
             using CancellationTokenRegistration failFirst = time.Limit.Token.Register(() =>
             {
                 if (accepted is not null)
@@ -483,11 +485,13 @@ public sealed class TlsChainSelfCheckTests : IDisposable
                     accepted.Client.Close();
                 }
 
-                // The bound of the real clock only ends a run in which the check does not end.
-                _ = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
+                // The bound of the real clock only ends a run in which the check does not end; the assertion below fails it.
+                endedInside = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
             });
             Assert.False(check.IsCompleted, "The check ended before the clock moved.");
             _time.Advance(TlsChainSelfCheck.Limit);
+
+            Assert.True(endedInside, "The check did not end while the limit's callbacks ran.");
 
             Assert.Equal(NoAnswer(endPoint, "did not finish within 10 seconds"), await check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token));
         }
