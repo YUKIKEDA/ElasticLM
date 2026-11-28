@@ -1,15 +1,13 @@
 # A temporary measurement for V1d30a (Issue #540), removed before the pull request is ready (.cursor/rules/open-ends.mdc).
-# The first run (46153160165) measured the systemd hardening directives one by one and together, and the launchd log
-# rotation. This second form measures what the implementation needs: name resolution through the outside DNS under the
-# chosen directives, the values systemctl show prints for them, and the manual pages of journald.conf and newsyslog.conf
-# on the runners.
+# Runs 46153160165, 46159240509, and 46162140975 measured the systemd hardening, name resolution, the facts the design
+# cites, and the copy-and-cut rotation of a small log file. This last form measures the lines lost when the sample's
+# job rotates a log file of 10 MiB, the size it waits for.
 name: Measure V1d30a (temporary)
 
 on:
   pull_request:
     paths:
       - .github/workflows/measure-540.yml
-      - tests/ElasticLM.E2E/HardeningMeasurementTests.cs
 
 concurrency:
   group: measure-540-${{ github.ref }}
@@ -18,110 +16,9 @@ concurrency:
 permissions:
   contents: read
 
-env:
-  DOTNET_NOLOGO: true
-  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: true
-
 jobs:
-  publish:
-    name: Publish linux-x64
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version-file: web/admin/.node-version
-          package-manager-cache: false
-
-      - name: Build the admin UI
-        shell: pwsh
-        working-directory: web/admin
-        run: |
-          corepack pnpm install --frozen-lockfile
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          corepack pnpm run build
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-
-      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        with:
-          global-json-file: global.json
-
-      - name: Publish
-        shell: pwsh
-        run: ./eng/release/Publish-Rid.ps1 -Rid linux-x64 -OutDir publish -LogDir publish-logs
-
-      # A tar keeps the executable bits, which the artifact's zip does not.
-      - name: Pack
-        run: tar -cf publish.tar publish
-
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: linux-publish
-          path: publish.tar
-          retention-days: 1
-          if-no-files-found: error
-
-  systemd:
-    name: systemd (all)
-    needs: publish
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
-        with:
-          global-json-file: global.json
-
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: linux-publish
-
-      - name: Measure
-        shell: bash
-        run: |
-          set +e
-          tar -xf publish.tar
-          export ELM_E2E_BIN="$PWD/publish"
-          export ELM_E2E_NOTES="$RUNNER_TEMP/notes.txt"
-          export ELM_E2E_HARDENING_VARIANT=all
-          dotnet test --project tests/ElasticLM.E2E/ElasticLM.E2E.csproj -c Release -- --filter-class "*HardeningMeasurementTests"
-          echo "measure: dotnet test exit code $?"
-          cat "$ELM_E2E_NOTES"
-          exit 0
-
-  linux-facts:
-    name: Linux facts
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: Read
-        shell: bash
-        run: |
-          set +e
-          echo "facts: sysctl net.ipv4.ip_unprivileged_port_start: $(sysctl -n net.ipv4.ip_unprivileged_port_start 2>&1)"
-          echo "facts: man 7 capabilities, CAP_NET_BIND_SERVICE"; MANPAGER=cat man 7 capabilities | col -b | grep -A 4 'CAP_NET_BIND_SERVICE'
-          echo "facts: a unit with an unknown key"
-          printf '[Service]\nType=oneshot\nExecStart=/bin/true\nElmUnknownKey=yes\n' | sudo tee /etc/systemd/system/elm-e2e-unknown.service > /dev/null
-          sudo systemctl daemon-reload
-          sudo systemctl start elm-e2e-unknown.service; echo "facts: start exit code $?"
-          sudo journalctl -b --no-pager -o cat | grep -i 'ElmUnknownKey'
-          sudo rm -f /etc/systemd/system/elm-e2e-unknown.service; sudo systemctl daemon-reload
-          echo "facts: systemd.exec(5), the version that added each directive of the sample"
-          MANPAGER=cat man systemd.exec | col -b > "$RUNNER_TEMP/exec.txt"
-          grep -n -E '^       [A-Z][A-Za-z]+=|Added in version' "$RUNNER_TEMP/exec.txt"
-          echo "facts: systemd.unit(5) and systemd(1) on unknown settings"; MANPAGER=cat man systemd.unit | col -b | grep -i -B 2 -A 4 'unknown'
-          exit 0
-
   launchd:
-    name: launchd log rotation
+    name: launchd log rotation of 10 MiB
     runs-on: macos-latest
     timeout-minutes: 15
     steps:
@@ -134,7 +31,6 @@ jobs:
         run: |
           set +e
           sw_vers
-          echo "facts: launchd.plist(5), StartInterval and RunAtLoad"; MANPAGER=cat man launchd.plist | col -b | grep -A 8 -E '^ *(StartInterval|RunAtLoad) '
           id=$(openssl rand -hex 4)
           label="elm-e2e-loss-$id"
           logs="/Library/Logs/$label"
@@ -160,19 +56,22 @@ jobs:
           EOF
           sudo install -m 0644 -o root -g wheel "$RUNNER_TEMP/$label.plist" "$plist"
           sudo launchctl bootstrap system "$plist"; echo "launchd-loss: bootstrap exit $?"
-          sleep 3
-          # The sample's own command, with this run's folder and a size of 1 byte to wait for.
+          # The sample's own command, with this run's folder and its size of 10 MiB.
           cmd=$(plutil -extract ProgramArguments.2 raw samples/ElmServerService/macos/elm-server-log.plist)
-          cmd=$(printf '%s' "$cmd" | sed "s|/Library/Logs/elm-server/|$logs/|; s|-ge 10485760|-ge 1|")
+          cmd=$(printf '%s' "$cmd" | sed "s|/Library/Logs/elm-server/|$logs/|")
           echo "launchd-loss: command: $cmd"
-          for n in $(seq 1 20); do
+          # 10 MiB of filler lines before the writer's numbers, appended as root so that the size is reached at once.
+          for n in $(seq 1 10); do
+            perl -e 'print "x" x 99, "\n" for 1..105000' | sudo tee -a "$log" > /dev/null
+            sleep 0.5
+            size=$(stat -f %z "$log")
             start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
             sudo /bin/sh -c "$cmd"; code=$?
             end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
             sleep 0.5
-            last=$(sudo tail -n 1 "$log.0"); first=$(sudo head -n 1 "$log")
+            last=$(sudo grep -E '^[0-9]+$' "$log.0" | tail -n 1); first=$(sudo grep -E '^[0-9]+$' "$log" | head -n 1)
             nul=$(sudo head -c 64 "$log" | tr -cd '\000' | wc -c | tr -d ' ')
-            echo "launchd-loss: run $n exit $code took $(echo "$end - $start" | bc) s; last in .0 $last; first in the cut file $first; lost $((first - last - 1)); zero bytes at the start $nul; size of .0 $(stat -f %z "$log.0"), of the cut file $(stat -f %z "$log")"
+            echo "launchd-loss: run $n size before $size exit $code took $(echo "$end - $start" | bc) s; last in .0 $last; first in the cut file $first; lost $((first - last - 1)); zero bytes at the start $nul; size of .0 $(stat -f %z "$log.0"), of the cut file $(stat -f %z "$log")"
           done
           echo "launchd-loss: files:"; ls -l "$logs"
           sudo launchctl bootout "system/$label"; echo "launchd-loss: bootout exit $?"
