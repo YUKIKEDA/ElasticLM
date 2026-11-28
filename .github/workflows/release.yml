@@ -2,6 +2,8 @@
 # A tag v<version> builds, checks, attests, and drafts a release; the owner's approval of the environment "release" pushes
 # the NuGet packages and publishes the release. workflow_dispatch and every pull request run the same build and checks
 # without publishing (workflow_dispatch also attests). Every action is pinned to a commit of its own repository's tag.
+# design §20.5 ("出荷のゲート", Issue #552): attest, draft, publish, and pages wait for the ci-passed job, which passes
+# only when a ci.yml run for a push to main at this commit succeeded.
 #
 # design §20.5 (V1d7): any job of a run can replace another job's artifact, so a job that uploads one hashes its files
 # before the upload and gives the sha256sum lines as a job output, which the job's own runner sets. A job that downloads
@@ -954,10 +956,47 @@ jobs:
           if grep -Evq '^sha256:[0-9a-f]{64}  ' "$RUNNER_TEMP/released"; then echo "::error::An asset of the draft release has no SHA-256 digest."; exit 1; fi
           diff <(cat "$RUNNER_TEMP/sums" SHA256SUMS | sort) <(sed 's/^sha256://' "$RUNNER_TEMP/released" | sort) || { echo "::error::The draft release does not hold exactly the checked files (< is missing or changed, > is not among them)."; exit 1; }
 
+  ci-passed:
+    # design §20.5 ("出荷のゲート", Issue #552), T22: nothing is attested, drafted, or published from a commit unless a
+    # ci.yml run for a push to main at that commit succeeded (the tests on three OSes, NativeAOT, Action pins). ci.yml
+    # does not run on tags. The build and check jobs do not wait for this job; it does not wait for CI either.
+    name: CI passed on main
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Find a successful ci.yml run for a push to main at this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$GITHUB_SHA&event=push&branch=main&per_page=100" \
+            --jq '.workflow_runs | sort_by(.created_at) | reverse | .[] | [(.id | tostring), .status, (.conclusion // "none"), .html_url] | join(" ")')
+          if [ -z "$runs" ]; then
+            echo "::error::No ci.yml run for a push to main at $GITHUB_SHA ($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/workflows/ci.yml): tag a merge commit on main whose push ran ci.yml; a tag is never moved, so release the next version."
+            exit 1
+          fi
+          if passed=$(grep -m 1 ' completed success ' <<< "$runs"); then
+            echo "ci.yml passed for $GITHUB_SHA: ${passed##* }"
+            exit 0
+          fi
+          read -r id status conclusion url <<< "$(head -n 1 <<< "$runs")"
+          if [ "$status" != "completed" ]; then
+            echo "::error::ci.yml for $GITHUB_SHA is still $status ($url): wait for it to pass, then run gh run rerun $GITHUB_RUN_ID --failed."
+          elif [ "$conclusion" = "cancelled" ]; then
+            echo "::error::ci.yml for $GITHUB_SHA was cancelled ($url): run gh run rerun $id, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
+          else
+            echo "::error::ci.yml for $GITHUB_SHA ended in $conclusion ($url): run gh run rerun $id --failed, and once it passes, gh run rerun $GITHUB_RUN_ID --failed."
+          fi
+          exit 1
+
   attest:
     # T24: provenance for every file SHA256SUMS lists, and for SHA256SUMS itself. No build code runs here.
     name: Attest
-    needs: [checksums, checksums-check]
+    needs: [checksums, checksums-check, ci-passed]
     if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -997,7 +1036,7 @@ jobs:
   draft:
     # Q16: a draft release with every file; the owner looks at it before approving the environment. No build code runs here.
     name: Draft the release
-    needs: [version, checksums, checksums-check, attest]
+    needs: [version, checksums, checksums-check, ci-passed, attest]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -1056,7 +1095,7 @@ jobs:
     # the draft with Trusted Publishing, push the tested image unchanged and attest it (design §20.6, T26), then publish
     # the draft. No checkout and no build code.
     name: Publish
-    needs: [version, image, checksums, draft]
+    needs: [version, image, checksums, ci-passed, draft]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -1247,7 +1286,7 @@ jobs:
     # T28: after the release is published, the owner's approval of the environment "github-pages" deploys the site built
     # in this run. No checkout and no build code. The environment allows v* tags only and needs the owner's approval.
     name: Publish the documentation site
-    needs: [site, publish]
+    needs: [site, ci-passed, publish]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 15

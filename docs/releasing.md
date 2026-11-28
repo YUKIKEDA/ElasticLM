@@ -141,6 +141,14 @@ release is published (design §20.7, T28).
    `v*` tag, an rc tag included, before V1e's change to `release.yml` has merged (design §20.5, "V1e で変えること"): until then, `publish`
    runs on every `v*` tag and would push the rc's packages to nuget.org and its image to GHCR, while the user
    documentation says that a prerelease pushes neither.
+   The tagged commit must be a merge commit on `main` whose push ran `ci.yml`, and that run must have passed: the
+   `ci-passed` job looks for a successful `ci.yml` run for a push to `main` at the tagged commit, and `attest`, `draft`,
+   `publish`, and `pages` wait for it (design §20.5, "出荷のゲート"). A commit of a pull request's branch has no such run,
+   even when `main` reaches it. Push the tag after that run has passed (`gh run list --workflow ci.yml --branch main
+   --event push --commit <sha>`). The job does not wait: if the run is still going, failed, or was cancelled, the job
+   fails with the run's URL. Re-run CI if it failed (`gh run rerun <CI run ID> --failed`; a cancelled run with
+   `gh run rerun <CI run ID>`), and once it passes, `gh run rerun <release run ID> --failed`. The build and check jobs
+   do not wait for `ci-passed`, so they have already run.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release. A job that takes files from another
