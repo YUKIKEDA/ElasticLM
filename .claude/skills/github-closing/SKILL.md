@@ -7,7 +7,7 @@ description: >-
 
 # Closing keywords
 
-GitHub completes an issue at merge when the PR title, body, or squash commit message contains a closing verb immediately before the issue number. Negation is still a match: `This does not close #12` completes #12.
+GitHub completes an issue at merge when the PR title, the PR body, or the message of any commit that the merge brings to `main` contains a closing verb immediately before the issue number. Negation is still a match: `This does not close #12` completes #12.
 
 Verbs: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`, `resolve`, `resolves`, `resolved`.
 
@@ -19,7 +19,7 @@ Under `## Related`, one line, nothing else on it:
 Closes #12
 ```
 
-Do not repeat that verb next to the same number anywhere else, and never in a commit body. The body of a squash merge that an agent makes on the owner's order (`gh pr merge <n> --squash --body`) is a commit body: it names the Issue as `Refs #12`, and the `Closes` of the PR body closes it. The squash body of PR #381 held `Closes #327`.
+Do not repeat that verb next to the same number anywhere else, and never in a commit body. PRs are merged with a merge commit, so every commit of the branch lands on `main`, and each commit body is read for closing verbs. The body of the merge commit that an agent makes on the owner's order (`gh pr merge <n> --merge --body`) is a commit body too: it names the Issue as `Refs #12`, and the `Closes` of the PR body closes it. The squash body of PR #381 held `Closes #327`.
 
 ## Leave the issue open
 
