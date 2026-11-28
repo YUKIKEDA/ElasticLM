@@ -2,11 +2,11 @@
 
 ## Grill の記録
 
-持ち主の決定（2026-11-28、Issue #521 のコメント）で行を足し、すぐ始めた。同じファイルの、偽の時計を実時間の間隔で進める形のテストも探して直す。原因はテストの側だけにあり、製品の振る舞いも設計の文も変えないので、問は立てていない。
+持ち主の決定（2026-11-28、Issue #521 のコメント）で行を足し、すぐ始めた。持ち主は、同じファイルの、偽の時計を実時間の間隔で進める形のテストも探して直すと決めた。`ElasticLM.Cli.Tests` で、同じ形のテストも探した。原因はテストの側だけにあり、製品の振る舞いも設計の文も変えないので、問は立てていない。
 
 ### 落ち方
 
-`ElmRemoteTextTests.Request_BodyThatStops_EndsAfter100SecondsWithoutAByte` が、ElmRemoteTextTests.cs:202 の `Assert.InRange(moved, 100, 101)` で「Range: (100 - 101) / Actual: 107」で 1 回落ちた。PR #505 の run 46027666405、ジョブ `build.ps1 (windows-latest)`（140615910190）の Release。PR #505 は CLI もこのテストも変えていない。走らせ直すと通った。
+`ElmRemoteTextTests.Request_BodyThatStops_EndsAfter100SecondsWithoutAByte` が、ElmRemoteTextTests.cs:202 の `Assert.InRange(moved, 100, 101)` で落ちた（「Range: (100 - 101) / Actual: 107」、1 回）。PR #505 の run 46027666405、ジョブ `build.ps1 (windows-latest)`（140615910190）の Release。PR #505 は CLI もこのテストも変えていない。走らせ直すと通った。
 
 ### 原因
 
@@ -19,15 +19,15 @@
 
 ### 測った事実
 
-測ったのは、`origin/main` の d89e9e3 から切ったこの行のブランチ、Windows 11（build 26300）、SDK 10.0.404、Debug、このテスト 1 件だけを流した。`web/admin/dist` は、手元の Node.js が 24 でなく Corepack もないので、ほかの作業の木で作ったものを写して使った（このテストは管理画面を使わない）。測りの間だけ、テストの偽の時計を、タイマーの知らせを実時間で 400 ミリ秒遅らせて製品に渡すもの（`FakeTimeProvider` を継ぎ、`CreateTimer` に渡すコールバックを `ThreadPool` に回して `Thread.Sleep(400)` のあとに呼ぶ）に替え、測ったあと消した。遅いランナーで、製品がタイマーの切れたことに気付くのが遅れる形を、決まって起こすためである。
+`origin/main` の d89e9e3 から切ったこの行のブランチ、Windows 11（build 26300）、SDK 10.0.404 の環境で、Debug で、このテスト 1 件だけを流して測った。`web/admin/dist` は、手元の Node.js が 24 でなく Corepack もないので、ほかの作業の木で作ったものを写して使った（このテストは管理画面を使わない）。測りの間だけ、テストの偽の時計を、タイマーの知らせを実時間で 400 ミリ秒遅らせて製品に渡すもの（`FakeTimeProvider` を継ぎ、`CreateTimer` に渡すコールバックを `ThreadPool` に回して `Thread.Sleep(400)` のあとに呼ぶ）に替え、測ったあと消した。遅いランナーで、製品がタイマーの切れたことに気付くのが遅れる形を、決まって起こすためである。
 
 - 今までの形で、知らせを遅らせると、3 回とも「Range: (100 - 101) / Actual: 106」で落ちた。CI の落ち方と同じ形である。遅らせないと通った。
-- 直した形で、同じく知らせを遅らせても、3 回とも通った。遅らせないときも通った。
-- 変異の確かめ（製品の `AdminCommands.IdleTimeout` を一時だけ変えた）: 99 秒にすると「The command ended before 100 seconds without a byte.」で落ちた。101 秒にすると、`elm` が終わらず、実時間の 20 秒の待ちが `TimeoutException` で落ちた。どちらも戻した。
+- 直した形（a912bf7）で、同じく知らせを遅らせても、3 回とも通った。遅らせないときも通った。レビューの指摘を直した形（下の「直したこと」）でも、遅らせて 3 回、遅らせずに 1 回、どれも通った。
+- 変異の確かめ（製品の `AdminCommands.IdleTimeout` を一時だけ変えた）: a912bf7 では、99 秒にすると「The command ended before 100 seconds without a byte.」（実時間の 0.5 秒の待ちのあとの確かめ）で落ち、101 秒にすると、`elm` が終わらず、実時間の 20 秒の待ちが `TimeoutException` で落ちた。レビューの指摘を直した形では、99 秒と 99.5 秒で「The wait fired before 100 seconds without a byte.」、100.001 秒と 101 秒で「The wait did not fire at 100 seconds without a byte.」で落ちた。どれも時計を進めた直後の確かめで、実時間の待ちに頼らない（1 件 6〜8 秒で、そのほとんどはビルドとテストの起動）。どれも戻した。
 
 ### 直したこと
 
-- `ElmRemoteTextTests.Request_BodyThatStops_EndsAfter100SecondsWithoutAByte`: 偽の時計 `TimerAfterTime` は、"{" が標準出力に出たあとに `elm` が作る最初のタイマー（本文の次の読みの待ち）を知らせる。テストはその知らせを待ってから時計を 99 秒進め、実時間で 0.5 秒待って `elm` が終わっていないことを確かめ、もう 1 秒進めて、`elm` が終了コード 3 と決まった 1 行で終わることを、実時間で 20 秒の上限で待つ。時計を進めるのはタイマーができたあとなので、待ちはちょうど 100 秒で切れる。進めた秒数を数えて範囲で確かめることをやめた。タイマーの長さでは選ばないので、製品の待ちが 100 秒より短ければ、99 秒のあとの確かめで落ちる。
+- `ElmRemoteTextTests.Request_BodyThatStops_EndsAfter100SecondsWithoutAByte`: 偽の時計 `TimerAfterCondition` は、"{" が標準出力に出たあとに `elm` が作る最初のタイマー（本文の次の読みの待ち）を知らせ、そのタイマーが切れたかを記録する。テストはその知らせを待ってから時計を 100 秒より 1 ミリ秒少なく進め、タイマーが切れていないことを確かめ、実時間で 0.5 秒待って `elm` が終わっていないことも確かめる。もう 1 ミリ秒進めて、タイマーが切れたことを確かめ、`elm` が終了コード 3 と決まった 1 行で終わることを、実時間で 20 秒の上限で待つ。`FakeTimeProvider.Advance` は、時刻に届いたタイマーのコールバックを返る前に呼ぶので、進めた直後の確かめは実時間によらず決まる。時計を進めるのはタイマーができたあとなので、待ちはちょうど 100 秒で切れる。進めた秒数を数えて範囲で確かめることをやめた。タイマーの長さでは選ばないので、製品の待ちが 100 秒より短くても長くても、1 ミリ秒の単位で、進めた直後の確かめで落ちる（上の変異の確かめ）。0.5 秒の待ちは、タイマーのほかに `elm` を終わらせるものがないことの、2 つ目の確かめとして残した。
 - 同じ種類を探した範囲: `ElasticLM.Cli.Tests` で偽の時計を進めるすべての箇所（`.Advance(`、`Task.Delay(`、`Task.WhenAny`、`Assert.InRange` を検索した）。
   - `ElmRemoteTextTests.Request_BodyThatKeepsComing_IsReadBeyond100Seconds`: 時計を 60 秒ずつ 2 回進めるだけで、進めた量を確かめない。タイマーができる前に進めても、待ちが 100 秒に届かないだけなので、結果は変わらない。本文の初めから数える誤った製品は、"a" の前にタイマーを作るので、決まって落ちる。
   - `ElmRemoteTextTests.OidcAnswer_ThatStops_EndsAfterThirtySecondsOfTheClock` と `ElmOfflineTests.Process_AnswerThatStops_ExitsThreeAfterThirtySeconds`: 30 秒の期限（`BoundedAnswer` の `CancellationTokenSource`）は要求を送る前に作るので、待ち受けが要求を受け取った（`Held`）ときには、もうある。そのあと決まった量だけ進める。
@@ -39,13 +39,13 @@
 測りの道具を消した木で（同じ環境）:
 
 - `dotnet csharpier check .`、`dotnet build ElasticLM.slnx -c Release -warnaserror`: 通った。
-- Cli のテストを丸ごと、Debug で 5 回、Release で 1 回（6 回）: 6 回とも 100 件のうち失敗 0（成功 92、スキップ 8）。
+- Cli のテストを丸ごと、Debug で 5 回、Release で 1 回（6 回）: 6 回とも 100 件のうち失敗 0（成功 92、スキップ 8）。a912bf7 でも、レビューの指摘を直した形でも、同じ 6 回を流し、同じ結果だった。
 - roadmap の行の ID を突き合わせるテストを含む `ElasticLM.Licensing.Tests`（Debug）: 429 件のうち失敗 0（成功 424、スキップ 5）。
 - `./build.ps1` は流していない（手元に Node.js 24 と Corepack がない）。CI が流す。
 
 ## 退けた案
 
-- **決定:** `elm` が次の読みのタイマーを作ったことを偽の時計で知ってから、99 秒と 1 秒を決まった量で進め、終わり方を確かめる。
-- **理由:** §16 の文（バイトが 100 秒来なければ終わる）は、99 秒で終わらず、100 秒で終わることで確かめられる。タイマーができたあとに進めれば、どちらも実時間の速さによらない。
+- **決定:** `elm` が次の読みのタイマーを作ったことを偽の時計で知ってから、100 秒より 1 ミリ秒少なく、そして 1 ミリ秒を決まった量で進め、そのたびにタイマーが切れたかを確かめ、終わり方を確かめる（`testing.mdc` の、上限ちょうどとその 1 つ先）。
+- **理由:** §16 の文（バイトが 100 秒来なければ終わる）は、100 秒の手前で切れず、100 秒で切れることで確かめられる。タイマーができたあとに進め、進めた直後に切れたかを読めば、どちらも実時間の速さによらない。
 - **却下した案:** 進めた秒数の範囲を広げる（例えば 100 から 120）。遅いランナーでの落ち方は減るが、範囲の上は実時間で決まるままで、101 秒より長い製品の待ちを見つけられなくなる。
 - **却下した案:** ループの実時間の間隔を長くする。落ちにくくなるだけで、何回回ったかを確かめることは変わらない。

@@ -156,18 +156,20 @@ public sealed class ElmRemoteTextTests : IDisposable
     /// <remarks>
     /// Preconditions:
     /// - ELM_API_KEY set; a listener that answers 200 in chunks with the one byte "{" and then nothing; elm on a fake clock
-    ///   that tells the test when elm makes its first timer once "{" is on standard output: the wait of the read that
-    ///   follows the byte.
+    ///   that tells the test when elm makes its first timer once "{" is on standard output (the wait of the read that
+    ///   follows the byte) and records whether that timer has fired.
     ///
     /// Steps:
-    /// - GET /v1/admin/licenses; once that timer is made, move the clock 99 seconds, then 1 more.
+    /// - GET /v1/admin/licenses; once that timer is made, move the clock 100 seconds less 1 millisecond, then 1 millisecond
+    ///   more.
     ///
     /// Expected:
-    /// - The command has not ended after 99 seconds of the clock (checked after half a second of the real clock).
-    /// - After 100: exit code 3 and the one line "error: The service cannot be reached: No byte of the answer came within
-    ///   100 seconds.", within 20 seconds of the real clock; standard output holds "{". A wait of 101 seconds would not end
-    ///   the command in that time. Before Issue #521 the test moved the clock 1 second every 50 milliseconds of the real
-    ///   clock until the command ended and asserted how far it had moved, which a slow runner took past 101 seconds.
+    /// - After 99.999 seconds the timer has not fired (the fake clock runs a timer's callback inside the move), and the
+    ///   command has not ended after half a second of the real clock.
+    /// - After 100 seconds the timer has fired; exit code 3 and the one line "error: The service cannot be reached: No byte
+    ///   of the answer came within 100 seconds.", within 20 seconds of the real clock; standard output holds "{". Before
+    ///   Issue #521 the test moved the clock 1 second every 50 milliseconds of the real clock until the command ended and
+    ///   asserted how far it had moved, which a slow runner took past 101 seconds.
     /// </remarks>
     [Fact]
     public async Task Request_BodyThatStops_EndsAfter100SecondsWithoutAByte()
@@ -175,19 +177,22 @@ public sealed class ElmRemoteTextTests : IDisposable
         _environment["ELM_API_KEY"] = "elm_test";
         await using RawAnswerServer service = RawAnswerServer.Start(_ => RawAnswer.Stalled("{", 1));
         var output = new SyncWriter();
-        var time = new TimerAfterTime(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), () => output.Text == "{");
+        var time = new TimerAfterCondition(new DateTimeOffset(2026, 10, 1, 0, 0, 0, TimeSpan.Zero), () => output.Text == "{");
         Task<(int Code, string Out, string Error)> running = RunAsync(
             time,
             output,
             ["admin", "request", "GET", "/v1/admin/licenses", "--url", service.Url.ToString()]
         );
-        await time.Made.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
+        Task made = await Task.WhenAny(time.Made, Task.Delay(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken));
+        Assert.True(made == time.Made, "elm made no timer after '{'.");
 
-        // design §16 (V1d27): 99 seconds without a byte do not end the command.
-        time.Advance(TimeSpan.FromSeconds(99));
+        // design §16 (V1d27): a wait just short of 100 seconds without a byte does not end the command.
+        time.Advance(TimeSpan.FromSeconds(100) - TimeSpan.FromMilliseconds(1));
+        Assert.False(time.Fired, "The wait fired before 100 seconds without a byte.");
         await Task.WhenAny(running, Task.Delay(500, TestContext.Current.CancellationToken));
         Assert.False(running.IsCompleted, "The command ended before 100 seconds without a byte.");
-        time.Advance(TimeSpan.FromSeconds(1));
+        time.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.True(time.Fired, "The wait did not fire at 100 seconds without a byte.");
 
         (int code, string text, string error) = await running.WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
         Assert.Equal((3, "{", "error: The service cannot be reached: No byte of the answer came within 100 seconds."), (code, text, error.Trim()));
@@ -560,24 +565,38 @@ public sealed class ElmRemoteTextTests : IDisposable
             TestContext.Current.CancellationToken
         );
 
-    // A fake clock that completes Made once elm makes a timer while the condition holds. A move of the clock made before
-    // that does not count toward the timer's wait, so the test moves the clock only once the timer is there (Issue #521).
-    // The timer's length is not matched: a shorter wait in elm then ends the command before the full move, and the test
-    // says so.
-    private sealed class TimerAfterTime(DateTimeOffset start, Func<bool> condition) : FakeTimeProvider(start)
+    // A fake clock that completes Made once elm makes its first timer while the condition holds, and records whether that
+    // timer has fired. A move of the clock made before that does not count toward the timer's wait, so the test moves the
+    // clock only once the timer is there (Issue #521). FakeTimeProvider.Advance runs a due timer's callback before it
+    // returns, so Fired read right after a move says whether the move reached the timer's due time, whatever the real
+    // clock. The timer's length is not matched: a wait in elm shorter or longer than the moves fails the test on Fired.
+    private sealed class TimerAfterCondition(DateTimeOffset start, Func<bool> condition) : FakeTimeProvider(start)
     {
         private readonly TaskCompletionSource _made = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _fired;
 
         public Task Made => _made.Task;
 
+        public bool Fired => Volatile.Read(ref _fired) == 1;
+
         public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
         {
-            ITimer timer = base.CreateTimer(callback, state, dueTime, period);
-            if (condition())
+            if (_made.Task.IsCompleted || !condition())
             {
-                _made.TrySetResult();
+                return base.CreateTimer(callback, state, dueTime, period);
             }
 
+            ITimer timer = base.CreateTimer(
+                given =>
+                {
+                    Volatile.Write(ref _fired, 1);
+                    callback(given);
+                },
+                state,
+                dueTime,
+                period
+            );
+            _made.TrySetResult();
             return timer;
         }
     }
