@@ -72,14 +72,28 @@ public sealed partial class LaunchdServiceTests
         bool passed = false;
         try
         {
-            // The page's step 1: the role account, with a UID from 450 to 499 that no account has.
-            string uid = await FreeUidAsync();
-            await SystemService.SudoOkAsync("sysadminctl", "-addUser", account, "-fullName", "elm-server e2e", "-UID", uid, "-roleAccount");
-            (int known, string idOut, string idError) = await Binaries.RunAsync("id", ["-u", account], "/");
-            Assert.True(known == 0 && idOut.Trim() == uid, $"sysadminctl did not make {account} with UID {uid}: {idError}{idOut}");
-            string group = (await Binaries.RunAsync("id", ["-gn", account], "/")).Out.Trim();
-            RunReport.Note($"elm-server under launchd: sysadminctl -roleAccount made UID {uid}, primary group {group}.");
-
+            // The page's step 1: a group of its own, and the role account in it, with an ID from 450 to 499 that no account and
+            // no group has.
+            string uid = await FreeIdAsync();
+            await SystemService.SudoOkAsync("dseditgroup", "-o", "create", "-r", "elm-server e2e", "-i", uid, account);
+            await SystemService.SudoOkAsync(
+                "sysadminctl",
+                "-addUser",
+                account,
+                "-fullName",
+                "elm-server e2e",
+                "-UID",
+                uid,
+                "-GID",
+                uid,
+                "-roleAccount"
+            );
+            (int known, string idOut, string idError) = await Binaries.RunAsync("id", [account], "/");
+            Assert.True(
+                known == 0 && idOut.Contains($"uid={uid}({account}) gid={uid}({account})", StringComparison.Ordinal),
+                $"sysadminctl did not make {account} with UID and GID {uid}: {idError}{idOut}"
+            );
+            RunReport.Note($"elm-server under launchd: id {account}: {idOut.Trim()}");
             await SystemService.SudoOkAsync("install", "-d", "-m", "0755", bin);
             await SystemService.SudoOkAsync("install", "-m", "0755", Binaries.Server, Binaries.Elm, bin);
             await SystemService.SudoOkAsync("install", "-m", "0644", vendor.RootPublicKey, bin + "/root.pub.pem");
@@ -90,8 +104,9 @@ public sealed partial class LaunchdServiceTests
                 ("/usr/local/elm-server", bin)
             );
             await SystemService.InstallTextAsync(vendor, settings, bin + "/elm-server.json", "0644");
-            await SystemService.SudoOkAsync("install", "-d", "-o", account, "-g", group, "-m", "0700", data);
+            await SystemService.SudoOkAsync("install", "-d", "-o", account, "-g", account, "-m", "0700", data);
             await SystemService.SudoOkAsync("install", "-d", "-m", "0755", logs);
+            await SystemService.SudoOkAsync("install", "-m", "0640", "-o", account, "-g", account, "/dev/null", logFile);
 
             // Step 2: one start from the terminal makes the installation key and stops for want of the license.
             (int first, string firstOut, string firstError) = await SystemService.SudoAsync([
@@ -134,10 +149,7 @@ public sealed partial class LaunchdServiceTests
                 "elm-server.plist",
                 ("<string>elm-server</string>\n  <key>ProgramArguments</key>", $"<string>{label}</string>\n  <key>ProgramArguments</key>"),
                 ("/usr/local/elm-server/", bin + "/"),
-                (
-                    "<string>_elm-server</string>\n  <key>GroupName</key>\n  <string>_elm-server</string>",
-                    $"<string>{account}</string>\n  <key>GroupName</key>\n  <string>{group}</string>"
-                ),
+                ("<string>_elm-server</string>", $"<string>{account}</string>"),
                 ("/Library/Logs/elm-server/", logs + "/")
             );
             await SystemService.InstallTextAsync(vendor, plistText, plist, "0644");
@@ -187,6 +199,7 @@ public sealed partial class LaunchdServiceTests
             await SystemService.CleanUpAsync(problems, "launchctl bootout", () => IgnoreAsync("launchctl", "bootout", "system/" + label));
             await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoOkAsync("rm", "-rf", plist, bin, data, logs));
             await SystemService.CleanUpAsync(problems, "the account", () => IgnoreAsync("sysadminctl", "-deleteUser", account));
+            await SystemService.CleanUpAsync(problems, "the group", () => IgnoreAsync("dseditgroup", "-o", "delete", account));
             Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
         }
     }
@@ -199,15 +212,19 @@ public sealed partial class LaunchdServiceTests
     // The process of the job, or "" when it runs none.
     private static string Pid(string printed) => PidLine().Match(printed).Groups[1].Value;
 
-    // The lowest UID from 450 to 499, the range that sysadminctl takes for a role account, that no account has.
-    private static async Task<string> FreeUidAsync()
+    // The lowest ID from 450 to 499, the range that sysadminctl takes for a role account, that no account and no group has.
+    private static async Task<string> FreeIdAsync()
     {
-        (int code, string output, string error) = await Binaries.RunAsync("dscl", [".", "-list", "/Users", "UniqueID"], "/");
-        Assert.True(code == 0, $"dscl exited with {code}: {error}");
-        HashSet<string> taken =
-        [
-            .. output.Split('\n').Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? string.Empty),
-        ];
+        HashSet<string> taken = [];
+        foreach ((string records, string attribute) in (List<(string, string)>)[("/Users", "UniqueID"), ("/Groups", "PrimaryGroupID")])
+        {
+            (int code, string output, string error) = await Binaries.RunAsync("dscl", [".", "-list", records, attribute], "/");
+            Assert.True(code == 0, $"dscl exited with {code}: {error}");
+            taken.UnionWith(
+                output.Split('\n').Select(line => line.Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? string.Empty)
+            );
+        }
+
         return Enumerable.Range(450, 50).Select(n => n.ToString(System.Globalization.CultureInfo.InvariantCulture)).First(n => !taken.Contains(n));
     }
 
