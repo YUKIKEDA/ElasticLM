@@ -1159,9 +1159,9 @@ public sealed class ActivationClient : IAsyncDisposable
             LicenseError? error = whole.IsSuccess ? null : LicenseClient.ProblemOf(whole.Status, content, keepDetail: true);
             return new Reply(content, error, LicenseClient.ValidNonce(nonce), whole.Headers.RetryAfter?.Delta);
         }
-        catch (HttpRequestException e) when (BoundedAnswer.NeverSent(e))
+        catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException && BoundedAnswer.NeverSent(e))
         {
-            // The request did not leave this device.
+            // The request did not leave this device: also a time limit or a cancellation before any byte of it was written.
             return Reply.Failure(new LicenseError(ErrorCode.NetworkError, "The service cannot be reached: " + e.Message));
         }
         catch (Exception e) when (e is HttpRequestException or OperationCanceledException or TimeoutException)

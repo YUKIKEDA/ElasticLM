@@ -931,14 +931,64 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     }
 
     /// <summary>
-    /// A renewal that the 30-second time limit ends before it has an answer, also one whose connection may never have been
-    /// made, counts as one without an answer: the client cannot tell that it never left, so the retry names it (design §10.4
-    /// step 2).
+    /// A renewal that the 30-second time limit ends before any byte of it was written is not one without an answer: after 16
+    /// of them the list still has room for a renewal whose answer is lost, and the next retry gets that renewal's token
+    /// (design §10.4 step 2, the V1d24e Grill).
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A server (clone strategy deny, leases of an hour) past its reclaim window; a client holding a lease of pro
+    ///   (sequence 1), behind a relay that holds the next 16 renewals in front of the client's own handler, so that none of
+    ///   them is written, until the time limit ends each, and then throws away the answer to the first renewal after them
+    ///   that the server answers with a success, after the server renewed to sequence 2.
+    ///
+    /// Steps:
+    /// - Move the clock 20 minutes (the renewal); once the relay holds it, move the clock 30 s (its time limit), so that
+    ///   the lease is Retrying; then move the clock 5 s at a time, waiting 20 ms of real time after each, until the lease is
+    ///   no longer Retrying. Each held renewal ends 30 s after it was sent; the retries come 15 s, 30 s, and then every
+    ///   60 s after each failure, so a step wakes one at most.
+    ///
+    /// Expected:
+    /// - The relay held 16 renewals and lost one answer. The last renewal's body is {"seq":1,"retry":[the jti of the lost
+    ///   renewal]}: none of the held ones is named.
+    /// - The lease is Held with sequence 2, its token names the lost renewal's proof, and the server counts 1 seat. Before
+    ///   V1d24e the held renewals filled the list, the lost renewal was left out, and the lease was Lost with
+    ///   ELM_CLONE_DETECTED.
+    /// </remarks>
+    [Fact]
+    public async Task Renewal_SixteenEndedBeforeTheyWereWrittenThenAnswerLost_RetryNamesOnlyTheLostRenewal()
+    {
+        ElmServer server = await StartHourServerAsync();
+        var relay = new Recorder { HoldNextRenewals = 16, LoseNextRenewalAnswer = true };
+        LicenseClient client = Client(server, relay);
+        Lease lease = Acquired(await client.AcquireLeaseAsync("pro", cancellationToken: TestContext.Current.CancellationToken));
+
+        _deployment.Time.Advance(TimeSpan.FromMinutes(20));
+        await Deployment.WaitUntilAsync(() => relay.HeldRenewals().Length == 1);
+        _deployment.Time.Advance(TimeSpan.FromSeconds(30));
+        await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Retrying);
+        for (int i = 0; i < 480 && lease.State == LeaseState.Retrying; i++)
+        {
+            _deployment.Time.Advance(TimeSpan.FromSeconds(5));
+            await Task.Delay(20, TestContext.Current.CancellationToken);
+        }
+
+        string lost = Assert.Single(relay.LostRenewals());
+        Assert.Equal(16, relay.HeldRenewals().Length);
+        Assert.Equal(RetryBody([lost]), Renewals(relay)[^1].Body);
+        Assert.Equal((LeaseState.Held, 2L, lost), (lease.State, lease.Token.Sequence, lease.Token.AnsweredProofId));
+        Assert.Equal(1, server.Engine.SeatsInUse("pro"));
+    }
+
+    /// <summary>
+    /// A renewal that the 30-second time limit ends before any byte of it was written never left the device: the retry does
+    /// not name it (design §10.4 step 2, the V1d24e Grill's Q1 and Q2).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - A server (clone strategy deny) past its reclaim window; a client holding a lease of pro (sequence 1), behind a relay
-    ///   that holds the next renewal without passing it on, as a connection that is never made, until the client gives up.
+    ///   that holds the next renewal in front of the client's own handler, so that none of it is written, until the client
+    ///   gives up.
     ///
     /// Steps:
     /// - Move the clock 200 s (the renewal); once the relay holds it, move the clock 30 s (the time limit); then 15 s (the
@@ -946,11 +996,12 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
     ///
     /// Expected:
     /// - Retrying with ELM_NETWORK_ERROR "The server cannot be reached: No whole answer came within 30 seconds.".
-    /// - The retry's body is {"seq":1,"retry":[the jti of the held renewal]}; the server, which never saw the held renewal,
-    ///   renews to sequence 2, and the lease is Held with a token that names the retry's proof.
+    /// - The retry's body is {"seq":1}, without the held renewal's jti; the server, which never saw the held renewal, renews
+    ///   to sequence 2, and the lease is Held with a token that names the retry's proof. Before V1d24e the retry named the
+    ///   held renewal.
     /// </remarks>
     [Fact]
-    public async Task Renewal_EndedByTheTimeLimit_IsNamedByTheRetry()
+    public async Task Renewal_EndedByTheTimeLimitBeforeItWasWritten_IsNotNamedByTheRetry()
     {
         ElmServer server = await StartOpenServerAsync();
         var relay = new Recorder { HoldNextRenewals = 1 };
@@ -965,12 +1016,12 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
             new LicenseError(ErrorCode.NetworkError, "The server cannot be reached: No whole answer came within 30 seconds."),
             lease.LastError
         );
-        string held = Assert.Single(relay.HeldRenewals());
+        Assert.Single(relay.HeldRenewals());
 
         _deployment.Time.Advance(TimeSpan.FromSeconds(15));
         await Deployment.WaitUntilAsync(() => lease.State == LeaseState.Held);
         SentRequest retry = Renewals(relay)[^1];
-        Assert.Equal(RetryBody([held]), retry.Body);
+        Assert.Equal("""{"seq":1}""", retry.Body);
         Assert.Equal((2L, retry.ProofId), (lease.Token.Sequence, lease.Token.AnsweredProofId));
         Assert.Equal(1, server.Engine.SeatsInUse("pro"));
     }
