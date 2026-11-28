@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.RegularExpressions;
 
@@ -34,11 +35,13 @@ public sealed partial class LaunchdServiceTests
     /// - Install the plist of the sample (0644) in /Library/LaunchDaemons and launchctl bootstrap system; wait until elm
     ///   server status answers as the account.
     /// - Kill the process with SIGKILL and time until elm server status answers again from a new process.
+    /// - Install the newsyslog line of samples/ElmServerService/macos (0644) in /etc/newsyslog.d with the names of this run,
+    ///   rotate the log with newsyslog -F -f that file, make a request with elm server status, and launchctl kickstart -k.
     /// - launchctl kill SIGTERM, timed until the job has no process; read launchctl print, the newest usage log, and the log
     ///   file.
     /// - launchctl kickstart, wait until elm server status answers, and SIGTERM again.
-    /// - Clean up, also when the run is canceled: launchctl bootout, end every process of the account, remove the plist and
-    ///   the folders, delete the account (keeping its home, the shared /var/empty) and the group, and check that both are
+    /// - Clean up, also when the run is canceled: launchctl bootout, end every process of the account, remove the plist, the
+    ///   newsyslog file, and the folders, delete the account (keeping its home, the shared /var/empty) and the group, and check that both are
     ///   gone and /var/empty is still there.
     ///
     /// Expected:
@@ -46,6 +49,9 @@ public sealed partial class LaunchdServiceTests
     ///   missing server license and names an installation key; activate exits with 0.
     /// - launchctl print shows the exit timeout of 60 seconds.
     /// - After the kill a new process answers.
+    /// - After the rotation the old file, the same inode, is the .0 file, and the new log file belongs to the account with
+    ///   mode 640. The request's lines go to the .0 file while the new file keeps its size; after kickstart -k the new file
+    ///   holds the server.started line and the server answers.
     /// - After SIGTERM the job runs no process and its last exit code is 0; the newest usage log ends with server.stopped and
     ///   its signature, and the newest borrow record holds server.stopped; the log file holds the server.started and server.stopped lines of the operational log.
     /// - launchctl kickstart brings the server back.
@@ -66,6 +72,7 @@ public sealed partial class LaunchdServiceTests
         string logFile = logs + "/elm-server.log";
         string license = data + "/server.elmlic";
         string plist = $"/Library/LaunchDaemons/{label}.plist";
+        string newsyslogFile = $"/etc/newsyslog.d/{label}.conf";
         string elm = bin + "/elm";
 
         await using Vendor vendor = await Vendor.CreateAsync("license", "lease", "log");
@@ -180,6 +187,41 @@ public sealed partial class LaunchdServiceTests
             TimeSpan restart = Stopwatch.GetElapsedTime(killed);
             RunReport.Note($"elm-server under launchd: SIGKILL to an answer from the restarted server took {restart.TotalMilliseconds:F0} ms.");
 
+            // The page's log rotation (V1d30a, question 30a-5): newsyslog with the sample's line moves the file to .0 and
+            // creates a new one for the account with mode 640, and the server writes to the moved file until launchctl
+            // kickstart -k starts it again.
+            string rotation = SystemService.Sample(
+                "macos/elm-server.conf",
+                ("/Library/Logs/elm-server/", logs + "/"),
+                ("_elm-server:_elm-server", $"{account}:{account}")
+            );
+            await SystemService.InstallTextAsync(vendor, rotation, newsyslogFile, "0644");
+            string inode = await StatAsync("%i", logFile);
+            await SystemService.SudoOkAsync("newsyslog", "-F", "-f", newsyslogFile);
+            Assert.Equal(inode, await StatAsync("%i", logFile + ".0"));
+            Assert.Equal($"{account}:{account} 640", await StatAsync("%Su:%Sg %Lp", logFile));
+            long moved = long.Parse(await StatAsync("%z", logFile + ".0"), CultureInfo.InvariantCulture);
+            string fresh = await StatAsync("%z", logFile);
+
+            // elm server status is a request, whose Executing endpoint lines the server writes at Information.
+            await WaitForStatusAsync(account, elm, data);
+            await RealClock.WaitUntilAsync(
+                "the request's lines in the moved log file",
+                async () => long.Parse(await StatAsync("%z", logFile + ".0"), CultureInfo.InvariantCulture) > moved,
+                SystemService.StateTimeout
+            );
+            Assert.Equal(fresh, await StatAsync("%z", logFile));
+            await SystemService.SudoOkAsync("launchctl", "kickstart", "-k", "system/" + label);
+            await RealClock.WaitUntilAsync(
+                "server.started in the new log file",
+                async () => (await SystemService.SudoOkAsync("cat", logFile)).Contains("server.started: listening on port", StringComparison.Ordinal),
+                SystemService.StateTimeout
+            );
+            await WaitForStatusAsync(account, elm, data);
+            RunReport.Note(
+                $"elm-server under launchd: after newsyslog, the moved file grew from {moved} bytes and the new one stayed at {fresh} bytes until kickstart -k."
+            );
+
             // The stop: SIGTERM, as the page says, and the job keeps no process since the exit is a success.
             long stopping = Stopwatch.GetTimestamp();
             await SystemService.SudoOkAsync("launchctl", "kill", "SIGTERM", "system/" + label);
@@ -221,7 +263,11 @@ public sealed partial class LaunchdServiceTests
                 () => SystemService.SudoTryAsync("launchctl", "bootout", "system/" + label)
             );
             await SystemService.CleanUpAsync(problems, "the account's processes", () => SystemService.KillProcessesOfAsync(account, bin));
-            await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoCleanUpAsync("rm", "-rf", plist, bin, data, logs));
+            await SystemService.CleanUpAsync(
+                problems,
+                "the folders",
+                () => SystemService.SudoCleanUpAsync("rm", "-rf", plist, newsyslogFile, bin, data, logs)
+            );
 
             // -keepHome: the role account's home is the shared /var/empty.
             await SystemService.CleanUpAsync(
@@ -252,6 +298,9 @@ public sealed partial class LaunchdServiceTests
             Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
         }
     }
+
+    // A value of stat -f for the file, read as root: the log's folder is root's and the file the account's.
+    private static async Task<string> StatAsync(string format, string file) => (await SystemService.SudoOkAsync("stat", "-f", format, file)).Trim();
 
     private static async Task<string> PrintAsync(string label) => (await SystemService.SudoAsync(["launchctl", "print", "system/" + label])).Out;
 

@@ -192,8 +192,13 @@ internal static class SystemService
         }
     }
 
-    // The text of the newest file of a signed log in the folder (usage-….jsonl, borrows-….jsonl), read as root.
-    private static async Task<string> NewestAsync(string data, string name)
+    /// <summary>
+    /// Reads, as root, the text of the newest file of a signed log in the folder (<c>usage-….jsonl</c>,
+    /// <c>borrows-….jsonl</c>), failing the test when the folder holds none.
+    /// </summary>
+    /// <param name="data">The folder.</param>
+    /// <param name="name">The log's name: <c>usage</c> or <c>borrows</c>.</param>
+    public static async Task<string> NewestAsync(string data, string name)
     {
         string list = await SudoOkAsync("find", data, "-maxdepth", "1", "-name", name + "-*.jsonl");
         string[] files = list.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);

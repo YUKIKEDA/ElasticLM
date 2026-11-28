@@ -159,14 +159,17 @@ public sealed partial class HardeningMeasurementTests
                 string machine = (await Binaries.RunAsync("hostname", [], "/")).Out.Trim();
                 foreach ((string label, string[] set) in (List<(string, string[])>)[("no directive", []), ("the variant", directives)])
                 {
-                    foreach (string name in (string[])["localhost", hostsName, machine])
+                    foreach (string name in (string[])["localhost", hostsName, machine, "github.com", "elm-e2e.invalid"])
                     {
                         (int code, string output, string error) = await RunSandboxedAsync(user, set, ["getent", "ahosts", name]);
                         Note($"names under {label}: getent ahosts {name}: exit {code}: {Last(output + error)}");
+                        long resolving = Stopwatch.GetTimestamp();
                         (code, output, error) = await RunSandboxedAsync(
                             user,
                             set,
                             [
+                                "timeout",
+                                "15",
                                 elm,
                                 "server",
                                 "refresh",
@@ -182,7 +185,9 @@ public sealed partial class HardeningMeasurementTests
                                 etc + "/root.pub.pem",
                             ]
                         );
-                        Note($"names under {label}: elm server refresh https://{name}:1: exit {code}: {Last(output + error)}");
+                        Note(
+                            $"names under {label}: elm server refresh https://{name}:1: exit {code} after {Stopwatch.GetElapsedTime(resolving).TotalMilliseconds:F0} ms: {Last(output + error)}"
+                        );
                     }
                 }
             }
@@ -193,6 +198,7 @@ public sealed partial class HardeningMeasurementTests
                 ("Group=elm-server", "Group=" + user),
                 ("/opt/elm-server/", bin + "/"),
                 ("/etc/elm-server/", etc + "/"),
+                ("/var/lib/elm-server", data),
                 ("TimeoutStopSec=60\n", "TimeoutStopSec=60\n" + string.Concat(directives.Select(d => d + "\n")))
             );
             if (Environment.GetEnvironmentVariable(OutVariable) is { Length: > 0 } outFolder)
@@ -205,6 +211,11 @@ public sealed partial class HardeningMeasurementTests
             long startedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds() - 1;
             (int enabled, _, string enableError) = await SystemService.SudoAsync(["systemctl", "enable", "--now", unit]);
             Note($"systemctl enable --now exited with {enabled}{(enabled == 0 ? string.Empty : ": " + Last(enableError))}");
+            foreach (string directive in directives)
+            {
+                string property = directive[..directive.IndexOf('=', StringComparison.Ordinal)];
+                Note($"systemctl show {property}={Cut(await ShowAsync(unit, property))}");
+            }
 
             bool answered = false;
             string statusError = string.Empty;
