@@ -210,7 +210,7 @@ Errors:
 
 Warnings: `chain.reset` with its reason, lines after the last signature, a last line cut in the middle (reported only when the file was read to its end, without an earlier error), a server that moved (another key of the same server license), an `elm-service` signing key that was replaced, and a file in a folder whose name has the form of a log file's name but no real date and time, which is not verified.
 
-Deleting or cutting the newest file, which has no next file, is not detected. Nor is deleting the oldest files: the first file given is taken as the start of the chain. Nor is deleting the newest files, or cutting the newest one at a signature, while the program is stopped: its next start continues the chain from the newest file that is left. Nor is cutting the file before a `chain.reset` at one of its signatures: a `chain.reset` does not name the previous file's last signature. When the `chain.reset` could not read the previous file (its `prev` has no `first`), another file renamed to that file's name is not detected either.
+Deleting or cutting the newest file, which has no next file, is not detected. Nor is deleting the oldest files: the first file given is taken as the start of the chain. Nor is deleting the newest files, or cutting the newest one right after a signature line, while the program is stopped: its next start continues the chain from the newest file that is left. Nor is cutting the file before a `chain.reset` at one of its signatures: a `chain.reset` does not name the previous file's last signature. When the `chain.reset` could not read the previous file (its `prev` has no `first`), another file renamed to that file's name is not detected either.
 
 ## Borrow record (elm-server)
 
