@@ -104,11 +104,13 @@ public sealed class ElmServiceTests
     ///   FRAME_SIZE_ERROR for a longer frame (Http2FrameReader.cs TryReadFrame) and with COMPRESSION_ERROR for a larger
     ///   table size update (HPackDecoder.cs SetDynamicHeaderTableSize), and ends it with FLOW_CONTROL_ERROR for DATA past
     ///   either window, the stream's included (InputFlowControl.cs TryAdvance).
+    /// - The test settings raise the rate limits of one address (RateLimitPerIp, RateLimitClientPerIp) to 1,000, above the
+    ///   102 GETs of the case of 101 streams.
     ///
     /// Steps:
     /// - On a new TLS connection each time (ALPN h2), send GET /v1/nonce as HTTP/2 frames (KestrelLimits.Http2OtherOutcomeAsync):
-    ///   with the client window set to 0, the number of streams given at once, each with END_STREAM, then, after a reset of
-    ///   the last, a RST_STREAM (CANCEL) of the first and one more stream; one HEADERS frame of the length given (past the
+    ///   with the client window set to 0, the number of streams given at once, each with END_STREAM, then, after the answer
+    ///   (200 or reset) of the last, a RST_STREAM (CANCEL) of the first and one more stream; one HEADERS frame of the length given (past the
     ///   limit, its frame header alone); a header block that starts with a dynamic table size update of the value given;
     ///   with the client window set to 0, one stream or two without END_STREAM, and after their 200, DATA of the given
     ///   number of bytes on the stream or split over the two, and a PING. Read the answers' status, RST_STREAM, PING ACK,

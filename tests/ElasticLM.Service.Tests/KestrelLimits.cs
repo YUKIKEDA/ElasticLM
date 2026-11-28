@@ -182,22 +182,35 @@ internal static class KestrelLimits
     /// to or one past one of Kestrel's other HTTP/2 limits, and returns the outcome: the status code of the last stream,
     /// "reset" and the error code of its RST_STREAM, "ping" for the acknowledgement of a PING sent after the request bodies,
     /// "goaway" and the error code of a GOAWAY, or "no answer". It asserts the answers on the way: the 200 of every earlier
-    /// stream, and after a 200 or a reset of the last stream, the 200 of a plain GET on the same connection.
+    /// stream, and after a 200 or a reset of the last stream, the 200 of a plain GET on the same connection. For "streams"
+    /// that GET goes after the client has reset the first stream with RST_STREAM (CANCEL).
     /// </summary>
     /// <remarks>
     /// "streams" opens that many streams at once, each a GET with END_STREAM, on a connection whose client SETTINGS sets
     /// SETTINGS_INITIAL_WINDOW_SIZE to 0: the server can send no DATA of an answer, so each stream stays open after its 200
-    /// (Http2Connection.cs StartStream refuses a stream past MaxStreamsPerConnection with REFUSED_STREAM). After a reset of
-    /// the last stream, the client resets the first stream with CANCEL, which ends its count at once (Http2Stream.cs
-    /// AbortRstStreamReceived), and opens one more. "frame" is the length of one HEADERS frame, filled with a padding field;
+    /// (Http2Connection.cs StartStream refuses a stream past MaxStreamsPerConnection with REFUSED_STREAM). After the answer
+    /// of the last stream, a 200 or a reset, the client resets the first stream with CANCEL, which ends its count at once
+    /// (Http2Stream.cs AbortRstStreamReceived), and opens one more. The case of 101 streams sends 102 GETs on one
+    /// connection, and so rests on the test settings that raise the rate limit of one address to 1,000 (RateLimitPerIp of the
+    /// server's Deployment, RateLimitPerIp and RateLimitClientPerIp of the service's TestService). "frame" is
+    /// the length of one HEADERS frame, filled with a padding field;
     /// past the limit only the frame's header goes, since Kestrel refuses the length before it waits for the payload
     /// (Http2FrameReader.cs TryReadFrame), and a payload it no longer reads can make the connection reset before the GOAWAY
     /// arrives. "table" is the value of a dynamic table size update at the start of the header block (RFC 7541 §6.3), which
     /// Kestrel's decoder takes up to Http2Limits.HeaderTableSize (HPackDecoder.cs SetDynamicHeaderTableSize). "stream window"
     /// and "connection window" are the bytes of DATA on one stream, or split over two streams, sent after the 200 of a GET
     /// without END_STREAM on a connection whose client window is 0, so the answers stay open and the handler never reads the
-    /// body: Kestrel gives back window only for what a handler reads (Http2Stream.cs OnDataRead), and a DATA frame past
-    /// either window ends the connection (InputFlowControl.cs TryAdvance). The DATA and the PING after it go in one write.
+    /// body. Kestrel gives back window for what a handler reads (Http2Stream.cs OnDataRead), and gives back the unread rest
+    /// to the connection when the stream completes (Http2Stream.cs CompleteStream, StreamInputFlowControl.cs Abort). The
+    /// stream completes only after the answer's END_STREAM has been written (Http2OutputProducer.cs OnRequestProcessingEnded
+    /// waits for CompleteResponseAsync, which Http2FrameWriter.cs calls once the whole answer is out), and with a client
+    /// window of 0 no DATA of the answer, and so no END_STREAM, can go: no window comes back while the test sends. A DATA
+    /// frame past either window ends the connection (InputFlowControl.cs TryAdvance). The DATA and the PING after it go in
+    /// one write. That the PING, written after DATA past a window, does not make the connection reset before the GOAWAY
+    /// arrives was not checked on the wire; it is reasoned: SslStream cuts the write into records of about 16 KiB, so the
+    /// end of the last DATA frame and the PING are in the last record, and Kestrel decrypts that whole record before it
+    /// reads the frame, which leaves no unread byte. Both past cases gave the GOAWAY in 20 runs of 20 on each server
+    /// (docs/rows/V1d29h.md).
     /// </remarks>
     public static async Task<string> Http2OtherOutcomeAsync(Uri url, string path, string kind, int size)
     {
