@@ -2,7 +2,7 @@
 
 ## Grill の記録
 
-持ち主の決定（2026-11-28、Issue #529 のコメント）で行を足し（PR #530）、すぐ始めた。原因は製品の側にあり、直し方は持ち主に聞いた（問 3g-1）。設計の独立レビューの指摘は D1〜D9 で、D1 と D4 は問 3g-2 として持ち主に聞く（下の「同じ種類を探した範囲」）。
+持ち主の決定（2026-11-28、Issue #529 のコメント）で行を足し（PR #530）、すぐ始めた。原因は製品の側にあり、直し方は持ち主に聞いた（問 3g-1）。設計の独立レビューの指摘は D1〜D9、PR #531 の独立レビューの指摘は R1〜R7 で、D1、D4、R1、R2 は問 3g-2 として持ち主に聞く（下の「同じ種類を探した範囲」）。
 
 ### 落ち方
 
@@ -41,7 +41,7 @@ Windows 11（build 26300）、SDK 10.0.404、Release。
 - 手を加えない製品とテストで、このテストの形（待ち受けを作る、`RunAsync` を始める、接続を受ける、取り消す、結果を読む）を流した。1 つのプロセスで 1 回ずつ続けて 3,000 回を 1 組とし、3 組流した。組の違いは取り消しの前の空回しで、入れない組、0〜2,000 回の組、0〜20,000 回の組である。9,000 回のすべてで `TaskCanceledException` か `OperationCanceledException` が投げられ、文は 1 回も返らなかった。測りのためのテストは、測りのあとで消した。32 本を並べて流した試しは、ループバックのポートを使い切って接続が受けられずに止まったので、数えていない。
 - 決まって起こす再現: 製品の `RunAsync` の `ConnectAsync` のあとに、呼び出し側のトークンの取り消しを待ってからソケットを閉じる変更を入れた。これは、システムが接続を済ませたあとに `CancelConnectAsync` が走ったときと同じ状態である。変更は測りの間だけ入れ、測りのあとで元に戻した（コミットしていない）。直す前の製品では 3 回とも、CI と同じ「Assert.ThrowsAny() Failure: No exception was thrown / Expected: typeof(System.OperationCanceledException)」で落ちた。`RunAsync` が返した値は「The check that Windows sends the intermediate CA certificates of the TLS certificate 'chain.crt' did not get an answer: the TLS handshake with 127.0.0.1:{port} failed.」だった。変更を入れずに流すと通った（`TaskCanceledException`、1 回）。
 
-2 つ目の測りは、直しをコミットした da72eee（`origin/main` の 4758d74 を取り込んだあと）で取った。結果は下の変異の確かめにある。
+2 つ目の測りは、PR #531 のレビューの直しまでをコミットした 6dd62f4（`origin/main` の 4758d74 を取り込んだあと）で取った。結果は下の変異の確かめにある。
 
 ### 持ち主の決定
 
@@ -53,23 +53,27 @@ Windows 11（build 26300）、SDK 10.0.404、Release。
   - 振る舞いが変わるのは、呼び出し側が取り消したときだけである。
   - 時間の上限（10 秒）の文と、答えが得られないときの文（`failed`、`failed (socket error {SocketError})`、`did not finish within 10 seconds`）は変わらない。時間の上限の `catch` の条件（上限が切れ、呼び出し側は取り消していない）も変えていない。
   - XML ドキュメントに `<exception cref="OperationCanceledException">` を足した。
+  - サーバーが送った証明書の写しは、確かめが例外で終わる道でも破棄する（PR #531 のレビューの R4。今までは、取り消しの例外がそのまま上がる道でも破棄していなかった）。
 - design §13.5 の「答えが得られないとき」の項に、この扱いの文と、その理由の文を足した。
-- テスト `Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation` を足した。
+- テスト `Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation` を足した。接続を RST で切る場合と、TLS でないバイト（`HTTP/1.1 400 Bad Request` と空の行）で答える場合の 2 つの場合を流す（R3）。
   - テストは、`RunAsync` を始めてから、呼び出し側のトークンに自分のコールバックを登録する。dotnet/runtime release/10.0 の `src/libraries/System.Private.CoreLib/src/System/Threading/CancellationTokenSource.cs` では、`Register` が新しいコールバックをリストの先頭に足し、`ExecuteCallbackHandlers` が先頭から取って呼ぶ（その要約に「The handlers are invoked synchronously in LIFO order.」とある）。公開の `Cancel` のドキュメントは順を約束していない。この順のために、テストのコールバックが走る間、トークンは取り消された状態で、確かめの待ち（リンクしたトークン）はまだ取り消されていない。
-  - コールバックの中で、受けた接続を RST で切り（`LingerOption(true, 0)`）、確かめが終わるまで待つ。確かめはハンドシェイクの段で `IOException` か `SocketException` で終わる。テストは、`OperationCanceledException` が投げられ、その内側の例外がその誤りであることを確かめる。
+  - コールバックの中で、受けた接続を RST で切るか（`LingerOption(true, 0)`）、TLS でないバイトを送り、確かめが終わるまで待つ（タスクの待ちのハンドルで、実時間の 30 秒を上限にする）。確かめはハンドシェイクの段で、RST なら `IOException`、TLS でないバイトなら `AuthenticationException` で終わる。テストは、`OperationCanceledException` が投げられ、その内側の例外がその型であることを確かめる。
   - このテストが決まって起こすのは、ハンドシェイクの段の道である。CI で落ちた接続の段の道（接続が成功で返ってから、閉じたソケットで誤りになる）は、同じ `catch` を通る。この道は、上の決まって起こす再現でだけ通した。
   - 内側の例外の確かめがあるので、コールバックの順が変わってリンクしたトークンが先に取り消されれば、テストは素通りせずに落ちる。
 - `Run_CallerCancels_ThrowsTheCancellation` は変えていない。直したあとは、取り消しがハンドシェイクの待ちに届いても、接続の段で閉じたソケットの誤りになっても、取り消しを投げる。
 
 ### 変異の確かめ
 
-da72eee で、変異ごとにビルドの終了コードが 0 であることを確かめてから流した。変異は、ファイルの文字を書き換えて入れ、最後に元の文字を書き戻して、ビルドが通ることを確かめた。
+6dd62f4 で、変異ごとにビルドの終了コードが 0 であることを確かめてから流した。変異は、ファイルの文字を書き換えて入れ、最後に元の文字を書き戻して、ビルドが通ることを確かめた。`TlsChainSelfCheckTests` は 15 件（Windows では 1 件をスキップ）。
 
-- 変異なし: `TlsChainSelfCheckTests`（14 件）は 3 回とも、失敗 0。
-- M1: 足した `catch` の条件に `&& e is InvalidCastException` を加え、当たらないようにした。`TlsChainSelfCheckTests` を 3 回流し、3 回とも `Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation` だけが「Assert.ThrowsAny() Failure: No exception was thrown」で落ちた。コールバックの順が上のとおりであることも、これで分かる。
-- M2: 条件の `cancellationToken.IsCancellationRequested` を `cancellationToken.CanBeCanceled` にし、取り消していなくても誤りを取り消しにした。3 回流し、3 回とも `Run_NoTlsAnswer_SaysTheHandshakeFailed` だけが落ちた。
+- 変異なし: 3 回とも、失敗 0。
+- M1: 足した `catch` の条件に `&& e is InvalidCastException` を加え、当たらないようにした。3 回とも、`Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation` の 2 つの場合だけが「Assert.ThrowsAny() Failure: No exception was thrown」で落ちた。コールバックの順が上のとおりであることも、これで分かる。
+- M2: 条件の `cancellationToken.IsCancellationRequested` を `cancellationToken.CanBeCanceled` にし、取り消していなくても誤りを取り消しにした。3 回とも、`Run_NoTlsAnswer_SaysTheHandshakeFailed` だけが落ちた。
+- M3: 条件を `IOException` と `SocketException` だけに狭めた（`&& e is IOException or SocketException` を加えた）。3 回とも、`Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation` の TLS でないバイトの場合だけが落ちた。
 - 決まって起こす再現を入れた直した製品: `Run_CallerCancels_ThrowsTheCancellation` は 3 回とも通った。
 - 決まって起こす再現と M1 を一緒に入れた製品: `Run_CallerCancels_ThrowsTheCancellation` は 3 回とも、CI と同じ「No exception was thrown」で落ちた。
+
+da72eee（R3〜R6 を直す前）でも、変異なし、M1、M2、再現をそれぞれ 3 回流し、同じ結果だった（そのときの新しいテストは RST の場合だけだった）。
 
 ### 同じ種類を探した範囲
 
@@ -79,7 +83,7 @@ da72eee で、変異ごとにビルドの終了コードが 0 であることを
   - 接続が成功で返れば「Another elm-server is running …」。
   - `OperationAborted` 以外のソケットの誤りなら「The administration socket … cannot be used」。
   - 今の製品は取り消せるトークンを渡さないので起きない。この PR では直さず、持ち主に聞く（問 3g-2）。
-- `TlsChainSelfCheck` の時間の上限も同じ種類である（D4）。10 秒の上限もリンクしたトークンで接続を取り消すので、上限が接続の窓に入ると、文は `did not finish within 10 seconds` ではなく `failed` になる。どちらの文でも起動は止まり、違うのは文だけである。これも問 3g-2 に入れた。
+- `TlsChainSelfCheck` の時間の上限も同じ種類である（D4）。10 秒の上限もリンクしたトークンで接続を取り消すので、上限が接続の窓に入ると、文は `did not finish within 10 seconds` ではなく `failed` になる。どちらの文でも起動は止まり、違うのは文だけである。テスト `Run_ListenerNeverAnswers_EndsAtTheLimit` は、接続を受けた直後に偽の時計で上限を切れさせるので、同じ窓を持ち、`Assert.Equal` の文の比べで同じようにゆれうる（PR #531 のレビューの R2）。このテストの名前を挙げた Issue はない（`gh issue list --state all --search` で探した）。これも問 3g-2 に入れた。
 - `ServerAdminApi.ConnectAsync`（`src/ElasticLM.Cli/ServerAdminApi.cs`）は、ハンドラーの 30 秒の上限で接続を取り消す。上限が接続の窓に入ると、`TimeoutException` ではなく `HttpRequestException` になる。呼ぶ側（`ServerCommands` など）は両方を同じ誤りとして扱うので、出力は変わらない。
 - `ActivationClient` と `LicenseClient` の、`OperationCanceledException` を `HttpRequestException` と一緒に受ける `catch` は、取り消しも通信の誤り（`NetworkError`）として返すことを、もともと決めている。誤りの種類によって取り消しが文に変わる形ではない。
 - `ElmService.Web.cs` の `EndSessionAsync` は、要求が切られたときを含めて null を返すことを決めている。
