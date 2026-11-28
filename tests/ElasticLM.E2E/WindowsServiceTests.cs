@@ -41,7 +41,7 @@ public sealed partial class WindowsServiceTests
     ///   installation key.
     /// - After the stop, the service is STOPPED with WIN32_EXIT_CODE 0, the newest usage log file and the newest borrow record
     ///   hold a server.stopped line, and the usage log ends with its signature.
-    /// - The stop's time goes to the test's output and, on GitHub Actions, to the job summary.
+    /// - The stop's time goes to the test's output and, through run.ps1, to the job's log and summary (RunReport.Note).
     /// </remarks>
     [Fact]
     public async Task Service_StartWithoutLicenseThenStop_ReportsTheErrorAndClosesTheRecords()
@@ -172,11 +172,7 @@ public sealed partial class WindowsServiceTests
             string query = await WaitForStateAsync(sc, name, "STOPPED", vendor.Folder);
             TimeSpan stopTime = Stopwatch.GetElapsedTime(stopping);
             string line = $"elm-server as a Windows service: sc stop to STOPPED took {stopTime.TotalMilliseconds:F0} ms.";
-            TestContext.Current.TestOutputHelper?.WriteLine(line);
-            if (Environment.GetEnvironmentVariable("GITHUB_STEP_SUMMARY") is { Length: > 0 } summary)
-            {
-                await File.AppendAllTextAsync(summary, line + Environment.NewLine, TestContext.Current.CancellationToken);
-            }
+            RunReport.Note(line);
 
             Assert.Matches(@"WIN32_EXIT_CODE\s*:\s*0\s", query);
             string usage = Newest(data, "usage");
