@@ -137,6 +137,14 @@
         How-to page names keeps nothing, as README.md does not.
     The marker fails when it is indented, when the next line that is not blank opens a code block, and without page.
 
+    <!-- steps:e2e tests=<class>.<method>,... --> stands on a line of its own, from the start of the line, on a How-to page
+    whose steps need privileges that this script never takes, such as registering a system service (design §13.1, V1d30,
+    Q30-i). The end-to-end tests it names (tests/ElasticLM.E2E, a [Fact] or [Theory] of that class) run the page's steps on
+    CI, and this script checks the marker, that each named test exists, and the page's translation, and then skips the page
+    (skip: <page>: its steps run in the end-to-end tests ...) instead of failing it as a page with no steps. It is the only
+    steps marker of its page. It fails when it is indented, when the next line that is not blank opens a code block, without
+    tests, and with a name that is not <class>.<method> or that names no such test.
+
     elm-server and elm-service run with -ElmServer and -ElmService and get no environment variable whose name starts with
     ELM_ (in any case), so that a variable left in the shell cannot override the page's settings file. The one exception
     is the elm-service of a steps:background block, which gets the run's passphrase as ELM_SIGNING_PASSPHRASE. cl, cc,
@@ -290,10 +298,14 @@ $markerKeys = @{
     expect = @()
     prebuilt = @('name')
     after = @('page')
+    e2e = @('tests')
 }
 # The folder of the pages that may carry steps:after, and the folder of the pages it may name (design §20.7, V1c4a, Q5).
 $howToFolder = 'docs/guide/how-to/'
 $tutorialFolder = 'docs/guide/tutorials/'
+# The end-to-end tests that steps:e2e names, and the form of a name: <class>.<method> (design §13.1, V1d30, Q30-i).
+$endToEndFolder = Join-Path $repoRoot 'tests/ElasticLM.E2E'
+$endToEndName = '^(?<class>[A-Z][A-Za-z0-9]*)\.(?<method>[A-Z][A-Za-z0-9_]*)$'
 
 if (-not $Page) {
     $Page = @(Join-Path $repoRoot 'README.md') + @(foreach ($folder in $tutorialFolder, $howToFolder) {
@@ -309,9 +321,20 @@ function Get-PageName([string]$path) {
     return ($relative.StartsWith('..') ? $full : $relative).Replace('\', '/')
 }
 
+# Whether tests/ElasticLM.E2E has a test method of that name, a [Fact] or a [Theory] (with any other attributes after it), in a
+# file that declares the class (design §13.1, V1d30, Q30-i).
+function Test-EndToEndTest([string]$class, [string]$method) {
+    $test = '\[(?:Fact|Theory)\b[^\]]*\]\s*(?:\[[^\]]*\]\s*)*public\s+(?:async\s+)?\w+\s+' + [regex]::Escape($method) + '\s*\('
+    foreach ($file in Get-ChildItem -LiteralPath $endToEndFolder -Filter '*.cs' -File) {
+        $text = [IO.File]::ReadAllText($file.FullName)
+        if ($text -cmatch ('\bclass\s+' + [regex]::Escape($class) + '\b') -and $text -cmatch $test) { return $true }
+    }
+    return $false
+}
+
 $fenceOpen = '^ {0,3}(?<fence>`{3,}|~{3,})'
 # The markers that stand on a line of their own, with no code block.
-$lineMarker = '<!--\s*steps:(?<kind>prebuilt|after)(\s|-->)'
+$lineMarker = '<!--\s*steps:(?<kind>prebuilt|after|e2e)(\s|-->)'
 
 # The fenced code blocks of a Markdown file, each with the marker on the line right before its opening line (or none), and
 # the steps:prebuilt and steps:after markers, each on a line of its own. Each item has the line number of its marker
@@ -374,7 +397,7 @@ function Read-Marker([string]$at, [string]$text) {
     $marker = [regex]::Match($text, '^<!--\s*steps:(?<kind>[a-z]+)(?<rest>.*?)\s*-->$')
     $kind = $marker.Groups['kind'].Value
     if (-not $marker.Success -or -not $markerKeys.ContainsKey($kind)) {
-        throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, steps:prebuilt, or steps:after."
+        throw "$($at): unknown marker; use steps:run, steps:background, steps:file, steps:expect, steps:prebuilt, steps:after, or steps:e2e."
     }
     $rest = $marker.Groups['rest'].Value
     if ($rest.Contains('-->')) { throw "$($at): a marker is one line, and a value cannot hold '-->'." }
@@ -690,7 +713,7 @@ function Read-Plan([string]$name, [object]$parsed) {
             $marker = Read-Marker $at $block.Marker
         }
         $attributes = $marker.Attributes
-        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null; Replaces = $false; Slot = 'main'; Container = $null }
+        $step = [pscustomobject]@{ Kind = $marker.Kind; Block = $block; Attributes = $attributes; Commands = @(); Pattern = $null; Exit = 0; Ready = $null; Os = $null; After = $null; Replaces = $false; Slot = 'main'; Container = $null; Tests = @() }
         switch ($marker.Kind) {
             'run' {
                 if ($attributes.ContainsKey('os')) {
@@ -855,10 +878,29 @@ function Read-Plan([string]$name, [object]$parsed) {
                 $built.UnionWith($targetPlan.Built)
                 $outputs.UnionWith($targetPlan.Outputs)
             }
+            'e2e' {
+                # A How-to page whose steps need privileges (a system service) runs them in the end-to-end tests that it
+                # names, on CI, and this script skips it (design §13.1, V1d30, Q30-i). Each named test must exist.
+                if (-not $isHowTo) { throw "$($at): steps:e2e stands on a How-to page ($howToFolder) only." }
+                if ($plan.Count -gt 0) { throw "$($at): steps:e2e is the only steps marker of its page." }
+                $value = $attributes.ContainsKey('tests') ? $attributes['tests'] : ''
+                if ($value -eq '') { throw "$($at): steps:e2e takes tests=<class>.<method>,..., the end-to-end tests that run the page's steps." }
+                $step.Tests = @($value -split ',')
+                foreach ($test in $step.Tests) {
+                    $parts = [regex]::Match($test, $endToEndName)
+                    if (-not $parts.Success) { throw "$($at): '$test' is not <class>.<method>." }
+                    if (-not (Test-EndToEndTest $parts.Groups['class'].Value $parts.Groups['method'].Value)) {
+                        throw "$($at): $test is not a [Fact] or [Theory] of tests/ElasticLM.E2E."
+                    }
+                }
+            }
         }
         $plan.Add($step)
         # A steps:prebuilt marker runs nothing, so a steps:expect after it still checks the steps:run block before it.
         if ($marker.Kind -cne 'prebuilt') { $previous = $marker.Kind; $previousOs = $step.Os }
+    }
+    if (($plan | Where-Object Kind -CEQ 'e2e') -and $plan.Count -gt 1) {
+        throw "$($name): steps:e2e is the only steps marker of its page."
     }
     if (-not ($plan | Where-Object Kind -CNE 'after')) { throw "$name has no steps." }
     if (-not $libraryPath -and $prebuilt.Contains('libelasticlm')) { throw "$name needs -Library: it puts libelasticlm in the folder app." }
@@ -1402,6 +1444,13 @@ function Invoke-Page([string]$path) {
     if (-not (Get-Marked $parsed)) { throw "$name has no steps." }
     $plan = Read-Plan $name $parsed
     Test-Translation $path $parsed
+    # A page with steps:e2e runs in the end-to-end tests it names, not here (design §13.1, V1d30, Q30-i).
+    $endToEnd = @($plan.Steps | Where-Object Kind -CEQ 'e2e')
+    if ($endToEnd) {
+        "skip: $($name): its steps run in the end-to-end tests $($endToEnd[0].Tests -join ', ')"
+        $script:ran.Add($name) | Out-Null
+        return
+    }
     $source = $null
     if ($plan.After) {
         Test-Translation $plan.After.Path $plan.After.Parsed
