@@ -48,6 +48,7 @@ Grill（Issue #533 のコメント。内訳は事実調べの報告から）で�
 この行の作業で測ったこと（Windows 11 26300、SDK 10.0.404、Release、この PR の木）:
 
 - 足したテスト `Start_CancelledRightAfterTheProbesConnect_ThrowsTheCancellationAndKeepsTheFiles` の 3 つの場合を、1 回のプロセスで 3 つずつ、60 回続けて流した。180 件すべて通った（`dotnet test --filter-method` の終了コードと合計の数を数えた）。28cae9e の木と、独立レビューの直し（内側の例外の確かめを足した）の木で、それぞれ 60 回、どちらも 180 件すべて通った。
+- macOS と Linux の結果（3h-3）: PR #537 の 9627bd5 の CI（run 46132357510）で、`build.ps1 (macos-latest)`（job 140941545221、arm64、Release と Debug）と `build.ps1 (ubuntu-latest)`（job 140941545219）が通った。足した 2 つのテストの 5 つの場合は、どちらの OS でも落ちもスキップもしなかった（ログは落ちたテストとスキップしたテストだけを名指しする）。つまり macOS でも、3 つの場合とも、起動は取り消しで終わり、内側の例外の型は計測のイベントの誤りと合い、`admin.sock` と `admin.token` は残った。接続が返した値そのもの（macOS の `full queue` が `ConnectionRefused` か）は、ログに残らないので読めていない。
 
 ### 持ち主の決定（2026-11-28、Issue #533 のコメント。すべて推奨のとおり）
 
