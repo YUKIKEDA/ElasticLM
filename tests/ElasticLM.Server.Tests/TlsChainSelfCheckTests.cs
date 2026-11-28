@@ -255,12 +255,13 @@ public sealed class TlsChainSelfCheckTests : IDisposable
 
     /// <summary>
     /// A check whose handshake fails with another error after the caller's token is cancelled, before the cancellation reaches
-    /// the check's own wait, ends with the cancellation, not with the sentence of a failed handshake (design §13.5, V1d3g).
+    /// the check's own wait, ends with the cancellation, not with the sentence of a failed handshake: for an IO error and for
+    /// an authentication error (design §13.5, V1d3g).
     /// </summary>
     /// <remarks>
     /// Preconditions:
     /// - Windows. A chain; the certificate with the intermediate as the intermediates of its file; a TCP listener of the test
-    ///   that accepts the connection and sends nothing.
+    ///   that accepts the connection.
     /// - The test's own callback on the token is registered after the check's, so it runs first when the token is cancelled:
     ///   CancellationTokenSource.ExecuteCallbackHandlers runs the callbacks from the last one registered (dotnet/runtime
     ///   release/10.0; the public documentation does not promise the order). While it runs, the token reads as cancelled and
@@ -271,14 +272,17 @@ public sealed class TlsChainSelfCheckTests : IDisposable
     ///
     /// Steps:
     /// - Start the check with a token of the test; read the first byte of its handshake on the accepted connection. Register a
-    ///   callback on the token that resets that connection and waits until the check has ended; cancel the token.
+    ///   callback on the token that, as the case says, resets that connection or answers with bytes that are not TLS
+    ///   ("HTTP/1.1 400 Bad Request" and an empty line), and waits until the check has ended; cancel the token.
     ///
     /// Expected:
-    /// - The check throws OperationCanceledException, whose inner exception is the IOException or SocketException of the reset
-    ///   connection.
+    /// - The check throws OperationCanceledException, whose inner exception is the error of the handshake: IOException for the
+    ///   reset connection, AuthenticationException for the answer that is not TLS.
     /// </remarks>
-    [Fact]
-    public async Task Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation()
+    [Theory]
+    [InlineData("reset", typeof(IOException))]
+    [InlineData("not TLS", typeof(AuthenticationException))]
+    public async Task Run_HandshakeFailsAfterTheCallerCancels_ThrowsTheCancellation(string answer, Type error)
     {
         Assert.SkipUnless(OperatingSystem.IsWindows(), TestCertificateChain.SelfCheckIsWindowsOnly);
         TestCertificateChain chain = Own(new TestCertificateChain());
@@ -289,22 +293,29 @@ public sealed class TlsChainSelfCheckTests : IDisposable
 
         Task<string?> check = TlsChainSelfCheck.RunAsync(Path, certificate, (IPEndPoint)listener.LocalEndpoint, _time, caller.Token);
         using TcpClient accepted = await listener.AcceptTcpClientAsync(_stop.Token);
-        Assert.Equal(1, await accepted.GetStream().ReadAsync(new byte[1], _stop.Token));
+        NetworkStream stream = accepted.GetStream();
+        Assert.Equal(1, await stream.ReadAsync(new byte[1], _stop.Token));
         using CancellationTokenRegistration failFirst = caller.Token.Register(() =>
         {
-            accepted.Client.LingerState = new LingerOption(true, 0);
-            accepted.Client.Close();
-            _ = SpinWait.SpinUntil(() => check.IsCompleted, TimeSpan.FromSeconds(30));
+            if (answer == "reset")
+            {
+                accepted.Client.LingerState = new LingerOption(true, 0);
+                accepted.Client.Close();
+            }
+            else
+            {
+                stream.Write("HTTP/1.1 400 Bad Request\r\n\r\n"u8);
+            }
+
+            // The bound of the real clock only ends a run in which the check does not end.
+            _ = ((IAsyncResult)check).AsyncWaitHandle.WaitOne(TimeSpan.FromSeconds(30));
         });
         await caller.CancelAsync();
 
         OperationCanceledException cancelled = await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
             check.WaitAsync(TimeSpan.FromSeconds(30), _stop.Token)
         );
-        Assert.True(
-            cancelled.InnerException is IOException or SocketException,
-            $"The check ended with {cancelled.InnerException?.GetType().Name ?? "no inner exception"}, not with the reset connection."
-        );
+        Assert.IsType(error, cancelled.InnerException);
     }
 
     /// <summary>

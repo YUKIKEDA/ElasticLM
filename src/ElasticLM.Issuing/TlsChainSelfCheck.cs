@@ -45,9 +45,9 @@ public static class TlsChainSelfCheck
     /// <see langword="null"/> when every such intermediate was sent or nothing was checked; otherwise why the server must not go
     /// on: the intermediates that were not sent, or that the handshake did not get as far as the server's certificates.
     /// </returns>
-    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled. When the check ends with
-    /// another exception and the token is cancelled by then, whatever that exception is, it becomes the inner exception of
-    /// this one, and no sentence is returned.</exception>
+    /// <exception cref="OperationCanceledException"><paramref name="cancellationToken"/> was cancelled. A check that ends with
+    /// any other exception after the token is cancelled throws this exception, with that exception as its inner exception, and
+    /// returns no sentence.</exception>
     public static async Task<string?> RunAsync(
         string certificatePath,
         TlsServerCertificate certificate,
@@ -76,67 +76,67 @@ public static class TlsChainSelfCheck
         string? unfinished = null;
         using var limit = new CancellationTokenSource(Limit, time);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, limit.Token);
-        try
-        {
-            using var socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
-            await socket.ConnectAsync(target, linked.Token).ConfigureAwait(false);
-            var tls = new SslStream(new NetworkStream(socket, ownsSocket: false));
-            await using (tls.ConfigureAwait(false))
-            {
-                await tls.AuthenticateAsClientAsync(
-                        new SslClientAuthenticationOptions
-                        {
-                            // An IP address is not sent as a server name, and Kestrel's listener has one certificate for every name.
-                            TargetHost = target.Address.ToString(),
-
-                            // A full handshake: the check reads what this process sends at a first handshake, not what a
-                            // session kept from an earlier connection.
-                            AllowTlsResume = false,
-
-                            // SslStream builds a chain before it calls back; this keeps that from fetching the certificates
-                            // the server left out, or a revocation list, from the network.
-                            CertificateChainPolicy = new X509ChainPolicy
-                            {
-                                DisableCertificateDownloads = true,
-                                RevocationMode = X509RevocationMode.NoCheck,
-                            },
-                            RemoteCertificateValidationCallback = (_, _, chain, _) =>
-                            {
-                                // SslStream puts the certificates the server sent into the chain's ExtraStore
-                                // (CertificateValidationPal.GetRemoteCertificate, dotnet/runtime v10.0.15).
-                                // Copies: the chain and its certificates belong to SslStream, which disposes them.
-                                sent = [.. (chain?.ChainPolicy.ExtraStore ?? []).Select(c => X509CertificateLoader.LoadCertificate(c.RawData))];
-                                return true;
-                            },
-                        },
-                        linked.Token
-                    )
-                    .ConfigureAwait(false);
-            }
-        }
-        catch (OperationCanceledException) when (limit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
-        {
-            unfinished = $"did not finish within {Limit.TotalSeconds:0} seconds";
-        }
-        catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
-        {
-            // The caller's cancellation can end the check with another error: a cancelled connect closes the socket
-            // (SocketAsyncEventArgs.CancelConnectAsync, dotnet/runtime release/10.0), and when the connect had already
-            // succeeded the next step fails on the closed socket. Such an error says nothing about the server (design §13.5).
-            throw new OperationCanceledException("The check was cancelled.", e, cancellationToken);
-        }
-        catch (SocketException e)
-        {
-            unfinished = $"failed (socket error {e.SocketErrorCode})";
-        }
-        catch (Exception e) when (e is IOException or AuthenticationException)
-        {
-            unfinished = "failed";
-        }
-
         List<X509Certificate2> missing;
         try
         {
+            try
+            {
+                using var socket = new Socket(target.AddressFamily, SocketType.Stream, ProtocolType.Tcp);
+                await socket.ConnectAsync(target, linked.Token).ConfigureAwait(false);
+                var tls = new SslStream(new NetworkStream(socket, ownsSocket: false));
+                await using (tls.ConfigureAwait(false))
+                {
+                    await tls.AuthenticateAsClientAsync(
+                            new SslClientAuthenticationOptions
+                            {
+                                // An IP address is not sent as a server name, and Kestrel's listener has one certificate for every name.
+                                TargetHost = target.Address.ToString(),
+
+                                // A full handshake: the check reads what this process sends at a first handshake, not what a
+                                // session kept from an earlier connection.
+                                AllowTlsResume = false,
+
+                                // SslStream builds a chain before it calls back; this keeps that from fetching the certificates
+                                // the server left out, or a revocation list, from the network.
+                                CertificateChainPolicy = new X509ChainPolicy
+                                {
+                                    DisableCertificateDownloads = true,
+                                    RevocationMode = X509RevocationMode.NoCheck,
+                                },
+                                RemoteCertificateValidationCallback = (_, _, chain, _) =>
+                                {
+                                    // SslStream puts the certificates the server sent into the chain's ExtraStore
+                                    // (CertificateValidationPal.GetRemoteCertificate, dotnet/runtime v10.0.15).
+                                    // Copies: the chain and its certificates belong to SslStream, which disposes them.
+                                    sent = [.. (chain?.ChainPolicy.ExtraStore ?? []).Select(c => X509CertificateLoader.LoadCertificate(c.RawData))];
+                                    return true;
+                                },
+                            },
+                            linked.Token
+                        )
+                        .ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (limit.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+            {
+                unfinished = $"did not finish within {Limit.TotalSeconds:0} seconds";
+            }
+            catch (Exception e) when (cancellationToken.IsCancellationRequested && e is not OperationCanceledException)
+            {
+                // The caller's cancellation can end the check with another error: a cancelled connect closes the socket
+                // (SocketAsyncEventArgs.CancelConnectAsync, dotnet/runtime release/10.0), and when the connect had already
+                // succeeded the next step fails on the closed socket. Such an error says nothing about the server (design §13.5).
+                throw new OperationCanceledException("The check was cancelled.", e, cancellationToken);
+            }
+            catch (SocketException e)
+            {
+                unfinished = $"failed (socket error {e.SocketErrorCode})";
+            }
+            catch (Exception e) when (e is IOException or AuthenticationException)
+            {
+                unfinished = "failed";
+            }
+
             // The servers' certificates arrive before the handshake ends; the check reads them whenever they arrived.
             if (sent is null)
             {
