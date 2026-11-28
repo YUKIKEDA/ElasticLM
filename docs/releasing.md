@@ -27,16 +27,16 @@ Issue #339). Read with `gh api` on 2026-11-28 between 11:14Z and 11:26Z (UTC):
    `release.yml` asks for what it needs.
 3. Settings → Rules → Rulesets → New tag ruleset, twice. Both target tags matching `v*` and are **Active**:
    - `release`: **Restrict updates**, **Restrict deletions**, and **Block force pushes**. Bypass list: empty. While
-     this ruleset is active, no push or deletion moves or removes a `v*` tag, the owner's included; a failed release
+     this ruleset is active, no push or deletion moves or removes a `v*` tag, not even the owner's; a failed release
      gets the next version.
    - `release-create`: **Restrict creations** and **Block force pushes**. Bypass list: **Repository admin**, mode
      **Always**. Only a repository admin, and so only the owner (step 1), can create a `v*` tag; the workflows'
      `GITHUB_TOKEN` cannot.
 
-   One ruleset cannot do both. **Restrict creations** says: "If selected, only users with bypass permissions can create
-   branches or tags whose name matches the pattern you specify."
-   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
-   So a ruleset with an empty bypass list lets nobody create a tag, and a ruleset whose bypass list names the owner lets
+   One ruleset cannot do both. The page on the rules
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
+   says of **Restrict creations**: "If selected, only users with bypass permissions can create branches or tags whose
+   name matches the pattern you specify." So a ruleset with an empty bypass list lets nobody create a tag, and a ruleset whose bypass list names the owner lets
    the owner move and remove tags too. With two rulesets, "the rules in each of these rulesets are aggregated", and a
    ruleset can "allow certain users to bypass the rules in the ruleset"
    (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets).
@@ -44,11 +44,14 @@ Issue #339). Read with `gh api` on 2026-11-28 between 11:14Z and 11:26Z (UTC):
    `current_user_can_bypass` with `gh api`: `always` for `release-create` and `never` for `release`. Moving or removing
    a tag as the owner has not been tried: no `v*` tag exists, and pushing one starts `release.yml`.
 
-   The rulesets do not hold against the owner's own account. A repository admin can change or delete either ruleset,
-   then move the tag. Anything that holds the owner's credentials can create a `v*` tag, including the owner's `gh`
+   The rulesets do not hold against the owner's own account. "You can edit, monitor, and delete existing rulesets in a
+   repository"
+   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/managing-rulesets-for-a-repository),
+   so the owner, as the repository admin, can change or delete either ruleset and then move the tag (read there, not
+   tried). Anything that holds the owner's credentials can create a `v*` tag, including the owner's `gh`
    login and any agent that uses it. Publishing still waits for the approval of the environment `release`, but the
-   owner is its required reviewer, so the owner's token can give that approval through the REST API too, and a token
-   with the `repo` scope can change the environment's rules
+   owner is its required reviewer, so the owner's token can give that approval through the REST API too, and the same
+   token can change the environment's rules
    (https://docs.github.com/en/rest/actions/workflow-runs, https://docs.github.com/en/rest/deployments/environments).
    The same holds for the environment `github-pages`. See design §5.3 T22, and §5.4 for the owner's account.
 4. Turn on **Immutable releases** in the repository settings
