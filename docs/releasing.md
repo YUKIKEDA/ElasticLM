@@ -10,7 +10,7 @@ Do these once, before the first tag. Each step closes a gap the threat model nam
 
 Some of them are done. While `release.yml` is on `main`, a `v*` tag must not start the `publish` job without the
 owner's approval, so the owner set the environment `release` and the tag rulesets before V1e (roadmap row V1d20,
-Issue #339). The owner turned on immutable releases at the same time, so that a release published before V1e cannot
+Issue #339). The owner then turned on immutable releases as well, so that a release published before V1e cannot
 change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
 
 | Step | State |
