@@ -220,7 +220,7 @@ public sealed partial class LaunchdServiceTests
                 "launchctl bootout",
                 () => SystemService.SudoTryAsync("launchctl", "bootout", "system/" + label)
             );
-            await SystemService.CleanUpAsync(problems, "the account's processes", () => SystemService.KillProcessesOfAsync(account));
+            await SystemService.CleanUpAsync(problems, "the account's processes", () => SystemService.KillProcessesOfAsync(account, bin));
             await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoCleanUpAsync("rm", "-rf", plist, bin, data, logs));
 
             // -keepHome: the role account's home is the shared /var/empty.

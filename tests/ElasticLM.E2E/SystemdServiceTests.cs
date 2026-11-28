@@ -216,9 +216,12 @@ public sealed partial class SystemdServiceTests
             await SystemService.CleanUpAsync(problems, "the unit file", () => SystemService.SudoCleanUpAsync("rm", "-f", unitFile));
             await SystemService.CleanUpAsync(problems, "daemon-reload", () => SystemService.SudoCleanUpAsync("systemctl", "daemon-reload"));
             await SystemService.CleanUpAsync(problems, "reset-failed", () => SystemService.SudoTryAsync("systemctl", "reset-failed", unit));
-            await SystemService.CleanUpAsync(problems, "the user's processes", () => SystemService.KillProcessesOfAsync(user));
+            await SystemService.CleanUpAsync(problems, "the user's processes", () => SystemService.KillProcessesOfAsync(user, bin));
             await SystemService.CleanUpAsync(problems, "the folders", () => SystemService.SudoCleanUpAsync("rm", "-rf", bin, etc, data));
-            await SystemService.CleanUpAsync(problems, "userdel", () => SystemService.SudoTryAsync("userdel", user));
+
+            // --force: a container's processes may run as the same UID (999 on the runner), and userdel refuses a user with
+            // processes otherwise.
+            await SystemService.CleanUpAsync(problems, "userdel", () => SystemService.SudoTryAsync("userdel", "--force", user));
             await SystemService.CleanUpAsync(problems, "the user", () => SystemService.AssertNoAccountAsync(user));
             Assert.True(!passed || problems.Count == 0, "Cleanup: " + string.Join("; ", problems));
         }

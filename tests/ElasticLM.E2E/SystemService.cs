@@ -100,16 +100,20 @@ internal static class SystemService
     public static async Task SudoTryAsync(params string[] arguments) => await SudoAsync(arguments, cleanup: true);
 
     /// <summary>
-    /// Ends every process of an account with SIGKILL and waits until none is left, so that the account can be deleted and
-    /// no server keeps running as it after a test that failed half-way (testing.mdc).
+    /// Ends with SIGKILL every process of an account that runs a program of the test's own folder, and waits until none is
+    /// left, so that the account can be deleted and no server keeps running as it after a test that failed half-way
+    /// (testing.mdc). A process is picked by its account and its command line together: on a runner, a system account's
+    /// UID can be the one that a container's processes run as (useradd --system gave 999, PostgreSQL's in its image), and
+    /// pkill -u alone ended the PostgreSQL of the other end-to-end tests (PR #532).
     /// </summary>
     /// <param name="account">The account.</param>
-    public static async Task KillProcessesOfAsync(string account)
+    /// <param name="folder">The test's own folder of the programs, which every command line of its processes names.</param>
+    public static async Task KillProcessesOfAsync(string account, string folder)
     {
-        await SudoTryAsync("pkill", "-KILL", "-u", account);
+        await SudoTryAsync("pkill", "-KILL", "-u", account, "-f", folder + "/");
         await RealClock.WaitUntilAsync(
             $"the processes of {account} to end",
-            async () => (await SudoAsync(["pgrep", "-u", account], cleanup: true)).Code == 1,
+            async () => (await SudoAsync(["pgrep", "-u", account, "-f", folder + "/"], cleanup: true)).Code == 1,
             StateTimeout
         );
     }
