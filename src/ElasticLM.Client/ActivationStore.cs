@@ -132,23 +132,21 @@ internal sealed class ActivationStore(string directory, TimeProvider time)
         byte[] bytes;
         try
         {
-            var info = new FileInfo(FilePath);
-            if (!info.Exists)
+            if (!new FileInfo(FilePath).Exists)
             {
                 return null;
             }
 
-            if (info.Length > MaxLength)
+            // A reader lets a writer remove the file. On Windows a writer's replacement is still refused while this handle is
+            // open, and the writer tries again (design §12.6.2, V1d2a). The limit is checked while the file is read (design
+            // §8.6, V1d24c); before, the length was checked before the open, and the buffer was sized from the length after it.
+            if (FileReplacement.ReadShared(FilePath, MaxLength) is not byte[] stored)
             {
                 damaged = true;
                 return null;
             }
 
-            // A reader lets a writer remove the file. On Windows a writer's replacement is still refused while this handle is
-            // open, and the writer tries again (design §12.6.2, V1d2a).
-            using var stream = new FileStream(FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            bytes = new byte[stream.Length];
-            stream.ReadExactly(bytes);
+            bytes = stored;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {

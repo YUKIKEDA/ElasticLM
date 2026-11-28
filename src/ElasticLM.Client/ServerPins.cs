@@ -32,18 +32,13 @@ internal sealed class ServerPins(string directory, TimeProvider time)
         string path = PathOf(server);
         try
         {
-            var info = new FileInfo(path);
-            if (!info.Exists)
+            if (!new FileInfo(path).Exists)
             {
                 return true;
             }
 
-            if (info.Length > MaxPinFileLength)
-            {
-                return false;
-            }
-
             // design §12.6.2 (V1d24a): ResetServerPin deletes the file, and on Windows a reader without Delete would refuse it.
+            // design §8.6 (V1d24c): the limit is checked while the file is read.
             if (FileReplacement.ReadShared(path, MaxPinFileLength) is not byte[] bytes)
             {
                 return false;

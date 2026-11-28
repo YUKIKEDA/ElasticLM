@@ -60,6 +60,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
     public const int MaxReplayEntries = 100_000;
 
     private const int MaxLicenseFileLength = 64 * 1024;
+
+    // design §8.6 (V1d24c): one trust.rootKeys file, about 90 P-256 public keys.
+    private const int MaxRootKeyFileLength = 16 * 1024;
     private const int MaxFingerprints = 8;
     private const int MaxClientNameBytes = 255;
     private const int MaxAppBytes = 64;
@@ -296,7 +299,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 : new TlsServerCertificate(TlsCertificates.SelfSigned(key, publicUrls, host.Time), []);
             disposables.Add(certificate);
 
-            WebApplication app = Build(settings, certificate, host, adminSocketPath, out Func<IPEndPoint> listening);
+            var stop = new ServerStop();
+            WebApplication app = Build(settings, certificate, host, adminSocketPath, stop, out Func<IPEndPoint> listening);
 
             // design §13.1 (V1c9, R2): a failed start disposes the host too, which writes out the console log before Program
             // prints the last line.
@@ -368,6 +372,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 )
             );
             server.Map();
+            stop.Close = server.CloseAsync;
             try
             {
                 await app.StartAsync(cancellationToken).ConfigureAwait(false);
@@ -377,8 +382,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 // Kestrel turns only an address in use into an IOException (AddressBinder.BindEndpointAsync, aspnetcore
                 // release/10.0); other socket errors, such as an address this machine does not have, stay SocketException
                 // (Socket.Bind to 192.0.2.1: SocketError.AddressNotAvailable on Windows 11 with .NET 10 and on Ubuntu 22.04
-                // with .NET 8). No hosted service of ours runs in StartAsync (design §13.1, V1c9).
-                // Kestrel has closed the socket listener by then, which removes admin.sock (design §13.7).
+                // with .NET 8). No code of ours runs in StartAsync: ServerStop starts with nothing to do (design §13.1, V1c9,
+                // V1d29a). Kestrel has closed the socket listener by then, which removes admin.sock (design §13.7).
                 throw new ServerStartException($"elm-server cannot listen on {settings.Listen} and {adminSocketPath}: {e.Message}");
             }
 
@@ -416,8 +421,8 @@ internal sealed partial class ElmServer : IAsyncDisposable
     public Task WaitForShutdownAsync() => _app.WaitForShutdownAsync();
 
     /// <summary>
-    /// Stops listening and the timers (design §13.2), writes <c>server.stopped</c> with the leases not returned, and signs
-    /// the logs. Leases not returned are dropped; clients reclaim them after a restart, and borrows come back from the record.
+    /// Stops listening, then closes the records as the host's stop does (<see cref="CloseAsync"/>). After a stop of the host
+    /// (Ctrl+C, SIGTERM, or a service stop), which closed them already, it does nothing.
     /// </summary>
     public async Task StopAsync()
     {
@@ -426,26 +431,57 @@ internal sealed partial class ElmServer : IAsyncDisposable
             return;
         }
 
-        _stopped = true;
-        await StopActivationAsync().ConfigureAwait(false);
-        if (_cleanup is not null)
-        {
-            await _cleanup.DisposeAsync().ConfigureAwait(false);
-        }
-
-        if (_seal is not null)
-        {
-            await _seal.DisposeAsync().ConfigureAwait(false);
-        }
-
-        if (_sync is not null)
-        {
-            await _sync.DisposeAsync().ConfigureAwait(false);
-        }
-
         try
         {
+            // design §13.4 (V1d29a): the host's stop runs CloseAsync through ServerStop once its listeners have stopped.
             await _app.StopAsync().ConfigureAwait(false);
+        }
+        catch
+        {
+            // design §13.7: the lock is released also when the stop throws; the next start locks the same file.
+            _lock.Dispose();
+            throw;
+        }
+
+        await CloseAsync().ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Stops the timers (design §13.2), writes <c>server.stopped</c> with the leases not returned, signs the logs, and
+    /// releases the lock file, once. Leases not returned are dropped; clients reclaim them after a restart, and borrows come
+    /// back from the record.
+    /// </summary>
+    /// <remarks>
+    /// The host calls it through <see cref="ServerStop.StoppedAsync"/>, after every hosted service has stopped, Kestrel's
+    /// included, and before it raises <c>ApplicationStopped</c>; as a Windows service, the service reports STOPPED only after
+    /// that (design §13.4, V1d29a).
+    /// </remarks>
+    private async Task CloseAsync()
+    {
+        if (_stopped)
+        {
+            return;
+        }
+
+        _stopped = true;
+        try
+        {
+            await StopActivationAsync().ConfigureAwait(false);
+            if (_cleanup is not null)
+            {
+                await _cleanup.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (_seal is not null)
+            {
+                await _seal.DisposeAsync().ConfigureAwait(false);
+            }
+
+            if (_sync is not null)
+            {
+                await _sync.DisposeAsync().ConfigureAwait(false);
+            }
+
             lock (_reloadLock)
             {
                 int leases = Engine.LeaseCount;
@@ -605,7 +641,10 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 string text;
                 try
                 {
-                    text = File.ReadAllText(path);
+                    // design §8.6 (V1d24c): 16 KiB, read with the limit checked while the file is read.
+                    text =
+                        BoundedFile.ReadAllText(path, MaxRootKeyFileLength)
+                        ?? throw new ServerStartException($"trust.rootKeys file '{path}' is larger than 16 KiB.");
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException)
                 {
@@ -752,13 +791,9 @@ internal sealed partial class ElmServer : IAsyncDisposable
                 return (null, new LicenseError(ErrorCode.LicenseNotFound, missing));
             }
 
-            if (info.Length > MaxLicenseFileLength)
-            {
-                return (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
-            }
-
             // design §12.6.2 (V1d24a): elm server deactivate deletes the file, which this reader then does not refuse. A refresh
-            // that replaces it is refused on Windows whatever the sharing, and tries again.
+            // that replaces it is refused on Windows whatever the sharing, and tries again. design §8.6 (V1d24c): the limit is
+            // checked while the file is read.
             return FileReplacement.ReadShared(settings.LicensePath, MaxLicenseFileLength) is byte[] read
                 ? (read, null)
                 : (null, new LicenseError(ErrorCode.Malformed, $"The server license '{settings.LicensePath}' is larger than 64 KiB."));
@@ -809,6 +844,7 @@ internal sealed partial class ElmServer : IAsyncDisposable
         TlsServerCertificate certificate,
         ServerHostOptions host,
         string adminSocketPath,
+        ServerStop stop,
         out Func<IPEndPoint> listening
     )
     {
@@ -817,6 +853,11 @@ internal sealed partial class ElmServer : IAsyncDisposable
         ListenOptions? https = null;
         listening = () => https!.IPEndPoint!;
         WebApplicationBuilder builder = WebApplication.CreateSlimBuilder(new WebApplicationOptions { ContentRootPath = AppContext.BaseDirectory });
+
+        // design §13.1, §18.3 (V1d29a): under the Windows service control manager, the service lifetime and the event log at
+        // Warning and up. Before HostRequestLog.Raise, which then sees the event log's rule.
+        ServerService.AddTo(builder.Services, builder.Logging);
+        builder.Services.AddSingleton<IHostedService>(stop);
         builder.Logging.SetMinimumLevel(host.MinimumLogLevel);
         HostRequestLog.Raise(builder.Logging, HostRequestLog.Category, LogLevel.Warning);
         if (host.LoggerProvider is ILoggerProvider provider)

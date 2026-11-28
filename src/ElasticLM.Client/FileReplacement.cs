@@ -1,5 +1,6 @@
 using System.Buffers;
 using System.Security.Cryptography;
+using ElasticLM.Licensing;
 
 namespace ElasticLM.Client;
 
@@ -251,41 +252,23 @@ internal static class FileReplacement
         }
     }
 
+    // design §12.6.2 (V1d24a): with FileShare.Read or ReadWrite, File.Delete and File.Move of the file throw IOException
+    // 0x80070020 on Windows while this handle is open; with Delete added they pass (Windows 11, .NET 10.0.14). design §8.6
+    // (V1d24c): the limit is checked while the file is read (BoundedFile).
+
     /// <summary>
     /// Reads a whole file that a writer may delete, move, or replace while it is read: the file is opened with
     /// <see cref="FileShare.ReadWrite"/> and <see cref="FileShare.Delete"/>, so on Windows a delete of the file and a move of
     /// it to another name are not refused for this reader. A move over it is refused on Windows whatever the sharing; the
-    /// writer tries again (<see cref="Move(string, string, TimeProvider)"/>). A file that cannot seek (a pipe, a device) is
-    /// read to its end, and the limit is checked on what the open file gives, not on a length read before it was opened.
+    /// writer tries again (<see cref="Move(string, string, TimeProvider)"/>). At most one byte past the limit is read, whatever
+    /// length the file has or reaches while it is read, and a file that cannot seek (a pipe, a device) is read the same way.
     /// </summary>
     /// <param name="path">The file.</param>
     /// <param name="maxLength">The most bytes the file may hold.</param>
     /// <returns>Its bytes, or <see langword="null"/> when it holds more than <paramref name="maxLength"/> bytes.</returns>
-    /// <exception cref="IOException">The file cannot be read.</exception>
+    /// <exception cref="IOException">The file is missing or cannot be read.</exception>
     /// <exception cref="UnauthorizedAccessException">Access is denied.</exception>
-    public static byte[]? ReadShared(string path, int maxLength)
-    {
-        // design §12.6.2 (V1d24a): with FileShare.Read or ReadWrite, File.Delete and File.Move of the file throw IOException
-        // 0x80070020 on Windows while this handle is open; with Delete added they pass (Windows 11, .NET 10.0.14).
-        using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, ShareWithWriters);
-        if (stream.CanSeek)
-        {
-            if (stream.Length > maxLength)
-            {
-                return null;
-            }
-
-            byte[] bytes = new byte[stream.Length];
-            stream.ReadExactly(bytes);
-            return bytes;
-        }
-
-        // Review of PR #475: Length throws NotSupportedException on a stream that cannot seek; File.ReadAllBytes reads such
-        // a file to its end, and so does this, one byte past the limit at most.
-        byte[] buffer = new byte[maxLength + 1];
-        int read = stream.ReadAtLeast(buffer, buffer.Length, throwOnEndOfStream: false);
-        return read > maxLength ? null : buffer[..read];
-    }
+    public static byte[]? ReadShared(string path, int maxLength) => BoundedFile.Read(path, maxLength, ShareWithWriters);
 
     /// <summary>Deletes a file, if it can. A temporary file it cannot delete stays for <see cref="RemoveLeftovers(string)"/>.</summary>
     /// <param name="path">The file.</param>

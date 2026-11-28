@@ -28,7 +28,7 @@ Any other argument, or `--config` without a path, is an error.
 | 1 | The server cannot start. The reasons are listed below. |
 | 2 | An unknown argument, `--config` without a path, or a setting error: the configuration file does not exist, cannot be read, is larger than 64 KiB, or is not valid; a value is not valid; `product` is missing; or [`admin.listen`](#admin), which is not a setting, has a value. |
 
-Before it exits with 1 or 2, `elm-server` prints `error:` and the reason to standard error.
+Before it exits with 1 or 2, `elm-server` prints `error:` and the reason to standard error. As a Windows service, it also writes that line to the Application event log, as an error with event ID 50 ([Windows service](#windows-service)).
 
 Exit code 1 means, for example:
 
@@ -36,6 +36,7 @@ Exit code 1 means, for example:
 - The path of the socket file, `admin.sock` in the data folder, is longer than the system allows. The message is `error: The path of the administration socket '<path>' is <length> bytes in UTF-8, and this system allows <limit>. Use a data folder with a shorter path.` The server checks this before it reads the root keys or creates the data folder, so such a start leaves nothing. See [Data folder](#data-folder).
 - The system has no Unix domain sockets, as on a Windows older than the versions at the top of this page: `error: This system has no Unix domain sockets, which the server's administration API needs. On Windows, Windows 10 version 1803 or Windows Server 2019, or later, is required.` The server checks this at the same point, after the length of the path.
 - No root public keys are given.
+- A `trust.rootKeys` file is larger than 16 KiB, or the file of `tls.certificate` or of `tls.key` is larger than 64 KiB: `error: trust.rootKeys file '<path>' is larger than 16 KiB.`, `error: The TLS certificate '<path>' is larger than 64 KiB.`, or `error: The TLS key '<path>' is larger than 64 KiB.`
 - Another `elm-server` runs on the same data folder: `error: Another elm-server is running on the data folder '<folder>': it holds the lock file '<path>'.` Stop that server, or give this one a `dataDirectory` of its own. On Windows the same line appears while another program, such as a backup or an antivirus scan, has `server.lock` open: start the server again, and exclude `server.lock` from that program ([Data folder](#data-folder) lists the files to exclude). Where the file lock does not hold (see [Data folder](#data-folder)), a second server stops instead with `error: Another elm-server is running on the data folder '<folder>': its administration socket '<path>' accepts connections.`
 - The lock file `server.lock` cannot be opened, for a reason other than another program holding it: a missing permission, a full disk, or a read-only file system, for example. `error: The lock file '<path>' cannot be opened: <reason>`. The reason names the cause: check that the server's user may write in the data folder, and that `server.lock` is a file.
 - What is at the path of `admin.sock` can be neither used nor removed, such as a folder of that name: `error: The administration socket '<path>' cannot be used: <reason>`. Remove what is at that path, and start the server again.
@@ -61,7 +62,7 @@ Exit code 1 means, for example:
 - Without `--config`, `elm-server` reads environment variables only.
 - An environment variable overrides the same setting in the file. An environment variable that is set to an empty value counts as not set. The one exception is `ELM_TLS_PASSWORD`: an empty value is used as an empty password.
 - The file is at most 64 KiB. A key that the file does not know (for example a misspelt one) is an error. Key names are case-sensitive.
-- A relative path, in `--config` or in a setting (`license`, `dataDirectory`, `trust.rootKeys`, `tls.certificate`, `tls.key`), is relative to the working folder of the `elm-server` process: the folder it is started in. It is not relative to the folder of the configuration file or of the executable. The one exception is `log.usage`, whose relative path is under `dataDirectory`.
+- A relative path, in `--config` or in a setting (`license`, `dataDirectory`, `trust.rootKeys`, `tls.certificate`, `tls.key`), is relative to the working folder of the `elm-server` process: the folder it is started in. It is not relative to the folder of the configuration file or of the executable. The one exception is `log.usage`, whose relative path is under `dataDirectory`. A Windows service does not start in a folder you choose, so give `--config` and these settings as absolute paths there ([Windows service](#windows-service)).
 - A setting error stops `elm-server` before it starts: it prints `error:` and the reason. The exit codes are in [Command line and exit codes](#command-line-and-exit-codes).
 - The server reads its settings only when it starts. [`elm server reload`](elm-cli.md#elm-server-reload) makes a running server read the server license file again, from the same `license` path, and nothing else. A change to any setting takes effect at the next start.
 - A duration, such as `borrow.maxDuration`, has the form `d.hh:mm:ss`: days, a dot, then hours, minutes, and seconds. `7.00:00:00` is 7 days, and `0.12:00:00` is 12 hours. The days may be left out: `12:00:00` is also 12 hours.
@@ -175,15 +176,15 @@ An `allow` or `deny` entry is one of:
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required) | PEM files of the vendor's root public keys, which the server license's key certificate is checked against. Instead of files, `ELM_TRUST_ROOT_KEYS` (note the second `_`) can hold the PEM text. Without either, the server does not start. |
+| `trust.rootKeys` | `ELM_TRUST_ROOTKEYS` | list of file paths | none (required) | PEM files of the vendor's root public keys, which the server license's key certificate is checked against. Each file is at most 16 KiB, which holds about 90 keys. Instead of files, `ELM_TRUST_ROOT_KEYS` (note the second `_`) can hold the PEM text. Without either, the server does not start. |
 | `trust.revokedKeyIds` | `ELM_TRUST_REVOKEDKEYIDS` | list of strings | none | Key IDs (`kid`) that the server no longer trusts. |
 
 ## `tls`
 
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
-| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
-| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`. |
+| `tls.certificate` | `ELM_TLS_CERTIFICATE` | file path | none: the server makes a self-signed certificate with its installation key at each start | The server's TLS certificate. With `tls.key` set, a PEM certificate; without it, a PKCS#12 file whose password is in `ELM_TLS_PASSWORD` (not set: no password). The file is at most 64 KiB. The certificate must carry its private key. If it has an Extended Key Usage, that must include server authentication (`1.3.6.1.5.5.7.3.1`). |
+| `tls.key` | `ELM_TLS_KEY` | file path | none | The PEM private key of a PEM `tls.certificate`, at most 64 KiB. |
 
 Intermediate CA certificates:
 
@@ -217,6 +218,18 @@ Intermediate CA certificates:
 | Setting | Environment variable | Type | Default | Range and notes |
 | --- | --- | --- | --- | --- |
 | `service.url` | `ELM_SERVICE_URL` | URL | none: the server license is not refreshed on its own | The `elm-service` that refreshes the server license. An `https` URL, or `http` on a loopback address. When set, the server checks at start that it can create a file beside the `license` file. |
+
+## Windows service
+
+`elm-server` can run as a Windows service. When the service control manager starts it, it reports its start and stop there; otherwise it behaves as when it is started in a terminal.
+
+- Start: the server reports that the service is running before it listens. A start that then fails, because the server cannot listen or its check that Windows sends the intermediate CA certificates stops the start, shows the service as running and then ended; the reason is in the event log as event ID 50 ([Logs](logs.md#elm-server-as-a-windows-service)).
+- Stop: a service stop is a normal stop with exit code 0. The server stops listening, writes `server.stopped` to the usage log and the borrow record, and signs them, and then reports that the service has stopped. If this takes more than 30 seconds, the server reports the stop at 30 seconds and goes on closing, and the process may end at any point after that. When Windows shuts down, it may end a service that has not stopped within the time in the registry value `WaitToKillServiceTimeout` under `HKLM\SYSTEM\CurrentControlSet\Control`. A server ended that way has not written `server.stopped`, so its next start waits for the leases of the run before, as after a crash ([Floating licenses](../explanation/floating-licenses.md)).
+- Account: run the service as LocalSystem, the account a service gets when none is given, or as a normal user account. A server that runs as a virtual service account (`NT SERVICE\<name>`) or as LocalService puts that account in the access list of its data folder, and nobody can sign in as it to run the [server license commands](elm-cli.md#server-license-commands) of `elm` ([elm server](elm-cli.md#elm-server)).
+- First start as LocalSystem: let the service create its data folder. The access list of that folder names only the Administrators group and SYSTEM, so an administrator can run the server license commands on it from a terminal opened with "Run as administrator". A folder that an administrator's run created first, such as an `elm server` command or `elm-server` started in a terminal, names that administrator instead, and the server refuses it ([Which folders the server accepts](#which-folders-the-server-accepts)). Without a server license, the first start creates the folder and the installation key and stops with exit code 1; the line with the key's thumbprint and the machine fingerprints is in the event log. Then get the server license, for example with `elm server activate` from a terminal opened with "Run as administrator", and start the service again.
+- As a normal user account: the account needs the right to log on as a service. An administrator registers the event source `elm-server` first, since the account cannot. The data folder that the service creates names that account in its access list, so run the server license commands as that account, not from an administrator's terminal. This setup is not tested in CI, which runs the service as LocalSystem only.
+- Paths: give `--config` and every path in the settings as absolute paths.
+- Logs: the operational log and the start errors go to the Application event log, with the source `elm-server` ([Logs](logs.md#elm-server-as-a-windows-service)).
 
 ## Example
 
