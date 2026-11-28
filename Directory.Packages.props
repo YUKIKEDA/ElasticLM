@@ -15,8 +15,8 @@
   <ItemGroup Label="Service">
     <!-- elm-service only (design §14.2, §21). SQLite itself is built from vendor/sqlite; the provider binds to it by name. -->
     <PackageVersion Include="Microsoft.Data.Sqlite.Core" Version="10.0.14" />
-    <PackageVersion Include="SQLitePCLRaw.provider.e_sqlite3" Version="2.1.13" />
-    <PackageVersion Include="SQLitePCLRaw.core" Version="2.1.13" />
+    <PackageVersion Include="SQLitePCLRaw.provider.e_sqlite3" Version="3.0.5" />
+    <PackageVersion Include="SQLitePCLRaw.core" Version="3.0.5" />
     <PackageVersion Include="Npgsql" Version="10.0.3" />
     <!-- elm-service only: the type-checked SQL builder (design §14.2, decision 0.81). MIT, no runtime dependency, NativeAOT. -->
     <PackageVersion Include="AuraORM" Version="0.1.0" />
