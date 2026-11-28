@@ -135,7 +135,7 @@ The lines after `TimeoutStopSec` narrow what someone who runs code inside the se
 
 What these lines do not stop: the process still reads and writes the data folder, so code inside it can still read the installation key and sign leases, as the rules above say, and use the local administration socket. It can still read the files that every user may read, such as those in `/etc`, and still connect to any address over the network. On macOS and Windows, the service gets no such limits.
 
-The unit was tried with systemd 259 on Ubuntu 26.04. After you install it (below), `sudo systemd-analyze security elm-server` lists each setting, and its last line rates the unit's exposure: `Overall exposure level for elm-server.service: 1.7 OK` there, against 9.2 (UNSAFE) for the unit without these lines.
+The unit was tried with systemd 259 on Ubuntu 26.04. The newest of these lines, `ProtectClock=`, came with systemd 245 (systemd.exec(5) gives the version of each). systemd ignores a line it does not know, with a warning in the journal such as `Unknown key 'ProtectClock' in section [Service], ignoring.`, and runs the server without that limit; on an older systemd, look for such warnings after `daemon-reload` with `sudo journalctl -b | grep 'elm-server.service'`. After you install the unit (below), `sudo systemd-analyze security elm-server` lists each setting, and its last line rates the unit's exposure: `Overall exposure level for elm-server.service: 1.7 OK` there, against 9.2 (UNSAFE) for the unit without these lines.
 
 If the server starts from the terminal, as above, but not under the unit, look for the reason in `sudo journalctl -u elm-server`. The settings below change what the unit must allow:
 
@@ -357,7 +357,7 @@ The server writes its operational log as long as it runs, from the level `Inform
 </plist>
 ```
 
-Every 600 seconds, launchd runs the command as root: when the log file holds 10,485,760 bytes (10 MiB) or more, it renames the copies `elm-server.log.0` to `.5` one number up, so the oldest, `.6`, is replaced, copies the log file to `elm-server.log.0` with its owner and mode, and cuts the log file to nothing. The log thus takes at most about 80 MiB with its seven copies, plus what the server writes in the 600 seconds before the next check. The lines that the server writes between the copy and the cut are lost (MEASURED-LOSS). Install the plist where only root may write, and load it:
+Every 600 seconds, launchd runs the command as root: when the log file holds 10,485,760 bytes (10 MiB) or more, it renames the copies `elm-server.log.0` to `.5` one number up, so the oldest, `.6`, is replaced, copies the log file to `elm-server.log.0` with its owner and mode, and cuts the log file to nothing. The log thus takes at most about 80 MiB with its seven copies, plus what the server writes in the 600 seconds before the next check. The lines that the server writes between the copy and the cut are lost: in 20 rotations on macOS 26, with a program that wrote a line every millisecond, none was lost in 17 and one in 3. Install the plist where only root may write, and load it:
 
 ```shell
 sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/

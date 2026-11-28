@@ -211,7 +211,8 @@ public sealed partial class LaunchdServiceTests
                 SystemService.StateTimeout
             );
 
-            // One run: a job of StartInterval alone does not run when it is loaded (launchd.plist(5)), only on the kickstart.
+            // One run: without RunAtLoad, whose default is false (launchd.plist(5)), the job does not run when it is loaded,
+            // only on the kickstart.
             Assert.NotEqual(0, (await SystemService.SudoAsync(["test", "-e", logFile + ".1"])).Code);
             string copy = await SystemService.SudoOkAsync("cat", logFile + ".0");
             Assert.StartsWith(before, copy, StringComparison.Ordinal);

@@ -135,7 +135,7 @@ WantedBy=multi-user.target
 
 これらの行で止められないこともある。プロセスはデータフォルダーを読み書きできるので、その中のコードは、上の規則のとおりインストール鍵を読み、リースに署名でき、ローカルの管理用のソケットも使える。`/etc` の中のファイルなど、どのユーザーでも読めるファイルは読めるし、ネットワークのどのアドレスにも接続できる。macOS と Windows のサービスには、このような制限はない。
 
-このユニットは、Ubuntu 26.04 の systemd 259 で試した。下の手順でユニットを置いたあと、`sudo systemd-analyze security elm-server` を実行すると、設定ごとの一覧が表示され、最後の行にユニットの露出の度合いが出る。この環境では `Overall exposure level for elm-server.service: 1.7 OK` だった。これらの行のないユニットでは 9.2（UNSAFE）だった。
+このユニットは、Ubuntu 26.04 の systemd 259 で試した。これらの行でいちばん新しい `ProtectClock=` は、systemd 245 で入った（行ごとの版は systemd.exec(5) にある）。systemd は、知らない行を無視し、ジャーナルに `Unknown key 'ProtectClock' in section [Service], ignoring.` のような警告を書いて、その制限なしでサーバーを動かす。古い systemd では、`daemon-reload` のあとに `sudo journalctl -b | grep 'elm-server.service'` でこのような警告を探す。下の手順でユニットを置いたあと、`sudo systemd-analyze security elm-server` を実行すると、設定ごとの一覧が表示され、最後の行にユニットの露出の度合いが出る。この環境では `Overall exposure level for elm-server.service: 1.7 OK` だった。これらの行のないユニットでは 9.2（UNSAFE）だった。
 
 ターミナルからは起動するのに、ユニットでは起動しないときは、`sudo journalctl -u elm-server` で理由を探す。次の設定をするときは、ユニットで許すものを変える。
 
@@ -357,7 +357,7 @@ macOS では、フォルダーは引用符で囲んだ `"/Library/Application Su
 </plist>
 ```
 
-launchd は、600 秒ごとにこのコマンドを root で実行する。ログのファイルが 10,485,760 バイト（10 MiB）以上なら、コピーの `elm-server.log.0` から `.5` の番号を 1 つずつ上げ（いちばん古い `.6` は置き換わる）、ログのファイルを持ち主とモードごと `elm-server.log.0` にコピーし、ログのファイルを空に切り詰める。そのため、ログが使うのは、7 つのコピーと合わせておよそ 80 MiB までと、次に確かめるまでの 600 秒にサーバーが書く分になる。コピーしてから切り詰めるまでにサーバーが書いた行は失われる（MEASURED-LOSS）。plist を root だけが書き込める場所に置き、読み込む。
+launchd は、600 秒ごとにこのコマンドを root で実行する。ログのファイルが 10,485,760 バイト（10 MiB）以上なら、コピーの `elm-server.log.0` から `.5` の番号を 1 つずつ上げ（いちばん古い `.6` は置き換わる）、ログのファイルを持ち主とモードごと `elm-server.log.0` にコピーし、ログのファイルを空に切り詰める。そのため、ログが使うのは、7 つのコピーと合わせておよそ 80 MiB までと、次に確かめるまでの 600 秒にサーバーが書く分になる。コピーしてから切り詰めるまでにサーバーが書いた行は失われる。macOS 26 で、1 ミリ秒ごとに 1 行を書くプログラムを 20 回回すと、17 回は 1 行も失われず、3 回は 1 行が失われた。plist を root だけが書き込める場所に置き、読み込む。
 
 ```shell
 sudo install -m 0644 elm-server-log.plist /Library/LaunchDaemons/
