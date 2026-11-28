@@ -337,8 +337,8 @@ public sealed partial class ActivationClientTests
     /// <summary>
     /// A refresh that the 30-second time limit or the app's cancellation ends before any byte of it was written never left
     /// the device: its error says the service cannot be reached, and its jti is not kept for a retry. One that ends after the
-    /// service handled it did not get an answer, and its jti is kept (design §10.4 step 2, §12.1, §12.6.2, the V1d24e Grill's
-    /// Q3).
+    /// service handled it did not get an answer, and its jti is kept (design §10.4 step 2, §12.1, §12.6.2, V1d24e question
+    /// 24e-3).
     /// </summary>
     /// <remarks>
     /// Preconditions:

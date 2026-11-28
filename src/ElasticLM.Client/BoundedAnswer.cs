@@ -83,7 +83,14 @@ internal abstract record BoundedAnswer
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token, cancellationToken);
 
         // Set on this method's own flow, so the caller's flow keeps its value; the request's bytes are written on this flow.
-        WriteMark? mark = http is MarkingClient { MarksWrites: true } ? new WriteMark() : null;
+        // Only HTTP/1.x writes a request on the request's own flow: HTTP/2 writes on the connection's, where the mark would
+        // stay unset and every timeout would read as never sent. A request that may go out as HTTP/2 gets no mark.
+        WriteMark? mark =
+            http is MarkingClient { MarksWrites: true }
+            && request.Version.Major == 1
+            && request.VersionPolicy != HttpVersionPolicy.RequestVersionOrHigher
+                ? new WriteMark()
+                : null;
         CurrentMark.Value = mark;
         try
         {
@@ -126,8 +133,9 @@ internal abstract record BoundedAnswer
 
     /// <summary>
     /// Returns whether a failed exchange never sent its request: the server's name was not resolved; the connection, its
-    /// TLS handshake, or a proxy's tunnel was not made; or, on a client over a handler of <see cref="CreateHandler"/>, the
-    /// time limit or the caller's cancellation ended the exchange before any byte of the request was written. The server
+    /// TLS handshake, or a proxy's tunnel was not made; or, for an HTTP/1.x request on a client over a handler of
+    /// <see cref="CreateHandler"/>, the time limit or the caller's cancellation ended the exchange before any byte of the
+    /// request was written. The server
     /// cannot have acted on such a request.
     /// </summary>
     /// <param name="failure">The exception of <see cref="SendAsync"/>.</param>
@@ -156,11 +164,12 @@ internal abstract record BoundedAnswer
         return inner is SocketsHttpHandler sockets && ReferenceEquals(sockets.PlaintextStreamFilter, MarkingFilter);
     }
 
-    // design §10.4 step 2 (V1d24e, the Grill's Q4): the connection to a proxy that carries a CONNECT tunnel is not marked. Its
+    // design §10.4 step 2 (V1d24e, question 24e-4): the connection to a proxy that carries a CONNECT tunnel is not marked. Its
     // bytes are the CONNECT request and, once the tunnel is made, the TLS handshake to the server, neither of which is the
     // request. The connection inside the tunnel gets its own filter and is marked. In dotnet/runtime release/10.0 the filter
     // runs once a connection, after TLS (HttpConnectionPool.ApplyPlaintextFilterAsync); measured on SDK 10.0.404, the
-    // connection of the tunnel gets the CONNECT request as its InitialRequestMessage.
+    // connection of the tunnel gets the CONNECT request as its InitialRequestMessage. CreateClient looks for this filter once,
+    // when it makes the client (Marks): a filter replaced on the handler after that is not seen.
     private static ValueTask<Stream> Mark(SocketsHttpPlaintextStreamFilterContext context, CancellationToken cancellationToken) =>
         ValueTask.FromResult(
             context.InitialRequestMessage.Method == HttpMethod.Connect ? context.PlaintextStream : new MarkingStream(context.PlaintextStream)

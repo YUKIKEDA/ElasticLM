@@ -982,7 +982,7 @@ public sealed class LeaseAnswerTests : IAsyncDisposable
 
     /// <summary>
     /// A renewal that the 30-second time limit ends before any byte of it was written never left the device: the retry does
-    /// not name it (design §10.4 step 2, the V1d24e Grill's Q1 and Q2).
+    /// not name it (design §10.4 step 2, V1d24e questions 24e-1 and 24e-2).
     /// </summary>
     /// <remarks>
     /// Preconditions:

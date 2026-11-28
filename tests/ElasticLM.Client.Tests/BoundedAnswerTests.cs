@@ -343,7 +343,7 @@ public sealed class BoundedAnswerTests
 
     /// <summary>
     /// A request that the time limit or the caller's cancellation ends before any byte of it was written never left the
-    /// device (design §10.4 step 2, the V1d24e Grill's Q1, Q2, Q4): while TLS is not made, and while a proxy does not answer
+    /// device (design §10.4 step 2, V1d24e questions 24e-1, 24e-2, and 24e-4): while TLS is not made, and while a proxy does not answer
     /// the CONNECT of its tunnel.
     /// </summary>
     /// <remarks>
@@ -401,7 +401,7 @@ public sealed class BoundedAnswerTests
 
     /// <summary>
     /// A request that the time limit or the caller's cancellation ends after its bytes were written may have reached the
-    /// server, also through a proxy that is not a tunnel (design §10.4 step 2, the V1d24e Grill's Q4).
+    /// server, also through a proxy that is not a tunnel (design §10.4 step 2, V1d24e question 24e-4).
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -466,7 +466,7 @@ public sealed class BoundedAnswerTests
 
     /// <summary>
     /// A client whose handler does not set the mark never takes a time limit for a request that never left (design §10.4
-    /// step 2, the V1d24e Grill's Q5): without the mark, no write is seen, and every request would look as if it never left.
+    /// step 2, V1d24e question 24e-5): without the mark, no write is seen, and every request would look as if it never left.
     /// </summary>
     /// <remarks>
     /// Preconditions:
@@ -501,6 +501,46 @@ public sealed class BoundedAnswerTests
         Assert.False(BoundedAnswer.NeverSent(failure));
     }
 
+    /// <summary>
+    /// A request that may go out as HTTP/2 gets no mark, so a time limit before any byte of it was written is not taken for
+    /// one that never left (design §10.4 step 2): HTTP/2 writes on the connection's flow, where the mark would stay unset
+    /// and every time limit would read as never sent.
+    /// </summary>
+    /// <remarks>
+    /// Preconditions:
+    /// - A fake clock. A client over a handler of CreateHandler; a loopback listener that accepts the TCP connection and
+    ///   never sends a byte; the request goes to it over https.
+    /// - 2.0: a request of version 2.0 with the default policy (RequestVersionOrLower). 1.1-or-higher: version 1.1 with
+    ///   RequestVersionOrHigher.
+    ///
+    /// Steps:
+    /// - POST a body of 2 bytes; once the listener accepted the connection, move the clock 30 seconds.
+    ///
+    /// Expected:
+    /// - A TimeoutException with "No whole answer came within 30 seconds.", and NeverSent is false. The same request of
+    ///   version 1.1 with the default policy gives true (NeverSent_EndedBeforeAnyByteWasWritten_IsTrue).
+    /// </remarks>
+    /// <param name="kind">The version and its policy.</param>
+    [Theory]
+    [InlineData("2.0")]
+    [InlineData("1.1-or-higher")]
+    public async Task NeverSent_RequestThatMayGoOutAsHttp2_IsFalseForATimeLimit(string kind)
+    {
+        await using var mute = new MuteListener();
+        using HttpClient http = BoundedAnswer.CreateClient(AnyCertificate(BoundedAnswer.CreateHandler()));
+        var target = new Uri(mute.HttpsUrl, "x");
+        var request = new HttpRequestMessage(HttpMethod.Post, target)
+        {
+            Content = new StringContent("{}"),
+            Version = kind == "2.0" ? HttpVersion.Version20 : HttpVersion.Version11,
+            VersionPolicy = kind == "2.0" ? HttpVersionPolicy.RequestVersionOrLower : HttpVersionPolicy.RequestVersionOrHigher,
+        };
+
+        Exception failure = await EndAsync(http, target, mute.Accepted, "time-limit", request);
+
+        Assert.False(BoundedAnswer.NeverSent(failure));
+    }
+
     // Accepts any server certificate, as the client's first connection to a server does: the servers of these tests show a
     // self-signed one.
     private static SocketsHttpHandler AnyCertificate(SocketsHttpHandler handler)
@@ -514,11 +554,11 @@ public sealed class BoundedAnswerTests
 
     // POSTs a body of 2 bytes to the target, waits until the exchange has reached the given point, ends it by the time
     // limit or by the caller's cancellation, and returns the exception.
-    private static async Task<Exception> EndAsync(HttpClient http, Uri target, Task reached, string end)
+    private static async Task<Exception> EndAsync(HttpClient http, Uri target, Task reached, string end, HttpRequestMessage? sent = null)
     {
         var time = new FakeTimeProvider(Start);
         using var caller = CancellationTokenSource.CreateLinkedTokenSource(Cancel);
-        using var request = new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent("{}") };
+        using HttpRequestMessage request = sent ?? new HttpRequestMessage(HttpMethod.Post, target) { Content = new StringContent("{}") };
         Task<BoundedAnswer> sending = BoundedAnswer.SendAsync(http, request, Limit, time, caller.Token).WaitAsync(Hang, Cancel);
         await reached.WaitAsync(Hang, Cancel);
         if (end == "time-limit")
