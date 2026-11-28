@@ -3,8 +3,9 @@
 # job that downloads the artifact checks the files against those lines and that the folder holds exactly the listed
 # files. The steps named "Hash …" and "Check … against …" carry the same commands as in release.yml.
 #
-# design §20.5 (V1d21): the main ruleset requires the check of every job here, by name. A pull request that renames a
-# job, removes it, or changes its matrix says so in its body (.cursor/rules/pull-requests.mdc).
+# design §20.5 (V1d21): the main ruleset requires, by name, the checks its list names (one per matrix value). A pull
+# request that renames a listed job, removes it, or changes its matrix says so in its body
+# (.cursor/rules/pull-requests.mdc).
 name: CI
 
 on:

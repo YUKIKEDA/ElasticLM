@@ -23,12 +23,15 @@ Do these once, before the first tag. Each step closes a gap the threat model nam
    and files cannot change, even for the owner; a draft still can (T24).
 5. Settings → Secrets and variables → Actions → Variables: add `NUGET_USER` with the owner's nuget.org profile name. It is
    not a secret; `NuGet/login` sends it with the OIDC token.
-6. Require the checks of `ci.yml` and `release.yml` on `main` (design §20.5, "`main` の必須の検査"; Issue #340). Do this
-   only after the pull request of V1d21 has merged: it renames the job `Admin UI (web/admin)` of `release.yml`, and a
-   required name that a pull request's run does not report stays "Pending" and blocks the merge.
-   1. Settings → Rules → Rulesets → **Protect main branch**. Keep the bypass list empty and the rules already there.
-   2. Turn on **Require status checks to pass**. Leave **Require branches to be up to date before merging** off and
-      **Do not require status checks on creation** off.
+6. Require the checks of `ci.yml` and of the pull-request jobs of `release.yml` on `main` (design §20.5,
+   "`main` の必須の検査"; Issue #340). Do this only after the pull request of V1d21 has merged: it renames the job
+   `Admin UI (web/admin)` of `release.yml`, and a required name that a pull request's run does not report stays
+   "Pending" and blocks the merge. A pull request whose last run started before the change still reports the old name;
+   it needs a new run, such as a push that merges `origin/main` (a re-run uses the same merge commit).
+   1. Settings → Rules → Rulesets → **Protect main branch**. Keep the bypass list empty, the enforcement **Active**, and
+      the rules already there.
+   2. Turn on **Require status checks to pass before merging**. Leave **Require branches to be up to date before
+      merging** off and **Do not require status checks on creation** off.
    3. Under **Add checks**, add each of these 29 names exactly, and set the source of each to **GitHub Actions**:
 
       ```text
@@ -68,17 +71,20 @@ Do these once, before the first tag. Each step closes a gap the threat model nam
    4. Save the ruleset.
 7. Settings → General → Pull Requests: turn on **Allow auto-merge**
    (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-auto-merge-for-pull-requests-in-your-repository).
-8. Check steps 6 and 7. The agent reads the same values and writes them on Issue #340.
-   - This prints `[]`, `false`, `false` (or `null`), `29`, and the 29 names of step 6, each after `15368` (the ID of
-     GitHub Actions):
+8. Check steps 6 and 7 with the commands below. The agent runs the same commands afterwards and writes the result on
+   Issue #340.
+   - This prints `active`; the rule types `deletion`, `non_fast_forward`, `pull_request`, and `required_status_checks`
+     (in any order); `[]`; `false`; `false` (`null` if GitHub leaves `do_not_enforce_on_create` out); `29`; and the 29
+     names of step 6, each after `15368` (the ID of GitHub Actions):
 
      ```sh
-     gh api repos/YUKIKEDA/ElasticLM/rulesets/25864892 --jq '.bypass_actors, (.rules[] | select(.type == "required_status_checks") | .parameters | .strict_required_status_checks_policy, .do_not_enforce_on_create, (.required_status_checks | length), (.required_status_checks[] | "\(.integration_id) \(.context)"))'
+     gh api repos/YUKIKEDA/ElasticLM/rulesets/25864892 --jq '.enforcement, [.rules[].type], .bypass_actors, (.rules[] | select(.type == "required_status_checks") | .parameters | .strict_required_status_checks_policy, .do_not_enforce_on_create, (.required_status_checks | length), (.required_status_checks[] | "\(.integration_id) \(.context)"))'
      ```
 
    - `gh api repos/YUKIKEDA/ElasticLM --jq .allow_auto_merge` prints `true`.
-9. When a pull request says that it renames a required job, removes one, or changes its matrix, change the list of step
-   6 to the names its body gives when you merge it (`.cursor/rules/pull-requests.mdc`).
+9. When you merge a pull request that says it renames a required job, removes one, or changes its matrix, change the
+   required checks of the ruleset (step 6) to the names its body gives (`.cursor/rules/pull-requests.mdc`). Open pull
+   requests then need a new run, as in step 6.
 
 ### Environment `release`
 
