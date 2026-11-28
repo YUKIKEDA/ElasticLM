@@ -34,6 +34,7 @@ N/A
 ## Checklist
 
 - [ ] Title follows Conventional Commits (`type(scope): subject`)
+- [ ] Every commit message follows Conventional Commits and holds no closing keyword (`Refs #N`, not `Closes #N`)
 - [ ] CSharpier applied (`dotnet csharpier format .`)
 - [ ] New public API has XML docs; new tests have `summary` + `remarks` (Preconditions / Steps / Expected)
 - [ ] No key material, real license token, or secret in the diff, tests, or logs (`.cursor/rules/security.mdc`)
@@ -41,4 +42,3 @@ N/A
 - [ ] Corrections from the owner written into the file they belong to (`.cursor/rules/record-corrections.mdc`) — or N/A
 - [ ] `docs/roadmap.md`: this row is `done` with its Issue, and **今** points at the next row — or N/A (`.cursor/rules/workflow.mdc`)
 - [ ] Every Done when of the Issue it closes is met in this PR, or moved to a named row first (`github-closing`)
-- [ ] A required check renamed, removed, or with a changed matrix (names before and after), a `paths` filter or an `if` added to a required job or its workflow, or a new job of a required name is stated at the top of the body — or N/A (`pull-requests`)

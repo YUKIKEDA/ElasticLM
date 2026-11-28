@@ -18,8 +18,7 @@ change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
 | Repository, steps 1 to 4 | Done. The owner is the only collaborator, the default workflow permissions are `read`, both tag rulesets are active, and immutable releases are on |
 | Environment `release` | Done. It has no secrets and no variables |
 | Repository, step 5 (`NUGET_USER`) | In V1e |
-| Repository, steps 6 to 8 (required checks of `main`, auto-merge) | After the pull request of V1d21 merges (Issue #340) |
-| Repository, step 10 (the tokens) | Read by the owner on GitHub's pages on 2026-11-28: no personal access token, and GitHub CLI as the only authorized OAuth app |
+| Repository, step 6 (the tokens) | Read by the owner on GitHub's pages on 2026-11-28: no personal access token, and GitHub CLI as the only authorized OAuth app |
 | nuget.org | In V1e |
 | Documentation site (Pages, environment `github-pages`) | In V1e |
 
@@ -62,80 +61,20 @@ change either. Read with `gh api` on 2026-11-28 between 11:14Z and 11:45Z (UTC):
    and files cannot change, even for the owner; a draft still can (T24).
 5. Settings → Secrets and variables → Actions → Variables: add `NUGET_USER` with the owner's nuget.org profile name. It is
    not a secret; `NuGet/login` sends it with the OIDC token.
-6. Require the checks of `ci.yml` and of the pull-request jobs of `release.yml` on `main` (design §20.5,
-   "`main` の必須の検査"; Issue #340). Do this only after the pull request of V1d21 has merged: it renames the job
-   `Admin UI (web/admin)` of `release.yml`, and a required name that a pull request's run does not report stays
-   "Pending" and blocks the merge. A pull request whose last run started before the change still reports the old name;
-   it needs a new run, such as a push that merges `origin/main` (a re-run uses the same merge commit).
-   1. Settings → Rules → Rulesets → **Protect main branch**. Keep the bypass list empty, the enforcement **Active**, and
-      the rules already there.
-   2. Turn on **Require status checks to pass before merging**. Leave **Require branches to be up to date before
-      merging** off and **Do not require status checks on creation** off.
-   3. Under **Add checks**, add each of these 29 names exactly, and set the source of each to **GitHub Actions**:
+6. Check, by reading only, that the GitHub CLI token is the only GitHub credential with the `repo` scope (design T28
+   and §5.4). Change no setting of the machine and no other repository.
+   1. Settings (of your account) → Developer settings → Personal access tokens → **Tokens (classic)** and
+      **Fine-grained tokens**: note each token and its scopes. No token other than GitHub CLI's may have `repo`.
+   2. Settings (of your account) → Applications → **Authorized OAuth Apps**: note the apps.
+   3. Write what you saw on Issue #340, or tell the agent, who writes it there and in `docs/rows/V1d21.md`. If a token
+      with `repo` is there, design §5.4 gets it in the row of the owner's account.
 
-      ```text
-      Action pins
-      Admin UI (web/admin)
-      build.ps1 (windows-latest)
-      build.ps1 (ubuntu-latest)
-      build.ps1 (macos-latest)
-      NativeAOT elm-server, elm, elm-service, and libelasticlm (windows-latest)
-      NativeAOT elm-server, elm, elm-service, and libelasticlm (ubuntu-latest)
-      NativeAOT elm-server, elm, elm-service, and libelasticlm (macos-latest)
-      Version and release notes
-      Admin UI (web/admin, release)
-      Build win-x64
-      Build win-arm64
-      Build linux-x64
-      Build linux-arm64
-      Build linux-musl-x64
-      Build osx-arm64
-      Build osx-x64
-      NuGet packages
-      Use the packages (win-x64)
-      Use the packages (linux-x64)
-      Use the packages (osx-arm64)
-      SBOM
-      Container image
-      Container image (linux/amd64)
-      Container image (linux/arm64)
-      Guide steps with containers
-      SHA256SUMS
-      Check the release files
-      Documentation site (website)
-      ```
+   On 2026-11-28 the owner saw no personal access token of either kind, and GitHub CLI as the only authorized OAuth
+   app.
 
-      Do not add `Measure`, `Attest`, `Draft the release`, `Publish`, `Publish the documentation site`, or CodeQL's
-      `Analyze (…)`: they do not run on every pull request, and a required check that does not run blocks the merge.
-   4. Save the ruleset.
-7. Settings → General → Pull Requests: turn on **Allow auto-merge**
-   (https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/configuring-pull-request-merges/managing-auto-merge-for-pull-requests-in-your-repository).
-8. Check steps 6 and 7 with the commands below. The agent runs the same commands afterwards and writes the result on
-   Issue #340.
-   - This prints `active`; the rule types `deletion`, `non_fast_forward`, `pull_request`, and `required_status_checks`
-     (in any order); `[]`; `false`; `false` (`null` if GitHub leaves `do_not_enforce_on_create` out); `29`; and the 29
-     names of step 6, each after `15368` (the ID of GitHub Actions):
-
-     ```sh
-     gh api repos/YUKIKEDA/ElasticLM/rulesets/25864892 --jq '.enforcement, [.rules[].type], .bypass_actors, (.rules[] | select(.type == "required_status_checks") | .parameters | .strict_required_status_checks_policy, .do_not_enforce_on_create, (.required_status_checks | length), (.required_status_checks[] | "\(.integration_id) \(.context)"))'
-     ```
-
-   - `gh api repos/YUKIKEDA/ElasticLM --jq .allow_auto_merge` prints `true`.
-9. When you merge a pull request that says it renames a required job, removes one, or changes its matrix, change the
-   required checks of the ruleset (step 6) to the names its body gives (`.cursor/rules/pull-requests.mdc`). Open pull
-   requests then need a new run, as in step 6. A pull request may also say that it adds a `paths` filter to a required
-   job's workflow (its checks would stay "Pending"), adds an `if` to a required job (a skipped job reports "Success",
-   so its check would pass without checking anything), or adds a job of a required name (the result would be
-   ambiguous). Do not merge it until the body says how the required checks stay whole.
-10. Check, by reading only, that the GitHub CLI token is the only GitHub credential with the `repo` scope (design T28
-    and §5.4). Change no setting of the machine and no other repository.
-    1. Settings (of your account) → Developer settings → Personal access tokens → **Tokens (classic)** and
-       **Fine-grained tokens**: note each token and its scopes. No token other than GitHub CLI's may have `repo`.
-    2. Settings (of your account) → Applications → **Authorized OAuth Apps**: note the apps.
-    3. Write what you saw on Issue #340, or tell the agent, who writes it there and in `docs/rows/V1d21.md`. If a token
-       with `repo` is there, design §5.4 gets it in the row of the owner's account.
-    On 2026-11-28 the owner saw no personal access token of either kind, and GitHub CLI as the only authorized OAuth
-    app.
+The `main` ruleset requires no status checks, and **Allow auto-merge** stays off: the owner decided so on 2026-11-28
+(design §20.5, "`main` の検査とマージ"; Issue #340). GitHub does not stop the merge of a pull request whose checks
+are red or still running.
 
 ### Environment `release`
 
@@ -202,6 +141,15 @@ release is published (design §20.7, T28).
    `v*` tag, an rc tag included, before V1e's change to `release.yml` has merged (design §20.5, "V1e で変えること"): until then, `publish`
    runs on every `v*` tag and would push the rc's packages to nuget.org and its image to GHCR, while the user
    documentation says that a prerelease pushes neither.
+   The tagged commit must be a merge commit on `main` whose push ran `ci.yml`, and that run must have passed: the
+   `ci-passed` job looks for a successful `ci.yml` run for a push to `main` at the tagged commit, and `attest`, `draft`,
+   `publish`, and `pages` wait for it (design §20.5, "出荷のゲート"). A commit of a pull request's branch has no such run,
+   even when `main` reaches it. Push the tag after that run has passed (`gh run list --workflow ci.yml --branch main
+   --event push --commit <sha>`). The job does not wait: if the run is still going, failed, or was cancelled, the job
+   fails with the run's URL, and also when the tag came so soon after the merge that the push run does not exist yet.
+   Re-run CI if it failed (`gh run rerun <CI run ID> --failed`; a cancelled run, or one that ended in another way,
+   with `gh run rerun <CI run ID>`), and once it passes, `gh run rerun <release run ID> --failed`. The build and check jobs
+   do not wait for `ci-passed`, so they have already run.
 4. `release.yml` checks that the tag is `VersionPrefix` (or `VersionPrefix-<suffix>`), that the commit is on `main`, and
    that `CHANGELOG.md` has the section. It builds the seven runtime identifiers and the packages, checks them, writes
    `SHA256SUMS`, attests every file, and creates a **draft** GitHub Release. A job that takes files from another

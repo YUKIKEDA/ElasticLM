@@ -25,7 +25,7 @@ Read the rules that match the work before changing anything. `alwaysApply` rules
 
 | Rule | One line |
 | --- | --- |
-| `workflow` | Grill, Issue, branch, PR, human squash merge, retrospective; labels; gates |
+| `workflow` | Grill, Issue, branch, PR, human merge with a merge commit, retrospective; labels; gates |
 | `consent` | A question is not a decision; options need a recommendation; outward actions need an order |
 | `git` | Finished work goes to a PR on its branch without asking; destructive git needs a named order; never `main` |
 | `scope` | Requirements decide scope; no half-shipped capability or security property |
@@ -65,7 +65,7 @@ Skills live in `.agents/skills/`. `skills-lock.json` pins the ones that come fro
 ## Environment
 
 - .NET 10 SDK (`global.json`). If `dotnet --list-sdks` shows none, install it; do not stop to ask. Use the newest patch of the feature band: CI gets it through `rollForward: latestFeature`, and an older local patch can fail where CI passes. On 2026-11-06 SDK 10.0.402 failed the restore of `./build.ps1` and the NativeAOT publish with NU1903 (a high-severity vulnerability in `Microsoft.DotNet.ILCompiler` 10.0.13, which every project that sets `PublishAot` references), and 10.0.403 passed (PR #220, PR #222). The .NET 10 SDK may be only under `%LOCALAPPDATA%\Microsoft\dotnet`: on 2026-11-27 that folder had 10.0.404, the newest patch, while `C:\Program Files\dotnet` had for a while no .NET 10 SDK, and `./build.ps1` stopped with "A compatible .NET SDK was not found". In PowerShell, set `$env:DOTNET_ROOT` to that folder and put it first in `$env:PATH`; changing `PATH` in Git Bash still picks `C:\Program Files\dotnet` (PR #475).
-- Node.js of `web/admin/.node-version` (24) with its Corepack, for the admin UI (`web/admin/`). `./build.ps1` checks the version and runs pnpm through `corepack pnpm`, which checks pnpm's version and hash against `packageManager`. `./build.ps1 -SkipWeb` uses an existing `web/admin/dist` instead (design §15.2). The documentation site (`website/`) uses the same Node.js and Corepack: `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` there; `release.yml` builds it on every pull request, outside `./build.ps1` (design §20.7).
+- Node.js of `web/admin/.node-version` (24) with its Corepack, for the admin UI (`web/admin/`). `./build.ps1` checks the version and runs pnpm through `corepack pnpm`, which checks pnpm's version and hash against `packageManager`. `./build.ps1 -SkipWeb` uses an existing `web/admin/dist` instead (design §15.2). The documentation site (`website/`) uses the same Node.js and Corepack: `corepack pnpm install --frozen-lockfile` and `corepack pnpm run build` there; `release.yml` builds it on every pull request that it runs on, outside `./build.ps1` (design §20.5, §20.7).
 - Windows is the primary host. CI runs the same gate on Windows, Linux, and macOS.
 - The agent shell is PowerShell (`.cursor/rules/powershell-shell.mdc`).
 - `libelasticlm` (`src/ElasticLM.Native`, `include/elasticlm.h`): `./build.ps1` runs its .NET tests; its C test runs with `./tests/native/run.ps1 -Publish` (which also publishes `elm-service` and `elm-server`, so `web/admin/dist` must be built; MSVC from Visual Studio's C++ workload on Windows) and in the CI NativeAOT job.
