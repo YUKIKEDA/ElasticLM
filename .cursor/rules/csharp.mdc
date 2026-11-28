@@ -41,6 +41,10 @@ Make an invalid state unrepresentable; do not document it away or catch it at ru
 - Code that reads an answer of our own programs with `JsonDocument` reads a nullable member that the writer's JSON context leaves out when `null` (`DefaultIgnoreCondition = WhenWritingNull`) with `TryGetProperty`, and a test covers the answer without it. `elm server status` threw for a server license without expiry because `elm-server` leaves out `licenseExpires` and the CLI read it with `GetProperty` (V1c7, PR #207).
 - A refactor that moves checks into a shared function compares each message the callers returned before and after. A changed message is listed under Risk in the PR. In M4d1 three refusals of `elm-server` changed wording when its checks moved to `LeaseRules`, and one place kept the old wording (PR #83).
 
+## Async flow
+
+- A value carried in the execution context (`AsyncLocal<T>`) reaches only code that runs in the flow that set it. Code that uses such a value to record what a library did for one call first reads, in the library's source, which flow does that work (`.cursor/rules/security.mdc` asks the same of a library's exceptions). In V1d24e the client's `BoundedAnswer` marks, in the stream that its `PlaintextStreamFilter` wraps, that a request's bytes were written. HTTP/1.x writes them in the request's flow, while HTTP/2 writes them in the connection's loop (`Http2Connection.ProcessOutgoingFramesAsync`, release/10.0), where the mark never shows, so every request cut off by its time limit would count as never sent, the unsafe side. The independent review found it (A), and the mark is set only for a request of version 1.x whose version policy is not `RequestVersionOrHigher` (`docs/rows/V1d24e.md`, PR #524).
+
 ## Cryptography objects
 
 - Measure what creating a cryptography object costs against what one operation costs, under NativeAOT, before putting it on a measured path. In M1, creating an `ECDsa` and importing a P-256 public key took about 275 µs on Windows, against about 110 µs for one verification, and verification took 888 µs per license file until each key was created once (PR #8).
